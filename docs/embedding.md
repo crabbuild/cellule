@@ -51,6 +51,12 @@ owned adapters, publishes a session, installs its lease, starts supervisors,
 and opens readiness last. Its HTTP, Git, identity, and deployment choices
 belong to Crab rather than to Cellule.
 
+Release migration is also a peer operation. `MigrationPeerClient::migrate`
+re-describes the Cell when the migration reply is lost, malformed, or cannot
+confirm the requested successor. If it still cannot confirm the successor, it
+returns `PeerTransportUnknown`; inspect the current Cell description before
+deciding whether to retry the same migration plan.
+
 `build_unleased_for_maintenance()` is for private, bounded offline work. It
 uses object-only admission and cannot be advertised as a serving node.
 

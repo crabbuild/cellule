@@ -83,6 +83,8 @@ impl MigrationPeerClient {
     }
 
     /// Migrates one exact remote capability without accepting migration SQL on the wire.
+    /// An ambiguous reply is reconciled by describing the Cell; an unconfirmed
+    /// migration returns `Error::PeerTransportUnknown`.
     pub async fn migrate(
         &self,
         target: CellTarget,
@@ -107,39 +109,54 @@ impl MigrationPeerClient {
             to_code: plan.to_code().as_bytes().to_vec(),
             to_schema: plan.to_schema(),
         });
-        let reply = match self
+        let reply = self
             .transport
             .exchange(target.clone(), now_ms, expires_at_ms, operation)
-            .await
-        {
-            Ok(reply) => reply,
-            Err(source @ Error::PeerTransportUnknown { .. }) => {
-                let observed = self.transport.describe(target).await?;
-                if migrated_description(observed, expected, plan) {
-                    return Ok(observed);
+            .await;
+        let source = match reply {
+            Ok(wire::PeerReply {
+                outcome: Some(wire::peer_reply::Outcome::Migration(reply)),
+            }) => {
+                let description = reply
+                    .description
+                    .ok_or(Error::Peer("migration reply description is missing"))
+                    .and_then(runtime_description);
+                match description {
+                    Ok(observed) if migrated_description(observed, expected, plan) => {
+                        return Ok(observed);
+                    }
+                    Ok(_) => Error::Peer("migration reply does not match the requested successor"),
+                    Err(source) => source,
                 }
-                return Err(source);
             }
+            Ok(wire::PeerReply {
+                outcome: Some(wire::peer_reply::Outcome::Error(error)),
+            }) if error.code == wire::error::Code::OutcomeUnknown as i32
+                || error.outcome == wire::error::Outcome::Unknown as i32 =>
+            {
+                runtime_error(error)
+            }
+            Ok(wire::PeerReply {
+                outcome: Some(wire::peer_reply::Outcome::Error(error)),
+            }) => return Err(runtime_error(error)),
+            Ok(_) => Error::Peer("unexpected migration reply"),
+            Err(source @ Error::PeerTransportUnknown { .. }) => source,
             Err(error) => return Err(error),
         };
-        match reply.outcome {
-            Some(wire::peer_reply::Outcome::Migration(reply)) => {
-                let observed = runtime_description(
-                    reply
-                        .description
-                        .ok_or(Error::Peer("migration reply description is missing"))?,
-                )?;
-                if migrated_description(observed, expected, plan) {
-                    Ok(observed)
-                } else {
-                    Err(Error::Peer(
-                        "migration reply does not match the requested successor",
-                    ))
-                }
-            }
-            Some(wire::peer_reply::Outcome::Error(error)) => Err(runtime_error(error)),
-            _ => Err(Error::Peer("unexpected migration reply")),
+        // Publication can succeed before the reply is lost or corrupted.
+        // Re-describe before reporting an outcome that cannot be confirmed.
+        if let Ok(observed) = self.transport.describe(target).await
+            && migrated_description(observed, expected, plan)
+        {
+            return Ok(observed);
         }
+        Err(match source {
+            source @ Error::PeerTransportUnknown { .. } => source,
+            source => Error::PeerTransportUnknown {
+                context: "migration outcome cannot be confirmed",
+                source: Box::new(source),
+            },
+        })
     }
 }
 

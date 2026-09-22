@@ -4,8 +4,9 @@ use std::{
     pin::Pin,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use cellule_ltx::CellStorageLayout;
@@ -18,7 +19,7 @@ use cellule_runtime::{
     NodeLogAuthority, NodeLogRotationBarrier, NodeLogShipper, NodeLogTransport, Owner,
     PeerAuthorizer, PeerCellResolver, PeerDispatcher, PeerPrincipal, PeerRoundTrip, PeerSigner,
     PeerVerifier, Registry, RegistryBuilder, RetainedCodeDescriptor, SessionId, SqlWorkerPool,
-    TenantId, VerifiedPeerRequest,
+    TenantId, VerifiedPeerRequest, peer_wire,
 };
 use cellule_store::Store;
 use futures_util::stream::BoxStream;
@@ -26,6 +27,7 @@ use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
 };
+use prost::Message;
 
 const MODULE: &str = "migration-test";
 const NAMESPACE: NamespaceId = NamespaceId::from_bytes([61; 16]);
@@ -262,14 +264,15 @@ impl PeerAuthorizer for MigrationAuthorizer {
 struct LoopbackRoundTrip {
     verifier: Arc<PeerVerifier>,
     dispatcher: Arc<PeerDispatcher>,
+    now_ms: i64,
 }
 
-struct LoseFirstMigrationReply {
+struct CorruptMigrationReplies {
     inner: Arc<dyn PeerRoundTrip>,
-    first: AtomicBool,
+    next: Arc<AtomicUsize>,
 }
 
-impl PeerRoundTrip for LoseFirstMigrationReply {
+impl PeerRoundTrip for CorruptMigrationReplies {
     fn send(
         &self,
         target: CellTarget,
@@ -277,13 +280,44 @@ impl PeerRoundTrip for LoseFirstMigrationReply {
         remaining_ms: u32,
     ) -> Pin<Box<dyn Future<Output = cellule_runtime::Result<Vec<u8>>> + Send + 'static>> {
         let inner = Arc::clone(&self.inner);
-        let lose = self.first.swap(false, Ordering::SeqCst);
+        let next = Arc::clone(&self.next);
         Box::pin(async move {
             let reply = inner.send(target, request, remaining_ms).await?;
-            if lose {
-                Ok(b"invalid".to_vec())
-            } else {
-                Ok(reply)
+            let mut decoded = cellule_runtime::decode_peer_reply(&reply)?;
+            if !matches!(
+                decoded.outcome,
+                Some(peer_wire::peer_reply::Outcome::Migration(_))
+            ) {
+                return Ok(reply);
+            }
+            match next.fetch_add(1, Ordering::SeqCst) {
+                0 => Ok(b"invalid".to_vec()),
+                1 => {
+                    if let Some(peer_wire::peer_reply::Outcome::Migration(migration)) =
+                        &mut decoded.outcome
+                    {
+                        migration.description = None;
+                    }
+                    Ok(decoded.encode_to_vec())
+                }
+                2 => {
+                    if let Some(peer_wire::peer_reply::Outcome::Migration(migration)) =
+                        &mut decoded.outcome
+                    {
+                        migration.description.as_mut().unwrap().cell_id[0] ^= 1;
+                    }
+                    cellule_runtime::encode_peer_reply(&decoded)
+                }
+                3 => cellule_runtime::encode_peer_reply(&peer_wire::PeerReply {
+                    outcome: Some(peer_wire::peer_reply::Outcome::Error(peer_wire::Error {
+                        code: peer_wire::error::Code::Internal as i32,
+                        outcome: peer_wire::error::Outcome::Unknown as i32,
+                        message: "migration result unavailable".into(),
+                        retry_after_ms: 0,
+                        application_details: Vec::new(),
+                    })),
+                }),
+                _ => Ok(reply),
             }
         })
     }
@@ -298,14 +332,15 @@ impl PeerRoundTrip for LoopbackRoundTrip {
     ) -> Pin<Box<dyn Future<Output = cellule_runtime::Result<Vec<u8>>> + Send + 'static>> {
         let verifier = Arc::clone(&self.verifier);
         let dispatcher = Arc::clone(&self.dispatcher);
+        let now_ms = self.now_ms;
         Box::pin(async move {
-            let verified = verifier.verify(&request, 10)?;
+            let verified = verifier.verify(&request, now_ms)?;
             if verified.target() != &target {
                 return Err(cellule_runtime::Error::Peer(
                     "loopback migration target changed",
                 ));
             }
-            dispatcher.dispatch_bytes(&verified, 10).await
+            dispatcher.dispatch_bytes(&verified, now_ms).await
         })
     }
 }
@@ -764,6 +799,13 @@ async fn authenticated_peer_migration_derives_plan_and_reconciles_retry() {
         }),
         Arc::new(MigrationAuthorizer),
     ));
+    let now_ms = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
     let client = MigrationPeerClient::new(
         Arc::new(signer),
         PeerPrincipal {
@@ -771,25 +813,31 @@ async fn authenticated_peer_migration_derives_plan_and_reconciles_retry() {
             subject: "release-operator".into(),
             actions: vec!["cell.release.migrate".into()],
         },
-        Arc::new(LoseFirstMigrationReply {
+        Arc::new(CorruptMigrationReplies {
             inner: Arc::new(LoopbackRoundTrip {
                 verifier,
                 dispatcher,
+                now_ms,
             }),
-            first: AtomicBool::new(true),
+            next: Arc::new(AtomicUsize::new(0)),
         }),
     );
 
     let migrated = client
-        .migrate(target.clone(), expected, plan, 10)
+        .migrate(target.clone(), expected, plan, now_ms)
         .await
         .unwrap();
     assert_eq!(migrated.code, registry.module_code(MODULE).unwrap());
     assert_eq!(migrated.schema, 2);
-    assert_eq!(
-        client.migrate(target, expected, plan, 10).await.unwrap(),
-        migrated
-    );
+    for _ in 0..4 {
+        assert_eq!(
+            client
+                .migrate(target.clone(), expected, plan, now_ms)
+                .await
+                .unwrap(),
+            migrated
+        );
+    }
 
     let control = authority.load(proof.entry().cell()).await.unwrap().unwrap();
     runtime
