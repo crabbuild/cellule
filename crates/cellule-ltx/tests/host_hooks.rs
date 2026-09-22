@@ -526,7 +526,12 @@ async fn prepare_opens_captured_segments_concurrently() {
         Limits::default(),
     )
     .unwrap()
-    .with_host(Host::default().with_executor(Arc::new(DelayedExecutor { delay })));
+    .with_host(
+        Host::default()
+            // This checks three-way overlap; the CPU-capped default may admit only two jobs.
+            .with_job_slots(Arc::new(tokio::sync::Semaphore::new(3)))
+            .with_executor(Arc::new(DelayedExecutor { delay })),
+    );
     let started = tokio::time::Instant::now();
 
     replica.prepare(None, &captured, 1, 1).await.unwrap();
