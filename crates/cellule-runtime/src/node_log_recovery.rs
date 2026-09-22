@@ -32,7 +32,7 @@ struct WitnessWriter {
 impl WitnessWriter {
     fn new(directory: &Path) -> Result<Self> {
         let temporary = tempfile::Builder::new()
-            .prefix(".crab-witness-")
+            .prefix(".cellule-witness-")
             .tempfile_in(directory)?;
         let path = temporary.into_temp_path();
         let file = OpenOptions::new().append(true).open(&path)?;
@@ -118,7 +118,7 @@ impl WitnessDigestWriter {
             return Err(Error::Node("recovery witness digest range is empty"));
         }
         let temporary = tempfile::Builder::new()
-            .prefix(".crab-witness-digests-")
+            .prefix(".cellule-witness-digests-")
             .tempfile_in(directory)?;
         let path = temporary.into_temp_path();
         let file = OpenOptions::new().append(true).open(&path)?;

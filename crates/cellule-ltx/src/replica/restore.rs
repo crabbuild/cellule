@@ -202,7 +202,7 @@ impl RestoreScratch {
         for _ in 0..16 {
             let mut scratch_name = filename.to_owned();
             scratch_name.push(format!(
-                ".crab-restore-{}-{}",
+                ".cellule-restore-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));

@@ -550,6 +550,6 @@ async fn failed_or_cancelled_parallel_restore_never_publishes_destination() {
             .unwrap()
             .file_name()
             .to_string_lossy()
-            .contains(".crab-restore-")
+            .contains(".cellule-restore-")
     }));
 }

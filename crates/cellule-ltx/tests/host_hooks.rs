@@ -710,7 +710,7 @@ async fn cell_restore_write_and_install_failures_clean_owned_scratch() {
             .unwrap()
             .file_name()
             .to_string_lossy()
-            .contains(".crab-restore-")
+            .contains(".cellule-restore-")
     }));
 
     faults.arm(Some("persist_file_new"));
@@ -721,7 +721,7 @@ async fn cell_restore_write_and_install_failures_clean_owned_scratch() {
             .unwrap()
             .file_name()
             .to_string_lossy()
-            .contains(".crab-restore-")
+            .contains(".cellule-restore-")
     }));
 
     faults.arm(None);
@@ -825,7 +825,7 @@ async fn cell_compaction_uses_injected_filesystem_and_cleans_failed_scratch() {
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
-                .contains(".crab-compaction-")
+                .contains(".cellule-compaction-")
         }));
     }
 

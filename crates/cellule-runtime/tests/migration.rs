@@ -742,7 +742,7 @@ async fn authenticated_peer_migration_derives_plan_and_reconciles_retry() {
     let client = MigrationPeerClient::new(
         Arc::new(signer),
         PeerPrincipal {
-            issuer: "crab-runtime:test".into(),
+            issuer: "cellule-runtime:test".into(),
             subject: "release-operator".into(),
             actions: vec!["cell.release.migrate".into()],
         },

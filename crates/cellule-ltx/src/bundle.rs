@@ -110,7 +110,7 @@ impl BundleBuilder {
     pub fn new_temp(directory: &Path, limits: Limits) -> Result<Self> {
         let limits = limits.validate()?;
         let file = tempfile::Builder::new()
-            .prefix(".crab-bundle-")
+            .prefix(".cellule-bundle-")
             .tempfile_in(directory)?;
         Ok(Self {
             path: file.into_temp_path(),

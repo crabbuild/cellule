@@ -792,7 +792,7 @@ mod tests {
     #[test]
     fn explicit_s3_credentials_build_signing_store() {
         let built = build_object_store(
-            "crab-test-bucket",
+            "cellule-test-bucket",
             ObjectStoreCredentials::Aws {
                 access_key_id: "access".into(),
                 secret_access_key: "secret".into(),

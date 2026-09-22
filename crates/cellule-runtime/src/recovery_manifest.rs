@@ -427,7 +427,7 @@ impl RecoveryManifestStore {
         let disk_reservation = self.recovery_disk.try_reserve(metadata.size)?;
         let temporary = match &self.recovery_scratch {
             Some(directory) => tempfile::Builder::new()
-                .prefix(".crab-recovery-")
+                .prefix(".cellule-recovery-")
                 .tempfile_in(directory)?,
             None => tempfile::NamedTempFile::new()?,
         };

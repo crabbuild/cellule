@@ -1,0 +1,31 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install SQLite CLI
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Architecture boundaries
+        run: python3 scripts/check-boundaries.py
+      - name: Check
+        run: cargo check --workspace --all-targets --locked
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Test replica feature
+        run: cargo test -p cellule-ltx --features replica --locked
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Validate SQL and peer contracts
+        run: node crates/cellule-runtime/docs/validate.mjs

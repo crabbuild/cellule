@@ -35,7 +35,7 @@ pub struct FilesystemCasStore {
 impl FilesystemCasStore {
     pub fn new(root: &FilePath) -> Result<Self> {
         let inner = object_store::local::LocalFileSystem::new_with_prefix(root)?;
-        std::fs::create_dir_all(root.join(".crab-cas-locks")).map_err(|source| {
+        std::fs::create_dir_all(root.join(".cellule-cas-locks")).map_err(|source| {
             object_store::Error::Generic {
                 store: "filesystem-cas-store",
                 source: Box::new(source),
@@ -68,7 +68,7 @@ impl FilesystemCasStore {
     fn lock_path(&self, location: &Path) -> PathBuf {
         let digest = blake3::hash(location.as_ref().as_bytes());
         self.root
-            .join(".crab-cas-locks")
+            .join(".cellule-cas-locks")
             .join(format!("{}.lock", hex(digest.as_bytes())))
     }
 

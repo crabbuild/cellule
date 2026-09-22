@@ -97,7 +97,7 @@ impl SqlWorkerPool {
         for index in 0..worker_count {
             let (sender, receiver) = mpsc::channel(WORKER_QUEUE);
             let thread = match std::thread::Builder::new()
-                .name(format!("crab-cell-sql-{index}"))
+                .name(format!("cellule-sql-{index}"))
                 .spawn(move || run_worker(receiver))
             {
                 Ok(thread) => thread,

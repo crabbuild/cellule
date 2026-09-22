@@ -397,7 +397,7 @@ struct MarkStore {
 impl MarkStore {
     async fn open(directory: &FilePath) -> Result<Self> {
         let file = tempfile::Builder::new()
-            .prefix("crab-cell-retention-")
+            .prefix("cellule-retention-")
             .suffix(".sqlite3")
             .tempfile_in(directory)
             .map_err(Error::RetentionIo)?;

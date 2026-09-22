@@ -694,7 +694,7 @@ async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() 
         dispatcher,
     });
     let principal = PeerPrincipal {
-        issuer: "crab-runtime:test".into(),
+        issuer: "cellule-runtime:test".into(),
         subject: "source-session".into(),
         actions: vec!["repository.issue.create".into()],
     };
@@ -906,7 +906,7 @@ async fn effect_supervisor_delivers_to_inbox_and_acknowledges_source() {
     let peer = EffectPeerClient::new(
         Arc::new(signer),
         PeerPrincipal {
-            issuer: "crab-runtime:test".into(),
+            issuer: "cellule-runtime:test".into(),
             subject: "source-session".into(),
             actions: vec!["repository.issue.create".into()],
         },

@@ -32,7 +32,8 @@ pub use api::{
     register_workflow,
 };
 
-const WORKFLOW_SCHEMA: &str = include_str!("migrations/workflow.sql");
+/// SQL for the built-in Workflow schema, for application migration descriptors.
+pub const WORKFLOW_SCHEMA_SQL: &str = include_str!("migrations/workflow.sql");
 const MAX_WORKFLOW_BYTES: usize = 1 << 20;
 const MAX_ACTIONS: usize = 128;
 const MAX_EVENTS_PER_CELL: u64 = 100_000;
@@ -223,7 +224,7 @@ pub struct WorkflowRun {
 
 /// Installs the exact version-one Workflow schema during bootstrap or migration.
 pub fn install_workflow_schema(transaction: &Transaction<'_>) -> Result<()> {
-    transaction.execute_batch(WORKFLOW_SCHEMA)?;
+    transaction.execute_batch(WORKFLOW_SCHEMA_SQL)?;
     Ok(())
 }
 
@@ -1299,7 +1300,7 @@ mod tests {
     #[test]
     fn embedded_workflow_migration_matches_normative_contract() {
         assert_eq!(
-            WORKFLOW_SCHEMA,
+            WORKFLOW_SCHEMA_SQL,
             include_str!("../docs/contracts/workflow.sql")
         );
     }

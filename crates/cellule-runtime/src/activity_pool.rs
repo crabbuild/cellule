@@ -30,7 +30,7 @@ impl BlockingActivityPool {
         for index in 0..worker_count {
             let receiver = Arc::clone(&receiver);
             let thread = match std::thread::Builder::new()
-                .name(format!("crab-cell-activity-{index}"))
+                .name(format!("cellule-activity-{index}"))
                 .spawn(move || run_worker(&receiver))
             {
                 Ok(thread) => thread,

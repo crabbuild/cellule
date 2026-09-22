@@ -103,7 +103,7 @@ impl ScratchFiles {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         for _ in 0..16 {
             let path = self.directory.join(format!(
-                ".crab-compaction-{}-{}-{label}",
+                ".cellule-compaction-{}-{}-{label}",
                 std::process::id(),
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));

@@ -26,16 +26,16 @@ Recovery begins from the authority-pinned root and verifies the referenced data 
 
 ## Develop
 
-Rust 1.97 or newer is required. Set `CARGO_TARGET_DIR` outside the checkout when building:
+Rust 1.97 or newer is required:
 
 ```sh
-CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/cellule-main" cargo check --workspace --locked
-CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/cellule-main" cargo test --workspace --locked
-CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/cellule-main" cargo test -p cellule-ltx --features replica --locked
+cargo check --workspace --locked
+cargo test --workspace --locked
+cargo test -p cellule-ltx --features replica --locked
 ```
 
 See [architecture](docs/architecture.md) for ownership rules and [the application reference test](crates/cellule-app/tests/reference_application.rs) for SQL, KV, Blob, Queue, Cron, Workflow, Activity, and Effect registration. `cellule-ltx` retains its [upstream attribution](crates/cellule-ltx/UPSTREAM.md) and bundled licenses.
 
-## Extraction status
+## Integration
 
-This workspace is an independent source extraction. Crab still has its original Cell crates and server integration. Migration of Crab to Cellule, publication of packages, and compatibility qualification across the existing Crab data and peer contracts remain open. The architecture document defines Cellule's crate boundaries; the original product-specific design notes remain in Crab.
+Cellule is developed and tested as a separate workspace. An embedding service supplies its own storage provider, application modules, network transport, and authentication. The architecture document defines the crate boundaries; Crab-specific design notes remain with Crab.

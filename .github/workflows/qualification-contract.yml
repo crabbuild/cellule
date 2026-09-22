@@ -1,0 +1,106 @@
+name: Cellule qualification contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Install contract validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y protobuf-compiler sqlite3
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - name: Validate executable design contracts
+        run: node crates/cellule-runtime/docs/validate.mjs
+      - name: Verify tracked qualification profiles
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-runtime-qualification-target
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/qualification-profiles"
+          mkdir -p "$root"
+          for profile in \
+            pr-contract local-provider scale fault fault-s3 fault-gcs fault-azure \
+            provider provider-s3 provider-gcs provider-azure compatibility; do
+            generated="$root/${profile}.json"
+            cargo run --quiet --locked -p cellule-runtime --bin qualification_receipt -- \
+              profile "$generated" "$profile"
+            jq -S . "$generated" > "$root/${profile}.generated"
+            jq -S . "crates/cellule-runtime/qualification/profiles/${profile}-v1.json" \
+              > "$root/${profile}.tracked"
+            cmp "$root/${profile}.generated" "$root/${profile}.tracked"
+          done
+      - name: Run production hot-path preflight guards
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-runtime-qualification-target
+        run: cargo test -p cellule-runtime --test qualification_preflight --locked
+      - name: Verify application and host boundaries
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-runtime-qualification-target
+        run: cargo test -p cellule-app -p cellule-host --locked
+      - name: Verify receipt, placement, pressure, and resource contracts
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-runtime-qualification-target
+        run: |
+          set -euo pipefail
+          for filter in qualification placement pressure resource; do
+            cargo test -p cellule-runtime "${filter}" --locked
+          done
+      - name: Verify canonical LTX contracts
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-runtime-qualification-target
+        run: cargo test -p cellule-ltx --features replica --locked
+      - name: Smoke-test the complete qualification matrix in a fresh process
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-runtime-qualification-target
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/qualification-matrix-contract"
+          mkdir -p "$root/receipts" "$root/artifacts"
+          source_revision=0123456789abcdef0123456789abcdef01234567
+          image_digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          fixture="$root/fixture.json"
+          profile="$root/pr-contract-profile.json"
+          jq -cn '{schema: 1, kind: "qualification-matrix-contract-fixture"}' > "$fixture"
+          cargo run --quiet --locked -p cellule-runtime --bin qualification_receipt -- \
+            profile "$profile" pr-contract
+          canonical_workload="$root/pr-contract-workload.json"
+          cargo run --quiet --locked -p cellule-runtime --bin qualification_receipt -- \
+            workload "$canonical_workload" "$profile" 7
+          cargo run --quiet --locked -p cellule-runtime --bin qualification_receipt -- \
+            verify-workload "$canonical_workload" "$profile"
+          entries='[]'
+          for workload in protocol storage publication warm-path churn fleet failover primitives accounting compatibility; do
+            artifact="$root/artifacts/${workload}.json"
+            receipt="$root/receipts/${workload}.json"
+            if [ "$workload" = primitives ]; then
+              cp "$canonical_workload" "$artifact"
+            else
+              cp "$fixture" "$artifact"
+            fi
+            cargo run --quiet --locked -p cellule-runtime --bin qualification_receipt -- \
+              emit "$receipt" "$source_revision" "$image_digest" "$artifact" \
+              github-actions "$workload" none "$profile"
+            entries="$(jq -c \
+              --arg workload "$workload" \
+              --arg receipt "receipts/${workload}.json" \
+              --arg artifact "artifacts/${workload}.json" \
+              '. + [{workload: $workload, receipt: $receipt, artifacts: [$artifact]}]' \
+              <<< "$entries")"
+          done
+          printf '%s' "$(jq -cn --argjson entries "$entries" \
+            '{schema_version: 1, entries: $entries}')" > "$root/qualification-matrix.json"
+          (
+            cd "$root"
+            cargo run --quiet --locked --manifest-path "${GITHUB_WORKSPACE}/Cargo.toml" \
+              -p cellule-runtime --bin qualification_receipt -- \
+              verify-matrix qualification-matrix.json "$source_revision" "$image_digest" \
+              pr-contract-profile.json
+          )

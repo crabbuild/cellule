@@ -196,7 +196,7 @@ fn signed_migration_binds_source_and_successor_versions() {
     let encoded = signer
         .sign(
             PeerPrincipal {
-                issuer: "crab-runtime:test".into(),
+                issuer: "cellule-runtime:test".into(),
                 subject: "release-operator".into(),
                 actions: vec!["cell.release.migrate".into()],
             },

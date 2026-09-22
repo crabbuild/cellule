@@ -3,7 +3,7 @@ set -euo pipefail
 
 mode="${1:-fast}"
 model_dir="$(cd "$(dirname "$0")" && pwd)"
-cache_dir="${CRAB_CELL_TLC_CACHE:-${TMPDIR:-/tmp}/crab-cell-tlc}"
+cache_dir="${CELLULE_TLC_CACHE:-${TMPDIR:-/tmp}/cellule-tlc}"
 toolchain_file="$model_dir/toolchain.env"
 source "$toolchain_file"
 
@@ -37,7 +37,7 @@ run_model() {
   local output
   local meta_dir="$cache_dir/meta-negative/${config%.cfg}"
   mkdir -p "$meta_dir"
-  output="$(mktemp "${TMPDIR:-/tmp}/crab-cell-tlc.XXXXXX")"
+  output="$(mktemp "${TMPDIR:-/tmp}/cellule-tlc.XXXXXX")"
   trap 'rm -f "$output"' RETURN
   set +e
   java -cp "$jar" tlc2.TLC -workers 1 -noGenerateSpecTE \
