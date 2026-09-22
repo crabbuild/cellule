@@ -1,0 +1,41 @@
+[package]
+name = "cellule-store"
+version = "0.1.0"
+publish = false
+edition = "2024"
+license = "Apache-2.0"
+rust-version.workspace = true
+description = "Provider-neutral object-store transport for Cellule."
+
+[lib]
+name = "cellule_store"
+path = "src/lib.rs"
+
+[features]
+default = []
+test-support = []
+
+[dependencies]
+async-trait = { workspace = true }
+blake3 = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+hyper = "1"
+object_store = { workspace = true, features = [
+    "aws",
+    "gcp",
+    "azure",
+    "fs",
+] }
+rand = "0.9"
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+url = "2.5"
+
+[dev-dependencies]
+tempfile = { workspace = true }
