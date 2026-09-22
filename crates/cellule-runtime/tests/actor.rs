@@ -1413,7 +1413,7 @@ async fn resident_lookup_is_invalidated_before_drain_releases_the_cell() {
 
     assert!(
         runtime
-            .resident_handle(&fixture.target, CatalogRole::Repository)
+            .resident_handle(&fixture.target, CatalogRole::Application)
             .await
             .unwrap()
             .is_some()
@@ -1423,7 +1423,7 @@ async fn resident_lookup_is_invalidated_before_drain_releases_the_cell() {
 
     assert!(
         runtime
-            .resident_handle(&fixture.target, CatalogRole::Repository)
+            .resident_handle(&fixture.target, CatalogRole::Application)
             .await
             .unwrap()
             .is_none()
@@ -1448,7 +1448,7 @@ async fn resident_route_reports_zero_origin_reads_and_latency_percentiles() {
     for _ in 0..64 {
         let started = std::time::Instant::now();
         let resident = runtime
-            .resident_handle(&fixture.target, CatalogRole::Repository)
+            .resident_handle(&fixture.target, CatalogRole::Application)
             .await
             .unwrap()
             .expect("bootstrapped Cell must remain resident");
@@ -1541,7 +1541,7 @@ async fn restored_sparse_route_promotes_before_zero_origin_reads() {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if runtime
-                .resident_handle(&fixture.target, CatalogRole::Repository)
+                .resident_handle(&fixture.target, CatalogRole::Application)
                 .await
                 .unwrap()
                 .is_some()
@@ -1556,7 +1556,7 @@ async fn restored_sparse_route_promotes_before_zero_origin_reads() {
     origin_reads.store(0, Ordering::Release);
 
     let resident = runtime
-        .resident_handle(&fixture.target, CatalogRole::Repository)
+        .resident_handle(&fixture.target, CatalogRole::Application)
         .await
         .unwrap()
         .expect("verified sparse restore must promote to resident");
@@ -1594,7 +1594,7 @@ async fn shutdown_releases_a_hydration_reservation_after_an_origin_wait() {
         &first_runtime,
         &fixture,
         first_session,
-        CatalogRole::Repository,
+        CatalogRole::Application,
         |transaction| {
             transaction.execute_batch(
                 "CREATE TABLE payload(value BLOB NOT NULL);\
@@ -2484,7 +2484,7 @@ async fn bootstrap_on(
         runtime,
         fixture,
         session,
-        CatalogRole::Repository,
+        CatalogRole::Application,
         |transaction| {
             transaction.execute_batch(
                 "CREATE TABLE counter(value INTEGER NOT NULL); INSERT INTO counter VALUES (0)",
@@ -3502,7 +3502,7 @@ async fn unchanged_unpublished_owner_is_taken_over_then_bootstrapped() {
         .provision(
             CatalogEntry::new(
                 &fixture.target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 Digest::from_bytes([5; 32]),
                 1,
             )
@@ -3591,7 +3591,7 @@ async fn slow_bootstrap_renews_unpublished_ownership_before_publication() {
         .provision(
             CatalogEntry::new(
                 &fixture.target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 Digest::from_bytes([5; 32]),
                 1,
             )
@@ -4240,7 +4240,7 @@ async fn activation_rejects_control_owned_by_another_node_session() {
         .provision(
             CatalogEntry::new(
                 &fixture.target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 Digest::from_bytes([5; 32]),
                 1,
             )
@@ -4290,7 +4290,7 @@ async fn failed_bootstrap_keeps_control_unpublished_and_releases_cell_capacity()
         .provision(
             CatalogEntry::new(
                 &fixture.target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 Digest::from_bytes([5; 32]),
                 1,
             )
@@ -4365,7 +4365,7 @@ async fn panicking_bootstrap_keeps_worker_alive_and_releases_cell_capacity() {
         .provision(
             CatalogEntry::new(
                 &fixture.target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 Digest::from_bytes([5; 32]),
                 1,
             )
@@ -4481,7 +4481,7 @@ async fn source_loss_takeover(store: Store, prefix: Path) {
         .provision(
             CatalogEntry::new(
                 &target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 Digest::from_bytes([45; 32]),
                 1,
             )

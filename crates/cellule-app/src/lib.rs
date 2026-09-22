@@ -540,7 +540,7 @@ fn valid_name(value: &str) -> bool {
 
 fn role_code(role: CatalogRole) -> u8 {
     match role {
-        CatalogRole::Repository => 0,
+        CatalogRole::Application => 0,
         CatalogRole::Sql => 1,
         CatalogRole::Kv => 2,
         CatalogRole::Queue => 3,

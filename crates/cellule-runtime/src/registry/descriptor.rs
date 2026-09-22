@@ -379,7 +379,7 @@ impl RawNamespace {
 
 fn role_name(role: CatalogRole) -> &'static str {
     match role {
-        CatalogRole::Repository => "repository",
+        CatalogRole::Application => "application",
         CatalogRole::Sql => "sql",
         CatalogRole::Kv => "kv",
         CatalogRole::Queue => "queue",

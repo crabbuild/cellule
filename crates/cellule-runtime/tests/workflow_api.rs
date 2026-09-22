@@ -118,7 +118,7 @@ static WORKFLOW_NAMESPACES: [NamespaceDescriptor; 2] = [
     NamespaceDescriptor {
         id: EFFECT_NAMESPACE,
         name: "workflow-effect-target",
-        role: CatalogRole::Repository,
+        role: CatalogRole::Application,
         shards: 1,
         effect_targets: &[],
         dead_letter: None,
@@ -136,7 +136,7 @@ static DRIFT_NAMESPACES: [NamespaceDescriptor; 2] = [
     NamespaceDescriptor {
         id: EFFECT_NAMESPACE,
         name: "workflow-effect-target",
-        role: CatalogRole::Repository,
+        role: CatalogRole::Application,
         shards: 1,
         effect_targets: &[],
         dead_letter: None,

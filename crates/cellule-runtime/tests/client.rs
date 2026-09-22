@@ -338,7 +338,7 @@ fn descriptor() -> &'static ModuleDescriptor {
         namespaces: &[NamespaceDescriptor {
             id: NAMESPACE,
             name: MODULE,
-            role: CatalogRole::Repository,
+            role: CatalogRole::Application,
             shards: 1,
             effect_targets: &[NAMESPACE],
             dead_letter: None,
@@ -404,7 +404,7 @@ async fn fixture() -> Fixture {
         .provision(
             CatalogEntry::new(
                 &target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 registry.module_code(MODULE).unwrap(),
                 1,
             )

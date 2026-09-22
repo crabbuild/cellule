@@ -20,7 +20,7 @@ pub(crate) fn full_job_scratch_bytes(page_size: u32, database_pages: u32) -> Res
 ///
 /// Construction reads only named files and owns their exact verified database
 /// image, preventing later path replacement from changing the plan. A remote
-/// manifest's authenticity, repository identity, epoch, and object selection
+/// manifest's authenticity, Cell identity, epoch, and object selection
 /// remain the caller's job.
 pub struct VerifiedPlan {
     pub(crate) infos: Vec<SegmentInfo>,

@@ -17,7 +17,9 @@ use tempfile::TempPath;
 /// Keeps a server-owned verified bundle artifact alive while an overlay uses it.
 pub trait BundleLease: Send + Sync {}
 
-/// One immutable segment and its repository/epoch identity, before bundling.
+/// One immutable segment and its Cell/incarnation identity, before bundling.
+///
+/// `repository` is the retained CRB1 row name; its value encodes a Cell ID.
 pub struct BundleEntry {
     pub repository: String,
     pub epoch: String,
@@ -44,6 +46,8 @@ impl BundleEntry {
 }
 
 /// A verified segment's byte extent in a bundle; identity is not authorization.
+///
+/// `repository` is the retained CRB1 row name; its value encodes a Cell ID.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BundleRow {

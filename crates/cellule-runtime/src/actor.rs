@@ -41,7 +41,7 @@ use crate::{
 
 const INGRESS_REQUESTS: usize = 1_024;
 const CELL_REQUESTS: usize = 64;
-// A repository attribution read may reserve a 1 MiB result plus its encoded
+// A large application read may reserve a 1 MiB result plus its encoded
 // request. Allow a normal burst of concurrent reads; node-wide retained-byte
 // admission remains the aggregate safety ceiling.
 const CELL_BYTES: usize = 16 * 1024 * 1024;
@@ -2032,7 +2032,8 @@ fn handle_message(
         }
         Message::Execute(mut command) => {
             let Some(active) = cells.get_mut(&command.cell) else {
-                send_command_reply(&mut command, Err(Error::CellNotActive));
+                let error = missing_cell_error(&command.admission);
+                send_command_reply(&mut command, Err(error));
                 return;
             };
             match active.coordination.step(CoordinationInput::Admit {
@@ -2051,7 +2052,8 @@ fn handle_message(
         }
         Message::Query(mut query) => {
             let Some(active) = cells.get_mut(&query.cell) else {
-                send_query_reply(&mut query, Err(Error::CellNotActive));
+                let error = missing_cell_error(&query.admission);
+                send_query_reply(&mut query, Err(error));
                 return;
             };
             match active.coordination.step(CoordinationInput::Admit {
@@ -2070,7 +2072,11 @@ fn handle_message(
         }
         Message::Resolve(mut resolve) => {
             let Some(active) = cells.get_mut(&resolve.cell) else {
-                send_resolve_reply(&mut resolve, Err(Error::CellNotActive));
+                if resolve.admission.fenced.load(Ordering::Acquire) {
+                    send_resolve_reply(&mut resolve, Ok(Resolution::Unknown));
+                } else {
+                    send_resolve_reply(&mut resolve, Err(Error::CellNotActive));
+                }
                 return;
             };
             match active.coordination.step(CoordinationInput::Admit {
@@ -2092,7 +2098,8 @@ fn handle_message(
         }
         Message::Migrate(mut migration) => {
             let Some(active) = cells.get_mut(&migration.cell) else {
-                send_migration_reply(&mut migration, Err(Error::CellNotActive));
+                let error = missing_cell_error(&migration.admission);
+                send_migration_reply(&mut migration, Err(error));
                 return;
             };
             let decision = active.coordination.step(CoordinationInput::Admit {
@@ -3738,6 +3745,16 @@ fn rejection_error(reason: RejectReason) -> Error {
     }
 }
 
+fn missing_cell_error(admission: &CellAdmission) -> Error {
+    // A queued request can outlive actor removal; its capability still carries
+    // the fence decision that callers need for safe retry or resolution.
+    if admission.fenced.load(Ordering::Acquire) {
+        Error::Fenced
+    } else {
+        Error::CellNotActive
+    }
+}
+
 fn finish_work(active: &mut ActiveCell, fenced: bool) -> CoordinationDecision {
     let decision = active
         .coordination
@@ -3977,9 +3994,12 @@ fn start_fenced_deactivate(
     tasks: &mut JoinSet<TaskResult>,
     preserve_owner: bool,
 ) {
-    let Some(active) = cells.remove(&cell) else {
+    let Some(mut active) = cells.remove(&cell) else {
         return;
     };
+    // A stale capability must observe fencing even when this actor removes the Cell
+    // before processing a queued request or the next scheduler tick.
+    fence_active(&mut active);
     transitioning.insert(cell);
     let generation = active.generation;
     let pool = pool.clone();

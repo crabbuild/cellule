@@ -397,7 +397,9 @@ pub(crate) struct LedgerDiskAdmission {
 impl cellule_ltx::DiskBudgetAdmission for LedgerDiskAdmission {
     fn reconcile(&self, bytes: u64) -> cellule_ltx::Result<()> {
         let Some(state) = self.state.upgrade() else {
-            return Err(cellule_ltx::LtxError::InvalidState("runtime ledger closed"));
+            // A shared budget can retain this hook between its liveness check
+            // and reconciliation after the runtime has released its ledger.
+            return Ok(());
         };
         ResourceLedger { state }
             .reconcile_disk(bytes)
@@ -456,7 +458,7 @@ impl cellule_ltx::HostResourceAdmission for LedgerHostResourceAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cellule_ltx::HostResourceAdmission;
+    use cellule_ltx::{DiskBudgetAdmission, HostResourceAdmission};
 
     #[test]
     fn reservations_are_bounded_and_return_to_baseline() {
@@ -578,6 +580,23 @@ mod tests {
         drop(reservation);
         assert_eq!(budget.used(), 0);
         assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 0);
+    }
+
+    #[test]
+    fn closed_runtime_disk_admission_does_not_block_shared_budget() {
+        let ledger = ResourceLedger::new(ResourceCost::zero().with_disk_bytes(10));
+        let budget = cellule_ltx::DiskBudget::new(10);
+        let admission = Arc::new(LedgerDiskAdmission {
+            state: ledger.weak(),
+        });
+        budget.install_admission(admission.clone()).unwrap();
+        drop(ledger);
+
+        assert!(!admission.is_live());
+        admission.reconcile(1).unwrap();
+        let reservation = budget.try_reserve(1).unwrap();
+        assert_eq!(budget.used(), 1);
+        drop(reservation);
     }
 
     #[test]

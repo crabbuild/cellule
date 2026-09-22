@@ -91,7 +91,7 @@ fn descriptor(name: &'static str, namespace: u8) -> ModuleDescriptor {
     let namespaces = Box::leak(Box::new([NamespaceDescriptor {
         id: NamespaceId::from_bytes([namespace; 16]),
         name,
-        role: CatalogRole::Repository,
+        role: CatalogRole::Application,
         shards: 1,
         effect_targets: &[],
         dead_letter: None,
@@ -255,14 +255,14 @@ fn compiled_registry_is_canonical_and_executes_only_declared_bindings() {
     let first_code = registry.module_code("first").unwrap();
     assert!(registry.supports_cell(
         NamespaceId::from_bytes([1; 16]),
-        CatalogRole::Repository,
+        CatalogRole::Application,
         first_code,
         1,
     ));
     for (namespace, role, code, schema) in [
         (
             NamespaceId::from_bytes([9; 16]),
-            CatalogRole::Repository,
+            CatalogRole::Application,
             first_code,
             1,
         ),
@@ -274,13 +274,13 @@ fn compiled_registry_is_canonical_and_executes_only_declared_bindings() {
         ),
         (
             NamespaceId::from_bytes([1; 16]),
-            CatalogRole::Repository,
+            CatalogRole::Application,
             Digest::from_bytes([8; 32]),
             1,
         ),
         (
             NamespaceId::from_bytes([1; 16]),
-            CatalogRole::Repository,
+            CatalogRole::Application,
             first_code,
             2,
         ),

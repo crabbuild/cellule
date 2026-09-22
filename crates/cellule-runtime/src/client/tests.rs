@@ -188,7 +188,7 @@ impl CellModule for PendingModule {
             namespaces: &[NamespaceDescriptor {
                 id: NAMESPACE,
                 name: MODULE,
-                role: CatalogRole::Repository,
+                role: CatalogRole::Application,
                 shards: 1,
                 effect_targets: &[],
                 dead_letter: None,

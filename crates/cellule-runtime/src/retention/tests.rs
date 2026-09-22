@@ -171,7 +171,7 @@ async fn collection_preserves_live_and_pinned_graphs(store: Store, prefix: Path)
     let pinned_target = target(identity, b"pinned");
     for target in [&current_target, &pinned_target] {
         catalog
-            .provision(CatalogEntry::new(target, CatalogRole::Repository, code, 1).unwrap())
+            .provision(CatalogEntry::new(target, CatalogRole::Application, code, 1).unwrap())
             .await
             .unwrap();
     }
@@ -398,7 +398,7 @@ async fn maintenance_collection_rejects_an_owned_current_cell_before_deleting() 
     let code = Digest::from_bytes([12; 32]);
     let target = target(identity, b"owned");
     CellCatalog::new(layout.clone(), identity.tenant())
-        .provision(CatalogEntry::new(&target, CatalogRole::Repository, code, 1).unwrap())
+        .provision(CatalogEntry::new(&target, CatalogRole::Application, code, 1).unwrap())
         .await
         .unwrap();
     let control = Control::initial(

@@ -96,7 +96,7 @@ async fn pin_verifies_roots_and_fails_closed_when_a_dependency_is_missing() {
         .provision(
             CatalogEntry::new(
                 &target,
-                CatalogRole::Repository,
+                CatalogRole::Application,
                 Digest::from_bytes([6; 32]),
                 1,
             )

@@ -29,7 +29,7 @@ application service (HTTP, CLI, credentials, node networking)
 
 ## Persisted contracts
 
-Cell IDs, namespace IDs, partitioning, control revisions, LTX checksums, root object references, and canonical descriptors are persisted or exchanged between nodes. Changes need migration or explicit compatibility proof. The initial extraction preserves LTX and Cell object layout identifiers, but renames application and release descriptor identities and the peer schema package. Crab integration must migrate or qualify its existing persisted data and signed peer messages before switching dependencies.
+Cell IDs, namespace IDs, partitioning, control revisions, LTX checksums, root object references, and canonical descriptors are persisted or exchanged between nodes. Changes need migration or explicit compatibility proof. The extraction preserves LTX and Cell object layouts, including legacy `crab.*.v1` hash domains and the CRB1 bundle footer's `repository` key (which contains a Cell ID). The generic catalog role is `application`; application and release descriptor identities and the peer schema package also use Cellule names. Crab integration must qualify any existing persisted data and signed peer messages before switching dependencies.
 
 ## Verification levels
 

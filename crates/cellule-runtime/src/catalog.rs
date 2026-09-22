@@ -19,7 +19,8 @@ const MAX_RETRY_DELAY_MS: u64 = 1_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogRole {
-    Repository,
+    /// Application-defined SQL Cell.
+    Application,
     Sql,
     Kv,
     Queue,

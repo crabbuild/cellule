@@ -263,7 +263,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            inspect_persisted_work(&connection, CatalogRole::Repository)
+            inspect_persisted_work(&connection, CatalogRole::Application)
                 .unwrap()
                 .is_empty()
         );
@@ -275,7 +275,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            inspect_persisted_work(&connection, CatalogRole::Repository)
+            inspect_persisted_work(&connection, CatalogRole::Application)
                 .unwrap()
                 .first_blocker(),
             Some("maintenance release is blocked by retained request outcomes")

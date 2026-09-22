@@ -86,7 +86,7 @@ macro_rules! module {
 fn valid_descriptor() -> &'static ModuleDescriptor {
     descriptor(
         "valid",
-        namespace(1, CatalogRole::Repository, 1, &[], None),
+        namespace(1, CatalogRole::Application, 1, &[], None),
         migration(
             1,
             MIGRATION_SQL,
@@ -108,7 +108,7 @@ fn finishes_with_error<M: CellModule>(module: M) -> bool {
 fn invalid_migration_digest_descriptor() -> &'static ModuleDescriptor {
     descriptor(
         "invalid-migration-digest",
-        namespace(2, CatalogRole::Repository, 1, &[], None),
+        namespace(2, CatalogRole::Application, 1, &[], None),
         migration(1, MIGRATION_SQL, Digest::from_bytes([8; 32])),
         &[],
         &[],
@@ -125,7 +125,7 @@ module!(
 fn invalid_migration_order_descriptor() -> &'static ModuleDescriptor {
     descriptor(
         "invalid-migration-order",
-        namespace(3, CatalogRole::Repository, 1, &[], None),
+        namespace(3, CatalogRole::Application, 1, &[], None),
         migration(
             2,
             MIGRATION_SQL,
@@ -146,7 +146,7 @@ module!(
 fn invalid_effect_target_descriptor() -> &'static ModuleDescriptor {
     descriptor(
         "invalid-effect-target",
-        namespace(4, CatalogRole::Repository, 1, one_namespace_id(99), None),
+        namespace(4, CatalogRole::Application, 1, one_namespace_id(99), None),
         migration(
             1,
             MIGRATION_SQL,
@@ -169,7 +169,7 @@ fn invalid_dead_letter_descriptor() -> &'static ModuleDescriptor {
         "invalid-dead-letter",
         namespace(
             5,
-            CatalogRole::Repository,
+            CatalogRole::Application,
             1,
             &[],
             Some(NamespaceId::from_bytes([5; 16])),
@@ -236,7 +236,7 @@ module!(
 fn invalid_shards_descriptor() -> &'static ModuleDescriptor {
     descriptor(
         "invalid-shards",
-        namespace(8, CatalogRole::Repository, 3, &[], None),
+        namespace(8, CatalogRole::Application, 3, &[], None),
         migration(
             1,
             MIGRATION_SQL,
@@ -261,7 +261,7 @@ fn invalid_operation_limits_descriptor() -> &'static ModuleDescriptor {
     };
     descriptor(
         "invalid-operation-limits",
-        namespace(9, CatalogRole::Repository, 1, &[], None),
+        namespace(9, CatalogRole::Application, 1, &[], None),
         migration(
             1,
             MIGRATION_SQL,
@@ -282,7 +282,7 @@ module!(
 fn duplicate_a_descriptor() -> &'static ModuleDescriptor {
     descriptor(
         "duplicate-module",
-        namespace(10, CatalogRole::Repository, 1, &[], None),
+        namespace(10, CatalogRole::Application, 1, &[], None),
         migration(
             1,
             MIGRATION_SQL,
@@ -297,7 +297,7 @@ fn duplicate_a_descriptor() -> &'static ModuleDescriptor {
 fn duplicate_b_descriptor() -> &'static ModuleDescriptor {
     descriptor(
         "duplicate-module",
-        namespace(11, CatalogRole::Repository, 1, &[], None),
+        namespace(11, CatalogRole::Application, 1, &[], None),
         migration(
             1,
             MIGRATION_SQL,

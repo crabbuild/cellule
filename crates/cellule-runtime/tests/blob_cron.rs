@@ -136,7 +136,7 @@ impl CellModule for CronTargetModule {
         descriptor(
             TARGET_MODULE,
             TARGET_NAMESPACE,
-            CatalogRole::Repository,
+            CatalogRole::Application,
             TARGET_MIGRATION,
             TARGET_COMMANDS,
             &[],

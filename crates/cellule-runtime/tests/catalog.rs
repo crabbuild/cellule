@@ -35,7 +35,7 @@ fn entry(target: &CellTarget, role: CatalogRole, byte: u8) -> CatalogEntry {
 #[tokio::test]
 async fn catalog_provision_is_idempotent_and_precedes_control() {
     let (layout, catalog, target) = fixture();
-    let expected = entry(&target, CatalogRole::Repository, 4);
+    let expected = entry(&target, CatalogRole::Application, 4);
     let first = catalog.provision(expected.clone()).await.unwrap();
     let second = catalog.provision(expected.clone()).await.unwrap();
     assert_eq!(first.revision(), 1);
@@ -83,8 +83,8 @@ async fn catalog_provision_is_idempotent_and_precedes_control() {
 #[tokio::test]
 async fn concurrent_catalog_writers_merge_entries_on_one_shard() {
     let (_, catalog, first, second) = same_shard_targets();
-    let first_entry = entry(&first, CatalogRole::Repository, 5);
-    let second_entry = entry(&second, CatalogRole::Repository, 6);
+    let first_entry = entry(&first, CatalogRole::Application, 5);
+    let second_entry = entry(&second, CatalogRole::Application, 6);
     let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let first_writer = {
         let catalog = catalog.clone();
@@ -130,7 +130,7 @@ async fn concurrent_catalog_writers_merge_entries_on_one_shard() {
 async fn catalog_rejects_conflicting_bootstrap_contract_for_one_cell() {
     let (_, catalog, target) = fixture();
     catalog
-        .provision(entry(&target, CatalogRole::Repository, 7))
+        .provision(entry(&target, CatalogRole::Application, 7))
         .await
         .unwrap();
     assert!(matches!(
@@ -143,7 +143,7 @@ async fn catalog_rejects_conflicting_bootstrap_contract_for_one_cell() {
 async fn catalog_page_digest_is_checked_before_entry_use() {
     let (layout, catalog, target) = fixture();
     catalog
-        .provision(entry(&target, CatalogRole::Repository, 9))
+        .provision(entry(&target, CatalogRole::Application, 9))
         .await
         .unwrap();
     let (head, _) = layout
