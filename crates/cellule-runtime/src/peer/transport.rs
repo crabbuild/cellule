@@ -2,7 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use prost::Message;
@@ -18,6 +18,9 @@ use super::{PeerOperation, PeerPrincipal, PeerSigner, decode_peer_reply, wire};
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 
 /// Sends one authenticated request to the current owner and returns exact reply bytes.
+///
+/// A pending future is dropped when `remaining_ms` elapses. The mutation may
+/// have reached the owner, so callers must resolve its original identity.
 pub trait PeerRoundTrip: Send + Sync + 'static {
     fn send(
         &self,
@@ -264,7 +267,17 @@ impl PeerClientTransport {
             remaining_ms,
             operation,
         )?;
-        let reply = self.round_trip.send(target, request, remaining_ms).await?;
+        // An adapter may stall after the peer accepted a mutation. Bound the
+        // wait here and preserve ambiguity so callers resolve its identity.
+        let reply = tokio::time::timeout(
+            Duration::from_millis(u64::from(remaining_ms)),
+            self.round_trip.send(target, request, remaining_ms),
+        )
+        .await
+        .map_err(|source| Error::PeerTransportUnknown {
+            context: "peer round trip deadline exceeded",
+            source: Box::new(source),
+        })??;
         decode_peer_reply(&reply)
     }
 }

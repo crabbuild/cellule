@@ -56,8 +56,10 @@ For a request, authenticate at the service boundary, select the exact tenant,
 application, namespace, and partition, then use a typed capability from
 `ApplicationHandle`. Reuse the same `MutationIdentity` when retrying an
 ambiguous command; resolve a pending mutation instead of inventing a second
-identity. Use a commit receipt as a query minimum when the caller needs to
-observe its write. The [reference application](quickstart.md#run-the-reference-application)
+identity. Cellule times out a pending peer round trip at its request budget;
+a mutation may still have reached its owner. Use a commit receipt as a query
+minimum when the caller needs to observe its write. The
+[reference application](quickstart.md#run-the-reference-application)
 exercises these calls for SQL, KV, Blob, Queue, Workflow/Activity, and
 Cron/Effect.
 

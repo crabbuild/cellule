@@ -123,8 +123,10 @@ impl PeerRoundTrip for AcceptedButLost {
     }
 }
 
-#[tokio::test]
-async fn ambiguous_peer_command_preserves_identity_without_retry() {
+fn peer_command_fixture(
+    round_trip: Arc<dyn PeerRoundTrip>,
+    expires_at_ms: i64,
+) -> (crate::peer::PeerClientTransport, EncodedCommand) {
     let target = CellTarget::new(
         TenantId::from_bytes([1; 16]),
         ApplicationId::from_bytes([2; 16]),
@@ -132,13 +134,6 @@ async fn ambiguous_peer_command_preserves_identity_without_retry() {
         b"pending",
     )
     .unwrap();
-    let identity = MutationIdentity {
-        request_id: RequestId::from_bytes([7; 16]),
-        issued_at_ms: 1_000,
-        expires_at_ms: 61_000,
-    };
-    let operation_digest = Digest::from_bytes([8; 32]);
-    let calls = Arc::new(AtomicUsize::new(0));
     let transport = crate::peer::PeerClientTransport::new(
         Arc::new(PeerSigner::new(
             SessionId::from_bytes([9; 16]),
@@ -150,33 +145,45 @@ async fn ambiguous_peer_command_preserves_identity_without_retry() {
             subject: "operator".into(),
             actions: vec!["repository.write".into()],
         },
+        round_trip,
+    );
+    let command = EncodedCommand {
+        target: target.clone(),
+        expected: CellDescription {
+            cell: target.cell_id(),
+            incarnation: IncarnationId::from_bytes([12; 16]),
+            code: Digest::from_bytes([13; 32]),
+            schema: 1,
+        },
+        identity: MutationIdentity {
+            request_id: RequestId::from_bytes([7; 16]),
+            issued_at_ms: 1_000,
+            expires_at_ms,
+        },
+        operation_digest: Digest::from_bytes([8; 32]),
+        now_ms: 1_000,
+        module: MODULE,
+        operation_id: 1,
+        codec_version: 1,
+        input: b"input".to_vec(),
+        input_limit: 64,
+        output_limit: 64,
+    };
+    (transport, command)
+}
+
+#[tokio::test]
+async fn ambiguous_peer_command_preserves_identity_without_retry() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (transport, command) = peer_command_fixture(
         Arc::new(AcceptedButLost {
             calls: Arc::clone(&calls),
         }),
+        61_000,
     );
-
-    let result = CellTransport::command(
-        &transport,
-        EncodedCommand {
-            target: target.clone(),
-            expected: CellDescription {
-                cell: target.cell_id(),
-                incarnation: IncarnationId::from_bytes([12; 16]),
-                code: Digest::from_bytes([13; 32]),
-                schema: 1,
-            },
-            identity,
-            operation_digest,
-            now_ms: 1_000,
-            module: MODULE,
-            operation_id: 1,
-            codec_version: 1,
-            input: b"input".to_vec(),
-            input_limit: 64,
-            output_limit: 64,
-        },
-    )
-    .await;
+    let identity = command.identity;
+    let operation_digest = command.operation_digest;
+    let result = CellTransport::command(&transport, command).await;
 
     assert!(matches!(
         result,
@@ -187,6 +194,42 @@ async fn ambiguous_peer_command_preserves_identity_without_retry() {
         }) if request_id == identity.request_id && digest == operation_digest
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+struct NeverReplies;
+
+impl PeerRoundTrip for NeverReplies {
+    fn send(
+        &self,
+        _target: CellTarget,
+        _request: Vec<u8>,
+        _remaining_ms: u32,
+    ) -> Pin<Box<dyn Future<Output = crate::Result<Vec<u8>>> + Send + 'static>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[tokio::test]
+async fn stalled_peer_command_returns_resolvable_unknown_outcome() {
+    let (transport, command) = peer_command_fixture(Arc::new(NeverReplies), 1_020);
+    let identity = command.identity;
+    let operation_digest = command.operation_digest;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        CellTransport::command(&transport, command),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Ok(Err(Error::OutcomeUnknown {
+            request_id,
+            operation_digest: digest,
+            source,
+        })) if request_id == identity.request_id
+            && digest == operation_digest
+            && matches!(*source, Error::PeerTransportUnknown { .. })
+    ));
 }
 
 struct PendingModule;
