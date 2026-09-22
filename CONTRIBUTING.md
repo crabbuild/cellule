@@ -1,6 +1,6 @@
 # Contributing to Cellule
 
-Cellule is a layered Rust workspace for reusable Cell storage, coordination, and application mechanics. Start with the [architecture](docs/architecture.md) and the [local quickstart](docs/quickstart.md). Read the nearest crate `AGENTS.md` before changing a crate.
+Cellule is a layered Rust workspace for reusable Cell storage, coordination, and application mechanics. Start with the [architecture](docs/architecture.md), [local quickstart](docs/quickstart.md), and [embedding guide](docs/embedding.md). Read the nearest crate `AGENTS.md` before changing a crate.
 
 ## Local setup
 
