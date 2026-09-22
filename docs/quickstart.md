@@ -51,3 +51,13 @@ CELLULE_PERF_ITERATIONS=1 cargo test -p cellule-app --test reference_application
 ```
 
 This local run is not provider or production capacity qualification.
+
+To exercise one additional routing hop, run the balanced variant. A loopback listener sends each request to one of three owner processes; the receiving process serves a local Cell or forwards the signed request to its owner. The test checks that every process both serves and forwards requests:
+
+```sh
+CELLULE_PERF_ITERATIONS=1 cargo test -p cellule-app --test reference_application \
+  process_performance::reference_balanced_three_process_fleet_end_to_end_performance \
+  --locked -- --ignored --exact --nocapture
+```
+
+The [performance guide](../crates/cellule-app/PERFORMANCE.md) describes the topology and measurement limits. These runs use a test-only filesystem CAS store and static placement; they do not qualify cloud storage or production routing.
