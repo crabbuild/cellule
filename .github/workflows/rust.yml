@@ -25,6 +25,8 @@ jobs:
         run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
       - name: Test
         run: cargo test --workspace --locked
+      - name: Run orders example
+        run: cargo run -p cellule-app --example orders --locked
       - name: Test replica feature
         run: cargo test -p cellule-ltx --features replica --locked
       - name: Lint

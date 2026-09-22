@@ -29,14 +29,14 @@ The [application source](../crates/cellule-app/tests/reference_application.rs) d
 3. `PerfFixture::start` creates real SQLite databases, publishes their initial roots, and routes the typed handles locally.
 4. `reference_storefront_smoke` runs one verified action per lane in `run_reference_primitive_performance`.
 
-| User action | Primitive | Verified result |
-| --- | --- | --- |
-| Place an order | SQL | Insert through a parameterized batch; query the committed total. |
-| Save a cart | KV | Write bytes with a mutation identity; read those bytes at the commit receipt. |
-| Upload an attachment | Blob | Store content-addressed parts, commit the manifest, then verify a range read. |
-| Send a notification | Queue | Send, claim with a validated lease, and acknowledge the exact message. |
-| Fulfill an order | Workflow and Activity | Start a workflow, execute its registered Rust activity, and read terminal state. |
-| Schedule an invoice | Cron and Effect | Fire the schedule, deliver the durable effect to its destination Cell, and query the SQL receipt. |
+| User action | Primitive | Call sequence in the smoke | Verified result |
+| --- | --- | --- | --- |
+| Place an order | SQL | `batch` → `query` at the commit receipt | The committed total is returned. |
+| Save a cart | KV | `atomic(Put)` → `get` at the commit receipt | The saved cart bytes are returned. |
+| Upload an attachment | Blob | `mutate(Begin)` → `mutate(PutPart)` → `mutate(Complete)` → `query(Read)` | A range read returns the uploaded bytes. |
+| Send a notification | Queue | `send` → `claim` → `validate_claim` → `ack` | The claimed message matches and its lease is acknowledged. |
+| Fulfill an order | Workflow and Activity | `start` → `ActivitySupervisor::run_once` → `state` | The registered Rust activity completes the workflow. |
+| Schedule an invoice | Cron and Effect | `mutate(Upsert)` → maintenance tick → `get` → effect delivery → SQL `query` | The fired schedule reaches its destination and the receipt is readable. |
 
 To inspect recovery and capability checks, run the separate `typed_application_executes_every_primitive_through_a_local_router` test from the same target. The [application crate guide](../crates/cellule-app/README.md) explains descriptor ownership; the [runtime guide](../crates/cellule-runtime/README.md) explains durability and failure paths.
 
