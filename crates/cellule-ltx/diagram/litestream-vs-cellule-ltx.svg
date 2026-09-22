@@ -1,6 +1,6 @@
 <svg viewBox="0 0 1120 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title description">
-  <title id="title">Litestream sidecar and crab-ltx embedded architecture</title>
-  <desc id="description">Litestream operates background replication beside an application. Crab-ltx is embedded in the host runtime and prepares immutable data. Cell authority validates the observed owner and version, atomically publishes the selected root, and rejects stale writers.</desc>
+  <title id="title">Litestream sidecar and Cellule LTX embedded architecture</title>
+  <desc id="description">Litestream operates background replication beside an application. Cellule LTX is embedded in the host runtime and prepares immutable data. Cell authority validates the observed owner and version, atomically publishes the selected root, and rejects stale writers.</desc>
   <style>text { font-family: 'SF Mono', 'Cascadia Code', 'DejaVu Sans Mono', monospace; }</style>
   <defs>
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -63,7 +63,7 @@
   </g>
 
   <rect x="585" y="85" width="500" height="455" rx="12" fill="none" stroke="#34d399" stroke-width="1.5" stroke-dasharray="8,4"/>
-  <text x="603" y="111" fill="#34d399" font-size="12" font-weight="700">CRAB-LTX · EMBEDDED</text>
+  <text x="603" y="111" fill="#34d399" font-size="12" font-weight="700">CELLULE LTX · EMBEDDED</text>
   <text x="603" y="130" fill="#94a3b8" font-size="9">Host schedules work; Cell authority serializes ownership and root publication</text>
 
   <path d="M 745 205 L 745 250" fill="none" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>

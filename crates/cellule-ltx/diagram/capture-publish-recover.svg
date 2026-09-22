@@ -1,5 +1,5 @@
 <svg viewBox="0 0 1120 690" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title description">
-  <title id="title">Crab LTX capture, publication, and recovery sequence</title>
+  <title id="title">Cellule LTX capture, publication, and recovery sequence</title>
   <desc id="description">The application writes through Db, prepares immutable objects through CellReplica, publishes the root through Cell authority, and later recovers only that authority-pinned root.</desc>
   <style>text { font-family: 'SF Mono', 'Cascadia Code', 'DejaVu Sans Mono', monospace; }</style>
   <defs>
