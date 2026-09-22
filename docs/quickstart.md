@@ -38,6 +38,16 @@ cargo run -p cellule-app --example fulfillment --locked
 
 The workflow starts in `Running`, schedules a `pack-order` Activity, and the supervisor claims and executes that Rust handler. The definition uses `decode_workflow_activity_event` to handle either a completed or failed Activity without parsing event bytes itself. The activity completion advances the workflow to `Completed`; a read at the completion receipt verifies the result before printing `fulfillment completed: packed order 42`. The definition digest tracks the example source, and its module descriptor contains the exact version-one Workflow schema. This example also uses fresh local storage on every run.
 
+## Run a Cron invoice delivery
+
+The [invoices example](../crates/cellule-app/examples/invoices.rs) starts a Cron Cell and a destination SQL Cell. Run it from the workspace root:
+
+```sh
+cargo run -p cellule-app --example invoices --locked
+```
+
+It creates an invoice schedule, fires one due maintenance tick, and verifies the schedule advanced to occurrence one. The effect supervisor then delivers a signed invocation through an in-process peer hop to the SQL Cell. A SQL read confirms the destination row before the example prints `invoice delivered: invoice 42 ready`. The hop exercises signing, verification, authorization, and the destination inbox without requiring a network service. The example uses temporary SQLite files and in-memory object storage; a deployed service supplies its own peer transport and credentials.
+
 ## Run the reference application
 
 The [reference application](../crates/cellule-app/tests/reference_application.rs) is a compiled Rust application with seven Cells and typed handles. Its storefront smoke places an order, saves a cart, uploads an attachment, sends a notification, completes a workflow activity, and delivers a scheduled invoice effect. Run it from the workspace root:

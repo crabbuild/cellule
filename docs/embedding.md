@@ -2,7 +2,7 @@
 
 Cellule is a Rust library, not a server. An embedding service supplies its own
 API, authentication, cloud credentials, private peer transport, node directory,
-and deployment policy. Start with the [local SQL, KV, Queue, and Workflow examples](quickstart.md),
+and deployment policy. Start with the [local SQL, KV, Queue, Workflow, and Cron examples](quickstart.md),
 which commit and read real Cells without those adapters. This guide
 covers the additional ownership needed before a service can accept traffic.
 
