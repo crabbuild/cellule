@@ -1,4 +1,14 @@
-# Run the reference application
+# Run a local orders Cell
+
+The [orders example](../crates/cellule-app/examples/orders.rs) is a small executable application with one SQL Cell. From the workspace root, run:
+
+```sh
+cargo run -p cellule-app --example orders --locked
+```
+
+It provisions a Cell in an in-memory object store, commits order 42, reads its total at the commit receipt, and prints `order 42 total: 1999 cents`. It uses a temporary SQLite file and needs no credentials. The example shows module registration, Cell provisioning, a typed SQL handle, and a published read in one file.
+
+## Run the reference application
 
 The [reference application](../crates/cellule-app/tests/reference_application.rs) is a compiled Rust application with seven Cells and typed handles. Its storefront smoke places an order, saves a cart, uploads an attachment, sends a notification, completes a workflow activity, and delivers a scheduled invoice effect. Run it from the workspace root:
 
