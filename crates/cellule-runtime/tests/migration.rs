@@ -264,6 +264,31 @@ struct LoopbackRoundTrip {
     dispatcher: Arc<PeerDispatcher>,
 }
 
+struct LoseFirstMigrationReply {
+    inner: Arc<dyn PeerRoundTrip>,
+    first: AtomicBool,
+}
+
+impl PeerRoundTrip for LoseFirstMigrationReply {
+    fn send(
+        &self,
+        target: CellTarget,
+        request: Vec<u8>,
+        remaining_ms: u32,
+    ) -> Pin<Box<dyn Future<Output = cellule_runtime::Result<Vec<u8>>> + Send + 'static>> {
+        let inner = Arc::clone(&self.inner);
+        let lose = self.first.swap(false, Ordering::SeqCst);
+        Box::pin(async move {
+            let reply = inner.send(target, request, remaining_ms).await?;
+            if lose {
+                Ok(b"invalid".to_vec())
+            } else {
+                Ok(reply)
+            }
+        })
+    }
+}
+
 impl PeerRoundTrip for LoopbackRoundTrip {
     fn send(
         &self,
@@ -746,9 +771,12 @@ async fn authenticated_peer_migration_derives_plan_and_reconciles_retry() {
             subject: "release-operator".into(),
             actions: vec!["cell.release.migrate".into()],
         },
-        Arc::new(LoopbackRoundTrip {
-            verifier,
-            dispatcher,
+        Arc::new(LoseFirstMigrationReply {
+            inner: Arc::new(LoopbackRoundTrip {
+                verifier,
+                dispatcher,
+            }),
+            first: AtomicBool::new(true),
         }),
     );
 

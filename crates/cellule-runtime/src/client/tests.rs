@@ -232,6 +232,78 @@ async fn stalled_peer_command_returns_resolvable_unknown_outcome() {
     ));
 }
 
+struct UnusableReply(Vec<u8>);
+
+impl PeerRoundTrip for UnusableReply {
+    fn send(
+        &self,
+        _target: CellTarget,
+        _request: Vec<u8>,
+        _remaining_ms: u32,
+    ) -> Pin<Box<dyn Future<Output = crate::Result<Vec<u8>>> + Send + 'static>> {
+        let reply = self.0.clone();
+        Box::pin(async move { Ok(reply) })
+    }
+}
+
+#[tokio::test]
+async fn unusable_peer_mutation_replies_preserve_pending_identity() {
+    use crate::peer::wire;
+
+    let wrong_kind = crate::peer::encode_peer_reply(&wire::PeerReply {
+        outcome: Some(wire::peer_reply::Outcome::Read(wire::ReadReply {
+            receipt: None,
+            result: Some(wire::read_reply::Result::Description(
+                wire::CellDescription {
+                    cell_id: vec![1; 32],
+                    incarnation: vec![2; 16],
+                    code: vec![3; 32],
+                    schema: 1,
+                },
+            )),
+        })),
+    })
+    .unwrap();
+    let wrong_receipt = crate::peer::encode_peer_reply(&wire::PeerReply {
+        outcome: Some(wire::peer_reply::Outcome::Mutation(wire::MutationReply {
+            receipt: Some(wire::Receipt {
+                cell_id: vec![9; 32],
+                incarnation: vec![12; 16],
+                commit_sequence: 1,
+            }),
+            outcome: Some(wire::mutation_reply::Outcome::Result(
+                wire::MutationResult {
+                    result: Some(wire::mutation_result::Result::CommandOutput(Vec::new())),
+                },
+            )),
+        })),
+    })
+    .unwrap();
+
+    for (case, reply) in [
+        ("malformed", b"invalid".to_vec()),
+        ("wrong kind", wrong_kind),
+        ("wrong receipt", wrong_receipt),
+    ] {
+        let (transport, command) = peer_command_fixture(Arc::new(UnusableReply(reply)), 61_000);
+        let identity = command.identity;
+        let operation_digest = command.operation_digest;
+        let result = CellTransport::command(&transport, command).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(Error::OutcomeUnknown {
+                    request_id,
+                    operation_digest: digest,
+                    ..
+                }) if request_id == identity.request_id && digest == operation_digest
+            ),
+            "{case} reply must retain pending identity"
+        );
+    }
+}
+
 struct PendingModule;
 
 impl CellModule for PendingModule {

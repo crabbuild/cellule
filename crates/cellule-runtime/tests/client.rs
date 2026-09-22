@@ -1,4 +1,12 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::UNIX_EPOCH};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::UNIX_EPOCH,
+};
 
 mod support;
 
@@ -528,6 +536,43 @@ struct LoopbackRoundTrip {
     dispatcher: Arc<PeerDispatcher>,
 }
 
+struct CorruptEffectReceipt {
+    inner: Arc<dyn PeerRoundTrip>,
+    calls: AtomicUsize,
+}
+
+impl PeerRoundTrip for CorruptEffectReceipt {
+    fn send(
+        &self,
+        target: CellTarget,
+        request: Vec<u8>,
+        remaining_ms: u32,
+    ) -> Pin<Box<dyn Future<Output = cellule_runtime::Result<Vec<u8>>> + Send + 'static>> {
+        let inner = Arc::clone(&self.inner);
+        let delivery = self.calls.fetch_add(1, Ordering::SeqCst) == 1;
+        Box::pin(async move {
+            let reply = inner.send(target, request, remaining_ms).await?;
+            if delivery {
+                let mut decoded = cellule_runtime::decode_peer_reply(&reply)?;
+                let Some(wire::peer_reply::Outcome::Mutation(ref mut mutation)) = decoded.outcome
+                else {
+                    return Err(cellule_runtime::Error::Peer(
+                        "expected effect mutation reply",
+                    ));
+                };
+                let receipt = mutation
+                    .receipt
+                    .as_mut()
+                    .ok_or(cellule_runtime::Error::Peer("effect receipt is missing"))?;
+                receipt.cell_id[0] ^= 1;
+                cellule_runtime::encode_peer_reply(&decoded)
+            } else {
+                Ok(reply)
+            }
+        })
+    }
+}
+
 impl PeerRoundTrip for LoopbackRoundTrip {
     fn send(
         &self,
@@ -762,12 +807,33 @@ async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() 
         expires_at_ms: identity.expires_at_ms,
         created_sequence: source_sequence,
     };
-    let client = EffectPeerClient::new(Arc::new(signer), principal, round_trip);
-    let delivered = client.deliver(&claim, now_ms).await.unwrap();
+    let signer = Arc::new(signer);
+    let wrong_receipt = EffectPeerClient::new(
+        Arc::clone(&signer),
+        principal.clone(),
+        Arc::new(CorruptEffectReceipt {
+            inner: round_trip.clone(),
+            calls: AtomicUsize::new(0),
+        }),
+    );
+    let error = wrong_receipt.deliver(&claim, now_ms).await.unwrap_err();
+    assert!(matches!(
+        error,
+        cellule_runtime::Error::EffectOutcomeUnknown {
+            effect_id: id,
+            operation_digest: digest,
+            ..
+        } if id == claim.effect_id && digest == claim.operation_digest
+    ));
+
+    let client = EffectPeerClient::new(signer, principal, round_trip);
+    let Resolution::Committed(delivered) = client.resolve(&claim, now_ms + 1).await.unwrap() else {
+        panic!("accepted delivery must resolve from the destination inbox");
+    };
     assert_eq!(delivered.commit_sequence(), 1);
-    assert_eq!(client.deliver(&claim, now_ms + 1).await.unwrap(), delivered);
+    assert_eq!(client.deliver(&claim, now_ms + 2).await.unwrap(), delivered);
     assert_eq!(
-        client.resolve(&claim, now_ms + 2).await.unwrap(),
+        client.resolve(&claim, now_ms + 3).await.unwrap(),
         Resolution::Committed(delivered)
     );
 
