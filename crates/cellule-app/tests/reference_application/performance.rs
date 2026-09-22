@@ -34,10 +34,23 @@ where
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reference_storefront_smoke() {
+    let fixture = PerfFixture::start(1).await;
+    run_reference_primitive_performance(&fixture, false, "storefront_smoke", 1).await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "manual end-to-end performance run"]
 async fn reference_primitive_end_to_end_performance() {
     let fixture = PerfFixture::start(1).await;
-    run_reference_primitive_performance(&fixture, false, "single_runtime").await;
+    run_reference_primitive_performance(
+        &fixture,
+        false,
+        "single_runtime",
+        performance_iterations(),
+    )
+    .await;
     fixture.shutdown().await;
 }
 
@@ -45,19 +58,29 @@ async fn reference_primitive_end_to_end_performance() {
 #[ignore = "manual three-node end-to-end performance run"]
 async fn reference_three_node_fleet_end_to_end_performance() {
     let fixture = PerfFixture::start(3).await;
-    run_reference_primitive_performance(&fixture, true, "fleet_three_runtime_mixed").await;
+    run_reference_primitive_performance(
+        &fixture,
+        true,
+        "fleet_three_runtime_mixed",
+        performance_iterations(),
+    )
+    .await;
     fixture.shutdown().await;
+}
+
+pub(super) fn performance_iterations() -> usize {
+    std::env::var("CELLULE_PERF_ITERATIONS")
+        .ok()
+        .map(|value| value.parse::<usize>().unwrap())
+        .unwrap_or(30)
 }
 
 pub(super) async fn run_reference_primitive_performance(
     fixture: &PerfFixture,
     concurrent: bool,
     fleet_label: &str,
+    iterations: usize,
 ) {
-    let iterations = std::env::var("CELLULE_PERF_ITERATIONS")
-        .ok()
-        .map(|value| value.parse::<usize>().unwrap())
-        .unwrap_or(30);
     assert!((1..=1_000).contains(&iterations));
     let sql = fixture
         .typed

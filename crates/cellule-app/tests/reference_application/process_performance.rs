@@ -1,5 +1,5 @@
 use super::fleet::{GatewayStats, start_balancer, start_gateway_peer_server, start_peer_server};
-use super::performance::run_reference_primitive_performance;
+use super::performance::{performance_iterations, run_reference_primitive_performance};
 use super::performance_fixture::{PerfFixture, node_session, owner_routes, perf_cells};
 use super::*;
 use std::{
@@ -250,7 +250,7 @@ async fn run_three_process_fleet(balanced: bool) {
     } else {
         "fleet_three_process_mixed"
     };
-    run_reference_primitive_performance(&fixture, true, label).await;
+    run_reference_primitive_performance(&fixture, true, label, performance_iterations()).await;
     if let Some((_, server, stats)) = balancer {
         server.abort();
         let counts = stats.counts();

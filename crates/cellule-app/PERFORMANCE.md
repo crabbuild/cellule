@@ -1,5 +1,10 @@
 # Cell primitive end-to-end performance
 
+The non-ignored `reference_storefront_smoke` runs one verified action in each
+of the six lanes below. Start with the [quickstart](../../docs/quickstart.md)
+for its command and source walkthrough. The ignored tests in this document
+repeat the same actions to measure local throughput and latency.
+
 The ignored `reference_primitive_end_to_end_performance` test measures complete,
 serial user actions through a compiled `cellule-app` handle, the local Cell
 router, SQLite actors, LTX publication, and read-back verification. Each result
