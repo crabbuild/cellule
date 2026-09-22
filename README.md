@@ -39,3 +39,7 @@ Start with the [runnable reference application guide](docs/quickstart.md). It wa
 ## Integration
 
 Cellule is developed and tested as a separate workspace. An embedding service supplies its own storage provider, application modules, network transport, and authentication. The architecture document defines the crate boundaries; Crab-specific design notes remain with Crab.
+
+## Contribute
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, verification, and compatibility rules.
