@@ -12,8 +12,7 @@ capture remains usable without the `replica` feature; object-store examples use
 Run the local example from the repository root:
 
 ```sh
-CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/crab-main" \
-  cargo run -p cellule-ltx --example local_roundtrip --locked
+cargo run -p cellule-ltx --example local_roundtrip --locked
 ```
 
 ## RustFS scale workload
@@ -26,15 +25,14 @@ export CELLULE_LTX_TEST_BUCKET=cellule-ltx-examples
 export CELLULE_LTX_TEST_ENDPOINT=http://127.0.0.1:9000
 export AWS_ACCESS_KEY_ID="<RustFS access key>"
 export AWS_SECRET_ACCESS_KEY="<RustFS secret key>"
-export CELLULE_LTX_WORKLOAD_ROOT="$HOME/Workspace/cellule-ltx-workloads"
+export CELLULE_LTX_WORKLOAD_ROOT=/path/to/large-scratch
 ```
 
 The default workload grows a 5 GiB incompressible SQLite database. Keep source,
-restore, and compaction scratch files on the external workspace volume:
+restore, and compaction scratch files on a volume with enough free space:
 
 ```sh
-CRAB_CELL_LTX_TARGET_BYTES=$((5 * 1024 * 1024 * 1024)) \
-CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/crab-main" \
+CELLULE_LTX_TARGET_BYTES=$((5 * 1024 * 1024 * 1024)) \
   cargo run --release -p cellule-ltx --features replica \
   --example rustfs_cell_replica_scale_load --locked
 ```

@@ -167,7 +167,6 @@ what restore, resume, or compaction consumes.
 Run the complete local demonstration from the repository root:
 
 ```sh
-export CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/cellule-main"
 cargo run -p cellule-ltx --example local_roundtrip --locked
 ```
 
@@ -574,11 +573,9 @@ establish a 10,000-database or 1,000-TPS production capacity claim.
 
 ## Verification
 
-From the repository root, choose a target directory unique to this checkout:
+From the repository root:
 
 ```sh
-export CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/cellule-main"
-
 cargo test -p cellule-ltx --locked
 cargo test -p cellule-ltx --features replica --locked
 cargo test -p cellule-ltx --doc --features replica --locked

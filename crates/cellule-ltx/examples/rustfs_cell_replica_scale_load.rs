@@ -20,7 +20,7 @@ async fn main() -> cellule_ltx::Result<()> {
     let target_bytes = target_bytes()?;
     if target_bytes < CUT_BYTES {
         return Err(LtxError::InvalidState(
-            "CRAB_CELL_LTX_TARGET_BYTES must be at least 32 MiB",
+            "CELLULE_LTX_TARGET_BYTES must be at least 32 MiB",
         ));
     }
     let workload_root = workload_root()?;
@@ -185,11 +185,11 @@ async fn main() -> cellule_ltx::Result<()> {
 }
 
 fn target_bytes() -> cellule_ltx::Result<u64> {
-    std::env::var("CRAB_CELL_LTX_TARGET_BYTES")
+    std::env::var("CELLULE_LTX_TARGET_BYTES")
         .map(|value| {
             value
                 .parse()
-                .map_err(|_| LtxError::InvalidState("invalid CRAB_CELL_LTX_TARGET_BYTES"))
+                .map_err(|_| LtxError::InvalidState("invalid CELLULE_LTX_TARGET_BYTES"))
         })
         .unwrap_or(Ok(5 * GIB))
 }
@@ -205,7 +205,7 @@ fn workload_root() -> cellule_ltx::Result<PathBuf> {
 
 fn temporary_directory(root: &Path, label: &str) -> cellule_ltx::Result<tempfile::TempDir> {
     tempfile::Builder::new()
-        .prefix(&format!("crab-cell-ltx-{label}-"))
+        .prefix(&format!("cellule-ltx-{label}-"))
         .tempdir_in(root)
         .map_err(Into::into)
 }

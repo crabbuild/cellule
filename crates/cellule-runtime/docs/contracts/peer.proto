@@ -1,7 +1,7 @@
 syntax = "proto3";
 package cellule.peer.v1;
 
-// Private messages for enrolled Crab nodes, not a public gRPC service.
+// Private messages for enrolled Cellule nodes, not a public gRPC service.
 // Rust message types are generated privately inside cellule-runtime.
 message PeerAuthorization {
   bytes origin_session = 1;  // 16 bytes; enrollment binds the signing public key.
