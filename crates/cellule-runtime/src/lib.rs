@@ -65,9 +65,10 @@ pub use application::{ApplicationIdentity, ApplicationIdentityStore};
 pub use authority::{CellAuthority, VersionedControl};
 pub use backup::{BackupPin, BackupPinStore, BackupRestore, PinnedCatalogShard};
 pub use blob::{
-    BlobCommand, BlobCondition, BlobMetadata, BlobModule, BlobMutation, BlobMutationOutcome,
-    BlobNamespace, BlobPage, BlobQuery, BlobQueryCommand, BlobQueryResult, BlobRead,
-    blob_cleanup_expired, blob_mutate, blob_query, install_blob_schema, register_blob,
+    BlobArtifactStore, BlobCommand, BlobCondition, BlobGarbageCollectionReport, BlobMetadata,
+    BlobModule, BlobMutation, BlobMutationOutcome, BlobNamespace, BlobPage, BlobQuery,
+    BlobQueryCommand, BlobQueryResult, BlobRead, blob_cleanup_expired, blob_mutate, blob_query,
+    install_blob_schema, register_blob,
 };
 pub use catalog::{
     CatalogEntry, CatalogProof, CatalogRole, CatalogScanPage, CatalogShardScan, CellCatalog,
@@ -79,7 +80,7 @@ pub use cellule_ltx::{
 };
 pub use client::{
     CellClient, CellDescription, CellStateStream, Committed, InvocationError, Observed,
-    PendingMutation, Receipt, StateStreamCancellation, command_operation_digest,
+    PendingMutation, PreparedCommand, Receipt, StateStreamCancellation, command_operation_digest,
 };
 pub use cluster_qualification::validate_cluster_receipt;
 pub use codec::{BoundedDecoder, BoundedEncoder, CodecError, WireValue};
@@ -92,10 +93,11 @@ pub use cron::{
 pub use effects::{
     EffectAckRequest, EffectClaim, EffectClaimCommand, EffectClaimRequest, EffectCommandIntent,
     EffectLease, EffectLeaseCommand, EffectLeaseOutcome, EffectLeaseRequest, EffectModule,
-    EffectRunOutcome, EffectSource, EffectState, EffectSupervisor, EffectSupervisorError,
-    EffectTokenSource, EffectValidateClaimQuery, EffectValidateRequest, InboxApplyOutcome,
-    InboxDelivery, SystemEffectTokens, effect_ack_delivered, effect_claim, effect_cleanup_terminal,
-    effect_extend, effect_id, effect_operation_digest, effect_retry, effect_validate_claim,
+    EffectRunOutcome, EffectSource, EffectState, EffectStatus, EffectStatusQuery,
+    EffectStatusRequest, EffectSupervisor, EffectSupervisorError, EffectTokenSource,
+    EffectValidateClaimQuery, EffectValidateRequest, InboxApplyOutcome, InboxDelivery,
+    SystemEffectTokens, effect_ack_delivered, effect_claim, effect_cleanup_terminal, effect_extend,
+    effect_id, effect_operation_digest, effect_retry, effect_status, effect_validate_claim,
     inbox_apply, inbox_cleanup_expired, inbox_resolve, register_effect_delivery,
 };
 pub use error::{Error, Result};
@@ -131,8 +133,10 @@ pub use node_log::{
     close_node_log, rotate_node_log,
 };
 pub use node_log_recovery::{
-    CompletedNodeRecovery, NodeLogRecovery, RecoveryCell, RecoveryCoordinator, SealedSession,
-    recoverable_cells, recoverable_cells_from_frames, recoverable_cells_from_scopes,
+    CompletedNodeRecovery, NodeLogRecovery, RecoverableCellInventory, RecoveryCell,
+    RecoveryCoordinator, RecoveryCoordinatorResult, RecoveryInventorySummary, RecoveryWorkSummary,
+    SealedSession, recoverable_cells, recoverable_cells_from_frames, recoverable_cells_from_scopes,
+    recoverable_cells_from_scopes_with_summary,
 };
 pub use node_log_shipper::{NodeLogShipper, NodeLogSubmission};
 pub use node_log_state::{NodeLogPhase, NodeLogStatus, NodeRecoveryClaim};
@@ -147,8 +151,8 @@ pub use peer::{
     wire as peer_wire,
 };
 pub use placement::{
-    PlacementEligibility, PlacementObservation, PlacementPlanner, PlacementPressure,
-    PlacementRuntimeSnapshot, PlacementScore,
+    CellTransferDemand, CellTransferIntent, PlacementEligibility, PlacementObservation,
+    PlacementPlanner, PlacementPressure, PlacementScore,
 };
 pub use pressure::{
     MovementBudget, MovementKind, MovementPermit, PressureClassifier, PressureSample, PressureState,
@@ -158,13 +162,15 @@ pub use qualification::{
     QUALIFICATION_CASE_COVERAGE_BYTES, QUALIFICATION_CASE_COVERAGE_OPERATIONS, QUALIFICATION_CASES,
     QUALIFICATION_MATRIX_ROWS, QUALIFICATION_MATRIX_SCHEMA_VERSION, QUALIFICATION_PRIMITIVES,
     QUALIFICATION_PROFILE_SCHEMA_VERSION, QUALIFICATION_PROTECTED_EVIDENCE_MAX_AGE_MS,
-    QUALIFICATION_PROTECTED_EVIDENCE_MAX_CLOCK_SKEW_MS, QUALIFICATION_RESOURCE_METRICS,
+    QUALIFICATION_PROTECTED_EVIDENCE_MAX_CLOCK_SKEW_MS,
+    QUALIFICATION_PROVIDER_EVIDENCE_SCHEMA_VERSION, QUALIFICATION_RESOURCE_METRICS,
     QUALIFICATION_RUN_ARTIFACT_SCHEMA_VERSION, QUALIFICATION_SCHEMA_VERSION, QualificationCase,
-    QualificationExecution, QualificationMatrixEntry, QualificationMatrixManifest,
-    QualificationMetric, QualificationOperation, QualificationOperationExecutor,
-    QualificationOperationIter, QualificationOutcome, QualificationOwnership,
-    QualificationPrimitiveCounts, QualificationProfile, QualificationReceipt,
-    QualificationRunArtifact, QualificationRunSummary, QualificationRunner, QualificationWorkload,
+    QualificationExecution, QualificationExecutionEvidence, QualificationMatrixEntry,
+    QualificationMatrixManifest, QualificationMetric, QualificationOperation,
+    QualificationOperationExecutor, QualificationOperationIter, QualificationOutcome,
+    QualificationOwnership, QualificationPrimitiveCounts, QualificationProfile,
+    QualificationProviderEvidence, QualificationReceipt, QualificationRunArtifact,
+    QualificationRunSummary, QualificationRunner, QualificationWorkload,
 };
 pub use queue::{
     QueueClaimCommand, QueueClaimRequest, QueueControlAction, QueueControlCommand,
@@ -177,8 +183,8 @@ pub use queue::{
 };
 pub use recovery_artifacts::RecoveryArtifactRegistry;
 pub use recovery_manifest::{
-    PinnedRecoveryCell, RecoveryArtifact, RecoveryArtifactKey, RecoveryArtifactStore,
-    RecoveryManifestStore,
+    PinnedRecoveryCell, PinnedRecoveryCells, RecoveryArtifact, RecoveryArtifactKey,
+    RecoveryArtifactStore, RecoveryManifestStore, RecoveryPublicationSummary,
 };
 pub use registry::{
     BuildDescriptor, CellModule, Command, CommandContext, CommandInvocation, CommandResult,

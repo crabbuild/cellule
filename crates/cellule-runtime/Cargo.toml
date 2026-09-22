@@ -14,16 +14,14 @@ required-features = ["process-test-support"]
 
 [features]
 default = []
-process-test-support = ["dep:async-trait", "dep:fs4"]
+process-test-support = ["cellule-store/test-support"]
 
 [dependencies]
-async-trait = { workspace = true, optional = true }
 blake3.workspace = true
 bytes.workspace = true
 cellule-store.workspace = true
 cellule-ltx = { workspace = true, features = ["replica"] }
 ed25519-dalek.workspace = true
-fs4 = { version = "0.13", optional = true }
 futures-util.workspace = true
 object_store.workspace = true
 prost.workspace = true
@@ -35,6 +33,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-util.workspace = true
+tracing.workspace = true
 
 [build-dependencies]
 prost-build = "0.13"
@@ -42,4 +41,5 @@ protoc-bin-vendored = "3"
 
 [dev-dependencies]
 async-trait.workspace = true
+cellule-store = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

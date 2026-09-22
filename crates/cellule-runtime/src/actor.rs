@@ -49,7 +49,10 @@ const RENEWAL_SCAN: std::time::Duration = std::time::Duration::from_millis(100);
 const MAX_RENEWALS_IN_FLIGHT: usize = 32;
 const SQL_WALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 const HYDRATION_TICK: std::time::Duration = std::time::Duration::from_millis(100);
+const COMPACTION_QUIET: std::time::Duration = std::time::Duration::from_millis(250);
+const COMPACTION_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
 const HYDRATION_PAGES_PER_STEP: u32 = 64;
+const FLEET_PUBLICATION_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
 const fn bounded_u32(value: usize) -> u32 {
     if value > u32::MAX as usize {
@@ -328,6 +331,7 @@ pub(super) struct RuntimeInner {
     sender: mpsc::Sender<Message>,
     resources: ResourceLedger,
     shutting_down: AtomicBool,
+    accepting_cells: AtomicBool,
     session: SessionId,
     pool: SqlWorkerPool,
     replica_host: cellule_ltx::Host,
@@ -468,6 +472,7 @@ impl CellRuntime {
                 sender,
                 resources,
                 shutting_down: AtomicBool::new(false),
+                accepting_cells: AtomicBool::new(true),
                 session,
                 pool,
                 replica_host,
@@ -582,6 +587,20 @@ impl CellRuntime {
         drain.and(workers).and(durability)
     }
 
+    /// Stops new Cell acquisition while existing owners continue serving.
+    pub fn stop_acquiring(&self) -> crate::Result<()> {
+        self.ensure_running()?;
+        self.inner.accepting_cells.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    /// Reports whether a new owner may be acquired on this node.
+    #[must_use]
+    pub fn is_acquiring(&self) -> bool {
+        !self.inner.shutting_down.load(Ordering::Acquire)
+            && self.inner.accepting_cells.load(Ordering::Acquire)
+    }
+
     /// Starts bounded, actor-owned eviction of safe idle Cells.
     ///
     /// The returned count is the number of drains started. Resource
@@ -596,6 +615,58 @@ impl CellRuntime {
         self.inner
             .sender
             .send(Message::EvictIdle { limit, reply })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    /// Lists currently settled local Cells as advisory transfer candidates.
+    /// The exact generation and eligibility are rechecked by `release_idle_cell`.
+    pub async fn idle_transfer_candidates(
+        &self,
+    ) -> crate::Result<Vec<(CellId, u64, i64, CatalogRole)>> {
+        self.ensure_running()?;
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::IdleTransferCandidates { reply })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    /// Counts live and transitioning Cells until their release has completed.
+    pub async fn unreleased_cell_count(&self) -> crate::Result<usize> {
+        self.ensure_running()?;
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::UnreleasedCellCount { reply })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    /// Releases one exact local generation only after the actor's settled-work
+    /// gate, worker close, and authoritative release have completed.
+    pub async fn release_idle_cell(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+    ) -> crate::Result<()> {
+        self.ensure_running()?;
+        if source != self.inner.session || generation == 0 {
+            return Err(Error::Fenced);
+        }
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::ReleaseIdleCell {
+                cell,
+                generation,
+                reply,
+            })
             .await
             .map_err(|_| Error::RuntimeClosed)?;
         response.await.map_err(|_| Error::RuntimeClosed)?
@@ -826,7 +897,7 @@ impl CellRuntime {
             + Send
             + 'static,
     {
-        self.ensure_running()?;
+        self.ensure_acquiring()?;
         self.activation_cell(&catalog, &observed)?;
         if observed.value().state != crate::ControlState::Recovering
             || observed.value().root.is_some()
@@ -876,7 +947,7 @@ impl CellRuntime {
             + Send
             + 'static,
     {
-        self.ensure_running()?;
+        self.ensure_acquiring()?;
         let cell = self.claiming_cell(&catalog, &observed, &owner)?;
         if owner.session != takeover.claimant() {
             return Err(Error::Fenced);
@@ -955,7 +1026,7 @@ impl CellRuntime {
         recovery_store: crate::RecoveryManifestStore,
         destination: PathBuf,
     ) -> crate::Result<CellHandle> {
-        self.ensure_running()?;
+        self.ensure_acquiring()?;
         self.activation_cell(&catalog, &observed)?;
         let replica = self.replica_with_directory_cache(replica, &destination)?;
         let observed = self
@@ -983,7 +1054,7 @@ impl CellRuntime {
         destination: PathBuf,
         owner: Owner,
     ) -> crate::Result<CellHandle> {
-        self.ensure_running()?;
+        self.ensure_acquiring()?;
         let rollback_node_lease = self.inner.node_lease.guard()?;
         self.claiming_cell(&catalog, &observed, &owner)?;
         if observed.value().state != crate::ControlState::Idle
@@ -1059,7 +1130,7 @@ impl CellRuntime {
         destination: PathBuf,
         owner: Owner,
     ) -> crate::Result<CellHandle> {
-        self.ensure_running()?;
+        self.ensure_acquiring()?;
         let replica = self.replica_with_directory_cache(replica, &destination)?;
         let rollback_node_lease = self.inner.node_lease.guard()?;
         let rollback_authority = authority.clone();
@@ -1304,6 +1375,14 @@ impl CellRuntime {
         self.inner.node_lease.check()
     }
 
+    fn ensure_acquiring(&self) -> crate::Result<()> {
+        self.ensure_running()?;
+        if !self.inner.accepting_cells.load(Ordering::Acquire) {
+            return Err(Error::CellDraining);
+        }
+        Ok(())
+    }
+
     async fn activate_inner(
         &self,
         catalog: CatalogProof,
@@ -1440,6 +1519,8 @@ struct BootstrapActivation {
     reservation: CellReservation,
 }
 
+type IdleTransferCandidates = Vec<(CellId, u64, i64, CatalogRole)>;
+
 enum Message {
     Activate {
         cell: CellId,
@@ -1465,6 +1546,17 @@ enum Message {
     EvictIdle {
         limit: usize,
         reply: oneshot::Sender<crate::Result<usize>>,
+    },
+    IdleTransferCandidates {
+        reply: oneshot::Sender<crate::Result<IdleTransferCandidates>>,
+    },
+    UnreleasedCellCount {
+        reply: oneshot::Sender<crate::Result<usize>>,
+    },
+    ReleaseIdleCell {
+        cell: CellId,
+        generation: u64,
+        reply: oneshot::Sender<crate::Result<()>>,
     },
     ObservePressure {
         sample: PressureSample,
@@ -1588,6 +1680,8 @@ struct ActiveCell {
     inventory_refreshing: bool,
     drain: Option<oneshot::Sender<crate::Result<()>>>,
     last_used_ms: i64,
+    last_work_at: std::time::Instant,
+    compaction_retry_at: std::time::Instant,
 }
 
 struct QueuedPublication {
@@ -1688,6 +1782,13 @@ enum TaskResult {
         node_logged: bool,
         result: crate::Result<()>,
         fenced: bool,
+    },
+    Compacted {
+        cell: CellId,
+        generation: u64,
+        effect_id: u64,
+        publisher: Box<CellPublisher>,
+        result: crate::Result<Option<bool>>,
     },
     Queried {
         cell: CellId,
@@ -1828,6 +1929,7 @@ async fn run(
                         &node_lease,
                     );
                     start_background_inventory(&pool, &mut cells, &mut tasks, &node_lease);
+                    start_background_compaction(&pool, &mut cells, &mut tasks, &node_lease);
                 }
             }
             continue;
@@ -1871,6 +1973,7 @@ async fn run(
                     &node_lease,
                 );
                 start_background_inventory(&pool, &mut cells, &mut tasks, &node_lease);
+                start_background_compaction(&pool, &mut cells, &mut tasks, &node_lease);
             }
         }
     }
@@ -2201,6 +2304,56 @@ fn handle_message(
             );
             let _ = reply.send(Ok(count));
         }
+        Message::IdleTransferCandidates { reply } => {
+            if node_lease.check().is_err() {
+                let _ = reply.send(Err(Error::Fenced));
+                return;
+            }
+            let candidates = cells
+                .iter()
+                .filter_map(|(cell, active)| {
+                    eviction_observation(*cell, active)
+                        .eligible()
+                        .then_some(active)
+                        .filter(|active| !active.draining())
+                        .map(|active| (*cell, active.generation, active.last_used_ms, active.role))
+                })
+                .collect();
+            let _ = reply.send(Ok(candidates));
+        }
+        Message::UnreleasedCellCount { reply } => {
+            let _ = reply.send(Ok(cells.len().saturating_add(transitioning.len())));
+        }
+        Message::ReleaseIdleCell {
+            cell,
+            generation,
+            reply,
+        } => {
+            if node_lease.check().is_err() {
+                let _ = reply.send(Err(Error::Fenced));
+                return;
+            }
+            let Some(active) = cells.get(&cell) else {
+                let _ = reply.send(Err(Error::CellNotActive));
+                return;
+            };
+            if active.generation != generation
+                || active.draining()
+                || !eviction_observation(cell, active).eligible()
+            {
+                let _ = reply.send(Err(Error::CellDraining));
+                return;
+            }
+            let Ok(mut permit) = movement.try_start(unix_millis()) else {
+                let _ = reply.send(Err(Error::Capacity("movement budget")));
+                return;
+            };
+            if begin_idle_cell_eviction(cell, pool, cells, transitioning, tasks, Some(reply)) {
+                movement_permits.insert(cell, permit);
+            } else {
+                movement.complete(&mut permit);
+            }
+        }
         Message::ObservePressure { sample, reply } => {
             let result = pressure.observe(sample);
             if let Ok(state) = result
@@ -2261,6 +2414,15 @@ fn reject_fenced_message(message: Message) {
         Message::EvictIdle { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));
         }
+        Message::IdleTransferCandidates { reply } => {
+            let _ = reply.send(Err(Error::Fenced));
+        }
+        Message::UnreleasedCellCount { reply } => {
+            let _ = reply.send(Err(Error::Fenced));
+        }
+        Message::ReleaseIdleCell { reply, .. } => {
+            let _ = reply.send(Err(Error::Fenced));
+        }
         Message::ObservePressure { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));
         }
@@ -2306,49 +2468,71 @@ fn begin_idle_evictions(
 ) -> Vec<CellId> {
     let observations = cells
         .iter()
-        .map(|(cell, active)| EvictionObservation {
-            cell: *cell,
-            state: if active.draining() {
-                EvictionState::Quiescing
-            } else {
-                EvictionState::Idle
-            },
-            last_used_ms: active.last_used_ms,
-            cost: ResourceCost::active_cell().with_retained_bytes(
-                usize::try_from(active.publication_bytes).unwrap_or(usize::MAX),
-            ),
-            busy: active.busy() || active.renewing(),
-            retained_obligation: active.coordination.publication_count() != 0,
-            migrating: active.publisher.is_none(),
-            backup_pinned: active.unpublished_node_logs != 0,
-            leased_work: !active.queue.is_empty(),
-            primitive_obligation: !active.persisted_work.is_unknown()
-                && !active.persisted_work.is_empty(),
-            accounting_known: !active.persisted_work.is_unknown(),
-        })
+        .map(|(cell, active)| eviction_observation(*cell, active))
         .collect::<Vec<_>>();
     let victims = select_victims(&observations, limit);
     let mut started = Vec::new();
     for cell in victims {
-        let Some(active) = cells.get_mut(&cell) else {
-            continue;
-        };
-        let decision = active.coordination.step(CoordinationInput::BeginDrain);
-        if matches!(decision, CoordinationDecision::Reject(_)) {
-            continue;
-        }
-        active.admission.draining.store(true, Ordering::Release);
-        active.admission.requests.close();
-        active.admission.bytes.close();
-        started.push(cell);
-        if matches!(
-            schedule(active, true),
-            CoordinationDecision::ReadyToDeactivate
-        ) {
-            start_deactivate(cell, pool, cells, transitioning, tasks);
+        if begin_idle_cell_eviction(cell, pool, cells, transitioning, tasks, None) {
+            started.push(cell);
         }
     }
     started
+}
+
+fn eviction_observation(cell: CellId, active: &ActiveCell) -> EvictionObservation {
+    EvictionObservation {
+        cell,
+        state: if active.draining() {
+            EvictionState::Quiescing
+        } else {
+            EvictionState::Idle
+        },
+        last_used_ms: active.last_used_ms,
+        cost: ResourceCost::active_cell()
+            .with_retained_bytes(usize::try_from(active.publication_bytes).unwrap_or(usize::MAX)),
+        busy: active.busy() || active.renewing(),
+        retained_obligation: active.coordination.publication_count() != 0,
+        migrating: active.publisher.is_none(),
+        backup_pinned: active.unpublished_node_logs != 0,
+        leased_work: !active.queue.is_empty(),
+        primitive_obligation: !active.persisted_work.is_transfer_settled(),
+        accounting_known: !active.persisted_work.is_unknown(),
+    }
+}
+
+fn begin_idle_cell_eviction(
+    cell: CellId,
+    pool: &SqlWorkerPool,
+    cells: &mut HashMap<CellId, ActiveCell>,
+    transitioning: &mut HashSet<CellId>,
+    tasks: &mut JoinSet<TaskResult>,
+    reply: Option<oneshot::Sender<crate::Result<()>>>,
+) -> bool {
+    let Some(active) = cells.get_mut(&cell) else {
+        if let Some(reply) = reply {
+            let _ = reply.send(Err(Error::CellNotActive));
+        }
+        return false;
+    };
+    let decision = active.coordination.step(CoordinationInput::BeginDrain);
+    if matches!(decision, CoordinationDecision::Reject(_)) {
+        if let Some(reply) = reply {
+            let _ = reply.send(Err(Error::CellDraining));
+        }
+        return false;
+    }
+    active.admission.draining.store(true, Ordering::Release);
+    active.admission.requests.close();
+    active.admission.bytes.close();
+    active.drain = reply;
+    if matches!(
+        schedule(active, true),
+        CoordinationDecision::ReadyToDeactivate
+    ) {
+        start_deactivate(cell, pool, cells, transitioning, tasks);
+    }
+    true
 }
 
 async fn activate_restored_and_publish(
@@ -2563,6 +2747,74 @@ fn start_background_inventory(
     }
 }
 
+fn start_background_compaction(
+    pool: &SqlWorkerPool,
+    cells: &mut HashMap<CellId, ActiveCell>,
+    tasks: &mut JoinSet<TaskResult>,
+    node_lease: &RuntimeNodeLease,
+) {
+    let now = std::time::Instant::now();
+    for (cell, active) in cells {
+        if now.duration_since(active.last_work_at) < COMPACTION_QUIET
+            || now < active.compaction_retry_at
+        {
+            continue;
+        }
+        let due = active
+            .publisher
+            .as_ref()
+            .is_some_and(CellPublisher::compaction_due);
+        let decision = active
+            .coordination
+            .step(CoordinationInput::BeginCompaction {
+                queue_empty: active.queue.is_empty(),
+                publication_idle: active.coordination.publication_count() == 0,
+                publisher_ready: active.publisher.is_some(),
+                due,
+                lease_live: node_lease.check().is_ok(),
+            });
+        if matches!(decision, CoordinationDecision::Fence) {
+            fence_active(active);
+            continue;
+        }
+        if !matches!(decision, CoordinationDecision::Started) {
+            continue;
+        }
+        let Some(mut publisher) = active.publisher.take() else {
+            active
+                .coordination
+                .step(CoordinationInput::FinishCompaction { fenced: true });
+            fence_active(active);
+            continue;
+        };
+        let cell = *cell;
+        let generation = active.generation;
+        let effect_id = active.begin_task(CoordinationEffect::Compaction);
+        let pool = pool.clone();
+        tasks.spawn(async move {
+            let started = std::time::Instant::now();
+            let result = publisher.compact_one_quiet().await;
+            tracing::debug!(
+                elapsed_ms = started.elapsed().as_millis(),
+                promoted = matches!(result, Ok(Some(true))),
+                retry = matches!(result, Ok(None)),
+                succeeded = result.is_ok(),
+                "Cell LTX quiet compaction completed"
+            );
+            if result.is_err() {
+                let _ = pool.fence(cell).await;
+            }
+            TaskResult::Compacted {
+                cell,
+                generation,
+                effect_id,
+                publisher: Box::new(publisher),
+                result,
+            }
+        });
+    }
+}
+
 fn schedule(active: &mut ActiveCell, lease_live: bool) -> CoordinationDecision {
     let publication_blocked = active.queue.front().is_some_and(|work| {
         matches!(work, QueuedWork::Command(_))
@@ -2601,6 +2853,7 @@ fn start_next(
     }
     let generation = active.generation;
     active.last_used_ms = unix_millis();
+    active.last_work_at = std::time::Instant::now();
     let kind = match &work {
         QueuedWork::Command(_) => AdmissionKind::Command,
         QueuedWork::Query(_) => AdmissionKind::Query,
@@ -2978,6 +3231,12 @@ fn start_publication(
         return;
     };
     let node_logged = publication.durability.is_some();
+    tracing::debug!(
+        queue_wait_ms = publication.submitted_at.elapsed().as_millis(),
+        pending_publications = active.coordination.publication_count(),
+        publication_bytes = active.publication_bytes,
+        "Cell LTX publication started"
+    );
     let generation = active.generation;
     let effect_id = active.begin_task(CoordinationEffect::Publication);
     // Moving the publisher out of ActiveCell is the serialization token for
@@ -2987,13 +3246,57 @@ fn start_publication(
     tasks.spawn(async move {
         let _retained_reservation = retained_reservation;
         let retained_bytes = publication.pending.retained_bytes();
+        let mut publication_proof = Some(publication.proof);
+        let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
+        let mut retry_delay = std::time::Duration::from_millis(100);
         let result = async {
             let expected = publication.pending.outcome().clone();
-            let prepared = publisher.prepare(&publication.pending).await?;
+            let prepared = loop {
+                match publisher.prepare(&publication.pending).await {
+                    Ok(prepared) => break prepared,
+                    Err(error) if node_logged && is_storage_publication_error(&error) => {
+                        if let Some(durability) = publication.durability.as_ref() {
+                            wait_for_fleet_proof(durability, fleet_deadline).await?;
+                        }
+                        if let Some(proof) = publication_proof.take() {
+                            let _ = proof.send(Err(error));
+                        }
+                        if std::time::Instant::now() >= fleet_deadline {
+                            return Err(Error::Fenced);
+                        }
+                        tokio::time::sleep(retry_delay).await;
+                        retry_delay = retry_delay
+                            .saturating_mul(2)
+                            .min(std::time::Duration::from_secs(2));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             pool.bind_prepared(cell, prepared.clone()).await?;
-            let root = publisher
-                .publish_prepared(&prepared, publication.pending.next_due_ms())
-                .await?;
+            let root = loop {
+                match publisher
+                    .publish_prepared(&prepared, publication.pending.next_due_ms())
+                    .await
+                {
+                    Ok(root) => break root,
+                    Err(error) if node_logged && is_storage_publication_error(&error) => {
+                        if let Some(durability) = publication.durability.as_ref() {
+                            wait_for_fleet_proof(durability, fleet_deadline).await?;
+                        }
+                        if let Some(proof) = publication_proof.take() {
+                            let _ = proof.send(Err(error));
+                        }
+                        if std::time::Instant::now() >= fleet_deadline {
+                            return Err(Error::Fenced);
+                        }
+                        tokio::time::sleep(retry_delay).await;
+                        retry_delay = retry_delay
+                            .saturating_mul(2)
+                            .min(std::time::Duration::from_secs(2));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             if let Some(durability) = publication.durability.as_ref() {
                 durability.prove_object().await?;
             } else {
@@ -3008,9 +3311,15 @@ fn start_publication(
             Ok(())
         }
         .await;
+        tracing::debug!(
+            publication_lag_ms = publication.submitted_at.elapsed().as_millis(),
+            succeeded = result.is_ok(),
+            "Cell LTX publication completed"
+        );
         let fenced = result.is_err();
-        let proof = if fenced { Err(Error::Fenced) } else { Ok(()) };
-        let _ = publication.proof.send(proof);
+        if let Some(proof) = publication_proof {
+            let _ = proof.send(if fenced { Err(Error::Fenced) } else { Ok(()) });
+        }
         if fenced {
             let _ = pool.fence(cell).await;
         }
@@ -3025,6 +3334,25 @@ fn start_publication(
             fenced,
         }
     });
+}
+
+fn is_storage_publication_error(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Storage(_) | Error::Ltx(cellule_ltx::LtxError::Storage(_))
+    )
+}
+
+async fn wait_for_fleet_proof(
+    durability: &PendingDurability,
+    deadline: std::time::Instant,
+) -> crate::Result<()> {
+    tokio::time::timeout_at(
+        tokio::time::Instant::from_std(deadline),
+        durability.prove_fleet(),
+    )
+    .await
+    .map_err(|_| Error::Fenced)?
 }
 
 async fn execute_query(
@@ -3263,6 +3591,8 @@ fn handle_task(
                         inventory_refreshing: false,
                         drain: None,
                         last_used_ms: unix_millis(),
+                        last_work_at: std::time::Instant::now(),
+                        compaction_retry_at: std::time::Instant::now(),
                     },
                 );
             }
@@ -3509,6 +3839,7 @@ fn handle_task(
                 return;
             }
             active.finish_task(effect_id, CoordinationEffect::Publication);
+            active.last_work_at = std::time::Instant::now();
             let object_published = result.is_ok();
             if node_lease.check().is_err() {
                 result = Err(Error::Fenced);
@@ -3530,6 +3861,37 @@ fn handle_task(
                 fence_active(active);
             } else {
                 start_publication(cell, active, pool, tasks);
+            }
+            continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+        }
+        TaskResult::Compacted {
+            cell,
+            generation,
+            effect_id,
+            publisher,
+            result,
+        } => {
+            let Some(active) = cells.get_mut(&cell) else {
+                return;
+            };
+            if active.generation != generation
+                || !active
+                    .coordination
+                    .effect_matches(effect_id, CoordinationEffect::Compaction)
+            {
+                return;
+            }
+            active.finish_task(effect_id, CoordinationEffect::Compaction);
+            let fenced = result.is_err() || node_lease.check().is_err();
+            active.publisher = Some(*publisher);
+            if matches!(result, Ok(None)) {
+                active.compaction_retry_at = std::time::Instant::now() + COMPACTION_RETRY;
+            }
+            let decision = active
+                .coordination
+                .step(CoordinationInput::FinishCompaction { fenced });
+            if matches!(decision, CoordinationDecision::Fence) {
+                fence_active(active);
             }
             continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
         }
@@ -3756,6 +4118,7 @@ fn missing_cell_error(admission: &CellAdmission) -> Error {
 }
 
 fn finish_work(active: &mut ActiveCell, fenced: bool) -> CoordinationDecision {
+    active.last_work_at = std::time::Instant::now();
     let decision = active
         .coordination
         .step(CoordinationInput::FinishWork { fenced });
@@ -3766,6 +4129,7 @@ fn finish_work(active: &mut ActiveCell, fenced: bool) -> CoordinationDecision {
 }
 
 fn finish_migration(active: &mut ActiveCell, fenced: bool) -> CoordinationDecision {
+    active.last_work_at = std::time::Instant::now();
     let decision = active
         .coordination
         .step(CoordinationInput::FinishMigration { fenced });

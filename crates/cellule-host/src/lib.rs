@@ -14,13 +14,13 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use cellule_app::{ApplicationHandle, CellApplication, CompiledApplication};
 use cellule_runtime::{
-    ApplicationId, CellClient, CellRuntime, CellRuntimeStats, DiskBudget, Error, FollowerStore,
-    NodeDurabilityConfig, QualificationOperationExecutor, QualificationRunSummary,
+    ApplicationId, CellClient, CellId, CellRuntime, CellRuntimeStats, DiskBudget, Error,
+    FollowerStore, NodeDurabilityConfig, QualificationOperationExecutor, QualificationRunSummary,
     QualificationWorkload, ReplicaHost, ReplicaLimits, SessionId, SqlWorkerPool, TenantId,
 };
 use tokio::task::JoinHandle;
@@ -390,8 +390,24 @@ impl Drop for TaskBatch {
 pub enum NodeState {
     Starting,
     Ready,
+    ScalingDown,
     Draining,
     Stopped,
+}
+
+/// Progress while a node serves the Cells that cannot yet move.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScaleDownStatus {
+    pub remaining_cells: usize,
+    pub settled_candidates: usize,
+}
+
+impl ScaleDownStatus {
+    /// Reports confirmed local release; receiver service is a separate proof.
+    #[must_use]
+    pub const fn ready_to_stop(self) -> bool {
+        self.remaining_cells == 0
+    }
 }
 
 /// Point-in-time lifecycle and admission status for one [`CellNode`].
@@ -654,7 +670,7 @@ impl CellNode {
     /// Returns whether the node has installed its lease and accepts work.
     #[must_use]
     pub fn is_ready(&self) -> bool {
-        self.state() == NodeState::Ready
+        matches!(self.state(), NodeState::Ready | NodeState::ScalingDown)
             && self
                 .task_group
                 .lock()
@@ -667,6 +683,72 @@ impl CellNode {
     #[must_use]
     pub fn stats(&self) -> CellRuntimeStats {
         self.runtime.stats()
+    }
+
+    /// Lists settled local Cells as advisory candidates for the fleet planner.
+    pub async fn idle_transfer_candidates(
+        &self,
+    ) -> cellule_runtime::Result<Vec<(CellId, u64, i64, cellule_runtime::CatalogRole)>> {
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        self.runtime.idle_transfer_candidates().await
+    }
+
+    /// Releases one exact settled Cell generation and waits for owner release.
+    pub async fn release_idle_cell(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+    ) -> cellule_runtime::Result<()> {
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        self.runtime
+            .release_idle_cell(cell, source, generation)
+            .await
+    }
+
+    /// Stops new Cell acquisition while retaining the lease and current owners.
+    pub fn begin_scale_down(&self) -> cellule_runtime::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
+        match *state {
+            NodeState::Ready => {
+                self.runtime.stop_acquiring()?;
+                *state = NodeState::ScalingDown;
+                Ok(())
+            }
+            NodeState::ScalingDown => Ok(()),
+            _ => Err(Error::CellDraining),
+        }
+    }
+
+    /// Waits for confirmed releases. An incomplete result leaves the node
+    /// serving and its facilities alive for the next fleet planning window.
+    pub async fn drain_for_scale_down(
+        &self,
+        deadline: Instant,
+    ) -> cellule_runtime::Result<ScaleDownStatus> {
+        self.begin_scale_down()?;
+        loop {
+            let remaining_cells = self.runtime.unreleased_cell_count().await?;
+            let settled_candidates = self.runtime.idle_transfer_candidates().await?.len();
+            let status = ScaleDownStatus {
+                remaining_cells,
+                settled_candidates,
+            };
+            if status.ready_to_stop() || Instant::now() >= deadline {
+                return Ok(status);
+            }
+            let wait = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(1));
+            tokio::time::sleep(wait).await;
+        }
     }
 
     /// Installs the product's metrics adapter before the node is advertised.
@@ -877,7 +959,7 @@ impl CellNode {
         self.runtime.is_shutting_down()
     }
 
-    /// Attaches one provider-owned lifecycle component before node shutdown.
+    /// Attaches one provider-owned lifecycle component during node startup.
     pub fn install_facility(&self, facility: CellNodeFacility) -> cellule_runtime::Result<()> {
         self.install_facilities(std::iter::once(facility))
     }
@@ -886,6 +968,8 @@ impl CellNode {
     ///
     /// All names and capacity are validated before any facility is retained, so
     /// a failed composition cannot leave the node with a partial owner set.
+    /// Registration closes when readiness opens so the owner set cannot change
+    /// underneath admitted requests.
     pub fn install_facilities(
         &self,
         facilities: impl IntoIterator<Item = CellNodeFacility>,
@@ -901,7 +985,7 @@ impl CellNode {
             .state
             .lock()
             .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
-        if !matches!(*state, NodeState::Starting | NodeState::Ready) {
+        if *state != NodeState::Starting {
             return Err(Error::CellDraining);
         }
         let mut facilities = self
@@ -1009,6 +1093,57 @@ impl CellNode {
             return Err(Error::CellDraining);
         }
         let summary = workload.run_with_case_coverage(executor).await?;
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        Ok(summary)
+    }
+
+    /// Runs an observed workload while this node is ready without asserting
+    /// that every scheduled lifecycle case was exercised.
+    ///
+    /// This entry point is for local wiring and smoke evidence. Its result must
+    /// not be promoted to a protected profile unless the resulting artifact
+    /// proves the profile's required case coverage independently.
+    pub async fn run_qualification_observed<E>(
+        &self,
+        workload: &QualificationWorkload,
+        executor: &mut E,
+    ) -> cellule_runtime::Result<QualificationRunSummary>
+    where
+        E: QualificationOperationExecutor,
+    {
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        let summary = workload.run(executor).await?;
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        Ok(summary)
+    }
+
+    /// Runs independent qualification operations with bounded concurrency.
+    ///
+    /// The application-specific executor must make each scheduled operation
+    /// independent or idempotent. Readiness is checked before admission and
+    /// after all in-flight work drains, so a result from a draining or failed
+    /// node is never accepted as qualification evidence.
+    pub async fn run_qualification_concurrent<E>(
+        &self,
+        workload: &QualificationWorkload,
+        executor: E,
+        concurrency: usize,
+    ) -> cellule_runtime::Result<QualificationRunSummary>
+    where
+        E: QualificationOperationExecutor + Clone + Send + 'static,
+    {
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        let summary = workload
+            .run_concurrent_with_case_coverage(executor, concurrency)
+            .await?;
         if !self.is_ready() {
             return Err(Error::CellDraining);
         }
@@ -1376,6 +1511,7 @@ mod tests {
         assert!(matches!(error, Error::Control(_)));
     }
 
+    #[derive(Clone)]
     struct QualificationStub;
 
     impl QualificationOperationExecutor for QualificationStub {
@@ -1409,6 +1545,72 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, Error::CellDraining));
+    }
+
+    #[tokio::test]
+    async fn concurrent_qualification_is_readiness_gated_and_bounded() {
+        let node = CellNodeBuilder::new(application())
+            .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+            .with_replica_host(ReplicaHost::default())
+            .with_session(SessionId::from_bytes([35; 16]))
+            .build()
+            .unwrap();
+        node.install_task_group(CancellationToken::new(), CancellationToken::new())
+            .unwrap();
+        node.install_node_lease(NodeLeaseGuard::new(0, 60_000).unwrap())
+            .unwrap();
+        let workload = QualificationWorkload::generate_with_size(
+            &QualificationProfile::pr_contract(),
+            41,
+            1,
+            56,
+            1,
+        )
+        .unwrap();
+        let summary = node
+            .run_qualification_concurrent(&workload, QualificationStub, 2)
+            .await
+            .unwrap();
+        assert_eq!(summary.operations(), 56);
+        node.shutdown().await.unwrap();
+    }
+
+    struct ObservedQualificationStub;
+
+    impl QualificationOperationExecutor for ObservedQualificationStub {
+        type Future<'a> = std::future::Ready<cellule_runtime::Result<QualificationExecution>>;
+
+        fn execute<'a>(&'a mut self, _operation: QualificationOperation) -> Self::Future<'a> {
+            std::future::ready(Ok(QualificationExecution::acknowledged(true)))
+        }
+    }
+
+    #[tokio::test]
+    async fn observed_qualification_preserves_unclaimed_case_coverage() {
+        let node = CellNodeBuilder::new(application())
+            .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+            .with_replica_host(ReplicaHost::default())
+            .with_session(SessionId::from_bytes([36; 16]))
+            .build()
+            .unwrap();
+        node.install_task_group(CancellationToken::new(), CancellationToken::new())
+            .unwrap();
+        node.install_node_lease(NodeLeaseGuard::new(0, 60_000).unwrap())
+            .unwrap();
+        let workload = QualificationWorkload::generate_with_size(
+            &QualificationProfile::pr_contract(),
+            41,
+            1,
+            56,
+            1,
+        )
+        .unwrap();
+        let summary = node
+            .run_qualification_observed(&workload, &mut ObservedQualificationStub)
+            .await
+            .unwrap();
+        assert!(summary.case_coverage().iter().all(|byte| *byte == 0));
+        node.shutdown().await.unwrap();
     }
 
     struct NoopNodeDurabilityProvider;
@@ -1912,6 +2114,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scale_down_stops_acquisition_without_stopping_the_host() {
+        let node = CellNodeBuilder::new(application())
+            .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+            .with_replica_host(ReplicaHost::default())
+            .with_session(SessionId::from_bytes([97; 16]))
+            .build()
+            .unwrap();
+        node.install_task_group(CancellationToken::new(), CancellationToken::new())
+            .unwrap();
+        node.install_node_lease_for_startup(NodeLeaseGuard::new(0, 60_000).unwrap())
+            .unwrap();
+        node.start().unwrap();
+        let status = node.drain_for_scale_down(Instant::now()).await.unwrap();
+        assert!(status.ready_to_stop());
+        assert_eq!(node.state(), NodeState::ScalingDown);
+        assert!(node.is_ready());
+        assert!(!node.runtime().is_acquiring());
+        node.drain().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn facility_batch_installation_is_atomic_on_name_conflict() {
         let node = CellNodeBuilder::new(application())
             .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
@@ -1953,6 +2176,27 @@ mod tests {
             .unwrap();
         node.start().unwrap();
         assert!(node.is_ready());
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn facility_registration_is_frozen_after_readiness() {
+        let node = CellNodeBuilder::new(application())
+            .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+            .with_replica_host(ReplicaHost::default())
+            .with_session(SessionId::from_bytes([34; 16]))
+            .build()
+            .unwrap();
+        node.install_task_group(CancellationToken::new(), CancellationToken::new())
+            .unwrap();
+        node.install_node_lease(NodeLeaseGuard::new(0, 60_000).unwrap())
+            .unwrap();
+        assert!(node.is_ready());
+
+        assert!(matches!(
+            node.install_facility(CellNodeFacility::new("late", || async { Ok(()) }).unwrap()),
+            Err(Error::CellDraining)
+        ));
         node.shutdown().await.unwrap();
     }
 

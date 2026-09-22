@@ -1,4 +1,7 @@
-use std::collections::HashSet;
+use std::{
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+};
 
 use bytes::Bytes;
 use cellule_ltx::CellStorageLayout;
@@ -6,10 +9,9 @@ use cellule_store::{ETag, StorageError, map_object_store_error};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
-use crate::placement::{
-    PlacementObservation, PlacementPlanner, PlacementRuntimeSnapshot, PlacementScore,
-};
+use crate::placement::{PlacementObservation, PlacementPlanner, PlacementScore};
 use crate::{
     Digest, Error, NodeId, NodeLogPhase, NodeLogRotationBarrier, NodeLogStatus, NodeRecoveryClaim,
     Result, SessionId,
@@ -25,10 +27,13 @@ const MAX_CLOCK_SKEW_MS: i64 = 5 * 60_000;
 const STALE_ADVERTISEMENT_RETENTION_MS: i64 = MAX_CLOCK_SKEW_MS + MAX_ADVERTISEMENT_LIFETIME_MS;
 const MAX_STALE_COLLECTION_ITEMS: usize = 1_024;
 const MAX_LIVE_NODE_RECORDS: usize = 10_000;
+const NODE_DIRECTORY_READ_CONCURRENCY: usize = 32;
+const RECOVERY_SCAN_CACHE_TTL_MS: i64 = 1_000;
 const SIGNING_DOMAIN: &[u8] = b"crab.node.v1\0";
 const PLACEMENT_SIGNING_DOMAIN: &[u8] = b"crab.node-placement.v1\0";
 const NODE_LOG_SELECTION_DOMAIN: &[u8] = b"crab.node-log.member.v1\0";
-const PLACEMENT_SCHEMA_VERSION: u32 = 1;
+const RECOVERY_CANDIDATE_ROTATION_DOMAIN: &[u8] = b"crab.node-recovery-candidate.v1\0";
+const PLACEMENT_SCHEMA_VERSION: u32 = 2;
 
 /// Current private follower-log wire and persistence protocol.
 pub const NODE_LOG_PROTOCOL_VERSION: u32 = 1;
@@ -58,59 +63,24 @@ pub struct NodePlacementCapacity {
     pub max_active_cells: u32,
     pub running_jobs: u32,
     pub job_capacity: u32,
+    pub publication_backlog: u32,
+    pub hydration_backlog: u32,
+    pub primitive_backlog: u32,
 }
 
 impl NodePlacementCapacity {
-    /// Creates a bounded placement snapshot from measured node totals.
-    pub const fn new(
-        memory_capacity_bytes: u64,
-        disk_capacity_bytes: u64,
-        active_cells: u32,
-        max_active_cells: u32,
-        running_jobs: u32,
-        job_capacity: u32,
-    ) -> Result<Self> {
-        if memory_capacity_bytes == 0
-            || disk_capacity_bytes == 0
-            || max_active_cells == 0
-            || active_cells > max_active_cells
-            || job_capacity == 0
-            || running_jobs > job_capacity
+    /// Validates and returns a placement snapshot with measured node totals.
+    pub const fn validated(self) -> Result<Self> {
+        if self.memory_capacity_bytes == 0
+            || self.disk_capacity_bytes == 0
+            || self.max_active_cells == 0
+            || self.active_cells > self.max_active_cells
+            || self.job_capacity == 0
+            || self.running_jobs > self.job_capacity
         {
             return Err(Error::Node("placement capacity is invalid"));
         }
-        Ok(Self {
-            memory_capacity_bytes,
-            disk_capacity_bytes,
-            active_cells,
-            max_active_cells,
-            running_jobs,
-            job_capacity,
-        })
-    }
-
-    fn validate(self) -> Result<()> {
-        Self::new(
-            self.memory_capacity_bytes,
-            self.disk_capacity_bytes,
-            self.active_cells,
-            self.max_active_cells,
-            self.running_jobs,
-            self.job_capacity,
-        )
-        .map(|_| ())
-    }
-
-    fn from_capacity(capacity: NodeCapacity) -> Option<Self> {
-        Self::new(
-            capacity.free_memory_bytes,
-            capacity.free_disk_bytes,
-            0,
-            1,
-            0,
-            capacity.job_credits,
-        )
-        .ok()
+        Ok(self)
     }
 }
 
@@ -205,7 +175,6 @@ impl NodeAdvertisement {
         failure_domain: NodeFailureDomain,
         capacity: NodeCapacity,
     ) -> Result<Self> {
-        let placement = NodePlacementCapacity::from_capacity(capacity);
         let mut advertisement = Self {
             node,
             session,
@@ -225,17 +194,12 @@ impl NodeAdvertisement {
             capacity,
             log: None,
             signature: [0; 64],
-            placement_version: placement.map_or(0, |_| PLACEMENT_SCHEMA_VERSION),
+            placement_version: 0,
             placement_signature: [0; 64],
-            placement,
+            placement: None,
         };
         advertisement.validate_shape()?;
         advertisement.signature = signing_key.sign(&advertisement.signing_bytes()?).to_bytes();
-        if advertisement.placement.is_some() {
-            advertisement.placement_signature = signing_key
-                .sign(&advertisement.placement_signing_bytes()?)
-                .to_bytes();
-        }
         Ok(advertisement)
     }
 
@@ -331,7 +295,7 @@ impl NodeAdvertisement {
         placement: NodePlacementCapacity,
         signing_key: &SigningKey,
     ) -> Result<Self> {
-        placement.validate()?;
+        placement.validated()?;
         self.placement = Some(placement);
         self.placement_version = PLACEMENT_SCHEMA_VERSION;
         self.placement_signature = signing_key
@@ -424,7 +388,7 @@ impl NodeAdvertisement {
             return Err(Error::Node("advertisement follower capacity is invalid"));
         }
         if let Some(placement) = self.placement {
-            placement.validate()?;
+            placement.validated()?;
         }
         if self.module_digests.is_empty()
             || self.module_digests.len() > MAX_MODULES
@@ -476,7 +440,10 @@ impl NodeAdvertisement {
     }
 
     fn signing_bytes(&self) -> Result<Vec<u8>> {
-        let unsigned = serde_json::to_vec(&RawUnsignedIdentity::from(self))?;
+        let unsigned = serde_json::to_vec(&RawNodeSigningPayload {
+            identity: RawUnsignedIdentity::from(self),
+            capacity: RawCapacity::from(self.capacity),
+        })?;
         let mut bytes = Vec::with_capacity(SIGNING_DOMAIN.len() + unsigned.len());
         bytes.extend_from_slice(SIGNING_DOMAIN);
         bytes.extend_from_slice(&unsigned);
@@ -633,6 +600,10 @@ pub struct NodeDirectory {
     fleet: Digest,
     image: Digest,
     release: Digest,
+    // Candidate discovery is advisory; claims always reload the authoritative
+    // record. Sharing this short-lived snapshot keeps cloned schedulers from
+    // multiplying a full directory scan without changing failover authority.
+    recovery_scan: Arc<RwLock<Option<Arc<RecoveryScanSnapshot>>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -649,6 +620,7 @@ impl NodeDirectory {
             fleet,
             image,
             release,
+            recovery_scan: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -745,6 +717,31 @@ impl NodeDirectory {
         claimant: SessionId,
         now_ms: i64,
     ) -> Result<FencedNodeSession> {
+        self.claim_expired_inner(session, claimant, now_ms, false)
+            .await
+    }
+
+    /// Claims an expired session for request-path takeover only when its node
+    /// log is already inactive. An active log returns `PendingPublication`
+    /// without writing a claim so the follower recovery scheduler can proceed.
+    pub async fn claim_expired_for_takeover(
+        &self,
+        session: SessionId,
+        claimant: SessionId,
+        now_ms: i64,
+    ) -> Result<NodeTakeoverProof> {
+        self.claim_expired_inner(session, claimant, now_ms, true)
+            .await?
+            .direct_takeover()
+    }
+
+    async fn claim_expired_inner(
+        &self,
+        session: SessionId,
+        claimant: SessionId,
+        now_ms: i64,
+        reject_active_log: bool,
+    ) -> Result<FencedNodeSession> {
         if now_ms < 0 || claimant.as_bytes().iter().all(|byte| *byte == 0) || claimant == session {
             return Err(Error::Node("node recovery time is invalid"));
         }
@@ -756,7 +753,13 @@ impl NodeDirectory {
             return Err(Error::Node("expired node session record is missing"));
         };
         let tombstone = match record {
-            NodeRecord::Tombstone(tombstone) if tombstone.session == session => {
+            NodeRecord::Tombstone(tombstone) => {
+                if tombstone.session != session {
+                    return Err(Error::Node("node tombstone session differs"));
+                }
+                if reject_active_log && tombstone.log.as_ref().is_some_and(NodeLogStatus::active) {
+                    return Err(Error::PendingPublication);
+                }
                 if tombstone.claimant == Some(claimant)
                     && tombstone
                         .claim_expires_at_ms
@@ -773,6 +776,14 @@ impl NodeDirectory {
                 if advertisement.session != session || advertisement.expires_at_ms > now_ms {
                     return Err(Error::Node("node session is not expired"));
                 }
+                if reject_active_log
+                    && advertisement
+                        .log
+                        .as_ref()
+                        .is_some_and(NodeLogStatus::active)
+                {
+                    return Err(Error::PendingPublication);
+                }
                 NodeTombstone::new(
                     session,
                     advertisement.node,
@@ -782,9 +793,6 @@ impl NodeDirectory {
                     advertisement.log.clone(),
                 )?
                 .claim(claimant, now_ms)?
-            }
-            NodeRecord::Tombstone(_) => {
-                return Err(Error::Node("node tombstone session differs"));
             }
         };
         let proof = tombstone.fenced()?;
@@ -951,68 +959,18 @@ impl NodeDirectory {
         if claimant_node.is_some_and(|node| claimant_advertisement.advertisement.node() != node) {
             return Err(Error::Node("node recovery claimant identity differs"));
         }
-        let live_nodes = if claimant_node.is_some() || require_no_live_followers {
-            self.live(now_ms, MAX_LIVE_NODE_RECORDS)
-                .await?
-                .into_iter()
-                .filter(recovery_executor_eligible)
-                .map(|advertisement| advertisement.node())
-                .collect::<HashSet<_>>()
-        } else {
-            HashSet::new()
-        };
-        let prefix = self.layout.node_directory_path();
-        let mut stream = self.layout.store().inner().list(Some(&prefix));
-        let mut candidates = Vec::new();
-        while let Some(item) = stream.next().await {
-            let meta = item.map_err(|error| map_object_store_error(error, prefix.as_ref()))?;
-            let Some((record, _)) = self.load_record_at(&meta.location).await? else {
-                continue;
-            };
-            let session = record.session();
-            validate_record_path(&self.layout, session, &meta.location)?;
-            let (eligible, members) = match record {
-                NodeRecord::Advertisement(advertisement) => {
-                    self.validate_scope(&advertisement)?;
-                    advertisement.validate_shape()?;
-                    advertisement.verify_signature()?;
-                    if advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
-                        return Err(Error::Node("advertised node issue time differs"));
-                    }
-                    let log = advertisement.log.as_ref();
-                    (
-                        advertisement.expires_at_ms <= now_ms
-                            && log.is_some_and(NodeLogStatus::active)
-                            && log.is_some_and(|log| {
-                                matches!(log.phase(), NodeLogPhase::Open | NodeLogPhase::Recovering)
-                            }),
-                        log.map_or_else(Vec::new, |log| log.members().to_vec()),
-                    )
-                }
-                NodeRecord::Tombstone(tombstone) => {
-                    let claim_available = tombstone.claimant == Some(claimant)
-                        || tombstone
-                            .claim_expires_at_ms
-                            .is_none_or(|expires_at_ms| expires_at_ms <= now_ms);
-                    let log = tombstone.log.as_ref();
-                    (
-                        claim_available
-                            && log.is_some_and(|log| {
-                                log.active()
-                                    && matches!(
-                                        log.phase(),
-                                        NodeLogPhase::Open | NodeLogPhase::Recovering
-                                    )
-                            }),
-                        log.map_or_else(Vec::new, |log| log.members().to_vec()),
-                    )
-                }
-            };
-            if !eligible || session == claimant {
+        let snapshot = self
+            .recovery_scan_snapshot(now_ms, claimant_node.is_some() || require_no_live_followers)
+            .await?;
+        let live_nodes = &snapshot.live_nodes;
+        let mut candidates = RecoveryCandidateWindow::new(now_ms, limit)?;
+        for record in &snapshot.records {
+            if !record.eligible_for(claimant, now_ms) || record.session == claimant {
                 continue;
             }
             if let Some(claimant_node) = claimant_node {
-                let preferred = members
+                let preferred = record
+                    .members
                     .iter()
                     .filter(|member| live_nodes.contains(member))
                     .min_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
@@ -1020,17 +978,138 @@ impl NodeDirectory {
                     continue;
                 }
             } else if require_no_live_followers
-                && members.iter().any(|member| live_nodes.contains(member))
+                && record
+                    .members
+                    .iter()
+                    .any(|member| live_nodes.contains(member))
             {
                 continue;
             }
-            candidates.push(session);
-            if candidates.len() == limit {
-                break;
+            candidates.push(record.session);
+        }
+        Ok(candidates.finish())
+    }
+
+    async fn recovery_scan_snapshot(
+        &self,
+        now_ms: i64,
+        include_live_nodes: bool,
+    ) -> Result<Arc<RecoveryScanSnapshot>> {
+        if let Some(snapshot) = self.recovery_scan.read().await.as_ref()
+            && now_ms >= snapshot.observed_at_ms
+            && now_ms.saturating_sub(snapshot.observed_at_ms) < RECOVERY_SCAN_CACHE_TTL_MS
+            && (!include_live_nodes || !snapshot.live_nodes.is_empty())
+        {
+            return Ok(Arc::clone(snapshot));
+        }
+
+        let mut cached = self.recovery_scan.write().await;
+        if let Some(snapshot) = cached.as_ref()
+            && now_ms >= snapshot.observed_at_ms
+            && now_ms.saturating_sub(snapshot.observed_at_ms) < RECOVERY_SCAN_CACHE_TTL_MS
+            && (!include_live_nodes || !snapshot.live_nodes.is_empty())
+        {
+            return Ok(Arc::clone(snapshot));
+        }
+
+        let prefix = self.layout.node_directory_path();
+        let stream = self.layout.store().inner().list(Some(&prefix));
+        let mut live_nodes = HashSet::new();
+        let mut live_sessions = HashSet::new();
+        let mut live_count = 0_usize;
+        let mut records = stream
+            .map(|item| {
+                let prefix = prefix.clone();
+                async move {
+                    let meta =
+                        item.map_err(|error| map_object_store_error(error, prefix.as_ref()))?;
+                    let Some((record, _)) = self.load_record_at(&meta.location).await? else {
+                        return Ok(None);
+                    };
+                    let session = record.session();
+                    validate_record_path(&self.layout, session, &meta.location)?;
+                    match record {
+                        NodeRecord::Advertisement(advertisement) => {
+                            self.validate_scope(&advertisement)?;
+                            advertisement.validate_shape()?;
+                            advertisement.verify_signature()?;
+                            if advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
+                            {
+                                return Err(Error::Node("advertised node issue time differs"));
+                            }
+                            let live = if include_live_nodes && advertisement.expires_at_ms > now_ms
+                            {
+                                self.validate(&advertisement, now_ms)?;
+                                Some((
+                                    advertisement.node(),
+                                    recovery_executor_eligible(&advertisement),
+                                ))
+                            } else {
+                                None
+                            };
+                            let candidate =
+                                advertisement
+                                    .log
+                                    .as_ref()
+                                    .map(|log| RecoveryCandidateRecord {
+                                        session,
+                                        expires_at_ms: advertisement.expires_at_ms,
+                                        claimant: None,
+                                        claim_expires_at_ms: None,
+                                        active: log.active(),
+                                        phase: log.phase(),
+                                        members: log.members().to_vec(),
+                                    });
+                            Ok(Some((candidate, live)))
+                        }
+                        NodeRecord::Tombstone(tombstone) => {
+                            let candidate =
+                                tombstone.log.as_ref().map(|log| RecoveryCandidateRecord {
+                                    session,
+                                    expires_at_ms: tombstone.expires_at_ms,
+                                    claimant: tombstone.claimant,
+                                    claim_expires_at_ms: tombstone.claim_expires_at_ms,
+                                    active: log.active(),
+                                    phase: log.phase(),
+                                    members: log.members().to_vec(),
+                                });
+                            Ok(Some((candidate, None)))
+                        }
+                    }
+                }
+            })
+            .buffer_unordered(NODE_DIRECTORY_READ_CONCURRENCY);
+        let mut candidates = Vec::new();
+        while let Some(record) = records.next().await {
+            if let Some((record, live)) = record? {
+                if let Some((node, eligible)) = live {
+                    live_count = live_count.saturating_add(1);
+                    if live_count > MAX_LIVE_NODE_RECORDS {
+                        return Err(Error::Node("live node directory exceeds its limit"));
+                    }
+                    if !live_sessions.insert(node) {
+                        return Err(Error::Node("multiple live sessions advertise one node"));
+                    }
+                    if eligible {
+                        live_nodes.insert(node);
+                    }
+                }
+                let Some(record) = record else {
+                    continue;
+                };
+                if candidates.len() == MAX_LIVE_NODE_RECORDS {
+                    return Err(Error::Node("node recovery directory exceeds its limit"));
+                }
+                candidates.push(record);
             }
         }
-        candidates.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-        Ok(candidates)
+        let snapshot = Arc::new(RecoveryScanSnapshot {
+            observed_at_ms: now_ms,
+            live_nodes,
+            records: candidates,
+        });
+        *cached = Some(Arc::clone(&snapshot));
+        Ok(snapshot)
     }
 
     /// Extends an exact recovery claim while its claimant remains live.
@@ -1227,47 +1306,6 @@ impl NodeDirectory {
         Ok(advertisements)
     }
 
-    /// Ranks live, signature-verified nodes using measured runtime snapshots.
-    ///
-    /// The directory contributes only authenticated advertisement capacity and
-    /// lease age. Runtime counters are required explicitly; an absent snapshot
-    /// is omitted instead of being interpreted as idle capacity.
-    pub async fn choose_placement(
-        &self,
-        planner: &PlacementPlanner,
-        cell: crate::CellId,
-        now_ms: i64,
-        snapshots: &[PlacementRuntimeSnapshot],
-        limit: usize,
-    ) -> Result<Option<PlacementScore>> {
-        let live = self.live(now_ms, limit).await?;
-        let observations = live
-            .iter()
-            .filter_map(|advertisement| {
-                snapshots
-                    .iter()
-                    .find(|snapshot| snapshot.node == advertisement.node())
-                    .and_then(|snapshot| {
-                        PlacementObservation::from_advertisement(
-                            advertisement,
-                            now_ms,
-                            snapshot.memory_capacity_bytes,
-                            snapshot.disk_capacity_bytes,
-                            snapshot.active_cells,
-                            snapshot.max_active_cells,
-                            snapshot.running_jobs,
-                            snapshot.pressure,
-                            snapshot.draining,
-                            snapshot.locality_bonus,
-                            snapshot.current_owner,
-                        )
-                        .ok()
-                    })
-            })
-            .collect::<Vec<_>>();
-        planner.choose(cell, now_ms, &observations)
-    }
-
     /// Chooses a destination using only authenticated, measured placement
     /// blocks advertised by the current live fleet.
     ///
@@ -1279,19 +1317,13 @@ impl NodeDirectory {
         planner: &PlacementPlanner,
         cell: crate::CellId,
         now_ms: i64,
-        current_session: SessionId,
         limit: usize,
     ) -> Result<Option<PlacementScore>> {
         let live = self.live(now_ms, limit).await?;
         let observations = live
             .iter()
             .filter_map(|advertisement| {
-                PlacementObservation::from_signed_advertisement(
-                    advertisement,
-                    now_ms,
-                    advertisement.session() == current_session,
-                )
-                .ok()
+                PlacementObservation::from_signed_advertisement(advertisement, now_ms, false).ok()
             })
             .collect::<Vec<_>>();
         planner.choose(cell, now_ms, &observations)
@@ -1409,42 +1441,58 @@ impl NodeDirectory {
             }));
         }
         let prefix = self.layout.node_directory_path();
-        let mut stream = self.layout.store().inner().list(Some(&prefix));
+        let stream = self.layout.store().inner().list(Some(&prefix));
+        let mut records = stream
+            .map(|item| {
+                let prefix = prefix.clone();
+                async move {
+                    let meta =
+                        item.map_err(|error| map_object_store_error(error, prefix.as_ref()))?;
+                    let (body, _) = match self
+                        .layout
+                        .store()
+                        .get_with_etag_bounded(&meta.location, MAX_NODE_BYTES)
+                        .await
+                    {
+                        Ok(value) => value,
+                        Err(StorageError::NotFound { .. }) => return Ok(None),
+                        Err(error) => return Err(error.into()),
+                    };
+                    let NodeRecord::Advertisement(advertisement) =
+                        NodeRecord::decode_canonical(&body)?
+                    else {
+                        return Ok(None);
+                    };
+                    validate_record_path(&self.layout, advertisement.session, &meta.location)?;
+                    match scan {
+                        AdvertisementScan::LiveRelease => {
+                            if advertisement.expires_at_ms <= now_ms {
+                                return Ok(None);
+                            }
+                            self.validate(&advertisement, now_ms)?;
+                        }
+                        AdvertisementScan::AdvertisedFleet => {
+                            advertisement.validate_shape()?;
+                            advertisement.verify_signature()?;
+                            if advertisement.fleet != self.fleet
+                                || advertisement.issued_at_ms
+                                    > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
+                            {
+                                return Err(Error::Node(
+                                    "advertised node fleet or issue time differs",
+                                ));
+                            }
+                        }
+                    }
+                    Ok(Some(*advertisement))
+                }
+            })
+            .buffer_unordered(NODE_DIRECTORY_READ_CONCURRENCY);
         let mut advertisements = Vec::new();
-        while let Some(item) = stream.next().await {
-            let meta = item.map_err(|error| map_object_store_error(error, prefix.as_ref()))?;
-            let (body, _) = match self
-                .layout
-                .store()
-                .get_with_etag_bounded(&meta.location, MAX_NODE_BYTES)
-                .await
-            {
-                Ok(value) => value,
-                Err(StorageError::NotFound { .. }) => continue,
-                Err(error) => return Err(error.into()),
-            };
-            let NodeRecord::Advertisement(advertisement) = NodeRecord::decode_canonical(&body)?
-            else {
+        while let Some(advertisement) = records.next().await {
+            let Some(advertisement) = advertisement? else {
                 continue;
             };
-            validate_record_path(&self.layout, advertisement.session, &meta.location)?;
-            match scan {
-                AdvertisementScan::LiveRelease => {
-                    if advertisement.expires_at_ms <= now_ms {
-                        continue;
-                    }
-                    self.validate(&advertisement, now_ms)?;
-                }
-                AdvertisementScan::AdvertisedFleet => {
-                    advertisement.validate_shape()?;
-                    advertisement.verify_signature()?;
-                    if advertisement.fleet != self.fleet
-                        || advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
-                    {
-                        return Err(Error::Node("advertised node fleet or issue time differs"));
-                    }
-                }
-            }
             if advertisements.len() == limit {
                 return Err(Error::Node(match scan {
                     AdvertisementScan::LiveRelease => "live node directory exceeds its limit",
@@ -1453,7 +1501,7 @@ impl NodeDirectory {
                     }
                 }));
             }
-            advertisements.push(*advertisement);
+            advertisements.push(advertisement);
         }
         advertisements
             .sort_unstable_by(|left, right| left.session.as_bytes().cmp(right.session.as_bytes()));
@@ -1913,6 +1961,104 @@ impl NodeDirectory {
     }
 }
 
+struct RecoveryScanSnapshot {
+    observed_at_ms: i64,
+    live_nodes: HashSet<NodeId>,
+    records: Vec<RecoveryCandidateRecord>,
+}
+
+struct RecoveryCandidateRecord {
+    session: SessionId,
+    expires_at_ms: i64,
+    claimant: Option<SessionId>,
+    claim_expires_at_ms: Option<i64>,
+    active: bool,
+    phase: NodeLogPhase,
+    members: Vec<NodeId>,
+}
+
+impl RecoveryCandidateRecord {
+    fn eligible_for(&self, claimant: SessionId, now_ms: i64) -> bool {
+        self.expires_at_ms <= now_ms
+            && self.active
+            && matches!(self.phase, NodeLogPhase::Open | NodeLogPhase::Recovering)
+            && (self.claimant == Some(claimant)
+                || self
+                    .claim_expires_at_ms
+                    .is_none_or(|expires_at_ms| expires_at_ms <= now_ms))
+    }
+}
+
+/// Bounded rotating window over the expired sessions discovered in one scan.
+///
+/// Object-store listings are not a durable work queue. Keeping only the first
+/// page lets a permanently failing early session starve every later session,
+/// so the window rotates its start key while retaining at most `2 * limit`
+/// session IDs.
+struct RecoveryCandidateWindow {
+    start: [u8; 16],
+    limit: usize,
+    after: BTreeSet<[u8; 16]>,
+    before: BTreeSet<[u8; 16]>,
+}
+
+impl RecoveryCandidateWindow {
+    fn new(now_ms: i64, limit: usize) -> Result<Self> {
+        if now_ms < 0 || limit == 0 {
+            return Err(Error::Node("node recovery candidate window is invalid"));
+        }
+        let bucket = u64::try_from(now_ms / 1_000)
+            .map_err(|_| Error::Node("node recovery candidate rotation overflows"))?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(RECOVERY_CANDIDATE_ROTATION_DOMAIN);
+        hasher.update(&bucket.to_be_bytes());
+        let digest = hasher.finalize();
+        let mut start = [0_u8; 16];
+        start.copy_from_slice(&digest.as_bytes()[..16]);
+        Ok(Self::with_start(start, limit))
+    }
+
+    fn with_start(start: [u8; 16], limit: usize) -> Self {
+        Self {
+            start,
+            limit,
+            after: BTreeSet::new(),
+            before: BTreeSet::new(),
+        }
+    }
+
+    fn push(&mut self, session: SessionId) {
+        let key = *session.as_bytes();
+        let window = if key >= self.start {
+            &mut self.after
+        } else {
+            &mut self.before
+        };
+        if !window.insert(key) {
+            return;
+        }
+        if window.len() > self.limit {
+            let evicted = if key >= self.start {
+                window.iter().next_back().copied()
+            } else {
+                window.iter().next().copied()
+            };
+            if let Some(evicted) = evicted {
+                window.remove(&evicted);
+            }
+        }
+    }
+
+    fn finish(self) -> Vec<SessionId> {
+        self.after
+            .into_iter()
+            .chain(self.before.into_iter().rev())
+            .take(self.limit)
+            .map(SessionId::from_bytes)
+            .collect()
+    }
+}
+
 fn recovery_executor_eligible(advertisement: &NodeAdvertisement) -> bool {
     let capacity = advertisement.capacity();
     let placement_has_headroom = advertisement.placement_capacity().is_none_or(|placement| {
@@ -2205,6 +2351,8 @@ fn validate_successor(current: &NodeAdvertisement, next: &NodeAdvertisement) -> 
 }
 
 fn same_boot_identity(current: &NodeAdvertisement, next: &NodeAdvertisement) -> bool {
+    // Capacity is a fresh signed heartbeat measurement, so its signature may
+    // change without allowing the boot identity or signing key to change.
     current.node == next.node
         && current.session == next.session
         && current.endpoint == next.endpoint
@@ -2216,7 +2364,6 @@ fn same_boot_identity(current: &NodeAdvertisement, next: &NodeAdvertisement) -> 
         && current.module_digests == next.module_digests
         && current.peer_versions == next.peer_versions
         && current.failure_domain == next.failure_domain
-        && current.signature == next.signature
 }
 
 fn compare_member_candidate(
@@ -2351,6 +2498,13 @@ struct RawUnsignedIdentity {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+struct RawNodeSigningPayload {
+    identity: RawUnsignedIdentity,
+    capacity: RawCapacity,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct RawFailureDomain {
     zone: Option<String>,
     host: Option<String>,
@@ -2460,14 +2614,7 @@ impl From<&NodeAdvertisement> for RawAdvertisement {
                 expires_at_ms: value.expires_at_ms.to_string(),
             },
             log: value.log.as_ref().map(encode_log),
-            capacity: RawCapacity {
-                free_memory_bytes: value.capacity.free_memory_bytes.to_string(),
-                free_disk_bytes: value.capacity.free_disk_bytes.to_string(),
-                follower_free_bytes: value.capacity.follower_free_bytes.to_string(),
-                follower_retained_bytes: value.capacity.follower_retained_bytes.to_string(),
-                job_credits: value.capacity.job_credits,
-                log_protocol: value.capacity.log_protocol,
-            },
+            capacity: RawCapacity::from(value.capacity),
             placement: value.placement.map(|placement| RawPlacementCapacity {
                 memory_capacity_bytes: placement.memory_capacity_bytes.to_string(),
                 disk_capacity_bytes: placement.disk_capacity_bytes.to_string(),
@@ -2475,6 +2622,12 @@ impl From<&NodeAdvertisement> for RawAdvertisement {
                 max_active_cells: placement.max_active_cells,
                 running_jobs: placement.running_jobs,
                 job_capacity: placement.job_capacity,
+                publication_backlog: (value.placement_version >= PLACEMENT_SCHEMA_VERSION)
+                    .then_some(placement.publication_backlog),
+                hydration_backlog: (value.placement_version >= PLACEMENT_SCHEMA_VERSION)
+                    .then_some(placement.hydration_backlog),
+                primitive_backlog: (value.placement_version >= PLACEMENT_SCHEMA_VERSION)
+                    .then_some(placement.primitive_backlog),
             }),
             placement_version: (value.placement_version != 0).then_some(value.placement_version),
             placement_signature: value
@@ -2506,6 +2659,19 @@ struct RawCapacity {
     log_protocol: u32,
 }
 
+impl From<NodeCapacity> for RawCapacity {
+    fn from(value: NodeCapacity) -> Self {
+        Self {
+            free_memory_bytes: value.free_memory_bytes.to_string(),
+            free_disk_bytes: value.free_disk_bytes.to_string(),
+            follower_free_bytes: value.follower_free_bytes.to_string(),
+            follower_retained_bytes: value.follower_retained_bytes.to_string(),
+            job_credits: value.job_credits,
+            log_protocol: value.log_protocol,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawPlacementCapacity {
@@ -2515,6 +2681,12 @@ struct RawPlacementCapacity {
     max_active_cells: u32,
     running_jobs: u32,
     job_capacity: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publication_backlog: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hydration_backlog: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    primitive_backlog: Option<u32>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -2590,14 +2762,18 @@ impl TryFrom<RawAdvertisement> for NodeAdvertisement {
             placement: value
                 .placement
                 .map(|placement| {
-                    NodePlacementCapacity::new(
-                        canonical_u64(&placement.memory_capacity_bytes)?,
-                        canonical_u64(&placement.disk_capacity_bytes)?,
-                        placement.active_cells,
-                        placement.max_active_cells,
-                        placement.running_jobs,
-                        placement.job_capacity,
-                    )
+                    NodePlacementCapacity {
+                        memory_capacity_bytes: canonical_u64(&placement.memory_capacity_bytes)?,
+                        disk_capacity_bytes: canonical_u64(&placement.disk_capacity_bytes)?,
+                        active_cells: placement.active_cells,
+                        max_active_cells: placement.max_active_cells,
+                        running_jobs: placement.running_jobs,
+                        job_capacity: placement.job_capacity,
+                        publication_backlog: placement.publication_backlog.unwrap_or(0),
+                        hydration_backlog: placement.hydration_backlog.unwrap_or(0),
+                        primitive_backlog: placement.primitive_backlog.unwrap_or(0),
+                    }
+                    .validated()
                 })
                 .transpose()?,
             log: value.log.map(|log| decode_log(node, log)).transpose()?,

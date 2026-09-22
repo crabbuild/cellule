@@ -5,16 +5,13 @@ use std::{
     time::Duration,
 };
 
-#[path = "../process_store.rs"]
-mod process_store;
-
 use cellule_ltx::CellStorageLayout;
 use cellule_ltx::{CellReplica, Limits};
 use cellule_runtime::{
     ApplicationId, CellAuthority, CellCatalog, CellRuntime, CellTarget, IncarnationId, NamespaceId,
     Owner, SessionId, SqlWorkerPool, TenantId,
 };
-use cellule_store::Store;
+use cellule_store::{Store, test_support::FilesystemCasStore};
 use object_store::path::Path;
 
 #[tokio::main]
@@ -49,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let cell = target.cell_id();
     let incarnation = IncarnationId::from_bytes([2; 16]);
-    let object_store = process_store::FilesystemCasStore::new(FilePath::new(&store_root))?;
+    let object_store = FilesystemCasStore::new(FilePath::new(&store_root))?;
     let shared_store = object_store.clone();
     let layout = CellStorageLayout::new(
         Store::new(Arc::new(shared_store)),
@@ -133,7 +130,7 @@ fn decode_fixed<const N: usize>(value: &str) -> Result<[u8; N], String> {
         return Err(format!("expected {} hexadecimal characters", N * 2));
     }
     let mut bytes = [0_u8; N];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         bytes[index] = (decode_nibble(pair[0])? << 4) | decode_nibble(pair[1])?;
     }
     Ok(bytes)

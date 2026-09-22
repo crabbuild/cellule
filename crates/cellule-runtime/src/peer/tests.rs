@@ -10,6 +10,63 @@ fn signer() -> PeerSigner {
     )
 }
 
+#[test]
+fn signed_peer_request_carries_maximum_kv_value() {
+    let input = crate::KvAtomicRequest {
+        scope: b"scope".to_vec(),
+        checks: Vec::new(),
+        mutations: vec![crate::KvMutation::Put {
+            key: b"key".to_vec(),
+            value: vec![7; 4 * 1024 * 1024],
+            expires_at_ms: None,
+        }],
+    };
+    let mut encoder = crate::BoundedEncoder::new(crate::codec::MAX_WIRE_BYTES as u32).unwrap();
+    crate::WireValue::encode(&input, &mut encoder).unwrap();
+    let mut request = mutation();
+    let Some(wire::mutation_request::Operation::CellCommand(command)) = &mut request.operation
+    else {
+        panic!("expected Cell command");
+    };
+    command.input = encoder.finish();
+    let signing = signer();
+    let encoded = signing
+        .sign(
+            principal(),
+            NOW_MS,
+            NOW_MS + 60_000,
+            30_000,
+            PeerOperation::Mutate(request),
+        )
+        .unwrap();
+    let verified = verifier(&signing).verify(&encoded, NOW_MS + 1_000).unwrap();
+    assert_eq!(verified.operation_tag(), 10);
+}
+
+#[test]
+fn short_operation_deadline_survives_peer_transit_without_extending_identity() {
+    let expires_at_ms = NOW_MS + 5_000;
+    let (authorization_expires_at_ms, remaining_ms) =
+        transport::peer_time_budget(NOW_MS, expires_at_ms).unwrap();
+    assert_eq!(remaining_ms, 5_000);
+    let mut request = mutation();
+    request.identity.as_mut().unwrap().expires_at_ms = expires_at_ms;
+    request.timeout_ms = remaining_ms;
+    let signer = signer();
+    let encoded = signer
+        .sign(
+            principal(),
+            NOW_MS,
+            authorization_expires_at_ms,
+            remaining_ms,
+            PeerOperation::Mutate(request),
+        )
+        .unwrap();
+    let verifier = verifier(&signer);
+    assert!(verifier.verify(&encoded, NOW_MS + 1_000).is_ok());
+    assert!(verifier.verify(&encoded, expires_at_ms).is_err());
+}
+
 fn principal() -> PeerPrincipal {
     PeerPrincipal {
         issuer: "https://identity.example".into(),

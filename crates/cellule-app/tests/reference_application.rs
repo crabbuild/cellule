@@ -4,28 +4,37 @@ use cellule_app::{ApplicationBuilder, ApplicationHandle, CellApplication, CellTy
 use cellule_ltx::{CellReplica, DiskBudget, Host, Limits};
 use cellule_runtime::{
     ActivityContext, ActivityExecution, ActivityHandler, ActivityRunOutcome, ApplicationId,
-    BlobCondition, BlobModule, BlobMutation, BlobMutationOutcome, BlobQuery, BlobQueryResult,
-    BuildDescriptor, CatalogEntry, CatalogRole, CellAuthority, CellClient, CellHandle, CellModule,
-    CellRuntime, CellStorageLayout, CellTarget, CronModule, CronMutation, CronQueryResult,
-    CronTarget, Digest, EffectClaimRequest, EffectLeaseOutcome, EffectModule, Error,
-    FencedNodeSession, IncarnationId, InvocationError, KvAtomicCommand, KvAtomicRequest,
-    KvGetQuery, KvGetRequest, KvModule, KvMutation, MaintenanceModule, ModuleDescriptor,
-    MutationIdentity, NamespaceDescriptor, NamespaceId, NodeAdvertisement, NodeCapacity,
-    NodeDirectory, NodeFailureDomain, NodeId, OperationDescriptor, Owner, QualificationExecution,
-    QualificationOperation, QualificationOperationExecutor, QualificationProfile,
-    QualificationWorkload, QueueClaimRequest, QueueDeadLetterTarget, QueueLeaseOutcome,
-    QueueModule, QueueSendRequest, Registry, RegistryBuilder, RequestId, Result, SqlBatch,
-    SqlModule, SqlStatement, SqlValue, SqlWorkerPool, TenantId, WorkflowAction,
-    WorkflowActivityModule, WorkflowContext, WorkflowDecision, WorkflowDefinition, WorkflowModule,
-    WorkflowStatus, install_blob_schema, install_cron_schema, install_kv_schema,
-    install_queue_schema, install_workflow_schema, partition_for_shard, register_activity,
-    register_blob, register_cron, register_effect_delivery, register_kv, register_maintenance,
-    register_queue, register_sql, register_workflow, register_workflow_activities,
+    BlobArtifactStore, BlobCondition, BlobModule, BlobMutation, BlobMutationOutcome, BlobQuery,
+    BlobQueryResult, BuildDescriptor, CatalogEntry, CatalogRole, CellAuthority, CellClient,
+    CellHandle, CellModule, CellRuntime, CellStorageLayout, CellTarget, Command, CommandContext,
+    CommandResult, CronInvocation, CronModule, CronMutation, CronQueryResult, CronTarget, Digest,
+    EffectClaimRequest, EffectLeaseOutcome, EffectModule, Error, FencedNodeSession, IncarnationId,
+    InvocationError, KvAtomicCommand, KvAtomicRequest, KvGetQuery, KvGetRequest, KvModule,
+    KvMutation, MaintenanceModule, ModuleDescriptor, MutationIdentity, NamespaceDescriptor,
+    NamespaceId, NodeAdvertisement, NodeCapacity, NodeDirectory, NodeFailureDomain, NodeId,
+    OperationDescriptor, Owner, QualificationExecution, QualificationOperation,
+    QualificationOperationExecutor, QualificationProfile, QualificationWorkload, QueueClaimRequest,
+    QueueDeadLetterTarget, QueueLeaseOutcome, QueueModule, QueueSendRequest, Registry,
+    RegistryBuilder, RequestId, Result, SqlBatch, SqlModule, SqlStatement, SqlValue, SqlWorkerPool,
+    TenantId, WorkflowAction, WorkflowActivityModule, WorkflowContext, WorkflowDecision,
+    WorkflowDefinition, WorkflowModule, WorkflowStatus, install_blob_schema, install_cron_schema,
+    install_kv_schema, install_queue_schema, install_workflow_schema, partition_for_shard,
+    register_activity, register_blob, register_cron, register_effect_delivery, register_kv,
+    register_maintenance, register_queue, register_sql, register_workflow,
+    register_workflow_activities,
 };
 use cellule_store::Store;
 use ed25519_dalek::SigningKey;
 use object_store::memory::InMemory;
 
+#[path = "reference_application/fleet.rs"]
+mod fleet;
+#[path = "reference_application/performance.rs"]
+mod performance;
+#[path = "reference_application/performance_fixture.rs"]
+mod performance_fixture;
+#[path = "reference_application/process_performance.rs"]
+mod process_performance;
 const SQL_NAMESPACE: NamespaceId = NamespaceId::from_bytes([1; 16]);
 const KV_NAMESPACE: NamespaceId = NamespaceId::from_bytes([2; 16]);
 const BLOB_NAMESPACE: NamespaceId = NamespaceId::from_bytes([3; 16]);
@@ -90,7 +99,13 @@ fn descriptor(
         commands
             .iter()
             .copied()
-            .map(operation)
+            .map(|id| {
+                let mut descriptor = operation(id);
+                if module == KV_MODULE {
+                    descriptor.input_limit = 4 * 1024 * 1024 + 64 * 1024;
+                }
+                descriptor
+            })
             .collect::<Vec<_>>()
             .into_boxed_slice(),
     );
@@ -98,7 +113,13 @@ fn descriptor(
         queries
             .iter()
             .copied()
-            .map(operation)
+            .map(|id| {
+                let mut descriptor = operation(id);
+                if module == KV_MODULE {
+                    descriptor.output_limit = 4 * 1024 * 1024 + 64 * 1024;
+                }
+                descriptor
+            })
             .collect::<Vec<_>>()
             .into_boxed_slice(),
     );
@@ -130,6 +151,7 @@ impl EffectModule for ReferenceSql {
     const CLAIM_COMMAND_ID: u32 = 3;
     const LEASE_COMMAND_ID: u32 = 4;
     const VALIDATE_QUERY_ID: u32 = 5;
+    const STATUS_QUERY_ID: u32 = 6;
 }
 impl CellModule for ReferenceSql {
     const NAME: &'static str = SQL_MODULE;
@@ -142,11 +164,42 @@ impl CellModule for ReferenceSql {
             effect_targets: &[],
             dead_letter: None,
         }];
-        descriptor(SQL_MODULE, &[1, 3, 4], &[2, 5], NAMESPACES, &[], &[])
+        descriptor(SQL_MODULE, &[1, 3, 4, 6], &[2, 5, 6], NAMESPACES, &[], &[])
     }
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
         register_sql::<Self>(registry)?;
+        registry.bind_command::<ReferenceCronReceiver>()?;
         register_effect_delivery::<Self>(registry)
+    }
+}
+
+struct ReferenceCronReceiver;
+
+impl Command for ReferenceCronReceiver {
+    const MODULE: &'static str = SQL_MODULE;
+    const ID: u32 = 6;
+    const CODEC_VERSION: u32 = 1;
+    type Input = CronInvocation;
+    type Output = ();
+
+    fn execute(
+        context: &mut CommandContext<'_, '_>,
+        input: Self::Input,
+    ) -> Result<CommandResult<Self::Output>> {
+        context.sql(&SqlBatch {
+            statements: vec![SqlStatement {
+                sql: "INSERT INTO invoice_receipts(schedule_id, occurrence, payload) VALUES (?1, ?2, ?3)"
+                    .into(),
+                parameters: vec![
+                    SqlValue::Blob(input.schedule_id.to_vec()),
+                    SqlValue::Integer(i64::try_from(input.occurrence).map_err(|_| {
+                        Error::Command("cron occurrence exceeds SQL integer range")
+                    })?),
+                    SqlValue::Blob(input.payload),
+                ],
+            }],
+        })?;
+        Ok(CommandResult::Success(()))
     }
 }
 
@@ -164,6 +217,7 @@ impl EffectModule for UnregisteredEffects {
     const CLAIM_COMMAND_ID: u32 = 20;
     const LEASE_COMMAND_ID: u32 = 21;
     const VALIDATE_QUERY_ID: u32 = 22;
+    const STATUS_QUERY_ID: u32 = 23;
 }
 impl CellModule for ReferenceKv {
     const NAME: &'static str = KV_MODULE;
@@ -301,12 +355,19 @@ impl MaintenanceModule for ReferenceCron {
     const MODULE: &'static str = CRON_MODULE;
     const TICK_COMMAND_ID: u32 = 3;
     const CRON_TARGETS: &'static [CronTarget] =
-        &[CronTarget::new(SQL_MODULE, SQL_NAMESPACE, 1, 1, 1 << 20)];
+        &[CronTarget::new(SQL_MODULE, SQL_NAMESPACE, 6, 1, 1 << 20)];
 }
 impl CronModule for ReferenceCron {
     const NAMESPACE: NamespaceId = CRON_NAMESPACE;
     const MUTATE_COMMAND_ID: u32 = 1;
     const QUERY_ID: u32 = 2;
+}
+impl EffectModule for ReferenceCron {
+    const MODULE: &'static str = CRON_MODULE;
+    const CLAIM_COMMAND_ID: u32 = 4;
+    const LEASE_COMMAND_ID: u32 = 5;
+    const VALIDATE_QUERY_ID: u32 = 6;
+    const STATUS_QUERY_ID: u32 = 7;
 }
 impl CellModule for ReferenceCron {
     const NAME: &'static str = CRON_MODULE;
@@ -319,10 +380,11 @@ impl CellModule for ReferenceCron {
             effect_targets: &[SQL_NAMESPACE],
             dead_letter: None,
         }];
-        descriptor(CRON_MODULE, &[1, 3], &[2], NAMESPACES, &[], &[])
+        descriptor(CRON_MODULE, &[1, 3, 4, 5], &[2, 6, 7], NAMESPACES, &[], &[])
     }
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
-        register_cron::<Self>(registry)
+        register_cron::<Self>(registry)?;
+        register_effect_delivery::<Self>(registry)
     }
 }
 
@@ -433,6 +495,7 @@ impl EffectModule for ReferenceWorkflow {
     const CLAIM_COMMAND_ID: u32 = 11;
     const LEASE_COMMAND_ID: u32 = 12;
     const VALIDATE_QUERY_ID: u32 = 13;
+    const STATUS_QUERY_ID: u32 = 14;
 }
 impl CellModule for ReferenceWorkflow {
     const NAME: &'static str = WORKFLOW_MODULE;
@@ -448,7 +511,7 @@ impl CellModule for ReferenceWorkflow {
         descriptor(
             WORKFLOW_MODULE,
             &[1, 2, 3, 4, 6, 7, 8, 9, 11, 12],
-            &[5, 10, 13],
+            &[5, 10, 13, 14],
             NAMESPACES,
             &[WORKFLOW_DIGEST],
             REFERENCE_ACTIVITY_TYPES,
@@ -625,7 +688,7 @@ async fn reference_application_uses_typed_handle_for_a_real_commit() {
     let incarnation = IncarnationId::from_bytes([23; 16]);
     let store = Store::new(Arc::new(InMemory::new()));
     let layout = CellStorageLayout::new(
-        store,
+        store.clone(),
         object_store::path::Path::from("reference-application"),
         *application_id.as_bytes(),
     );
@@ -682,7 +745,8 @@ async fn reference_application_uses_typed_handle_for_a_real_commit() {
         .unwrap();
     let client = CellClient::local(application.registry(), handle);
     let typed =
-        ApplicationHandle::<ReferenceApplication>::new(client, application, tenant, application_id);
+        ApplicationHandle::<ReferenceApplication>::new(client, application, tenant, application_id)
+            .with_blob_artifact_store(BlobArtifactStore::new(store));
     typed_capability_surface(&typed, target.clone()).unwrap();
     let now_ms = i64::try_from(
         std::time::SystemTime::now()
@@ -723,6 +787,7 @@ async fn bootstrap_reference_cell<F>(
     directory: &tempfile::TempDir,
     tenant: TenantId,
     application: ApplicationId,
+    session: cellule_runtime::SessionId,
     namespace: NamespaceId,
     role: CatalogRole,
     module: &'static str,
@@ -750,7 +815,6 @@ where
         .await?;
     let authority = CellAuthority::new(layout.clone());
     let incarnation = IncarnationId::from_bytes([incarnation_byte; 16]);
-    let session = cellule_runtime::SessionId::from_bytes([24; 16]);
     let observed = authority
         .create_initial(
             &proof,
@@ -1015,7 +1079,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
     let application_id = ApplicationId::from_bytes([32; 16]);
     let store = Store::new(Arc::new(InMemory::new()));
     let layout = CellStorageLayout::new(
-        store,
+        store.clone(),
         object_store::path::Path::from("reference-primitive-qualification"),
         *application_id.as_bytes(),
     );
@@ -1037,6 +1101,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             &directory,
             tenant,
             application_id,
+            session,
             SQL_NAMESPACE,
             CatalogRole::Sql,
             SQL_MODULE,
@@ -1052,6 +1117,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             &directory,
             tenant,
             application_id,
+            session,
             KV_NAMESPACE,
             CatalogRole::Kv,
             KV_MODULE,
@@ -1067,6 +1133,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             &directory,
             tenant,
             application_id,
+            session,
             BLOB_NAMESPACE,
             CatalogRole::Blob,
             BLOB_MODULE,
@@ -1082,6 +1149,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             &directory,
             tenant,
             application_id,
+            session,
             QUEUE_NAMESPACE,
             CatalogRole::Queue,
             QUEUE_MODULE,
@@ -1097,6 +1165,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             &directory,
             tenant,
             application_id,
+            session,
             DEAD_LETTER_NAMESPACE,
             CatalogRole::Queue,
             DEAD_LETTER_MODULE,
@@ -1112,6 +1181,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             &directory,
             tenant,
             application_id,
+            session,
             CRON_NAMESPACE,
             CatalogRole::Cron,
             CRON_MODULE,
@@ -1127,6 +1197,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             &directory,
             tenant,
             application_id,
+            session,
             WORKFLOW_NAMESPACE,
             CatalogRole::Workflow,
             WORKFLOW_MODULE,
@@ -1142,7 +1213,8 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         Arc::clone(&application),
         tenant,
         application_id,
-    );
+    )
+    .with_blob_artifact_store(BlobArtifactStore::new(store.clone()));
     let now_ms = i64::try_from(
         std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1178,6 +1250,23 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         .await;
     assert!(matches!(
         wrong_command,
+        Err(InvocationError::NotStarted(Error::Registry(
+            "namespace module differs from capability"
+        )))
+    ));
+    let wrong_prepared = typed
+        .prepare_command::<KvAtomicCommand<ReferenceKv>>(
+            &sql_target,
+            reference_identity(50, now_ms),
+            KvAtomicRequest {
+                scope: b"wrong-module".to_vec(),
+                checks: Vec::new(),
+                mutations: Vec::new(),
+            },
+        )
+        .await;
+    assert!(matches!(
+        wrong_prepared,
         Err(InvocationError::NotStarted(Error::Registry(
             "namespace module differs from capability"
         )))
@@ -1504,6 +1593,10 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
     drop(kv);
     drop(sql);
     drop(typed);
+    // The workload executor owns the last cloned local transport. Release it
+    // before deleting the source files so the crashed owner cannot continue a
+    // background compaction against the torn-down SQLite paths.
+    drop(executor);
     drop(runtime);
     drop(directory);
 
@@ -1568,7 +1661,8 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         application,
         tenant,
         application_id,
-    );
+    )
+    .with_blob_artifact_store(BlobArtifactStore::new(store));
     restored
         .sql::<ReferenceSql>(sql_target.clone())
         .unwrap()
