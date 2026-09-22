@@ -28,6 +28,16 @@ cargo run -p cellule-app --example notifications --locked
 
 It sends `order 42 ready`, claims the message, validates the published lease before processing, acknowledges that exact message and token, and confirms the Queue reports one acknowledgement. It prints `notification acknowledged: order 42 ready`. Its descriptor declares the Queue's version-one schema and enough capacity for the Queue's maximum send payload. The store and SQLite file are fresh on every run.
 
+## Run a fulfillment Workflow and Activity
+
+The [fulfillment example](../crates/cellule-app/examples/fulfillment.rs) starts one Workflow Cell with a registered native Activity. Run it from the workspace root:
+
+```sh
+cargo run -p cellule-app --example fulfillment --locked
+```
+
+The workflow starts in `Running`, schedules a `pack-order` Activity, and the supervisor claims and executes that Rust handler. The definition uses `decode_workflow_activity_event` to handle either a completed or failed Activity without parsing event bytes itself. The activity completion advances the workflow to `Completed`; a read at the completion receipt verifies the result before printing `fulfillment completed: packed order 42`. The definition digest tracks the example source, and its module descriptor contains the exact version-one Workflow schema. This example also uses fresh local storage on every run.
+
 ## Run the reference application
 
 The [reference application](../crates/cellule-app/tests/reference_application.rs) is a compiled Rust application with seven Cells and typed handles. Its storefront smoke places an order, saves a cart, uploads an attachment, sends a notification, completes a workflow activity, and delivers a scheduled invoice effect. Run it from the workspace root:

@@ -590,13 +590,11 @@ fn completion_digest(completion: &ActivityCompletion) -> [u8; 32] {
 }
 
 fn completion_event(completion: &ActivityCompletion) -> Vec<u8> {
-    let mut event = Vec::with_capacity(34 + completion.result.len());
-    event.extend_from_slice(b"activity\0");
-    event.push(u8::from(completion.failed));
-    event.extend_from_slice(&completion.activity_id);
-    event.extend_from_slice(&(completion.result.len() as u32).to_be_bytes());
-    event.extend_from_slice(&completion.result);
-    event
+    super::encode_workflow_activity_event(
+        completion.failed,
+        completion.activity_id,
+        &completion.result,
+    )
 }
 
 fn completion_event_id(completion: &ActivityCompletion) -> [u8; 32] {
