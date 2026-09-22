@@ -18,6 +18,16 @@ cargo run -p cellule-app --example carts --locked
 
 It checks that `customer/42` has no `cart` key, atomically saves `book x2`, reads at the commit receipt, and prints `cart for customer 42: book x2`. Its module descriptor includes the exact version-one KV schema that bootstrap installs. Like orders, it uses a fresh in-memory store and a temporary SQLite file, so its fixed demo release identity is not for persisted deployments.
 
+## Run a local notification Queue
+
+The [notifications example](../crates/cellule-app/examples/notifications.rs) starts one Queue Cell. Run it from the workspace root:
+
+```sh
+cargo run -p cellule-app --example notifications --locked
+```
+
+It sends `order 42 ready`, claims the message, validates the published lease before processing, acknowledges that exact message and token, and confirms the Queue reports one acknowledgement. It prints `notification acknowledged: order 42 ready`. Its descriptor declares the Queue's version-one schema and enough capacity for the Queue's maximum send payload. The store and SQLite file are fresh on every run.
+
 ## Run the reference application
 
 The [reference application](../crates/cellule-app/tests/reference_application.rs) is a compiled Rust application with seven Cells and typed handles. Its storefront smoke places an order, saves a cart, uploads an attachment, sends a notification, completes a workflow activity, and delivers a scheduled invoice effect. Run it from the workspace root:

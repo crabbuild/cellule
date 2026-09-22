@@ -36,6 +36,8 @@ jobs:
         run: cargo run -p cellule-app --example orders --locked
       - name: Run carts example
         run: cargo run -p cellule-app --example carts --locked
+      - name: Run notifications example
+        run: cargo run -p cellule-app --example notifications --locked
       - name: Run balanced three-process storefront smoke
         run: |
           CELLULE_PERF_ITERATIONS=1 cargo test -p cellule-app --test reference_application \

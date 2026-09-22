@@ -9,11 +9,12 @@ From the workspace root:
 ```sh
 cargo run -p cellule-app --example orders --locked
 cargo run -p cellule-app --example carts --locked
+cargo run -p cellule-app --example notifications --locked
 cargo test -p cellule-app --test reference_application \
   performance::reference_storefront_smoke --locked -- --exact --nocapture
 ```
 
-The [orders executable](examples/orders.rs) creates one local SQL Cell, commits an order, and reads at the commit receipt. The [carts executable](examples/carts.rs) creates one KV Cell, conditionally saves a cart, and reads the published value. The [storefront application](tests/reference_application.rs) registers seven Cells and verifies SQL orders, KV carts, Blob attachments, Queue notifications, Workflow/Activity fulfillment, and Cron/Effect invoices. The [quickstart](../../docs/quickstart.md) maps each action to its call sequence. All three runs use temporary SQLite files and in-memory object storage.
+The [orders executable](examples/orders.rs) creates one local SQL Cell, commits an order, and reads at the commit receipt. The [carts executable](examples/carts.rs) creates one KV Cell, conditionally saves a cart, and reads the published value. The [notifications executable](examples/notifications.rs) creates one Queue Cell, sends a notification, validates its claim, acknowledges it, and reads the acknowledged count. The [storefront application](tests/reference_application.rs) registers seven Cells and verifies SQL orders, KV carts, Blob attachments, Queue notifications, Workflow/Activity fulfillment, and Cron/Effect invoices. The [quickstart](../../docs/quickstart.md) maps each action to its call sequence. All four runs use temporary SQLite files and in-memory object storage.
 
 ## Author an application
 
