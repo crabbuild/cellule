@@ -1,8 +1,12 @@
 use super::*;
 use cellule_ltx::rusqlite::Connection;
+use std::collections::BTreeSet;
 
-#[test]
-fn multipart_publish_is_atomic_conditional_and_range_readable() {
+#[tokio::test]
+async fn multipart_publish_is_atomic_conditional_and_range_readable() {
+    use cellule_store::Store;
+    use object_store::memory::InMemory;
+    let artifacts = BlobArtifactStore::new(Store::new(std::sync::Arc::new(InMemory::new())));
     let mut connection = Connection::open_in_memory().unwrap();
     connection
         .execute_batch("PRAGMA foreign_keys = ON")
@@ -29,16 +33,19 @@ fn multipart_publish_is_atomic_conditional_and_range_readable() {
         BlobMutationOutcome::Begun
     );
     for (part_number, payload) in [(1, b"hello ".as_slice()), (2, b"world".as_slice())] {
+        let digest = part_digest(payload);
+        artifacts.put_part(digest, payload).await.unwrap();
         assert!(matches!(
             blob_mutate(
                 &transaction,
                 2,
                 2,
-                &BlobMutation::PutPart {
+                &BlobMutation::PutPartRef {
                     key: key.clone(),
                     upload_id,
                     part_number,
-                    payload: payload.to_vec(),
+                    digest,
+                    size: payload.len() as u32,
                 },
             )
             .unwrap(),
@@ -70,7 +77,14 @@ fn multipart_publish_is_atomic_conditional_and_range_readable() {
     .unwrap() else {
         panic!("blob range was not returned");
     };
-    assert_eq!(read.bytes, b"lo wo");
+    let mut bytes = Vec::new();
+    for part in &read.parts {
+        let payload = artifacts.read_part(part.digest, part.size).await.unwrap();
+        let start = 3_u64.saturating_sub(part.offset) as usize;
+        let end = 8_u64.saturating_sub(part.offset).min(u64::from(part.size)) as usize;
+        bytes.extend_from_slice(&payload[start..end]);
+    }
+    assert_eq!(bytes, b"lo wo");
     assert_eq!(read.metadata.etag, etag);
     let BlobQueryResult::List(page) = blob_query(
         &transaction,
@@ -101,9 +115,127 @@ fn multipart_publish_is_atomic_conditional_and_range_readable() {
     );
 }
 
+#[tokio::test]
+async fn object_store_sweep_keeps_live_parts_and_reclaims_old_orphans() {
+    use cellule_store::Store;
+    use object_store::memory::InMemory;
+
+    let store = Store::new(std::sync::Arc::new(InMemory::new()));
+    let artifacts = BlobArtifactStore::new(store.clone());
+    let live_payload = b"live";
+    let orphan_payload = b"orphan";
+    let live_digest = part_digest(live_payload);
+    let orphan_digest = part_digest(orphan_payload);
+    artifacts.put_part(live_digest, live_payload).await.unwrap();
+    artifacts
+        .put_part(orphan_digest, orphan_payload)
+        .await
+        .unwrap();
+
+    let report = artifacts
+        .sweep_unreferenced(&BTreeSet::from([live_digest]), i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(report.scanned(), 2);
+    assert_eq!(report.deleted(), 1);
+    assert!(!report.has_more());
+
+    let objects = store
+        .list_prefix(&ObjectPath::from(BLOB_ARTIFACT_PREFIX))
+        .await
+        .unwrap();
+    assert_eq!(objects.len(), 1);
+    assert!(
+        objects[0]
+            .location
+            .to_string()
+            .ends_with(&blake3::Hash::from_bytes(live_digest).to_hex().to_string())
+    );
+}
+
+#[tokio::test]
+async fn object_store_sweep_reaches_orphans_beyond_live_entries() {
+    use cellule_store::Store;
+    use object_store::memory::InMemory;
+
+    let store = Store::new(std::sync::Arc::new(InMemory::new()));
+    let artifacts = BlobArtifactStore::new(store);
+    let mut live_digests = BTreeSet::new();
+    for index in 0_u32..129 {
+        let payload = index.to_be_bytes();
+        let digest = part_digest(&payload);
+        artifacts.put_part(digest, &payload).await.unwrap();
+        live_digests.insert(digest);
+    }
+    let orphan_payload = b"orphan past the scan budget";
+    artifacts
+        .put_part(part_digest(orphan_payload), orphan_payload)
+        .await
+        .unwrap();
+
+    let report = artifacts
+        .sweep_unreferenced(&live_digests, i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(report.scanned(), 130);
+    assert_eq!(report.deleted(), 1);
+    assert!(!report.has_more());
+}
+
+#[tokio::test]
+async fn object_store_sweep_bounds_deletions_and_finishes_on_retry() {
+    use cellule_store::Store;
+    use object_store::memory::InMemory;
+
+    let store = Store::new(std::sync::Arc::new(InMemory::new()));
+    let artifacts = BlobArtifactStore::new(store);
+    for index in 0_u32..129 {
+        let payload = index.to_be_bytes();
+        artifacts
+            .put_part(part_digest(&payload), &payload)
+            .await
+            .unwrap();
+    }
+
+    let first = artifacts
+        .sweep_unreferenced(&BTreeSet::new(), i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(first.deleted(), MAX_BLOB_GC_DELETIONS);
+    assert!(first.has_more());
+
+    let second = artifacts
+        .sweep_unreferenced(&BTreeSet::new(), i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(second.deleted(), 1);
+    assert!(!second.has_more());
+}
+
 #[test]
 fn checked_in_blob_schema_matches_runtime_schema() {
-    assert_eq!(BLOB_SCHEMA, include_str!("../../docs/contracts/blob.sql"));
+    assert_eq!(
+        BLOB_SCHEMA_SQL,
+        include_str!("../../docs/contracts/blob.sql")
+    );
+}
+
+#[test]
+fn blob_schema_keeps_part_bytes_out_of_sqlite() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    let transaction = connection.transaction().unwrap();
+    install_blob_schema(&transaction).unwrap();
+    let columns = transaction
+        .prepare("PRAGMA table_info(blob_parts)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        columns,
+        ["upload_id", "part_number", "digest", "size", "byte_offset"]
+    );
 }
 
 #[test]

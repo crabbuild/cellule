@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-test-support = []
+test-support = ["dep:fs4"]
 
 [dependencies]
 async-trait = { workspace = true }
@@ -21,6 +21,7 @@ blake3 = { workspace = true }
 bytes = { workspace = true }
 cellule-types.workspace = true
 futures-util = { workspace = true }
+fs4 = { version = "0.13", optional = true }
 hyper = "1"
 object_store = { workspace = true, features = [
     "aws",

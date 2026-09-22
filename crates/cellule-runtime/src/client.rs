@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fmt,
     future::Future,
+    marker::PhantomData,
     pin::Pin,
     sync::{
         Arc,
@@ -247,6 +248,64 @@ impl PendingMutation {
     }
 }
 
+/// Typed command whose exact request evidence survives cancellation of execution.
+///
+/// Clone before dispatch if the caller may be cancelled; only retry the clone
+/// after resolving its evidence as absent.
+#[must_use]
+pub struct PreparedCommand<C: Command> {
+    client: CellClient,
+    request: EncodedCommand,
+    evidence: PendingMutation,
+    marker: PhantomData<fn() -> C>,
+}
+
+impl<C: Command> Clone for PreparedCommand<C> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            request: self.request.clone(),
+            evidence: self.evidence.clone(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Command> PreparedCommand<C> {
+    /// Returns the exact request evidence to resolve after execution is cancelled or ambiguous.
+    #[must_use]
+    pub const fn evidence(&self) -> &PendingMutation {
+        &self.evidence
+    }
+
+    /// Executes the prepared request once against its validated owner incarnation.
+    ///
+    /// Returns pending evidence when acceptance is unknown and rejects an expired identity.
+    pub async fn execute(
+        mut self,
+    ) -> std::result::Result<Committed<C::Output>, InvocationError<C::Output>> {
+        let now_ms = unix_time_ms().map_err(InvocationError::NotStarted)?;
+        self.evidence
+            .identity
+            .validate(now_ms)
+            .map_err(InvocationError::NotStarted)?;
+        self.request.now_ms = now_ms;
+        match self.client.transport.command(self.request).await {
+            Ok(outcome) => decode_pending::<C::Output>(&self.evidence, outcome),
+            Err(Error::OutcomeUnknown {
+                request_id,
+                operation_digest,
+                ..
+            }) if request_id == self.evidence.identity.request_id
+                && operation_digest == self.evidence.operation_digest =>
+            {
+                Err(InvocationError::Pending(Box::new(self.evidence)))
+            }
+            Err(error) => Err(InvocationError::NotStarted(error)),
+        }
+    }
+}
+
 /// Outcome-aware typed invocation failure.
 pub enum InvocationError<T> {
     Rejected(Box<Committed<T>>),
@@ -303,6 +362,7 @@ impl<T> std::error::Error for InvocationError<T> {
 }
 
 /// Owned encoded command accepted by a local or authenticated peer transport.
+#[derive(Clone)]
 pub(super) struct EncodedCommand {
     pub(super) target: CellTarget,
     pub(super) expected: CellDescription,
@@ -375,6 +435,7 @@ pub(super) trait CellTransport: Send + Sync + 'static {
 pub struct CellClient {
     registry: Arc<Registry>,
     transport: Arc<dyn CellTransport>,
+    blob_artifact_store: Option<crate::BlobArtifactStore>,
 }
 
 impl CellClient {
@@ -383,7 +444,20 @@ impl CellClient {
         Self {
             registry,
             transport,
+            blob_artifact_store: None,
         }
+    }
+
+    /// Returns a client clone wired to the configured object-store Blob data.
+    #[must_use]
+    pub fn with_blob_artifact_store(&self, store: crate::BlobArtifactStore) -> Self {
+        let mut client = self.clone();
+        client.blob_artifact_store = Some(store);
+        client
+    }
+
+    pub(crate) fn blob_artifact_store(&self) -> Option<crate::BlobArtifactStore> {
+        self.blob_artifact_store.clone()
     }
 
     /// Builds the canonical single-owner transport used by embedded routes.
@@ -542,6 +616,21 @@ impl CellClient {
         identity: MutationIdentity,
         input: C::Input,
     ) -> std::result::Result<Committed<C::Output>, InvocationError<C::Output>> {
+        self.prepare_command::<C>(target, identity, input)
+            .await?
+            .execute()
+            .await
+    }
+
+    /// Prepares one exact typed command so its evidence survives cancellation during dispatch.
+    ///
+    /// Validates the owner contract and bounded input without dispatching a mutation.
+    pub async fn prepare_command<C: Command>(
+        &self,
+        target: &CellTarget,
+        identity: MutationIdentity,
+        input: C::Input,
+    ) -> std::result::Result<PreparedCommand<C>, InvocationError<C::Output>> {
         let now_ms = unix_time_ms().map_err(InvocationError::NotStarted)?;
         identity
             .validate(now_ms)
@@ -571,38 +660,18 @@ impl CellClient {
             input_limit: operation.input_limit,
             output_limit: operation.output_limit,
         };
-        match self.transport.command(request).await {
-            Ok(StoredOutcome::Success {
-                result,
-                commit_sequence,
-            }) => decode_committed(
-                &result,
-                operation.output_limit,
-                receipt(description, commit_sequence),
-            ),
-            Ok(StoredOutcome::Rejected {
-                result,
-                commit_sequence,
-            }) => Err(InvocationError::Rejected(Box::new(decode_committed(
-                &result,
-                operation.output_limit,
-                receipt(description, commit_sequence),
-            )?))),
-            Err(Error::OutcomeUnknown {
-                request_id,
-                operation_digest,
-                ..
-            }) if request_id == identity.request_id && operation_digest == digest => {
-                Err(InvocationError::Pending(Box::new(PendingMutation {
-                    target: target.clone(),
-                    incarnation: description.incarnation,
-                    identity,
-                    operation_digest: digest,
-                    max_result_bytes: operation.output_limit as usize,
-                })))
-            }
-            Err(error) => Err(InvocationError::NotStarted(error)),
-        }
+        Ok(PreparedCommand {
+            client: self.clone(),
+            request,
+            evidence: PendingMutation {
+                target: target.clone(),
+                incarnation: description.incarnation,
+                identity,
+                operation_digest: digest,
+                max_result_bytes: operation.output_limit as usize,
+            },
+            marker: PhantomData,
+        })
     }
 
     /// Runs one typed FIFO read at or beyond an optional receipt.
@@ -908,6 +977,39 @@ fn decode_committed<T: crate::WireValue>(
             source: Box::new(Error::from(error)),
         })?;
     Ok(Committed { output, receipt })
+}
+
+pub(crate) fn decode_pending<T: crate::WireValue>(
+    pending: &PendingMutation,
+    outcome: StoredOutcome,
+) -> std::result::Result<Committed<T>, InvocationError<T>> {
+    let limit = u32::try_from(pending.max_result_bytes).map_err(|_| {
+        InvocationError::NotStarted(Error::Command("pending result limit overflow"))
+    })?;
+    let decode = |result: Vec<u8>, commit_sequence| {
+        decode_committed(
+            &result,
+            limit,
+            Receipt {
+                cell: pending.target.cell_id(),
+                incarnation: pending.incarnation,
+                commit_sequence,
+            },
+        )
+    };
+    match outcome {
+        StoredOutcome::Success {
+            result,
+            commit_sequence,
+        } => decode(result, commit_sequence),
+        StoredOutcome::Rejected {
+            result,
+            commit_sequence,
+        } => Err(InvocationError::Rejected(Box::new(decode(
+            result,
+            commit_sequence,
+        )?))),
+    }
 }
 
 fn validate_description(

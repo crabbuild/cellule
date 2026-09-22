@@ -12,9 +12,12 @@ blake3.workspace = true
 cellule-runtime.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 cellule-ltx = { workspace = true, features = ["replica"] }
-cellule-store.workspace = true
+cellule-store = { workspace = true, features = ["test-support"] }
 ed25519-dalek.workspace = true
+fs4 = "0.13"
+futures-util.workspace = true
 object_store.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }

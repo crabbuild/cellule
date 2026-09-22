@@ -153,6 +153,60 @@ pub trait WorkflowDefinition: Send + Sync + 'static {
     ) -> Result<WorkflowDecision>;
 }
 
+/// Activity event delivered to a workflow definition after native execution or expiry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkflowActivityEvent<'a> {
+    Completed {
+        activity_id: [u8; 16],
+        result: &'a [u8],
+    },
+    Failed {
+        activity_id: [u8; 16],
+        details: &'a [u8],
+    },
+}
+
+/// Decodes a native Activity event; returns `None` for an unrelated workflow event.
+///
+/// A tagged but malformed Activity event returns an error rather than reaching the definition.
+pub fn decode_workflow_activity_event(event: &[u8]) -> Result<Option<WorkflowActivityEvent<'_>>> {
+    let Some(data) = event.strip_prefix(b"activity\0") else {
+        return Ok(None);
+    };
+    if data.len() < 21 {
+        return Err(Error::Command("activity event is truncated"));
+    }
+    let mut activity_id = [0; 16];
+    activity_id.copy_from_slice(&data[1..17]);
+    let declared = usize::try_from(u32::from_be_bytes([data[17], data[18], data[19], data[20]]))
+        .map_err(|_| Error::Command("activity event length overflows"))?;
+    let payload = &data[21..];
+    if declared != payload.len() {
+        return Err(Error::Command("activity event length differs"));
+    }
+    match data[0] {
+        0 => Ok(Some(WorkflowActivityEvent::Completed {
+            activity_id,
+            result: payload,
+        })),
+        1 => Ok(Some(WorkflowActivityEvent::Failed {
+            activity_id,
+            details: payload,
+        })),
+        _ => Err(Error::Command("activity event status is invalid")),
+    }
+}
+
+fn encode_workflow_activity_event(failed: bool, activity_id: [u8; 16], payload: &[u8]) -> Vec<u8> {
+    let mut event = Vec::with_capacity(30 + payload.len());
+    event.extend_from_slice(b"activity\0");
+    event.push(u8::from(failed));
+    event.extend_from_slice(&activity_id);
+    event.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    event.extend_from_slice(payload);
+    event
+}
+
 /// Inputs that create one new workflow run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkflowStart {
@@ -741,13 +795,7 @@ fn retained_definition(
 }
 
 fn activity_failure_event(activity_id: [u8; 16], details: &[u8]) -> Vec<u8> {
-    let mut event = Vec::with_capacity(34 + details.len());
-    event.extend_from_slice(b"activity\0");
-    event.push(1);
-    event.extend_from_slice(&activity_id);
-    event.extend_from_slice(&(details.len() as u32).to_be_bytes());
-    event.extend_from_slice(details);
-    event
+    encode_workflow_activity_event(true, activity_id, details)
 }
 
 fn activity_failure_event_id(run_id: [u8; 16], activity_id: [u8; 16]) -> [u8; 32] {
@@ -1310,6 +1358,43 @@ mod tests {
         assert_eq!(WorkflowStatus::decode(0).unwrap(), WorkflowStatus::Running);
         assert_eq!(WorkflowStatus::decode(4).unwrap(), WorkflowStatus::Paused);
         assert!(WorkflowStatus::decode(5).is_err());
+    }
+
+    #[test]
+    fn activity_event_decodes_completed_and_failed_payloads() {
+        let activity_id = [7; 16];
+        let completed = encode_workflow_activity_event(false, activity_id, b"packed order 42");
+        assert_eq!(
+            decode_workflow_activity_event(&completed).unwrap(),
+            Some(WorkflowActivityEvent::Completed {
+                activity_id,
+                result: b"packed order 42",
+            })
+        );
+        let failed = activity_failure_event(activity_id, b"expired");
+        assert_eq!(
+            decode_workflow_activity_event(&failed).unwrap(),
+            Some(WorkflowActivityEvent::Failed {
+                activity_id,
+                details: b"expired",
+            })
+        );
+    }
+
+    #[test]
+    fn activity_event_rejects_corrupt_tagged_data() {
+        let mut event = encode_workflow_activity_event(false, [7; 16], b"packed");
+        event[9] = 2;
+        assert!(decode_workflow_activity_event(&event).is_err());
+        event[9] = 0;
+        event[29] = 7;
+        assert!(decode_workflow_activity_event(&event).is_err());
+        assert!(decode_workflow_activity_event(b"activity\0").is_err());
+        assert!(
+            decode_workflow_activity_event(b"pack order 42")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

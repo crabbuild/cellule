@@ -1,3 +1,9 @@
+use std::collections::BTreeSet;
+
+use bytes::Bytes;
+use cellule_store::{StorageError, Store};
+use futures_util::StreamExt;
+use object_store::path::Path as ObjectPath;
 use rusqlite::{Connection, OptionalExtension, Transaction};
 
 use crate::{Error, Result};
@@ -8,7 +14,8 @@ mod tests;
 
 pub use api::{BlobCommand, BlobModule, BlobNamespace, BlobQueryCommand, register_blob};
 
-const BLOB_SCHEMA: &str = include_str!("migrations/blob.sql");
+/// Version-one Blob schema for a module's `MigrationDescriptor`.
+pub const BLOB_SCHEMA_SQL: &str = include_str!("migrations/blob.sql");
 pub(crate) const MAX_BLOB_PART_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_BLOB_READ_BYTES: u32 = 512 * 1024;
 pub(crate) const MAX_BLOB_PARTS: u32 = 4_096;
@@ -18,6 +25,9 @@ const MAX_METADATA_BYTES: usize = 8 * 1_024;
 const MAX_CONTENT_TYPE_BYTES: usize = 256;
 const MIN_UPLOAD_LIFETIME_MS: i64 = 60_000;
 const MAX_UPLOAD_LIFETIME_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+const BLOB_ARTIFACT_PREFIX: &str = ".cellule/blob-parts";
+const MAX_BLOB_READ_PARTS: usize = 8;
+const MAX_BLOB_GC_DELETIONS: u32 = 128;
 
 #[derive(Clone, Copy)]
 struct BlobMutationTimes {
@@ -49,6 +59,18 @@ pub enum BlobMutation {
         upload_id: [u8; 16],
         part_number: u32,
         payload: Vec<u8>,
+    },
+    /// Stores a reference to a content-addressed object-store part.
+    ///
+    /// This variant is emitted by [`BlobNamespace`] after it uploads the
+    /// payload. Applications should use [`BlobMutation::PutPart`] instead.
+    #[doc(hidden)]
+    PutPartRef {
+        key: Vec<u8>,
+        upload_id: [u8; 16],
+        part_number: u32,
+        digest: [u8; 32],
+        size: u32,
     },
     Complete {
         key: Vec<u8>,
@@ -96,6 +118,176 @@ pub struct BlobRead {
     pub metadata: BlobMetadata,
     pub offset: u64,
     pub bytes: Vec<u8>,
+    pub(crate) parts: Vec<BlobPart>,
+    pub(crate) end: u64,
+}
+
+/// One object-store part intersecting a bounded Blob range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BlobPart {
+    digest: [u8; 32],
+    offset: u64,
+    size: u32,
+}
+
+/// Object-store backing for Blob parts.
+///
+/// SQLite stores only the bounded upload manifest and content digests. Part
+/// bytes are immutable, content-addressed objects in the configured
+/// object store and are verified again on every range read.
+#[derive(Clone)]
+pub struct BlobArtifactStore {
+    store: Store,
+}
+
+/// Result from one Blob part reachability sweep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlobGarbageCollectionReport {
+    scanned: u64,
+    deleted: u32,
+    has_more: bool,
+}
+
+impl BlobGarbageCollectionReport {
+    /// Returns the number of object-store entries inspected by the sweep.
+    #[must_use]
+    pub const fn scanned(self) -> u64 {
+        self.scanned
+    }
+
+    /// Returns the number of unreferenced part objects deleted by the sweep.
+    #[must_use]
+    pub const fn deleted(self) -> u32 {
+        self.deleted
+    }
+
+    /// Returns whether the deletion budget was reached and another sweep may be needed.
+    #[must_use]
+    pub const fn has_more(self) -> bool {
+        self.has_more
+    }
+}
+
+impl BlobArtifactStore {
+    /// Wraps a configured object store for Blob artifact data.
+    #[must_use]
+    pub fn new(store: Store) -> Self {
+        Self { store }
+    }
+
+    async fn put_part(&self, digest: [u8; 32], payload: &[u8]) -> Result<()> {
+        if part_digest(payload) != digest {
+            return Err(Error::Command("blob part digest does not match payload"));
+        }
+        self.store
+            .put(&self.part_path(&digest), Bytes::copy_from_slice(payload))
+            .await?;
+        Ok(())
+    }
+
+    async fn read_part(&self, digest: [u8; 32], size: u32) -> Result<Vec<u8>> {
+        if usize::try_from(size)
+            .ok()
+            .is_none_or(|size| size > MAX_BLOB_PART_BYTES)
+        {
+            return Err(Error::Command("invalid stored blob part size"));
+        }
+        let (bytes, _) = self
+            .store
+            .get_with_etag_bounded(&self.part_path(&digest), u64::from(size))
+            .await?;
+        if bytes.len() != size as usize || part_digest(&bytes) != digest {
+            return Err(Error::Command("blob part integrity check failed"));
+        }
+        Ok(bytes.to_vec())
+    }
+
+    /// Reclaims old part objects absent from a complete cross-Cell reference set.
+    ///
+    /// Callers must quiesce Blob writes in this object-store scope and build
+    /// `live_digests` from every authoritative Cell database sharing it. A grace
+    /// boundary alone cannot protect an old part reused by a concurrent upload.
+    /// Objects newer than `cutoff_ms` are retained for uploads whose SQLite
+    /// manifests have not committed. Each call inspects the complete unordered
+    /// listing until 128 parts have been deleted; schedule another call while
+    /// [`BlobGarbageCollectionReport::has_more`] is true.
+    pub async fn sweep_unreferenced(
+        &self,
+        live_digests: &BTreeSet<[u8; 32]>,
+        cutoff_ms: i64,
+    ) -> Result<BlobGarbageCollectionReport> {
+        if cutoff_ms < 0 {
+            return Err(Error::Command("negative blob garbage-collection cutoff"));
+        }
+        let mut objects = self
+            .store
+            .list_stream(&ObjectPath::from(BLOB_ARTIFACT_PREFIX));
+        let mut scanned = 0_u64;
+        let mut candidates = Vec::with_capacity(MAX_BLOB_GC_DELETIONS as usize);
+        while let Some(object) = objects.next().await {
+            let object = object?;
+            scanned = scanned.saturating_add(1);
+            let Some(hash) = content_hash_from_path(object.location.as_ref()) else {
+                continue;
+            };
+            let Some(digest) = decode_hex_digest(hash) else {
+                continue;
+            };
+            if live_digests.contains(&digest) || object.last_modified.timestamp_millis() > cutoff_ms
+            {
+                continue;
+            }
+            candidates.push(object.location);
+            if candidates.len() == MAX_BLOB_GC_DELETIONS as usize {
+                break;
+            }
+        }
+        drop(objects);
+        let has_more = candidates.len() == MAX_BLOB_GC_DELETIONS as usize;
+        let mut deleted = 0_u32;
+        for path in candidates {
+            match self.store.delete(&path).await {
+                Ok(()) | Err(StorageError::NotFound { .. }) => deleted += 1,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(BlobGarbageCollectionReport {
+            scanned,
+            deleted,
+            has_more,
+        })
+    }
+
+    fn part_path(&self, digest: &[u8; 32]) -> ObjectPath {
+        let hash = blake3::Hash::from_bytes(*digest).to_hex().to_string();
+        ObjectPath::from(format!("{BLOB_ARTIFACT_PREFIX}/{}/{hash}", &hash[..2]))
+    }
+}
+
+fn content_hash_from_path(path: &str) -> Option<&str> {
+    let remainder = path.strip_prefix(BLOB_ARTIFACT_PREFIX)?.strip_prefix('/')?;
+    let (partition, hash) = remainder.split_once('/')?;
+    (partition.len() == 2 && hash.get(..2) == Some(partition) && !hash.contains('/'))
+        .then_some(hash)
+}
+
+fn decode_hex_digest(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut digest = [0_u8; 32];
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        digest[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
+    }
+    Some(digest)
+}
+
+fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
+    }
 }
 
 /// One lexicographically ordered page of blob metadata.
@@ -131,9 +323,9 @@ pub enum BlobQueryResult {
     List(BlobPage),
 }
 
-/// Installs the exact version-one Blob schema.
+/// Installs the current Blob metadata and manifest schema.
 pub fn install_blob_schema(transaction: &Transaction<'_>) -> Result<()> {
-    transaction.execute_batch(BLOB_SCHEMA)?;
+    transaction.execute_batch(BLOB_SCHEMA_SQL)?;
     Ok(())
 }
 
@@ -167,12 +359,24 @@ pub fn blob_mutate(
             metadata,
             *expires_at_ms,
         ),
-        BlobMutation::PutPart {
+        BlobMutation::PutPart { .. } => Err(Error::Command(
+            "blob part payload must be uploaded to object store",
+        )),
+        BlobMutation::PutPartRef {
             key,
             upload_id,
             part_number,
-            payload,
-        } => put_part(transaction, now_ms, key, *upload_id, *part_number, payload),
+            digest,
+            size,
+        } => put_part_ref(
+            transaction,
+            now_ms,
+            key,
+            *upload_id,
+            *part_number,
+            *digest,
+            *size,
+        ),
         BlobMutation::Complete {
             key,
             upload_id,
@@ -277,19 +481,23 @@ fn begin_upload(
     Ok(BlobMutationOutcome::Begun)
 }
 
-fn put_part(
+fn put_part_ref(
     transaction: &Transaction<'_>,
     now_ms: i64,
     key: &[u8],
     upload_id: [u8; 16],
     part_number: u32,
-    payload: &[u8],
+    digest: [u8; 32],
+    size: u32,
 ) -> Result<BlobMutationOutcome> {
     validate_key(key)?;
     if !(1..=MAX_BLOB_PARTS).contains(&part_number) {
         return Err(Error::Command("blob part number must be in 1..=4096"));
     }
-    if payload.len() > MAX_BLOB_PART_BYTES {
+    if usize::try_from(size)
+        .ok()
+        .is_none_or(|size| size > MAX_BLOB_PART_BYTES)
+    {
         return Err(Error::Command("blob part exceeds 256 KiB"));
     }
     let upload = upload_state(transaction, upload_id)?;
@@ -299,28 +507,29 @@ fn put_part(
     if stored_key != key || completed || expires_at_ms <= now_ms {
         return Ok(BlobMutationOutcome::Conflict);
     }
-    let digest = part_digest(payload);
     let existing = transaction
         .query_row(
-            "SELECT digest FROM blob_parts WHERE upload_id = ?1 AND part_number = ?2",
+            "SELECT digest, size FROM blob_parts WHERE upload_id = ?1 AND part_number = ?2",
             (upload_id.as_slice(), i64::from(part_number)),
-            |row| row.get::<_, Vec<u8>>(0),
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?)),
         )
         .optional()?;
     if let Some(existing) = existing {
-        return Ok(if existing.as_slice() == digest {
-            BlobMutationOutcome::PartStored { digest }
-        } else {
-            BlobMutationOutcome::Conflict
-        });
+        return Ok(
+            if existing.0.as_slice() == digest.as_slice() && existing.1 == i64::from(size) {
+                BlobMutationOutcome::PartStored { digest }
+            } else {
+                BlobMutationOutcome::Conflict
+            },
+        );
     }
     transaction.execute(
-        "INSERT INTO blob_parts(upload_id, part_number, digest, payload, byte_offset) VALUES (?1, ?2, ?3, ?4, NULL)",
+        "INSERT INTO blob_parts(upload_id, part_number, digest, size, byte_offset) VALUES (?1, ?2, ?3, ?4, NULL)",
         (
             upload_id.as_slice(),
             i64::from(part_number),
             digest.as_slice(),
-            payload,
+            i64::from(size),
         ),
     )?;
     Ok(BlobMutationOutcome::PartStored { digest })
@@ -392,7 +601,7 @@ fn complete_upload(
         return Ok(BlobMutationOutcome::Conflict);
     }
     let mut statement = transaction.prepare(
-        "SELECT part_number, digest, length(payload) FROM blob_parts WHERE upload_id = ?1 ORDER BY part_number",
+        "SELECT part_number, digest, size FROM blob_parts WHERE upload_id = ?1 ORDER BY part_number",
     )?;
     let rows = statement.query_map([upload_id.as_slice()], |row| {
         Ok((
@@ -515,6 +724,8 @@ fn read_blob(
             metadata,
             offset,
             bytes: Vec::new(),
+            parts: Vec::new(),
+            end: offset,
         }));
     }
     let end = offset.saturating_add(u64::from(limit)).min(metadata.size);
@@ -524,33 +735,48 @@ fn read_blob(
         |row| row.get::<_, Vec<u8>>(0),
     )?;
     let mut statement = connection.prepare(
-        "SELECT byte_offset, digest, payload FROM blob_parts WHERE upload_id = ?1 AND byte_offset < ?2 AND byte_offset + length(payload) > ?3 ORDER BY part_number",
+        "SELECT byte_offset, digest, size FROM blob_parts WHERE upload_id = ?1 AND byte_offset < ?2 AND byte_offset + size > ?3 ORDER BY part_number",
     )?;
     let rows = statement.query_map((upload_id, end as i64, offset as i64), |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, Vec<u8>>(1)?,
-            row.get::<_, Vec<u8>>(2)?,
+            row.get::<_, i64>(2)?,
         ))
     })?;
-    let mut bytes = Vec::with_capacity((end - offset) as usize);
+    let mut parts = Vec::new();
     for row in rows {
-        let (part_offset, digest, payload) = row?;
-        if part_offset < 0 || digest.as_slice() != part_digest(&payload) {
+        let (part_offset, digest, size) = row?;
+        if part_offset < 0 || digest.len() != 32 || size < 0 {
             return Err(Error::Command("blob part integrity check failed"));
         }
+        let digest: [u8; 32] = digest
+            .try_into()
+            .map_err(|_| Error::Command("invalid stored blob part digest"))?;
+        let size =
+            u32::try_from(size).map_err(|_| Error::Command("invalid stored blob part size"))?;
+        if size as usize > MAX_BLOB_PART_BYTES {
+            return Err(Error::Command("invalid stored blob part size"));
+        }
         let part_offset = part_offset as u64;
-        let start = offset.saturating_sub(part_offset) as usize;
-        let take_end = (end.saturating_sub(part_offset) as usize).min(payload.len());
-        bytes.extend_from_slice(&payload[start..take_end]);
+        parts.push(BlobPart {
+            digest,
+            offset: part_offset,
+            size,
+        });
     }
-    if bytes.len() != (end - offset) as usize {
+    if parts.len() > MAX_BLOB_READ_PARTS {
+        return Err(Error::Command("blob range references too many parts"));
+    }
+    if parts.is_empty() {
         return Err(Error::Command("blob range is incomplete"));
     }
     Ok(Some(BlobRead {
         metadata,
         offset,
-        bytes,
+        bytes: Vec::new(),
+        parts,
+        end,
     }))
 }
 

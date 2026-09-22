@@ -7,12 +7,12 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use cellule_runtime::{
-    ApplicationId, BlobModule, BlobNamespace, BuildDescriptor, CatalogRole, CellClient, CellModule,
-    CellTarget, Command, Committed, CronModule, CronNamespace, Digest, EffectModule, EffectSource,
-    Error, InvocationError, KvModule, KvNamespace, NamespaceId, Observed, Query, QueueModule,
-    QueueNamespace, Registry, RegistryBuilder, Result, SqlCell, SqlModule, TenantId,
-    WorkflowActivities, WorkflowActivityModule, WorkflowModule, WorkflowNamespace,
-    partition_for_shard,
+    ApplicationId, BlobArtifactStore, BlobModule, BlobNamespace, BuildDescriptor, CatalogRole,
+    CellClient, CellModule, CellTarget, Command, Committed, CronModule, CronNamespace, Digest,
+    EffectModule, EffectSource, Error, InvocationError, KvModule, KvNamespace, NamespaceId,
+    Observed, PendingMutation, PreparedCommand, Query, QueueModule, QueueNamespace, Registry,
+    RegistryBuilder, Resolution, Result, SqlCell, SqlModule, TenantId, WorkflowActivities,
+    WorkflowActivityModule, WorkflowModule, WorkflowNamespace, partition_for_shard,
 };
 
 const DESCRIPTOR_MAGIC: &[u8] = b"cellule.application.v1\0";
@@ -336,6 +336,14 @@ impl<A> ApplicationHandle<A> {
         }
     }
 
+    /// Returns a handle whose Blob capability uses the configured object store.
+    #[must_use]
+    pub fn with_blob_artifact_store(&self, store: BlobArtifactStore) -> Self {
+        let mut handle = self.clone();
+        handle.client = handle.client.with_blob_artifact_store(store);
+        handle
+    }
+
     /// Returns the immutable compiled artifact.
     #[must_use]
     pub fn compiled(&self) -> &CompiledApplication {
@@ -355,6 +363,22 @@ impl<A> ApplicationHandle<A> {
         self.client.command::<C>(target, identity, input).await
     }
 
+    /// Prepares a scoped typed command whose evidence can be resolved after cancellation.
+    ///
+    /// Rejects a target outside this application before preparing the mutation.
+    pub async fn prepare_command<C: Command>(
+        &self,
+        target: &CellTarget,
+        identity: cellule_runtime::MutationIdentity,
+        input: C::Input,
+    ) -> std::result::Result<PreparedCommand<C>, InvocationError<C::Output>> {
+        self.validate_target_module(target, C::MODULE)
+            .map_err(InvocationError::NotStarted)?;
+        self.client
+            .prepare_command::<C>(target, identity, input)
+            .await
+    }
+
     /// Executes one statically typed query after enforcing application scope.
     pub async fn query<Q: Query>(
         &self,
@@ -366,6 +390,19 @@ impl<A> ApplicationHandle<A> {
             return Err(InvocationError::NotStarted(error));
         }
         self.client.query::<Q>(target, minimum, input).await
+    }
+
+    /// Resolves a pending command against the current owner after checking its application scope.
+    ///
+    /// The caller must keep the pending mutation from its original typed invocation;
+    /// resolution can remain unknown until the owner recovers or the identity expires.
+    pub async fn resolve(
+        &self,
+        pending: &PendingMutation,
+    ) -> std::result::Result<Resolution, InvocationError<Vec<u8>>> {
+        self.validate_target(pending.target())
+            .map_err(InvocationError::NotStarted)?;
+        self.client.resolve(pending).await
     }
 
     /// Returns the typed KV capability for a compiled KV module.
@@ -421,7 +458,7 @@ impl<A> ApplicationHandle<A> {
 
     /// Returns the source effect capability for one explicitly selected Cell.
     ///
-    /// Effects are emitted by commands through [`CommandContext::emit_effect`];
+    /// Effects are emitted by commands through [`cellule_runtime::CommandContext::emit_effect`];
     /// this capability is for claiming and acknowledging the resulting source
     /// ledger. The destination still owns external idempotency.
     pub fn effects<M: EffectModule>(&self, target: CellTarget) -> Result<EffectSource<M>> {

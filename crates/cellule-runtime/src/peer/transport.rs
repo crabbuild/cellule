@@ -2,7 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use prost::Message;
@@ -18,6 +18,15 @@ use super::{PeerOperation, PeerPrincipal, PeerSigner, decode_peer_reply, wire};
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 
 /// Sends one authenticated request to the current owner and returns exact reply bytes.
+///
+/// A pending future is dropped when `remaining_ms` elapses. A malformed or
+/// unrelated reply also leaves mutation acceptance unknown. Callers must
+/// resolve the original identity instead of issuing a new mutation.
+/// An adapter must return `Error::PeerTransportUnknown` whenever delivery or
+/// acceptance may have occurred, including a lost response or an HTTP error
+/// emitted after dispatch. Return a known transport error only when non-delivery
+/// is proven. A received response permits a safe retry only when its peer reply
+/// explicitly says `NotStarted`.
 pub trait PeerRoundTrip: Send + Sync + 'static {
     fn send(
         &self,
@@ -74,6 +83,8 @@ impl MigrationPeerClient {
     }
 
     /// Migrates one exact remote capability without accepting migration SQL on the wire.
+    /// An ambiguous reply is reconciled by describing the Cell; an unconfirmed
+    /// migration returns `Error::PeerTransportUnknown`.
     pub async fn migrate(
         &self,
         target: CellTarget,
@@ -98,39 +109,54 @@ impl MigrationPeerClient {
             to_code: plan.to_code().as_bytes().to_vec(),
             to_schema: plan.to_schema(),
         });
-        let reply = match self
+        let reply = self
             .transport
             .exchange(target.clone(), now_ms, expires_at_ms, operation)
-            .await
-        {
-            Ok(reply) => reply,
-            Err(source @ Error::PeerTransportUnknown { .. }) => {
-                let observed = self.transport.describe(target).await?;
-                if migrated_description(observed, expected, plan) {
-                    return Ok(observed);
+            .await;
+        let source = match reply {
+            Ok(wire::PeerReply {
+                outcome: Some(wire::peer_reply::Outcome::Migration(reply)),
+            }) => {
+                let description = reply
+                    .description
+                    .ok_or(Error::Peer("migration reply description is missing"))
+                    .and_then(runtime_description);
+                match description {
+                    Ok(observed) if migrated_description(observed, expected, plan) => {
+                        return Ok(observed);
+                    }
+                    Ok(_) => Error::Peer("migration reply does not match the requested successor"),
+                    Err(source) => source,
                 }
-                return Err(source);
             }
+            Ok(wire::PeerReply {
+                outcome: Some(wire::peer_reply::Outcome::Error(error)),
+            }) if error.code == wire::error::Code::OutcomeUnknown as i32
+                || error.outcome == wire::error::Outcome::Unknown as i32 =>
+            {
+                runtime_error(error)
+            }
+            Ok(wire::PeerReply {
+                outcome: Some(wire::peer_reply::Outcome::Error(error)),
+            }) => return Err(runtime_error(error)),
+            Ok(_) => Error::Peer("unexpected migration reply"),
+            Err(source @ Error::PeerTransportUnknown { .. }) => source,
             Err(error) => return Err(error),
         };
-        match reply.outcome {
-            Some(wire::peer_reply::Outcome::Migration(reply)) => {
-                let observed = runtime_description(
-                    reply
-                        .description
-                        .ok_or(Error::Peer("migration reply description is missing"))?,
-                )?;
-                if migrated_description(observed, expected, plan) {
-                    Ok(observed)
-                } else {
-                    Err(Error::Peer(
-                        "migration reply does not match the requested successor",
-                    ))
-                }
-            }
-            Some(wire::peer_reply::Outcome::Error(error)) => Err(runtime_error(error)),
-            _ => Err(Error::Peer("unexpected migration reply")),
+        // Publication can succeed before the reply is lost or corrupted.
+        // Re-describe before reporting an outcome that cannot be confirmed.
+        if let Ok(observed) = self.transport.describe(target).await
+            && migrated_description(observed, expected, plan)
+        {
+            return Ok(observed);
         }
+        Err(match source {
+            source @ Error::PeerTransportUnknown { .. } => source,
+            source => Error::PeerTransportUnknown {
+                context: "migration outcome cannot be confirmed",
+                source: Box::new(source),
+            },
+        })
     }
 }
 
@@ -182,11 +208,7 @@ impl EffectPeerClient {
             .await
         {
             Err(source @ Error::PeerTransportUnknown { .. }) => {
-                return Err(Error::EffectOutcomeUnknown {
-                    effect_id: claim.effect_id,
-                    operation_digest: claim.operation_digest,
-                    source: Box::new(source),
-                });
+                return Err(unknown_effect_reply(source, claim));
             }
             result => result?,
         };
@@ -197,7 +219,10 @@ impl EffectPeerClient {
             Some(wire::peer_reply::Outcome::Error(error)) => {
                 Err(effect_error(error, claim.effect_id, claim.operation_digest))
             }
-            _ => Err(Error::Peer("unexpected effect delivery reply")),
+            _ => Err(unknown_effect_reply(
+                Error::Peer("unexpected effect delivery reply"),
+                claim,
+            )),
         }
     }
 
@@ -256,16 +281,53 @@ impl PeerClientTransport {
         expires_at_ms: i64,
         operation: PeerOperation,
     ) -> Result<wire::PeerReply> {
-        let remaining_ms = remaining_ms(now_ms, expires_at_ms)?;
+        let expects_mutation = matches!(
+            &operation,
+            PeerOperation::Mutate(_) | PeerOperation::DeliverEffect(_)
+        );
+        let expects_migration = matches!(&operation, PeerOperation::Migrate(_));
+        let (authorization_expires_at_ms, remaining_ms) = peer_time_budget(now_ms, expires_at_ms)?;
         let request = self.signer.sign(
             self.principal.clone(),
             now_ms,
-            expires_at_ms,
+            authorization_expires_at_ms,
             remaining_ms,
             operation,
         )?;
-        let reply = self.round_trip.send(target, request, remaining_ms).await?;
-        decode_peer_reply(&reply)
+        // An adapter may stall after the peer accepted a mutation. Bound the
+        // wait here and preserve ambiguity so callers resolve its identity.
+        let reply = tokio::time::timeout(
+            Duration::from_millis(u64::from(remaining_ms)),
+            self.round_trip.send(target, request, remaining_ms),
+        )
+        .await
+        .map_err(|source| Error::PeerTransportUnknown {
+            context: "peer round trip deadline exceeded",
+            source: Box::new(source),
+        })??;
+        // Once the adapter returns bytes, an invalid or unrelated response
+        // cannot prove that a mutating request did not reach its owner.
+        let reply = decode_peer_reply(&reply).map_err(|source| Error::PeerTransportUnknown {
+            context: "peer reply is invalid",
+            source: Box::new(source),
+        })?;
+        let unexpected_mutation = expects_mutation
+            && !matches!(
+                reply.outcome.as_ref(),
+                Some(wire::peer_reply::Outcome::Mutation(_) | wire::peer_reply::Outcome::Error(_))
+            );
+        let unexpected_migration = expects_migration
+            && !matches!(
+                reply.outcome.as_ref(),
+                Some(wire::peer_reply::Outcome::Migration(_) | wire::peer_reply::Outcome::Error(_))
+            );
+        if unexpected_mutation || unexpected_migration {
+            return Err(Error::PeerTransportUnknown {
+                context: "peer reply does not match the requested operation",
+                source: Box::new(Error::Peer("unexpected peer reply kind")),
+            });
+        }
+        Ok(reply)
     }
 }
 
@@ -335,11 +397,11 @@ impl CellTransport for PeerClientTransport {
                 .await
             {
                 Err(source @ Error::PeerTransportUnknown { .. }) => {
-                    return Err(Error::OutcomeUnknown {
-                        request_id: command.identity.request_id,
-                        operation_digest: command.operation_digest,
-                        source: Box::new(source),
-                    });
+                    return Err(unknown_command_reply(
+                        source,
+                        command.identity,
+                        command.operation_digest,
+                    ));
                 }
                 result => result?,
             };
@@ -355,7 +417,11 @@ impl CellTransport for PeerClientTransport {
                     command.identity,
                     command.operation_digest,
                 )),
-                _ => Err(Error::Peer("unexpected mutation reply")),
+                _ => Err(unknown_command_reply(
+                    Error::Peer("unexpected mutation reply"),
+                    command.identity,
+                    command.operation_digest,
+                )),
             }
         })
     }
@@ -515,12 +581,11 @@ fn effect_mutation_outcome(
     expected: CellDescription,
     claim: &EffectClaim,
 ) -> Result<StoredOutcome> {
-    let receipt = checked_receipt(
-        reply
-            .receipt
-            .ok_or(Error::Peer("effect reply receipt is missing"))?,
-        expected,
-    )?;
+    let receipt = reply
+        .receipt
+        .ok_or(Error::Peer("effect reply receipt is missing"))
+        .and_then(|receipt| checked_receipt(receipt, expected))
+        .map_err(|source| unknown_effect_reply(source, claim))?;
     match reply.outcome {
         Some(wire::mutation_reply::Outcome::Result(wire::MutationResult {
             result: Some(wire::mutation_result::Result::CommandOutput(result)),
@@ -540,7 +605,18 @@ fn effect_mutation_outcome(
         Some(wire::mutation_reply::Outcome::Error(error)) => {
             Err(effect_error(error, claim.effect_id, claim.operation_digest))
         }
-        _ => Err(Error::Peer("unexpected effect mutation result")),
+        _ => Err(unknown_effect_reply(
+            Error::Peer("unexpected effect mutation result"),
+            claim,
+        )),
+    }
+}
+
+fn unknown_effect_reply(source: Error, claim: &EffectClaim) -> Error {
+    Error::EffectOutcomeUnknown {
+        effect_id: claim.effect_id,
+        operation_digest: claim.operation_digest,
+        source: Box::new(source),
     }
 }
 
@@ -590,12 +666,11 @@ fn mutation_outcome(
     identity: MutationIdentity,
     digest: Digest,
 ) -> Result<StoredOutcome> {
-    let receipt = checked_receipt(
-        reply
-            .receipt
-            .ok_or(Error::Peer("mutation reply receipt is missing"))?,
-        expected,
-    )?;
+    let receipt = reply
+        .receipt
+        .ok_or(Error::Peer("mutation reply receipt is missing"))
+        .and_then(|receipt| checked_receipt(receipt, expected))
+        .map_err(|source| unknown_command_reply(source, identity, digest))?;
     match reply.outcome {
         Some(wire::mutation_reply::Outcome::Result(wire::MutationResult {
             result: Some(wire::mutation_result::Result::CommandOutput(result)),
@@ -615,7 +690,19 @@ fn mutation_outcome(
         Some(wire::mutation_reply::Outcome::Error(error)) => {
             Err(command_error(error, identity, digest))
         }
-        _ => Err(Error::Peer("unexpected mutation result")),
+        _ => Err(unknown_command_reply(
+            Error::Peer("unexpected mutation result"),
+            identity,
+            digest,
+        )),
+    }
+}
+
+fn unknown_command_reply(source: Error, identity: MutationIdentity, digest: Digest) -> Error {
+    Error::OutcomeUnknown {
+        request_id: identity.request_id,
+        operation_digest: digest,
+        source: Box::new(source),
     }
 }
 
@@ -740,6 +827,16 @@ fn remaining_ms(now_ms: i64, expires_at_ms: i64) -> Result<u32> {
         .ok_or(Error::Peer("peer request already expired"))?;
     u32::try_from(remaining.min(i64::from(DEFAULT_TIMEOUT_MS)))
         .map_err(|_| Error::Peer("peer deadline overflow"))
+}
+
+pub(super) fn peer_time_budget(now_ms: i64, operation_expires_at_ms: i64) -> Result<(i64, u32)> {
+    let remaining_ms = remaining_ms(now_ms, operation_expires_at_ms)?;
+    // Authorization must outlive the operation budget so transit does not
+    // invalidate a signed request before the peer can verify it.
+    let authorization_expires_at_ms = now_ms
+        .checked_add(60_000)
+        .ok_or(Error::Peer("peer authorization deadline overflow"))?;
+    Ok((authorization_expires_at_ms, remaining_ms))
 }
 
 fn unix_time_ms() -> Result<i64> {

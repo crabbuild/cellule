@@ -2,17 +2,24 @@ name: Rust
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   workspace:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install SQLite CLI
         run: sudo apt-get update && sudo apt-get install -y sqlite3
       - name: Format
@@ -21,11 +28,40 @@ jobs:
         run: python3 scripts/check-boundaries.py
       - name: Check
         run: cargo check --workspace --all-targets --locked
+      - name: Documentation links
+        run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
       - name: Test
         run: cargo test --workspace --locked
+      - name: Run orders example
+        run: cargo run -p cellule-app --example orders --locked
+      - name: Run carts example
+        run: cargo run -p cellule-app --example carts --locked
+      - name: Run notifications example
+        run: cargo run -p cellule-app --example notifications --locked
+      - name: Run fulfillment example
+        run: cargo run -p cellule-app --example fulfillment --locked
+      - name: Run invoices example
+        run: cargo run -p cellule-app --example invoices --locked
+      - name: Run balanced three-process storefront smoke
+        run: |
+          CELLULE_PERF_ITERATIONS=1 cargo test -p cellule-app --test reference_application \
+            process_performance::reference_balanced_three_process_fleet_end_to_end_performance \
+            --locked -- --ignored --exact --nocapture
       - name: Test replica feature
         run: cargo test -p cellule-ltx --features replica --locked
       - name: Lint
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Validate SQL and peer contracts
         run: node crates/cellule-runtime/docs/validate.mjs
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.0
+      - name: Check Rust 1.97 minimum
+        run: cargo check --workspace --all-targets --locked

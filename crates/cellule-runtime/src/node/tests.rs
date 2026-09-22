@@ -10,11 +10,82 @@ use object_store::{memory::InMemory, path::Path};
 use super::*;
 use crate::{
     AppendRequest, ApplicationId, CellTarget, NamespaceId, NodeLogTransport, PeerOperation,
-    PeerPrincipal, PeerSigner, PlacementPlanner, PlacementPressure, PlacementRuntimeSnapshot,
-    RetireRequest, SealRequest, TailRequest, TenantId, peer_wire,
+    PeerPrincipal, PeerSigner, PlacementPlanner, RetireRequest, SealRequest, TailRequest, TenantId,
+    peer_wire,
 };
 
 const NOW_MS: i64 = 1_000_000;
+
+#[test]
+fn recovery_candidate_window_rotates_without_growing_with_directory_size() {
+    let sessions = [
+        SessionId::from_bytes([1; 16]),
+        SessionId::from_bytes([2; 16]),
+        SessionId::from_bytes([3; 16]),
+        SessionId::from_bytes([4; 16]),
+    ];
+    let mut first = RecoveryCandidateWindow::with_start([2; 16], 2);
+    for session in sessions {
+        first.push(session);
+    }
+    assert_eq!(
+        first.finish(),
+        [
+            SessionId::from_bytes([2; 16]),
+            SessionId::from_bytes([3; 16])
+        ]
+    );
+
+    let mut wrapped = RecoveryCandidateWindow::with_start([4; 16], 2);
+    for session in sessions {
+        wrapped.push(session);
+    }
+    assert_eq!(
+        wrapped.finish(),
+        [
+            SessionId::from_bytes([4; 16]),
+            SessionId::from_bytes([3; 16])
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cloned_directories_share_only_a_fresh_recovery_scan_snapshot() {
+    let directory = directory();
+    let clone = directory.clone();
+    let first = directory
+        .recovery_scan_snapshot(NOW_MS, false)
+        .await
+        .unwrap();
+    let reused = clone
+        .recovery_scan_snapshot(NOW_MS + 1, false)
+        .await
+        .unwrap();
+    assert!(Arc::ptr_eq(&first, &reused));
+
+    let refreshed = clone
+        .recovery_scan_snapshot(NOW_MS + RECOVERY_SCAN_CACHE_TTL_MS, false)
+        .await
+        .unwrap();
+    assert!(!Arc::ptr_eq(&first, &refreshed));
+}
+
+#[test]
+fn recovery_candidate_snapshot_rechecks_claim_and_expiry() {
+    let record = RecoveryCandidateRecord {
+        session: SessionId::from_bytes([1; 16]),
+        expires_at_ms: NOW_MS + 10,
+        claimant: Some(SessionId::from_bytes([2; 16])),
+        claim_expires_at_ms: Some(NOW_MS + 20),
+        active: true,
+        phase: NodeLogPhase::Recovering,
+        members: Vec::new(),
+    };
+    let other = SessionId::from_bytes([3; 16]);
+    assert!(!record.eligible_for(other, NOW_MS + 15));
+    assert!(record.eligible_for(other, NOW_MS + 20));
+    assert!(record.eligible_for(record.claimant.unwrap(), NOW_MS + 15));
+}
 
 fn node(session: SessionId) -> NodeId {
     NodeId::from_bytes(*session.as_bytes())
@@ -149,47 +220,93 @@ fn advertisement_for_node_capacity_in_domain(
 }
 
 #[tokio::test]
-async fn placement_uses_signed_capacity_and_requires_runtime_snapshot() {
+async fn placement_uses_signed_capacity_only() {
     let key = SigningKey::from_bytes(&[7; 32]);
     let directory = directory();
     let session = SessionId::from_bytes([1; 16]);
     directory
-        .create(advertisement_for(session, &key, 1, NOW_MS), NOW_MS)
+        .create(
+            advertisement_for(session, &key, 1, NOW_MS)
+                .with_placement_capacity(
+                    NodePlacementCapacity {
+                        memory_capacity_bytes: 2_000,
+                        disk_capacity_bytes: 4_000,
+                        active_cells: 1,
+                        max_active_cells: 8,
+                        running_jobs: 0,
+                        job_capacity: 3,
+                        publication_backlog: 0,
+                        hydration_backlog: 0,
+                        primitive_backlog: 0,
+                    }
+                    .validated()
+                    .unwrap(),
+                    &key,
+                )
+                .unwrap(),
+            NOW_MS,
+        )
         .await
         .unwrap();
     let planner = PlacementPlanner::default();
     let cell = crate::CellId::from_bytes([9; 32]);
-    let snapshot = PlacementRuntimeSnapshot {
-        node: node(session),
-        memory_capacity_bytes: 2_000,
-        disk_capacity_bytes: 4_000,
-        active_cells: 1,
-        max_active_cells: 8,
-        running_jobs: 0,
-        pressure: PlacementPressure::Normal,
-        draining: false,
-        locality_bonus: 10,
-        current_owner: false,
-    };
-    let chosen = directory
-        .choose_placement(&planner, cell, NOW_MS + 1, &[snapshot], 4)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(chosen.node, node(session));
     let advertised = directory
-        .choose_advertised_placement(&planner, cell, NOW_MS + 1, session, 4)
+        .choose_advertised_placement(&planner, cell, NOW_MS + 1, 4)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(advertised.node, node(session));
-    assert!(
-        directory
-            .choose_placement(&planner, cell, NOW_MS + 1, &[], 4)
-            .await
-            .unwrap()
-            .is_none()
-    );
+}
+
+#[tokio::test]
+async fn cold_placement_does_not_reward_the_requesting_node() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let local = SessionId::from_bytes([1; 16]);
+    let remote = SessionId::from_bytes([2; 16]);
+    for (session, free_memory_bytes) in [(local, 100), (remote, 1_000)] {
+        let advertisement = advertisement_for_capacity(
+            session,
+            &key,
+            1,
+            NOW_MS,
+            NodeCapacity {
+                free_memory_bytes,
+                free_disk_bytes: 1_000,
+                job_credits: 4,
+                ..NodeCapacity::default()
+            },
+        )
+        .with_placement_capacity(
+            NodePlacementCapacity {
+                memory_capacity_bytes: 1_000,
+                disk_capacity_bytes: 1_000,
+                active_cells: 0,
+                max_active_cells: 10,
+                running_jobs: 0,
+                job_capacity: 4,
+                publication_backlog: 0,
+                hydration_backlog: 0,
+                primitive_backlog: 0,
+            }
+            .validated()
+            .unwrap(),
+            &key,
+        )
+        .unwrap();
+        directory.create(advertisement, NOW_MS).await.unwrap();
+    }
+    let chosen = directory
+        .choose_advertised_placement(
+            &PlacementPlanner::default(),
+            crate::CellId::from_bytes([9; 32]),
+            NOW_MS + 1,
+            4,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(chosen.session, remote);
 }
 
 #[tokio::test]
@@ -731,6 +848,96 @@ async fn clean_node_log_close_clears_authority_before_session_withdrawal() {
 }
 
 #[tokio::test]
+async fn request_takeover_does_not_claim_active_node_log() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let leader = SessionId::from_bytes([1; 16]);
+    let member = SessionId::from_bytes([2; 16]);
+    let claimant = SessionId::from_bytes([3; 16]);
+    let created = directory
+        .create(advertisement_for(leader, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let member_record = directory
+        .create(advertisement_for(member, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let enrolled = directory
+        .recruit_log(&created, 7, 1, 2, NOW_MS + 1)
+        .await
+        .unwrap();
+    directory.activate_log(&enrolled, NOW_MS + 2).await.unwrap();
+    let claimant_record = directory
+        .create(advertisement_for(claimant, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    for (record, session) in [(&member_record, member), (&claimant_record, claimant)] {
+        directory
+            .refresh(
+                record,
+                advertisement_for(session, &key, 2, NOW_MS + 9_000),
+                NOW_MS + 9_000,
+            )
+            .await
+            .unwrap();
+    }
+
+    assert!(matches!(
+        directory
+            .claim_expired_for_takeover(leader, claimant, NOW_MS + 10_000)
+            .await,
+        Err(Error::PendingPublication)
+    ));
+    assert_eq!(
+        directory
+            .recovery_candidates(claimant, NOW_MS + 10_000, 2)
+            .await
+            .unwrap(),
+        [leader]
+    );
+    assert!(
+        directory
+            .takeover_proof(leader, claimant, NOW_MS + 10_000)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn recovery_claim_rechecks_signed_admission_before_fencing() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let leader = SessionId::from_bytes([1; 16]);
+    let claimant = SessionId::from_bytes([2; 16]);
+    directory
+        .create(advertisement_for(leader, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    directory
+        .create(
+            advertisement_for_capacity(claimant, &key, 1, NOW_MS + 1, NodeCapacity::default()),
+            NOW_MS + 1,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        directory
+            .claim_expired_for_recovery(leader, claimant, NOW_MS + 10_000)
+            .await,
+        Err(Error::Capacity("node recovery claimant is not eligible"))
+    ));
+    assert!(
+        directory
+            .takeover_proof(leader, claimant, NOW_MS + 10_000)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn expired_enrolled_log_becomes_a_renewable_recovery_claim() {
     let key = SigningKey::from_bytes(&[7; 32]);
     let directory = directory();
@@ -951,6 +1158,59 @@ async fn live_original_follower_is_the_only_affine_recovery_candidate() {
             .is_none()
     );
     drop(drained);
+}
+
+#[tokio::test]
+async fn non_member_recovery_candidate_is_allowed_when_all_followers_are_expired() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let leader = SessionId::from_bytes([1; 16]);
+    let first_member = SessionId::from_bytes([2; 16]);
+    let second_member = SessionId::from_bytes([3; 16]);
+    let fallback = SessionId::from_bytes([4; 16]);
+    let leader_record = directory
+        .create(advertisement_for(leader, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let first_record = directory
+        .create(advertisement_for(first_member, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let second_record = directory
+        .create(advertisement_for(second_member, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let fallback_record = directory
+        .create(advertisement_for(fallback, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let enrolled = directory
+        .recruit_log(&leader_record, 7, 1, 8, NOW_MS + 1)
+        .await
+        .unwrap();
+    directory.activate_log(&enrolled, NOW_MS + 2).await.unwrap();
+    let members = enrolled.advertisement().log().unwrap().members().to_vec();
+    let fallback_record = [first_record, second_record, fallback_record]
+        .into_iter()
+        .find(|record| !members.contains(&record.advertisement().node()))
+        .expect("the bounded two-member log leaves one non-member");
+    let fallback_session = fallback_record.advertisement().session();
+    directory
+        .refresh(
+            &fallback_record,
+            advertisement_for(fallback_session, &key, 2, NOW_MS + 10_000),
+            NOW_MS + 10_000,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        directory
+            .recovery_candidates_without_live_followers(fallback_session, NOW_MS + 10_000, 2)
+            .await
+            .unwrap(),
+        [leader]
+    );
 }
 
 #[tokio::test]
@@ -1291,7 +1551,36 @@ async fn invalid_signature_expiry_and_identity_change_fail_closed() {
         .capacity
         .free_memory_bytes
         .saturating_add(1);
+    // Capacity is part of the signed heartbeat; changing it without a new
+    // signature must fail closed. The optional placement block is authenticated
+    // independently because it drives ownership placement.
     assert!(tampered_capacity.verify_signature().is_err());
+    let signed = original
+        .clone()
+        .with_placement_capacity(
+            NodePlacementCapacity {
+                memory_capacity_bytes: 8_192,
+                disk_capacity_bytes: 16_384,
+                active_cells: 1,
+                max_active_cells: 8,
+                running_jobs: 1,
+                job_capacity: 4,
+                publication_backlog: 0,
+                hydration_backlog: 0,
+                primitive_backlog: 0,
+            }
+            .validated()
+            .unwrap(),
+            &key,
+        )
+        .unwrap();
+    let mut tampered_placement = signed;
+    tampered_placement
+        .placement
+        .as_mut()
+        .expect("signed placement is present")
+        .memory_capacity_bytes = 8_193;
+    assert!(tampered_placement.verify_signature().is_err());
     let mut tampered = original.encode().unwrap();
     let endpoint_byte = tampered
         .windows(b"node-1".len())
@@ -1328,21 +1617,60 @@ async fn invalid_signature_expiry_and_identity_change_fail_closed() {
     );
 }
 
+#[tokio::test]
+async fn refresh_accepts_new_signed_capacity_for_same_boot_session() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let session = SessionId::from_bytes([1; 16]);
+    let created = directory
+        .create(advertisement_for(session, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let next_capacity = NodeCapacity {
+        free_memory_bytes: 900,
+        free_disk_bytes: 1_800,
+        follower_free_bytes: 1_700,
+        follower_retained_bytes: 700,
+        job_credits: 2,
+        log_protocol: NODE_LOG_PROTOCOL_VERSION,
+    };
+    let next = advertisement_for_capacity(session, &key, 2, NOW_MS + 1_000, next_capacity);
+    assert_ne!(next.signature, created.advertisement().signature);
+    let refreshed = directory
+        .refresh(&created, next, NOW_MS + 1_000)
+        .await
+        .unwrap();
+    assert_eq!(refreshed.advertisement().capacity(), next_capacity);
+    assert!(refreshed.advertisement().verify_signature().is_ok());
+}
+
 #[test]
 fn placement_schema_is_mixed_version_safe_and_fail_closed() {
     let key = SigningKey::from_bytes(&[7; 32]);
     let current = advertisement(&key, 1, NOW_MS)
         .with_placement_capacity(
-            NodePlacementCapacity::new(8_192, 16_384, 3, 16, 2, 8).unwrap(),
+            NodePlacementCapacity {
+                memory_capacity_bytes: 8_192,
+                disk_capacity_bytes: 16_384,
+                active_cells: 3,
+                max_active_cells: 16,
+                running_jobs: 2,
+                job_capacity: 8,
+                publication_backlog: 4,
+                hydration_backlog: 5,
+                primitive_backlog: 6,
+            }
+            .validated()
+            .unwrap(),
             &key,
         )
         .unwrap();
     assert!(current.has_signed_placement());
     let decoded_current = NodeAdvertisement::decode_canonical(&current.encode().unwrap()).unwrap();
-    assert_eq!(decoded_current.placement_version, 1);
+    assert_eq!(decoded_current.placement_version, 2);
     assert_eq!(
         decoded_current.placement_capacity(),
-        Some(NodePlacementCapacity::new(8_192, 16_384, 3, 16, 2, 8).unwrap())
+        current.placement_capacity()
     );
     let observation =
         PlacementObservation::from_signed_advertisement(&decoded_current, NOW_MS + 1, true)
@@ -1350,6 +1678,9 @@ fn placement_schema_is_mixed_version_safe_and_fail_closed() {
     assert_eq!(observation.memory_capacity_bytes, 8_192);
     assert_eq!(observation.active_cells, 3);
     assert_eq!(observation.running_jobs, 2);
+    assert_eq!(observation.publication_backlog, 4);
+    assert_eq!(observation.hydration_backlog, 5);
+    assert_eq!(observation.primitive_backlog, 6);
 
     let mut legacy = current.clone();
     legacy.placement_version = 0;
@@ -1357,26 +1688,27 @@ fn placement_schema_is_mixed_version_safe_and_fail_closed() {
     let decoded_legacy = NodeAdvertisement::decode_canonical(&legacy.encode().unwrap()).unwrap();
     assert!(!decoded_legacy.has_signed_placement());
 
+    let mut previous = current.clone();
+    previous.placement_version = 1;
+    let decoded_previous =
+        NodeAdvertisement::decode_canonical(&previous.encode().unwrap()).unwrap();
+    assert!(!decoded_previous.has_signed_placement());
+    assert_eq!(
+        decoded_previous
+            .placement_capacity()
+            .unwrap()
+            .publication_backlog,
+        0
+    );
+
     let mut future = current;
-    future.placement_version = 2;
+    future.placement_version = 3;
     future.placement_signature = [0; 64];
     let decoded_future = NodeAdvertisement::decode_canonical(&future.encode().unwrap()).unwrap();
     assert!(!decoded_future.has_signed_placement());
     assert!(
-        PlacementObservation::from_advertisement(
-            &decoded_future,
-            NOW_MS + 1,
-            2_000,
-            4_000,
-            1,
-            8,
-            0,
-            PlacementPressure::Normal,
-            false,
-            0,
-            false,
-        )
-        .is_err()
+        PlacementObservation::from_signed_advertisement(&decoded_future, NOW_MS + 1, false)
+            .is_err()
     );
 }
 
@@ -1393,13 +1725,25 @@ fn placement_upgrade_sets_schema_when_legacy_capacity_was_unusable() {
     assert!(!legacy.has_signed_placement());
     let upgraded = legacy
         .with_placement_capacity(
-            NodePlacementCapacity::new(8_192, 16_384, 0, 16, 0, 8).unwrap(),
+            NodePlacementCapacity {
+                memory_capacity_bytes: 8_192,
+                disk_capacity_bytes: 16_384,
+                active_cells: 0,
+                max_active_cells: 16,
+                running_jobs: 0,
+                job_capacity: 8,
+                publication_backlog: 0,
+                hydration_backlog: 0,
+                primitive_backlog: 0,
+            }
+            .validated()
+            .unwrap(),
             &key,
         )
         .unwrap();
     assert!(upgraded.has_signed_placement());
     let decoded = NodeAdvertisement::decode_canonical(&upgraded.encode().unwrap()).unwrap();
-    assert_eq!(decoded.placement_version, 1);
+    assert_eq!(decoded.placement_version, 2);
     assert_eq!(decoded.placement_capacity(), upgraded.placement_capacity());
 }
 

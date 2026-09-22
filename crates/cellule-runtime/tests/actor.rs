@@ -2,18 +2,13 @@ use std::{
     fmt,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
 };
 
 use bytes::Bytes;
-#[cfg(feature = "process-test-support")]
-#[path = "../src/process_store.rs"]
-mod process_store;
-
-use cellule_ltx::{CellObjectKind, CellStorageLayout};
-use cellule_ltx::{CellReplica, Limits};
+use cellule_ltx::{CellObjectKind, CellReplica, CellStorageLayout, Limits};
 use cellule_runtime::{
     ACTIVE_CELL_FILE_DESCRIPTORS, AppendRequest, ApplicationId, CatalogEntry, CatalogRole,
     CellAuthority, CellRuntime, CellTarget, ControlState, Digest, DiskBudget, DurabilityGate,
@@ -23,7 +18,7 @@ use cellule_runtime::{
     Resolution, RetireRequest, SealRequest, SessionId, SqlWorkerPool, StoredOutcome, TailRequest,
     TenantId, Transition, install_queue_schema, install_workflow_schema,
 };
-use cellule_store::{ObjectStoreCredentials, Store, build_explicit_store};
+use cellule_store::{ObjectStoreCredentials, RetryPolicy, Store, build_explicit_store};
 use futures_util::stream::BoxStream;
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
@@ -36,6 +31,7 @@ struct PausingStore {
     inner: Arc<InMemory>,
     armed: AtomicBool,
     failing: AtomicBool,
+    transient_put_failures: AtomicUsize,
     failed: AtomicBool,
     blocked: AtomicBool,
     released: AtomicBool,
@@ -56,6 +52,7 @@ impl PausingStore {
             inner,
             armed: AtomicBool::new(false),
             failing: AtomicBool::new(false),
+            transient_put_failures: AtomicUsize::new(0),
             failed: AtomicBool::new(false),
             blocked: AtomicBool::new(false),
             released: AtomicBool::new(false),
@@ -81,6 +78,10 @@ impl PausingStore {
 
     fn fail_puts(&self) {
         self.failing.store(true, Ordering::Release);
+    }
+
+    fn fail_next_put_transiently(&self) {
+        self.transient_put_failures.store(1, Ordering::Release);
     }
 
     fn allow_puts(&self) {
@@ -134,6 +135,23 @@ impl ObjectStore for PausingStore {
         payload: PutPayload,
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
+        if self
+            .transient_put_failures
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            self.failed.store(true, Ordering::Release);
+            self.entered.notify_waiters();
+            return Err(object_store::Error::Generic {
+                store: "pausing-store",
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "injected transient put failure",
+                )),
+            });
+        }
         if self.failing.load(Ordering::Acquire) {
             self.failed.store(true, Ordering::Release);
             self.entered.notify_waiters();
@@ -593,7 +611,7 @@ fn fixture_with_limits_and_store_at_prefix(
 
 #[cfg(feature = "process-test-support")]
 fn filesystem_fixture(partition: &[u8], root: &std::path::Path) -> Fixture {
-    let store = process_store::FilesystemCasStore::new(root).unwrap();
+    let store = cellule_store::test_support::FilesystemCasStore::new(root).unwrap();
     fixture_with_limits_and_store(partition, Limits::default(), Store::new(Arc::new(store)))
 }
 
@@ -1124,38 +1142,44 @@ async fn fleet_proof_retains_owner_when_object_publication_fails_first() {
         .unwrap()
         .unwrap();
     assert_eq!(control.value().root.as_ref().unwrap().commit_sequence, 0);
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+    let value = handle
+        .query(64, 64, |connection| {
+            let value = connection
+                .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))?;
+            Ok(value.to_be_bytes().to_vec())
+        })
+        .await
+        .unwrap();
+    assert_eq!(i64::from_be_bytes(value.try_into().unwrap()), 1);
+    assert_eq!(runtime.stats().active_cells(), 1);
+    let pending = CellAuthority::new(fixture.layout.clone())
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.value().state, ControlState::Serving);
+    assert_eq!(pending.value().owner.as_ref().unwrap().session, session);
+    assert_eq!(pending.value().root.as_ref().unwrap().commit_sequence, 0);
+    assert!(runtime.stats().unpublished_node_log_bytes() > 0);
+    store.allow_puts();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            match handle.query(1, 1, |_| Ok(Vec::new())).await {
-                Err(cellule_runtime::Error::Fenced) => break,
-                Ok(_) => tokio::task::yield_now().await,
-                Err(error) => panic!("unexpected query result after publication failure: {error}"),
+            let control = CellAuthority::new(fixture.layout.clone())
+                .load(fixture.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap();
+            if control.value().root.as_ref().unwrap().commit_sequence == 1
+                && runtime.stats().unpublished_node_log_bytes() == 0
+            {
+                break;
             }
-        }
-    })
-    .await
-    .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while runtime.stats().active_cells() != 0 {
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
-    let fenced = CellAuthority::new(fixture.layout.clone())
-        .load(fixture.target.cell_id())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fenced.value().state, ControlState::Serving);
-    assert_eq!(fenced.value().owner.as_ref().unwrap().session, session);
-    assert_eq!(fenced.value().root.as_ref().unwrap().commit_sequence, 0);
-    assert!(runtime.stats().unpublished_node_log_bytes() > 0);
-    store.allow_puts();
-    assert!(matches!(
-        runtime.shutdown().await,
-        Err(cellule_runtime::Error::PendingPublication)
-    ));
+    runtime.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1853,7 +1877,7 @@ async fn churn_evicts_idle_cells_and_restores_exact_roots() {
 }
 
 #[tokio::test]
-async fn persisted_work_blocks_idle_eviction_until_explicit_release() {
+async fn retained_request_outcome_moves_with_exact_root() {
     let fixture = fixture_for(b"eviction-persisted-work");
     let session = SessionId::from_bytes([78; 16]);
     let runtime =
@@ -1880,11 +1904,201 @@ async fn persisted_work_blocks_idle_eviction_until_explicit_release() {
         }
     ));
 
-    assert_eq!(runtime.evict_idle(1).await.unwrap(), 0);
-    assert_eq!(runtime.stats().active_cells(), 1);
-
-    handle.drain().await.unwrap();
+    let generation = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some((_, generation, _, _)) =
+                runtime.idle_transfer_candidates().await.unwrap().first()
+            {
+                break *generation;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    runtime
+        .release_idle_cell(fixture.target.cell_id(), session, generation)
+        .await
+        .unwrap();
     assert_eq!(runtime.stats().active_cells(), 0);
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let idle = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(idle.value().state, ControlState::Idle);
+    let catalog =
+        cellule_runtime::CellCatalog::new(fixture.layout.clone(), fixture.target.tenant());
+    let proof = catalog
+        .lookup(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let successor_session = SessionId::from_bytes([95; 16]);
+    let successor_runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        8 * 1024 * 1024,
+        successor_session,
+    )
+    .unwrap();
+    let successor = successor_runtime
+        .acquire_idle_restored(
+            proof,
+            fixture.replica.clone(),
+            authority,
+            idle,
+            fixture._directory.path().join("outcome-successor.sqlite"),
+            Owner {
+                session: successor_session,
+                endpoint: "https://outcome-successor.internal:8081".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        successor
+            .resolve(identity(79), Digest::from_bytes([79; 32]), 20, 64)
+            .await
+            .unwrap(),
+        Resolution::Committed(StoredOutcome::Success {
+            commit_sequence: 1,
+            ..
+        })
+    ));
+    successor.drain().await.unwrap();
+    successor_runtime.shutdown().await.unwrap();
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn exact_idle_release_checks_generation_and_confirms_authority_release() {
+    let fixture = fixture_for(b"exact-idle-release");
+    let session = SessionId::from_bytes([91; 16]);
+    let runtime =
+        CellRuntime::new(SqlWorkerPool::new(1, 1).unwrap(), 8 * 1024 * 1024, session).unwrap();
+    let _handle = bootstrap_on(&runtime, &fixture, session).await;
+    let candidates = runtime.idle_transfer_candidates().await.unwrap();
+    assert_eq!(candidates.len(), 1);
+    let (cell, generation, _, role) = candidates[0];
+    assert_eq!(role, CatalogRole::Application);
+    assert!(
+        runtime
+            .release_idle_cell(cell, SessionId::from_bytes([92; 16]), generation)
+            .await
+            .is_err()
+    );
+    assert!(
+        runtime
+            .release_idle_cell(cell, session, generation + 1)
+            .await
+            .is_err()
+    );
+    runtime
+        .release_idle_cell(cell, session, generation)
+        .await
+        .unwrap();
+    assert_eq!(runtime.stats().active_cells(), 0);
+    let idle = CellAuthority::new(fixture.layout.clone())
+        .load(cell)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(idle.value().state, ControlState::Idle);
+    assert!(idle.value().owner.is_none());
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn exact_idle_release_refuses_persisted_work() {
+    let fixture = fixture_for(b"exact-idle-blocked");
+    let session = SessionId::from_bytes([93; 16]);
+    let runtime =
+        CellRuntime::new(SqlWorkerPool::new(1, 1).unwrap(), 8 * 1024 * 1024, session).unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, session).await;
+    let (_, generation, _, _) = runtime.idle_transfer_candidates().await.unwrap()[0];
+    handle
+        .execute(identity(94), Digest::from_bytes([94; 32]), 20, 64, 64, |transaction| {
+            transaction.execute(
+                "INSERT INTO sys_effects(effect_id, destination, operation, state, attempt, due_at_ms, expires_at_ms, token, lease_until_ms, created_sequence, result) VALUES (?1, ?2, ?3, 0, 0, 20, 1000, NULL, NULL, 1, NULL)",
+                cellule_ltx::rusqlite::params![&[1_u8; 32], &[2_u8; 32], &[3_u8]],
+            )?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        })
+        .await
+        .unwrap();
+    assert!(runtime.idle_transfer_candidates().await.unwrap().is_empty());
+    assert!(
+        runtime
+            .release_idle_cell(fixture.target.cell_id(), session, generation)
+            .await
+            .is_err()
+    );
+    assert_eq!(runtime.stats().active_cells(), 1);
+    handle.drain().await.unwrap();
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn stop_acquiring_keeps_existing_cell_serving() {
+    let first = fixture_for(b"scale-down-serving");
+    let second = fixture_for(b"scale-down-new");
+    let session = SessionId::from_bytes([96; 16]);
+    let runtime =
+        CellRuntime::new(SqlWorkerPool::new(1, 2).unwrap(), 8 * 1024 * 1024, session).unwrap();
+    let handle = bootstrap_on(&runtime, &first, session).await;
+    runtime.stop_acquiring().unwrap();
+    assert!(!runtime.is_acquiring());
+    assert_eq!(
+        handle
+            .query(64, 64, |connection| {
+                let value = connection
+                    .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))?;
+                Ok(value.to_be_bytes().to_vec())
+            })
+            .await
+            .unwrap(),
+        0_i64.to_be_bytes()
+    );
+    let catalog = cellule_runtime::CellCatalog::new(second.layout.clone(), second.target.tenant());
+    let proof = catalog
+        .provision(
+            CatalogEntry::new(
+                &second.target,
+                CatalogRole::Application,
+                Digest::from_bytes([5; 32]),
+                1,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(second.layout.clone());
+    let observed = authority
+        .create_initial(
+            &proof,
+            IncarnationId::from_bytes([2; 16]),
+            Owner {
+                session,
+                endpoint: "https://node.internal:8081".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let result = runtime
+        .bootstrap(
+            proof,
+            second.replica.clone(),
+            authority,
+            observed,
+            second._directory.path().join("blocked.sqlite"),
+            |_| Ok(()),
+        )
+        .await;
+    assert!(matches!(result, Err(cellule_runtime::Error::CellDraining)));
+    assert_eq!(runtime.unreleased_cell_count().await.unwrap(), 1);
+    handle.drain().await.unwrap();
+    assert_eq!(runtime.unreleased_cell_count().await.unwrap(), 0);
     runtime.shutdown().await.unwrap();
 }
 
@@ -2701,6 +2915,202 @@ async fn dispatcher_compacts_before_segment_admission_is_exhausted() {
             .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
             .unwrap(),
         10
+    );
+}
+
+#[tokio::test]
+async fn dispatcher_promotes_after_burst_becomes_quiet() {
+    let pausing = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+    let store: Arc<dyn ObjectStore> = pausing.clone();
+    let fixture = fixture_with_limits_and_store(
+        b"quiet-compaction-runtime",
+        Limits::default(),
+        Store::with_retry(
+            store,
+            RetryPolicy {
+                max_attempts: 1,
+                base: std::time::Duration::from_millis(1),
+                cap: std::time::Duration::from_millis(1),
+            },
+        ),
+    );
+    let handle = activate(&fixture, 16 * 1024 * 1024).await;
+    for sequence in 1_u8..=8 {
+        handle
+            .execute(
+                identity(sequence),
+                Digest::from_bytes([sequence.saturating_add(30); 32]),
+                20,
+                1_024,
+                1_024,
+                |transaction| {
+                    transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                    Ok(HandlerOutcome::Success(Vec::new()))
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let before = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    let initial_segments = fixture
+        .replica
+        .open_root(&before)
+        .await
+        .unwrap()
+        .segment_count();
+    assert!(initial_segments >= 8);
+    pausing.fail_next_put_transiently();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        pausing.wait_until_failed(),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        authority
+            .load(fixture.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .ltx_root(),
+        Some(before)
+    );
+
+    let promoted = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let root = authority
+                .load(fixture.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .value()
+                .ltx_root()
+                .unwrap();
+            if fixture
+                .replica
+                .open_root(&root)
+                .await
+                .unwrap()
+                .segment_count()
+                < initial_segments
+            {
+                break root;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(promoted.position, before.position);
+    assert_eq!(promoted.commit_sequence, before.commit_sequence);
+    handle.drain().await.unwrap();
+    let restored_directory = tempfile::TempDir::new().unwrap();
+    let restored = restored_directory.path().join("restored.sqlite");
+    fixture
+        .replica
+        .open_root(&promoted)
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        8
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn command_arriving_during_quiet_compaction_waits_for_publisher() {
+    let pausing = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+    let store: Arc<dyn ObjectStore> = pausing.clone();
+    let fixture = fixture_with_limits_and_store(
+        b"quiet-compaction-queued-command",
+        Limits::default(),
+        Store::new(store),
+    );
+    let handle = activate(&fixture, 16 * 1024 * 1024).await;
+    for sequence in 1_u8..=8 {
+        handle
+            .execute(
+                identity(sequence),
+                Digest::from_bytes([sequence.saturating_add(70); 32]),
+                20,
+                1_024,
+                1_024,
+                |transaction| {
+                    transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                    Ok(HandlerOutcome::Success(Vec::new()))
+                },
+            )
+            .await
+            .unwrap();
+    }
+    pausing.arm();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        pausing.wait_until_blocked(),
+    )
+    .await
+    .unwrap();
+    let ninth = handle.execute(
+        identity(9),
+        Digest::from_bytes([79; 32]),
+        20,
+        1_024,
+        1_024,
+        |transaction| {
+            transaction.execute("UPDATE counter SET value = value + 1", [])?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        },
+    );
+    tokio::pin!(ninth);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut ninth)
+            .await
+            .is_err()
+    );
+    pausing.release();
+    assert_eq!(ninth.await.unwrap().commit_sequence(), 9);
+    handle.drain().await.unwrap();
+    let root = CellAuthority::new(fixture.layout.clone())
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    let restored_directory = tempfile::TempDir::new().unwrap();
+    let restored = restored_directory.path().join("restored.sqlite");
+    fixture
+        .replica
+        .open_root(&root)
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        9
     );
 }
 

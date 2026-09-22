@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 
 use super::{
     CellClient, CellDescription, CellTransport, EncodedCommand, EncodedObservation, EncodedQuery,
-    EncodedResolve, InvocationError,
+    EncodedResolve, InvocationError, PendingMutation, decode_pending,
 };
 use crate::{
     ApplicationId, BuildDescriptor, CatalogRole, CellModule, CellTarget, Command, CommandContext,
@@ -25,6 +25,50 @@ const MODULE: &str = "pending-test";
 const NAMESPACE: NamespaceId = NamespaceId::from_bytes([3; 16]);
 const MIGRATION: &str = "CREATE TABLE pending_test(value BLOB NOT NULL)";
 const RETAINED_CODE: Digest = Digest::from_bytes([14; 32]);
+
+#[test]
+fn pending_rejection_preserves_published_receipt() {
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        ApplicationId::from_bytes([2; 16]),
+        NAMESPACE,
+        b"pending",
+    )
+    .expect("valid pending target");
+    let incarnation = IncarnationId::from_bytes([3; 16]);
+    let pending = PendingMutation {
+        target: target.clone(),
+        incarnation,
+        identity: MutationIdentity {
+            request_id: RequestId::from_bytes([4; 16]),
+            issued_at_ms: 1_000,
+            expires_at_ms: 61_000,
+        },
+        operation_digest: Digest::from_bytes([5; 32]),
+        max_result_bytes: 64,
+    };
+    let result =
+        crate::codec::encode_wire(&b"lease-lost".to_vec(), 64).expect("bounded rejection result");
+
+    let decoded = decode_pending::<Vec<u8>>(
+        &pending,
+        StoredOutcome::Rejected {
+            result,
+            commit_sequence: 42,
+        },
+    );
+
+    assert!(matches!(
+        decoded,
+        Err(InvocationError::Rejected(committed))
+            if committed.output == b"lease-lost"
+                && committed.receipt == Receipt {
+                    cell: target.cell_id(),
+                    incarnation,
+                    commit_sequence: 42,
+                }
+    ));
+}
 
 struct PendingCommand;
 
@@ -79,8 +123,10 @@ impl PeerRoundTrip for AcceptedButLost {
     }
 }
 
-#[tokio::test]
-async fn ambiguous_peer_command_preserves_identity_without_retry() {
+fn peer_command_fixture(
+    round_trip: Arc<dyn PeerRoundTrip>,
+    expires_at_ms: i64,
+) -> (crate::peer::PeerClientTransport, EncodedCommand) {
     let target = CellTarget::new(
         TenantId::from_bytes([1; 16]),
         ApplicationId::from_bytes([2; 16]),
@@ -88,13 +134,6 @@ async fn ambiguous_peer_command_preserves_identity_without_retry() {
         b"pending",
     )
     .unwrap();
-    let identity = MutationIdentity {
-        request_id: RequestId::from_bytes([7; 16]),
-        issued_at_ms: 1_000,
-        expires_at_ms: 61_000,
-    };
-    let operation_digest = Digest::from_bytes([8; 32]);
-    let calls = Arc::new(AtomicUsize::new(0));
     let transport = crate::peer::PeerClientTransport::new(
         Arc::new(PeerSigner::new(
             SessionId::from_bytes([9; 16]),
@@ -106,33 +145,45 @@ async fn ambiguous_peer_command_preserves_identity_without_retry() {
             subject: "operator".into(),
             actions: vec!["repository.write".into()],
         },
+        round_trip,
+    );
+    let command = EncodedCommand {
+        target: target.clone(),
+        expected: CellDescription {
+            cell: target.cell_id(),
+            incarnation: IncarnationId::from_bytes([12; 16]),
+            code: Digest::from_bytes([13; 32]),
+            schema: 1,
+        },
+        identity: MutationIdentity {
+            request_id: RequestId::from_bytes([7; 16]),
+            issued_at_ms: 1_000,
+            expires_at_ms,
+        },
+        operation_digest: Digest::from_bytes([8; 32]),
+        now_ms: 1_000,
+        module: MODULE,
+        operation_id: 1,
+        codec_version: 1,
+        input: b"input".to_vec(),
+        input_limit: 64,
+        output_limit: 64,
+    };
+    (transport, command)
+}
+
+#[tokio::test]
+async fn ambiguous_peer_command_preserves_identity_without_retry() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (transport, command) = peer_command_fixture(
         Arc::new(AcceptedButLost {
             calls: Arc::clone(&calls),
         }),
+        61_000,
     );
-
-    let result = CellTransport::command(
-        &transport,
-        EncodedCommand {
-            target: target.clone(),
-            expected: CellDescription {
-                cell: target.cell_id(),
-                incarnation: IncarnationId::from_bytes([12; 16]),
-                code: Digest::from_bytes([13; 32]),
-                schema: 1,
-            },
-            identity,
-            operation_digest,
-            now_ms: 1_000,
-            module: MODULE,
-            operation_id: 1,
-            codec_version: 1,
-            input: b"input".to_vec(),
-            input_limit: 64,
-            output_limit: 64,
-        },
-    )
-    .await;
+    let identity = command.identity;
+    let operation_digest = command.operation_digest;
+    let result = CellTransport::command(&transport, command).await;
 
     assert!(matches!(
         result,
@@ -143,6 +194,114 @@ async fn ambiguous_peer_command_preserves_identity_without_retry() {
         }) if request_id == identity.request_id && digest == operation_digest
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+struct NeverReplies;
+
+impl PeerRoundTrip for NeverReplies {
+    fn send(
+        &self,
+        _target: CellTarget,
+        _request: Vec<u8>,
+        _remaining_ms: u32,
+    ) -> Pin<Box<dyn Future<Output = crate::Result<Vec<u8>>> + Send + 'static>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[tokio::test]
+async fn stalled_peer_command_returns_resolvable_unknown_outcome() {
+    let (transport, command) = peer_command_fixture(Arc::new(NeverReplies), 1_020);
+    let identity = command.identity;
+    let operation_digest = command.operation_digest;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        CellTransport::command(&transport, command),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Ok(Err(Error::OutcomeUnknown {
+            request_id,
+            operation_digest: digest,
+            source,
+        })) if request_id == identity.request_id
+            && digest == operation_digest
+            && matches!(*source, Error::PeerTransportUnknown { .. })
+    ));
+}
+
+struct UnusableReply(Vec<u8>);
+
+impl PeerRoundTrip for UnusableReply {
+    fn send(
+        &self,
+        _target: CellTarget,
+        _request: Vec<u8>,
+        _remaining_ms: u32,
+    ) -> Pin<Box<dyn Future<Output = crate::Result<Vec<u8>>> + Send + 'static>> {
+        let reply = self.0.clone();
+        Box::pin(async move { Ok(reply) })
+    }
+}
+
+#[tokio::test]
+async fn unusable_peer_mutation_replies_preserve_pending_identity() {
+    use crate::peer::wire;
+
+    let wrong_kind = crate::peer::encode_peer_reply(&wire::PeerReply {
+        outcome: Some(wire::peer_reply::Outcome::Read(wire::ReadReply {
+            receipt: None,
+            result: Some(wire::read_reply::Result::Description(
+                wire::CellDescription {
+                    cell_id: vec![1; 32],
+                    incarnation: vec![2; 16],
+                    code: vec![3; 32],
+                    schema: 1,
+                },
+            )),
+        })),
+    })
+    .unwrap();
+    let wrong_receipt = crate::peer::encode_peer_reply(&wire::PeerReply {
+        outcome: Some(wire::peer_reply::Outcome::Mutation(wire::MutationReply {
+            receipt: Some(wire::Receipt {
+                cell_id: vec![9; 32],
+                incarnation: vec![12; 16],
+                commit_sequence: 1,
+            }),
+            outcome: Some(wire::mutation_reply::Outcome::Result(
+                wire::MutationResult {
+                    result: Some(wire::mutation_result::Result::CommandOutput(Vec::new())),
+                },
+            )),
+        })),
+    })
+    .unwrap();
+
+    for (case, reply) in [
+        ("malformed", b"invalid".to_vec()),
+        ("wrong kind", wrong_kind),
+        ("wrong receipt", wrong_receipt),
+    ] {
+        let (transport, command) = peer_command_fixture(Arc::new(UnusableReply(reply)), 61_000);
+        let identity = command.identity;
+        let operation_digest = command.operation_digest;
+        let result = CellTransport::command(&transport, command).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(Error::OutcomeUnknown {
+                    request_id,
+                    operation_digest: digest,
+                    ..
+                }) if request_id == identity.request_id && digest == operation_digest
+            ),
+            "{case} reply must retain pending identity"
+        );
+    }
 }
 
 struct PendingModule;
@@ -358,13 +517,16 @@ async fn unknown_outcome_keeps_identity_and_digest_for_resolve() {
         expires_at_ms: now_ms + 60_000,
     };
 
-    let pending = match client
-        .command::<PendingCommand>(&target, identity, b"input".to_vec())
+    let prepared = client
+        .prepare_command::<PendingCommand>(&target, identity, b"input".to_vec())
         .await
-    {
+        .expect("prepare exact command");
+    let evidence = prepared.evidence().clone();
+    let pending = match prepared.execute().await {
         Err(InvocationError::Pending(pending)) => pending,
         outcome => panic!("unexpected command outcome: {outcome:?}"),
     };
+    assert_eq!(*pending, evidence);
     assert_eq!(pending.identity(), identity);
     assert_eq!(
         Some(pending.operation_digest()),

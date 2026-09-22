@@ -11,13 +11,15 @@ pub use api::{
     register_kv,
 };
 
-const KV_SCHEMA: &str = include_str!("migrations/kv.sql");
+/// Version-one KV schema for a module's `MigrationDescriptor`.
+pub const KV_SCHEMA_SQL: &str = include_str!("migrations/kv.sql");
 const MAX_SCOPE_BYTES: usize = 1_024;
 const MAX_KEY_BYTES: usize = 1_024;
-const MAX_VALUE_BYTES: usize = 65_536;
+const MAX_VALUE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ATOMIC_ITEMS: usize = 128;
-const MAX_OPERATION_BYTES: usize = 1 << 20;
+const MAX_OPERATION_BYTES: usize = crate::codec::MAX_WIRE_BYTES;
 const MAX_LIST_ITEMS: usize = 1_000;
+// Preserve the normal page size; a single larger entry occupies one page.
 const MAX_PAGE_BYTES: usize = 1 << 20;
 const VERSION_BYTES: usize = 28;
 const CLEANUP_ITEMS: usize = 128;
@@ -100,7 +102,7 @@ pub struct KvPage {
 
 /// Installs the exact version-one KV schema inside bootstrap or migration SQL.
 pub fn install_kv_schema(transaction: &Transaction<'_>) -> Result<()> {
-    transaction.execute_batch(KV_SCHEMA)?;
+    transaction.execute_batch(KV_SCHEMA_SQL)?;
     Ok(())
 }
 
@@ -257,9 +259,10 @@ pub fn kv_list(
             .and_then(|bytes| bytes.checked_add(VERSION_BYTES + 64))
             .ok_or(Error::Command("KV page byte count overflow"))?;
         if entries.len() == limit
-            || page_bytes
-                .checked_add(entry_bytes)
-                .is_none_or(|bytes| bytes > MAX_PAGE_BYTES)
+            || (!entries.is_empty()
+                && page_bytes
+                    .checked_add(entry_bytes)
+                    .is_none_or(|bytes| bytes > MAX_PAGE_BYTES))
         {
             has_more = true;
             break;
@@ -337,7 +340,7 @@ fn validate_atomic(now_ms: i64, request: &KvAtomicRequest) -> Result<()> {
         } = mutation
         {
             if value.len() > MAX_VALUE_BYTES {
-                return Err(Error::Command("KV value exceeds 65536 bytes"));
+                return Err(Error::Command("KV value exceeds 4 MiB"));
             }
             operation_bytes = operation_bytes
                 .checked_add(value.len())
@@ -348,7 +351,7 @@ fn validate_atomic(now_ms: i64, request: &KvAtomicRequest) -> Result<()> {
         }
     }
     if operation_bytes > MAX_OPERATION_BYTES {
-        return Err(Error::Command("KV atomic operation exceeds 1 MiB"));
+        return Err(Error::Command("KV atomic operation exceeds byte budget"));
     }
     Ok(())
 }
@@ -432,7 +435,7 @@ mod tests {
 
     #[test]
     fn embedded_kv_migration_matches_normative_contract() {
-        assert_eq!(KV_SCHEMA, include_str!("../docs/contracts/kv.sql"));
+        assert_eq!(KV_SCHEMA_SQL, include_str!("../docs/contracts/kv.sql"));
     }
 
     #[test]

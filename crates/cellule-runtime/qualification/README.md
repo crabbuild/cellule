@@ -14,14 +14,42 @@ seven days ago or more than five minutes ahead of its verifier clock. The
 historical library verifier remains timestamp-neutral; use the fresh protected
 matrix entry point for release decisions.
 
-Generate and verify a deterministic mixed primitive workload with:
+Run the commands below from this qualification directory. From the workspace
+root, enter it first so `profiles/` resolves to the checked-in inputs:
+
+```sh
+cd crates/cellule-runtime/qualification
+```
+
+Generate and verify a deterministic mixed primitive workload in a temporary
+directory, leaving the source tree untouched:
+
+```sh
+WORKLOAD_DIR="$(mktemp -d)"
+cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
+  workload "$WORKLOAD_DIR/workload.json" profiles/pr-contract-v1.json 7
+cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
+  verify-workload "$WORKLOAD_DIR/workload.json" profiles/pr-contract-v1.json
+```
+
+After a real harness has written one receipt and one or more raw artifacts for
+each matrix workload, build the canonical manifest from that evidence tree:
 
 ```text
+evidence/
+├── receipts/<workload>.json
+└── artifacts/<workload>/<artifact files>
+
 cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
-  workload workload.json profiles/pr-contract-v1.json 7
-cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
-  verify-workload workload.json profiles/pr-contract-v1.json
+  manifest evidence/qualification-matrix.json evidence/
 ```
+
+The builder emits schema-2 rows in the required order and rejects missing,
+symlinked, or non-file evidence entries. The manifest output must be directly
+under the evidence directory so its relative paths remain verifiable. It only
+indexes files; it does not create or sign receipts. Run `verify-matrix` with the
+protected profile and pinned attestation key before treating the resulting
+manifest as release evidence.
 
 Typed qualification adapters may use the bounded `QualificationWorkload::run_concurrent`
 entry point when scheduled operations are independent or idempotent. The serial
@@ -31,12 +59,42 @@ latency histogram, and logical outcome digest. Protected adapters should use
 `run_with_case_coverage` or `run_concurrent_with_case_coverage`, which require
 each result to bind the lifecycle case it exercised.
 
+After a protected adapter has captured a verified run artifact, write the
+non-secret execution identity and fault/ownership observations with the
+`QualificationExecutionEvidence` schema, then bind the receipt with the
+trusted signing key held outside the evidence directory:
+
+```text
+cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
+  bind-protected receipt.json <source-sha> <image-digest> profile.json \
+  execution-evidence.json /run/secrets/qualification-signing-key \
+  run-artifact.json workload.json raw/provider-events.json
+```
+
+The command rejects local profiles, non-canonical evidence, mismatched
+workload/run artifacts, missing protected resource measurements, and a signing
+key symlink. It never generates a protected receipt from the synthetic
+`emit` path; the resulting receipt must still pass `verify-matrix` with the
+pinned public key before release packaging.
+
+Named provider profiles also require one canonical
+`QualificationProviderEvidence` raw artifact beside the run and workload
+artifacts. It binds the provider/profile digest and workload seed, and records
+successful conditional, range, and multipart checks. Missing, duplicated,
+partial, or mismatched provider semantics are rejected by both the binder and
+the fresh-process matrix verifier.
+
 The default workload contains a deterministic, seed-bound case schedule for each
 primitive: `happy`, `retry`, `duplicate`, `expiry`, `cancellation`, `owner-loss`,
 and `recovery`. Adapters inspect `QualificationOperation::case()` (or its
 bounded hint accessors) to drive the corresponding primitive-specific behavior;
 the schedule is a case plan, not evidence that an external provider or owner
-fault actually occurred.
+fault actually occurred. The workload's outcome counts are forecasts used to
+describe that schedule. A measured run binds the scheduled attempt count for
+each primitive and records actual acknowledgements, rejections, ambiguity,
+retries, and verification independently; it need not reproduce those
+forecasts. A PR wiring smoke marks only the primitive/case pairs it actually
+exercises and checks; other scheduled pairs stay unmarked.
 
 The measured summary also emits `throughput_ops_per_sec` using a conservative
 rounded-up duration; protected profiles still verify the raw elapsed duration
@@ -44,7 +102,7 @@ and their independent resource counters. Protected `primitives` receipts must
 also match the measured run artifact's cells, operations, duration, throughput,
 and p50/p95/p99/max latency metrics in non-decreasing order; a signed receipt
 with substituted threshold values is rejected.
-Measured run artifacts use schema 3 and include a bounded primitive/case bitset;
+Measured run artifacts use schema 4 and include a bounded primitive/case bitset;
 named provider/topology profiles reject artifacts missing any lifecycle case.
 The PR profile is a correctness gate.
 `local-provider-v1`, `fault-v1`, `provider-v1`, `compatibility-v1`, and
@@ -60,3 +118,12 @@ watermark proof. The command-line `emit` helper only creates threshold metrics
 for the PR correctness profile; protected evidence must come from the real
 provider/fault/scale harness so it cannot be promoted from a synthetic local
 receipt.
+
+## Release handoff
+
+A host release workflow must fetch protected evidence from a successful run at
+the exact source revision being released. It must check the run identity and
+commit before accepting the artifact, then verify the matrix against the
+release image, tracked profile, and pinned attestation public key. Missing,
+stale, symlinked, or malformed evidence fails closed. The embedding product
+owns its CI artifact names, deployment topology, and release inputs.
