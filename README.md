@@ -6,13 +6,14 @@ Cellule is an embedded Rust framework for distributed applications whose state i
 
 | Layer | Crate | Responsibility |
 | --- | --- | --- |
+| Contracts | `cellule-types` | Dependency-light provider and bucket identities shared across storage boundaries. |
 | Transport | `cellule-store` | Provider-neutral object-store operations, conditional writes, retries, and error classification. |
 | Persistence | `cellule-ltx` | Managed SQLite WAL capture, verified LTX recovery, immutable Cell roots, and sparse reads. Remote replication requires the `replica` feature. |
 | Coordination and execution | `cellule-runtime` | Cell identities, owner fencing, authority CAS, SQL execution, durable outcomes, and distributed primitives. |
 | Application | `cellule-app` | Module registration, stable topology, and typed author handles. |
 | Host | `cellule-host` | One-runtime node lifecycle, resource admission, drain, and shutdown. |
 
-The dependencies point downward: `host → app → runtime → ltx → store`. `host` also uses runtime directly. No crate depends on Crab, Git, or an HTTP server.
+The dependencies point downward: `host → app → runtime → ltx → store → types`. `host` also uses runtime directly. No crate depends on Crab, Git, or an HTTP server.
 
 ## How a write becomes durable
 

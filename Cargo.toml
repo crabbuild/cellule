@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/cellule-types",
     "crates/cellule-store",
     "crates/cellule-ltx",
     "crates/cellule-runtime",
@@ -14,6 +15,7 @@ license = "Apache-2.0"
 rust-version = "1.97"
 
 [workspace.dependencies]
+cellule-types = { version = "=0.1.0", path = "crates/cellule-types", default-features = false }
 cellule-store = { version = "=0.1.0", path = "crates/cellule-store", default-features = false }
 cellule-ltx = { version = "=0.1.0", path = "crates/cellule-ltx", default-features = false }
 cellule-runtime = { version = "=0.1.0", path = "crates/cellule-runtime", default-features = false }

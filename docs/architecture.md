@@ -13,13 +13,14 @@ application service (HTTP, CLI, credentials, node networking)
              │
       cellule-ltx
              │
-      cellule-store
-             │
-      object_store providers
+      cellule-store ──────┐
+          │              │
+      cellule-types   object_store providers
 ```
 
 ## Boundaries
 
+- `cellule-types` owns stable, dependency-light provider and bucket identities.
 - `cellule-store` wraps `object_store` for bounded reads, retries, compare-and-swap, immutable writes, and classified failures. It cannot decide which Cell root is authoritative.
 - `cellule-ltx` owns SQLite WAL capture, LTX encoding and validation, exact restore, immutable root construction, and authenticated sparse pages. It returns a proposed root; it cannot acknowledge an application request.
 - `cellule-runtime` owns stable identities, control transitions, owner fencing, release and catalog state, actors, durable request outcomes, primitive implementations, and root publication. One Cell command changes one SQLite database; cross-Cell work uses durable effects and idempotent inboxes.

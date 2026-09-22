@@ -19,6 +19,7 @@ test-support = []
 async-trait = { workspace = true }
 blake3 = { workspace = true }
 bytes = { workspace = true }
+cellule-types.workspace = true
 futures-util = { workspace = true }
 hyper = "1"
 object_store = { workspace = true, features = [
