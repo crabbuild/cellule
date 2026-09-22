@@ -14,13 +14,22 @@ seven days ago or more than five minutes ahead of its verifier clock. The
 historical library verifier remains timestamp-neutral; use the fresh protected
 matrix entry point for release decisions.
 
-Generate and verify a deterministic mixed primitive workload with:
+Run the commands below from this qualification directory. From the workspace
+root, enter it first so `profiles/` resolves to the checked-in inputs:
 
-```text
+```sh
+cd crates/cellule-runtime/qualification
+```
+
+Generate and verify a deterministic mixed primitive workload in a temporary
+directory, leaving the source tree untouched:
+
+```sh
+WORKLOAD_DIR="$(mktemp -d)"
 cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
-  workload workload.json profiles/pr-contract-v1.json 7
+  workload "$WORKLOAD_DIR/workload.json" profiles/pr-contract-v1.json 7
 cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
-  verify-workload workload.json profiles/pr-contract-v1.json
+  verify-workload "$WORKLOAD_DIR/workload.json" profiles/pr-contract-v1.json
 ```
 
 After a real harness has written one receipt and one or more raw artifacts for
