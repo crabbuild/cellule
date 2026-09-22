@@ -22,6 +22,11 @@ const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 /// A pending future is dropped when `remaining_ms` elapses. A malformed or
 /// unrelated reply also leaves mutation acceptance unknown. Callers must
 /// resolve the original identity instead of issuing a new mutation.
+/// An adapter must return `Error::PeerTransportUnknown` whenever delivery or
+/// acceptance may have occurred, including a lost response or an HTTP error
+/// emitted after dispatch. Return a known transport error only when non-delivery
+/// is proven. A received response permits a safe retry only when its peer reply
+/// explicitly says `NotStarted`.
 pub trait PeerRoundTrip: Send + Sync + 'static {
     fn send(
         &self,

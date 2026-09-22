@@ -30,7 +30,11 @@ covers the additional ownership needed before a service can accept traffic.
    `CellClient::peer`, and an inbound verifier. Bind a typed
    `ApplicationHandle` through the node after routing is ready. Do not expose
    a peer endpoint merely because a socket has bound: serving also requires
-   the expected application release and a live owner session.
+   the expected application release and a live owner session. The transport
+   adapter must classify a lost reply or post-dispatch failure as
+   `PeerTransportUnknown`; an HTTP status such as 503 cannot prove non-delivery.
+   A received response permits a safe retry only when its valid peer reply
+   explicitly says `NotStarted`.
 5. Probe the provider operations the deployment uses, publish the node session
    through the service's authoritative directory, and install the resulting
    [`NodeLeaseGuard`](../crates/cellule-runtime/src/node_lease.rs) with
