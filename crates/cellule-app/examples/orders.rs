@@ -144,58 +144,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session,
         Host::default().with_local_disk_budget(DiskBudget::new(1 << 30)),
     )?;
-    let handle = runtime
-        .bootstrap(
-            proof,
-            CellReplica::new(
-                layout,
-                *target.cell_id().as_bytes(),
-                *incarnation.as_bytes(),
-                Limits::default(),
-            )?,
-            authority,
-            observed,
-            files.path().join("orders.sqlite"),
-            |transaction| {
-                transaction.execute_batch(SCHEMA)?;
-                Ok(())
-            },
-        )
-        .await?;
-    let client = CellClient::local(registry, handle);
-    let typed = ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id);
-    let sql = typed.sql::<Orders>(target)?;
-    let now_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
-    let committed = sql
-        .batch(
-            MutationIdentity {
-                request_id: RequestId::from_bytes([6; 16]),
-                issued_at_ms: now_ms,
-                expires_at_ms: now_ms + 60_000,
-            },
-            SqlBatch {
-                statements: vec![SqlStatement {
-                    sql: "INSERT INTO orders (id, total_cents) VALUES (?1, ?2)".into(),
-                    parameters: vec![SqlValue::Integer(42), SqlValue::Integer(1_999)],
-                }],
-            },
-        )
-        .await?;
-    let observed = sql
-        .query(
-            Some(committed.receipt),
-            SqlBatch {
-                statements: vec![SqlStatement {
-                    sql: "SELECT total_cents FROM orders WHERE id = ?1".into(),
-                    parameters: vec![SqlValue::Integer(42)],
-                }],
-            },
-        )
-        .await?;
-    if observed.output[0].rows != vec![vec![SqlValue::Integer(1_999)]] {
-        return Err(Error::Control("published order total differs").into());
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let handle = runtime
+            .bootstrap(
+                proof,
+                CellReplica::new(
+                    layout,
+                    *target.cell_id().as_bytes(),
+                    *incarnation.as_bytes(),
+                    Limits::default(),
+                )?,
+                authority,
+                observed,
+                files.path().join("orders.sqlite"),
+                |transaction| {
+                    transaction.execute_batch(SCHEMA)?;
+                    Ok(())
+                },
+            )
+            .await?;
+        let client = CellClient::local(registry, handle);
+        let typed =
+            ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id);
+        let sql = typed.sql::<Orders>(target)?;
+        let now_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+        let committed = sql
+            .batch(
+                MutationIdentity {
+                    request_id: RequestId::from_bytes([6; 16]),
+                    issued_at_ms: now_ms,
+                    expires_at_ms: now_ms + 60_000,
+                },
+                SqlBatch {
+                    statements: vec![SqlStatement {
+                        sql: "INSERT INTO orders (id, total_cents) VALUES (?1, ?2)".into(),
+                        parameters: vec![SqlValue::Integer(42), SqlValue::Integer(1_999)],
+                    }],
+                },
+            )
+            .await?;
+        let observed = sql
+            .query(
+                Some(committed.receipt),
+                SqlBatch {
+                    statements: vec![SqlStatement {
+                        sql: "SELECT total_cents FROM orders WHERE id = ?1".into(),
+                        parameters: vec![SqlValue::Integer(42)],
+                    }],
+                },
+            )
+            .await?;
+        if observed.output.first().map(|result| &result.rows)
+            != Some(&vec![vec![SqlValue::Integer(1_999)]])
+        {
+            return Err(Error::Control("published order total differs").into());
+        }
+        Ok(())
     }
+    .await;
+    let shutdown = runtime.shutdown().await;
+    result?;
+    shutdown?;
     println!("order 42 total: 1999 cents");
-    runtime.shutdown().await?;
     Ok(())
 }
