@@ -10,10 +10,11 @@ From the workspace root:
 
 ```sh
 cargo run -p cellule-app --example orders --locked
+cargo +1.97.0 check --workspace --all-targets --locked
 cargo test --workspace --locked
 cargo test -p cellule-ltx --features replica --locked
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
 python3 scripts/check-boundaries.py
 node crates/cellule-runtime/docs/validate.mjs
