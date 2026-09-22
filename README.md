@@ -2,16 +2,18 @@
 
 Cellule is an embedded Rust framework for distributed applications whose state is partitioned into SQLite-backed Cells. A Cell has one fenced writer, a durable control record, immutable LTX history in object storage, and an exact recovery root. Applications register statically linked modules and invoke typed commands and queries. The embedding service owns network endpoints, authentication, cloud credentials, and deployment policy.
 
+The source repository is public. The crates are currently unpublished while provider and deployment qualification remains open; run the examples from this workspace checkout.
+
 ## Crates
 
 | Layer | Crate | Responsibility |
 | --- | --- | --- |
-| Contracts | `cellule-types` | Dependency-light provider and bucket identities shared across storage boundaries. |
-| Transport | `cellule-store` | Provider-neutral object-store operations, conditional writes, retries, and error classification. |
-| Persistence | `cellule-ltx` | Managed SQLite WAL capture, verified LTX recovery, immutable Cell roots, and sparse reads. Remote replication requires the `replica` feature. |
-| Coordination and execution | `cellule-runtime` | Cell identities, owner fencing, authority CAS, SQL execution, durable outcomes, and distributed primitives. |
-| Application | `cellule-app` | Module registration, stable topology, and typed author handles. |
-| Host | `cellule-host` | One-runtime node lifecycle, resource admission, drain, and shutdown. |
+| Contracts | [cellule-types](crates/cellule-types/README.md) | Dependency-light provider and bucket identities shared across storage boundaries. |
+| Transport | [cellule-store](crates/cellule-store/README.md) | Provider-neutral object-store operations, conditional writes, retries, and error classification. |
+| Persistence | [cellule-ltx](crates/cellule-ltx/README.md) | Managed SQLite WAL capture, verified LTX recovery, immutable Cell roots, and sparse reads. Remote replication requires the `replica` feature. |
+| Coordination and execution | [cellule-runtime](crates/cellule-runtime/README.md) | Cell identities, owner fencing, authority CAS, SQL execution, durable outcomes, and distributed primitives. |
+| Application | [cellule-app](crates/cellule-app/README.md) | Module registration, stable topology, and typed author handles. |
+| Host | [cellule-host](crates/cellule-host/README.md) | One-runtime node lifecycle, resource admission, drain, and shutdown. |
 
 The dependencies point downward: `host → app → runtime → ltx → store → types`. `host` also uses runtime directly. No crate depends on Crab, Git, or an HTTP server.
 
