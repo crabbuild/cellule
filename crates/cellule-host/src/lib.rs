@@ -1168,7 +1168,12 @@ impl CellNode {
     /// Stops admission and waits for owned drains until `deadline`.
     /// A timed-out runtime drain continues; another call can wait for its result.
     pub async fn drain_until(&self, deadline: Option<Instant>) -> cellule_runtime::Result<()> {
-        let _shutdown = self.shutdown_lock.lock().await;
+        let _shutdown = match deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline.into(), self.shutdown_lock.lock())
+                .await
+                .map_err(|_| Error::Control("CellNode shutdown lock deadline exceeded"))?,
+            None => self.shutdown_lock.lock().await,
+        };
         {
             let mut state = self
                 .state
@@ -2307,6 +2312,49 @@ mod tests {
         first.unwrap();
         second.unwrap();
         assert_eq!(node.state(), NodeState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn shutdown_deadline_bounds_wait_for_another_shutdown() {
+        let node = Arc::new(
+            CellNodeBuilder::new(application())
+                .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+                .with_replica_host(ReplicaHost::default())
+                .with_session(SessionId::from_bytes([38; 16]))
+                .build()
+                .unwrap(),
+        );
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        node.install_facility(
+            CellNodeFacility::new("waiting", {
+                let entered = Arc::clone(&entered);
+                let release = Arc::clone(&release);
+                move || {
+                    let entered = Arc::clone(&entered);
+                    let release = Arc::clone(&release);
+                    async move {
+                        entered.notify_one();
+                        release.notified().await;
+                        Ok(())
+                    }
+                }
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let first_node = Arc::clone(&node);
+        let first = tokio::spawn(async move { first_node.shutdown().await });
+        entered.notified().await;
+
+        let bounded = tokio::time::timeout(
+            Duration::from_millis(500),
+            node.shutdown_until(Instant::now() + Duration::from_millis(10)),
+        )
+        .await;
+        release.notify_one();
+        first.await.unwrap().unwrap();
+        assert!(matches!(bounded, Ok(Err(Error::Control(_)))));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
