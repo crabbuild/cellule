@@ -537,6 +537,7 @@ impl CellNodeBuilder {
         let node = CellNode {
             application,
             runtime,
+            runtime_drain: tokio::sync::Mutex::new(RuntimeDrain::NotStarted),
             state: Arc::new(Mutex::new(NodeState::Starting)),
             lease_installed: AtomicBool::new(false),
             shutdown_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -567,6 +568,7 @@ impl CellNodeBuilder {
         let node = CellNode {
             application,
             runtime,
+            runtime_drain: tokio::sync::Mutex::new(RuntimeDrain::NotStarted),
             state: Arc::new(Mutex::new(NodeState::Starting)),
             lease_installed: AtomicBool::new(false),
             shutdown_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -633,10 +635,18 @@ fn append_required_components(
     Ok(())
 }
 
+enum RuntimeDrain {
+    NotStarted,
+    Running(JoinHandle<cellule_runtime::Result<()>>),
+    Succeeded,
+    Failed,
+}
+
 /// One started application host with an ordered drain/shutdown boundary.
 pub struct CellNode {
     application: Arc<CompiledApplication>,
     runtime: CellRuntime,
+    runtime_drain: tokio::sync::Mutex<RuntimeDrain>,
     state: Arc<Mutex<NodeState>>,
     lease_installed: AtomicBool,
     shutdown_lock: Arc<tokio::sync::Mutex<()>>,
@@ -1155,7 +1165,8 @@ impl CellNode {
         self.drain_until(None).await
     }
 
-    /// Stops admission and completes every owned drain phase by `deadline`.
+    /// Stops admission and waits for owned drains until `deadline`.
+    /// A timed-out runtime drain continues; another call can wait for its result.
     pub async fn drain_until(&self, deadline: Option<Instant>) -> cellule_runtime::Result<()> {
         let _shutdown = self.shutdown_lock.lock().await;
         {
@@ -1229,15 +1240,7 @@ impl CellNode {
                 }
             }
         }
-        let runtime_result = match deadline {
-            Some(deadline) => {
-                match tokio::time::timeout_at(deadline.into(), self.runtime.shutdown()).await {
-                    Ok(result) => result,
-                    Err(_) => Err(Error::Control("CellNode runtime drain deadline exceeded")),
-                }
-            }
-            None => self.runtime.shutdown().await,
-        };
+        let runtime_result = self.drain_runtime_until(deadline).await;
         if first_error.is_none() {
             first_error = runtime_result.err();
         }
@@ -1270,8 +1273,45 @@ impl CellNode {
     }
 
     /// Deadline-aware alias for graceful shutdown hooks.
+    /// A later call can resume waiting after the deadline expires.
     pub async fn shutdown_until(&self, deadline: Instant) -> cellule_runtime::Result<()> {
         self.drain_until(Some(deadline)).await
+    }
+
+    async fn drain_runtime_until(&self, deadline: Option<Instant>) -> cellule_runtime::Result<()> {
+        let mut drain = self.runtime_drain.lock().await;
+        if matches!(*drain, RuntimeDrain::NotStarted) {
+            // A caller deadline must not cancel the one-shot runtime shutdown.
+            let runtime = self.runtime.clone();
+            *drain = RuntimeDrain::Running(tokio::spawn(async move { runtime.shutdown().await }));
+        }
+        let RuntimeDrain::Running(task) = &mut *drain else {
+            return match *drain {
+                RuntimeDrain::Succeeded => Ok(()),
+                RuntimeDrain::Failed => Err(Error::Control("CellNode runtime drain failed")),
+                _ => Err(Error::Control("CellNode runtime drain is unavailable")),
+            };
+        };
+        let joined = match deadline {
+            Some(deadline) => match tokio::time::timeout_at(deadline.into(), &mut *task).await {
+                Ok(joined) => joined,
+                Err(_) => return Err(Error::Control("CellNode runtime drain deadline exceeded")),
+            },
+            None => (&mut *task).await,
+        };
+        let result = match joined {
+            Ok(result) => result,
+            Err(source) => Err(Error::Facility {
+                name: "runtime-shutdown",
+                source: Box::new(source),
+            }),
+        };
+        *drain = if result.is_ok() {
+            RuntimeDrain::Succeeded
+        } else {
+            RuntimeDrain::Failed
+        };
+        result
     }
 }
 
@@ -2363,6 +2403,76 @@ mod tests {
         assert!(completed.load(Ordering::Acquire));
         assert!(node.is_shutting_down());
         assert_eq!(node.state(), NodeState::Draining);
+    }
+
+    #[tokio::test]
+    async fn node_shutdown_retries_a_transient_facility_failure_after_runtime_drain() {
+        let node = CellNodeBuilder::new(application())
+            .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+            .with_replica_host(ReplicaHost::default())
+            .with_session(SessionId::from_bytes([36; 16]))
+            .build()
+            .unwrap();
+        let fail_once = Arc::new(AtomicBool::new(true));
+        node.install_facility(
+            CellNodeFacility::new("transient", move || {
+                let fail_once = Arc::clone(&fail_once);
+                async move {
+                    if fail_once.swap(false, Ordering::AcqRel) {
+                        return Err(Box::new(std::io::Error::other("try again"))
+                            as Box<dyn std::error::Error + Send + Sync>);
+                    }
+                    Ok(())
+                }
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            node.shutdown().await,
+            Err(Error::Facility {
+                name: "transient",
+                ..
+            })
+        ));
+        assert_eq!(node.state(), NodeState::Draining);
+        assert!(node.is_shutting_down());
+        node.shutdown().await.unwrap();
+        assert_eq!(node.state(), NodeState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn node_shutdown_resumes_after_a_facility_deadline() {
+        let node = CellNodeBuilder::new(application())
+            .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+            .with_replica_host(ReplicaHost::default())
+            .with_session(SessionId::from_bytes([37; 16]))
+            .build()
+            .unwrap();
+        let stall_once = Arc::new(AtomicBool::new(true));
+        node.install_facility(
+            CellNodeFacility::new("slow", move || {
+                let stall_once = Arc::clone(&stall_once);
+                async move {
+                    if stall_once.swap(false, Ordering::AcqRel) {
+                        std::future::pending::<FacilityResult>().await?;
+                    }
+                    Ok(())
+                }
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            node.shutdown_until(Instant::now() + Duration::from_millis(10))
+                .await
+                .is_err()
+        );
+        assert_eq!(node.state(), NodeState::Draining);
+        node.shutdown().await.unwrap();
+        assert_eq!(node.state(), NodeState::Stopped);
     }
 
     #[tokio::test]
