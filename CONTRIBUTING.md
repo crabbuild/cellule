@@ -10,6 +10,7 @@ From the workspace root:
 
 ```sh
 cargo run -p cellule-app --example orders --locked
+cargo run -p cellule-app --example carts --locked
 cargo +1.97.0 check --workspace --all-targets --locked
 cargo test --workspace --locked
 cargo test -p cellule-ltx --features replica --locked

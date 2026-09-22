@@ -4,23 +4,24 @@ use cellule_app::{ApplicationBuilder, ApplicationHandle, CellApplication, CellTy
 use cellule_ltx::{CellReplica, DiskBudget, Host, Limits};
 use cellule_runtime::{
     ActivityContext, ActivityExecution, ActivityHandler, ActivityRunOutcome, ApplicationId,
-    BlobArtifactStore, BlobCondition, BlobModule, BlobMutation, BlobMutationOutcome, BlobQuery,
-    BlobQueryResult, BuildDescriptor, CatalogEntry, CatalogRole, CellAuthority, CellClient,
-    CellHandle, CellModule, CellRuntime, CellStorageLayout, CellTarget, Command, CommandContext,
-    CommandResult, CronInvocation, CronModule, CronMutation, CronQueryResult, CronTarget, Digest,
-    EffectClaimRequest, EffectLeaseOutcome, EffectModule, Error, FencedNodeSession, IncarnationId,
-    InvocationError, KvAtomicCommand, KvAtomicRequest, KvGetQuery, KvGetRequest, KvModule,
+    BLOB_SCHEMA_SQL, BlobArtifactStore, BlobCondition, BlobModule, BlobMutation,
+    BlobMutationOutcome, BlobQuery, BlobQueryResult, BuildDescriptor, CRON_SCHEMA_SQL,
+    CatalogEntry, CatalogRole, CellAuthority, CellClient, CellHandle, CellModule, CellRuntime,
+    CellStorageLayout, CellTarget, Command, CommandContext, CommandResult, CronInvocation,
+    CronModule, CronMutation, CronQueryResult, CronTarget, Digest, EffectClaimRequest,
+    EffectLeaseOutcome, EffectModule, Error, FencedNodeSession, IncarnationId, InvocationError,
+    KV_SCHEMA_SQL, KvAtomicCommand, KvAtomicRequest, KvGetQuery, KvGetRequest, KvModule,
     KvMutation, MaintenanceModule, ModuleDescriptor, MutationIdentity, NamespaceDescriptor,
     NamespaceId, NodeAdvertisement, NodeCapacity, NodeDirectory, NodeFailureDomain, NodeId,
-    OperationDescriptor, Owner, QualificationExecution, QualificationOperation,
+    OperationDescriptor, Owner, QUEUE_SCHEMA_SQL, QualificationExecution, QualificationOperation,
     QualificationOperationExecutor, QualificationProfile, QualificationWorkload, QueueClaimRequest,
     QueueDeadLetterTarget, QueueLeaseOutcome, QueueModule, QueueSendRequest, Registry,
     RegistryBuilder, RequestId, Result, SqlBatch, SqlModule, SqlStatement, SqlValue, SqlWorkerPool,
-    TenantId, WorkflowAction, WorkflowActivityModule, WorkflowContext, WorkflowDecision,
-    WorkflowDefinition, WorkflowModule, WorkflowStatus, install_blob_schema, install_cron_schema,
-    install_kv_schema, install_queue_schema, install_workflow_schema, partition_for_shard,
-    register_activity, register_blob, register_cron, register_effect_delivery, register_kv,
-    register_maintenance, register_queue, register_sql, register_workflow,
+    TenantId, WORKFLOW_SCHEMA_SQL, WorkflowAction, WorkflowActivityModule, WorkflowContext,
+    WorkflowDecision, WorkflowDefinition, WorkflowModule, WorkflowStatus, install_blob_schema,
+    install_cron_schema, install_kv_schema, install_queue_schema, install_workflow_schema,
+    partition_for_shard, register_activity, register_blob, register_cron, register_effect_delivery,
+    register_kv, register_maintenance, register_queue, register_sql, register_workflow,
     register_workflow_activities,
 };
 use cellule_store::Store;
@@ -43,6 +44,8 @@ const DEAD_LETTER_NAMESPACE: NamespaceId = NamespaceId::from_bytes([5; 16]);
 const CRON_NAMESPACE: NamespaceId = NamespaceId::from_bytes([6; 16]);
 const WORKFLOW_NAMESPACE: NamespaceId = NamespaceId::from_bytes([7; 16]);
 const WORKFLOW_DIGEST: Digest = Digest::from_bytes([8; 32]);
+const SQL_SCHEMA: &str = "CREATE TABLE orders(id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL); \
+    CREATE TABLE invoice_receipts(schedule_id BLOB NOT NULL, occurrence INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(schedule_id, occurrence));";
 
 const SQL_MODULE: &str = "reference-sql";
 const KV_MODULE: &str = "reference-kv";
@@ -63,21 +66,9 @@ fn operation(id: u32) -> OperationDescriptor {
     }
 }
 
-fn migration() -> &'static [cellule_runtime::MigrationDescriptor] {
-    static MIGRATION: OnceLock<&'static [cellule_runtime::MigrationDescriptor]> = OnceLock::new();
-    MIGRATION.get_or_init(|| {
-        Box::leak(Box::new([cellule_runtime::MigrationDescriptor {
-            version: 1,
-            sql: "-- reference application migration v1",
-            digest: Digest::from_bytes(
-                *blake3::hash(b"-- reference application migration v1").as_bytes(),
-            ),
-        }]))
-    })
-}
-
 fn descriptor(
     module: &'static str,
+    schema_sql: &'static str,
     commands: &'static [u32],
     queries: &'static [u32],
     namespaces: &'static [NamespaceDescriptor],
@@ -129,7 +120,11 @@ fn descriptor(
         retained_codes: &[],
         schema_min: 1,
         schema_max: 1,
-        migrations: migration(),
+        migrations: Box::leak(Box::new([cellule_runtime::MigrationDescriptor {
+            version: 1,
+            sql: schema_sql,
+            digest: Digest::from_bytes(*blake3::hash(schema_sql.as_bytes()).as_bytes()),
+        }])),
         commands: command_descriptors,
         queries: query_descriptors,
         workflow_definitions: workflows,
@@ -164,7 +159,15 @@ impl CellModule for ReferenceSql {
             effect_targets: &[],
             dead_letter: None,
         }];
-        descriptor(SQL_MODULE, &[1, 3, 4, 6], &[2, 5, 6], NAMESPACES, &[], &[])
+        descriptor(
+            SQL_MODULE,
+            SQL_SCHEMA,
+            &[1, 3, 4, 6],
+            &[2, 5, 6],
+            NAMESPACES,
+            &[],
+            &[],
+        )
     }
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
         register_sql::<Self>(registry)?;
@@ -230,7 +233,15 @@ impl CellModule for ReferenceKv {
             effect_targets: &[],
             dead_letter: None,
         }];
-        descriptor(KV_MODULE, &[1], &[2, 3], NAMESPACES, &[], &[])
+        descriptor(
+            KV_MODULE,
+            KV_SCHEMA_SQL,
+            &[1],
+            &[2, 3],
+            NAMESPACES,
+            &[],
+            &[],
+        )
     }
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
         register_kv::<Self>(registry)
@@ -258,7 +269,15 @@ impl CellModule for ReferenceBlob {
             effect_targets: &[],
             dead_letter: None,
         }];
-        descriptor(BLOB_MODULE, &[1, 3], &[2], NAMESPACES, &[], &[])
+        descriptor(
+            BLOB_MODULE,
+            BLOB_SCHEMA_SQL,
+            &[1, 3],
+            &[2],
+            NAMESPACES,
+            &[],
+            &[],
+        )
     }
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
         register_blob::<Self>(registry)
@@ -299,6 +318,7 @@ impl CellModule for ReferenceQueue {
         }];
         descriptor(
             QUEUE_MODULE,
+            QUEUE_SCHEMA_SQL,
             &[1, 2, 3, 5, 7],
             &[4, 6],
             NAMESPACES,
@@ -338,6 +358,7 @@ impl CellModule for ReferenceDeadLetter {
         }];
         descriptor(
             DEAD_LETTER_MODULE,
+            QUEUE_SCHEMA_SQL,
             &[1, 2, 3, 4, 6],
             &[5, 7],
             NAMESPACES,
@@ -380,7 +401,15 @@ impl CellModule for ReferenceCron {
             effect_targets: &[SQL_NAMESPACE],
             dead_letter: None,
         }];
-        descriptor(CRON_MODULE, &[1, 3, 4, 5], &[2, 6, 7], NAMESPACES, &[], &[])
+        descriptor(
+            CRON_MODULE,
+            CRON_SCHEMA_SQL,
+            &[1, 3, 4, 5],
+            &[2, 6, 7],
+            NAMESPACES,
+            &[],
+            &[],
+        )
     }
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
         register_cron::<Self>(registry)?;
@@ -510,6 +539,7 @@ impl CellModule for ReferenceWorkflow {
         }];
         descriptor(
             WORKFLOW_MODULE,
+            WORKFLOW_SCHEMA_SQL,
             &[1, 2, 3, 4, 6, 7, 8, 9, 11, 12],
             &[5, 10, 13, 14],
             NAMESPACES,
@@ -739,7 +769,7 @@ async fn reference_application_uses_typed_handle_for_a_real_commit() {
             authority,
             observed,
             directory.path().join("reference.sqlite"),
-            |_| Ok(()),
+            performance_fixture::install_sql_tables,
         )
         .await
         .unwrap();

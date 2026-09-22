@@ -1,4 +1,4 @@
-# Run a local orders Cell
+# Run Cellule locally
 
 The [orders example](../crates/cellule-app/examples/orders.rs) is a small executable application with one SQL Cell. From the workspace root, run:
 
@@ -7,6 +7,16 @@ cargo run -p cellule-app --example orders --locked
 ```
 
 It provisions a Cell in an in-memory object store, commits order 42, reads its total at the commit receipt, and prints `order 42 total: 1999 cents`. It uses a temporary SQLite file and needs no credentials. The example shows module registration, Cell provisioning, a typed SQL handle, and a published read in one file.
+
+## Run a local cart Cell
+
+The [carts example](../crates/cellule-app/examples/carts.rs) uses the same one-Cell setup with a typed KV handle. Run it from the workspace root:
+
+```sh
+cargo run -p cellule-app --example carts --locked
+```
+
+It checks that `customer/42` has no `cart` key, atomically saves `book x2`, reads at the commit receipt, and prints `cart for customer 42: book x2`. Its module descriptor includes the exact version-one KV schema that bootstrap installs. Like orders, it uses a fresh in-memory store and a temporary SQLite file, so its fixed demo release identity is not for persisted deployments.
 
 ## Run the reference application
 
@@ -24,7 +34,7 @@ The test uses temporary SQLite files and an in-memory object store. It needs no 
 
 The [application source](../crates/cellule-app/tests/reference_application.rs) declares modules and compiles their descriptor with `ApplicationBuilder`. The [fixture](../crates/cellule-app/tests/reference_application/performance_fixture.rs) creates the Cells and typed handles. The [smoke actions](../crates/cellule-app/tests/reference_application/performance.rs) invoke those handles and check visible results. Follow the path in this order:
 
-1. `ReferenceApplication::register` declares the SQL, KV, Blob, Queue, Cron, Workflow, Activity, and Effect modules. Each namespace and operation ID is stable because the descriptor is persisted with Cells.
+1. `ReferenceApplication::register` declares the SQL, KV, Blob, Queue, Cron, Workflow, Activity, and Effect modules. Each namespace and operation ID is stable because the descriptor is persisted with Cells. Its version-one migration SQL matches the schema installed at bootstrap.
 2. `compiled` binds those modules to seven `CellType` declarations. The builder validates topology and produces a digest that is checked on restore.
 3. `PerfFixture::start` creates real SQLite databases, publishes their initial roots, and routes the typed handles locally.
 4. `reference_storefront_smoke` runs one verified action per lane in `run_reference_primitive_performance`.

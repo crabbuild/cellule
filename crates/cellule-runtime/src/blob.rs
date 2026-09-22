@@ -14,7 +14,8 @@ mod tests;
 
 pub use api::{BlobCommand, BlobModule, BlobNamespace, BlobQueryCommand, register_blob};
 
-const BLOB_SCHEMA: &str = include_str!("migrations/blob.sql");
+/// Version-one Blob schema for a module's `MigrationDescriptor`.
+pub const BLOB_SCHEMA_SQL: &str = include_str!("migrations/blob.sql");
 pub(crate) const MAX_BLOB_PART_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_BLOB_READ_BYTES: u32 = 512 * 1024;
 pub(crate) const MAX_BLOB_PARTS: u32 = 4_096;
@@ -324,7 +325,7 @@ pub enum BlobQueryResult {
 
 /// Installs the current Blob metadata and manifest schema.
 pub fn install_blob_schema(transaction: &Transaction<'_>) -> Result<()> {
-    transaction.execute_batch(BLOB_SCHEMA)?;
+    transaction.execute_batch(BLOB_SCHEMA_SQL)?;
     Ok(())
 }
 

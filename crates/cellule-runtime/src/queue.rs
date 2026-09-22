@@ -16,7 +16,8 @@ pub use api::{
     register_queue,
 };
 
-const QUEUE_SCHEMA: &str = include_str!("migrations/queue.sql");
+/// Version-one Queue schema for a module's `MigrationDescriptor`.
+pub const QUEUE_SCHEMA_SQL: &str = include_str!("migrations/queue.sql");
 const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
 pub(crate) const QUEUE_SEND_MAX_INPUT_BYTES: u32 = MAX_PAYLOAD_BYTES as u32 + 32;
 const MAX_CLAIM_BYTES: usize = 512 * 1024;
@@ -205,7 +206,7 @@ pub struct QueueInfo {
 
 /// Installs the exact version-one Queue schema inside bootstrap or migration SQL.
 pub fn install_queue_schema(transaction: &Transaction<'_>) -> Result<()> {
-    transaction.execute_batch(QUEUE_SCHEMA)?;
+    transaction.execute_batch(QUEUE_SCHEMA_SQL)?;
     Ok(())
 }
 

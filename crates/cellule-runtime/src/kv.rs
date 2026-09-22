@@ -11,7 +11,8 @@ pub use api::{
     register_kv,
 };
 
-const KV_SCHEMA: &str = include_str!("migrations/kv.sql");
+/// Version-one KV schema for a module's `MigrationDescriptor`.
+pub const KV_SCHEMA_SQL: &str = include_str!("migrations/kv.sql");
 const MAX_SCOPE_BYTES: usize = 1_024;
 const MAX_KEY_BYTES: usize = 1_024;
 const MAX_VALUE_BYTES: usize = 4 * 1024 * 1024;
@@ -101,7 +102,7 @@ pub struct KvPage {
 
 /// Installs the exact version-one KV schema inside bootstrap or migration SQL.
 pub fn install_kv_schema(transaction: &Transaction<'_>) -> Result<()> {
-    transaction.execute_batch(KV_SCHEMA)?;
+    transaction.execute_batch(KV_SCHEMA_SQL)?;
     Ok(())
 }
 
@@ -434,7 +435,7 @@ mod tests {
 
     #[test]
     fn embedded_kv_migration_matches_normative_contract() {
-        assert_eq!(KV_SCHEMA, include_str!("../docs/contracts/kv.sql"));
+        assert_eq!(KV_SCHEMA_SQL, include_str!("../docs/contracts/kv.sql"));
     }
 
     #[test]

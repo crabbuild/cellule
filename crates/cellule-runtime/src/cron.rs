@@ -9,7 +9,8 @@ mod api;
 
 pub use api::{CronCommand, CronModule, CronNamespace, CronQueryCommand, register_cron};
 
-const CRON_SCHEMA: &str = include_str!("migrations/cron.sql");
+/// Version-one Cron schema for a module's `MigrationDescriptor`.
+pub const CRON_SCHEMA_SQL: &str = include_str!("migrations/cron.sql");
 const MIN_INTERVAL_MS: u64 = 1_000;
 const MAX_INTERVAL_MS: u64 = 365 * 24 * 60 * 60 * 1_000;
 const MAX_PAYLOAD_BYTES: usize = 256 * 1_024;
@@ -135,7 +136,7 @@ pub enum CronQueryResult {
 
 /// Installs the exact version-one Cron schema.
 pub fn install_cron_schema(transaction: &Transaction<'_>) -> Result<()> {
-    transaction.execute_batch(CRON_SCHEMA)?;
+    transaction.execute_batch(CRON_SCHEMA_SQL)?;
     Ok(())
 }
 
@@ -518,6 +519,6 @@ mod tests {
 
     #[test]
     fn checked_in_cron_schema_matches_runtime_schema() {
-        assert_eq!(CRON_SCHEMA, include_str!("../docs/contracts/cron.sql"));
+        assert_eq!(CRON_SCHEMA_SQL, include_str!("../docs/contracts/cron.sql"));
     }
 }

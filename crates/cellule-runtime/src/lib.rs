@@ -65,10 +65,10 @@ pub use application::{ApplicationIdentity, ApplicationIdentityStore};
 pub use authority::{CellAuthority, VersionedControl};
 pub use backup::{BackupPin, BackupPinStore, BackupRestore, PinnedCatalogShard};
 pub use blob::{
-    BlobArtifactStore, BlobCommand, BlobCondition, BlobGarbageCollectionReport, BlobMetadata,
-    BlobModule, BlobMutation, BlobMutationOutcome, BlobNamespace, BlobPage, BlobQuery,
-    BlobQueryCommand, BlobQueryResult, BlobRead, blob_cleanup_expired, blob_mutate, blob_query,
-    install_blob_schema, register_blob,
+    BLOB_SCHEMA_SQL, BlobArtifactStore, BlobCommand, BlobCondition, BlobGarbageCollectionReport,
+    BlobMetadata, BlobModule, BlobMutation, BlobMutationOutcome, BlobNamespace, BlobPage,
+    BlobQuery, BlobQueryCommand, BlobQueryResult, BlobRead, blob_cleanup_expired, blob_mutate,
+    blob_query, install_blob_schema, register_blob,
 };
 pub use catalog::{
     CatalogEntry, CatalogProof, CatalogRole, CatalogScanPage, CatalogShardScan, CellCatalog,
@@ -86,9 +86,9 @@ pub use cluster_qualification::validate_cluster_receipt;
 pub use codec::{BoundedDecoder, BoundedEncoder, CodecError, WireValue};
 pub use control::{Control, ControlState, Owner, RecoveryOverlayRef, RootRef, Transition};
 pub use cron::{
-    CronCommand, CronInvocation, CronModule, CronMutation, CronMutationOutcome, CronNamespace,
-    CronQuery, CronQueryCommand, CronQueryResult, CronSchedule, CronTarget, cron_mutate,
-    cron_query, install_cron_schema, register_cron,
+    CRON_SCHEMA_SQL, CronCommand, CronInvocation, CronModule, CronMutation, CronMutationOutcome,
+    CronNamespace, CronQuery, CronQueryCommand, CronQueryResult, CronSchedule, CronTarget,
+    cron_mutate, cron_query, install_cron_schema, register_cron,
 };
 pub use effects::{
     EffectAckRequest, EffectClaim, EffectClaimCommand, EffectClaimRequest, EffectCommandIntent,
@@ -111,9 +111,10 @@ pub use identity::{
     SessionId, TenantId, partition_for_shard, shard_for_scope,
 };
 pub use kv::{
-    KvAtomicCommand, KvAtomicOutcome, KvAtomicRequest, KvCheck, KvCondition, KvEntry, KvGetQuery,
-    KvGetRequest, KvListQuery, KvListRequest, KvModule, KvMutation, KvMutationResult, KvNamespace,
-    KvPage, install_kv_schema, kv_atomic, kv_cleanup_expired, kv_get, kv_list, register_kv,
+    KV_SCHEMA_SQL, KvAtomicCommand, KvAtomicOutcome, KvAtomicRequest, KvCheck, KvCondition,
+    KvEntry, KvGetQuery, KvGetRequest, KvListQuery, KvListRequest, KvModule, KvMutation,
+    KvMutationResult, KvNamespace, KvPage, install_kv_schema, kv_atomic, kv_cleanup_expired,
+    kv_get, kv_list, register_kv,
 };
 pub use maintenance::{
     MaintenanceModule, MaintenanceTickCommand, MaintenanceTickOutcome, MaintenanceTickRequest,
@@ -173,13 +174,14 @@ pub use qualification::{
     QualificationRunSummary, QualificationRunner, QualificationWorkload,
 };
 pub use queue::{
-    QueueClaimCommand, QueueClaimRequest, QueueControlAction, QueueControlCommand,
-    QueueControlOutcome, QueueDeadLetterTarget, QueueInfo, QueueInfoQuery, QueueInfoRequest,
-    QueueLeaseAction, QueueLeaseCommand, QueueLeaseOutcome, QueueLeaseRequest, QueueMessage,
-    QueueModule, QueueNamespace, QueueSendCommand, QueueSendOutcome, QueueSendRequest, QueueState,
-    QueueTokenSource, QueueValidateClaimQuery, QueueValidateRequest, SystemQueueTokens,
-    install_queue_schema, queue_apply_lease, queue_claim, queue_cleanup_expired, queue_control,
-    queue_info, queue_send, queue_validate_claim, register_queue, verify_queue_counts,
+    QUEUE_SCHEMA_SQL, QueueClaimCommand, QueueClaimRequest, QueueControlAction,
+    QueueControlCommand, QueueControlOutcome, QueueDeadLetterTarget, QueueInfo, QueueInfoQuery,
+    QueueInfoRequest, QueueLeaseAction, QueueLeaseCommand, QueueLeaseOutcome, QueueLeaseRequest,
+    QueueMessage, QueueModule, QueueNamespace, QueueSendCommand, QueueSendOutcome,
+    QueueSendRequest, QueueState, QueueTokenSource, QueueValidateClaimQuery, QueueValidateRequest,
+    SystemQueueTokens, install_queue_schema, queue_apply_lease, queue_claim, queue_cleanup_expired,
+    queue_control, queue_info, queue_send, queue_validate_claim, register_queue,
+    verify_queue_counts,
 };
 pub use recovery_artifacts::RecoveryArtifactRegistry;
 pub use recovery_manifest::{

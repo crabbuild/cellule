@@ -37,10 +37,7 @@ pub(super) fn item_id(index: usize) -> [u8; 16] {
 }
 
 pub(super) fn install_sql_tables(tx: &cellule_ltx::rusqlite::Transaction<'_>) -> Result<()> {
-    tx.execute_batch(
-        "CREATE TABLE orders(id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL); \
-         CREATE TABLE invoice_receipts(schedule_id BLOB NOT NULL, occurrence INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(schedule_id, occurrence));",
-    )?;
+    tx.execute_batch(SQL_SCHEMA)?;
     Ok(())
 }
 

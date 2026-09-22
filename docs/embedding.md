@@ -2,16 +2,16 @@
 
 Cellule is a Rust library, not a server. An embedding service supplies its own
 API, authentication, cloud credentials, private peer transport, node directory,
-and deployment policy. Start with the [local orders example](quickstart.md),
-which commits and reads a real SQL Cell without those adapters. This guide
+and deployment policy. Start with the [local SQL and KV examples](quickstart.md),
+which commit and read real Cells without those adapters. This guide
 covers the additional ownership needed before a service can accept traffic.
 
 ## Assemble one node
 
 1. Compile a [`CellApplication`](../crates/cellule-app/src/lib.rs) with stable
    namespace, operation, and schema IDs. Supply the deployed source revision
-   and lockfile digest in `BuildDescriptor`; the orders example's fixed revision
-   is only for a fresh, disposable store.
+   and lockfile digest in `BuildDescriptor`; the examples' fixed revisions are
+   only for fresh, disposable stores.
 2. Construct an object-store provider and a [`Store`](../crates/cellule-store/src/lib.rs).
    Give each application an explicit storage prefix through
    [`CellStorageLayout`](../crates/cellule-ltx/src/cell_layout.rs).
@@ -82,7 +82,7 @@ directory withdrawal, credentials, and any external effect destination.
 
 ## Qualify the deployment
 
-The in-memory orders example and local three-process storefront smoke prove
+The in-memory examples and local three-process storefront smoke prove
 application wiring, not cloud-provider or deployment behavior. Before a
 production rollout, run the [qualification profiles](../crates/cellule-runtime/qualification/README.md)
 against each selected provider and the intended node topology. Capture real
