@@ -9,14 +9,20 @@ crate mapping, the deliberate adaptations, and how to re-sync.
 | Field | Value |
 | --- | --- |
 | Repository | `crabbuild/crab` |
-| Last synced revision | `792d8182` (`#290 feat(cell): balance ownership by weighted Cell share`) |
-| Previous synced revision | `a3edf0b1` (`#278 fix(cell): require verified outcomes in protected qualification`) |
+| Final synced revision | `3ab25264` (`#291 fix(cell-runtime): bind cluster receipt owner losses to one chain`) |
+| Previous synced revisions | `792d8182` (`#290`), `a3edf0b1` (`#278`) |
 | Earlier bulk-sync base | `c8871a7c` (`#274 test(cell): cover local owner fault boundaries`) |
 | Framework-side scenario from the expiry stack | `#289 test(cell): recover expired Blob upload after owner loss` |
 
-Crab develops the Cell runtime as product infrastructure. Cellule carries the
+Crab developed the Cell runtime as product infrastructure. Cellule carries the
 reusable mechanics; product wiring (HTTP, authentication, provider
 credentials, deployment policy, release CI) stays with the embedding service.
+
+`3ab25264` is the last revision synthesized from Crab. From the first Cellule
+release onward the dependency points the other way: Crab consumes the published
+`cellule-*` crates as an external dependency, and Cellule evolves
+independently. Changes driven by an embedding product arrive here as regular
+Cellule issues and pull requests; there is no scheduled re-sync.
 
 ## Crate mapping
 
@@ -59,7 +65,11 @@ peer-resolution and migration replies map to unknown outcomes instead of
 guessed state, the host bounds its shutdown-lock wait and resumes a timed-out
 runtime drain, and workflow activity events are typed for author handlers.
 
-## Re-syncing
+## Re-syncing (historical)
+
+This procedure applied while Crab was the upstream. Keep it for reference when
+auditing the extraction, or for a deliberate forward-port before the first
+release; do not run it once Crab depends on published Cellule crates.
 
 1. Fetch `crabbuild/crab` and identify the crab revision after the last synced
    one.
