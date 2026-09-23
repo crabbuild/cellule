@@ -9,7 +9,8 @@ crate mapping, the deliberate adaptations, and how to re-sync.
 | Field | Value |
 | --- | --- |
 | Repository | `crabbuild/crab` |
-| Last synced revision | `a3edf0b1` (`#278 fix(cell): require verified outcomes in protected qualification`) |
+| Last synced revision | `792d8182` (`#290 feat(cell): balance ownership by weighted Cell share`) |
+| Previous synced revision | `a3edf0b1` (`#278 fix(cell): require verified outcomes in protected qualification`) |
 | Earlier bulk-sync base | `c8871a7c` (`#274 test(cell): cover local owner fault boundaries`) |
 | Framework-side scenario from the expiry stack | `#289 test(cell): recover expired Blob upload after owner loss` |
 
