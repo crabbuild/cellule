@@ -42,6 +42,8 @@ Start with the [runnable reference application guide](docs/quickstart.md). Its s
 
 Cellule is developed and tested as a separate workspace. An embedding service supplies its own storage provider, application modules, network transport, and authentication. The architecture document defines the crate boundaries, and the [runtime design notes](crates/cellule-runtime/docs/README.md) carry the mechanics that were synthesized from Crab.
 
+The [Crab synthesis ledger](docs/synthesis.md) records the synced revision, the crate mapping, and the deliberate adaptations.
+
 ## Contribute
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, verification, and compatibility rules.
