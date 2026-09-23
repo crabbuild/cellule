@@ -2,7 +2,10 @@
 
 Cellule is an embedded Rust framework for distributed applications whose state is partitioned into SQLite-backed Cells. A Cell has one fenced writer, a durable control record, immutable LTX history in object storage, and an exact recovery root. Applications register statically linked modules and invoke typed commands and queries. The embedding service owns network endpoints, authentication, cloud credentials, and deployment policy.
 
-The source repository is public. The crates are currently unpublished while provider and deployment qualification remains open; run the examples from this workspace checkout.
+The source repository is public. The crates publish to crates.io as a matched
+`cellule-*` set; see the [release guide](docs/releasing.md) for the packaging
+and publish order. Until the first release is cut, run the examples from this
+workspace checkout.
 
 ## Crates
 
