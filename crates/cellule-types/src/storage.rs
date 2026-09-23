@@ -72,6 +72,17 @@ impl BucketIdentity {
     }
 }
 
+/// Scoped object-store prefixes issued by an embedding service for
+/// path-limited views.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StorageScope {
+    pub repo_prefix: String,
+    pub global_prefix: String,
+    pub source_repo: String,
+    pub scope_hash: String,
+}
+
 fn normalize_identity_component(mut value: String) -> String {
     while value.ends_with('/') {
         value.pop();

@@ -8,6 +8,6 @@ Releasing an idle Cell for transfer requires the exact Cell generation and a tra
 
 New Blob part artifacts live at `.cellule/blob-parts/<two hex digits>/<digest>`. A sweep needs a complete cross-Cell live set, quiesced writers, and an age cutoff. The public `BlobArtifactStore` provides bounded uploads, reads, and reachability sweeps.
 
-Start with the [runnable reference application](../../docs/quickstart.md). See [qualification profiles](qualification/README.md), [executable contracts](docs/README.md), and [architecture](../../docs/architecture.md). Run `cargo test -p cellule-runtime --locked`; process-fault tests also use `--features process-test-support`.
+Start with the [runnable reference application](../../docs/quickstart.md). See [runtime design notes](docs/README.md), [qualification profiles](qualification/README.md), and [architecture](../../docs/architecture.md). Run `cargo test -p cellule-runtime --locked`; process-fault tests also use `--features process-test-support`.
 
 Workflow definitions can call `decode_workflow_activity_event` to distinguish a completed Activity, a failed or expired Activity, and an unrelated event. Tagged malformed events return an error; the [fulfillment example](../cellule-app/examples/fulfillment.rs) shows the full transition and native handler path.
