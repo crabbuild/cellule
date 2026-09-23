@@ -1307,10 +1307,10 @@ CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-main \
   cargo test -p cellule-runtime --locked
 
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-main \
-  cargo test -p the embedding service --locked
+  cargo test -p cellule-app --locked
 
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-main \
-  cargo clippy -p cellule-ltx -p cellule-runtime -p the embedding service \
+  cargo clippy -p cellule-ltx -p cellule-runtime -p cellule-app -p cellule-host \
   --all-targets --locked -- -D warnings
 
 node crates/cellule-runtime/docs/validate.mjs

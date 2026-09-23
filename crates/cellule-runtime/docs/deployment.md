@@ -312,7 +312,7 @@ spec:
             - $(CELLULE_POD_IP)
           readinessProbe:
             exec:
-              command: [the embedding service, --config, /etc/cellule/server.toml, healthcheck]
+              command: [cellule-server, --config, /etc/cellule/server.toml, healthcheck]
           volumeMounts:
             - { name: cell-cache, mountPath: /var/lib/cellule }
 ```

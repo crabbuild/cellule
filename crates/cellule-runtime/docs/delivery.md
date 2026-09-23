@@ -74,15 +74,15 @@ CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-b347 \
   cargo test -p cellule-ltx --features replica
 
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-b347 \
-  cargo test -p the embedding service
+  cargo test -p cellule-app
 ```
 
 Run Clippy for all changed crates:
 
 ```bash
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-b347-clippy \
-  cargo clippy -p cellule-ltx -p cellule-runtime \
-  -p the embedding service --all-targets -- -D warnings
+  cargo clippy -p cellule-ltx -p cellule-runtime -p cellule-app -p cellule-host \
+  --all-targets -- -D warnings
 ```
 
 Use the checkout's actual stable target suffix when it differs from `b347`.
@@ -187,17 +187,15 @@ cannot stand in for Kubernetes fault evidence.
 ```bash
 AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
 AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-CELLULE_LTX_TEST_BUCKET="$BUCKET" \
-CELLULE_LTX_TEST_ENDPOINT="$ENDPOINT" \
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
   cargo test -p cellule-ltx --features replica --test cell_roots \
   exact_root_inventory_verifies_every_remote_dependency --locked -- --exact
 
 AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
 AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-CELLULE_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_CELL_TEST_PREFIX="$UNIQUE_PREFIX" \
+CELLULE_TEST_BUCKET="$BUCKET" \
+CELLULE_TEST_ENDPOINT="$ENDPOINT" \
+CELLULE_TEST_PREFIX="$UNIQUE_PREFIX" \
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
   cargo test -p cellule-runtime --test actor \
   rustfs_source_loss_takeover_restores_exact_root_and_continues_publication \
@@ -205,9 +203,9 @@ CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
 
 AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
 AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-CELLULE_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_CELL_TEST_PREFIX="$UNIQUE_PREFIX-mixed" \
+CELLULE_TEST_BUCKET="$BUCKET" \
+CELLULE_TEST_ENDPOINT="$ENDPOINT" \
+CELLULE_TEST_PREFIX="$UNIQUE_PREFIX-mixed" \
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
   cargo test -p cellule-runtime --test actor \
   rustfs_mixed_primitive_inventory_churn_preserves_exact_roots \
@@ -215,44 +213,18 @@ CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
 
 AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
 AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-CELLULE_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_CELL_TEST_PREFIX="$UNIQUE_PREFIX-retention" \
+CELLULE_TEST_BUCKET="$BUCKET" \
+CELLULE_TEST_ENDPOINT="$ENDPOINT" \
+CELLULE_TEST_PREFIX="$UNIQUE_PREFIX-retention" \
 CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
   cargo test -p cellule-runtime --lib \
   retention::tests::rustfs_maintenance_collection_preserves_live_and_pinned_graphs \
   --locked -- --ignored --exact
-
-AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
-AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-AWS_ENDPOINT_URL_S3="$ENDPOINT" AWS_ALLOW_HTTP=true \
-AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false \
-QUALIFICATION_BUCKET="$BUCKET" QUALIFICATION_PREFIX="qualification/http-receive-$UNIQUE_PREFIX" \
-CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
-  cargo test -p the embedding service --lib \
-  server::receive_fault_tests::receive_faults_rustfs \
-  --locked -- --ignored --exact
-
-AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
-AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-CELLULE_HTTP_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_HTTP_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_HTTP_CELL_TEST_PREFIX="http-$UNIQUE_PREFIX" \
-CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
-  cargo test -p the embedding service --lib \
-  server::peer_e2e_tests::rustfs_public_collaboration_reaches_remote_owner_and_publishes_ltx \
-  --locked -- --ignored --exact
-
-AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
-AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-AWS_ENDPOINT_URL_S3="$ENDPOINT" AWS_ALLOW_HTTP=true \
-AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false \
-QUALIFICATION_BUCKET="$BUCKET" QUALIFICATION_PREFIX="qualification/http-push-$UNIQUE_PREFIX" \
-CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-rustfs \
-  cargo test -p the embedding service --lib \
-  server::receive_tests::native_http_push_rustfs \
-  --locked -- --ignored --exact
 ```
+
+The HTTP receive, peer collaboration, and native push provider tests that
+exercise those paths belong to the embedding service; Cellule's provider
+evidence stops at the runtime and LTX commands above.
 
 The coordination simulator has a deterministic seed replay entry point in the
 normal runtime test binary. It never starts I/O or Tokio work:
@@ -340,46 +312,36 @@ complete graph with the pinned release.
 The ignored qualification tests require one fresh bucket and a unique Cell prefix:
 
 ```bash
-CELLULE_LTX_TEST_BUCKET="$BUCKET" \
-CELLULE_LTX_TEST_ENDPOINT="$ENDPOINT" \
 cargo test -p cellule-ltx --features replica --test cell_roots \
   exact_root_inventory_verifies_every_remote_dependency -- --exact
 
-CELLULE_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_CELL_TEST_PREFIX="$UNIQUE_PREFIX" \
+CELLULE_TEST_BUCKET="$BUCKET" \
+CELLULE_TEST_ENDPOINT="$ENDPOINT" \
+CELLULE_TEST_PREFIX="$UNIQUE_PREFIX" \
 cargo test -p cellule-runtime --test actor \
   rustfs_source_loss_takeover_restores_exact_root_and_continues_publication \
   -- --ignored --exact
 
-CELLULE_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_CELL_TEST_PREFIX="$UNIQUE_PREFIX" \
-cargo test -p the embedding service --test public_cell_qualification \
-  rustfs_public_cell_node_runs_typed_primitive_workload \
-  -- --ignored --exact --nocapture
+cargo test -p cellule-app --test reference_application \
+  typed_application_executes_every_primitive_through_a_local_router \
+  -- --exact --nocapture
 
-CELLULE_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_CELL_TEST_PREFIX="$UNIQUE_PREFIX" \
+CELLULE_TEST_BUCKET="$BUCKET" \
+CELLULE_TEST_ENDPOINT="$ENDPOINT" \
+CELLULE_TEST_PREFIX="$UNIQUE_PREFIX" \
 cargo test -p cellule-runtime --lib \
   retention::tests::rustfs_maintenance_collection_preserves_live_and_pinned_graphs \
   -- --ignored --exact
 
-CELLULE_HTTP_CELL_TEST_BUCKET="$BUCKET" \
-CELLULE_HTTP_CELL_TEST_ENDPOINT="$ENDPOINT" \
-CELLULE_HTTP_CELL_TEST_PREFIX="$UNIQUE_PREFIX" \
-cargo test -p the embedding service --lib \
-  server::peer_e2e_tests::rustfs_public_collaboration_reaches_remote_owner_and_publishes_ltx \
-  -- --ignored --exact --nocapture
 ```
 
 The Cell test publishes a command on one session, removes its local database,
 takes over from a second session, resolves the original request from the exact
-root, and publishes the next sequence. The public-host test drives SQL, KV,
-Blob, Queue, Cron, Workflow, Activity, and Effects through the typed
-`CellNode` application handle against the same real provider. CI runs these
-tests against a pinned RustFS image; they remain iteration evidence until the
+root, and publishes the next sequence. The reference-application test drives
+SQL, KV, Blob, Queue, Cron, Workflow, Activity, and Effects through the typed
+`CellNode` application handle. The embedding service repeats that workload
+against a real provider over its own HTTP and peer endpoints; those product
+tests belong to it, and all of this remains iteration evidence until the
 protected provider, Kubernetes, and scale matrix receipts pass.
 
 The same CI job also runs the embedding service through public HTTP and private
@@ -589,20 +551,10 @@ before and after load.
 {"request_id":"{{request_id}}","title":"load qualification","body":"durable command"}
 ```
 
-```bash
-CARGO_TARGET_DIR=$HOME/Workspace/cellulebuild-target/cellule-load-generator \
-  cargo run -p the embedding service --release --example qualify_http_load --locked -- \
-  --base-url https://git.example.com \
-  --target 'refs=4@/api/repos/team/project/refs' \
-  --target 'commits=8@/api/repos/team/project/commits?rev=main&limit=20' \
-  --target 'readme=4@/api/repos/team/project/file?rev=main&path_hex=524541444d452e6d64' \
-  --mutation 'issues=16@/api/repos/team/disposable-load/issues|/secure/new-issue.json' \
-  --aggregate-requests-per-second 1000 \
-  --duration-seconds 300 \
-  --warmup-seconds 15 \
-  --header-file /secure/load-headers \
-  > http-load.json
-```
+The load generator, its request set, its header file, and the response artifact
+belong to the embedding service. It must drive the same aggregate request rate
+through each ready Pod and retain the per-Pod receipts, latency percentiles,
+success and admission counts, and capacity envelopes described above.
 
 The harness fully consumes each body and reports the method, 2xx responses, admission
 rejections, unexpected responses, transport/body-limit failures, bytes,
