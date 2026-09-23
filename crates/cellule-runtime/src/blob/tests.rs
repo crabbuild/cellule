@@ -154,6 +154,42 @@ async fn object_store_sweep_keeps_live_parts_and_reclaims_old_orphans() {
 }
 
 #[tokio::test]
+async fn blob_parts_follow_the_scoped_store_prefix() {
+    use cellule_store::{StorageScope, Store};
+    use object_store::memory::InMemory;
+
+    let scoped_prefix = ".scoped-cellule";
+    let store = Store::new(std::sync::Arc::new(InMemory::new())).with_storage_scope(StorageScope {
+        repo_prefix: "org/models".into(),
+        global_prefix: scoped_prefix.into(),
+        source_repo: "org/models".into(),
+        scope_hash: "42".into(),
+    });
+    let artifacts = BlobArtifactStore::new(store.clone());
+    let digest = part_digest(b"scoped");
+    artifacts.put_part(digest, b"scoped").await.unwrap();
+
+    let objects = store
+        .list_prefix(&global_content_prefix(scoped_prefix, BLOB_PART_KIND))
+        .await
+        .unwrap();
+    assert_eq!(objects.len(), 1);
+    assert!(
+        objects[0]
+            .location
+            .to_string()
+            .starts_with(&format!("{scoped_prefix}/{BLOB_PART_KIND}/"))
+    );
+
+    let report = artifacts
+        .sweep_unreferenced(&BTreeSet::new(), i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(report.scanned(), 1);
+    assert_eq!(report.deleted(), 1);
+}
+
+#[tokio::test]
 async fn object_store_sweep_reaches_orphans_beyond_live_entries() {
     use cellule_store::Store;
     use object_store::memory::InMemory;
