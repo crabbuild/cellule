@@ -51,6 +51,22 @@ indexes files; it does not create or sign receipts. Run `verify-matrix` with the
 protected profile and pinned attestation key before treating the resulting
 manifest as release evidence.
 
+The protected release bundle has one canonical fresh-process verifier. It
+requires all nine provider, scale, compatibility, and fault profiles, rejects
+symlinks anywhere below the bundle, checks each profile name and protected
+threshold contract, and verifies every matrix against the same source, image,
+and pinned signer:
+
+```text
+cargo run --locked -p cellule-runtime --bin qualification_receipt -- \
+  verify-protected-bundle protected/ <source-sha> <image-digest> \
+  <trusted-signer-hex>
+```
+
+The workflow and release gate call this command directly; they only retain
+their shell-side byte-for-byte comparison between each supplied profile and
+the tracked profile from the exact source checkout.
+
 Typed qualification adapters may use the bounded `QualificationWorkload::run_concurrent`
 entry point when scheduled operations are independent or idempotent. The serial
 `run` entry point remains the safe choice for workloads with application-level
@@ -104,6 +120,10 @@ and p50/p95/p99/max latency metrics in non-decreasing order; a signed receipt
 with substituted threshold values is rejected.
 Measured run artifacts use schema 4 and include a bounded primitive/case bitset;
 named provider/topology profiles reject artifacts missing any lifecycle case.
+Those protected profiles also require every acknowledged operation to have an
+independent verification result; a partial verification count cannot be
+promoted by the receipt binder. The local observed smoke remains allowed to
+report partial coverage and is not release evidence.
 The PR profile is a correctness gate.
 `local-provider-v1`, `fault-v1`, `provider-v1`, `compatibility-v1`, and
 `scale-v1` are release-candidate inputs only. The provider-specific
@@ -121,9 +141,19 @@ receipt.
 
 ## Release handoff
 
-A host release workflow must fetch protected evidence from a successful run at
-the exact source revision being released. It must check the run identity and
-commit before accepting the artifact, then verify the matrix against the
-release image, tracked profile, and pinned attestation public key. Missing,
-stale, symlinked, or malformed evidence fails closed. The embedding product
-owns its CI artifact names, deployment topology, and release inputs.
+A host release workflow must fetch protected evidence from a successful
+protected run at the exact source revision being released. The run produces one
+`protected/` directory with the tracked profiles, verified matrix manifests,
+receipts, and raw artifacts written by an operator-installed executable that
+owns the provider and Kubernetes boundary. That executable must run the real
+workload, isolate provider prefixes or namespaces, inject the profile's faults,
+and sample the profile's resources; a local, emulator, or synthetic fallback is
+not release evidence.
+
+The workflow must independently verify every required provider, scale,
+compatibility, and fault matrix against the release image, the tracked profile,
+and the pinned attestation public key in a fresh process, and it must check the
+run identity, workflow name, event, attempt, and commit before accepting the
+artifact. Missing, stale, symlinked, or malformed evidence fails closed. The
+embedding product owns its CI artifact names, runner labels, executable paths,
+secret names, deployment topology, and release inputs.
