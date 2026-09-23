@@ -117,7 +117,7 @@ async fn multipart_publish_is_atomic_conditional_and_range_readable() {
 
 #[tokio::test]
 async fn object_store_sweep_keeps_live_parts_and_reclaims_old_orphans() {
-    use cellule_store::Store;
+    use cellule_store::{GLOBAL_PREFIX, Store, global_content_prefix};
     use object_store::memory::InMemory;
 
     let store = Store::new(std::sync::Arc::new(InMemory::new()));
@@ -141,7 +141,7 @@ async fn object_store_sweep_keeps_live_parts_and_reclaims_old_orphans() {
     assert!(!report.has_more());
 
     let objects = store
-        .list_prefix(&ObjectPath::from(BLOB_ARTIFACT_PREFIX))
+        .list_prefix(&global_content_prefix(GLOBAL_PREFIX, BLOB_PART_KIND))
         .await
         .unwrap();
     assert_eq!(objects.len(), 1);

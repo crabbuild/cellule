@@ -1,7 +1,10 @@
 use std::collections::BTreeSet;
 
 use bytes::Bytes;
-use cellule_store::{StorageError, Store};
+use cellule_store::{
+    GLOBAL_PREFIX, StorageError, Store, content_hash_from_path, global_content_path,
+    global_content_prefix,
+};
 use futures_util::StreamExt;
 use object_store::path::Path as ObjectPath;
 use rusqlite::{Connection, OptionalExtension, Transaction};
@@ -25,7 +28,7 @@ const MAX_METADATA_BYTES: usize = 8 * 1_024;
 const MAX_CONTENT_TYPE_BYTES: usize = 256;
 const MIN_UPLOAD_LIFETIME_MS: i64 = 60_000;
 const MAX_UPLOAD_LIFETIME_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
-const BLOB_ARTIFACT_PREFIX: &str = ".cellule/blob-parts";
+const BLOB_PART_KIND: &str = "blob-parts";
 const MAX_BLOB_READ_PARTS: usize = 8;
 const MAX_BLOB_GC_DELETIONS: u32 = 128;
 
@@ -219,15 +222,20 @@ impl BlobArtifactStore {
         if cutoff_ms < 0 {
             return Err(Error::Command("negative blob garbage-collection cutoff"));
         }
+        let prefix = self
+            .store
+            .storage_scope()
+            .map_or(GLOBAL_PREFIX, |scope| scope.global_prefix.as_str());
         let mut objects = self
             .store
-            .list_stream(&ObjectPath::from(BLOB_ARTIFACT_PREFIX));
+            .list_stream(&global_content_prefix(prefix, BLOB_PART_KIND));
         let mut scanned = 0_u64;
         let mut candidates = Vec::with_capacity(MAX_BLOB_GC_DELETIONS as usize);
         while let Some(object) = objects.next().await {
             let object = object?;
             scanned = scanned.saturating_add(1);
-            let Some(hash) = content_hash_from_path(object.location.as_ref()) else {
+            let Some(hash) = content_hash_from_path(object.location.as_ref(), BLOB_PART_KIND)
+            else {
                 continue;
             };
             let Some(digest) = decode_hex_digest(hash) else {
@@ -260,15 +268,12 @@ impl BlobArtifactStore {
 
     fn part_path(&self, digest: &[u8; 32]) -> ObjectPath {
         let hash = blake3::Hash::from_bytes(*digest).to_hex().to_string();
-        ObjectPath::from(format!("{BLOB_ARTIFACT_PREFIX}/{}/{hash}", &hash[..2]))
+        let prefix = self
+            .store
+            .storage_scope()
+            .map_or(GLOBAL_PREFIX, |scope| scope.global_prefix.as_str());
+        global_content_path(prefix, BLOB_PART_KIND, &hash)
     }
-}
-
-fn content_hash_from_path(path: &str) -> Option<&str> {
-    let remainder = path.strip_prefix(BLOB_ARTIFACT_PREFIX)?.strip_prefix('/')?;
-    let (partition, hash) = remainder.split_once('/')?;
-    (partition.len() == 2 && hash.get(..2) == Some(partition) && !hash.contains('/'))
-        .then_some(hash)
 }
 
 fn decode_hex_digest(value: &str) -> Option<[u8; 32]> {
