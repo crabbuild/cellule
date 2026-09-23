@@ -37,6 +37,7 @@ use crate::error::{Result, StorageError};
 use crate::error_map::map_object_store_error;
 use crate::identity::BucketIdentity;
 use crate::retry::{RetryPolicy, retry};
+use cellule_types::storage::StorageScope;
 
 /// Opaque CAS token used by [`Store::update`] and returned by
 /// reads/writes so callers can chain compare-and-swap flows.
@@ -127,6 +128,7 @@ pub struct Store {
     staging_writes: Option<Arc<StagingWriteState>>,
     read_byte_observer: Option<Arc<dyn Fn(u64) + Send + Sync>>,
     read_request_observer: Option<Arc<dyn Fn(StorageReadKind) + Send + Sync>>,
+    storage_scope: Option<StorageScope>,
 }
 
 /// Provider-neutral kind of canonical storage read attempt.
@@ -183,6 +185,7 @@ impl Store {
             staging_writes: None,
             read_byte_observer: None,
             read_request_observer: None,
+            storage_scope: None,
         }
     }
 
@@ -206,6 +209,7 @@ impl Store {
             staging_writes: None,
             read_byte_observer: None,
             read_request_observer: None,
+            storage_scope: None,
         }
     }
 
@@ -278,6 +282,19 @@ impl Store {
         self.multipart.is_some()
             && self.multipart_identity.is_some()
             && self.staging_writes.is_none()
+    }
+
+    /// Attaches the scoped prefixes issued for a path-limited view.
+    #[must_use]
+    pub fn with_storage_scope(mut self, scope: StorageScope) -> Self {
+        self.storage_scope = Some(scope);
+        self
+    }
+
+    /// Returns the scoped prefixes attached to this store, if any.
+    #[must_use]
+    pub fn storage_scope(&self) -> Option<&StorageScope> {
+        self.storage_scope.as_ref()
     }
 
     /// Routes reads through the store selected by the longest matching prefix.
