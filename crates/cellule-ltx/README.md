@@ -113,7 +113,8 @@ acknowledged database state.
 | none | yes | Local capture, checkpointing, snapshots, exact verification, restore, and compaction |
 | `replica` | no | `cellule-store` transport, Cell roots, bundles, remote compaction, exact-root restore, sparse SQL, and hydration |
 
-The crate is currently an unpublished workspace library.
+The crate publishes to crates.io as `cellule-ltx`; `replica` stays an opt-in
+feature.
 
 ## Local capture and exact restore
 
