@@ -411,6 +411,53 @@ fn unsorted_actions_and_expired_authorization_are_rejected() {
 }
 
 #[test]
+fn expired_mutation_identity_is_rejected_before_actor_admission() {
+    let signer = signer();
+    let mut request = mutation();
+    request.identity = Some(wire::MutationIdentity {
+        request_id: vec![11; 16],
+        incarnation: vec![12; 16],
+        issued_at_ms: NOW_MS,
+        expires_at_ms: NOW_MS + 1_000,
+    });
+    let encoded = signer
+        .sign(
+            principal(),
+            NOW_MS,
+            NOW_MS + 60_000,
+            30_000,
+            PeerOperation::Mutate(request.clone()),
+        )
+        .unwrap();
+    let verifier = verifier(&signer);
+    assert!(matches!(
+        verifier.verify(&encoded, NOW_MS + 1_000),
+        Err(Error::Peer("invalid or expired mutation identity"))
+    ));
+    assert!(verifier.verify(&encoded, NOW_MS + 999).is_ok());
+
+    let resolve = wire::ResolveRequest {
+        target: Some(target()),
+        identity: request.identity,
+        operation_digest: vec![13; 32],
+    };
+    let encoded = signer
+        .sign(
+            principal(),
+            NOW_MS,
+            NOW_MS + 60_000,
+            30_000,
+            PeerOperation::Resolve(resolve),
+        )
+        .unwrap();
+    assert!(matches!(
+        verifier.verify(&encoded, NOW_MS + 1_000),
+        Err(Error::Peer("invalid or expired mutation identity"))
+    ));
+    assert!(verifier.verify(&encoded, NOW_MS + 999).is_ok());
+}
+
+#[test]
 fn reply_codec_rejects_unknown_fields_and_invalid_enums() {
     let reply = wire::PeerReply {
         outcome: Some(wire::peer_reply::Outcome::Read(wire::ReadReply {
