@@ -9,7 +9,7 @@ use cellule_runtime::{
     BlobQuery, BlobQueryResult, BuildDescriptor, CatalogEntry, CatalogRole, CellAuthority,
     CellCatalog, CellClient, CellModule, CellRuntime, CellTarget, Command, CommandContext,
     CommandResult, CronInvocation, CronModule, CronMutation, CronNamespace, CronQueryResult,
-    CronTarget, Digest, IncarnationId, MaintenanceModule, MaintenanceTickOutcome,
+    CronTarget, Digest, IncarnationId, InvocationError, MaintenanceModule, MaintenanceTickOutcome,
     MaintenanceTickRequest, MigrationDescriptor, ModuleDescriptor, MutationIdentity,
     NamespaceDescriptor, NamespaceId, OperationDescriptor, Owner, RegistryBuilder, RequestId,
     SessionId, SqlWorkerPool, TenantId, register_blob, register_cron,
@@ -508,6 +508,305 @@ async fn typed_blob_and_cron_recover_after_owner_loss() {
     drop(restored_cron);
     cron_restored.drain().await.unwrap();
     cron_runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn expired_blob_upload_is_reclaimed_after_owner_loss() {
+    let registry = registry();
+    let tenant = TenantId::from_bytes([60; 16]);
+    let application = ApplicationId::from_bytes([61; 16]);
+    let store = Store::new(Arc::new(InMemory::new()));
+    let layout = CellStorageLayout::new(
+        store.clone(),
+        Path::from("blob-expiry-runtime"),
+        *application.as_bytes(),
+    );
+    let blob_target =
+        CellTarget::new(tenant, application, BLOB_NAMESPACE, &0_u32.to_be_bytes()).unwrap();
+    let blob_incarnation = IncarnationId::from_bytes([62; 16]);
+    let catalog = CellCatalog::new(layout.clone(), tenant);
+    let blob_proof = catalog
+        .provision(
+            CatalogEntry::new(
+                &blob_target,
+                CatalogRole::Blob,
+                registry.module_code(BLOB_MODULE).unwrap(),
+                1,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout.clone());
+    let blob_session = SessionId::from_bytes([63; 16]);
+    let blob_control = authority
+        .create_initial(
+            &blob_proof,
+            blob_incarnation,
+            Owner {
+                session: blob_session,
+                endpoint: "https://blob-expiry.internal:8081".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let directory = tempfile::TempDir::new().unwrap();
+    let blob_runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 10).unwrap(),
+        16 * 1024 * 1024,
+        blob_session,
+    )
+    .unwrap();
+    let blob_handle = blob_runtime
+        .bootstrap(
+            blob_proof,
+            CellReplica::new(
+                layout.clone(),
+                *blob_target.cell_id().as_bytes(),
+                *blob_incarnation.as_bytes(),
+                Limits::default(),
+            )
+            .unwrap(),
+            authority.clone(),
+            blob_control,
+            directory.path().join("blob-expiry.sqlite"),
+            cellule_runtime::install_blob_schema,
+        )
+        .await
+        .unwrap();
+    let blobs = BlobNamespace::<TestBlob>::new(
+        CellClient::local(registry.clone(), blob_handle.clone())
+            .with_blob_artifact_store(cellule_runtime::BlobArtifactStore::new(store.clone())),
+        tenant,
+        application,
+    )
+    .unwrap();
+    let key = b"artifacts/expired".to_vec();
+    let upload_id = [64; 16];
+    // An upload must live at least a minute, so issue it in the past and let it
+    // expire shortly after the handover instead of sleeping for the full lifetime.
+    let issued_at_ms = now_ms() - 55_000;
+    let expires_at_ms = issued_at_ms + 60_000;
+    let begun = blobs
+        .mutate(
+            identity(65, issued_at_ms),
+            BlobMutation::Begin {
+                key: key.clone(),
+                upload_id,
+                condition: BlobCondition::Missing,
+                content_type: None,
+                metadata: Vec::new(),
+                expires_at_ms,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(begun.output, BlobMutationOutcome::Begun));
+    let stored = blobs
+        .mutate(
+            identity(66, now_ms()),
+            BlobMutation::PutPart {
+                key: key.clone(),
+                upload_id,
+                part_number: 1,
+                payload: b"unpublished-before-owner-loss".to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        stored.output,
+        BlobMutationOutcome::PartStored { .. }
+    ));
+    let hidden = blobs
+        .query(BlobQuery::Head { key: key.clone() }, Some(stored.receipt))
+        .await
+        .unwrap();
+    assert_eq!(hidden.output, BlobQueryResult::Head(None));
+    assert!(
+        now_ms() < expires_at_ms,
+        "Blob upload expired before owner loss"
+    );
+
+    drop(blobs);
+    drop(blob_handle);
+    drop(blob_runtime);
+    let stale_blob = authority
+        .load(blob_target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let successor = SessionId::from_bytes([67; 16]);
+    let takeover = support::fence_session(&layout, blob_session, successor).await;
+    let blob_runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 10).unwrap(),
+        16 * 1024 * 1024,
+        successor,
+    )
+    .unwrap();
+    let restored = blob_runtime
+        .takeover_restored(
+            catalog
+                .lookup(blob_target.cell_id())
+                .await
+                .unwrap()
+                .unwrap(),
+            CellReplica::new(
+                layout.clone(),
+                *blob_target.cell_id().as_bytes(),
+                *blob_incarnation.as_bytes(),
+                Limits::default(),
+            )
+            .unwrap(),
+            authority.clone(),
+            stale_blob,
+            takeover.direct_takeover().unwrap(),
+            cellule_runtime::RecoveryManifestStore::new(layout.clone(), Limits::default()),
+            directory.path().join("blob-expiry-takeover.sqlite"),
+            Owner {
+                session: successor,
+                endpoint: "https://blob-expiry-successor.internal:8081".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let restored_blobs = BlobNamespace::<TestBlob>::new(
+        CellClient::local(registry.clone(), restored.clone())
+            .with_blob_artifact_store(cellule_runtime::BlobArtifactStore::new(store.clone())),
+        tenant,
+        application,
+    )
+    .unwrap();
+    let unpublished = restored_blobs
+        .query(BlobQuery::Head { key: key.clone() }, None)
+        .await
+        .unwrap();
+    assert_eq!(unpublished.output, BlobQueryResult::Head(None));
+    assert!(unpublished.receipt.commit_sequence >= stored.receipt.commit_sequence);
+
+    let remaining_ms = expires_at_ms.saturating_sub(now_ms()).max(0) + 100;
+    tokio::time::sleep(std::time::Duration::from_millis(
+        u64::try_from(remaining_ms).unwrap(),
+    ))
+    .await;
+    assert!(now_ms() > expires_at_ms);
+    let stale = restored_blobs
+        .mutate(
+            identity(68, now_ms()),
+            BlobMutation::Complete {
+                key: key.clone(),
+                upload_id,
+                part_count: 1,
+            },
+        )
+        .await;
+    assert!(matches!(
+        stale,
+        Err(InvocationError::Rejected(outcome))
+            if matches!(
+                outcome.output,
+                BlobMutationOutcome::Conflict | BlobMutationOutcome::NotFound
+            )
+    ));
+    let after = restored_blobs
+        .query(BlobQuery::Head { key: key.clone() }, None)
+        .await
+        .unwrap();
+    assert_eq!(after.output, BlobQueryResult::Head(None));
+
+    let tick = registry
+        .run_maintenance_once(
+            CellClient::local(registry.clone(), restored.clone()),
+            blob_target.clone(),
+            identity(69, now_ms()),
+            MaintenanceTickRequest {
+                expected_commit_sequence: after.receipt.commit_sequence,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        tick.output,
+        MaintenanceTickOutcome::Applied { processed } if processed >= 1
+    ));
+    let reclaimed = restored_blobs
+        .mutate(
+            identity(70, now_ms()),
+            BlobMutation::Abort {
+                key: key.clone(),
+                upload_id,
+            },
+        )
+        .await;
+    assert!(matches!(
+        reclaimed,
+        Err(InvocationError::Rejected(outcome))
+            if outcome.output == BlobMutationOutcome::NotFound
+    ));
+
+    let fresh_upload = [71; 16];
+    let fresh_issued_at_ms = now_ms();
+    let fresh = restored_blobs
+        .mutate(
+            identity(72, fresh_issued_at_ms),
+            BlobMutation::Begin {
+                key: key.clone(),
+                upload_id: fresh_upload,
+                condition: BlobCondition::Missing,
+                content_type: None,
+                metadata: Vec::new(),
+                expires_at_ms: fresh_issued_at_ms + 60_000,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(fresh.output, BlobMutationOutcome::Begun));
+    restored_blobs
+        .mutate(
+            identity(73, now_ms()),
+            BlobMutation::PutPart {
+                key: key.clone(),
+                upload_id: fresh_upload,
+                part_number: 1,
+                payload: b"published-after-owner-loss".to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    let committed = restored_blobs
+        .mutate(
+            identity(74, now_ms()),
+            BlobMutation::Complete {
+                key: key.clone(),
+                upload_id: fresh_upload,
+                part_count: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        committed.output,
+        BlobMutationOutcome::Committed { size: 26, .. }
+    ));
+    let read = restored_blobs
+        .query(
+            BlobQuery::Read {
+                key,
+                offset: 0,
+                limit: 64,
+            },
+            Some(committed.receipt),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        read.output,
+        BlobQueryResult::Read(Some(ref value)) if value.bytes == b"published-after-owner-loss"
+    ));
+
+    drop(restored_blobs);
+    restored.drain().await.unwrap();
+    blob_runtime.shutdown().await.unwrap();
 }
 
 fn registry() -> Arc<cellule_runtime::Registry> {
