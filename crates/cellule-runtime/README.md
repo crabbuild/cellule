@@ -4,6 +4,8 @@ The runtime owns the Cell control record, fenced owner transitions, SQLite actor
 
 A command runs against one Cell database. The actor records its outcome in the transaction, LTX captures and verifies the committed WAL, and authority publication makes the root visible. A stale owner is fenced on a conditional-write conflict. On recovery, the runtime reads the authority-pinned root and verifies its immutable dependencies; bucket listings do not choose state.
 
+Releasing an idle Cell for transfer requires the exact Cell generation and a transfer-specific indexed durable-work inspection. Retained request and inbox outcomes, Blob metadata, Queue producer identities, and future Cron schedules may follow the exact root. Live or due Effects, ready or leased Queue messages, pending Workflow activities and timers, due Cron delivery, and unknown inspection state block movement; the maintenance-release inventory stays conservative.
+
 New Blob part artifacts live at `.cellule/blob-parts/<two hex digits>/<digest>`. A sweep needs a complete cross-Cell live set, quiesced writers, and an age cutoff. The public `BlobArtifactStore` provides bounded uploads, reads, and reachability sweeps.
 
 Start with the [runnable reference application](../../docs/quickstart.md). See [qualification profiles](qualification/README.md), [executable contracts](docs/README.md), and [architecture](../../docs/architecture.md). Run `cargo test -p cellule-runtime --locked`; process-fault tests also use `--features process-test-support`.
