@@ -28,6 +28,16 @@ cargo run -p cellule-app --example notifications --locked
 
 It sends `order 42 ready`, claims the message, validates the published lease before processing, acknowledges that exact message and token, and confirms the Queue reports one acknowledgement. It prints `notification acknowledged: order 42 ready`. Its descriptor declares the Queue's version-one schema and enough capacity for the Queue's maximum send payload. The store and SQLite file are fresh on every run.
 
+## Run a native consumer
+
+The [consumers example](../crates/cellule-app/examples/consumers.rs) starts one Queue Cell with a compiled `QueueConsumer`. Run it from the workspace root:
+
+```sh
+cargo run -p cellule-app --example consumers --locked
+```
+
+It sends two jobs, runs one consumer pass that acknowledges the steady job and retries the flaky one with the consumer's delay, then runs again after the retry. A single ready job is deferred until the batch timeout closes the batch, which shows how the claim forms batches before leasing anything. The final count read prints `consumer settled 3 jobs`.
+
 ## Run a fulfillment Workflow and Activity
 
 The [fulfillment example](../crates/cellule-app/examples/fulfillment.rs) starts one Workflow Cell with a registered native Activity. Run it from the workspace root:

@@ -114,10 +114,11 @@ before the batch closes, the handler runs outside the SQL worker, and every
 message is settled through the ordinary lease commands. `tests/queue_consumer.rs`
 covers deferral, a full batch, and a poison batch.
 
-The reference application now runs a native consumer over two ready messages
-and asserts the acknowledged count. Still open: a standalone example, and the
-embedding service owns the per-queue concurrency bound because one pass claims
-one batch.
+The reference application runs a native consumer over two ready messages and
+asserts the acknowledged count, and the [consumers example](../crates/cellule-app/examples/consumers.rs)
+shows acknowledgement, retry, and batch formation in one runnable file. Still
+open: the embedding service owns the per-queue concurrency bound because one
+pass claims one batch.
 
 Evidence: a duplicate delivery after a consumer crash settles once; a poison
 message reaches the dead-letter queue at the attempt bound; a slow handler
