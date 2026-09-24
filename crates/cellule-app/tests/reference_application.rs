@@ -1160,6 +1160,39 @@ impl QualificationOperationExecutor for TypedQualificationExecutor {
                         .await
                         .map_err(|_| Error::Control("qualification Cron invocation failed"))?;
                 }
+                "timer" => {
+                    let timers = handle.timer::<ReferenceTimer>()?;
+                    let mut timer_id = [0; 16];
+                    timer_id[..8].copy_from_slice(&operation.index().to_be_bytes());
+                    let scheduled = timers
+                        .mutate(
+                            identity,
+                            TimerMutation::Set {
+                                timer_id,
+                                target_index: 0,
+                                target_partition: partition_for_shard(0).to_vec(),
+                                payload: operation.nonce().to_be_bytes().to_vec(),
+                                due_at_ms: now_ms + 60_000,
+                            },
+                        )
+                        .await
+                        .map_err(|_| Error::Control("qualification Timer invocation failed"))?;
+                    if !matches!(scheduled.output, TimerMutationOutcome::Applied { .. })
+                        || !matches!(
+                            timers.get(timer_id, None).await.unwrap().output,
+                            TimerQueryResult::Get(Some(_))
+                        )
+                    {
+                        return Err(Error::Control("qualification Timer was not verified"));
+                    }
+                }
+                "consumer" => {
+                    let consumer = handle.queue_consumer::<ReferenceQueue>(5_000)?;
+                    consumer
+                        .run_once(0)
+                        .await
+                        .map_err(|_| Error::Control("qualification consumer invocation failed"))?;
+                }
                 "workflow" => {
                     let workflow = handle.workflow::<ReferenceWorkflow>()?;
                     workflow

@@ -195,7 +195,7 @@ async fn public_protected_matrix_binds_run_artifact_profile_and_signer() {
     profile_value["provider"] = serde_json::Value::String("protected-provider".into());
     let profile: QualificationProfile =
         serde_json::from_value(profile_value).expect("named protected profile");
-    let workload = QualificationWorkload::generate_with_size(&profile, 91, 1, 8, 1)
+    let workload = QualificationWorkload::generate_with_size(&profile, 91, 1, 10, 1)
         .expect("protected workload");
     let mut executor = MeasuredExecutor;
     let summary = workload

@@ -910,7 +910,7 @@ mod tests {
         profile_value["provider"] = serde_json::Value::String("rustfs".into());
         let profile: QualificationProfile =
             serde_json::from_value(profile_value).expect("named binder profile");
-        let workload = QualificationWorkload::generate_with_size(&profile, 31, 1, 8, 1)
+        let workload = QualificationWorkload::generate_with_size(&profile, 31, 1, 10, 1)
             .expect("binder workload");
         let mut executor = BinderExecutor;
         let summary = workload.run(&mut executor).await.expect("binder run");

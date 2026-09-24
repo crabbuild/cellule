@@ -118,6 +118,11 @@ result cannot satisfy a protected profile unless its artifact independently
 proves the required case coverage. All paths reject results if the node begins
 draining or a supervised task fails before the run completes.
 
+The mixed-load driver covers every entry in `QUALIFICATION_PRIMITIVES`:
+`sql`, `kv`, `blob`, `queue`, `consumer`, `cron`, `timer`, `workflow`,
+`activity`, and `effects`. Adding or removing an entry changes the receipt's
+primitive counts, so earlier receipts must be regenerated rather than compared.
+
 The raw four-process receipt is validated first with the fail-closed v6 command:
 
 ```bash

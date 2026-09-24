@@ -463,7 +463,7 @@ impl QualificationProfile {
 
 /// Primitive rows exercised by the canonical mixed-load qualification driver.
 pub const QUALIFICATION_PRIMITIVES: &[&str] = &[
-    "sql", "kv", "blob", "queue", "cron", "workflow", "activity", "effects",
+    "sql", "kv", "blob", "queue", "consumer", "cron", "timer", "workflow", "activity", "effects",
 ];
 
 /// Resource measurements that protected run artifacts must carry.
@@ -3826,7 +3826,7 @@ mod tests {
             case_coverage: true,
         };
         let summary = workload.run_with_case_coverage(&mut covered).await.unwrap();
-        assert!(summary.case_coverage().iter().all(|byte| *byte == u8::MAX));
+        assert!(has_complete_case_coverage(summary.case_coverage()));
         summary.artifact(&workload).unwrap();
     }
 
@@ -3948,7 +3948,7 @@ mod tests {
             QualificationProfile::new("throughput-run".into(), 1, 8, 1, 1_000).unwrap();
         throughput_profile.minimum_throughput_ops_per_sec = 8;
         let throughput_workload =
-            QualificationWorkload::generate_with_size(&throughput_profile, 19, 1, 8, 1).unwrap();
+            QualificationWorkload::generate_with_size(&throughput_profile, 19, 1, 10, 1).unwrap();
         let mut slow = QualificationRunArtifact {
             schema_version: QUALIFICATION_RUN_ARTIFACT_SCHEMA_VERSION,
             workload: throughput_workload.clone(),
@@ -3969,7 +3969,7 @@ mod tests {
             .as_bytes(),
             metrics: vec![
                 QualificationMetric::new("cells".into(), 1, "cells".into()).unwrap(),
-                QualificationMetric::new("operations".into(), 8, "operations".into()).unwrap(),
+                QualificationMetric::new("operations".into(), 10, "operations".into()).unwrap(),
                 QualificationMetric::new("duration_secs".into(), 2, "seconds".into()).unwrap(),
                 QualificationMetric::new("throughput_ops_per_sec".into(), 4, "ops/s".into())
                     .unwrap(),
@@ -3982,7 +3982,7 @@ mod tests {
         assert!(slow.verify_for_profile(&throughput_profile).is_err());
         slow.elapsed_ms = 1_000;
         slow.metrics[2].value = 1;
-        slow.metrics[3].value = 8;
+        slow.metrics[3].value = 10;
         slow.verify_for_profile(&throughput_profile).unwrap();
 
         let mut forged = artifact.clone();
@@ -4026,7 +4026,7 @@ mod tests {
         profile.maximum_local_disk_bytes = 2_000;
         profile.maximum_file_descriptors = 3_000;
         profile.maximum_bucket_calls = 4_000;
-        let workload = QualificationWorkload::generate_with_size(&profile, 23, 1, 8, 1).unwrap();
+        let workload = QualificationWorkload::generate_with_size(&profile, 23, 1, 10, 1).unwrap();
         let mut executor = ContractExecutor {
             calls: 0,
             case_coverage: false,
@@ -4050,7 +4050,7 @@ mod tests {
             .artifact_with_resource_metrics(&workload, &resources)
             .unwrap();
         run.elapsed_ms = 1_000;
-        for (name, value) in [("duration_secs", 1), ("throughput_ops_per_sec", 8)] {
+        for (name, value) in [("duration_secs", 1), ("throughput_ops_per_sec", 10)] {
             run.metrics
                 .iter_mut()
                 .find(|metric| metric.name() == name)
@@ -4117,7 +4117,7 @@ mod tests {
         profile.maximum_file_descriptors = 3_000;
         profile.maximum_bucket_calls = 4_000;
         profile.provider = "rustfs".into();
-        let workload = QualificationWorkload::generate_with_size(&profile, 29, 1, 8, 1).unwrap();
+        let workload = QualificationWorkload::generate_with_size(&profile, 29, 1, 10, 1).unwrap();
         let mut executor = ContractExecutor {
             calls: 0,
             case_coverage: false,
@@ -4133,7 +4133,7 @@ mod tests {
             .artifact_with_resource_metrics(&workload, &resources)
             .unwrap();
         run.elapsed_ms = 1_000;
-        for (name, value) in [("duration_secs", 1), ("throughput_ops_per_sec", 8)] {
+        for (name, value) in [("duration_secs", 1), ("throughput_ops_per_sec", 10)] {
             run.metrics
                 .iter_mut()
                 .find(|metric| metric.name() == name)
@@ -4289,7 +4289,7 @@ mod tests {
         );
 
         let mismatched_workload =
-            QualificationWorkload::generate_with_size(&profile, 29, 2, 8, 1).unwrap();
+            QualificationWorkload::generate_with_size(&profile, 29, 2, 10, 1).unwrap();
         let mismatched_workload_bytes = mismatched_workload.encode().unwrap();
         assert!(
             runner
@@ -5307,7 +5307,7 @@ mod tests {
         let image = Digest::from_bytes([27; 32]);
         let key = SigningKey::from_bytes(&[28; 32]);
         let runner = QualificationRunner::new(key.clone());
-        let workload = QualificationWorkload::generate_with_size(&profile, 7, 1, 8, 1).unwrap();
+        let workload = QualificationWorkload::generate_with_size(&profile, 7, 1, 10, 1).unwrap();
         let workload_artifact = workload.encode().unwrap();
         let run_artifact = QualificationRunArtifact {
             schema_version: QUALIFICATION_RUN_ARTIFACT_SCHEMA_VERSION,
@@ -5329,9 +5329,9 @@ mod tests {
             .as_bytes(),
             metrics: vec![
                 QualificationMetric::new("cells".into(), 1, "cells".into()).unwrap(),
-                QualificationMetric::new("operations".into(), 8, "operations".into()).unwrap(),
+                QualificationMetric::new("operations".into(), 10, "operations".into()).unwrap(),
                 QualificationMetric::new("duration_secs".into(), 1, "seconds".into()).unwrap(),
-                QualificationMetric::new("throughput_ops_per_sec".into(), 8, "ops/s".into())
+                QualificationMetric::new("throughput_ops_per_sec".into(), 10, "ops/s".into())
                     .unwrap(),
                 QualificationMetric::new("p50_latency_ms".into(), 1, "ms".into()).unwrap(),
                 QualificationMetric::new("p95_latency_ms".into(), 1, "ms".into()).unwrap(),
@@ -5344,9 +5344,9 @@ mod tests {
         let threshold_metrics = || {
             vec![
                 QualificationMetric::new("cells".into(), 1, "cells".into()).unwrap(),
-                QualificationMetric::new("operations".into(), 8, "operations".into()).unwrap(),
+                QualificationMetric::new("operations".into(), 10, "operations".into()).unwrap(),
                 QualificationMetric::new("duration_secs".into(), 1, "seconds".into()).unwrap(),
-                QualificationMetric::new("throughput_ops_per_sec".into(), 8, "ops/s".into())
+                QualificationMetric::new("throughput_ops_per_sec".into(), 10, "ops/s".into())
                     .unwrap(),
                 QualificationMetric::new("p50_latency_ms".into(), 1, "ms".into()).unwrap(),
                 QualificationMetric::new("p95_latency_ms".into(), 1, "ms".into()).unwrap(),

@@ -155,11 +155,17 @@ Cells into one. The contract needs the rigor effects already have:
 - Lag is observable per namespace as a bounded gauge.
 - A projection never becomes an authority for the source Cell's invariants.
 
-### Extend the qualification mix to Timer
+### Extend the qualification mix to Timer and the queue consumer (delivered)
 
-`QUALIFICATION_PRIMITIVES` drives the mixed-load matrix, the receipt row count,
-and the app-side executor. Timer must appear there with a verified action so a
-release receipt covers it the way it covers Cron and Effects.
+`QUALIFICATION_PRIMITIVES` drove the mixed-load matrix, the receipt row count,
+and the app-side executor. It now names `timer` and `consumer` beside the
+original eight primitives; the reference executor schedules and reads back a
+deadline for `timer` and runs one native consumer pass for `consumer`, so a
+release receipt covers both.
+
+Evidence produced before this change carries the previous eight-primitive mix
+and must be regenerated; the receipt validator compares a receipt's counts with
+the compiled list.
 
 ### Drive the primitive decision cores with a seeded simulator
 
