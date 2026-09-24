@@ -636,5 +636,24 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
             .output,
         TimerQueryResult::Get(None)
     ));
+    let stats = node.delivery_stats().expect("host delivery is installed");
+    assert!(
+        stats.passes() >= 1 && stats.due_cells() >= 2,
+        "delivery loop did not observe both deadlines: {stats:?}"
+    );
+    assert!(
+        stats.delivered() >= 2,
+        "delivery loop did not record both deliveries: {stats:?}"
+    );
+    assert_eq!(
+        stats.failed(),
+        0,
+        "delivery loop reported a failure: {stats:?}"
+    );
+    assert_eq!(
+        stats.in_flight(),
+        0,
+        "delivery loop still holds in-flight work: {stats:?}"
+    );
     node.shutdown().await.unwrap();
 }

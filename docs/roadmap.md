@@ -202,6 +202,11 @@ scheduler pass, takeover time) and a storage probe that proves conditional
 writes and ranged reads before a node serves. These use `cellule-host` status
 and `cellule-store` CAS semantics rather than new machinery.
 
+Delivered so far: `CellNode::delivery_stats` reports passes, due Cells,
+deliveries, skips, failures, and the in-flight gauge as six bounded scalars.
+Still open: per-namespace queue depth and workflow status gauges, and the
+startup storage probe.
+
 ## Leave these decisions open
 
 1. **Per-Cell alarm.** Timer is a sharded deadline Cell that delivers an effect.

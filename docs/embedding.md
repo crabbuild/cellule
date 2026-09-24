@@ -116,6 +116,12 @@ blocking-activity pool. A multi-node fleet passes the rendezvous-assigned
 shards it scans; a single-node deployment scans all of them. The loop runs
 inside the node task group, so node drain cancels and joins it.
 
+`CellNode::delivery_stats` samples the loop without waiting for it: completed
+passes, due Cells observed, Cells delivered, Cells skipped because this node
+does not serve them or their head moved, failed deliveries, and the in-flight
+gauge. The counters are bounded (six scalars), so they are safe to scrape or log
+on a fixed cadence.
+
 ## Qualify the deployment
 
 The in-memory examples and local three-process storefront smoke prove

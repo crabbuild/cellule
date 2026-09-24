@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 mod delivery;
 
-pub use delivery::{CellDelivery, CellDeliveryConfig};
+pub use delivery::{CellDelivery, CellDeliveryConfig, CellDeliveryCounters, CellDeliveryStats};
 
 const MAX_NODE_FACILITIES: usize = 64;
 const MAX_NODE_TASKS: usize = 256;
@@ -551,6 +551,7 @@ impl CellNodeBuilder {
             facilities: Arc::new(Mutex::new(Vec::new())),
             required_components: Arc::new(Mutex::new(required_components)),
             task_group: Arc::new(Mutex::new(None)),
+            delivery_counters: Arc::new(Mutex::new(None)),
         };
         node.install_follower_store(follower_store)?;
         Ok(node)
@@ -583,6 +584,7 @@ impl CellNodeBuilder {
             facilities: Arc::new(Mutex::new(Vec::new())),
             required_components: Arc::new(Mutex::new(required_components)),
             task_group: Arc::new(Mutex::new(None)),
+            delivery_counters: Arc::new(Mutex::new(None)),
         };
         node.install_follower_store(follower_store)?;
         Ok(node)
@@ -662,6 +664,7 @@ pub struct CellNode {
     facilities: Arc<Mutex<Vec<CellNodeFacility>>>,
     required_components: Arc<Mutex<Vec<&'static str>>>,
     task_group: Arc<Mutex<Option<Arc<CellNodeTaskGroup>>>>,
+    delivery_counters: Arc<Mutex<Option<Arc<CellDeliveryCounters>>>>,
 }
 
 impl CellNode {
@@ -916,8 +919,26 @@ impl CellNode {
             .ok_or(Error::Control(
                 "CellNode delivery requires an installed task group",
             ))?;
+        let counters = delivery.counters();
+        let mut installed = self
+            .delivery_counters
+            .lock()
+            .map_err(|_| Error::Control("CellNode delivery lock poisoned"))?;
+        if installed.is_some() {
+            return Err(Error::Control("CellNode delivery is already installed"));
+        }
+        *installed = Some(counters);
         let cancellation = task_group.cancellation.clone();
         task_group.spawn_boxed(async move { delivery.run(cancellation).await })
+    }
+
+    /// Samples the host-owned delivery counters, if delivery is installed.
+    #[must_use]
+    pub fn delivery_stats(&self) -> Option<CellDeliveryStats> {
+        self.delivery_counters
+            .lock()
+            .ok()
+            .and_then(|counters| counters.as_ref().map(|counters| counters.snapshot()))
     }
 
     /// Installs the provider enrollment adapter and moves node-log recruitment

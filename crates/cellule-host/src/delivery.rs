@@ -8,6 +8,7 @@
 
 use std::{
     sync::Arc,
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -139,6 +140,90 @@ pub struct CellDelivery {
     registry: Arc<Registry>,
     peer: EffectPeerClient,
     blocking: Arc<BlockingActivityPool>,
+    counters: Arc<CellDeliveryCounters>,
+}
+
+/// Shared delivery counters for one node.
+#[derive(Debug, Default)]
+pub struct CellDeliveryCounters {
+    passes: AtomicU64,
+    due_cells: AtomicU64,
+    delivered: AtomicU64,
+    skipped: AtomicU64,
+    failed: AtomicU64,
+    in_flight: AtomicU64,
+}
+
+impl CellDeliveryCounters {
+    /// Samples the counters without waiting for an in-flight delivery.
+    #[must_use]
+    pub fn snapshot(&self) -> CellDeliveryStats {
+        let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+        CellDeliveryStats {
+            passes: read(&self.passes),
+            due_cells: read(&self.due_cells),
+            delivered: read(&self.delivered),
+            skipped: read(&self.skipped),
+            failed: read(&self.failed),
+            in_flight: read(&self.in_flight),
+        }
+    }
+}
+
+/// Point-in-time delivery activity for one node.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CellDeliveryStats {
+    passes: u64,
+    due_cells: u64,
+    delivered: u64,
+    skipped: u64,
+    failed: u64,
+    in_flight: u64,
+}
+
+impl CellDeliveryStats {
+    /// Returns how many passes the loop completed or started.
+    #[must_use]
+    pub const fn passes(self) -> u64 {
+        self.passes
+    }
+
+    /// Returns how many due Cells the scans observed.
+    #[must_use]
+    pub const fn due_cells(self) -> u64 {
+        self.due_cells
+    }
+
+    /// Returns how many due Cells this node delivered for.
+    #[must_use]
+    pub const fn delivered(self) -> u64 {
+        self.delivered
+    }
+
+    /// Returns how many due Cells this node did not serve or found stale.
+    #[must_use]
+    pub const fn skipped(self) -> u64 {
+        self.skipped
+    }
+
+    /// Returns how many deliveries failed and ended their pass early.
+    #[must_use]
+    pub const fn failed(self) -> u64 {
+        self.failed
+    }
+
+    /// Returns how many deliveries are running right now.
+    #[must_use]
+    pub const fn in_flight(self) -> u64 {
+        self.in_flight
+    }
+}
+
+/// What one delivery pass did for one due Cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeliveryOutcome {
+    Delivered,
+    Skipped,
 }
 
 impl CellDelivery {
@@ -163,7 +248,14 @@ impl CellDelivery {
             registry,
             peer,
             blocking,
+            counters: Arc::new(CellDeliveryCounters::default()),
         })
+    }
+
+    /// Returns the shared counters this loop updates.
+    #[must_use]
+    pub fn counters(&self) -> Arc<CellDeliveryCounters> {
+        Arc::clone(&self.counters)
     }
 
     /// Runs delivery passes until the cancellation token fires.
@@ -187,6 +279,7 @@ impl CellDelivery {
 
     async fn pass(self: &Arc<Self>) -> Result<()> {
         let logical_time_ms = system_time_ms()?;
+        self.counters.passes.fetch_add(1, Ordering::Relaxed);
         let mut deliveries = JoinSet::new();
         for shard in &self.config.catalog_shards {
             let mut scan = DueCellScan::new(&self.catalog, self.authority.clone(), *shard).await?;
@@ -195,11 +288,29 @@ impl CellDelivery {
                 .await?
             {
                 for cell in due {
+                    self.counters.due_cells.fetch_add(1, Ordering::Relaxed);
                     while deliveries.len() >= self.config.max_concurrent_cells {
                         join_delivery(&mut deliveries).await?;
                     }
                     let delivery = Arc::clone(self);
-                    deliveries.spawn(async move { delivery.deliver(&cell).await });
+                    deliveries.spawn(async move {
+                        let counters = Arc::clone(&delivery.counters);
+                        counters.in_flight.fetch_add(1, Ordering::Relaxed);
+                        let result = delivery.deliver(&cell).await;
+                        counters.in_flight.fetch_sub(1, Ordering::Relaxed);
+                        match &result {
+                            Ok(DeliveryOutcome::Delivered) => {
+                                counters.delivered.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Ok(DeliveryOutcome::Skipped) => {
+                                counters.skipped.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(_) => {
+                                counters.failed.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        result.map(|_| ())
+                    });
                 }
             }
         }
@@ -209,7 +320,7 @@ impl CellDelivery {
         Ok(())
     }
 
-    async fn deliver(&self, due: &DueCell) -> Result<()> {
+    async fn deliver(&self, due: &DueCell) -> Result<DeliveryOutcome> {
         let entry = due.catalog().entry();
         let target = CellTarget::new(
             self.config.tenant,
@@ -218,7 +329,7 @@ impl CellDelivery {
             entry.partition(),
         )?;
         let Some(_job) = self.runtime.try_reserve_worker_job()? else {
-            return Ok(());
+            return Ok(DeliveryOutcome::Skipped);
         };
         if self
             .runtime
@@ -226,10 +337,10 @@ impl CellDelivery {
             .await?
             .is_none()
         {
-            return Ok(());
+            return Ok(DeliveryOutcome::Skipped);
         }
         let Some(root) = due.control().value().root.as_ref() else {
-            return Ok(());
+            return Ok(DeliveryOutcome::Skipped);
         };
         let tick = self
             .registry
@@ -246,7 +357,9 @@ impl CellDelivery {
             Ok(_) => {}
             // The Cell advanced between the scan and the dispatch; the next
             // pass rescans it instead of forcing a second attempt now.
-            Err(InvocationError::Rejected(_) | InvocationError::Pending(_)) => return Ok(()),
+            Err(InvocationError::Rejected(_) | InvocationError::Pending(_)) => {
+                return Ok(DeliveryOutcome::Skipped);
+            }
             Err(InvocationError::NotStarted(error)) => return Err(error),
             Err(InvocationError::InvalidPublishedResult { source, .. }) => return Err(*source),
         }
@@ -287,7 +400,7 @@ impl CellDelivery {
         {
             tracing::warn!(error = %error, "Cell effect pass was not resolved");
         }
-        Ok(())
+        Ok(DeliveryOutcome::Delivered)
     }
 }
 
