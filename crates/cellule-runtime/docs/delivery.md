@@ -93,13 +93,20 @@ It proves that a terminal effect keeps no lease, only the current token settles
 an effect, attempts stay inside the bound, and one effect identity is applied to
 the destination exactly once no matter how often it is delivered.
 
+`src/cron_sim.rs` covers the recurring trigger: upsert, pause, resume, delete,
+fire due occurrences, and clock advance. It proves that a paused or deleted
+schedule never fires, a fired occurrence advances the schedule exactly once by
+its interval, the occurrence count and next due time only move forward, the
+generation never decreases, and the published effect count equals the number of
+fired occurrences.
+
 All four simulators share `src/sim_schedule.rs`, so each keeps its own stream
 and a failure still replays from one seed.
 
 Sampling finds the bugs that happen often, so each simulator also enumerates
 every operation sequence of three steps over a reduced operation set — 155
-sequences for the primitive and effect cores, 84 for the workflow and blob
-cores — and runs the same invariants on each. A counterexample prints its exact
+sequences for the primitive and effect cores, 84 for the workflow, blob, and
+cron cores — and runs the same invariants on each. A counterexample prints its exact
 sequence, which becomes the regression test.
 
 ## Run crate-level proof

@@ -196,8 +196,9 @@ found a real bookkeeping gap — expired leases stayed in the simulator's live s
 while the store had already reclaimed them — which is the kind of drift the
 discipline is for.
 
-Effect delivery now has its own schedule too (`... --lib effects_sim`),
-covering claim, settle, retry, inbox application, and redelivery, so every
+Effect delivery (`... --lib effects_sim`) and the recurring trigger
+(`... --lib cron_sim`) have their own schedules too, covering claim, settle,
+retry, inbox application, redelivery, and cron occurrence advance, so every
 decision core the framework ships has one.
 
 Short schedules are now exhaustive rather than sampled: every three-step

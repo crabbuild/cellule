@@ -22,6 +22,8 @@ mod coordination;
 #[cfg(test)]
 mod coordination_sim;
 mod cron;
+#[cfg(test)]
+mod cron_sim;
 mod effects;
 #[cfg(test)]
 mod effects_sim;
