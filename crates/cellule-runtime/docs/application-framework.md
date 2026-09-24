@@ -86,7 +86,7 @@ Application authors use:
 - `CellApplication` to assemble modules into one release
 - `CellType` to declare namespace, partitioning, schema, and limits
 - `Command` and `Query` for deterministic in-Cell behavior
-- typed primitive capabilities for KV, Queue, Blob, Cron, and Workflow
+- typed primitive capabilities for KV, Queue, Blob, Cron, Timer, and Workflow
 - `EffectContext` for typed cross-Cell commands
 - `Activity` for external asynchronous work
 - generated application clients for targeting and invocation
@@ -368,6 +368,7 @@ impl CellModule for CommercePrimitives {
         register_queue::<FulfillmentJobs>(registry)?;
         register_blob::<InvoiceDocuments>(registry)?;
         register_cron::<SubscriptionRenewals>(registry)?;
+        register_timer::<PaymentTimeouts>(registry)?;
         register_workflow::<CheckoutRuns>(registry)?;
         Ok(())
     }

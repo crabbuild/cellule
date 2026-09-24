@@ -419,6 +419,7 @@ pub struct RegistryBuilder {
     queue_bindings: Vec<QueueBinding>,
     blob_bindings: Vec<PrimitiveBinding>,
     cron_bindings: Vec<CronBinding>,
+    timer_bindings: Vec<TimerBinding>,
     maintenance_bindings: BTreeMap<&'static str, Option<crate::QueueDeadLetterTarget>>,
     maintenance_runners: BTreeMap<&'static str, MaintenanceRunner>,
     effect_runners: BTreeMap<&'static str, EffectRunner>,
@@ -442,6 +443,7 @@ impl RegistryBuilder {
             queue_bindings: Vec::new(),
             blob_bindings: Vec::new(),
             cron_bindings: Vec::new(),
+            timer_bindings: Vec::new(),
             maintenance_bindings: BTreeMap::new(),
             maintenance_runners: BTreeMap::new(),
             effect_runners: BTreeMap::new(),
@@ -521,6 +523,27 @@ impl RegistryBuilder {
             return Err(Error::Registry("duplicate Cron module binding"));
         }
         self.cron_bindings.push(CronBinding {
+            module,
+            namespace,
+            targets,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn bind_timer_module(
+        &mut self,
+        module: &'static str,
+        namespace: NamespaceId,
+        targets: &'static [crate::TimerTarget],
+    ) -> Result<()> {
+        if self
+            .timer_bindings
+            .iter()
+            .any(|binding| binding.namespace == namespace)
+        {
+            return Err(Error::Registry("duplicate Timer module binding"));
+        }
+        self.timer_bindings.push(TimerBinding {
             module,
             namespace,
             targets,
@@ -775,6 +798,7 @@ impl RegistryBuilder {
             &namespace_owners,
         )?;
         validate_cron_bindings(&self.cron_bindings, &namespace_owners, &self.modules)?;
+        validate_timer_bindings(&self.timer_bindings, &namespace_owners, &self.modules)?;
         validate_maintenance_bindings(&self.maintenance_bindings, &self.queue_bindings)?;
         if self
             .maintenance_bindings
@@ -911,6 +935,12 @@ struct CronBinding {
     module: &'static str,
     namespace: NamespaceId,
     targets: &'static [crate::CronTarget],
+}
+
+struct TimerBinding {
+    module: &'static str,
+    namespace: NamespaceId,
+    targets: &'static [crate::TimerTarget],
 }
 
 #[derive(Clone, Copy)]
@@ -2036,6 +2066,69 @@ fn validate_cron_bindings(
             }) {
                 return Err(Error::Registry(
                     "Cron target command differs from descriptor",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_timer_bindings(
+    bindings: &[TimerBinding],
+    namespaces: &HashMap<NamespaceId, (&'static str, NamespaceDescriptor)>,
+    modules: &[&ModuleDescriptor],
+) -> Result<()> {
+    let timer_namespaces = namespaces
+        .values()
+        .filter(|(_, namespace)| namespace.role == CatalogRole::Timer)
+        .count();
+    if bindings.len() != timer_namespaces {
+        return Err(Error::Registry(
+            "Timer descriptors and compiled bindings differ",
+        ));
+    }
+    for binding in bindings {
+        let Some((owner, namespace)) = namespaces.get(&binding.namespace) else {
+            return Err(Error::Registry("Timer binding namespace is unavailable"));
+        };
+        if namespace.role != CatalogRole::Timer || *owner != binding.module {
+            return Err(Error::Registry("Timer binding does not own its namespace"));
+        }
+        let compiled_targets = binding
+            .targets
+            .iter()
+            .map(|target| target.namespace())
+            .collect::<HashSet<_>>();
+        let declared_targets = namespace
+            .effect_targets
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        if compiled_targets != declared_targets {
+            return Err(Error::Registry(
+                "Timer effect targets and descriptor differ",
+            ));
+        }
+        for target in binding.targets {
+            let Some((target_owner, _)) = namespaces.get(&target.namespace()) else {
+                return Err(Error::Registry("Timer target namespace is unavailable"));
+            };
+            if *target_owner != target.module() {
+                return Err(Error::Registry(
+                    "Timer target module differs from descriptor",
+                ));
+            }
+            let target_module = modules
+                .iter()
+                .find(|module| module.name == target.module())
+                .ok_or(Error::Registry("Timer target module is unavailable"))?;
+            if !target_module.commands.iter().any(|command| {
+                command.id == target.command_id()
+                    && command.codec_version == target.codec_version()
+                    && command.input_limit == target.input_limit()
+            }) {
+                return Err(Error::Registry(
+                    "Timer target command differs from descriptor",
                 ));
             }
         }

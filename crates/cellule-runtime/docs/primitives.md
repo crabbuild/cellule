@@ -1,4 +1,4 @@
-# Implement SQL, KV, Blob, Queue, Cron, and Workflow primitives
+# Implement SQL, KV, Blob, Queue, Cron, Timer, and Workflow primitives
 
 All primitives execute through typed Rust bindings and the same Cell actor. They share request deduplication, SQLite transactions, LTX publication, exact-root recovery, admission, and receipts.
 
@@ -246,6 +246,35 @@ latency a correctness failure.
 
 An owner crash after commit cannot lose an occurrence: the effect and next occurrence are in the same LTX root. A retry cannot execute the destination command twice because its inbox resolves the stable effect identity.
 
+## Use Timer for durable one-shot deadlines
+
+`TimerNamespace<M>` keeps a bounded one-shot deadline under a 16-byte timer ID on a deterministic shard. Setting the same ID again replaces the pending deadline and advances the generation, so a destination can recognize a delivery that a superseded generation scheduled.
+
+```rust,ignore
+let scheduled = timers
+    .mutate(identity, TimerMutation::Set {
+        timer_id,
+        target_index: 0,
+        target_partition: partition,
+        payload,
+        due_at_ms: now_ms + 30_000,
+    })
+    .await?;
+```
+
+A due deadline fires in the transaction that removes it: the Tick inserts the typed effect addressed to the declared target and deletes the entry, so a crash cannot lose the deadline or fire it twice. A deadline that has already passed is accepted and becomes eligible on the next Tick.
+
+| Timer contract | Limit or behavior |
+| --- | --- |
+| Payload | 256 KiB |
+| Due time | Now or up to 5 years ahead |
+| Fire budget | Shares the 128-item Tick budget through protected per-class shares |
+| List page | 128 entries or 512 KiB |
+| Delivery | Durable effect with destination inbox deduplication |
+| Controls | Set or replace, cancel, inspect one ID, list one explicit shard |
+
+Use Cron when a trigger recurs on a schedule and Timer when one mutation must run once at a chosen time.
+
 ## Use Workflow for durable state machines
 
 A workflow definition is compiled Rust with a stable digest. New runs pin the current digest; existing runs continue with the retained definition they started with.
@@ -355,6 +384,7 @@ Each mutating procedure recomputes the earliest due timestamp inside its transac
 | Workflow | Fire timers, retry activities, clean terminal runs |
 | Blob | Delete expired unpublished uploads |
 | Cron | Publish due occurrences and advance schedules |
+| Timer | Fire due one-shot deadlines and remove them |
 | Effects | Claim, retry, extend, acknowledge, clean source or inbox rows |
 
 When a Tick reports no local transition, the compiled registry tells the scheduler whether an activity or effect runner can claim work for that namespace.
@@ -370,4 +400,4 @@ Primitive mechanics are reusable, but registration is not automatic. A new modul
 5. Exact-root restore coverage
 6. Capacity and failure tests for its workload
 
-Do not add a public generic SQL, KV, Blob, Queue, Cron, or Workflow endpoint. Product-specific HTTP handlers remain the external API.
+Do not add a public generic SQL, KV, Blob, Queue, Cron, Timer, or Workflow endpoint. Product-specific HTTP handlers remain the external API.

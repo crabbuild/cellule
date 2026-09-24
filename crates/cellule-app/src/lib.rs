@@ -11,8 +11,9 @@ use cellule_runtime::{
     CellClient, CellModule, CellTarget, Command, Committed, CronModule, CronNamespace, Digest,
     EffectModule, EffectSource, Error, InvocationError, KvModule, KvNamespace, NamespaceId,
     Observed, PendingMutation, PreparedCommand, Query, QueueModule, QueueNamespace, Registry,
-    RegistryBuilder, Resolution, Result, SqlCell, SqlModule, TenantId, WorkflowActivities,
-    WorkflowActivityModule, WorkflowModule, WorkflowNamespace, partition_for_shard,
+    RegistryBuilder, Resolution, Result, SqlCell, SqlModule, TenantId, TimerModule, TimerNamespace,
+    WorkflowActivities, WorkflowActivityModule, WorkflowModule, WorkflowNamespace,
+    partition_for_shard,
 };
 
 const DESCRIPTOR_MAGIC: &[u8] = b"cellule.application.v1\0";
@@ -441,6 +442,12 @@ impl<A> ApplicationHandle<A> {
         CronNamespace::new(self.client.clone(), self.tenant, self.application)
     }
 
+    /// Returns the typed Timer capability for a compiled Timer module.
+    pub fn timer<M: TimerModule>(&self) -> Result<TimerNamespace<M>> {
+        self.validate_namespace(M::NAMESPACE, M::MODULE, CatalogRole::Timer)?;
+        TimerNamespace::new(self.client.clone(), self.tenant, self.application)
+    }
+
     /// Returns the typed Workflow capability for a compiled Workflow module.
     pub fn workflow<M: WorkflowModule>(&self) -> Result<WorkflowNamespace<M>> {
         self.validate_namespace(M::NAMESPACE, M::MODULE, CatalogRole::Workflow)?;
@@ -584,6 +591,7 @@ fn role_code(role: CatalogRole) -> u8 {
         CatalogRole::Workflow => 4,
         CatalogRole::Blob => 5,
         CatalogRole::Cron => 6,
+        CatalogRole::Timer => 7,
     }
 }
 

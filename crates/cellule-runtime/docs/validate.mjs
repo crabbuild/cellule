@@ -38,7 +38,8 @@ const queue = readFileSync(path.join(contracts, 'queue.sql'), 'utf8');
 const workflow = readFileSync(path.join(contracts, 'workflow.sql'), 'utf8');
 const blob = readFileSync(path.join(contracts, 'blob.sql'), 'utf8');
 const cron = readFileSync(path.join(contracts, 'cron.sql'), 'utf8');
-for (const schema of ['', kv, queue, workflow, blob, cron]) sqlite(schema, 'PRAGMA integrity_check;', 'ok');
+const timer = readFileSync(path.join(contracts, 'timer.sql'), 'utf8');
+for (const schema of ['', kv, queue, workflow, blob, cron, timer]) sqlite(schema, 'PRAGMA integrity_check;', 'ok');
 
 rejects('', `INSERT INTO sys_meta VALUES(1, zeroblob(31), zeroblob(16), 0, 0, 1);`, /CHECK constraint/);
 rejects(kv, `INSERT INTO kv_entries VALUES(X'', X'01', zeroblob(27), X'', NULL);`, /CHECK constraint/);
@@ -72,6 +73,11 @@ const upload = `INSERT INTO blob_uploads VALUES(zeroblob(16), X'01', zeroblob(32
 rejects(blob, upload + `INSERT INTO blob_parts VALUES(zeroblob(16), 1, zeroblob(32), 262145, NULL);`, /CHECK constraint/);
 rejects(blob, `INSERT INTO blob_parts VALUES(zeroblob(16), 1, zeroblob(32), 0, NULL);`, /FOREIGN KEY constraint/);
 rejects(cron, `INSERT INTO cron_schedules VALUES(zeroblob(16), 0, X'', X'', 999, 0, 0, 1, 1, 0);`, /CHECK constraint/);
+rejects(timer, `INSERT INTO timer_entries VALUES(zeroblob(15), 0, X'', X'', 100, 1, 0);`, /CHECK constraint/);
+rejects(timer, `INSERT INTO timer_entries VALUES(zeroblob(16), 0, X'', zeroblob(262145), 100, 1, 0);`, /CHECK constraint/);
+rejects(timer, `INSERT INTO timer_entries VALUES(zeroblob(16), 0, X'', X'', -1, 1, 0);`, /CHECK constraint/);
+sqlite(timer, `INSERT INTO timer_entries VALUES(zeroblob(16), 0, X'', X'', 100, 1, 0);
+SELECT count(*) FROM timer_entries INDEXED BY timer_due WHERE due_at_ms <= 100;`, '1');
 
 // Only message contracts are intended; product HTTP APIs belong to the embedding service.
 const peer = readFileSync(path.join(contracts, 'peer.proto'), 'utf8');

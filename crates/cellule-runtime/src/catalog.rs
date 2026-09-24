@@ -27,6 +27,8 @@ pub enum CatalogRole {
     Workflow,
     Blob,
     Cron,
+    /// Durable one-shot deadline Cell.
+    Timer,
 }
 
 /// Immutable identity and bootstrap contract for one cataloged Cell.

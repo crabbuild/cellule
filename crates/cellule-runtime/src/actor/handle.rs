@@ -186,7 +186,7 @@ impl CellHandle {
         role: CatalogRole,
     ) -> crate::Result<PersistedWorkInventory> {
         let encoded = self
-            .query(1, 1, move |connection| {
+            .query(1, 2, move |connection| {
                 crate::maintenance::inspect_persisted_work(connection, role)
                     .map(PersistedWorkInventory::encode)
             })

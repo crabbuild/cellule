@@ -8,24 +8,26 @@ use crate::{
     WireValue, WorkflowDefinition, scheduler::scheduler_tick_at,
 };
 
-const REQUESTS: u8 = 1 << 0;
-const INBOX: u8 = 1 << 1;
-const EFFECTS: u8 = 1 << 2;
-const QUEUE_MESSAGES: u8 = 1 << 3;
-const QUEUE_DEDUP: u8 = 1 << 4;
-const WORKFLOWS: u8 = 1 << 5;
-const BLOBS: u8 = 1 << 6;
-const CRON_SCHEDULES: u8 = 1 << 7;
+const REQUESTS: u16 = 1 << 0;
+const INBOX: u16 = 1 << 1;
+const EFFECTS: u16 = 1 << 2;
+const QUEUE_MESSAGES: u16 = 1 << 3;
+const QUEUE_DEDUP: u16 = 1 << 4;
+const WORKFLOWS: u16 = 1 << 5;
+const BLOBS: u16 = 1 << 6;
+const CRON_SCHEDULES: u16 = 1 << 7;
+const TIMERS: u16 = 1 << 8;
 
 const TRANSFER_EFFECTS: u8 = 1 << 0;
 const TRANSFER_QUEUE: u8 = 1 << 1;
 const TRANSFER_WORKFLOW: u8 = 1 << 2;
 const TRANSFER_CRON: u8 = 1 << 3;
+const TRANSFER_TIMER: u8 = 1 << 4;
 
 /// Conservative inventory of rows that can retain executable release contracts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PersistedWorkInventory {
-    bits: u8,
+    bits: u16,
     unknown: bool,
 }
 
@@ -47,7 +49,8 @@ impl PersistedWorkInventory {
     /// exact-root handoff. Retained outcomes, Blob metadata, and producer
     /// identities are restored with the root; live primitive rows still block.
     pub(crate) const fn is_transfer_settled(self) -> bool {
-        !self.unknown && self.bits & (EFFECTS | QUEUE_MESSAGES | WORKFLOWS | CRON_SCHEDULES) == 0
+        !self.unknown
+            && self.bits & (EFFECTS | QUEUE_MESSAGES | WORKFLOWS | CRON_SCHEDULES | TIMERS) == 0
     }
 
     pub(crate) const fn is_unknown(self) -> bool {
@@ -75,6 +78,8 @@ impl PersistedWorkInventory {
             Some("maintenance release is blocked by retained Blob objects")
         } else if self.bits & CRON_SCHEDULES != 0 {
             Some("maintenance release is blocked by retained Cron schedules")
+        } else if self.bits & TIMERS != 0 {
+            Some("maintenance release is blocked by retained Timer deadlines")
         } else {
             None
         }
@@ -84,14 +89,14 @@ impl PersistedWorkInventory {
         if self.unknown {
             Vec::new()
         } else {
-            vec![self.bits]
+            self.bits.to_be_bytes().to_vec()
         }
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> crate::Result<Self> {
         match bytes {
-            [bits] => Ok(Self {
-                bits: *bits,
+            [high, low] => Ok(Self {
+                bits: u16::from_be_bytes([*high, *low]),
                 unknown: false,
             }),
             _ => Err(Error::Command("invalid persisted-work inventory")),
@@ -125,21 +130,51 @@ pub(crate) fn inspect_persisted_work(
     role: CatalogRole,
 ) -> crate::Result<PersistedWorkInventory> {
     let mut bits = 0;
-    bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM sys_requests)")? * REQUESTS;
-    bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM sys_inbox)")? * INBOX;
-    bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM sys_effects)")? * EFFECTS;
+    bits |= u16::from(exists(
+        connection,
+        "SELECT EXISTS(SELECT 1 FROM sys_requests)",
+    )?) * REQUESTS;
+    bits |= u16::from(exists(
+        connection,
+        "SELECT EXISTS(SELECT 1 FROM sys_inbox)",
+    )?) * INBOX;
+    bits |= u16::from(exists(
+        connection,
+        "SELECT EXISTS(SELECT 1 FROM sys_effects)",
+    )?) * EFFECTS;
     if role == CatalogRole::Queue {
-        bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM queue_messages)")? * QUEUE_MESSAGES;
-        bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM queue_dedup)")? * QUEUE_DEDUP;
+        bits |= u16::from(exists(
+            connection,
+            "SELECT EXISTS(SELECT 1 FROM queue_messages)",
+        )?) * QUEUE_MESSAGES;
+        bits |= u16::from(exists(
+            connection,
+            "SELECT EXISTS(SELECT 1 FROM queue_dedup)",
+        )?) * QUEUE_DEDUP;
     }
     if role == CatalogRole::Workflow {
-        bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM workflow_runs)")? * WORKFLOWS;
+        bits |= u16::from(exists(
+            connection,
+            "SELECT EXISTS(SELECT 1 FROM workflow_runs)",
+        )?) * WORKFLOWS;
     }
     if role == CatalogRole::Blob {
-        bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM blob_objects)")? * BLOBS;
+        bits |= u16::from(exists(
+            connection,
+            "SELECT EXISTS(SELECT 1 FROM blob_objects)",
+        )?) * BLOBS;
     }
     if role == CatalogRole::Cron {
-        bits |= exists(connection, "SELECT EXISTS(SELECT 1 FROM cron_schedules)")? * CRON_SCHEDULES;
+        bits |= u16::from(exists(
+            connection,
+            "SELECT EXISTS(SELECT 1 FROM cron_schedules)",
+        )?) * CRON_SCHEDULES;
+    }
+    if role == CatalogRole::Timer {
+        bits |= u16::from(exists(
+            connection,
+            "SELECT EXISTS(SELECT 1 FROM timer_entries)",
+        )?) * TIMERS;
     }
     Ok(PersistedWorkInventory {
         bits,
@@ -206,6 +241,18 @@ pub(crate) fn inspect_transfer_work(
             _ => return Err(Error::Command("invalid transfer cron existence result")),
         };
     }
+    if role == CatalogRole::Timer {
+        let due = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM timer_entries INDEXED BY timer_due WHERE due_at_ms <= ?1 LIMIT 1)",
+            [now_ms],
+            |row| row.get::<_, i64>(0),
+        )?;
+        bits |= match due {
+            0 => 0,
+            1 => TRANSFER_TIMER,
+            _ => return Err(Error::Command("invalid transfer timer existence result")),
+        };
+    }
     Ok(TransferWorkInventory { bits })
 }
 
@@ -226,6 +273,7 @@ pub trait MaintenanceModule: Send + Sync + 'static {
     const WORKFLOW_DEFINITIONS: &'static [&'static dyn WorkflowDefinition] = &[];
     const QUEUE_DEAD_LETTER: Option<QueueDeadLetterTarget> = None;
     const CRON_TARGETS: &'static [CronTarget] = &[];
+    const TIMER_TARGETS: &'static [crate::TimerTarget] = &[];
 }
 
 /// Registers one module's internal scheduler Tick command.
@@ -279,6 +327,7 @@ impl<M: MaintenanceModule> Command for MaintenanceTickCommand<M> {
             M::WORKFLOW_DEFINITIONS,
             M::QUEUE_DEAD_LETTER,
             M::CRON_TARGETS,
+            M::TIMER_TARGETS,
         )?;
         Ok(CommandResult::Success(MaintenanceTickOutcome::Applied {
             processed,
@@ -334,7 +383,7 @@ mod tests {
     use super::*;
     use crate::{
         CellId, IncarnationId, install_cron_schema, install_queue_schema, install_runtime_schema,
-        install_workflow_schema,
+        install_timer_schema, install_workflow_schema,
     };
 
     #[test]
@@ -388,7 +437,7 @@ mod tests {
         );
         assert!(PersistedWorkInventory::decode(&unknown.encode()).is_err());
 
-        let empty = PersistedWorkInventory::decode(&[0]).unwrap();
+        let empty = PersistedWorkInventory::decode(&[0, 0]).unwrap();
         assert!(empty.is_empty());
         assert!(!empty.is_unknown());
     }
@@ -598,6 +647,45 @@ mod tests {
                 .unwrap()
                 .bits(),
             TRANSFER_CRON
+        );
+    }
+
+    #[test]
+    fn timer_deadlines_block_release_and_due_transfer() {
+        let mut timer = Connection::open_in_memory().unwrap();
+        install_runtime_schema(
+            &mut timer,
+            CellId::from_bytes([34; 32]),
+            IncarnationId::from_bytes([35; 16]),
+            1,
+        )
+        .unwrap();
+        let transaction = timer.transaction().unwrap();
+        install_timer_schema(&transaction).unwrap();
+        transaction.commit().unwrap();
+        timer
+            .execute(
+                "INSERT INTO timer_entries VALUES (?1, 0, X'', X'', 10, 1, 10)",
+                [[36_u8; 16].as_slice()],
+            )
+            .unwrap();
+
+        assert_eq!(
+            inspect_persisted_work(&timer, CatalogRole::Timer)
+                .unwrap()
+                .first_blocker(),
+            Some("maintenance release is blocked by retained Timer deadlines")
+        );
+        assert!(
+            inspect_transfer_work(&timer, CatalogRole::Timer, 5)
+                .unwrap()
+                .is_settled()
+        );
+        assert_eq!(
+            inspect_transfer_work(&timer, CatalogRole::Timer, 10)
+                .unwrap()
+                .bits(),
+            TRANSFER_TIMER
         );
     }
 }

@@ -134,6 +134,7 @@ The primitives share the same actor, transaction, publication, recovery, and adm
 | Blob | Object-store parts and range reads | Object-key hash | SQLite manifest and content-addressed part references within one shard |
 | Queue | Deferred work | Producer hash for send, explicit shard for claim | At least once |
 | Cron | Recurring typed triggers | Schedule-ID hash | Atomic occurrence effect and schedule advance |
+| Timer | One-shot delayed work | Timer-ID hash | Atomic deadline fire with destination inbox deduplication |
 | Workflow | Durable state machines, timers, activities | Workflow ID hash | Deterministic transition plus retryable activity |
 
 Read [primitives.md](primitives.md) for schemas, state transitions, limits, and examples.
@@ -219,6 +220,7 @@ These values are admission contracts, not benchmark results.
 | Blob part / range read | 256 KiB / 512 KiB |
 | Queue payload | 256 KiB |
 | Cron payload / interval | 256 KiB / 1 second to 1 year |
+| Timer payload / due window | 256 KiB / now to 5 years ahead |
 | Queue or activity lease | 5s to 300s, 30s default |
 | Native transaction wall budget | 5s |
 | Public transport wait | 30s default, 60s maximum |

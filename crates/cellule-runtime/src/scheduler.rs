@@ -5,7 +5,7 @@ use cellule_ltx::rusqlite::Transaction;
 use crate::effects::EffectBatch;
 use crate::{
     CatalogProof, CatalogShardScan, CellAuthority, CellCatalog, CellTarget, CronTarget, Error,
-    NodeAdvertisement, QueueDeadLetterTarget, Result, SessionId, VersionedControl,
+    NodeAdvertisement, QueueDeadLetterTarget, Result, SessionId, TimerTarget, VersionedControl,
     WorkflowDefinition,
     blob::blob_cleanup_expired,
     cron::cron_fire_due_bounded,
@@ -19,6 +19,7 @@ use crate::{
         queue_expire_ready_bounded, queue_expire_ready_bounded_with_dead_letter,
         queue_reclaim_expired_bounded, queue_reclaim_expired_bounded_with_dead_letter,
     },
+    timer::timer_fire_due_bounded,
     workflow::{
         workflow_cleanup_terminal_bounded, workflow_fail_one_expired_activity,
         workflow_fire_one_due_timer, workflow_reclaim_expired_bounded,
@@ -232,6 +233,7 @@ pub fn scheduler_tick(
         workflow_definitions,
         None,
         &[],
+        &[],
     )
 }
 
@@ -243,6 +245,7 @@ pub(crate) fn scheduler_tick_at(
     workflow_definitions: &[&'static dyn WorkflowDefinition],
     queue_dead_letter: Option<QueueDeadLetterTarget>,
     cron_targets: &[CronTarget],
+    timer_targets: &[TimerTarget],
 ) -> Result<SchedulerTickOutcome> {
     if logical_time_ms < 0 {
         return Err(Error::Command("negative scheduler logical time"));
@@ -253,6 +256,7 @@ pub(crate) fn scheduler_tick_at(
         + usize::from(tables.contains("kv_entries"))
         + usize::from(tables.contains("blob_uploads"))
         + usize::from(tables.contains("cron_schedules"))
+        + usize::from(tables.contains("timer_entries"))
         + 3 * usize::from(tables.contains("queue_messages"))
         + 4 * usize::from(tables.contains("workflow_activities"));
     let mut budget = MaintenanceBudget::new(classes)?;
@@ -284,6 +288,18 @@ pub(crate) fn scheduler_tick_at(
                 source,
                 logical_time_ms,
                 cron_targets,
+                limit,
+            )
+        })?;
+    }
+    if tables.contains("timer_entries") {
+        budget.run(|limit| {
+            timer_fire_due_bounded(
+                transaction,
+                &mut effects,
+                source,
+                logical_time_ms,
+                timer_targets,
                 limit,
             )
         })?;
@@ -373,6 +389,18 @@ pub(crate) fn scheduler_tick_at(
                 source,
                 logical_time_ms,
                 cron_targets,
+                limit,
+            )
+        })?;
+    }
+    if tables.contains("timer_entries") {
+        budget.fill(|limit| {
+            timer_fire_due_bounded(
+                transaction,
+                &mut effects,
+                source,
+                logical_time_ms,
+                timer_targets,
                 limit,
             )
         })?;
@@ -640,12 +668,20 @@ pub fn scheduler_next_due_ms(
             &mut next,
         )?;
     }
+    if tables.contains("timer_entries") {
+        include_minimum(
+            transaction,
+            "SELECT min(due_at_ms) FROM timer_entries INDEXED BY timer_due",
+            logical_time_ms,
+            &mut next,
+        )?;
+    }
     Ok(next)
 }
 
 fn installed_tables(transaction: &Transaction<'_>) -> Result<HashSet<String>> {
     let mut statement = transaction.prepare(
-        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('kv_entries', 'queue_messages', 'workflow_activities', 'blob_uploads', 'cron_schedules')",
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('kv_entries', 'queue_messages', 'workflow_activities', 'blob_uploads', 'cron_schedules', 'timer_entries')",
     )?;
     let tables = statement
         .query_map([], |row| row.get::<_, String>(0))?

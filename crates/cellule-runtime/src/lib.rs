@@ -53,6 +53,7 @@ mod scheduler;
 mod schema;
 mod sql;
 mod telemetry;
+mod timer;
 mod worker;
 mod workflow;
 
@@ -211,6 +212,11 @@ pub use sql::{
     SqlValue, register_sql, sql_batch, sql_query_batch,
 };
 pub use telemetry::{CellTelemetry, CellTelemetryHandle, ResidentRouteOutcome};
+pub use timer::{
+    TIMER_SCHEMA_SQL, TimerCommand, TimerEntry, TimerInvocation, TimerModule, TimerMutation,
+    TimerMutationOutcome, TimerNamespace, TimerQuery, TimerQueryCommand, TimerQueryResult,
+    TimerTarget, install_timer_schema, register_timer, timer_mutate, timer_query,
+};
 pub use worker::{
     ACTIVE_CELL_FILE_DESCRIPTORS, ACTIVE_CELL_PAGE_CACHE_BYTES, SqlWorkerPool, WorkerExecution,
 };
