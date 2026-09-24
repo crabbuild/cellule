@@ -145,15 +145,23 @@ released with no test-driven tick, claim, or effect delivery.
 Still open: rendezvous scanner election is left to the service, and the
 delivery loop does not yet bound how many Cells one pass delivers concurrently.
 
-### Define the read-model projection contract
+### Define the read-model projection contract (delivered)
 
-The framework declares a read-model Cell pattern, and nothing projects across
-Cells into one. The contract needs the rigor effects already have:
+`ProjectionModule`, `ProjectionRecord`, and `emit_projection` give the
+read-model pattern a contract without a second delivery path: the source emits
+one typed record per change through the effect ledger, the destination inbox
+deduplicates execution, `register_projection` binds the runtime-owned apply
+command and its status query, and the destination records the highest applied
+sequence per source Cell in the same transaction as its writes.
 
-- A projection is a typed consumer of another Cell's effect stream or queue.
-- Apply is idempotent against a source Cell sequence or receipt.
-- Lag is observable per namespace as a bounded gauge.
-- A projection never becomes an authority for the source Cell's invariants.
+Evidence: `crates/cellule-runtime/tests/projection.rs` publishes two changes
+from a source Cell, delivers both effects, and proves the read model and its
+watermark advance together.
+
+Still open: ordering stays the application's problem — the runtime promises
+at-least-once delivery plus a watermark, not ordered application — and no
+product projects a real read model yet, so the pattern has no production
+evidence.
 
 ### Extend the qualification mix to Timer and the queue consumer (delivered)
 

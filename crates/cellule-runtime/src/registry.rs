@@ -436,6 +436,7 @@ pub struct RegistryBuilder {
     blob_bindings: Vec<PrimitiveBinding>,
     cron_bindings: Vec<CronBinding>,
     timer_bindings: Vec<TimerBinding>,
+    projection_bindings: Vec<ProjectionBinding>,
     maintenance_bindings: BTreeMap<&'static str, Option<crate::QueueDeadLetterTarget>>,
     maintenance_runners: BTreeMap<&'static str, MaintenanceRunner>,
     effect_runners: BTreeMap<&'static str, EffectRunner>,
@@ -461,6 +462,7 @@ impl RegistryBuilder {
             blob_bindings: Vec::new(),
             cron_bindings: Vec::new(),
             timer_bindings: Vec::new(),
+            projection_bindings: Vec::new(),
             maintenance_bindings: BTreeMap::new(),
             maintenance_runners: BTreeMap::new(),
             effect_runners: BTreeMap::new(),
@@ -544,6 +546,23 @@ impl RegistryBuilder {
             namespace,
             targets,
         });
+        Ok(())
+    }
+
+    pub(crate) fn bind_projection_targets(
+        &mut self,
+        module: &'static str,
+        targets: &'static [crate::ProjectionTarget],
+    ) -> Result<()> {
+        if self
+            .projection_bindings
+            .iter()
+            .any(|binding| binding.module == module)
+        {
+            return Err(Error::Registry("duplicate projection source binding"));
+        }
+        self.projection_bindings
+            .push(ProjectionBinding { module, targets });
         Ok(())
     }
 
@@ -850,6 +869,7 @@ impl RegistryBuilder {
         )?;
         validate_cron_bindings(&self.cron_bindings, &namespace_owners, &self.modules)?;
         validate_timer_bindings(&self.timer_bindings, &namespace_owners, &self.modules)?;
+        validate_projection_bindings(&self.projection_bindings, &namespace_owners, &self.modules)?;
         validate_maintenance_bindings(&self.maintenance_bindings, &self.queue_bindings)?;
         if self
             .maintenance_bindings
@@ -993,6 +1013,11 @@ struct TimerBinding {
     module: &'static str,
     namespace: NamespaceId,
     targets: &'static [crate::TimerTarget],
+}
+
+struct ProjectionBinding {
+    module: &'static str,
+    targets: &'static [crate::ProjectionTarget],
 }
 
 #[derive(Clone, Copy)]
@@ -2236,6 +2261,55 @@ fn validate_timer_bindings(
             }) {
                 return Err(Error::Registry(
                     "Timer target command differs from descriptor",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_projection_bindings(
+    bindings: &[ProjectionBinding],
+    namespaces: &HashMap<NamespaceId, (&'static str, NamespaceDescriptor)>,
+    modules: &[&ModuleDescriptor],
+) -> Result<()> {
+    for binding in bindings {
+        let source = modules
+            .iter()
+            .find(|module| module.name == binding.module)
+            .ok_or(Error::Registry("projection source module is unavailable"))?;
+        let declared = source
+            .namespaces
+            .iter()
+            .flat_map(|namespace| namespace.effect_targets.iter().copied())
+            .collect::<HashSet<_>>();
+        for target in binding.targets {
+            if !declared.contains(&target.namespace()) {
+                return Err(Error::Registry(
+                    "projection target is not a declared effect target",
+                ));
+            }
+            let Some((owner, _)) = namespaces.get(&target.namespace()) else {
+                return Err(Error::Registry(
+                    "projection target namespace is unavailable",
+                ));
+            };
+            if *owner != target.module() {
+                return Err(Error::Registry(
+                    "projection target module differs from descriptor",
+                ));
+            }
+            let target_module = modules
+                .iter()
+                .find(|module| module.name == target.module())
+                .ok_or(Error::Registry("projection target module is unavailable"))?;
+            if !target_module.commands.iter().any(|command| {
+                command.id == target.command_id()
+                    && command.codec_version == target.codec_version()
+                    && command.input_limit == target.input_limit()
+            }) {
+                return Err(Error::Registry(
+                    "projection target command differs from descriptor",
                 ));
             }
         }

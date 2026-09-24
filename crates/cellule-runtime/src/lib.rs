@@ -39,6 +39,7 @@ mod node_log_transport;
 mod peer;
 mod placement;
 mod pressure;
+mod projection;
 mod publication;
 mod qualification;
 mod queue;
@@ -158,6 +159,12 @@ pub use placement::{
 };
 pub use pressure::{
     MovementBudget, MovementKind, MovementPermit, PressureClassifier, PressureSample, PressureState,
+};
+pub use projection::{
+    PROJECTION_SCHEMA_SQL, ProjectionApplyCommand, ProjectionModule, ProjectionOutcome,
+    ProjectionRecord, ProjectionStatus, ProjectionStatusQuery, ProjectionStatusRequest,
+    ProjectionTarget, apply_projection_watermark, emit_projection, install_projection_schema,
+    projection_watermark, register_projection, register_projection_targets,
 };
 pub use publication::CellPublisher;
 pub use qualification::{

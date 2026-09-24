@@ -419,6 +419,48 @@ The delivery path preserves these properties:
 
 The design doesn't claim an atomic transaction across source and destination. It provides durable at-least-once delivery with idempotent destination execution.
 
+## Build read models with projections
+
+A projection is a read-model Cell that consumes another Cell's changes. It uses
+the effect ledger, not a second delivery path: the source emits one typed
+`ProjectionRecord` per change, the destination inbox deduplicates execution,
+and the destination records how far it has applied each source Cell.
+
+```rust,ignore
+// Source command: publish the change and its ordering metadata together.
+emit_projection(context, CATALOG_TARGET, &partition, payload)?;
+
+// Read-model module: apply the change and let the runtime record the watermark.
+impl ProjectionModule for CustomerIndex {
+    const MODULE: &'static str = "customer-index";
+    const NAMESPACE: NamespaceId = CUSTOMERS;
+    const APPLY_COMMAND_ID: u32 = 1;
+    const STATUS_QUERY_ID: u32 = 2;
+
+    fn apply(context: &mut CommandContext<'_, '_>, record: &ProjectionRecord) -> Result<()> {
+        upsert_customer(context, record.payload.as_slice())
+    }
+}
+```
+
+| Projection contract | Limit or behavior |
+| --- | --- |
+| Record payload | 256 KiB |
+| Delivery | Durable effect with destination inbox deduplication |
+| Ordering | `source` plus `source_sequence`; the destination applies in delivery order |
+| Watermark | Highest applied sequence per source Cell, advanced in the apply transaction |
+| Status | `ProjectionStatusQuery` reports the destination's watermark for one source Cell |
+| Authority | The read model never becomes an authority for the source Cell's invariants |
+
+The runtime does not claim ordered delivery. Effects are at-least-once, so a
+projection that needs per-key ordering must carry the ordering in its payload
+and resolve it in the handler; the watermark exists so an operator can see how
+far a destination has applied a stream, not to select authoritative state.
+Register the apply command and its status query with `register_projection`, and
+declare each destination with `ProjectionTarget` plus
+`register_projection_targets`, which the registry checks against the
+destination module's descriptor.
+
 ## Let the scheduler advance time-based state
 
 Each mutating procedure recomputes the earliest due timestamp inside its transaction. The typed Tick advances bounded work from all installed classes.
