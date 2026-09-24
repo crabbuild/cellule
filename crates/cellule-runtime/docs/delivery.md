@@ -75,6 +75,12 @@ reproducible from its seed, so a counterexample becomes a regression test
 rather than an anecdote. The module is compiled for tests only; it is not part
 of the published surface.
 
+`src/workflow_sim.rs` does the same for the workflow decision core: 16 seeds of
+384 operations across start, signal, repeated signal identity, timer fire,
+cancel, and clock advance. It proves that an event sequence never decreases, a
+terminal status stays terminal, a fired timer never re-arms, and a repeated
+signal identity reports `Duplicate` without advancing the run.
+
 ## Run crate-level proof
 
 Set a worktree-specific external Cargo target directory before every Rust command.

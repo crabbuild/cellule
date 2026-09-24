@@ -20,8 +20,8 @@ use cellule_store::Store;
 use object_store::{memory::InMemory, path::Path};
 
 const JOBS: NamespaceId = NamespaceId::from_bytes([31; 16]);
-const RETRY_DELAY_MS: u32 = 20;
-const BATCH_TIMEOUT_MS: u32 = 10;
+const RETRY_DELAY_MS: u32 = 100;
+const BATCH_TIMEOUT_MS: u32 = 1_000;
 const COMMANDS: [OperationDescriptor; 5] = [
     operation(1),
     operation(2),
@@ -251,7 +251,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ) {
             return Err(Error::Control("consumer did not settle the full batch").into());
         }
-        tokio::time::sleep(Duration::from_millis(u64::from(RETRY_DELAY_MS) + 20)).await;
+        // A retried job also waits for the batch timeout before it is claimable.
+        tokio::time::sleep(Duration::from_millis(
+            u64::from(RETRY_DELAY_MS) + u64::from(BATCH_TIMEOUT_MS) + 100,
+        ))
+        .await;
         let retried = consumer.run_once(0).await?;
         if !matches!(
             retried,
@@ -284,7 +288,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ) {
             return Err(Error::Control("partial batch did not wait for its timeout").into());
         }
-        tokio::time::sleep(Duration::from_millis(70)).await;
+        tokio::time::sleep(Duration::from_millis(u64::from(BATCH_TIMEOUT_MS) + 100)).await;
         let aged = consumer.run_once(0).await?;
         if !matches!(
             aged,

@@ -187,13 +187,15 @@ projection apply and replay, with the invariants rechecked after every step.
 The schedule is seeded, so a counterexample replays exactly.
 
 Evidence: `cargo test -p cellule-runtime --locked --lib primitive_sim`
-(`seeded_schedules_preserve_primitive_invariants`). The first run found a real
-bookkeeping gap — expired leases stayed in the simulator's live set while the
-store had already reclaimed them — which is the kind of drift the discipline is
-for.
+(`seeded_schedules_preserve_primitive_invariants`) and
+`... --lib workflow_sim`
+(`seeded_workflow_schedules_preserve_decision_invariants`). The first run found
+a real bookkeeping gap — expired leases stayed in the simulator's live set while
+the store had already reclaimed them — which is the kind of drift the discipline
+is for.
 
 Still open: the schedule is adversarial but not exhaustive, and it does not yet
-drive Blob lifecycle or workflow timers.
+drive the Blob upload lifecycle.
 
 ### Make the framework observable and diagnosable
 

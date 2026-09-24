@@ -59,6 +59,8 @@ mod telemetry;
 mod timer;
 mod worker;
 mod workflow;
+#[cfg(test)]
+mod workflow_sim;
 
 pub use activity_pool::{BlockingActivityPool, BlockingActivityReservation};
 pub use actor::{

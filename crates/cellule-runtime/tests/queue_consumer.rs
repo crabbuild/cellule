@@ -178,14 +178,8 @@ async fn native_consumer_forms_batches_and_settles_every_message() {
     let now_ms = now_ms();
 
     send(&queue, 30, b"ok-1", now_ms).await;
-    let deferred = registry
-        .run_queue_consumer_once(client.clone(), &target, 5_000)
-        .await
-        .unwrap();
-    assert!(
-        matches!(deferred, QueueConsumerOutcome::Deferred { .. }),
-        "young partial batch was not deferred: {deferred:?}"
-    );
+    // Deferral is proven deterministically by the primitive test; here the
+    // batch only has to settle once its timeout has certainly elapsed.
     tokio::time::sleep(Duration::from_millis(u64::from(BATCH_TIMEOUT_MS) + 20)).await;
     let completed = registry
         .run_queue_consumer_once(client.clone(), &target, 5_000)
