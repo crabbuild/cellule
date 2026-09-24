@@ -442,7 +442,17 @@ impl CellDelivery {
 
 async fn join_delivery(deliveries: &mut JoinSet<Result<()>>) -> Result<()> {
     match deliveries.join_next().await {
-        Some(Ok(result)) => result,
+        Some(Ok(Ok(()))) => Ok(()),
+        // A per-Cell failure is already counted by the task that produced it.
+        // Ending the pass here would let one Cell that fails every time starve
+        // every Cell behind it in scan order, so the pass keeps going.
+        Some(Ok(Err(error))) => {
+            if matches!(error, Error::RuntimeClosed | Error::CellDraining) {
+                return Err(error);
+            }
+            tracing::warn!(error = %error, "Cell delivery was not resolved");
+            Ok(())
+        }
         Some(Err(_)) => Err(Error::Control("Cell delivery task did not finish")),
         None => Ok(()),
     }
