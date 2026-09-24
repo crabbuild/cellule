@@ -203,9 +203,11 @@ writes and ranged reads before a node serves. These use `cellule-host` status
 and `cellule-store` CAS semantics rather than new machinery.
 
 Delivered so far: `CellNode::delivery_stats` reports passes, due Cells,
-deliveries, skips, failures, and the in-flight gauge as six bounded scalars.
-Still open: per-namespace queue depth and workflow status gauges, and the
-startup storage probe.
+deliveries, skips, failures, and the in-flight gauge as six bounded scalars,
+and `cellule_store::probe_storage` plus
+`CellNode::require_storage_capabilities` prove conditional writes and ranged
+reads before readiness. Still open: per-namespace queue depth and workflow
+status gauges.
 
 ## Leave these decisions open
 

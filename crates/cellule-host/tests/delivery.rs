@@ -655,5 +655,18 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
         0,
         "delivery loop still holds in-flight work: {stats:?}"
     );
+    let probed = cellule_store::probe_storage(
+        &Store::new(Arc::new(InMemory::new())),
+        &Path::from("host-delivery-probe"),
+        now_ms().unwrap(),
+    )
+    .await
+    .unwrap();
+    node.require_storage_capabilities(&probed).unwrap();
+    let broken = cellule_store::StorageProbeReport {
+        reject_stale_etag: false,
+        ..probed.clone()
+    };
+    assert!(node.require_storage_capabilities(&broken).is_err());
     node.shutdown().await.unwrap();
 }

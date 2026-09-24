@@ -941,6 +941,23 @@ impl CellNode {
             .and_then(|counters| counters.as_ref().map(|counters| counters.snapshot()))
     }
 
+    /// Records the startup storage probe and refuses a store the runtime cannot fence with.
+    ///
+    /// The service owns provider construction, so it runs
+    /// [`cellule_runtime::probe_storage`] against the store it built and records the
+    /// report here before readiness. The caller holds the report, so it can log
+    /// every failing check; the node refuses a store that silently ignores a
+    /// condition instead of discovering it during a takeover.
+    pub fn require_storage_capabilities(
+        &self,
+        report: &cellule_runtime::StorageProbeReport,
+    ) -> cellule_runtime::Result<()> {
+        if report.passed() {
+            return Ok(());
+        }
+        Err(Error::Control("storage capability probe did not pass"))
+    }
+
     /// Installs the provider enrollment adapter and moves node-log recruitment
     /// and rotation into the host-owned task group.
     pub fn install_node_durability_provider<P>(

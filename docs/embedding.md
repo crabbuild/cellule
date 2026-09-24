@@ -45,6 +45,18 @@ covers the additional ownership needed before a service can accept traffic.
    while both `CellNode::is_ready()` and the service's lease and release checks
    hold.
 
+Step 5's first half is provider policy, so the runtime ships the check rather
+than the credential: call `cellule_store::probe_storage` against the store the
+service built and record the result with
+`CellNode::require_storage_capabilities` before readiness. The probe claims one
+fresh key, proves a conditional create is refused for an existing object, proves
+a conditional update with the current ETag changes the ETag, proves a stale ETag
+is refused, and proves a ranged read returns the exact bytes. A store that
+accepts the conditional headers and ignores them reports the failing capability
+instead of failing later during a takeover, and the caller logs
+`StorageProbeReport::failed_checks`. In-memory stores pass the probe and are
+still not provider qualification.
+
 The [Crab server integration](https://github.com/crabbuild/crab/pull/277) is a
 concrete embedding example: it builds one node, installs the task group and
 owned adapters, publishes a session, installs its lease, starts supervisors,

@@ -82,6 +82,7 @@ pub use cellule_ltx::{
     Host as ReplicaHost, Limits as ReplicaLimits, LtxPhase, LtxReadOrigin, LtxRequestOutcome,
     ScratchMonitor,
 };
+pub use cellule_store::{StorageProbeReport, probe_storage};
 pub use client::{
     CellClient, CellDescription, CellStateStream, Committed, InvocationError, Observed,
     PendingMutation, PreparedCommand, Receipt, StateStreamCancellation, command_operation_digest,

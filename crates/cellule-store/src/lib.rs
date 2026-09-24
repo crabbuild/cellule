@@ -6,6 +6,7 @@ pub mod identity;
 pub mod layout;
 pub mod multipart;
 mod observation;
+pub mod probe;
 pub mod provider_options;
 pub mod provider_store;
 mod read_admission;
@@ -31,6 +32,7 @@ pub use layout::{
     global_content_path, global_content_prefix,
 };
 pub use observation::{StorageObservation, StorageObserver, StorageOperation, StorageOutcome};
+pub use probe::{StorageProbeReport, probe_storage};
 pub use provider_store::{ObjectStoreCredentials, build_explicit_store};
 pub use retry::{RetryClass, RetryPolicy, retry, retry_class};
 pub use store::{
