@@ -260,6 +260,7 @@ pub(super) async fn run_reference_primitive_performance(
                     QueueClaimRequest {
                         limit: 1,
                         lease_ms: 5_000,
+                        max_batch_timeout_ms: 0,
                     },
                 )
                 .await

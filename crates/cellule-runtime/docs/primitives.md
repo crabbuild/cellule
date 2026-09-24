@@ -138,10 +138,19 @@ let claimed = queue
     .claim(
         claim_identity,
         shard,
-        QueueClaimRequest { limit: 16, lease_ms: 30_000 },
+        QueueClaimRequest {
+            limit: 16,
+            lease_ms: 30_000,
+            max_batch_timeout_ms: 5_000,
+        },
     )
     .await?;
 ```
+
+`max_batch_timeout_ms` forms the batch before anything is leased: a batch closes
+when it reaches `limit`, or when the oldest ready message has waited that long.
+Zero claims every ready message immediately. A deferred claim leases nothing,
+so it neither burns an attempt nor hides a message from another consumer.
 
 Queue state transitions are:
 
@@ -165,6 +174,7 @@ The claim command publishes its lease before returning payloads. Consumers valid
 | --- | --- |
 | Payload | 256 KiB |
 | Claim batch | Bounded by registered command output and item limit |
+| Batch timeout | Up to 60 seconds for a partial batch |
 | Lease | 5s to 300s |
 | Attempts | 20 |
 | Retention | 30 days from enqueue |
@@ -180,6 +190,43 @@ Queue controls are shard-scoped and use the same request ledger as sends and lea
 - Purge deletes only non-leased messages in batches of at most 128.
 - Redrive moves dead messages back to ready only after any dead-letter effect is terminal.
 - Info returns bounded aggregate counts instead of scanning message payloads.
+
+### Host a native consumer
+
+A module can compile a native consumer instead of driving the claim API itself.
+`QueueConsumer` declares the batch policy and one async handler; the supervisor
+claims, revalidates the published lease, runs the handler outside the SQL
+worker, and settles each message through the ordinary lease commands.
+
+```rust,ignore
+impl QueueConsumer for FulfillmentJobs {
+    const MAX_BATCH_SIZE: u32 = 16;
+    const MAX_BATCH_TIMEOUT_MS: u32 = 5_000;
+    const RETRY_DELAY_MS: u32 = 10_000;
+
+    fn consume(batch: QueueBatch) -> QueueConsumerFuture {
+        Box::pin(async move {
+            for message in &batch.messages {
+                deliver(&message.payload).await?;
+            }
+            Ok(vec![QueueSettlement::Ack; batch.messages.len()])
+        })
+    }
+}
+
+// Registration, then one bounded pass over an explicit shard:
+register_queue_consumer::<FulfillmentJobs>(registry)?;
+let supervisor = handle.queue_consumer::<FulfillmentJobs>(30_000)?;
+let outcome = supervisor.run_once(shard).await?;
+```
+
+The handler returns one settlement per claimed message, in order: `Ack`, or
+`Retry { delay_ms }` for a message that must return to the queue. Returning an
+error settles the whole batch as `Retry` after `RETRY_DELAY_MS`. The supervisor
+reports `Idle`, `Deferred`, `Completed`, `HandlerFailed`, or `LeaseLost`, and a
+settlement whose outcome is unknown returns `Pending` for the caller to
+resolve. One pass claims at most one batch; the embedding service owns how many
+passes run at once and therefore the per-queue concurrency bound.
 
 ## Use Blob for transactional object data
 

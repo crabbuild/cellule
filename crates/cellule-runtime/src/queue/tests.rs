@@ -289,6 +289,74 @@ fn failed_dead_letter_insert_rolls_back_queue_transition() {
 }
 
 #[test]
+fn partial_batch_waits_for_its_timeout_without_leasing() {
+    let mut connection = connection();
+    let transaction = connection.transaction().unwrap();
+    queue_send(
+        &transaction,
+        source_target().namespace(),
+        0,
+        &QueueSendRequest {
+            producer_id: [11; 16],
+            payload: b"sparse".to_vec(),
+            available_at_ms: 1_000,
+        },
+    )
+    .unwrap();
+
+    // One ready message is younger than the batch timeout, so nothing is leased.
+    assert!(
+        queue_claim(&transaction, 1_100, 2, 5_000, 5_000, &mut SystemQueueTokens)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        transaction
+            .query_row("SELECT attempt FROM queue_messages", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
+
+    // Once the oldest ready message has waited the timeout, the batch closes.
+    assert_eq!(
+        queue_claim(&transaction, 6_000, 2, 5_000, 5_000, &mut SystemQueueTokens)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn full_batch_closes_before_the_timeout() {
+    let mut connection = connection();
+    let transaction = connection.transaction().unwrap();
+    for (producer, payload) in [
+        ([12_u8; 16], b"one".to_vec()),
+        ([13_u8; 16], b"two".to_vec()),
+    ] {
+        queue_send(
+            &transaction,
+            source_target().namespace(),
+            0,
+            &QueueSendRequest {
+                producer_id: producer,
+                payload,
+                available_at_ms: 1_000,
+            },
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        queue_claim(&transaction, 1_100, 2, 5_000, 5_000, &mut SystemQueueTokens)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
 fn pause_blocks_claims_but_preserves_messages_for_resume() {
     let mut connection = connection();
     let transaction = connection.transaction().unwrap();
@@ -308,7 +376,7 @@ fn pause_blocks_claims_but_preserves_messages_for_resume() {
         QueueControlOutcome::Paused { generation: 1 }
     );
     assert!(
-        queue_claim(&transaction, 1, 1, 5_000, &mut SystemQueueTokens)
+        queue_claim(&transaction, 1, 1, 5_000, 0, &mut SystemQueueTokens)
             .unwrap()
             .is_empty()
     );
@@ -320,7 +388,7 @@ fn pause_blocks_claims_but_preserves_messages_for_resume() {
         QueueControlOutcome::Resumed { generation: 2 }
     );
     assert_eq!(
-        queue_claim(&transaction, 2, 1, 5_000, &mut SystemQueueTokens)
+        queue_claim(&transaction, 2, 1, 5_000, 0, &mut SystemQueueTokens)
             .unwrap()
             .len(),
         1

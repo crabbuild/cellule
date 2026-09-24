@@ -1569,6 +1569,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             QueueClaimRequest {
                 limit: 1,
                 lease_ms: 5_000,
+                max_batch_timeout_ms: 0,
             },
         )
         .await

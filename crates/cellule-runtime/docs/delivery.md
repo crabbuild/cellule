@@ -25,6 +25,7 @@ Each layer has one owner and one primary evidence surface.
 | Registry and codecs | `src/registry.rs`, `src/codec.rs` | `tests/registry.rs`, `tests/codec.rs` |
 | Typed client and peer dispatch | `src/client.rs`, `src/peer.rs` | `tests/client.rs`, peer unit tests |
 | SQL, KV, Blob, Queue, Cron, Timer, Workflow | `src/sql.rs`, `src/kv.rs`, `src/blob.rs`, `src/queue.rs`, `src/cron.rs`, `src/timer.rs`, `src/workflow.rs` | matching integration tests, including `tests/timer.rs` |
+| Queue consumers | `src/queue/consumer.rs` | `tests/queue_consumer.rs` |
 | Effects and activities | `src/effects.rs`, `src/activity_pool.rs` | `tests/effects.rs`, workflow tests |
 | Scheduler | `src/scheduler.rs`, `src/maintenance.rs` | `tests/scheduler.rs` |
 | Release control | `src/release.rs`, `src/release_progress.rs` | release unit tests and server command tests |
@@ -433,6 +434,7 @@ Primitive tests require more than procedure-level SQL assertions.
 | KV | Apply checks and writes, restore, preserve versions and TTL behavior |
 | Blob | Complete multipart publication, restore, preserve ETag and range bytes |
 | Queue | Publish claim, restore, validate lease, reclaim expiry, complete attempt |
+| Queue consumer | Run a claimed batch, fail it, prove the retry delay and attempt count |
 | Cron | Publish occurrence effect, restore, preserve next due time and generation |
 | Timer | Publish a deadline, restore before it fires, fire once, prove the entry is gone |
 | Workflow | Pin definition, publish transition, restore, run retained definition |

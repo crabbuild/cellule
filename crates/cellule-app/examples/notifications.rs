@@ -217,6 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 QueueClaimRequest {
                     limit: 1,
                     lease_ms: 30_000,
+                    max_batch_timeout_ms: 0,
                 },
             )
             .await?;

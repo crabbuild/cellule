@@ -178,6 +178,9 @@ impl<M: QueueModule> Command for QueueSendCommand<M> {
 pub struct QueueClaimRequest {
     pub limit: u32,
     pub lease_ms: u32,
+    /// Waits this long for a partial batch to fill before claiming it. Zero
+    /// claims every ready message immediately.
+    pub max_batch_timeout_ms: u32,
 }
 
 /// Typed Queue claim bound to immutable module operation IDs.
@@ -206,6 +209,7 @@ impl<M: QueueModule> Command for QueueClaimCommand<M> {
                 now_ms,
                 limit,
                 input.lease_ms,
+                input.max_batch_timeout_ms,
                 &mut tokens,
                 Some(&mut writer),
             )?
@@ -215,6 +219,7 @@ impl<M: QueueModule> Command for QueueClaimCommand<M> {
                 context.now_ms(),
                 limit,
                 input.lease_ms,
+                input.max_batch_timeout_ms,
                 &mut tokens,
             )?
         };
@@ -587,13 +592,15 @@ impl WireValue for QueueSendOutcome {
 impl WireValue for QueueClaimRequest {
     fn encode(&self, encoder: &mut BoundedEncoder) -> Result<(), CodecError> {
         encoder.write_u32(self.limit)?;
-        encoder.write_u32(self.lease_ms)
+        encoder.write_u32(self.lease_ms)?;
+        encoder.write_u32(self.max_batch_timeout_ms)
     }
 
     fn decode(decoder: &mut BoundedDecoder<'_>) -> Result<Self, CodecError> {
         Ok(Self {
             limit: decoder.read_u32()?,
             lease_ms: decoder.read_u32()?,
+            max_batch_timeout_ms: decoder.read_u32()?,
         })
     }
 }
@@ -911,6 +918,7 @@ mod tests {
         roundtrip(QueueClaimRequest {
             limit: 32,
             lease_ms: 300_000,
+            max_batch_timeout_ms: 0,
         });
         let message = QueueMessage {
             message_id: [3; 16],

@@ -8,12 +8,19 @@ use crate::{
 };
 
 mod api;
+mod consumer;
 
 pub use api::{
     QueueClaimCommand, QueueClaimRequest, QueueControlCommand, QueueDeadLetterTarget,
     QueueInfoQuery, QueueInfoRequest, QueueLeaseCommand, QueueLeaseRequest, QueueModule,
     QueueNamespace, QueueSendCommand, QueueValidateClaimQuery, QueueValidateRequest,
     register_queue,
+};
+pub use consumer::{
+    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_BATCH_TIMEOUT_MS, DEFAULT_RETRY_DELAY_MS,
+    MAX_CONSUMER_BATCH_SIZE, QueueBatch, QueueConsumer, QueueConsumerError, QueueConsumerFuture,
+    QueueConsumerOutcome, QueueConsumerPolicy, QueueConsumerSupervisor, QueueSettlement,
+    register_queue_consumer,
 };
 
 /// Version-one Queue schema for a module's `MigrationDescriptor`.
@@ -23,6 +30,8 @@ pub(crate) const QUEUE_SEND_MAX_INPUT_BYTES: u32 = MAX_PAYLOAD_BYTES as u32 + 32
 const MAX_CLAIM_BYTES: usize = 512 * 1024;
 const MAX_CLAIM_ITEMS: usize = 32;
 pub(crate) const MAX_ATTEMPTS: u32 = 20;
+/// Longest a partial batch may wait for more ready messages.
+pub const MAX_BATCH_TIMEOUT_MS: u32 = 60_000;
 const MAX_RECLAIM_ITEMS: usize = 128;
 const MIN_LEASE_MS: u32 = 5_000;
 const MAX_LEASE_MS: u32 = 300_000;
@@ -279,9 +288,18 @@ pub fn queue_claim(
     now_ms: i64,
     limit: usize,
     lease_ms: u32,
+    batch_timeout_ms: u32,
     tokens: &mut impl QueueTokenSource,
 ) -> Result<Vec<QueueMessage>> {
-    queue_claim_with_dead_letter(transaction, now_ms, limit, lease_ms, tokens, None)
+    queue_claim_with_dead_letter(
+        transaction,
+        now_ms,
+        limit,
+        lease_ms,
+        batch_timeout_ms,
+        tokens,
+        None,
+    )
 }
 
 pub(crate) fn queue_claim_with_dead_letter(
@@ -289,6 +307,7 @@ pub(crate) fn queue_claim_with_dead_letter(
     now_ms: i64,
     limit: usize,
     lease_ms: u32,
+    batch_timeout_ms: u32,
     tokens: &mut impl QueueTokenSource,
     dead_letter: Option<&mut QueueDeadLetterWriter<'_>>,
 ) -> Result<Vec<QueueMessage>> {
@@ -298,6 +317,11 @@ pub(crate) fn queue_claim_with_dead_letter(
     }
     if !(MIN_LEASE_MS..=MAX_LEASE_MS).contains(&lease_ms) {
         return Err(Error::Command("queue lease must be in 5..=300 seconds"));
+    }
+    if batch_timeout_ms > MAX_BATCH_TIMEOUT_MS {
+        return Err(Error::Command(
+            "queue batch timeout must be within one minute",
+        ));
     }
     if queue_paused(transaction)? {
         return Ok(Vec::new());
@@ -309,8 +333,37 @@ pub(crate) fn queue_claim_with_dead_letter(
         dead_letter,
     )?;
 
+    let candidates = select_ready_candidates(transaction, now_ms, limit)?;
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    // A partial batch waits for more messages, but only until the oldest ready
+    // message has waited its timeout. Nothing is leased before the batch closes,
+    // so a deferred batch neither burns an attempt nor hides a message.
+    if candidates.len() < limit
+        && batch_timeout_ms > 0
+        && now_ms.saturating_sub(candidates[0].due_at_ms) < i64::from(batch_timeout_ms)
+    {
+        return Ok(Vec::new());
+    }
+    claim_candidates(transaction, now_ms, lease_ms, candidates, tokens)
+}
+
+struct ReadyCandidate {
+    message_id: [u8; 16],
+    payload: Vec<u8>,
+    attempt: u32,
+    expires_at_ms: i64,
+    due_at_ms: i64,
+}
+
+fn select_ready_candidates(
+    transaction: &Transaction<'_>,
+    now_ms: i64,
+    limit: usize,
+) -> Result<Vec<ReadyCandidate>> {
     let mut statement = transaction.prepare(
-        "SELECT message_id, payload, attempt, expires_at_ms FROM queue_messages INDEXED BY queue_ready WHERE state = 0 AND due_at_ms <= ?1 AND expires_at_ms > ?1 AND attempt < ?2 ORDER BY due_at_ms, message_id LIMIT ?3",
+        "SELECT message_id, payload, attempt, expires_at_ms, due_at_ms FROM queue_messages INDEXED BY queue_ready WHERE state = 0 AND due_at_ms <= ?1 AND expires_at_ms > ?1 AND attempt < ?2 ORDER BY due_at_ms, message_id LIMIT ?3",
     )?;
     let rows = statement.query_map(
         (now_ms, i64::from(MAX_ATTEMPTS), (limit + 1) as i64),
@@ -320,6 +373,7 @@ pub(crate) fn queue_claim_with_dead_letter(
                 row.get::<_, Vec<u8>>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         },
     )?;
@@ -329,7 +383,7 @@ pub(crate) fn queue_claim_with_dead_letter(
         if candidates.len() == limit {
             break;
         }
-        let (message_id, payload, attempt, expires_at_ms) = row?;
+        let (message_id, payload, attempt, expires_at_ms, due_at_ms) = row?;
         let next_bytes = payload_bytes
             .checked_add(payload.len())
             .ok_or(Error::Command("queue claim byte count overflow"))?;
@@ -345,23 +399,38 @@ pub(crate) fn queue_claim_with_dead_letter(
         let attempt =
             u32::try_from(attempt).map_err(|_| Error::Command("invalid stored queue attempt"))?;
         payload_bytes = next_bytes;
-        candidates.push((message_id, payload, attempt, expires_at_ms));
+        candidates.push(ReadyCandidate {
+            message_id,
+            payload,
+            attempt,
+            expires_at_ms,
+            due_at_ms,
+        });
     }
     drop(statement);
+    Ok(candidates)
+}
 
+fn claim_candidates(
+    transaction: &Transaction<'_>,
+    now_ms: i64,
+    lease_ms: u32,
+    candidates: Vec<ReadyCandidate>,
+    tokens: &mut impl QueueTokenSource,
+) -> Result<Vec<QueueMessage>> {
     let requested_deadline = now_ms
         .checked_add(i64::from(lease_ms))
         .ok_or(Error::Command("queue lease deadline overflow"))?;
     let mut claimed = Vec::with_capacity(candidates.len());
-    for (message_id, payload, attempt, expires_at_ms) in candidates {
+    for candidate in candidates {
         let token = tokens.next_token()?;
-        let lease_until_ms = requested_deadline.min(expires_at_ms);
+        let lease_until_ms = requested_deadline.min(candidate.expires_at_ms);
         let changed = transaction.execute(
             "UPDATE queue_messages SET state = 1, attempt = attempt + 1, token = ?1, lease_until_ms = ?2 WHERE message_id = ?3 AND state = 0 AND due_at_ms <= ?4 AND expires_at_ms > ?4 AND attempt < ?5",
             (
                 token.as_slice(),
                 lease_until_ms,
-                message_id.as_slice(),
+                candidate.message_id.as_slice(),
                 now_ms,
                 i64::from(MAX_ATTEMPTS),
             ),
@@ -370,10 +439,10 @@ pub(crate) fn queue_claim_with_dead_letter(
             return Err(Error::Command("queue claim lost selected ready row"));
         }
         claimed.push(QueueMessage {
-            message_id,
-            payload,
+            message_id: candidate.message_id,
+            payload: candidate.payload,
             token,
-            attempt: attempt + 1,
+            attempt: candidate.attempt + 1,
             lease_until_ms,
         });
     }

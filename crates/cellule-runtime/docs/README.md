@@ -219,6 +219,7 @@ These values are admission contracts, not benchmark results.
 | KV value | 4 MiB |
 | Blob part / range read | 256 KiB / 512 KiB |
 | Queue payload | 256 KiB |
+| Queue batch timeout | Up to 60 seconds for a partial batch |
 | Cron payload / interval | 256 KiB / 1 second to 1 year |
 | Timer payload / due window | 256 KiB / now to 5 years ahead |
 | Queue or activity lease | 5s to 300s, 30s default |

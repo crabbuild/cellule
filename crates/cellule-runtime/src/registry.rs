@@ -343,6 +343,21 @@ type ActivityRunner = fn(
     Option<BlockingActivityReservation>,
 ) -> ActivityRunFuture;
 
+type QueueConsumerRunner =
+    fn(CellClient, TenantId, ApplicationId, u32, u32) -> QueueConsumerRunFuture;
+
+type QueueConsumerRunFuture = Pin<
+    Box<
+        dyn Future<
+                Output = std::result::Result<
+                    crate::QueueConsumerOutcome,
+                    crate::QueueConsumerError,
+                >,
+            > + Send
+            + 'static,
+    >,
+>;
+
 /// Stored command decision encoded with the command's declared output codec.
 pub enum CommandResult<T> {
     Success(T),
@@ -417,6 +432,7 @@ pub struct RegistryBuilder {
     activity_claims: BTreeSet<ActivityKey>,
     activity_runners: HashMap<NamespaceId, ActivityRunner>,
     queue_bindings: Vec<QueueBinding>,
+    queue_consumers: HashMap<NamespaceId, QueueConsumerRunner>,
     blob_bindings: Vec<PrimitiveBinding>,
     cron_bindings: Vec<CronBinding>,
     timer_bindings: Vec<TimerBinding>,
@@ -441,6 +457,7 @@ impl RegistryBuilder {
             activity_claims: BTreeSet::new(),
             activity_runners: HashMap::new(),
             queue_bindings: Vec::new(),
+            queue_consumers: HashMap::new(),
             blob_bindings: Vec::new(),
             cron_bindings: Vec::new(),
             timer_bindings: Vec::new(),
@@ -614,6 +631,18 @@ impl RegistryBuilder {
                 M::CODEC_VERSION,
             ),
         );
+        Ok(())
+    }
+
+    pub(crate) fn bind_queue_consumer<M: crate::QueueConsumer>(&mut self) -> Result<()> {
+        crate::QueueConsumerPolicy::compiled::<M>()?;
+        if self
+            .queue_consumers
+            .insert(M::NAMESPACE, typed_queue_consumer::<M>)
+            .is_some()
+        {
+            return Err(Error::Registry("duplicate queue consumer binding"));
+        }
         Ok(())
     }
 
@@ -791,6 +820,28 @@ impl RegistryBuilder {
             &self.modules,
         )?;
         validate_queue_bindings(&self.queue_bindings, &namespace_owners, &self.modules)?;
+        for namespace in self.queue_consumers.keys() {
+            let Some((owner, descriptor)) = namespace_owners.get(namespace) else {
+                return Err(Error::Registry("queue consumer namespace is unavailable"));
+            };
+            if descriptor.role != CatalogRole::Queue {
+                return Err(Error::Registry("queue consumer namespace is not a Queue"));
+            }
+            let Some(binding) = self
+                .queue_bindings
+                .iter()
+                .find(|binding| binding.namespace == *namespace)
+            else {
+                return Err(Error::Registry(
+                    "queue consumer namespace lacks a Queue binding",
+                ));
+            };
+            if binding.module != *owner {
+                return Err(Error::Registry(
+                    "queue consumer module does not own its namespace",
+                ));
+            }
+        }
         validate_primitive_bindings(
             &self.blob_bindings,
             CatalogRole::Blob,
@@ -912,6 +963,7 @@ impl RegistryBuilder {
             activities: self.activities,
             blocking_activity_namespaces,
             activity_runners: self.activity_runners,
+            queue_consumers: self.queue_consumers,
             maintenance_runners: self.maintenance_runners,
             effect_runners: self.effect_runners,
             maintenance_operations: self.maintenance_operations,
@@ -966,6 +1018,7 @@ pub struct Registry {
     activities: BTreeMap<ActivityKey, ActivityFunction>,
     blocking_activity_namespaces: HashSet<NamespaceId>,
     activity_runners: HashMap<NamespaceId, ActivityRunner>,
+    queue_consumers: HashMap<NamespaceId, QueueConsumerRunner>,
     maintenance_runners: BTreeMap<&'static str, MaintenanceRunner>,
     effect_runners: BTreeMap<&'static str, EffectRunner>,
     maintenance_operations: BTreeMap<&'static str, (u32, u32)>,
@@ -1226,6 +1279,41 @@ impl Registry {
     #[must_use]
     pub fn has_activity_runner(&self, namespace: NamespaceId) -> bool {
         self.activity_runners.contains_key(&namespace)
+    }
+
+    /// Reports whether one namespace has a statically bound native Queue consumer.
+    #[must_use]
+    pub fn has_queue_consumer(&self, namespace: NamespaceId) -> bool {
+        self.queue_consumers.contains_key(&namespace)
+    }
+
+    /// Runs at most one statically bound consumer batch from one Queue shard.
+    pub async fn run_queue_consumer_once(
+        &self,
+        client: CellClient,
+        target: &CellTarget,
+        lease_ms: u32,
+    ) -> std::result::Result<crate::QueueConsumerOutcome, crate::QueueConsumerError> {
+        let runner = self
+            .queue_consumers
+            .get(&target.namespace())
+            .copied()
+            .ok_or(crate::QueueConsumerError::Runtime(Error::Registry(
+                "queue consumer runner unavailable",
+            )))?;
+        let shard = u32::from_be_bytes(target.partition().try_into().map_err(|_| {
+            crate::QueueConsumerError::Runtime(Error::Identity(
+                "Queue partition is not a canonical shard",
+            ))
+        })?);
+        runner(
+            client,
+            target.tenant(),
+            target.application(),
+            shard,
+            lease_ms,
+        )
+        .await
     }
 
     /// Reports whether this release contains any native blocking activity.
@@ -1674,6 +1762,25 @@ fn typed_effect<M: EffectModule>(
             .map_err(EffectSupervisorError::Runtime)?
             .run_once()
             .await
+    })
+}
+
+fn typed_queue_consumer<M: crate::QueueConsumer>(
+    client: CellClient,
+    tenant: TenantId,
+    application: ApplicationId,
+    shard: u32,
+    lease_ms: u32,
+) -> QueueConsumerRunFuture {
+    Box::pin(async move {
+        crate::QueueConsumerSupervisor::<M>::new(
+            crate::QueueNamespace::<M>::new(client, tenant, application)
+                .map_err(crate::QueueConsumerError::Runtime)?,
+            lease_ms,
+        )
+        .map_err(crate::QueueConsumerError::Runtime)?
+        .run_once(shard)
+        .await
     })
 }
 

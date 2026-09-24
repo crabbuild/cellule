@@ -101,25 +101,26 @@ but no seeded simulator drives them.
 
 Ordered by how much they block an application owner.
 
-### Host queue consumers
+### Host queue consumers (runtime delivered)
 
 The Queue primitive is a claim API. celld instead hosts the consumer: the queue
 Cell forms a batch by size or by timeout, leases it, calls a registered handler
 in a stateless isolate, and settles each message.
 
-Deliver a consumer registration that names a Queue module and a handler, with
-the batch policy declared next to the module:
+`QueueConsumer`, `QueueConsumerSupervisor`, and the batch-forming claim now
+provide the runtime half: the batch policy sits next to the module
+(`MAX_BATCH_SIZE`, `MAX_BATCH_TIMEOUT_MS`, `RETRY_DELAY_MS`), nothing is leased
+before the batch closes, the handler runs outside the SQL worker, and every
+message is settled through the ordinary lease commands. `tests/queue_consumer.rs`
+covers deferral, a full batch, and a poison batch.
 
-- `max_batch_size`, `max_batch_timeout`, and a bounded `max_concurrency`.
-- Dispatch through the blocking pool, never inside the SQL worker that produced
-  the claim.
-- Claim validation against the published receipt before external work starts.
-- Per-message ack, delayed retry, and dead-letter routing under the existing
-  attempt and retention bounds.
+Still open: the reference application and a standalone example must exercise
+the consumer, and the embedding service owns the per-queue concurrency bound
+because one pass claims one batch.
 
 Evidence: a duplicate delivery after a consumer crash settles once; a poison
 message reaches the dead-letter queue at the attempt bound; a slow handler
-cannot block a producer; a batch timeout closes a sparse queue.
+cannot block a producer.
 
 ### Move effect and activity supervision into the host
 

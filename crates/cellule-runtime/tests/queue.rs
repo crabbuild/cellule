@@ -22,7 +22,7 @@ const QUEUE_NAMESPACE: NamespaceId = NamespaceId::from_bytes([6; 16]);
 const QUEUE_MIGRATION: &str = include_str!("../src/migrations/queue.sql");
 const QUEUE_COMMANDS: &[OperationDescriptor] = &[
     operation(1, 270 * 1024, 32),
-    operation(2, 8, 530 * 1024),
+    operation(2, 16, 530 * 1024),
     operation(3, 64, 16),
     operation(4, 8, 5),
     operation(5, 8, 16),
@@ -410,7 +410,7 @@ fn claim_tokens_require_published_live_lease_for_ack_retry_and_extend() {
 
     let transaction = connection.transaction().unwrap();
     let mut tokens = Tokens(0);
-    let claimed = queue_claim(&transaction, 20, 2, 5_000, &mut tokens).unwrap();
+    let claimed = queue_claim(&transaction, 20, 2, 5_000, 0, &mut tokens).unwrap();
     assert_eq!(claimed.len(), 2);
     assert_eq!(claimed[0].attempt, 1);
     transaction.commit().unwrap();
@@ -476,7 +476,7 @@ fn retry_and_expired_reclaim_preserve_attempt_limits_and_cleanup_bounds() {
 
     let mut tokens = Tokens(0);
     let transaction = connection.transaction().unwrap();
-    let first = queue_claim(&transaction, 0, 1, 5_000, &mut tokens)
+    let first = queue_claim(&transaction, 0, 1, 5_000, 0, &mut tokens)
         .unwrap()
         .remove(0);
     assert_eq!(
@@ -497,11 +497,11 @@ fn retry_and_expired_reclaim_preserve_attempt_limits_and_cleanup_bounds() {
 
     let transaction = connection.transaction().unwrap();
     assert!(
-        queue_claim(&transaction, 100, 1, 5_000, &mut tokens)
+        queue_claim(&transaction, 100, 1, 5_000, 0, &mut tokens)
             .unwrap()
             .is_empty()
     );
-    let second = queue_claim(&transaction, 101, 1, 5_000, &mut tokens)
+    let second = queue_claim(&transaction, 101, 1, 5_000, 0, &mut tokens)
         .unwrap()
         .remove(0);
     assert_eq!(second.attempt, 2);
@@ -515,7 +515,7 @@ fn retry_and_expired_reclaim_preserve_attempt_limits_and_cleanup_bounds() {
 
     let transaction = connection.transaction().unwrap();
     assert!(
-        queue_claim(&transaction, 102, 1, 5_000, &mut tokens)
+        queue_claim(&transaction, 102, 1, 5_000, 0, &mut tokens)
             .unwrap()
             .is_empty()
     );
@@ -653,6 +653,7 @@ async fn typed_queue_namespace_recovers_after_owner_loss() {
             QueueClaimRequest {
                 limit: 1,
                 lease_ms: 10_000,
+                max_batch_timeout_ms: 0,
             },
         )
         .await

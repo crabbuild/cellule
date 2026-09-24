@@ -175,14 +175,17 @@ pub use qualification::{
     QualificationRunSummary, QualificationRunner, QualificationWorkload,
 };
 pub use queue::{
-    QUEUE_SCHEMA_SQL, QueueClaimCommand, QueueClaimRequest, QueueControlAction,
-    QueueControlCommand, QueueControlOutcome, QueueDeadLetterTarget, QueueInfo, QueueInfoQuery,
-    QueueInfoRequest, QueueLeaseAction, QueueLeaseCommand, QueueLeaseOutcome, QueueLeaseRequest,
-    QueueMessage, QueueModule, QueueNamespace, QueueSendCommand, QueueSendOutcome,
-    QueueSendRequest, QueueState, QueueTokenSource, QueueValidateClaimQuery, QueueValidateRequest,
+    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_BATCH_TIMEOUT_MS, DEFAULT_RETRY_DELAY_MS,
+    MAX_CONSUMER_BATCH_SIZE, QUEUE_SCHEMA_SQL, QueueBatch, QueueClaimCommand, QueueClaimRequest,
+    QueueConsumer, QueueConsumerError, QueueConsumerFuture, QueueConsumerOutcome,
+    QueueConsumerPolicy, QueueConsumerSupervisor, QueueControlAction, QueueControlCommand,
+    QueueControlOutcome, QueueDeadLetterTarget, QueueInfo, QueueInfoQuery, QueueInfoRequest,
+    QueueLeaseAction, QueueLeaseCommand, QueueLeaseOutcome, QueueLeaseRequest, QueueMessage,
+    QueueModule, QueueNamespace, QueueSendCommand, QueueSendOutcome, QueueSendRequest,
+    QueueSettlement, QueueState, QueueTokenSource, QueueValidateClaimQuery, QueueValidateRequest,
     SystemQueueTokens, install_queue_schema, queue_apply_lease, queue_claim, queue_cleanup_expired,
     queue_control, queue_info, queue_send, queue_validate_claim, register_queue,
-    verify_queue_counts,
+    register_queue_consumer, verify_queue_counts,
 };
 pub use recovery_artifacts::RecoveryArtifactRegistry;
 pub use recovery_manifest::{

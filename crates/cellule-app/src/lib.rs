@@ -10,10 +10,10 @@ use cellule_runtime::{
     ApplicationId, BlobArtifactStore, BlobModule, BlobNamespace, BuildDescriptor, CatalogRole,
     CellClient, CellModule, CellTarget, Command, Committed, CronModule, CronNamespace, Digest,
     EffectModule, EffectSource, Error, InvocationError, KvModule, KvNamespace, NamespaceId,
-    Observed, PendingMutation, PreparedCommand, Query, QueueModule, QueueNamespace, Registry,
-    RegistryBuilder, Resolution, Result, SqlCell, SqlModule, TenantId, TimerModule, TimerNamespace,
-    WorkflowActivities, WorkflowActivityModule, WorkflowModule, WorkflowNamespace,
-    partition_for_shard,
+    Observed, PendingMutation, PreparedCommand, Query, QueueConsumer, QueueConsumerSupervisor,
+    QueueModule, QueueNamespace, Registry, RegistryBuilder, Resolution, Result, SqlCell, SqlModule,
+    TenantId, TimerModule, TimerNamespace, WorkflowActivities, WorkflowActivityModule,
+    WorkflowModule, WorkflowNamespace, partition_for_shard,
 };
 
 const DESCRIPTOR_MAGIC: &[u8] = b"cellule.application.v1\0";
@@ -434,6 +434,15 @@ impl<A> ApplicationHandle<A> {
     pub fn queue<M: QueueModule>(&self) -> Result<QueueNamespace<M>> {
         self.validate_namespace(M::NAMESPACE, M::MODULE, CatalogRole::Queue)?;
         QueueNamespace::new(self.client.clone(), self.tenant, self.application)
+    }
+
+    /// Returns a native consumer supervisor for a compiled Queue module.
+    pub fn queue_consumer<M: QueueConsumer>(
+        &self,
+        lease_ms: u32,
+    ) -> Result<QueueConsumerSupervisor<M>> {
+        self.validate_namespace(M::NAMESPACE, M::MODULE, CatalogRole::Queue)?;
+        QueueConsumerSupervisor::new(self.queue::<M>()?, lease_ms)
     }
 
     /// Returns the typed Cron capability for a compiled Cron module.
