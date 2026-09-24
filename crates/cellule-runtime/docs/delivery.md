@@ -96,6 +96,12 @@ the destination exactly once no matter how often it is delivered.
 All four simulators share `src/sim_schedule.rs`, so each keeps its own stream
 and a failure still replays from one seed.
 
+Sampling finds the bugs that happen often, so each simulator also enumerates
+every operation sequence of three steps over a reduced operation set — 155
+sequences for the primitive and effect cores, 84 for the workflow and blob
+cores — and runs the same invariants on each. A counterexample prints its exact
+sequence, which becomes the regression test.
+
 ## Run crate-level proof
 
 Set a worktree-specific external Cargo target directory before every Rust command.

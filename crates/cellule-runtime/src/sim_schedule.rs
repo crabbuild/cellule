@@ -33,3 +33,25 @@ impl Schedule {
         if bound == 0 { 0 } else { self.next() % bound }
     }
 }
+
+/// Enumerates every operation sequence of `length` steps over `choices`.
+///
+/// Sampling finds the bugs that happen often; a short exhaustive enumeration
+/// finds the ones that need an exact interleaving. Both run the same
+/// invariants, so a counterexample here is a regression test with the exact
+/// sequence in its name.
+pub(crate) fn sequences<T: Copy>(choices: &[T], length: usize) -> Vec<Vec<T>> {
+    let mut sequences = vec![Vec::new()];
+    for _ in 0..length {
+        let mut extended = Vec::with_capacity(sequences.len() * choices.len());
+        for prefix in &sequences {
+            for choice in choices {
+                let mut sequence = prefix.clone();
+                sequence.push(*choice);
+                extended.push(sequence);
+            }
+        }
+        sequences = extended;
+    }
+    sequences
+}

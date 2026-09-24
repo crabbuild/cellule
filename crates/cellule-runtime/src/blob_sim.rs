@@ -115,6 +115,15 @@ impl Simulation {
         Ok(self)
     }
 
+    /// Runs one explicit operation sequence, checking every step.
+    fn run_sequence(mut self, operations: &[Operation]) -> Result<Self> {
+        for operation in operations {
+            self.apply(*operation)?;
+            self.assert_invariants()?;
+        }
+        Ok(self)
+    }
+
     fn apply(&mut self, operation: Operation) -> Result<()> {
         match operation {
             Operation::Begin => self.begin(None),
@@ -382,6 +391,23 @@ mod tests {
                 simulation.observations, MAX_STEPS as u64,
                 "seed {seed} stopped early"
             );
+        }
+    }
+
+    #[test]
+    fn short_schedules_are_exhaustively_checked() {
+        const EXHAUSTIVE: &[Operation] = &[
+            Operation::Begin,
+            Operation::PutPart,
+            Operation::Complete,
+            Operation::Abort,
+        ];
+        let sequences = crate::sim_schedule::sequences(EXHAUSTIVE, 3);
+        for sequence in sequences {
+            let simulation = Simulation::new(1).unwrap();
+            simulation
+                .run_sequence(&sequence)
+                .unwrap_or_else(|error| panic!("sequence {sequence:?} failed: {error}"));
         }
     }
 

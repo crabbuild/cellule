@@ -199,7 +199,10 @@ Effect delivery now has its own schedule too (`... --lib effects_sim`),
 covering claim, settle, retry, inbox application, and redelivery, so every
 decision core the framework ships has one.
 
-Still open: the schedules are adversarial but not exhaustive.
+Short schedules are now exhaustive rather than sampled: every three-step
+sequence over a reduced operation set runs through the same invariants. Still
+open: deeper schedules remain sampled, and the exhaustive sweep starts from an
+empty Cell, so it cannot reach states that need a longer prefix.
 
 ### Make the framework observable and diagnosable
 
