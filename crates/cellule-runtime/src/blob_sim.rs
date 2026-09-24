@@ -15,6 +15,8 @@
 
 use cellule_ltx::rusqlite::Connection;
 
+use crate::sim_schedule::Schedule;
+
 use crate::{
     ApplicationId, BlobCondition, BlobMutation, BlobMutationOutcome, CellTarget, Error,
     IncarnationId, NamespaceId, Result, TenantId, blob_cleanup_expired, blob_mutate,
@@ -22,6 +24,7 @@ use crate::{
 };
 
 const MAX_STEPS: usize = 384;
+const BLOB_STREAM: u64 = 0x94d0_49bb_1331_11eb;
 const MAX_PARTS: u32 = 4;
 const UPLOAD_LIFETIME_MS: i64 = 60_000;
 
@@ -47,34 +50,6 @@ const OPERATIONS: &[Operation] = &[
     Operation::Cleanup,
     Operation::AdvanceClock,
 ];
-
-struct Schedule {
-    state: u64,
-}
-
-impl Schedule {
-    fn new(seed: u64) -> Self {
-        Self {
-            state: seed ^ 0x94d0_49bb_1331_11eb,
-        }
-    }
-
-    fn next(&mut self) -> u64 {
-        self.state = self
-            .state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.state >> 17
-    }
-
-    fn pick(&mut self, choices: &[Operation]) -> Operation {
-        choices[(self.next() as usize) % choices.len()]
-    }
-
-    fn below(&mut self, bound: u64) -> u64 {
-        if bound == 0 { 0 } else { self.next() % bound }
-    }
-}
 
 /// One upload the schedule may extend, finish, or discard.
 struct TrackedUpload {
@@ -116,7 +91,7 @@ impl Simulation {
         transaction.commit()?;
         Ok(Self {
             connection,
-            schedule: Schedule::new(seed),
+            schedule: Schedule::new(seed, BLOB_STREAM),
             now_ms: 10_000,
             created: 0,
             uploads: Vec::new(),

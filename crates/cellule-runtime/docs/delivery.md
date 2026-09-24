@@ -87,6 +87,15 @@ namespace emits it after uploading a part. It proves that a completed upload's
 part count matches its parts, a published object matches its upload, a part is
 never added to a finished upload, and cleanup never removes a published object.
 
+`src/effects_sim.rs` covers source-effect delivery: emit, claim, acknowledge,
+retry, deliver to the destination inbox, redeliver, cleanup, and clock advance.
+It proves that a terminal effect keeps no lease, only the current token settles
+an effect, attempts stay inside the bound, and one effect identity is applied to
+the destination exactly once no matter how often it is delivered.
+
+All four simulators share `src/sim_schedule.rs`, so each keeps its own stream
+and a failure still replays from one seed.
+
 ## Run crate-level proof
 
 Set a worktree-specific external Cargo target directory before every Rust command.

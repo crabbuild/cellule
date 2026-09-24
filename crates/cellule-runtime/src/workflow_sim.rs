@@ -14,6 +14,8 @@
 
 use cellule_ltx::rusqlite::Connection;
 
+use crate::sim_schedule::Schedule;
+
 use crate::{
     ApplicationId, CellTarget, Digest, Error, IncarnationId, NamespaceId, RequestId, Result,
     TenantId, WorkflowAction, WorkflowContext, WorkflowDecision, WorkflowDefinition,
@@ -23,6 +25,7 @@ use crate::{
 };
 
 const MAX_STEPS: usize = 384;
+const WORKFLOW_STREAM: u64 = 0x2545_f491_4f6c_dd1d;
 
 /// Deterministic definition: `start` arms a timer, a signal completes the run,
 /// and the timer completes it when no signal arrives first.
@@ -91,34 +94,6 @@ const OPERATIONS: &[Operation] = &[
     Operation::AdvanceClock,
 ];
 
-struct Schedule {
-    state: u64,
-}
-
-impl Schedule {
-    fn new(seed: u64) -> Self {
-        Self {
-            state: seed ^ 0x2545_f491_4f6c_dd1d,
-        }
-    }
-
-    fn next(&mut self) -> u64 {
-        self.state = self
-            .state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.state >> 17
-    }
-
-    fn pick(&mut self, choices: &[Operation]) -> Operation {
-        choices[(self.next() as usize) % choices.len()]
-    }
-
-    fn below(&mut self, bound: u64) -> u64 {
-        if bound == 0 { 0 } else { self.next() % bound }
-    }
-}
-
 /// One tracked run and the last position the schedule observed.
 struct TrackedRun {
     workflow_id: Vec<u8>,
@@ -160,7 +135,7 @@ impl Simulation {
         transaction.commit()?;
         Ok(Self {
             connection,
-            schedule: Schedule::new(seed),
+            schedule: Schedule::new(seed, WORKFLOW_STREAM),
             source: target,
             now_ms: 5_000,
             sequence: 0,

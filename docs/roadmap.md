@@ -195,9 +195,11 @@ found a real bookkeeping gap — expired leases stayed in the simulator's live s
 while the store had already reclaimed them — which is the kind of drift the
 discipline is for.
 
-Still open: the schedules are adversarial but not exhaustive, and effect
-delivery itself is driven only through the workflow and projection schedules
-rather than its own.
+Effect delivery now has its own schedule too (`... --lib effects_sim`),
+covering claim, settle, retry, inbox application, and redelivery, so every
+decision core the framework ships has one.
+
+Still open: the schedules are adversarial but not exhaustive.
 
 ### Make the framework observable and diagnosable
 

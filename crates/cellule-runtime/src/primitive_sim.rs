@@ -19,6 +19,8 @@ use std::collections::HashMap;
 
 use cellule_ltx::rusqlite::Connection;
 
+use crate::sim_schedule::Schedule;
+
 use crate::effects::EffectBatch;
 use crate::queue::{QueueLeaseAction, QueueSendOutcome};
 use crate::{
@@ -29,6 +31,7 @@ use crate::{
 };
 
 const MAX_STEPS: usize = 512;
+const PRIMITIVE_STREAM: u64 = 0x9e37_79b9_7f4a_7c15;
 const MAX_SEND_PAYLOAD_BYTES: usize = 64;
 const TIMER_TARGETS: &[TimerTarget] = &[TimerTarget::new(
     "primitive-sim-target",
@@ -69,35 +72,6 @@ const OPERATIONS: &[Operation] = &[
     Operation::ReplayProjection,
     Operation::AdvanceClock,
 ];
-
-/// Deterministic generator so a failing schedule can be replayed from its seed.
-struct Schedule {
-    state: u64,
-}
-
-impl Schedule {
-    fn new(seed: u64) -> Self {
-        Self {
-            state: seed ^ 0x9e37_79b9_7f4a_7c15,
-        }
-    }
-
-    fn next(&mut self) -> u64 {
-        self.state = self
-            .state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.state >> 17
-    }
-
-    fn pick(&mut self, choices: &[Operation]) -> Operation {
-        choices[(self.next() as usize) % choices.len()]
-    }
-
-    fn below(&mut self, bound: u64) -> u64 {
-        if bound == 0 { 0 } else { self.next() % bound }
-    }
-}
 
 /// One live lease the schedule may settle.
 struct LiveLease {
@@ -141,7 +115,7 @@ impl Simulation {
         transaction.commit()?;
         Ok(Self {
             connection,
-            schedule: Schedule::new(seed),
+            schedule: Schedule::new(seed, PRIMITIVE_STREAM),
             source: target,
             now_ms: 1_000,
             sequence: 0,

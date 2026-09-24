@@ -23,6 +23,8 @@ mod coordination;
 mod coordination_sim;
 mod cron;
 mod effects;
+#[cfg(test)]
+mod effects_sim;
 mod error;
 mod eviction;
 mod executor;
@@ -56,6 +58,8 @@ mod resource;
 mod retention;
 mod scheduler;
 mod schema;
+#[cfg(test)]
+mod sim_schedule;
 mod sql;
 mod telemetry;
 mod timer;
