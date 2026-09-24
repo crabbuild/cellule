@@ -48,9 +48,19 @@ cargo run -p cellule-app --example invoices --locked
 
 It creates an invoice schedule, fires one due maintenance tick, and verifies the schedule advanced to occurrence one. The effect supervisor then delivers a signed invocation through an in-process peer hop to the SQL Cell. A SQL read confirms the destination row before the example prints `invoice delivered: invoice 42 ready`. The hop exercises signing, verification, authorization, and the destination inbox without requiring a network service. The example uses temporary SQLite files and in-memory object storage; a deployed service supplies its own peer transport and credentials.
 
+## Run a Timer reservation timeout
+
+The [timeouts example](../crates/cellule-app/examples/timeouts.rs) starts a Timer Cell and a destination SQL Cell. Run it from the workspace root:
+
+```sh
+cargo run -p cellule-app --example timeouts --locked
+```
+
+It reserves stock, schedules a one-shot deadline that is already due, fires one maintenance tick, and verifies the deadline was removed in the same transaction. The effect supervisor then delivers the signed invocation through an in-process peer hop to the SQL Cell. A SQL read confirms the reservation was released before the example prints `timeout delivered: reservation 42 released by timeout`. Use Timer when a mutation must run once at a chosen time; use Cron when the trigger recurs.
+
 ## Run the reference application
 
-The [reference application](../crates/cellule-app/tests/reference_application.rs) is a compiled Rust application with seven Cells and typed handles. Its storefront smoke places an order, saves a cart, uploads an attachment, sends a notification, completes a workflow activity, and delivers a scheduled invoice effect. Run it from the workspace root:
+The [reference application](../crates/cellule-app/tests/reference_application.rs) is a compiled Rust application with eight Cells and typed handles. Its storefront smoke places an order, saves a cart, uploads an attachment, sends a notification, completes a workflow activity, and delivers a scheduled invoice effect. Run it from the workspace root:
 
 ```sh
 cargo test -p cellule-app --test reference_application \
@@ -64,8 +74,8 @@ The test uses temporary SQLite files and an in-memory object store. It needs no 
 
 The [application source](../crates/cellule-app/tests/reference_application.rs) declares modules and compiles their descriptor with `ApplicationBuilder`. The [fixture](../crates/cellule-app/tests/reference_application/performance_fixture.rs) creates the Cells and typed handles. The [smoke actions](../crates/cellule-app/tests/reference_application/performance.rs) invoke those handles and check visible results. Follow the path in this order:
 
-1. `ReferenceApplication::register` declares the SQL, KV, Blob, Queue, Cron, Workflow, Activity, and Effect modules. Each namespace and operation ID is stable because the descriptor is persisted with Cells. Its version-one migration SQL matches the schema installed at bootstrap.
-2. `compiled` binds those modules to seven `CellType` declarations. The builder validates topology and produces a digest that is checked on restore.
+1. `ReferenceApplication::register` declares the SQL, KV, Blob, Queue, Cron, Timer, Workflow, Activity, and Effect modules. Each namespace and operation ID is stable because the descriptor is persisted with Cells. Its version-one migration SQL matches the schema installed at bootstrap.
+2. `compiled` binds those modules to eight `CellType` declarations. The builder validates topology and produces a digest that is checked on restore.
 3. `PerfFixture::start` creates real SQLite databases, publishes their initial roots, and routes the typed handles locally.
 4. `reference_storefront_smoke` runs one verified action per lane in `run_reference_primitive_performance`.
 
@@ -77,6 +87,7 @@ The [application source](../crates/cellule-app/tests/reference_application.rs) d
 | Send a notification | Queue | `send` → `claim` → `validate_claim` → `ack` | The claimed message matches and its lease is acknowledged. |
 | Fulfill an order | Workflow and Activity | `start` → `ActivitySupervisor::run_once` → `state` | The registered Rust activity completes the workflow. |
 | Schedule an invoice | Cron and Effect | `mutate(Upsert)` → maintenance tick → `get` → effect delivery → SQL `query` | The fired schedule reaches its destination and the receipt is readable. |
+| Release a reservation | Timer and Effect | `mutate(Set)` → maintenance tick → `get` → effect delivery → SQL `query` | The fired deadline is removed and the destination row shows the release. |
 
 To inspect recovery and capability checks, run the separate `typed_application_executes_every_primitive_through_a_local_router` test from the same target. The [application crate guide](../crates/cellule-app/README.md) explains descriptor ownership; the [runtime guide](../crates/cellule-runtime/README.md) explains durability and failure paths.
 

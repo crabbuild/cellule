@@ -39,7 +39,7 @@ cargo test --workspace --locked
 cargo test -p cellule-ltx --features replica --locked
 ```
 
-Start with the [runnable reference application guide](docs/quickstart.md). Its standalone SQL orders, KV carts, Queue notifications, Workflow/Activity fulfillment, and Cron/Effect invoice delivery examples lead into a storefront smoke that also covers Blob attachments. The [reference application source](crates/cellule-app/tests/reference_application.rs) is compiled and exercised in CI. See [architecture](docs/architecture.md) for ownership rules, [embedding and deployment](docs/embedding.md) for node startup and shutdown, [qualification](crates/cellule-runtime/qualification/README.md) for evidence requirements, and [performance examples](crates/cellule-app/PERFORMANCE.md) for measured local workloads. `cellule-ltx` retains its [upstream attribution](crates/cellule-ltx/UPSTREAM.md) and bundled licenses.
+Start with the [runnable reference application guide](docs/quickstart.md). Its standalone SQL orders, KV carts, Queue notifications, Workflow/Activity fulfillment, Cron/Effect invoice delivery, and Timer reservation timeout examples lead into a storefront smoke that also covers Blob attachments. The [reference application source](crates/cellule-app/tests/reference_application.rs) is compiled and exercised in CI. See [architecture](docs/architecture.md) for ownership rules, [embedding and deployment](docs/embedding.md) for node startup and shutdown, [qualification](crates/cellule-runtime/qualification/README.md) for evidence requirements, and [performance examples](crates/cellule-app/PERFORMANCE.md) for measured local workloads. `cellule-ltx` retains its [upstream attribution](crates/cellule-ltx/UPSTREAM.md) and bundled licenses.
 
 ## Integration
 

@@ -7,22 +7,24 @@ use cellule_runtime::{
     BLOB_SCHEMA_SQL, BlobArtifactStore, BlobCondition, BlobModule, BlobMutation,
     BlobMutationOutcome, BlobQuery, BlobQueryResult, BuildDescriptor, CRON_SCHEMA_SQL,
     CatalogEntry, CatalogRole, CellAuthority, CellClient, CellHandle, CellModule, CellRuntime,
-    CellStorageLayout, CellTarget, Command, CommandContext, CommandResult, CronInvocation,
-    CronModule, CronMutation, CronQueryResult, CronTarget, Digest, EffectClaimRequest,
-    EffectLeaseOutcome, EffectModule, Error, FencedNodeSession, IncarnationId, InvocationError,
-    KV_SCHEMA_SQL, KvAtomicCommand, KvAtomicRequest, KvGetQuery, KvGetRequest, KvModule,
-    KvMutation, MaintenanceModule, ModuleDescriptor, MutationIdentity, NamespaceDescriptor,
-    NamespaceId, NodeAdvertisement, NodeCapacity, NodeDirectory, NodeFailureDomain, NodeId,
-    OperationDescriptor, Owner, QUEUE_SCHEMA_SQL, QualificationExecution, QualificationOperation,
+    CellStorageLayout, CellTarget, Command, CommandContext, CommandResult, ControlState,
+    CronInvocation, CronModule, CronMutation, CronQueryResult, CronTarget, Digest,
+    EffectClaimRequest, EffectLeaseOutcome, EffectModule, Error, FencedNodeSession, IncarnationId,
+    InvocationError, KV_SCHEMA_SQL, KvAtomicCommand, KvAtomicRequest, KvGetQuery, KvGetRequest,
+    KvModule, KvMutation, MaintenanceModule, MaintenanceTickOutcome, MaintenanceTickRequest,
+    ModuleDescriptor, MutationIdentity, NamespaceDescriptor, NamespaceId, NodeAdvertisement,
+    NodeCapacity, NodeDirectory, NodeFailureDomain, NodeId, OperationDescriptor, Owner,
+    QUEUE_SCHEMA_SQL, QualificationExecution, QualificationOperation,
     QualificationOperationExecutor, QualificationProfile, QualificationWorkload, QueueClaimRequest,
     QueueDeadLetterTarget, QueueLeaseOutcome, QueueModule, QueueSendRequest, Registry,
     RegistryBuilder, RequestId, Result, SqlBatch, SqlModule, SqlStatement, SqlValue, SqlWorkerPool,
-    TenantId, WORKFLOW_SCHEMA_SQL, WorkflowAction, WorkflowActivityModule, WorkflowContext,
-    WorkflowDecision, WorkflowDefinition, WorkflowModule, WorkflowStatus, install_blob_schema,
-    install_cron_schema, install_kv_schema, install_queue_schema, install_workflow_schema,
-    partition_for_shard, register_activity, register_blob, register_cron, register_effect_delivery,
-    register_kv, register_maintenance, register_queue, register_sql, register_workflow,
-    register_workflow_activities,
+    TIMER_SCHEMA_SQL, TenantId, TimerInvocation, TimerModule, TimerMutation, TimerMutationOutcome,
+    TimerQueryResult, TimerTarget, WORKFLOW_SCHEMA_SQL, WorkflowAction, WorkflowActivityModule,
+    WorkflowContext, WorkflowDecision, WorkflowDefinition, WorkflowModule, WorkflowStatus,
+    install_blob_schema, install_cron_schema, install_kv_schema, install_queue_schema,
+    install_timer_schema, install_workflow_schema, partition_for_shard, register_activity,
+    register_blob, register_cron, register_effect_delivery, register_kv, register_maintenance,
+    register_queue, register_sql, register_timer, register_workflow, register_workflow_activities,
 };
 use cellule_store::Store;
 use ed25519_dalek::SigningKey;
@@ -43,9 +45,11 @@ const QUEUE_NAMESPACE: NamespaceId = NamespaceId::from_bytes([4; 16]);
 const DEAD_LETTER_NAMESPACE: NamespaceId = NamespaceId::from_bytes([5; 16]);
 const CRON_NAMESPACE: NamespaceId = NamespaceId::from_bytes([6; 16]);
 const WORKFLOW_NAMESPACE: NamespaceId = NamespaceId::from_bytes([7; 16]);
+const TIMER_NAMESPACE: NamespaceId = NamespaceId::from_bytes([8; 16]);
 const WORKFLOW_DIGEST: Digest = Digest::from_bytes([8; 32]);
 const SQL_SCHEMA: &str = "CREATE TABLE orders(id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL); \
-    CREATE TABLE invoice_receipts(schedule_id BLOB NOT NULL, occurrence INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(schedule_id, occurrence));";
+    CREATE TABLE invoice_receipts(schedule_id BLOB NOT NULL, occurrence INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(schedule_id, occurrence)); \
+    CREATE TABLE deadline_receipts(timer_id BLOB NOT NULL, generation INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(timer_id, generation));";
 
 const SQL_MODULE: &str = "reference-sql";
 const KV_MODULE: &str = "reference-kv";
@@ -54,6 +58,7 @@ const QUEUE_MODULE: &str = "reference-queue";
 const DEAD_LETTER_MODULE: &str = "reference-dead-letter";
 const CRON_MODULE: &str = "reference-cron";
 const WORKFLOW_MODULE: &str = "reference-workflow";
+const TIMER_MODULE: &str = "reference-timer";
 
 fn operation(id: u32) -> OperationDescriptor {
     OperationDescriptor {
@@ -162,7 +167,7 @@ impl CellModule for ReferenceSql {
         descriptor(
             SQL_MODULE,
             SQL_SCHEMA,
-            &[1, 3, 4, 6],
+            &[1, 3, 4, 6, 7],
             &[2, 5, 6],
             NAMESPACES,
             &[],
@@ -172,6 +177,7 @@ impl CellModule for ReferenceSql {
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
         register_sql::<Self>(registry)?;
         registry.bind_command::<ReferenceCronReceiver>()?;
+        registry.bind_command::<ReferenceDeadlineReceiver>()?;
         register_effect_delivery::<Self>(registry)
     }
 }
@@ -197,6 +203,36 @@ impl Command for ReferenceCronReceiver {
                     SqlValue::Blob(input.schedule_id.to_vec()),
                     SqlValue::Integer(i64::try_from(input.occurrence).map_err(|_| {
                         Error::Command("cron occurrence exceeds SQL integer range")
+                    })?),
+                    SqlValue::Blob(input.payload),
+                ],
+            }],
+        })?;
+        Ok(CommandResult::Success(()))
+    }
+}
+
+struct ReferenceDeadlineReceiver;
+
+impl Command for ReferenceDeadlineReceiver {
+    const MODULE: &'static str = SQL_MODULE;
+    const ID: u32 = 7;
+    const CODEC_VERSION: u32 = 1;
+    type Input = TimerInvocation;
+    type Output = ();
+
+    fn execute(
+        context: &mut CommandContext<'_, '_>,
+        input: Self::Input,
+    ) -> Result<CommandResult<Self::Output>> {
+        context.sql(&SqlBatch {
+            statements: vec![SqlStatement {
+                sql: "INSERT INTO deadline_receipts(timer_id, generation, payload) VALUES (?1, ?2, ?3)"
+                    .into(),
+                parameters: vec![
+                    SqlValue::Blob(input.timer_id.to_vec()),
+                    SqlValue::Integer(i64::try_from(input.generation).map_err(|_| {
+                        Error::Command("timer generation exceeds SQL integer range")
                     })?),
                     SqlValue::Blob(input.payload),
                 ],
@@ -417,6 +453,52 @@ impl CellModule for ReferenceCron {
     }
 }
 
+struct ReferenceTimer;
+impl MaintenanceModule for ReferenceTimer {
+    const MODULE: &'static str = TIMER_MODULE;
+    const TICK_COMMAND_ID: u32 = 3;
+    const TIMER_TARGETS: &'static [TimerTarget] =
+        &[TimerTarget::new(SQL_MODULE, SQL_NAMESPACE, 7, 1, 1 << 20)];
+}
+impl TimerModule for ReferenceTimer {
+    const NAMESPACE: NamespaceId = TIMER_NAMESPACE;
+    const MUTATE_COMMAND_ID: u32 = 1;
+    const QUERY_ID: u32 = 2;
+}
+impl EffectModule for ReferenceTimer {
+    const MODULE: &'static str = TIMER_MODULE;
+    const CLAIM_COMMAND_ID: u32 = 4;
+    const LEASE_COMMAND_ID: u32 = 5;
+    const VALIDATE_QUERY_ID: u32 = 6;
+    const STATUS_QUERY_ID: u32 = 7;
+}
+impl CellModule for ReferenceTimer {
+    const NAME: &'static str = TIMER_MODULE;
+    fn descriptor(&self) -> &'static ModuleDescriptor {
+        static NAMESPACES: &[NamespaceDescriptor] = &[NamespaceDescriptor {
+            id: TIMER_NAMESPACE,
+            name: "reference-timer",
+            role: CatalogRole::Timer,
+            shards: 1,
+            effect_targets: &[SQL_NAMESPACE],
+            dead_letter: None,
+        }];
+        descriptor(
+            TIMER_MODULE,
+            TIMER_SCHEMA_SQL,
+            &[1, 3, 4, 5],
+            &[2, 6, 7],
+            NAMESPACES,
+            &[],
+            &[],
+        )
+    }
+    fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
+        register_timer::<Self>(registry)?;
+        register_effect_delivery::<Self>(registry)
+    }
+}
+
 struct ReferenceWorkflow;
 struct ReferenceDefinition;
 impl WorkflowDefinition for ReferenceDefinition {
@@ -567,6 +649,7 @@ impl CellApplication for ReferenceApplication {
         builder.register(ReferenceQueue)?;
         builder.register(ReferenceDeadLetter)?;
         builder.register(ReferenceCron)?;
+        builder.register(ReferenceTimer)?;
         builder.register(ReferenceWorkflow)?;
         for (module, name, namespace, role) in [
             (SQL_MODULE, "sql", SQL_NAMESPACE, CatalogRole::Sql),
@@ -580,6 +663,7 @@ impl CellApplication for ReferenceApplication {
                 CatalogRole::Queue,
             ),
             (CRON_MODULE, "cron", CRON_NAMESPACE, CatalogRole::Cron),
+            (TIMER_MODULE, "timer", TIMER_NAMESPACE, CatalogRole::Timer),
             (
                 WORKFLOW_MODULE,
                 "workflow",
@@ -612,6 +696,7 @@ fn compile_reference_in_order(reverse: bool) -> cellule_app::CompiledApplication
     .unwrap();
     if reverse {
         builder.register(ReferenceWorkflow).unwrap();
+        builder.register(ReferenceTimer).unwrap();
         builder.register(ReferenceCron).unwrap();
         builder.register(ReferenceDeadLetter).unwrap();
         builder.register(ReferenceQueue).unwrap();
@@ -625,6 +710,7 @@ fn compile_reference_in_order(reverse: bool) -> cellule_app::CompiledApplication
         builder.register(ReferenceQueue).unwrap();
         builder.register(ReferenceDeadLetter).unwrap();
         builder.register(ReferenceCron).unwrap();
+        builder.register(ReferenceTimer).unwrap();
         builder.register(ReferenceWorkflow).unwrap();
     }
     for (module, name, namespace, role) in [
@@ -639,6 +725,7 @@ fn compile_reference_in_order(reverse: bool) -> cellule_app::CompiledApplication
             CatalogRole::Queue,
         ),
         (CRON_MODULE, "cron", CRON_NAMESPACE, CatalogRole::Cron),
+        (TIMER_MODULE, "timer", TIMER_NAMESPACE, CatalogRole::Timer),
         (
             WORKFLOW_MODULE,
             "workflow",
@@ -664,7 +751,7 @@ fn application_descriptor_is_stable_when_modules_register_in_reverse_order() {
 #[test]
 fn reference_application_registers_every_primitive_and_relationship() {
     let application = compiled();
-    assert_eq!(application.cell_types().len(), 7);
+    assert_eq!(application.cell_types().len(), 8);
     assert!(application.registry().has_effect_runner(SQL_NAMESPACE));
     assert_eq!(
         application
@@ -1236,8 +1323,25 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         )
         .await
         .unwrap(),
+        bootstrap_reference_cell(
+            &runtime,
+            &registry,
+            &layout,
+            &directory,
+            tenant,
+            application_id,
+            session,
+            TIMER_NAMESPACE,
+            CatalogRole::Timer,
+            TIMER_MODULE,
+            47,
+            install_timer_schema,
+        )
+        .await
+        .unwrap(),
     ];
     let client = CellClient::local_many(registry.clone(), handles).unwrap();
+    let maintenance_client = client.clone();
     let typed = ApplicationHandle::<ReferenceApplication>::new(
         client,
         Arc::clone(&application),
@@ -1264,6 +1368,13 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         tenant,
         application_id,
         QUEUE_NAMESPACE,
+        &partition_for_shard(0),
+    )
+    .unwrap();
+    let timer_target = CellTarget::new(
+        tenant,
+        application_id,
+        TIMER_NAMESPACE,
         &partition_for_shard(0),
     )
     .unwrap();
@@ -1506,6 +1617,71 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         CronQueryResult::Get(Some(_))
     ));
 
+    let timers = typed.timer::<ReferenceTimer>().unwrap();
+    let timer_id = [61; 16];
+    let deadline = timers
+        .mutate(
+            reference_identity(61, now_ms),
+            TimerMutation::Set {
+                timer_id,
+                target_index: 0,
+                target_partition: partition_for_shard(0).to_vec(),
+                payload: b"deadline-value".to_vec(),
+                due_at_ms: now_ms,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        deadline.output,
+        TimerMutationOutcome::Applied { generation: 1 }
+    );
+    assert!(matches!(
+        timers
+            .get(timer_id, Some(deadline.receipt))
+            .await
+            .unwrap()
+            .output,
+        TimerQueryResult::Get(Some(_))
+    ));
+    let tick = registry
+        .run_maintenance_once(
+            maintenance_client.clone(),
+            timer_target.clone(),
+            reference_identity(62, now_ms),
+            MaintenanceTickRequest {
+                expected_commit_sequence: deadline.receipt.commit_sequence,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tick.output,
+        MaintenanceTickOutcome::Applied { processed: 1 }
+    );
+    assert!(matches!(
+        timers
+            .get(timer_id, Some(tick.receipt))
+            .await
+            .unwrap()
+            .output,
+        TimerQueryResult::Get(None)
+    ));
+    let timer_effects = typed
+        .effects::<ReferenceTimer>(timer_target.clone())
+        .unwrap();
+    let timer_claims = timer_effects
+        .claim(
+            reference_identity(63, now_ms),
+            EffectClaimRequest {
+                limit: 1,
+                lease_ms: 5_000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(timer_claims.output.len(), 1);
+
     let workflow = typed.workflow::<ReferenceWorkflow>().unwrap();
     let activity_workflow_id = b"activity-run".to_vec();
     let activity_started = workflow
@@ -1617,6 +1793,8 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
     drop(activity);
     drop(effects);
     drop(workflow);
+    drop(timer_effects);
+    drop(timers);
     drop(cron);
     drop(queue);
     drop(blob);
@@ -1651,37 +1829,58 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         (DEAD_LETTER_NAMESPACE, DEAD_LETTER_MODULE, 44_u8),
         (CRON_NAMESPACE, CRON_MODULE, 45_u8),
         (WORKFLOW_NAMESPACE, WORKFLOW_MODULE, 46_u8),
+        (TIMER_NAMESPACE, TIMER_MODULE, 47_u8),
     ] {
         let target =
             CellTarget::new(tenant, application_id, namespace, &partition_for_shard(0)).unwrap();
         let observed = authority.load(target.cell_id()).await.unwrap().unwrap();
-        let restored = takeover_runtime
-            .takeover_restored(
-                catalog.lookup(target.cell_id()).await.unwrap().unwrap(),
-                CellReplica::new(
-                    layout.clone(),
-                    *target.cell_id().as_bytes(),
-                    *IncarnationId::from_bytes([incarnation_byte; 16]).as_bytes(),
-                    Limits::default(),
+        let proof = catalog.lookup(target.cell_id()).await.unwrap().unwrap();
+        let replica = CellReplica::new(
+            layout.clone(),
+            *target.cell_id().as_bytes(),
+            *IncarnationId::from_bytes([incarnation_byte; 16]).as_bytes(),
+            Limits::default(),
+        )
+        .unwrap();
+        let destination = restored_directory
+            .path()
+            .join(format!("{module}-takeover.sqlite"));
+        let owner = Owner {
+            session: takeover_session,
+            endpoint: "https://reference-takeover.internal:8081".into(),
+        };
+        // A clean release leaves a published root with no owner, so the
+        // successor acquires it; a crashed owner needs the takeover path.
+        let restored = if observed.value().state == ControlState::Idle {
+            takeover_runtime
+                .acquire_idle_restored(
+                    proof,
+                    replica,
+                    authority.clone(),
+                    observed,
+                    destination,
+                    owner,
                 )
-                .unwrap(),
-                authority.clone(),
-                observed,
-                fence_reference_session(&layout, session, takeover_session)
-                    .await
-                    .direct_takeover()
-                    .unwrap(),
-                cellule_runtime::RecoveryManifestStore::new(layout.clone(), Limits::default()),
-                restored_directory
-                    .path()
-                    .join(format!("{module}-takeover.sqlite")),
-                Owner {
-                    session: takeover_session,
-                    endpoint: "https://reference-takeover.internal:8081".into(),
-                },
-            )
-            .await
-            .unwrap();
+                .await
+                .unwrap_or_else(|error| panic!("{module} idle acquisition failed: {error}"))
+        } else {
+            takeover_runtime
+                .takeover_restored(
+                    proof,
+                    replica,
+                    authority.clone(),
+                    observed,
+                    fence_reference_session(&layout, session, takeover_session)
+                        .await
+                        .direct_takeover()
+                        .unwrap(),
+                    cellule_runtime::RecoveryManifestStore::new(layout.clone(), Limits::default()),
+                    destination,
+                    owner,
+                )
+                .await
+                .unwrap_or_else(|error| panic!("{module} takeover failed: {error}"))
+        };
         assert_eq!(restored.cell_id(), target.cell_id());
         restored_handles.push(restored);
     }
@@ -1760,6 +1959,32 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         .get([58; 16], None)
         .await
         .unwrap();
+    let restored_timers = restored.timer::<ReferenceTimer>().unwrap();
+    assert!(matches!(
+        restored_timers.get(timer_id, None).await.unwrap().output,
+        TimerQueryResult::Get(None)
+    ));
+    let restored_deadline = restored_timers
+        .mutate(
+            reference_identity(106, now_ms),
+            TimerMutation::Set {
+                timer_id: [107; 16],
+                target_index: 0,
+                target_partition: partition_for_shard(0).to_vec(),
+                payload: b"deadline-after-recovery".to_vec(),
+                due_at_ms: now_ms + 60_000,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        restored_timers
+            .get([107; 16], Some(restored_deadline.receipt))
+            .await
+            .unwrap()
+            .output,
+        TimerQueryResult::Get(Some(_))
+    ));
     let restored_workflow = restored.workflow::<ReferenceWorkflow>().unwrap();
     let activity_workflow_id = b"activity-after-recovery".to_vec();
     restored_workflow
