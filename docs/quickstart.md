@@ -85,6 +85,7 @@ The [application source](../crates/cellule-app/tests/reference_application.rs) d
 | Save a cart | KV | `atomic(Put)` → `get` at the commit receipt | The saved cart bytes are returned. |
 | Upload an attachment | Blob | `mutate(Begin)` → `mutate(PutPart)` → `mutate(Complete)` → `query(Read)` | A range read returns the uploaded bytes. |
 | Send a notification | Queue | `send` → `claim` → `validate_claim` → `ack` | The claimed message matches and its lease is acknowledged. |
+| Consume notifications | Queue consumer | `send` → `queue_consumer::<M>(lease_ms)` → `run_once` | The full batch settles and the acknowledged count grows. |
 | Fulfill an order | Workflow and Activity | `start` → `ActivitySupervisor::run_once` → `state` | The registered Rust activity completes the workflow. |
 | Schedule an invoice | Cron and Effect | `mutate(Upsert)` → maintenance tick → `get` → effect delivery → SQL `query` | The fired schedule reaches its destination and the receipt is readable. |
 | Release a reservation | Timer and Effect | `mutate(Set)` → maintenance tick → `get` → effect delivery → SQL `query` | The fired deadline is removed and the destination row shows the release. |

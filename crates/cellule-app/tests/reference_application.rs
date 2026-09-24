@@ -15,16 +15,18 @@ use cellule_runtime::{
     ModuleDescriptor, MutationIdentity, NamespaceDescriptor, NamespaceId, NodeAdvertisement,
     NodeCapacity, NodeDirectory, NodeFailureDomain, NodeId, OperationDescriptor, Owner,
     QUEUE_SCHEMA_SQL, QualificationExecution, QualificationOperation,
-    QualificationOperationExecutor, QualificationProfile, QualificationWorkload, QueueClaimRequest,
-    QueueDeadLetterTarget, QueueLeaseOutcome, QueueModule, QueueSendRequest, Registry,
-    RegistryBuilder, RequestId, Result, SqlBatch, SqlModule, SqlStatement, SqlValue, SqlWorkerPool,
-    TIMER_SCHEMA_SQL, TenantId, TimerInvocation, TimerModule, TimerMutation, TimerMutationOutcome,
-    TimerQueryResult, TimerTarget, WORKFLOW_SCHEMA_SQL, WorkflowAction, WorkflowActivityModule,
-    WorkflowContext, WorkflowDecision, WorkflowDefinition, WorkflowModule, WorkflowStatus,
-    install_blob_schema, install_cron_schema, install_kv_schema, install_queue_schema,
-    install_timer_schema, install_workflow_schema, partition_for_shard, register_activity,
-    register_blob, register_cron, register_effect_delivery, register_kv, register_maintenance,
-    register_queue, register_sql, register_timer, register_workflow, register_workflow_activities,
+    QualificationOperationExecutor, QualificationProfile, QualificationWorkload, QueueBatch,
+    QueueClaimRequest, QueueConsumer, QueueConsumerFuture, QueueConsumerOutcome,
+    QueueDeadLetterTarget, QueueLeaseOutcome, QueueModule, QueueSendRequest, QueueSettlement,
+    Registry, RegistryBuilder, RequestId, Result, SqlBatch, SqlModule, SqlStatement, SqlValue,
+    SqlWorkerPool, TIMER_SCHEMA_SQL, TenantId, TimerInvocation, TimerModule, TimerMutation,
+    TimerMutationOutcome, TimerQueryResult, TimerTarget, WORKFLOW_SCHEMA_SQL, WorkflowAction,
+    WorkflowActivityModule, WorkflowContext, WorkflowDecision, WorkflowDefinition, WorkflowModule,
+    WorkflowStatus, install_blob_schema, install_cron_schema, install_kv_schema,
+    install_queue_schema, install_timer_schema, install_workflow_schema, partition_for_shard,
+    register_activity, register_blob, register_cron, register_effect_delivery, register_kv,
+    register_maintenance, register_queue, register_queue_consumer, register_sql, register_timer,
+    register_workflow, register_workflow_activities,
 };
 use cellule_store::Store;
 use ed25519_dalek::SigningKey;
@@ -341,6 +343,15 @@ impl QueueModule for ReferenceQueue {
     const CONTROL_COMMAND_ID: u32 = 5;
     const INFO_QUERY_ID: u32 = 6;
 }
+impl QueueConsumer for ReferenceQueue {
+    const MAX_BATCH_SIZE: u32 = 2;
+    const MAX_BATCH_TIMEOUT_MS: u32 = 50;
+    const RETRY_DELAY_MS: u32 = 100;
+
+    fn consume(batch: QueueBatch) -> QueueConsumerFuture {
+        Box::pin(async move { Ok(vec![QueueSettlement::Ack; batch.messages.len()]) })
+    }
+}
 impl CellModule for ReferenceQueue {
     const NAME: &'static str = QUEUE_MODULE;
     fn descriptor(&self) -> &'static ModuleDescriptor {
@@ -363,7 +374,8 @@ impl CellModule for ReferenceQueue {
         )
     }
     fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
-        register_queue::<Self>(registry)
+        register_queue::<Self>(registry)?;
+        register_queue_consumer::<Self>(registry)
     }
 }
 
@@ -1597,6 +1609,30 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         sent.output,
         cellule_runtime::QueueSendOutcome::Sent { .. }
     ));
+
+    for (producer, payload) in [
+        (120_u8, b"consumer-1".to_vec()),
+        (121_u8, b"consumer-2".to_vec()),
+    ] {
+        queue
+            .send(
+                reference_identity(producer, now_ms),
+                QueueSendRequest {
+                    producer_id: [producer; 16],
+                    payload,
+                    available_at_ms: now_ms,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let consumer = typed.queue_consumer::<ReferenceQueue>(5_000).unwrap();
+    let consumed = consumer.run_once(0).await.unwrap();
+    assert!(
+        matches!(consumed, QueueConsumerOutcome::Completed { acked: 2, .. }),
+        "native consumer did not settle a full batch: {consumed:?}"
+    );
+    assert_eq!(queue.info(0, None).await.unwrap().output.acked, 3);
 
     let cron = typed.cron::<ReferenceCron>().unwrap();
     let schedule_id = [58; 16];

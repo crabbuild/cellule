@@ -101,7 +101,7 @@ but no seeded simulator drives them.
 
 Ordered by how much they block an application owner.
 
-### Host queue consumers (runtime delivered)
+### Host queue consumers (delivered)
 
 The Queue primitive is a claim API. celld instead hosts the consumer: the queue
 Cell forms a batch by size or by timeout, leases it, calls a registered handler
@@ -114,9 +114,10 @@ before the batch closes, the handler runs outside the SQL worker, and every
 message is settled through the ordinary lease commands. `tests/queue_consumer.rs`
 covers deferral, a full batch, and a poison batch.
 
-Still open: the reference application and a standalone example must exercise
-the consumer, and the embedding service owns the per-queue concurrency bound
-because one pass claims one batch.
+The reference application now runs a native consumer over two ready messages
+and asserts the acknowledged count. Still open: a standalone example, and the
+embedding service owns the per-queue concurrency bound because one pass claims
+one batch.
 
 Evidence: a duplicate delivery after a consumer crash settles once; a poison
 message reaches the dead-letter queue at the attempt bound; a slow handler
