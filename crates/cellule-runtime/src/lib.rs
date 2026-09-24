@@ -11,6 +11,8 @@ mod application;
 mod authority;
 mod backup;
 mod blob;
+#[cfg(test)]
+mod blob_sim;
 mod catalog;
 mod client;
 mod cluster_qualification;

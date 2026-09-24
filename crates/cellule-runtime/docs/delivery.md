@@ -81,6 +81,12 @@ cancel, and clock advance. It proves that an event sequence never decreases, a
 terminal status stays terminal, a fired timer never re-arms, and a repeated
 signal identity reports `Duplicate` without advancing the run.
 
+`src/blob_sim.rs` covers the upload lifecycle: begin, part, complete, abort,
+delete, expiry cleanup, and clock advance, using `PutPartRef` exactly as the
+namespace emits it after uploading a part. It proves that a completed upload's
+part count matches its parts, a published object matches its upload, a part is
+never added to a finished upload, and cleanup never removes a published object.
+
 ## Run crate-level proof
 
 Set a worktree-specific external Cargo target directory before every Rust command.
