@@ -142,8 +142,10 @@ Evidence: `crates/cellule-host/tests/delivery.rs` builds a node, installs
 delivery, schedules a Timer deadline, and proves the destination SQL Cell is
 released with no test-driven tick, claim, or effect delivery.
 
-Still open: rendezvous scanner election is left to the service, and the
-delivery loop does not yet bound how many Cells one pass delivers concurrently.
+One pass now delivers up to `with_max_concurrent_cells` due Cells at the same
+time, each holding its own worker-job reservation. Still open: rendezvous
+scanner election stays with the service, which passes the catalog shards it
+owns.
 
 ### Define the read-model projection contract (delivered)
 

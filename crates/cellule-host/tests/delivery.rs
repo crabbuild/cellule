@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 const RESERVATIONS: NamespaceId = NamespaceId::from_bytes([81; 16]);
 const TIMEOUTS: NamespaceId = NamespaceId::from_bytes([82; 16]);
 const RESERVATION_ID: i64 = 42;
-const TIMER_ID: [u8; 16] = [83; 16];
+const SECOND_RESERVATION_ID: i64 = 43;
 const RESERVATION_SCHEMA: &str =
     "CREATE TABLE reservations (id INTEGER PRIMARY KEY, state INTEGER NOT NULL)";
 const RESERVATION_COMMANDS: [OperationDescriptor; 2] = [operation(1), operation(3)];
@@ -187,7 +187,7 @@ impl CellModule for Timeouts {
                 id: TIMEOUTS,
                 name: Self::NAME,
                 role: CatalogRole::Timer,
-                shards: 1,
+                shards: 2,
                 effect_targets: &[RESERVATIONS],
                 dead_letter: None,
             }],
@@ -220,7 +220,7 @@ impl CellApplication for TimeoutApp {
             "timeouts",
             TIMEOUTS,
             CatalogRole::Timer,
-            1,
+            2,
         )?)?;
         Ok(())
     }
@@ -345,6 +345,16 @@ impl PeerRoundTrip for Loopback {
     }
 }
 
+fn timer_id_for_shard(shard: u32) -> [u8; 16] {
+    for candidate in 0_u8..=u8::MAX {
+        let id = [candidate; 16];
+        if cellule_runtime::shard_for_scope(TIMEOUTS, &id, 2).unwrap() == shard {
+            return id;
+        }
+    }
+    panic!("no timer ID maps to shard {shard}");
+}
+
 fn now_ms() -> Result<i64> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -385,6 +395,8 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
     .unwrap();
     let timeout_target =
         CellTarget::new(tenant, application_id, TIMEOUTS, &partition_for_shard(0)).unwrap();
+    let second_timeout_target =
+        CellTarget::new(tenant, application_id, TIMEOUTS, &partition_for_shard(1)).unwrap();
     let store = Store::new(Arc::new(InMemory::new()));
     let layout = CellStorageLayout::new(
         store,
@@ -439,9 +451,29 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
     )
     .await
     .unwrap();
+    let second_timeout_handle = bootstrap_cell(
+        &runtime,
+        &registry,
+        &layout,
+        session,
+        CellSpec {
+            target: second_timeout_target.clone(),
+            role: CatalogRole::Timer,
+            module: Timeouts::NAME,
+            incarnation: IncarnationId::from_bytes([94; 16]),
+            path: files.path().join("timeouts-second.sqlite"),
+            install: install_timer_schema,
+        },
+    )
+    .await
+    .unwrap();
     let client = CellClient::local_many(
         Arc::clone(&registry),
-        vec![reservation_handle.clone(), timeout_handle],
+        vec![
+            reservation_handle.clone(),
+            timeout_handle,
+            second_timeout_handle,
+        ],
     )
     .unwrap();
 
@@ -478,6 +510,7 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
     );
     let config = CellDeliveryConfig::new(tenant, application_id)
         .with_poll_interval(Duration::from_millis(50))
+        .with_max_concurrent_cells(1)
         .with_lease_ms(5_000);
     let delivery = CellDelivery::new(
         config,
@@ -499,14 +532,21 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
         tenant,
         application_id,
     );
+    // One deadline per Timer shard, so the bounded pass must deliver two Cells.
+    let first_timer_id = timer_id_for_shard(0);
+    let second_timer_id = timer_id_for_shard(1);
+    assert_ne!(first_timer_id, second_timer_id);
     let reservations = typed.sql::<Reservations>(reservation_target).unwrap();
     reservations
         .batch(
             identity(93),
             SqlBatch {
                 statements: vec![SqlStatement {
-                    sql: "INSERT INTO reservations (id, state) VALUES (?1, 0)".into(),
-                    parameters: vec![SqlValue::Integer(RESERVATION_ID)],
+                    sql: "INSERT INTO reservations (id, state) VALUES (?1, 0), (?2, 0)".into(),
+                    parameters: vec![
+                        SqlValue::Integer(RESERVATION_ID),
+                        SqlValue::Integer(SECOND_RESERVATION_ID),
+                    ],
                 }],
             },
         )
@@ -517,7 +557,7 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
         .mutate(
             identity(94),
             TimerMutation::Set {
-                timer_id: TIMER_ID,
+                timer_id: first_timer_id,
                 target_index: 0,
                 target_partition: partition_for_shard(0).to_vec(),
                 payload: RESERVATION_ID.to_be_bytes().to_vec(),
@@ -530,9 +570,28 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
         scheduled.output,
         TimerMutationOutcome::Applied { generation: 1 }
     );
+    let second_timeouts = typed.timer::<Timeouts>().unwrap();
+    let second_scheduled = second_timeouts
+        .mutate(
+            identity(96),
+            TimerMutation::Set {
+                timer_id: second_timer_id,
+                target_index: 0,
+                target_partition: partition_for_shard(0).to_vec(),
+                payload: SECOND_RESERVATION_ID.to_be_bytes().to_vec(),
+                due_at_ms: now_ms().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        second_scheduled.output,
+        TimerMutationOutcome::Applied { generation: 1 }
+    );
 
     // Nothing in this test drives the tick, the consumer, or the effect
-    // supervisor: the host delivery loop must release the reservation alone.
+    // supervisor: the host delivery loop must release both reservations alone,
+    // even though the pass delivers one due Cell at a time.
     let delivered = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let observed = reservations
@@ -540,8 +599,8 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
                     None,
                     SqlBatch {
                         statements: vec![SqlStatement {
-                            sql: "SELECT state FROM reservations WHERE id = ?1".into(),
-                            parameters: vec![SqlValue::Integer(RESERVATION_ID)],
+                            sql: "SELECT count(*) FROM reservations WHERE state = 1".into(),
+                            parameters: Vec::new(),
                         }],
                     },
                 )
@@ -553,7 +612,7 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
                     .first()
                     .and_then(|set| set.rows.first())
                     .and_then(|row| row.first()),
-                Some(SqlValue::Integer(1))
+                Some(SqlValue::Integer(2))
             ) {
                 return;
             }
@@ -563,10 +622,18 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
     .await;
     assert!(
         delivered.is_ok(),
-        "host delivery did not release the reservation"
+        "host delivery did not release both reservations"
     );
     assert!(matches!(
-        timeouts.get(TIMER_ID, None).await.unwrap().output,
+        timeouts.get(first_timer_id, None).await.unwrap().output,
+        TimerQueryResult::Get(None)
+    ));
+    assert!(matches!(
+        second_timeouts
+            .get(second_timer_id, None)
+            .await
+            .unwrap()
+            .output,
         TimerQueryResult::Get(None)
     ));
     node.shutdown().await.unwrap();

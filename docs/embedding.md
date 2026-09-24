@@ -107,12 +107,14 @@ Each pass scans the configured catalog shards, keeps only Cells whose published
 `next_due_ms` is due, skips Cells this node does not serve, and then runs the
 Tick plus one bounded activity, queue-consumer, and effect pass for the
 registered namespaces. A Cell that advanced between the scan and the dispatch
-is skipped and rescanned on the next pass. The service supplies what only it
-can: the catalog and authority, a client that routes local and peer calls, the
-signed effect transport, and the blocking-activity pool. A multi-node fleet
-passes the rendezvous-assigned shards it scans; a single-node deployment scans
-all of them. The loop runs inside the node task group, so node drain cancels
-and joins it.
+is skipped and rescanned on the next pass. `with_max_concurrent_cells` bounds
+how many due Cells one pass delivers at the same time, and each delivery holds
+its own worker-job reservation, so the shared ledger still bounds the work. The
+service supplies what only it can: the catalog and authority, a client that
+routes local and peer calls, the signed effect transport, and the
+blocking-activity pool. A multi-node fleet passes the rendezvous-assigned
+shards it scans; a single-node deployment scans all of them. The loop runs
+inside the node task group, so node drain cancels and joins it.
 
 ## Qualify the deployment
 

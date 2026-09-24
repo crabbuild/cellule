@@ -17,6 +17,7 @@ use cellule_runtime::{
     MaintenanceTickRequest, MutationIdentity, Registry, RequestId, Result, TenantId,
 };
 use rand::RngCore;
+use tokio::task::JoinSet;
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
@@ -28,6 +29,8 @@ const DEFAULT_LEASE_MS: u32 = 30_000;
 const MIN_LEASE_MS: u32 = 5_000;
 const MAX_LEASE_MS: u32 = 300_000;
 const MAX_CELLS_PER_PASS: usize = 128;
+const DEFAULT_MAX_CONCURRENT_CELLS: usize = 4;
+const MAX_CONCURRENT_CELLS: usize = 64;
 const MIN_POLL_INTERVAL_MS: u64 = 10;
 const MAX_POLL_INTERVAL_MS: u64 = 10 * 60 * 1_000;
 const IDENTITY_LIFETIME_MS: i64 = 60_000;
@@ -40,6 +43,7 @@ pub struct CellDeliveryConfig {
     catalog_shards: Vec<u8>,
     poll_interval: Duration,
     max_cells_per_pass: usize,
+    max_concurrent_cells: usize,
     lease_ms: u32,
 }
 
@@ -53,6 +57,7 @@ impl CellDeliveryConfig {
             catalog_shards: (0..=u8::MAX).collect(),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_cells_per_pass: DEFAULT_MAX_CELLS_PER_PASS,
+            max_concurrent_cells: DEFAULT_MAX_CONCURRENT_CELLS,
             lease_ms: DEFAULT_LEASE_MS,
         }
     }
@@ -81,6 +86,13 @@ impl CellDeliveryConfig {
         self
     }
 
+    /// Sets how many due Cells one pass delivers at the same time.
+    #[must_use]
+    pub fn with_max_concurrent_cells(mut self, limit: usize) -> Self {
+        self.max_concurrent_cells = limit;
+        self
+    }
+
     /// Sets the lease used by activity, queue consumer, and effect passes.
     #[must_use]
     pub fn with_lease_ms(mut self, lease_ms: u32) -> Self {
@@ -101,6 +113,11 @@ impl CellDeliveryConfig {
         if !(1..=MAX_CELLS_PER_PASS).contains(&self.max_cells_per_pass) {
             return Err(Error::Control(
                 "Cell delivery batch must be in 1..=128 Cells",
+            ));
+        }
+        if !(1..=MAX_CONCURRENT_CELLS).contains(&self.max_concurrent_cells) {
+            return Err(Error::Control(
+                "Cell delivery concurrency must be in 1..=64 Cells",
             ));
         }
         if !(MIN_LEASE_MS..=MAX_LEASE_MS).contains(&self.lease_ms) {
@@ -151,13 +168,14 @@ impl CellDelivery {
 
     /// Runs delivery passes until the cancellation token fires.
     pub async fn run(self, cancellation: CancellationToken) -> FacilityResult {
+        let delivery = Arc::new(self);
         loop {
-            let deadline = Instant::now() + self.config.poll_interval;
+            let deadline = Instant::now() + delivery.config.poll_interval;
             tokio::select! {
                 () = cancellation.cancelled() => return Ok(()),
                 () = sleep_until(deadline) => {}
             }
-            match self.pass().await {
+            match delivery.pass().await {
                 Ok(()) => {}
                 Err(Error::RuntimeClosed | Error::CellDraining) => return Ok(()),
                 Err(error) => {
@@ -167,18 +185,26 @@ impl CellDelivery {
         }
     }
 
-    async fn pass(&self) -> Result<()> {
+    async fn pass(self: &Arc<Self>) -> Result<()> {
         let logical_time_ms = system_time_ms()?;
+        let mut deliveries = JoinSet::new();
         for shard in &self.config.catalog_shards {
             let mut scan = DueCellScan::new(&self.catalog, self.authority.clone(), *shard).await?;
             while let Some(due) = scan
                 .next_batch_bounded(logical_time_ms, self.config.max_cells_per_pass)
                 .await?
             {
-                for cell in &due {
-                    self.deliver(cell).await?;
+                for cell in due {
+                    while deliveries.len() >= self.config.max_concurrent_cells {
+                        join_delivery(&mut deliveries).await?;
+                    }
+                    let delivery = Arc::clone(self);
+                    deliveries.spawn(async move { delivery.deliver(&cell).await });
                 }
             }
+        }
+        while !deliveries.is_empty() {
+            join_delivery(&mut deliveries).await?;
         }
         Ok(())
     }
@@ -262,6 +288,14 @@ impl CellDelivery {
             tracing::warn!(error = %error, "Cell effect pass was not resolved");
         }
         Ok(())
+    }
+}
+
+async fn join_delivery(deliveries: &mut JoinSet<Result<()>>) -> Result<()> {
+    match deliveries.join_next().await {
+        Some(Ok(result)) => result,
+        Some(Err(_)) => Err(Error::Control("Cell delivery task did not finish")),
+        None => Ok(()),
     }
 }
 
