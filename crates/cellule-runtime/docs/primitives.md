@@ -478,6 +478,26 @@ Each mutating procedure recomputes the earliest due timestamp inside its transac
 
 When a Tick reports no local transition, the compiled registry tells the scheduler whether an activity or effect runner can claim work for that namespace.
 
+## Operate one Cell with bounded reads
+
+An operator never scans primitive state. Each read below is a bounded aggregate
+over the Cell's own indexed tables, so a scrape costs the same whether the Cell
+holds ten rows or ten million:
+
+| Read | Answers |
+| --- | --- |
+| `queue_info` | ready, leased, acknowledged, and dead counts plus the pause generation |
+| `workflow_status_counts` | runs per status plus due timers and due or leased activities |
+| `effect_status_counts` | source effects per state, the ready backlog that is already due, and inbox rows |
+| `projection_watermark` | how far one destination has applied one source Cell |
+| `CellNode::delivery_stats` | passes, due Cells, deliveries, skips, failures, and in-flight gauge for one node |
+
+Workflow runs, effect leases, and projection watermarks are deliberately not
+enumerated here: a run is read by identity (`WorkflowGetRequest`), and the
+watermark is read per source Cell. A service that wants a fleet-wide view
+samples the Cells it owns on its own cadence and exports the aggregates with its
+own bounded labels; the runtime does not label metrics by Cell ID.
+
 ## Install only compiled primitive modules
 
 Primitive mechanics are reusable, but registration is not automatic. A new module must include:

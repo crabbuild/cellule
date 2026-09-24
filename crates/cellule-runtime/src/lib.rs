@@ -106,12 +106,13 @@ pub use cron::{
 pub use effects::{
     EffectAckRequest, EffectClaim, EffectClaimCommand, EffectClaimRequest, EffectCommandIntent,
     EffectLease, EffectLeaseCommand, EffectLeaseOutcome, EffectLeaseRequest, EffectModule,
-    EffectRunOutcome, EffectSource, EffectState, EffectStatus, EffectStatusQuery,
-    EffectStatusRequest, EffectSupervisor, EffectSupervisorError, EffectTokenSource,
-    EffectValidateClaimQuery, EffectValidateRequest, InboxApplyOutcome, InboxDelivery,
-    SystemEffectTokens, effect_ack_delivered, effect_claim, effect_cleanup_terminal, effect_extend,
-    effect_id, effect_operation_digest, effect_retry, effect_status, effect_validate_claim,
-    inbox_apply, inbox_cleanup_expired, inbox_resolve, register_effect_delivery,
+    EffectRunOutcome, EffectSource, EffectState, EffectStatus, EffectStatusCounts,
+    EffectStatusQuery, EffectStatusRequest, EffectSupervisor, EffectSupervisorError,
+    EffectTokenSource, EffectValidateClaimQuery, EffectValidateRequest, InboxApplyOutcome,
+    InboxDelivery, SystemEffectTokens, effect_ack_delivered, effect_claim, effect_cleanup_terminal,
+    effect_extend, effect_id, effect_operation_digest, effect_retry, effect_status,
+    effect_status_counts, effect_validate_claim, inbox_apply, inbox_cleanup_expired, inbox_resolve,
+    register_effect_delivery,
 };
 pub use error::{Error, Result};
 pub use executor::{
@@ -253,10 +254,10 @@ pub use workflow::{
     WorkflowControlAction, WorkflowControlCommand, WorkflowDecision, WorkflowDefinition,
     WorkflowGetQuery, WorkflowGetRequest, WorkflowModule, WorkflowNamespace, WorkflowOutcome,
     WorkflowRun, WorkflowSignal, WorkflowSignalCommand, WorkflowStart, WorkflowStartCommand,
-    WorkflowStatus, decode_workflow_activity_event, install_workflow_schema, register_activity,
-    register_blocking_activity, register_workflow, register_workflow_activities,
+    WorkflowStatus, WorkflowStatusCounts, decode_workflow_activity_event, install_workflow_schema,
+    register_activity, register_blocking_activity, register_workflow, register_workflow_activities,
     verify_workflow_event_count, workflow_cancel, workflow_claim_activities,
     workflow_cleanup_terminal, workflow_complete_activity, workflow_control,
     workflow_extend_activity, workflow_fire_timer, workflow_signal, workflow_start, workflow_state,
-    workflow_validate_activity_claim,
+    workflow_status_counts, workflow_validate_activity_claim,
 };

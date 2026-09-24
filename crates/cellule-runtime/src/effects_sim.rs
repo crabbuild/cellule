@@ -342,6 +342,24 @@ impl Simulation {
                 return Err(Error::Command("effect simulation holds a settled lease"));
             }
         }
+        // The operator read must agree with the leases and inbox rows the
+        // schedule tracks.
+        let counts = crate::effect_status_counts(&self.connection, self.now_ms)?;
+        if counts.leased as usize != self.live.len() {
+            return Err(Error::Command(
+                "effect simulation status counts differ from tracked leases",
+            ));
+        }
+        if counts.inbox as usize != self.applied.len() {
+            return Err(Error::Command(
+                "effect simulation status counts differ from applied identities",
+            ));
+        }
+        if counts.due_now > counts.ready {
+            return Err(Error::Command(
+                "effect simulation reports more due effects than ready ones",
+            ));
+        }
         Ok(())
     }
 }

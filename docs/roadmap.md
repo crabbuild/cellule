@@ -212,8 +212,13 @@ Delivered so far: `CellNode::delivery_stats` reports passes, due Cells,
 deliveries, skips, failures, and the in-flight gauge as six bounded scalars,
 and `cellule_store::probe_storage` plus
 `CellNode::require_storage_capabilities` prove conditional writes and ranged
-reads before readiness. Still open: per-namespace queue depth and workflow
-status gauges.
+reads before readiness. `workflow_status_counts` and `effect_status_counts` add
+the missing per-Cell aggregates — runs per status with due timers, and effect
+states with the due backlog and inbox rows — so an operator can see a stalled
+workflow or delivery backlog without scanning either table.
+
+Still open: the service owns the transport and labels that turn these bounded
+reads into scraped metrics, and no product exposes them yet.
 
 ## Leave these decisions open
 

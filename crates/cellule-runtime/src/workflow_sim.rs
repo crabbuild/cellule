@@ -385,6 +385,20 @@ impl Simulation {
                 return Err(Error::Command("workflow simulation re-armed a fired timer"));
             }
         }
+        // The operator read must agree with the runs the schedule tracks.
+        let counts = crate::workflow_status_counts(&self.connection, self.now_ms)?;
+        if counts.runs as usize != self.runs.len() {
+            return Err(Error::Command(
+                "workflow simulation status counts differ from tracked runs",
+            ));
+        }
+        if counts.running + counts.completed + counts.failed + counts.cancelled + counts.paused
+            != counts.runs
+        {
+            return Err(Error::Command(
+                "workflow simulation status counts do not sum to its runs",
+            ));
+        }
         if observed_sequence > self.started {
             return Err(Error::Command("workflow simulation tracked an unknown run"));
         }

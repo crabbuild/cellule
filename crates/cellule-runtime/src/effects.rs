@@ -91,6 +91,56 @@ impl EffectState {
 }
 
 /// Reads one exact durable source effect without exposing its lease token.
+/// Bounded source-effect and destination-inbox counts for one Cell.
+///
+/// One indexed aggregate per state, so an operator can see a stalled delivery
+/// backlog without reading effect payloads or leases.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EffectStatusCounts {
+    pub ready: u64,
+    pub leased: u64,
+    pub delivered: u64,
+    pub failed: u64,
+    pub due_now: u64,
+    pub inbox: u64,
+}
+
+/// Counts source effects by state plus the ready backlog that is already due.
+pub fn effect_status_counts(connection: &Connection, now_ms: i64) -> Result<EffectStatusCounts> {
+    if now_ms < 0 {
+        return Err(Error::Command("negative effect status time"));
+    }
+    let (ready, leased, delivered, failed) = connection.query_row(
+        "SELECT count(*) FILTER (WHERE state = 0), count(*) FILTER (WHERE state = 1), count(*) FILTER (WHERE state = 2), count(*) FILTER (WHERE state = 3) FROM sys_effects",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        },
+    )?;
+    let (due_now, inbox) = connection.query_row(
+        "SELECT (SELECT count(*) FROM sys_effects INDEXED BY sys_effects_due WHERE state = 0 AND due_at_ms <= ?1), (SELECT count(*) FROM sys_inbox)",
+        [now_ms],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    )?;
+    Ok(EffectStatusCounts {
+        ready: effect_count(ready)?,
+        leased: effect_count(leased)?,
+        delivered: effect_count(delivered)?,
+        failed: effect_count(failed)?,
+        due_now: effect_count(due_now)?,
+        inbox: effect_count(inbox)?,
+    })
+}
+
+fn effect_count(value: i64) -> Result<u64> {
+    u64::try_from(value).map_err(|_| Error::Command("negative effect status count"))
+}
+
 pub fn effect_status(connection: &Connection, effect_id: [u8; 32]) -> Result<Option<EffectStatus>> {
     let row = connection
         .query_row(

@@ -811,6 +811,74 @@ fn exact_array<const N: usize>(value: Vec<u8>, message: &'static str) -> Result<
 }
 
 /// Reads one bounded current workflow state without exposing primitive tables.
+/// Bounded run and pending-work counts for one Workflow Cell.
+///
+/// Operators read this instead of scanning runs: every field is one indexed
+/// aggregate over the Cell's own tables, so a scrape cannot turn into a scan of
+/// unbounded workflow state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WorkflowStatusCounts {
+    pub runs: u64,
+    pub running: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    pub paused: u64,
+    pub due_timers: u64,
+    pub due_activities: u64,
+    pub leased_activities: u64,
+}
+
+/// Counts workflow runs by status plus pending timers and activities.
+pub fn workflow_status_counts(
+    connection: &Connection,
+    now_ms: i64,
+) -> Result<WorkflowStatusCounts> {
+    if now_ms < 0 {
+        return Err(Error::Command("negative workflow status time"));
+    }
+    let (runs, running, completed, failed, cancelled, paused) = connection.query_row(
+        "SELECT count(*), count(*) FILTER (WHERE status = 0), count(*) FILTER (WHERE status = 1), count(*) FILTER (WHERE status = 2), count(*) FILTER (WHERE status = 3), count(*) FILTER (WHERE status = 4) FROM workflow_runs",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        },
+    )?;
+    let (due_timers, due_activities, leased_activities) = connection.query_row(
+        "SELECT (SELECT count(*) FROM workflow_timers WHERE state = 0 AND due_at_ms <= ?1), (SELECT count(*) FROM workflow_activities WHERE state = 0 AND due_at_ms <= ?1), (SELECT count(*) FROM workflow_activities WHERE state = 1)",
+        [now_ms],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
+    )?;
+    Ok(WorkflowStatusCounts {
+        runs: status_count(runs)?,
+        running: status_count(running)?,
+        completed: status_count(completed)?,
+        failed: status_count(failed)?,
+        cancelled: status_count(cancelled)?,
+        paused: status_count(paused)?,
+        due_timers: status_count(due_timers)?,
+        due_activities: status_count(due_activities)?,
+        leased_activities: status_count(leased_activities)?,
+    })
+}
+
+fn status_count(value: i64) -> Result<u64> {
+    u64::try_from(value).map_err(|_| Error::Command("negative workflow status count"))
+}
+
 pub fn workflow_state(connection: &Connection, workflow_id: &[u8]) -> Result<Option<WorkflowRun>> {
     validate_identifier(workflow_id)?;
     let row = connection
