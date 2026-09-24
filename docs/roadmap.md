@@ -179,13 +179,21 @@ Evidence produced before this change carries the previous eight-primitive mix
 and must be regenerated; the receipt validator compares a receipt's counts with
 the compiled list.
 
-### Drive the primitive decision cores with a seeded simulator
+### Drive the primitive decision cores with a seeded simulator (delivered)
 
-Take the coordination simulator's approach to Queue lease expiry, Timer due
-selection, Cron advancement, and effect retry: a seeded schedule over the pure
-decision functions with adversarial waits, repeated delivery, and clock jumps.
-This is the highest-leverage assurance work, because those functions are
-already pure.
+`crates/cellule-runtime/src/primitive_sim.rs` runs 24 seeds of 512 operations
+across queue send, claim, settle, lease expiry, timer set, cancel, and fire, and
+projection apply and replay, with the invariants rechecked after every step.
+The schedule is seeded, so a counterexample replays exactly.
+
+Evidence: `cargo test -p cellule-runtime --locked --lib primitive_sim`
+(`seeded_schedules_preserve_primitive_invariants`). The first run found a real
+bookkeeping gap — expired leases stayed in the simulator's live set while the
+store had already reclaimed them — which is the kind of drift the discipline is
+for.
+
+Still open: the schedule is adversarial but not exhaustive, and it does not yet
+drive Blob lifecycle or workflow timers.
 
 ### Make the framework observable and diagnosable
 

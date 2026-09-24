@@ -39,6 +39,8 @@ mod node_log_transport;
 mod peer;
 mod placement;
 mod pressure;
+#[cfg(test)]
+mod primitive_sim;
 mod projection;
 mod publication;
 mod qualification;

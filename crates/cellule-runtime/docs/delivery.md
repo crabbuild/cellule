@@ -64,6 +64,17 @@ The script checks:
 
 This script validates contracts. It does not prove runtime behavior.
 
+## Drive seeded primitive schedules
+
+`src/primitive_sim.rs` runs seeded adversarial schedules over the queue, timer,
+and projection decision cores: 24 seeds of 512 operations each, with the
+invariants rechecked after every step — one state per message, counter
+agreement, unique live lease tokens, the attempt bound, cancelled timers that
+never fire, and monotonic projection watermarks. A failing schedule is
+reproducible from its seed, so a counterexample becomes a regression test
+rather than an anecdote. The module is compiled for tests only; it is not part
+of the published surface.
+
 ## Run crate-level proof
 
 Set a worktree-specific external Cargo target directory before every Rust command.
