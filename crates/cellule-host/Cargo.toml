@@ -10,9 +10,16 @@ description = "Provider-neutral Cell node lifecycle for Cellule"
 [dependencies]
 cellule-app.workspace = true
 cellule-runtime.workspace = true
+rand = "0.9"
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
+tracing.workspace = true
 
 [dev-dependencies]
+blake3.workspace = true
+cellule-ltx.workspace = true
+cellule-store.workspace = true
+ed25519-dalek.workspace = true
+object_store.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

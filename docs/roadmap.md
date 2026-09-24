@@ -123,21 +123,27 @@ Evidence: a duplicate delivery after a consumer crash settles once; a poison
 message reaches the dead-letter queue at the attempt bound; a slow handler
 cannot block a producer.
 
-### Move effect and activity supervision into the host
+### Move effect and activity supervision into the host (delivered)
 
 `EffectSupervisor` and `ActivitySupervisor` live in `cellule-runtime`, and the
 embedding service or example must drive them. `cellule-host` owns admission
 and drain but not supervision, so an embedder that uses the host alone inherits
 no delivery loop.
 
-Deliver one supervisor per node inside the host facade that claims effects and
-activities for every registered module, keeps dispatch outside the SQL worker,
-and respects the node resource ledger. Provider construction, authorization,
-and transport policy stay with the embedding service.
+`CellNode::install_delivery` now owns the per-node loop: it scans the configured
+catalog shards for Cells whose published `next_due_ms` is due, skips Cells this
+node does not serve, and runs the Tick plus one bounded activity, queue
+consumer, and effect pass for the registered namespaces, all inside the node
+task group so drain cancels and joins it. The service still supplies the
+catalog, authority, routable client, signed effect transport, and the blocking
+pool, and it still chooses which catalog shards it scans.
 
-Evidence: a node built through `cellule-host` alone delivers a cross-Cell
-effect and completes an activity after an owner loss, with no external
-scheduler in the composition.
+Evidence: `crates/cellule-host/tests/delivery.rs` builds a node, installs
+delivery, schedules a Timer deadline, and proves the destination SQL Cell is
+released with no test-driven tick, claim, or effect delivery.
+
+Still open: rendezvous scanner election is left to the service, and the
+delivery loop does not yet bound how many Cells one pass delivers concurrently.
 
 ### Define the read-model projection contract
 

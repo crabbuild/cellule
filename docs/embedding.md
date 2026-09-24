@@ -80,6 +80,40 @@ Only report a clean stop after shutdown succeeds. The host releases accepted
 work and its registered facilities; the service still owns listener shutdown,
 directory withdrawal, credentials, and any external effect destination.
 
+## Deliver due Cells
+
+Durable work does not run itself: a Cell's `next_due_ms` becomes actionable only
+when something dispatches its maintenance Tick, and activities, queue
+consumers, and source effects need a claim loop outside SQLite. Install
+`CellDelivery` once the task group and node lease exist:
+
+```rust,ignore
+let config = CellDeliveryConfig::new(tenant, application)
+    .with_catalog_shards(my_scanner_shards);
+let delivery = CellDelivery::new(
+    config,
+    CellCatalog::new(layout.clone(), tenant),
+    CellAuthority::new(layout.clone()),
+    client,
+    node.runtime(),
+    Arc::clone(application.registry()),
+    effect_peer_client,
+    Arc::new(BlockingActivityPool::for_system()?),
+)?;
+node.install_delivery(delivery)?;
+```
+
+Each pass scans the configured catalog shards, keeps only Cells whose published
+`next_due_ms` is due, skips Cells this node does not serve, and then runs the
+Tick plus one bounded activity, queue-consumer, and effect pass for the
+registered namespaces. A Cell that advanced between the scan and the dispatch
+is skipped and rescanned on the next pass. The service supplies what only it
+can: the catalog and authority, a client that routes local and peer calls, the
+signed effect transport, and the blocking-activity pool. A multi-node fleet
+passes the rendezvous-assigned shards it scans; a single-node deployment scans
+all of them. The loop runs inside the node task group, so node drain cancels
+and joins it.
+
 ## Qualify the deployment
 
 The in-memory examples and local three-process storefront smoke prove

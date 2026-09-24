@@ -26,6 +26,10 @@ use cellule_runtime::{
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+mod delivery;
+
+pub use delivery::{CellDelivery, CellDeliveryConfig};
+
 const MAX_NODE_FACILITIES: usize = 64;
 const MAX_NODE_TASKS: usize = 256;
 
@@ -895,6 +899,25 @@ impl CellNode {
         self.install_facility(facility)?;
         *installed = Some(Arc::clone(&task_group));
         Ok(task_group)
+    }
+
+    /// Installs host-owned delivery for the Cells this node serves.
+    ///
+    /// The loop runs inside the node's task group, so node drain cancels it and
+    /// joins it. Delivery requires an installed task group; the embedding
+    /// service still supplies the catalog, authority, client, peer transport,
+    /// and blocking-activity pool.
+    pub fn install_delivery(&self, delivery: CellDelivery) -> cellule_runtime::Result<()> {
+        let task_group = self
+            .task_group
+            .lock()
+            .map_err(|_| Error::Control("CellNode task group lock poisoned"))?
+            .clone()
+            .ok_or(Error::Control(
+                "CellNode delivery requires an installed task group",
+            ))?;
+        let cancellation = task_group.cancellation.clone();
+        task_group.spawn_boxed(async move { delivery.run(cancellation).await })
     }
 
     /// Installs the provider enrollment adapter and moves node-log recruitment

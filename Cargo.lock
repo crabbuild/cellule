@@ -178,11 +178,18 @@ dependencies = [
 name = "cellule-host"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "cellule-app",
+ "cellule-ltx",
  "cellule-runtime",
+ "cellule-store",
+ "ed25519-dalek",
+ "object_store",
+ "rand 0.9.5",
  "tempfile",
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
