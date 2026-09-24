@@ -160,10 +160,11 @@ Evidence: `crates/cellule-runtime/tests/projection.rs` publishes two changes
 from a source Cell, delivers both effects, and proves the read model and its
 watermark advance together.
 
-Still open: ordering stays the application's problem — the runtime promises
-at-least-once delivery plus a watermark, not ordered application — and no
-product projects a real read model yet, so the pattern has no production
-evidence.
+The reference application now publishes an order change, delivers the effect,
+reads the projected row, and asserts the watermark, so the pattern has
+application-level evidence. Still open: ordering stays the application's
+problem — the runtime promises at-least-once delivery plus a watermark, not
+ordered application — and no deployed product projects a read model yet.
 
 ### Extend the qualification mix to Timer and the queue consumer (delivered)
 

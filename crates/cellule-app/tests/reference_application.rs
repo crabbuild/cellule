@@ -28,6 +28,13 @@ use cellule_runtime::{
     register_maintenance, register_queue, register_queue_consumer, register_sql, register_timer,
     register_workflow, register_workflow_activities,
 };
+use cellule_runtime::{
+    BoundedDecoder, BoundedEncoder, CodecError, EffectPeerClient, EffectRunOutcome,
+    PROJECTION_SCHEMA_SQL, PeerAuthorizer, PeerCellResolver, PeerDispatcher, PeerPrincipal,
+    PeerRoundTrip, PeerSigner, PeerVerifier, ProjectionModule, ProjectionRecord,
+    ProjectionStatusQuery, ProjectionStatusRequest, ProjectionTarget, VerifiedPeerRequest,
+    WireValue, emit_projection, register_projection, register_projection_targets,
+};
 use cellule_store::Store;
 use ed25519_dalek::SigningKey;
 use object_store::memory::InMemory;
@@ -48,7 +55,17 @@ const DEAD_LETTER_NAMESPACE: NamespaceId = NamespaceId::from_bytes([5; 16]);
 const CRON_NAMESPACE: NamespaceId = NamespaceId::from_bytes([6; 16]);
 const WORKFLOW_NAMESPACE: NamespaceId = NamespaceId::from_bytes([7; 16]);
 const TIMER_NAMESPACE: NamespaceId = NamespaceId::from_bytes([8; 16]);
+const READ_MODEL_NAMESPACE: NamespaceId = NamespaceId::from_bytes([9; 16]);
 const WORKFLOW_DIGEST: Digest = Digest::from_bytes([8; 32]);
+const READ_MODEL_TABLE: &str =
+    "CREATE TABLE order_index(order_id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
+const SQL_PROJECTION_TARGETS: &[ProjectionTarget] = &[ProjectionTarget::new(
+    READ_MODEL_MODULE,
+    READ_MODEL_NAMESPACE,
+    1,
+    1,
+    1 << 20,
+)];
 const SQL_SCHEMA: &str = "CREATE TABLE orders(id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL); \
     CREATE TABLE invoice_receipts(schedule_id BLOB NOT NULL, occurrence INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(schedule_id, occurrence)); \
     CREATE TABLE deadline_receipts(timer_id BLOB NOT NULL, generation INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(timer_id, generation));";
@@ -61,6 +78,7 @@ const DEAD_LETTER_MODULE: &str = "reference-dead-letter";
 const CRON_MODULE: &str = "reference-cron";
 const WORKFLOW_MODULE: &str = "reference-workflow";
 const TIMER_MODULE: &str = "reference-timer";
+const READ_MODEL_MODULE: &str = "reference-read-model";
 
 fn operation(id: u32) -> OperationDescriptor {
     OperationDescriptor {
@@ -163,13 +181,13 @@ impl CellModule for ReferenceSql {
             name: "reference-sql",
             role: CatalogRole::Sql,
             shards: 1,
-            effect_targets: &[],
+            effect_targets: &[READ_MODEL_NAMESPACE],
             dead_letter: None,
         }];
         descriptor(
             SQL_MODULE,
             SQL_SCHEMA,
-            &[1, 3, 4, 6, 7],
+            &[1, 3, 4, 6, 7, 8],
             &[2, 5, 6],
             NAMESPACES,
             &[],
@@ -180,7 +198,66 @@ impl CellModule for ReferenceSql {
         register_sql::<Self>(registry)?;
         registry.bind_command::<ReferenceCronReceiver>()?;
         registry.bind_command::<ReferenceDeadlineReceiver>()?;
+        registry.bind_command::<PublishOrderChange>()?;
+        register_projection_targets(registry, SQL_MODULE, SQL_PROJECTION_TARGETS)?;
         register_effect_delivery::<Self>(registry)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OrderChange {
+    order_id: u64,
+    total_cents: i64,
+}
+
+impl WireValue for OrderChange {
+    fn encode(&self, encoder: &mut BoundedEncoder) -> std::result::Result<(), CodecError> {
+        encoder.write_u64(self.order_id)?;
+        encoder.write_i64(self.total_cents)
+    }
+
+    fn decode(decoder: &mut BoundedDecoder<'_>) -> std::result::Result<Self, CodecError> {
+        Ok(Self {
+            order_id: decoder.read_u64()?,
+            total_cents: decoder.read_i64()?,
+        })
+    }
+}
+
+struct PublishOrderChange;
+
+impl Command for PublishOrderChange {
+    const MODULE: &'static str = SQL_MODULE;
+    const ID: u32 = 8;
+    const CODEC_VERSION: u32 = 1;
+    type Input = OrderChange;
+    type Output = ();
+
+    fn execute(
+        context: &mut CommandContext<'_, '_>,
+        input: Self::Input,
+    ) -> Result<CommandResult<Self::Output>> {
+        context.sql(&SqlBatch {
+            statements: vec![SqlStatement {
+                sql: "INSERT INTO orders(id, total_cents) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET total_cents = excluded.total_cents".into(),
+                parameters: vec![
+                    SqlValue::Integer(i64::try_from(input.order_id).map_err(|_| {
+                        Error::Command("order id exceeds SQL integer range")
+                    })?),
+                    SqlValue::Integer(input.total_cents),
+                ],
+            }],
+        })?;
+        let mut payload = Vec::with_capacity(16);
+        payload.extend_from_slice(&input.order_id.to_be_bytes());
+        payload.extend_from_slice(&input.total_cents.to_be_bytes());
+        emit_projection(
+            context,
+            SQL_PROJECTION_TARGETS[0],
+            &partition_for_shard(0),
+            payload,
+        )?;
+        Ok(CommandResult::Success(()))
     }
 }
 
@@ -511,6 +588,79 @@ impl CellModule for ReferenceTimer {
     }
 }
 
+struct ReferenceReadModel;
+
+impl SqlModule for ReferenceReadModel {
+    const MODULE: &'static str = READ_MODEL_MODULE;
+    const BATCH_COMMAND_ID: u32 = 2;
+    const BATCH_QUERY_ID: u32 = 3;
+}
+
+impl ProjectionModule for ReferenceReadModel {
+    const MODULE: &'static str = READ_MODEL_MODULE;
+    const NAMESPACE: NamespaceId = READ_MODEL_NAMESPACE;
+    const APPLY_COMMAND_ID: u32 = 1;
+    const STATUS_QUERY_ID: u32 = 4;
+
+    fn apply(context: &mut CommandContext<'_, '_>, record: &ProjectionRecord) -> Result<()> {
+        let order_bytes: [u8; 8] = record
+            .payload
+            .get(..8)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(Error::Command("order change lacks an order id"))?;
+        let total_bytes: [u8; 8] = record
+            .payload
+            .get(8..16)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(Error::Command("order change lacks a total"))?;
+        let order_id = i64::try_from(u64::from_be_bytes(order_bytes))
+            .map_err(|_| Error::Command("order id exceeds SQL integer range"))?;
+        context.sql(&SqlBatch {
+            statements: vec![SqlStatement {
+                sql: "INSERT INTO order_index(order_id, total_cents) VALUES (?1, ?2) ON CONFLICT(order_id) DO UPDATE SET total_cents = excluded.total_cents".into(),
+                parameters: vec![
+                    SqlValue::Integer(order_id),
+                    SqlValue::Integer(i64::from_be_bytes(total_bytes)),
+                ],
+            }],
+        })?;
+        Ok(())
+    }
+}
+
+impl CellModule for ReferenceReadModel {
+    const NAME: &'static str = READ_MODEL_MODULE;
+
+    fn descriptor(&self) -> &'static ModuleDescriptor {
+        static NAMESPACES: &[NamespaceDescriptor] = &[NamespaceDescriptor {
+            id: READ_MODEL_NAMESPACE,
+            name: "reference-read-model",
+            role: CatalogRole::Sql,
+            shards: 1,
+            effect_targets: &[],
+            dead_letter: None,
+        }];
+        static SCHEMA: OnceLock<&'static str> = OnceLock::new();
+        let schema = SCHEMA.get_or_init(|| {
+            Box::leak(format!("{PROJECTION_SCHEMA_SQL}\n{READ_MODEL_TABLE}").into_boxed_str())
+        });
+        descriptor(
+            READ_MODEL_MODULE,
+            schema,
+            &[1, 2],
+            &[3, 4],
+            NAMESPACES,
+            &[],
+            &[],
+        )
+    }
+
+    fn register(self, registry: &mut RegistryBuilder) -> Result<()> {
+        register_sql::<Self>(registry)?;
+        register_projection::<Self>(registry)
+    }
+}
+
 struct ReferenceWorkflow;
 struct ReferenceDefinition;
 impl WorkflowDefinition for ReferenceDefinition {
@@ -662,6 +812,7 @@ impl CellApplication for ReferenceApplication {
         builder.register(ReferenceDeadLetter)?;
         builder.register(ReferenceCron)?;
         builder.register(ReferenceTimer)?;
+        builder.register(ReferenceReadModel)?;
         builder.register(ReferenceWorkflow)?;
         for (module, name, namespace, role) in [
             (SQL_MODULE, "sql", SQL_NAMESPACE, CatalogRole::Sql),
@@ -676,6 +827,12 @@ impl CellApplication for ReferenceApplication {
             ),
             (CRON_MODULE, "cron", CRON_NAMESPACE, CatalogRole::Cron),
             (TIMER_MODULE, "timer", TIMER_NAMESPACE, CatalogRole::Timer),
+            (
+                READ_MODEL_MODULE,
+                "read-model",
+                READ_MODEL_NAMESPACE,
+                CatalogRole::Sql,
+            ),
             (
                 WORKFLOW_MODULE,
                 "workflow",
@@ -708,6 +865,7 @@ fn compile_reference_in_order(reverse: bool) -> cellule_app::CompiledApplication
     .unwrap();
     if reverse {
         builder.register(ReferenceWorkflow).unwrap();
+        builder.register(ReferenceReadModel).unwrap();
         builder.register(ReferenceTimer).unwrap();
         builder.register(ReferenceCron).unwrap();
         builder.register(ReferenceDeadLetter).unwrap();
@@ -723,6 +881,7 @@ fn compile_reference_in_order(reverse: bool) -> cellule_app::CompiledApplication
         builder.register(ReferenceDeadLetter).unwrap();
         builder.register(ReferenceCron).unwrap();
         builder.register(ReferenceTimer).unwrap();
+        builder.register(ReferenceReadModel).unwrap();
         builder.register(ReferenceWorkflow).unwrap();
     }
     for (module, name, namespace, role) in [
@@ -738,6 +897,12 @@ fn compile_reference_in_order(reverse: bool) -> cellule_app::CompiledApplication
         ),
         (CRON_MODULE, "cron", CRON_NAMESPACE, CatalogRole::Cron),
         (TIMER_MODULE, "timer", TIMER_NAMESPACE, CatalogRole::Timer),
+        (
+            READ_MODEL_MODULE,
+            "read-model",
+            READ_MODEL_NAMESPACE,
+            CatalogRole::Sql,
+        ),
         (
             WORKFLOW_MODULE,
             "workflow",
@@ -763,7 +928,7 @@ fn application_descriptor_is_stable_when_modules_register_in_reverse_order() {
 #[test]
 fn reference_application_registers_every_primitive_and_relationship() {
     let application = compiled();
-    assert_eq!(application.cell_types().len(), 8);
+    assert_eq!(application.cell_types().len(), 9);
     assert!(application.registry().has_effect_runner(SQL_NAMESPACE));
     assert_eq!(
         application
@@ -969,6 +1134,111 @@ where
             initialize,
         )
         .await
+}
+
+struct ReadModelResolver {
+    target: CellTarget,
+    handle: CellHandle,
+}
+
+impl PeerCellResolver for ReadModelResolver {
+    fn resolve(
+        &self,
+        target: CellTarget,
+    ) -> Pin<Box<dyn Future<Output = Result<CellHandle>> + Send + 'static>> {
+        let allowed = target == self.target;
+        let handle = self.handle.clone();
+        Box::pin(async move {
+            if allowed {
+                Ok(handle)
+            } else {
+                Err(Error::CellNotActive)
+            }
+        })
+    }
+}
+
+struct ReadModelAuthorizer;
+
+impl PeerAuthorizer for ReadModelAuthorizer {
+    fn authorize(&self, request: &VerifiedPeerRequest) -> Result<()> {
+        if request.permits("projection.deliver") {
+            Ok(())
+        } else {
+            Err(Error::PeerAuthorization(
+                "projection delivery is not authorized",
+            ))
+        }
+    }
+}
+
+struct ReadModelLoopback {
+    verifier: Arc<PeerVerifier>,
+    dispatcher: Arc<PeerDispatcher>,
+}
+
+impl PeerRoundTrip for ReadModelLoopback {
+    fn send(
+        &self,
+        target: CellTarget,
+        request: Vec<u8>,
+        remaining_ms: u32,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'static>> {
+        let verifier = Arc::clone(&self.verifier);
+        let dispatcher = Arc::clone(&self.dispatcher);
+        Box::pin(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(u64::from(remaining_ms)),
+                async {
+                    let verified = verifier.verify(&request, peer_time_ms()?)?;
+                    if verified.target() != &target {
+                        return Err(Error::Peer("projection target changed in transit"));
+                    }
+                    dispatcher.dispatch_bytes(&verified, peer_time_ms()?).await
+                },
+            )
+            .await
+            .map_err(|source| Error::PeerTransportUnknown {
+                context: "reference projection peer deadline",
+                source: Box::new(source),
+            })?
+        })
+    }
+}
+
+fn peer_time_ms() -> Result<i64> {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| Error::Command("system time is before the Unix epoch"))?
+            .as_millis(),
+    )
+    .map_err(|_| Error::Command("system time exceeds the supported range"))
+}
+
+async fn read_model_total(client: &CellClient, target: &CellTarget) -> i64 {
+    let observed = client
+        .query::<cellule_runtime::SqlBatchQuery<ReferenceReadModel>>(
+            target,
+            None,
+            SqlBatch {
+                statements: vec![SqlStatement {
+                    sql: "SELECT total_cents FROM order_index WHERE order_id = 42".into(),
+                    parameters: Vec::new(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    match observed
+        .output
+        .first()
+        .and_then(|set| set.rows.first())
+        .and_then(|row| row.first())
+    {
+        Some(SqlValue::Integer(total)) => *total,
+        other => panic!("read model row is missing: {other:?}"),
+    }
 }
 
 fn reference_host() -> Host {
@@ -1255,7 +1525,7 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
     )
     .unwrap();
     let registry = application.registry();
-    let handles = vec![
+    let mut handles = vec![
         bootstrap_reference_cell(
             &runtime,
             &registry,
@@ -1268,7 +1538,10 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
             CatalogRole::Sql,
             SQL_MODULE,
             40,
-            |_| Ok(()),
+            |transaction| {
+                transaction.execute_batch(SQL_SCHEMA)?;
+                Ok(())
+            },
         )
         .await
         .unwrap(),
@@ -1385,10 +1658,31 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         .await
         .unwrap(),
     ];
+    let read_model_handle = bootstrap_reference_cell(
+        &runtime,
+        &registry,
+        &layout,
+        &directory,
+        tenant,
+        application_id,
+        session,
+        READ_MODEL_NAMESPACE,
+        CatalogRole::Sql,
+        READ_MODEL_MODULE,
+        48,
+        |transaction| {
+            transaction.execute_batch(PROJECTION_SCHEMA_SQL)?;
+            transaction.execute_batch(READ_MODEL_TABLE)?;
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    handles.push(read_model_handle.clone());
     let client = CellClient::local_many(registry.clone(), handles).unwrap();
     let maintenance_client = client.clone();
     let typed = ApplicationHandle::<ReferenceApplication>::new(
-        client,
+        client.clone(),
         Arc::clone(&application),
         tenant,
         application_id,
@@ -1518,6 +1812,84 @@ async fn typed_application_executes_every_primitive_through_a_local_router() {
         .await
         .unwrap();
     assert_eq!(sql_result.output[0].rows.len(), 1);
+
+    let read_model_target = CellTarget::new(
+        tenant,
+        application_id,
+        READ_MODEL_NAMESPACE,
+        &partition_for_shard(0),
+    )
+    .unwrap();
+    let published = typed
+        .command::<PublishOrderChange>(
+            &sql_target,
+            reference_identity(130, now_ms),
+            OrderChange {
+                order_id: 42,
+                total_cents: 1_999,
+            },
+        )
+        .await
+        .unwrap();
+    let peer_session = cellule_runtime::SessionId::from_bytes([131; 16]);
+    let signer = Arc::new(PeerSigner::new(
+        peer_session,
+        registry.release_digest(),
+        SigningKey::from_bytes(&[132; 32]),
+    ));
+    let verifier = Arc::new(PeerVerifier::new(
+        peer_session,
+        registry.release_digest(),
+        signer.verifying_key(),
+    ));
+    let dispatcher = Arc::new(PeerDispatcher::new(
+        Arc::clone(&registry),
+        Arc::new(ReadModelResolver {
+            target: read_model_target.clone(),
+            handle: read_model_handle,
+        }),
+        Arc::new(ReadModelAuthorizer),
+    ));
+    let projection_peer = EffectPeerClient::new(
+        signer,
+        PeerPrincipal {
+            issuer: "reference-application".into(),
+            subject: "projection-runner".into(),
+            actions: vec!["projection.deliver".into()],
+        },
+        Arc::new(ReadModelLoopback {
+            verifier,
+            dispatcher,
+        }),
+    );
+    let projected = registry
+        .run_effect_once(client.clone(), sql_target.clone(), projection_peer, 5_000)
+        .await
+        .unwrap();
+    assert!(
+        matches!(projected, EffectRunOutcome::Delivered { .. }),
+        "reference projection was not delivered: {projected:?}"
+    );
+    assert_eq!(
+        read_model_total(&client, &read_model_target).await,
+        1_999,
+        "read model did not project the order change"
+    );
+    assert_eq!(
+        client
+            .query::<ProjectionStatusQuery<ReferenceReadModel>>(
+                &read_model_target,
+                None,
+                ProjectionStatusRequest {
+                    source: sql_target.cell_id(),
+                },
+            )
+            .await
+            .unwrap()
+            .output
+            .applied_through,
+        Some(published.receipt.commit_sequence)
+    );
 
     let kv = typed.kv::<ReferenceKv>(KV_NAMESPACE).unwrap();
     kv.atomic(
