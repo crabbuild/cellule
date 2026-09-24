@@ -508,9 +508,12 @@ async fn host_delivery_fires_a_deadline_and_releases_the_destination() {
             dispatcher,
         }),
     );
+    // One shard per pass: the loop must rotate through the catalog rather than
+    // starve the Cells whose shards fall outside the first window.
     let config = CellDeliveryConfig::new(tenant, application_id)
         .with_poll_interval(Duration::from_millis(50))
         .with_max_concurrent_cells(1)
+        .with_max_shards_per_pass(1)
         .with_lease_ms(5_000);
     let delivery = CellDelivery::new(
         config,

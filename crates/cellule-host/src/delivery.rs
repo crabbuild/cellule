@@ -32,6 +32,8 @@ const MAX_LEASE_MS: u32 = 300_000;
 const MAX_CELLS_PER_PASS: usize = 128;
 const DEFAULT_MAX_CONCURRENT_CELLS: usize = 4;
 const MAX_CONCURRENT_CELLS: usize = 64;
+const DEFAULT_MAX_SHARDS_PER_PASS: usize = 64;
+const MAX_SHARDS: usize = 256;
 const MIN_POLL_INTERVAL_MS: u64 = 10;
 const MAX_POLL_INTERVAL_MS: u64 = 10 * 60 * 1_000;
 const IDENTITY_LIFETIME_MS: i64 = 60_000;
@@ -45,6 +47,7 @@ pub struct CellDeliveryConfig {
     poll_interval: Duration,
     max_cells_per_pass: usize,
     max_concurrent_cells: usize,
+    max_shards_per_pass: usize,
     lease_ms: u32,
 }
 
@@ -59,6 +62,7 @@ impl CellDeliveryConfig {
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_cells_per_pass: DEFAULT_MAX_CELLS_PER_PASS,
             max_concurrent_cells: DEFAULT_MAX_CONCURRENT_CELLS,
+            max_shards_per_pass: DEFAULT_MAX_SHARDS_PER_PASS,
             lease_ms: DEFAULT_LEASE_MS,
         }
     }
@@ -94,6 +98,17 @@ impl CellDeliveryConfig {
         self
     }
 
+    /// Sets how many catalog shards one pass reads, rotating across passes.
+    ///
+    /// A node that owns every shard still reads a bounded window per pass, so
+    /// the discovery cost of a large catalog does not scale with the number of
+    /// Cells it holds.
+    #[must_use]
+    pub fn with_max_shards_per_pass(mut self, limit: usize) -> Self {
+        self.max_shards_per_pass = limit;
+        self
+    }
+
     /// Sets the lease used by activity, queue consumer, and effect passes.
     #[must_use]
     pub fn with_lease_ms(mut self, lease_ms: u32) -> Self {
@@ -121,6 +136,11 @@ impl CellDeliveryConfig {
                 "Cell delivery concurrency must be in 1..=64 Cells",
             ));
         }
+        if !(1..=MAX_SHARDS).contains(&self.max_shards_per_pass) {
+            return Err(Error::Control(
+                "Cell delivery shard window must be in 1..=256 shards",
+            ));
+        }
         if !(MIN_LEASE_MS..=MAX_LEASE_MS).contains(&self.lease_ms) {
             return Err(Error::Control(
                 "Cell delivery lease must be in 5..=300 seconds",
@@ -141,6 +161,7 @@ pub struct CellDelivery {
     peer: EffectPeerClient,
     blocking: Arc<BlockingActivityPool>,
     counters: Arc<CellDeliveryCounters>,
+    shard_cursor: AtomicU64,
 }
 
 /// Shared delivery counters for one node.
@@ -249,6 +270,7 @@ impl CellDelivery {
             peer,
             blocking,
             counters: Arc::new(CellDeliveryCounters::default()),
+            shard_cursor: AtomicU64::new(0),
         })
     }
 
@@ -281,8 +303,8 @@ impl CellDelivery {
         let logical_time_ms = system_time_ms()?;
         self.counters.passes.fetch_add(1, Ordering::Relaxed);
         let mut deliveries = JoinSet::new();
-        for shard in &self.config.catalog_shards {
-            let mut scan = DueCellScan::new(&self.catalog, self.authority.clone(), *shard).await?;
+        for shard in self.shards_for_pass() {
+            let mut scan = DueCellScan::new(&self.catalog, self.authority.clone(), shard).await?;
             while let Some(due) = scan
                 .next_batch_bounded(logical_time_ms, self.config.max_cells_per_pass)
                 .await?
@@ -318,6 +340,20 @@ impl CellDelivery {
             join_delivery(&mut deliveries).await?;
         }
         Ok(())
+    }
+
+    /// Returns the next bounded shard window, rotating across passes so every
+    /// configured shard is scanned within a bounded number of passes.
+    fn shards_for_pass(&self) -> Vec<u8> {
+        let shards = &self.config.catalog_shards;
+        let window = self.config.max_shards_per_pass.min(shards.len());
+        let start = self
+            .shard_cursor
+            .fetch_add(window as u64, Ordering::Relaxed) as usize
+            % shards.len();
+        (0..window)
+            .map(|offset| shards[(start + offset) % shards.len()])
+            .collect()
     }
 
     async fn deliver(&self, due: &DueCell) -> Result<DeliveryOutcome> {

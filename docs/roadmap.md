@@ -144,9 +144,10 @@ delivery, schedules a Timer deadline, and proves the destination SQL Cell is
 released with no test-driven tick, claim, or effect delivery.
 
 One pass now delivers up to `with_max_concurrent_cells` due Cells at the same
-time, each holding its own worker-job reservation. Still open: rendezvous
-scanner election stays with the service, which passes the catalog shards it
-owns.
+time, each holding its own worker-job reservation, and reads a rotating
+`with_max_shards_per_pass` window of the catalog so discovery stays bounded as
+the catalog grows. Still open: rendezvous scanner election stays with the
+service, which passes the catalog shards it owns.
 
 ### Define the read-model projection contract (delivered)
 
