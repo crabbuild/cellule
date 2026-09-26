@@ -20,7 +20,8 @@ const DESCRIPTOR_MAGIC: &[u8] = b"cellule.application.v1\0";
 const MAX_APPLICATION_NAME_BYTES: usize = 128;
 const MAX_CELL_TYPES: usize = 128;
 const MAX_DESCRIPTOR_BYTES: usize = 256 * 1024;
-const MAX_PARTITION_VERSION: u32 = 1;
+const MAX_PARTITION_VERSION: u32 = 2;
+const UUID_PARTITION_VERSION: u32 = 2;
 
 /// One application-owned Cell topology declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,21 @@ impl CellType {
             database_limit_bytes: 64 * 1024 * 1024,
             capture_limit_bytes: 16 * 1024 * 1024,
         };
+        cell_type.validate()?;
+        Ok(cell_type)
+    }
+
+    /// Declares one SQL Cell per canonical 16-byte UUID partition.
+    ///
+    /// This changes only this Cell type's persisted descriptor; existing
+    /// fixed-shard descriptors retain their original bytes.
+    pub fn entity_uuid(
+        module: &'static str,
+        name: &'static str,
+        namespace: NamespaceId,
+    ) -> Result<Self> {
+        let mut cell_type = Self::new(module, name, namespace, CatalogRole::Sql, 1)?;
+        cell_type.partition_version = UUID_PARTITION_VERSION;
         cell_type.validate()?;
         Ok(cell_type)
     }
@@ -114,6 +130,9 @@ impl CellType {
 
     /// Maps one bounded application scope to its stable shard number.
     pub fn shard_for_scope(&self, scope: &[u8]) -> Result<u32> {
+        if self.partition_version == UUID_PARTITION_VERSION {
+            return Err(Error::Identity("UUID Cell type has no fixed shard"));
+        }
         cellule_runtime::shard_for_scope(self.namespace, scope, self.shards)
     }
 
@@ -132,6 +151,8 @@ impl CellType {
             || !self.shards.is_power_of_two()
             || self.partition_version == 0
             || self.partition_version > MAX_PARTITION_VERSION
+            || (self.partition_version == UUID_PARTITION_VERSION
+                && (self.role != CatalogRole::Sql || self.shards != 1))
             || self.schema_min == 0
             || self.schema_min > self.schema_max
             || self.database_limit_bytes == 0
@@ -499,16 +520,25 @@ impl<A> ApplicationHandle<A> {
         else {
             return Err(Error::Registry("namespace is not declared by application"));
         };
-        let shard = target
-            .partition()
-            .try_into()
-            .map(u32::from_be_bytes)
-            .map_err(|_| Error::Identity("Cell target partition is not canonical"))?;
-        if shard >= cell_type.shards || partition_for_shard(shard).as_slice() != target.partition()
-        {
-            return Err(Error::Identity(
-                "Cell target partition is outside the declared shard range",
-            ));
+        if cell_type.partition_version == UUID_PARTITION_VERSION {
+            if !canonical_uuid_partition(target.partition()) {
+                return Err(Error::Identity(
+                    "Cell target UUID partition is not canonical",
+                ));
+            }
+        } else {
+            let shard = target
+                .partition()
+                .try_into()
+                .map(u32::from_be_bytes)
+                .map_err(|_| Error::Identity("Cell target partition is not canonical"))?;
+            if shard >= cell_type.shards
+                || partition_for_shard(shard).as_slice() != target.partition()
+            {
+                return Err(Error::Identity(
+                    "Cell target partition is outside the declared shard range",
+                ));
+            }
         }
         Ok(())
     }
@@ -544,6 +574,10 @@ impl<A> ApplicationHandle<A> {
         }
         Ok(())
     }
+}
+
+fn canonical_uuid_partition(partition: &[u8]) -> bool {
+    partition.len() == 16 && (1..=8).contains(&(partition[6] >> 4)) && partition[8] >> 6 == 2
 }
 
 fn encode_descriptor(name: &str, registry: &Registry, cell_types: &[CellType]) -> Result<Vec<u8>> {
@@ -899,5 +933,26 @@ mod tests {
         assert!(cell_type.with_limits(1, 0).is_err());
         assert!(cell_type.with_schema_range(0, 1).is_err());
         assert!(cell_type.with_schema_range(2, 1).is_err());
+    }
+
+    #[test]
+    fn uuid_entity_partition_has_its_own_descriptor_and_validation() {
+        let namespace = NamespaceId::from_bytes([2; 16]);
+        let fixed = CellType::new("app-sql", "orders", namespace, CatalogRole::Sql, 1).unwrap();
+        let entity = CellType::entity_uuid("app-sql", "orders", namespace).unwrap();
+        assert_eq!(fixed.partition_version, 1);
+        assert_eq!(entity.partition_version, UUID_PARTITION_VERSION);
+        assert!(entity.shard_for_scope(b"one").is_err());
+
+        let mut uuid = [0; 16];
+        uuid[6] = 0x70;
+        uuid[8] = 0x80;
+        assert!(canonical_uuid_partition(&uuid));
+        assert!(!canonical_uuid_partition(&uuid[..15]));
+        uuid[6] = 0;
+        assert!(!canonical_uuid_partition(&uuid));
+        uuid[6] = 0x70;
+        uuid[8] = 0;
+        assert!(!canonical_uuid_partition(&uuid));
     }
 }
