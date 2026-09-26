@@ -22,6 +22,7 @@ The [orders executable](examples/orders.rs) creates one local SQL Cell, commits 
 
 1. Implement `CellModule` for each statically linked module. Its `ModuleDescriptor` declares the stable module name, namespace IDs and roles, schema range, migrations, and operation IDs. Bind each command and query in `register`; the registry checks that the bindings match the descriptor.
 2. Implement `CellApplication::register` to register those modules and add one `CellType` for every declared namespace. `ApplicationBuilder::finish` rejects missing, duplicate, or mismatched topology before the service opens readiness.
+   Use `CellType::entity_uuid` for a SQL namespace with one Cell per canonical UUID partition; ordinary `CellType::new` declarations retain fixed four-byte shard partitions. The partition version is persisted in the application descriptor.
 3. Compile with `CellApplication::compile(BuildDescriptor { source_revision, cargo_lock_digest })`. Use real build evidence for a persistent deployment; the standalone examples use fixed demo revisions because their stores are fresh on every run.
 4. Once the embedding service has a routed `CellClient`, construct `ApplicationHandle` with the compiled application, tenant ID, and application ID. Get `sql`, `kv`, `blob`, `queue`, `workflow`, `activities`, `cron`, or `effects` capabilities for the registered modules.
 
