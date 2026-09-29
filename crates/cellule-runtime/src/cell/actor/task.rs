@@ -17,6 +17,7 @@ pub(super) async fn run(
     let mut cells = HashMap::<CellId, ActiveCell>::new();
     let mut transitioning = HashSet::<CellId>::new();
     let mut tasks = JoinSet::<TaskResult>::new();
+    let mut renewals = RenewalScheduler::new();
     let mut next_generation = 0_u64;
     let mut shutdown = None::<ShutdownState>;
     let mut pressure = match PressureClassifier::new(800, 600, 1_000) {
@@ -54,6 +55,7 @@ pub(super) async fn run(
                 finish_shutdown(&mut shutdown);
                 return;
             };
+            let renewed = matches!(result, TaskResult::Renewed { .. });
             super::tasks::handle_task(
                 result,
                 &pool,
@@ -67,6 +69,9 @@ pub(super) async fn run(
                 &mut movement,
                 &mut movement_permits,
             );
+            if renewed {
+                renewals.finished();
+            }
             continue;
         }
         if tasks.is_empty() {
@@ -89,7 +94,8 @@ pub(super) async fn run(
                     handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &mut movement, &mut movement_permits, &mut next_generation);
                 }
                 _ = renewal_tick.tick() => {
-                    start_due_renewals(&pool, &mut cells, &mut tasks, &node_lease);
+                    renewals.scan_due(&cells);
+                    renewals.dispatch(&pool, &mut cells, &mut tasks, &node_lease);
                 }
                 _ = hydration_tick.tick() => {
                     start_background_hydration(
@@ -132,7 +138,11 @@ pub(super) async fn run(
                     }
                     while let Some(result) = tasks.join_next().await {
                         let Ok(result) = result else { return; };
+                        let renewed = matches!(result, TaskResult::Renewed { .. });
                         super::tasks::handle_task(result, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &unpublished_node_log_bytes, &publications, &mut movement, &mut movement_permits);
+                        if renewed {
+                            renewals.finished();
+                        }
                     }
                     break;
                 };
@@ -142,10 +152,18 @@ pub(super) async fn run(
                 let Some(Ok(result)) = result else {
                     return;
                 };
+                let renewed = matches!(result, TaskResult::Renewed { .. });
                 super::tasks::handle_task(result, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &unpublished_node_log_bytes, &publications, &mut movement, &mut movement_permits);
+                if renewed {
+                    renewals.finished();
+                    if !shutdown.as_ref().is_some_and(|state| state.draining) {
+                        renewals.dispatch(&pool, &mut cells, &mut tasks, &node_lease);
+                    }
+                }
             }
             _ = renewal_tick.tick() => {
-                start_due_renewals(&pool, &mut cells, &mut tasks, &node_lease);
+                renewals.scan_due(&cells);
+                renewals.dispatch(&pool, &mut cells, &mut tasks, &node_lease);
             }
             _ = hydration_tick.tick() => {
                 start_background_hydration(

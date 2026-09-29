@@ -424,7 +424,14 @@ and costs one cold activation, never correctness.
 <a id="detail-09"></a>
 ## Renew and self-fence ownership
 
-One node-level scanner renews owned Cells every three seconds. A mutation publication also advances owner progress.
+Each owner normally becomes due for renewal every three seconds. One
+node-level scanner discovers due owners every 100 ms. It orders pending
+renewals by their original deadline and starts at most 32 concurrently. When a
+renewal finishes, the actor immediately fills its free slot from that pending
+set; the next scan rebuilds the set from current owners, discarding stale
+generations and deadlines. This bounds pending scheduler memory by active Cell
+count and prevents the tick interval from capping renewal throughput at 320
+starts per second. A mutation publication also advances owner progress.
 
 The runtime gives a control-record renewal up to thirty seconds under object-store pressure. A separate node-session guard closes admission at its signed expiry, even while renewal I/O is pending.
 
