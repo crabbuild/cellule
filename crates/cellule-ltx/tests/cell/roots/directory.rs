@@ -104,8 +104,13 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
     let backend = Arc::new(InMemory::new());
     let cell = [85; 32];
     let incarnation = [86; 16];
+    // Cache persistence is the subject of this test. Give it private job
+    // admission so unrelated concurrent tests cannot make optional fills
+    // disappear before the restart boundary.
+    let cache_jobs = Arc::new(tokio::sync::Semaphore::new(4));
     let cache_host = Host::default()
         .with_local_disk_budget(DiskBudget::new(64 * 1024 * 1024))
+        .with_job_slots(cache_jobs.clone())
         .with_directory_cache(cache_root.clone())
         .await
         .unwrap();
@@ -146,6 +151,7 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
     }));
     let cached_host = Host::default()
         .with_local_disk_budget(DiskBudget::new(64 * 1024 * 1024))
+        .with_job_slots(cache_jobs)
         .with_directory_cache(cache_root)
         .await
         .unwrap();
