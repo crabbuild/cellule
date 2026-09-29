@@ -1,8 +1,8 @@
 # Technical reference map
 
-The short [runtime guide](README.md) is a route into the full documentation.
-These references retain limits, failure paths, examples, and design reasoning
-from the Cellule synthesis. Current contracts are owned by Cellule source and
+The [runtime guide](README.md) indexes the topic references below. Each one is a
+complete guide: limits, failure paths, examples, and design reasoning from the
+Cellule synthesis, plus the contracts that the source and tests own. Current contracts are owned by Cellule source and
 tests. Crab-specific HTTP routes and operations in older references describe
 the former application.
 
@@ -18,16 +18,16 @@ flowchart LR
     Proof --> LTX
 ```
 
-| Framework topic | Detailed reference |
+| Framework topic | Reference |
 | --- | --- |
-| Runtime overview and ownership | [Original detailed overview](overview-detailed.md) |
-| Actor, SQL worker, deadlines, and drain | [Execution](runtime-detailed.md) |
-| IDs, control, immutable roots, pages, backups, and retention | [Storage](storage-detailed.md) |
-| SQL, KV, Blob, Queue, Cron, Workflow, and Effects | [Primitives](primitives-detailed.md) |
-| Node logs, follower proof, owner loss, and recovery | [Failover and followers](failover-and-followers-detailed.md) |
-| Native modules, codecs, and client calls | [Rust API](rust-api-detailed.md) |
-| Node setup, routing, release, and observation | [Deployment](deployment-detailed.md) |
-| Tests, receipts, and qualification levels | [Delivery](delivery-detailed.md) |
+| Runtime overview and ownership | [Understand the embedded Cell runtime](overview.md) |
+| Actor, SQL worker, deadlines, and drain | [Execution and receipts](runtime.md) |
+| IDs, control, immutable roots, pages, backups, and retention | [Authority, storage, and recovery](storage.md) |
+| SQL, KV, Blob, Queue, Cron, Workflow, and Effects | [Cell primitives](primitives.md) |
+| Node logs, follower proof, owner loss, and recovery | [Follower durability and owner loss](failover-and-followers.md) |
+| Native modules, codecs, and client calls | [Native Rust authoring](rust-api.md) |
+| Node setup, routing, release, and observation | [Embed and operate Cellule](deployment.md) |
+| Tests, receipts, and qualification levels | [Verification and qualification](delivery.md) |
 
 ## Design and audit records
 
@@ -37,7 +37,7 @@ commands are not current deployment instructions.
 
 | Record | Scope |
 | --- | --- |
-| [Application framework](application-framework.md) and [worked example](application-framework-example.md) | Original module and API design. |
+| [Application framework and Commerce worked example](application-framework.md) | Original module, API, and end-to-end application design. |
 | [Canonical LTX scaling](canonical-ltx-scaling.md) | Scaling and publication design. |
 | [LTX performance audit](ltx-performance-audit.md) | Measurements, bottlenecks, and follow-up evidence. |
 | [Standalone replication audit](standalone-replication-audit.md) | Replication behavior review. |

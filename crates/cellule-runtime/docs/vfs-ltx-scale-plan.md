@@ -378,7 +378,7 @@ For writes, attribute SQLite command time, LTX capture, follower append
 and fsync, root preparation, object CAS, queue wait, and final proof source.
 The runtime already supports follower and object proofs. Tune batching or
 publication only after traces show which wait dominates. Preserve the
-[acknowledgement and recovery implications](failover-and-followers-detailed.md#preserve-these-guarantees):
+[acknowledgement and recovery implications](failover-and-followers.md#preserve-these-guarantees):
 every released result is covered, and a successor seals/replays any
 follower-only tail before serving. Inject owner process and local-disk loss,
 one follower loss, RustFS delay/failure, and ambiguous CAS.
@@ -497,7 +497,7 @@ supported throughput increase.
 <a id="detail-07"></a>
 ## Work packet 5: prove application-level scale
 
-Use the existing [reference application](application-framework-example.md)
+Use the existing [reference application](application-framework.md#commerce-example)
 and [Cell-backed issue example](https://github.com/crabbuild/crab/blob/beb439039cb37e750afe6625a2358101c70d1191/crates/crab-http-server/deploy/cell-issue-fleet/README.md).
 The issue example proves gateway distribution, owner routing, and one Cell
 per repository. Extend the reference application workload to exercise

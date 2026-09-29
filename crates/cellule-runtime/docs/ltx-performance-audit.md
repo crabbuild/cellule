@@ -1020,7 +1020,7 @@ the same database bytes, including a newer overwrite. Its observed reads were
 
 These are operation-work measurements, not before/after service percentiles;
 the baseline and expanded fixture differ in cache state and page coverage.
-The [executable runbook](../../cellule-ltx/REFERENCE.md#verification) records the real
+The [executable runbook](../../cellule-ltx/docs/README.md#verification) records the real
 provider command. Retain `range-compaction-before.log`,
 `range-compaction-rustfs.log` and `range-compaction-host.log` under the external
 target. Repeated runtime debt boundaries, foreground tails and sustained
@@ -2190,7 +2190,7 @@ aborting the first reader retains its blocking slot until the fsync finishes.
 The second root restores into a fresh SQLite file with the captured row
 visible. The same test passes against real RustFS and is retained as an
 explicitly invoked host test, documented in the
-[LTX verification runbook](../../cellule-ltx/REFERENCE.md#verification). A private
+[LTX verification runbook](../../cellule-ltx/docs/README.md#verification). A private
 admission regression proves that busy job slots do not queue fill buffers and
 that a subsequent admitted fill persists normally.
 
@@ -2371,7 +2371,7 @@ The first public-API regression reproduced both unrelated open and close
 missing their one-second bound while a file sync was paused. The strengthened
 test pauses file sync, parent sync and bridge startup separately, and checks
 distinct selected-root values for all three Cells. See the
-[RustFS run command](../../cellule-ltx/REFERENCE.md#verification) for the same scenario
+[RustFS run command](../../cellule-ltx/docs/README.md#verification) for the same scenario
 with real objects. Failure cases cover file creation, sizing, both barriers,
 bridge startup, capture-directory creation and a pre-existing destination.
 
