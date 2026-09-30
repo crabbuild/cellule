@@ -29,6 +29,7 @@ async-trait = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 
 [dev-dependencies]
+cellule-store = { workspace = true, features = ["test-support"] }
 object_store = { workspace = true, features = ["fs"] }
 proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

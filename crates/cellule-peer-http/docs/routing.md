@@ -67,6 +67,35 @@ listener negotiates HTTP/1.1, and `with_http2` negotiates HTTP/2
 (`tests::default_listener_negotiates_http_1_1`,
 `tests::http2_listener_negotiates_http_2`).
 
+## Ingress routing table
+
+`PeerHttpRoundTrip::routes` returns a `CellRouteTable` that shares the sender's
+owner hints, so an ingress can resolve the owner once and dial it directly
+instead of forwarding through another node — and the forwarding path then
+reuses the same observation rather than looking the owner up again.
+
+| Decision | Meaning | What it costs |
+| --- | --- | --- |
+| `RouteDecision::Local` | This session owns the Cell; serve it here. | One exact control observation. Ownership is a transition, never a hint. |
+| `RouteDecision::Remote(route)` | Another enrolled session owns it. The route carries the session, endpoint, pinned certificate and public key, and its lease bound. | Zero object reads while the hint is fresh; one background refresh per Cell past its window. |
+| `RouteDecision::Unowned` | No reachable peer owner: idle, tombstoned, absent, or the owner session is not enrolled. | One exact control observation. |
+
+`CellRouteTable::invalidate` drops a hinted route after a refusal or a known
+ownership change. A refusal reported for an older session leaves the current
+route in place, and a route is never served past the signed node lease. Every
+route stays a hint: the receiving node still authorizes the peer and fences a
+stale owner.
+
+```rust
+let routes = round_trip.routes();
+let decision = routes.route(&target).await?;
+```
+
+`tests::routing_table_shares_owner_hints_with_the_round_trip` asserts the
+sharing and the invalidation, and
+`tests::routing_table_reports_local_and_unowned_cells` asserts that a local or
+unowned decision always rests on an exact control observation.
+
 ## Local adapter comparison, 2026-09-29
 
 Run the ignored `tests::owner_lookup_performance` benchmark exactly once per

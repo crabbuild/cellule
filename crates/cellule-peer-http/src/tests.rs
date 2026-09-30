@@ -260,6 +260,106 @@ async fn owner_lookup_fixture_with_endpoint(
 }
 
 #[tokio::test]
+async fn routing_table_shares_owner_hints_with_the_round_trip() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let table = transport.routes();
+    assert!(matches!(
+        table.route(&target).await.unwrap(),
+        RouteDecision::Remote(_)
+    ));
+    assert_eq!(counted.counts().body_requests(), 2);
+    counted.reset();
+    // The forwarding path reuses the route the table already resolved.
+    assert_eq!(
+        transport.owner(&target).await.unwrap().session,
+        SessionId::from_bytes([26; 16])
+    );
+    assert_eq!(counted.counts().body_requests(), 0);
+    // A refusal drops the hint for both readers.
+    table.invalidate(&target, SessionId::from_bytes([26; 16]));
+    counted.reset();
+    assert!(matches!(
+        table.route(&target).await.unwrap(),
+        RouteDecision::Remote(_)
+    ));
+    assert!(counted.counts().body_requests() > 0);
+}
+
+#[tokio::test]
+async fn routing_table_reports_remote_routes_with_their_lease() {
+    let (transport, target, _counted) = owner_lookup_fixture().await;
+    let table = transport.routes();
+    let RouteDecision::Remote(route) = table.route(&target).await.unwrap() else {
+        panic!("fixture owner must be a remote route");
+    };
+    assert_eq!(route.session(), SessionId::from_bytes([26; 16]));
+    assert_eq!(route.endpoint().host_str(), Some("owner.example"));
+    assert_eq!(route.certificate(), Digest::from_bytes([23; 32]));
+    assert!(route.is_live_at(now_ms().unwrap()));
+}
+
+#[tokio::test]
+async fn routing_table_reports_local_and_unowned_cells() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let table = transport.routes();
+
+    let observed = transport
+        .hints
+        .authority
+        .load(target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let local = observed
+        .value()
+        .takeover(Owner {
+            session: transport.session,
+            endpoint: "https://self.internal:8081".into(),
+        })
+        .unwrap();
+    transport
+        .hints
+        .authority
+        .transition(&observed, local, Transition::Takeover)
+        .await
+        .unwrap();
+    counted.reset();
+    // Ownership by this session is a transition, so it rests on an exact
+    // control observation rather than a hint.
+    assert!(matches!(
+        table.route(&target).await.unwrap(),
+        RouteDecision::Local
+    ));
+    assert_eq!(counted.counts().body_requests(), 1);
+
+    let observed = transport
+        .hints
+        .authority
+        .load(target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut tombstoned = observed.value().clone();
+    tombstoned.epoch += 1;
+    tombstoned.revision += 1;
+    tombstoned.progress += 1;
+    tombstoned.state = ControlState::Tombstoned;
+    tombstoned.owner = None;
+    transport
+        .hints
+        .authority
+        .transition(&observed, tombstoned, Transition::Tombstone)
+        .await
+        .unwrap();
+    counted.reset();
+    assert!(matches!(
+        table.route(&target).await.unwrap(),
+        RouteDecision::Unowned
+    ));
+    assert_eq!(counted.counts().body_requests(), 1);
+}
+
+#[tokio::test]
 async fn exact_owner_lookup_reads_control_and_signed_session() {
     let (transport, target, counted) = owner_lookup_fixture().await;
     let owner = transport.owner(&target).await.unwrap();
@@ -515,12 +615,11 @@ async fn stale_owner_hint_is_served_while_one_refresh_runs() {
         .unwrap()
         .expires_at = Instant::now() - Duration::from_millis(1);
     // The hint is past its refresh window but still inside the signed lease.
-    assert!(matches!(
-        transport
-            .hints
-            .cached_owner(target.cell_id(), now_ms().unwrap()),
-        Some(CachedRoute::Stale(_))
-    ));
+    let stale = transport
+        .hints
+        .cached_owner(target.cell_id(), now_ms().unwrap())
+        .expect("the served hint must stay cached");
+    assert!(!stale.fresh, "the hint must be past its refresh window");
     counted.reset();
     let calls = (0..5).map(|_| {
         let transport = transport.clone();
@@ -538,12 +637,11 @@ async fn stale_owner_hint_is_served_while_one_refresh_runs() {
     // instead of each paying a synchronous control-and-session lookup.
     let mut refreshed = false;
     for _ in 0..200 {
-        if matches!(
-            transport
-                .hints
-                .cached_owner(target.cell_id(), now_ms().unwrap()),
-            Some(CachedRoute::Fresh(_))
-        ) {
+        if transport
+            .hints
+            .cached_owner(target.cell_id(), now_ms().unwrap())
+            .is_some_and(|route| route.fresh)
+        {
             refreshed = true;
             break;
         }
@@ -560,9 +658,9 @@ async fn background_refresh_reuses_the_enrolled_session_record() {
     assert_eq!(counted.counts().body_requests(), 2);
     counted.reset();
     // A hint refresh reuses the enrolled record and reads only control.
-    transport
+    let reused = transport
         .hints
-        .load_owner(
+        .lookup_owner(
             transport.scope.as_ref(),
             transport.session,
             &target,
@@ -570,12 +668,13 @@ async fn background_refresh_reuses_the_enrolled_session_record() {
         )
         .await
         .unwrap();
+    assert!(matches!(reused, OwnerLookup::Remote(_, _)));
     assert_eq!(counted.counts().body_requests(), 1);
     counted.reset();
     // A synchronous lookup still proves enrollment from the signed record.
-    transport
+    let verified = transport
         .hints
-        .load_owner(
+        .lookup_owner(
             transport.scope.as_ref(),
             transport.session,
             &target,
@@ -583,6 +682,7 @@ async fn background_refresh_reuses_the_enrolled_session_record() {
         )
         .await
         .unwrap();
+    assert!(matches!(verified, OwnerLookup::Remote(_, _)));
     assert_eq!(counted.counts().body_requests(), 2);
 }
 

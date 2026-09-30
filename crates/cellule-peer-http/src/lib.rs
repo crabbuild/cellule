@@ -98,6 +98,20 @@ impl PeerHttpRoundTrip {
         }
     }
 
+    /// Returns a routing table that shares this round trip's owner hints.
+    ///
+    /// An ingress can resolve the owner once and dial it directly; the
+    /// forwarding path then reuses the same observations instead of looking
+    /// the owner up again.
+    #[must_use]
+    pub fn routes(&self) -> CellRouteTable {
+        CellRouteTable {
+            scope: Arc::clone(&self.scope),
+            session: self.session,
+            hints: Arc::clone(&self.hints),
+        }
+    }
+
     async fn send_inner(
         &self,
         target: CellTarget,
@@ -190,14 +204,17 @@ impl PeerHttpRoundTrip {
         self.scope.check_target(target)?;
         let now = now_ms()?;
         match self.hints.cached_owner(target.cell_id(), now) {
-            Some(CachedRoute::Fresh(owner)) => Ok(owner),
-            Some(CachedRoute::Stale(owner)) => {
-                // The hint is still inside the signed node lease, so it names
-                // an enrolled endpoint. Serve it and refresh in the background
-                // so the next call needs no lookup. A moved owner refuses this
-                // request and the sender refreshes once inside the deadline.
-                self.spawn_refresh(target.clone());
-                Ok(owner)
+            Some(route) => {
+                if !route.fresh {
+                    // The hint is still inside the signed node lease, so it
+                    // names an enrolled endpoint. Serve it and refresh in the
+                    // background so the next call needs no lookup. A moved
+                    // owner refuses this request and the sender refreshes once
+                    // inside the deadline.
+                    self.hints
+                        .spawn_refresh(Arc::clone(&self.scope), self.session, target.clone());
+                }
+                Ok(route.peer)
             }
             None => self.load_owner(target).await,
         }
@@ -208,42 +225,22 @@ impl PeerHttpRoundTrip {
         self.load_owner(target).await
     }
 
-    /// Refreshes one stale hint without blocking its caller.
-    ///
-    /// At most one refresh per Cell is in flight; a failure leaves the current
-    /// hint in place until its lease bound or the next refusal.
-    fn spawn_refresh(&self, target: CellTarget) {
-        let cell = target.cell_id();
-        {
-            let Ok(mut refreshing) = self.hints.refreshing.lock() else {
-                return;
-            };
-            if !refreshing.insert(cell) {
-                return;
-            }
-        }
-        let hints = Arc::clone(&self.hints);
-        let scope = Arc::clone(&self.scope);
-        let session = self.session;
-        tokio::spawn(async move {
-            let _ = hints
-                .load_owner(scope.as_ref(), session, &target, SessionReuse::Reuse)
-                .await;
-            if let Ok(mut refreshing) = hints.refreshing.lock() {
-                refreshing.remove(&cell);
-            }
-        });
-    }
-
     async fn load_owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
-        self.hints
-            .load_owner(
+        match self
+            .hints
+            .lookup_owner(
                 self.scope.as_ref(),
                 self.session,
                 target,
                 SessionReuse::Verify,
             )
-            .await
+            .await?
+        {
+            OwnerLookup::Remote(peer, _) => Ok(peer),
+            // A Cell this node owns, has no owner, or whose owner session is
+            // not enrolled has no peer route to send through.
+            OwnerLookup::Local | OwnerLookup::Unowned => Err(CellError::CellNotActive),
+        }
     }
 
     fn client(&self, owner: &RemotePeer) -> cellule_runtime::Result<reqwest::Client> {
@@ -440,12 +437,155 @@ struct OwnerHints {
     refreshing: Mutex<HashSet<CellId>>,
 }
 
-/// A Cell owner hint and whether it wants a background refresh.
-enum CachedRoute {
-    /// The hint is inside its refresh window.
-    Fresh(RemotePeer),
-    /// The hint is lease-valid but past its refresh window.
-    Stale(RemotePeer),
+/// A Cell owner hint, its lease bound, and whether it wants a refresh.
+struct CachedRoute {
+    peer: RemotePeer,
+    lease_expires_at_ms: i64,
+    /// Whether the hint is still inside its refresh window.
+    fresh: bool,
+}
+
+/// The owner a lookup observed, before it is turned into a routing decision.
+enum OwnerLookup {
+    /// This node's own session owns the Cell.
+    Local,
+    /// Another enrolled session owns the Cell.
+    Remote(RemotePeer, i64),
+    /// The Cell has no current owner: idle, tombstoned, or absent.
+    Unowned,
+}
+
+/// One lease-bound route to the session that currently owns a Cell.
+///
+/// A route is a routing hint, never authority: the receiving node fences a
+/// stale owner, and a refused attempt invalidates the route in the table that
+/// produced it.
+#[derive(Clone, Debug)]
+pub struct CellRoute {
+    session: SessionId,
+    endpoint: url::Url,
+    certificate: Digest,
+    public_key: [u8; 32],
+    lease_expires_at_ms: i64,
+}
+
+impl CellRoute {
+    /// Returns the owning node session.
+    #[must_use]
+    pub const fn session(&self) -> SessionId {
+        self.session
+    }
+
+    /// Returns the enrolled peer endpoint for that session.
+    #[must_use]
+    pub const fn endpoint(&self) -> &url::Url {
+        &self.endpoint
+    }
+
+    /// Returns the certificate digest pinned by the owner's advertisement.
+    #[must_use]
+    pub const fn certificate(&self) -> Digest {
+        self.certificate
+    }
+
+    /// Returns the public key pinned by the owner's advertisement.
+    #[must_use]
+    pub const fn public_key(&self) -> [u8; 32] {
+        self.public_key
+    }
+
+    /// Returns whether the signed node lease still covers `now_ms`.
+    #[must_use]
+    pub fn is_live_at(&self, now_ms: i64) -> bool {
+        self.lease_expires_at_ms > now_ms.saturating_add(OWNER_LEASE_MARGIN_MS)
+    }
+
+    fn from_peer(peer: &RemotePeer, lease_expires_at_ms: i64) -> Self {
+        Self {
+            session: peer.session,
+            endpoint: peer.endpoint.clone(),
+            certificate: peer.certificate,
+            public_key: peer.public_key,
+            lease_expires_at_ms,
+        }
+    }
+}
+
+/// The routing decision for one Cell target.
+#[derive(Clone, Debug)]
+pub enum RouteDecision {
+    /// This node's session owns the Cell; serve it locally.
+    Local,
+    /// Another enrolled session owns it; dial the route or forward through it.
+    Remote(CellRoute),
+    /// No reachable peer owner: the Cell is idle, tombstoned, absent, or its
+    /// owner session is not currently enrolled.
+    Unowned,
+}
+
+/// Lease-bound `Cell -> node` routing table for an ingress.
+///
+/// The table shares its cache with the [`PeerHttpRoundTrip`] built from the
+/// same state, so an ingress that routes directly to the owner and a forwarder
+/// that resolves the owner itself never pay for the same lookup twice.
+///
+/// Remote routes are hinted: a fresh route resolves with no object read, a
+/// route past its refresh window is still served while one background refresh
+/// per Cell runs, and a route is never served past the signed node lease.
+/// `Local` and `Unowned` are transitions, so they always rest on an exact
+/// control observation.
+#[derive(Clone)]
+pub struct CellRouteTable {
+    scope: Arc<dyn PeerTargetScope>,
+    session: SessionId,
+    hints: Arc<OwnerHints>,
+}
+
+impl CellRouteTable {
+    /// Resolves the current route for one Cell target.
+    ///
+    /// A target outside this table's scope, or a malformed enrolled record,
+    /// fails closed instead of returning a route.
+    pub async fn route(&self, target: &CellTarget) -> cellule_runtime::Result<RouteDecision> {
+        self.scope.check_target(target)?;
+        let now = now_ms()?;
+        if let Some(route) = self.hints.cached_owner(target.cell_id(), now) {
+            if !route.fresh {
+                // Still inside the signed lease: serve it and refresh behind
+                // the caller. A refused attempt invalidates it.
+                self.hints
+                    .spawn_refresh(Arc::clone(&self.scope), self.session, target.clone());
+            }
+            return Ok(RouteDecision::Remote(CellRoute::from_peer(
+                &route.peer,
+                route.lease_expires_at_ms,
+            )));
+        }
+        match self
+            .hints
+            .lookup_owner(
+                self.scope.as_ref(),
+                self.session,
+                target,
+                SessionReuse::Verify,
+            )
+            .await?
+        {
+            OwnerLookup::Local => Ok(RouteDecision::Local),
+            OwnerLookup::Unowned => Ok(RouteDecision::Unowned),
+            OwnerLookup::Remote(peer, lease_expires_at_ms) => Ok(RouteDecision::Remote(
+                CellRoute::from_peer(&peer, lease_expires_at_ms),
+            )),
+        }
+    }
+
+    /// Drops one hinted route after a refusal or a known ownership change.
+    ///
+    /// The session argument guards against dropping a newer observation: a
+    /// refusal reported for an older session leaves the current route in place.
+    pub fn invalidate(&self, target: &CellTarget, session: SessionId) {
+        self.hints.invalidate_owner(target.cell_id(), session);
+    }
 }
 
 /// Whether a lookup may reuse an already enrolled session advertisement.
@@ -463,33 +603,59 @@ enum SessionReuse {
 }
 
 impl OwnerHints {
+    /// Refreshes one stale hint without blocking its caller.
+    ///
+    /// At most one refresh per Cell is in flight; a failure leaves the current
+    /// hint in place until its lease bound or the next refusal.
+    fn spawn_refresh(
+        self: &Arc<Self>,
+        scope: Arc<dyn PeerTargetScope>,
+        session: SessionId,
+        target: CellTarget,
+    ) {
+        let cell = target.cell_id();
+        {
+            let Ok(mut refreshing) = self.refreshing.lock() else {
+                return;
+            };
+            if !refreshing.insert(cell) {
+                return;
+            }
+        }
+        let hints = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = hints
+                .lookup_owner(scope.as_ref(), session, &target, SessionReuse::Reuse)
+                .await;
+            if let Ok(mut refreshing) = hints.refreshing.lock() {
+                refreshing.remove(&cell);
+            }
+        });
+    }
+
     /// Loads and enrolls the current owner for one target.
     ///
     /// One control read is always required: it names the owner session and its
     /// enrolled endpoint. The signed advertisement behind that session is
     /// reused while its lease holds, so a refresh that lands on the same
     /// session costs one object read instead of two.
-    async fn load_owner(
+    async fn lookup_owner(
         &self,
         scope: &dyn PeerTargetScope,
         session: SessionId,
         target: &CellTarget,
         reuse: SessionReuse,
-    ) -> cellule_runtime::Result<RemotePeer> {
+    ) -> cellule_runtime::Result<OwnerLookup> {
         scope.check_target(target)?;
         let lookup_started = Instant::now();
-        let control = self
-            .authority
-            .load(target.cell_id())
-            .await?
-            .ok_or(CellError::CellNotActive)?;
-        let owner = control
-            .value()
-            .owner
-            .as_ref()
-            .ok_or(CellError::CellNotActive)?;
+        let Some(control) = self.authority.load(target.cell_id()).await? else {
+            return Ok(OwnerLookup::Unowned);
+        };
+        let Some(owner) = control.value().owner.as_ref() else {
+            return Ok(OwnerLookup::Unowned);
+        };
         if owner.session == session {
-            return Err(CellError::CellNotActive);
+            return Ok(OwnerLookup::Local);
         }
         let now = now_ms()?;
         let enrolled = if reuse == SessionReuse::Reuse {
@@ -500,11 +666,11 @@ impl OwnerHints {
         let (endpoint, certificate, public_key, lease_expires_at_ms) = match enrolled {
             Some(enrolled) => enrolled,
             None => {
-                let loaded = self
-                    .directory
-                    .load(owner.session, now)
-                    .await?
-                    .ok_or(CellError::CellNotActive)?;
+                let Some(loaded) = self.directory.load(owner.session, now).await? else {
+                    // The control record names an owner session that is not
+                    // currently enrolled, so no route to it exists.
+                    return Ok(OwnerLookup::Unowned);
+                };
                 let advertisement = loaded.advertisement();
                 if advertisement.endpoint() != owner.endpoint {
                     return Err(CellError::PeerAuthorization(
@@ -540,7 +706,7 @@ impl OwnerHints {
             now,
             lookup_started,
         );
-        Ok(remote)
+        Ok(OwnerLookup::Remote(remote, lease_expires_at_ms))
     }
 
     fn cached_owner(&self, cell: CellId, now_ms: i64) -> Option<CachedRoute> {
@@ -554,11 +720,11 @@ impl OwnerHints {
             return None;
         }
         let owner = observed.owner.clone()?;
-        if observed.expires_at <= Instant::now() {
-            Some(CachedRoute::Stale(owner))
-        } else {
-            Some(CachedRoute::Fresh(owner))
-        }
+        Some(CachedRoute {
+            peer: owner,
+            lease_expires_at_ms: observed.lease_expires_at_ms,
+            fresh: observed.expires_at > Instant::now(),
+        })
     }
 
     fn cached_session(
