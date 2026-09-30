@@ -105,8 +105,8 @@ impl ReplicaReadRouter {
     ///
     /// Returns `None` when the node holds no usable snapshot, when the snapshot
     /// is behind, fenced, or unavailable, or when the local attempt outlives
-    /// [`LOCAL_ATTEMPT_BUDGET`]: the caller then resolves placement and tries
-    /// the selected readers with the rest of its deadline. Contract, codec, and
+    /// its bounded budget: the caller then resolves placement and tries the
+    /// selected readers with the rest of its deadline. Contract, codec, and
     /// receipt failures are returned because no other candidate can repair them.
     pub async fn query_local<Q: Query>(
         &self,
