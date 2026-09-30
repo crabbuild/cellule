@@ -39,11 +39,11 @@ the last fully served logical write rate separately from the first overloaded
 rate. The first and second isolated object-proof results are summarized below.
 
 The dedicated `Cell write capacity qualification` GitHub Actions workflow
-builds one release binary and runs three object-proof repeats on a fresh
-runner. Each repeat has its own Compose project, RustFS volume, object prefix,
-and evidence directory. It uploads raw samples, logs, the binary digest, and
-provider details even if a repeat fails. Its output requires review before a
-capacity claim; the follower-enabled comparison remains separate.
+builds release binaries for separate object-proof and follower-proof jobs.
+Each job runs three repeats; each repeat has its own Compose project, RustFS
+volume, object prefix, and evidence directory. The workflow uploads raw
+samples, logs, binary digests, and provider details even if a repeat fails.
+Its output requires review before a capacity claim.
 
 ## First isolated object-proof result
 
@@ -343,14 +343,13 @@ precision. A scheduler-late or client-full
 overload point identifies the harness admission limit until runtime and
 provider phase evidence demonstrates a narrower Cell limiter.
 
-The existing entity host does not enroll a follower durability lane, so this
-profile cannot supply the separate follower-enabled comparison. That lane
-requires a networked node-log transport, authority enrollment fixture, and
-recovery evidence. The added publication observation aggregates root
-preparation and provider I/O; it cannot by itself distinguish predecessor
+The original object-only profile could not supply a follower-enabled
+comparison. The later follower-proof lane above adds a networked node-log
+transport and authority enrollment; a separate process test covers owner-loss
+recovery. The added publication observation aggregates root preparation and
+provider I/O; it cannot by itself distinguish predecessor
 GET/HEAD, immutable PUT, and provider wait inside that phase. Those limits
-prevent selecting a safe implementation
-change from this revision alone.
+prevent selecting a safe publication change from this evidence alone.
 
 The 2026-09-29 workstation did not provide an isolated provider environment.
 The Colima VM had multiple unrelated active RustFS workloads, several above

@@ -113,8 +113,11 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         assert int(row["at_ms"]) > 0 and int(row["epoch"]) > 0
         assert row["phase"] in {"enrolled", "active", "coverage", "closed"}
         covered = int(row["covered_through"])
-        assert covered >= last_covered, "node-log coverage regressed"
-        last_covered = covered
+        if row["phase"] in {"enrolled", "active"}:
+            assert covered == 0, "node-log lifecycle marker has coverage"
+        else:
+            assert covered >= last_covered, "node-log coverage regressed"
+            last_covered = covered
     for window in windows:
         if node >= window["nodes"]:
             continue
@@ -128,7 +131,7 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         selected_appends = [row for row in appends if start <= int(row["at_ms"]) <= end]
         selected_network = [row for row in network if start <= int(row["at_ms"]) <= end]
         covered_before_end = [int(row["covered_through"]) for row in log_events
-                              if int(row["at_ms"]) <= end]
+                              if row["phase"] in {"coverage", "closed"} and int(row["at_ms"]) <= end]
         response_sources = {source: sum(row["source"] == source for row in selected_responses)
                             for source in sorted(sources)}
         window.setdefault("node_durability", {})[node] = dict(

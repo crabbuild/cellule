@@ -131,6 +131,23 @@ class EntityTimingEvidence(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "duplicate publication"):
             verify_timing_evidence(self.root, 0, self.windows)
 
+    def test_active_marker_after_coverage_does_not_reset_covered_sequence(self):
+        path = self.root / "node-0-node-log-events.tsv"
+        path.write_text("at_ms\tepoch\tphase\tcovered_through\n"
+                        "100001\t1\tenrolled\t0\n"
+                        "100002\t1\tcoverage\t1\n"
+                        "100003\t1\tactive\t0\n"
+                        "100004\t1\tcoverage\t2\n"
+                        "100005\t1\tclosed\t2\n")
+        report = verify_timing_evidence(self.root, 0, self.windows)
+        self.assertEqual(report["node_log_covered_through"], 2)
+        self.assertEqual(self.windows[0]["node_durability"][0]["node_log_covered_through"], 2)
+
+        path.write_text(path.read_text().replace("100004\t1\tcoverage\t2",
+                                                 "100004\t1\tcoverage\t0"))
+        with self.assertRaisesRegex(AssertionError, "node-log coverage regressed"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
 
 class CapacityScheduleEvidence(unittest.TestCase):
     def setUp(self):

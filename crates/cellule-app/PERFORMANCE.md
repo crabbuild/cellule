@@ -14,6 +14,7 @@ and [qualification runner](qualification/run.sh) for a fresh run.
 | Three-process RustFS | [`qualification/run.sh`](qualification/run.sh) | Local and forwarded gateway calls, receipts, drained sessions. |
 | Entity fleet and scaling | [`qualification/entities.py`](qualification/entities.py), [`scale.py`](qualification/scale.py) | Isolated Cell ledgers and bounded traffic. |
 | Fixed 12-Cell write capacity | [`qualification/scale.py`](qualification/scale.py) with `--workload capacity` | Hot, uniform, and skewed offered-rate ramps with receipt and overload checks. |
+| Fixed 12-Cell follower-proof capacity | [`qualification/scale.py`](qualification/scale.py) with `--workload capacity-follower` | Networked follower proofs, offered-rate ramps, and final root coverage. |
 | Reader and rollout variants | [Application integration suite](tests/integration.rs) | Selection, replacement, and recovered receipts. |
 
 ```mermaid
