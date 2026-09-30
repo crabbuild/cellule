@@ -136,6 +136,16 @@ runner is required before selecting a write-path change.
 Attempt 2 built the same revision but could not start the first repeat:
 the pinned `bucket-init` image pull returned `toomanyrequests: Data limit
 exceeded` from its public registry. It produced no capacity measurements.
+The docs-only rerun on source `f9b918a` ([CI run
+36657593245](https://github.com/crabbuild/cellule/actions/runs/36657593245),
+attempts 1 and 2) failed at the same image pull before traffic. The
+qualification fixture now pins the same AWS CLI 2.27.41 version from Docker
+Hub at manifest digest
+`sha256:bc6b7bba44ce38f9604ede49c584824af919047ea03fbcc7c7610671fdef95d8`;
+the object-store image, resource limits, rate schedule, and verifier are
+unchanged. The replacement still needs CI validation.
+Its bucket-init completed against a fresh local RustFS Compose volume; the
+three-repeat CI workload has not yet been rerun with it.
 
 The attempt-1 `verification.json` SHA-256 digests are
 `b1282ef781b4ca9d962fb43dbf2949662e589ce7737f730fd276473689483673`,

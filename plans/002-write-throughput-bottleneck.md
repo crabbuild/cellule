@@ -31,7 +31,8 @@
   per node per second) and attributed hot backlog to serial object
   publication ahead of a roughly 2 ms SQL worker. Plan 003 now targets that
   measured limiter. Uniform and skewed thresholds and the follower-enabled
-  lane remain unresolved.
+  lane remain unresolved. Plan 004 specifies the required networked follower
+  fixture and separate capacity evidence.
 
 ## Why this matters
 
@@ -191,14 +192,16 @@ measurements and a regression test for its corresponding invariant. Update
 
 ## Done criteria
 
-- [ ] Response-winning proof and later publication are separately measured.
-- [ ] A new scheduled workload covers hot, uniform, and skewed Cells without
+- [x] Response-winning proof and later publication are separately measured.
+- [x] A new scheduled workload covers hot, uniform, and skewed Cells without
       changing the existing mixed-reader qualification contract.
-- [ ] Three repeats per shape distinguish fully served from overloaded rates
+- [x] Three repeats per shape distinguish fully served from overloaded rates
       and retain raw readback, resource, and object-store evidence.
-- [ ] A single measured bottleneck has a follow-up implementation plan, or
+- [x] A single measured bottleneck has a follow-up implementation plan, or
       the report says precisely why the evidence is inconclusive.
-- [ ] Focused tests, parser tests, format, lint, boundaries, and docs checks pass.
+- [x] Focused tests, parser tests, format, lint, boundaries, and docs checks pass.
+- [ ] The follower-enabled lane runs separately with its own proof, response,
+      root-drain, and recovery evidence on the same scheduled shapes.
 
 ## STOP conditions
 

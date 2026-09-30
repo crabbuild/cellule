@@ -106,6 +106,9 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
     let incarnation = [86; 16];
     let cache_host = Host::default()
         .with_local_disk_budget(DiskBudget::new(64 * 1024 * 1024))
+        // Optional cache fills use try-acquire. Give this fixture its own
+        // admission slots so parallel tests cannot suppress the warm fill.
+        .with_job_slots(Arc::new(tokio::sync::Semaphore::new(4)))
         .with_directory_cache(cache_root.clone())
         .await
         .unwrap();
@@ -146,6 +149,7 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
     }));
     let cached_host = Host::default()
         .with_local_disk_budget(DiskBudget::new(64 * 1024 * 1024))
+        .with_job_slots(Arc::new(tokio::sync::Semaphore::new(4)))
         .with_directory_cache(cache_root)
         .await
         .unwrap();
