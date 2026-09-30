@@ -26,8 +26,12 @@
   integrity checks in CI run 36653277555 attempt 1, but host scheduling
   outliers at 4 actions/node/s made its saturation curves inconclusive. A
   same-revision rerun built but could not start because the bucket-init image
-  registry rate-limited the pull. A follower-enabled lane and a
-  measured-limiter follow-up remain.
+  registry rate-limited the pull. Final CI run 36655966439 passed three
+  repeats with the same hot threshold (24 fully served, 32 overloaded actions
+  per node per second) and attributed hot backlog to serial object
+  publication ahead of a roughly 2 ms SQL worker. Plan 003 now targets that
+  measured limiter. Uniform and skewed thresholds and the follower-enabled
+  lane remain unresolved.
 
 ## Why this matters
 

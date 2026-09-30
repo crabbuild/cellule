@@ -7,8 +7,8 @@ and process evidence outside the checkout.
 | Order | Plan | Priority | Effort | Status |
 | --- | --- | --- | --- | --- |
 | 1 | [Cut forwarded routing work and prove the capacity gain](001-forwarded-routing-and-capacity.md) | P1 | L | DONE: bounded adapter hint and three paired comparisons; product ingress follow-up is external |
-| 2 | [Measure the write-throughput limit](002-write-throughput-bottleneck.md) | P1 | M | IN PROGRESS: three object-proof measurement rounds; hosted-runner saturation remains inconclusive, follower lane pending |
-| 3 | [Reduce the hot Cell publication critical path](003-hot-cell-publication-critical-path.md) | P1 | M+ | TODO: controlled baseline and subphase attribution required before a code change |
+| 2 | [Measure the write-throughput limit](002-write-throughput-bottleneck.md) | P1 | M | IN PROGRESS: hot object-proof limiter measured; uniform/skewed stability and follower lane pending |
+| 3 | [Reduce the hot Cell publication critical path](003-hot-cell-publication-critical-path.md) | P1 | M+ | TODO: serial publication measured; controlled baseline and subphase attribution required before a code change |
 
 Status values: TODO, IN PROGRESS, DONE, BLOCKED (with reason), REJECTED (with
 reason). Update the row after executing the plan.

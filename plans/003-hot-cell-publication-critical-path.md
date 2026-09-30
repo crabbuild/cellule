@@ -13,8 +13,8 @@
   on the measured subphase.
 - **Risk:** LOW for finite timing observations, HIGH for publication changes.
 - **Depends on:** [Plan 002](002-write-throughput-bottleneck.md).
-- **Status:** TODO. The limiter is narrowed to serial publication, but the
-  current shared-runner capacity thresholds are inconclusive.
+- **Status:** TODO. Three repeats identify serial object publication as the
+  hot Cell limiter; the dominant root-preparation subphase remains unmeasured.
 
 [The capacity report](../crates/cellule-app/performance/2026-09-29-write-capacity.md)
 retains three raw object-proof repeats in each of two CI runs. In the finer
@@ -25,8 +25,14 @@ throttling. Provider PUT p95 was 6.7–7.5 ms, while capture p95 was under
 1 ms. A later instrumented run observed 59–67 ms actor-queue p95 in two
 hot overload windows while worker round-trip p95 was about 4 ms. Its
 fully-served thresholds varied sharply, including scheduler-late arrivals at
-only 4 actions/node/s. This supports examining the serialized publication
-token; it does **not** establish a safe code change or a stable maximum rate.
+only 4 actions/node/s. The final CI run 36655966439 found the same hot
+threshold in all three repeats: 24 actions/node/s fully served and 32
+overloaded. At overload, owner 0 published 62–65 roots/s at 15–16 ms mean
+publication time/root. Actor queue p95 rose to 142–160 ms while SQL worker
+p95 stayed near 2 ms. Root preparation p95 was 33–37 ms of 37–43 ms
+publication p95. The serialized publication path is the measured hot
+throughput limiter; the exact subphase to change is not yet established.
+Uniform and skewed thresholds still varied between repeats.
 
 ## Scope and invariants
 

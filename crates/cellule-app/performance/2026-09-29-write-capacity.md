@@ -144,6 +144,43 @@ and `d9abe2dc3ca698dda71e586da118bc8af0e7fdf2b97b982d963ff4946d108e18`.
 The downloaded artifact is under
 `$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36653277555`.
 
+## Final hot Cell attribution
+
+[CI run 36655966439](https://github.com/crabbuild/cellule/actions/runs/36655966439)
+passed three fresh-provider repeats on source snapshot
+`3d01ab9494f76cdf7cb249098ce1814e89f2b203` and binary SHA-256
+`fe847a82c53e456b1f71c32d9309eeb6a6e8e864372a183230db9bedf86eb842`.
+All acknowledged writes passed readback, all response proofs were Object,
+every window ended at zero root lag, and no node reported CPU throttling.
+
+| Shape | Fully served offered rate across repeats | Logical writes/s | First overloaded rate |
+| --- | --- | --- | --- |
+| One hot writable Cell | 24, 24, 24 actions/node/s | 71.96–71.99 | 32, 32, 32 actions/node/s |
+| Uniform writes | 24, 32, 32 actions/node/s | 71.96–95.92 | 32, 48, 48 actions/node/s |
+| Skewed, 20% writes | 96, 64, 96 actions/node/s | 38.40–57.59 | 128, 96, 128 actions/node/s |
+
+At hot overload, owner 0 published 62.28–65.10 roots/s. Mean publication
+time was 15.10–16.00 ms/root, with 11.64–11.69 provider requests per
+acknowledged write. Actor queue p95 climbed from 49–83 ms at the fully served
+point to 142–160 ms at overload, while SQL worker round-trip p95 was only
+2.03–2.28 ms at overload. Publication p95 was 37–43 ms, of which root
+preparation p95 was 33–37 ms. Supported hot action p95/p99 varied from
+112–198/175–222 ms; overloaded action p95/p99 was 288–322/324–435 ms.
+Owner `not_started` capacity refusals began at the 32 actions/node/s point.
+Together these observations identify serialized object publication as the
+hot Cell throughput limiter on this object-proof profile. They do not yet
+distinguish predecessor verification, directory work, immutable uploads, or
+compaction within preparation; [Plan 003](../../../plans/003-hot-cell-publication-critical-path.md)
+requires that split before code changes. Uniform and skewed thresholds varied
+between repeats, so this result is specific to the hot shape.
+
+The three `verification.json` SHA-256 digests are
+`40e4908a169013a80fe873f4aaf0d6f355872545a72212addb0d712281724e31`,
+`58740dbf1d5a57ed16b2138c011e2f694a4900b728967dee019b32a5eb187717`,
+and `7d379162a637ba97dd197a8bc85c9d3abebe584454f9d7f65a683c065fb289be`.
+The downloaded artifact is under
+`$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36655966439`.
+
 After preparing a fresh source/binary snapshot with the Compose qualification
 guide, run each repeat with a new state directory and Compose project:
 
