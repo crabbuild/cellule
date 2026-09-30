@@ -7,9 +7,19 @@ use super::*;
 
 pub(crate) struct LocalCellTransport {
     pub(crate) registry: Arc<Registry>,
-    pub(crate) handles: Arc<HashMap<CellId, CellHandle>>,
+    pub(crate) handles: Option<Arc<HashMap<CellId, CellHandle>>>,
     pub(crate) handle: CellHandle,
     pub(crate) telemetry: CellTelemetryHandle,
+}
+
+impl LocalCellTransport {
+    fn handle_for(&self, target: &CellTarget) -> Result<CellHandle> {
+        match &self.handles {
+            Some(handles) => local_handle(handles, target),
+            None if self.handle.cell_id() == target.cell_id() => Ok(self.handle.clone()),
+            None => Err(Error::Control("target Cell is not locally owned")),
+        }
+    }
 }
 
 impl CellTransport for LocalCellTransport {
@@ -17,9 +27,9 @@ impl CellTransport for LocalCellTransport {
         &self,
         target: CellTarget,
     ) -> Pin<Box<dyn Future<Output = Result<CellDescription>> + Send + 'static>> {
-        let handles = Arc::clone(&self.handles);
+        let handle = self.handle_for(&target);
         Box::pin(async move {
-            let handle = local_handle(&handles, &target)?;
+            let handle = handle?;
             validate_local_target(&handle, &target)?;
             Ok(local_description(&handle))
         })
@@ -30,10 +40,10 @@ impl CellTransport for LocalCellTransport {
         command: EncodedCommand,
     ) -> Pin<Box<dyn Future<Output = Result<StoredOutcome>> + Send + 'static>> {
         let registry = self.registry.clone();
-        let handles = Arc::clone(&self.handles);
+        let handle = self.handle_for(&command.target);
         let telemetry = self.telemetry.clone();
         Box::pin(async move {
-            let handle = local_handle(&handles, &command.target)?;
+            let handle = handle?;
             validate_local_target(&handle, &command.target)?;
             validate_expected(&handle, command.expected)?;
             if command.input.len() > command.input_limit as usize {
@@ -84,10 +94,10 @@ impl CellTransport for LocalCellTransport {
         query: EncodedQuery,
     ) -> Pin<Box<dyn Future<Output = Result<EncodedObservation>> + Send + 'static>> {
         let registry = self.registry.clone();
-        let handles = Arc::clone(&self.handles);
+        let handle = self.handle_for(&query.target);
         let telemetry = self.telemetry.clone();
         Box::pin(async move {
-            let handle = local_handle(&handles, &query.target)?;
+            let handle = handle?;
             validate_local_target(&handle, &query.target)?;
             validate_expected(&handle, query.expected)?;
             validate_minimum(query.expected, query.minimum)?;
@@ -148,9 +158,9 @@ impl CellTransport for LocalCellTransport {
         &self,
         resolve: EncodedResolve,
     ) -> Pin<Box<dyn Future<Output = Result<Resolution>> + Send + 'static>> {
-        let handles = Arc::clone(&self.handles);
+        let handle = self.handle_for(&resolve.target);
         Box::pin(async move {
-            let handle = local_handle(&handles, &resolve.target)?;
+            let handle = handle?;
             validate_local_target(&handle, &resolve.target)?;
             validate_expected(&handle, resolve.expected)?;
             handle

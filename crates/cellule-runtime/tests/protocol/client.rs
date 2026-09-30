@@ -432,6 +432,7 @@ struct Fixture {
     proof: CatalogProof,
     runtime: Option<CellRuntime>,
     session: SessionId,
+    node_lease: Option<cellule_runtime::node::lease::NodeLeaseGuard>,
     incarnation: IncarnationId,
     target: CellTarget,
     handle: Option<cellule_runtime::cell::actor::CellHandle>,
@@ -457,6 +458,14 @@ async fn fixture_with_limits(limits: Limits) -> Fixture {
 }
 
 async fn fixture_with_store(limits: Limits, store: Store) -> Fixture {
+    fixture_with_store_and_lease(limits, store, None).await
+}
+
+async fn fixture_with_store_and_lease(
+    limits: Limits,
+    store: Store,
+    node_lease: Option<cellule_runtime::node::lease::NodeLeaseGuard>,
+) -> Fixture {
     let registry = registry();
     let target = CellTarget::new(
         TenantId::from_bytes([1; 16]),
@@ -502,8 +511,19 @@ async fn fixture_with_store(limits: Limits, store: Store) -> Fixture {
         .await
         .unwrap();
     let directory = tempfile::TempDir::new().unwrap();
-    let runtime =
-        CellRuntime::new(SqlWorkerPool::new(1, 4).unwrap(), 4 * 1024 * 1024, session).unwrap();
+    let runtime = if let Some(lease) = &node_lease {
+        let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+            SqlWorkerPool::new(1, 4).unwrap(),
+            4 * 1024 * 1024,
+            session,
+            cellule_runtime::ltx::Host::default(),
+        )
+        .unwrap();
+        runtime.install_node_lease(lease.clone()).unwrap();
+        runtime
+    } else {
+        CellRuntime::new(SqlWorkerPool::new(1, 4).unwrap(), 4 * 1024 * 1024, session).unwrap()
+    };
     let handle = runtime
         .bootstrap(
             proof.clone(),
@@ -526,6 +546,7 @@ async fn fixture_with_store(limits: Limits, store: Store) -> Fixture {
         proof,
         runtime: Some(runtime),
         session,
+        node_lease,
         incarnation,
         target,
         handle: Some(handle),

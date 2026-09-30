@@ -86,7 +86,7 @@ consumes its recovery overlays before serving. See
 
 - **Request ledger.** The request ledger records the encoded outcome. Reusing the same request ID and operation digest returns that outcome; a changed digest is rejected. A timeout after dispatch is ambiguous. The caller resolves by identity instead of re-executing a possibly committed operation.
 - **Read policies.** Queries can require a minimum receipt. `ReadPolicy::CurrentOwner` preserves owner order. `ReadPolicy::Replica` returns only a snapshot that proves its actual position; it never silently falls back to the owner.
-- **Ingress-local replica reads.** A node that already admitted a snapshot answers a replica query without reading authority, policy, or membership, and without a peer hop. The snapshot still proves its position and current owner before it releases the result; only placement discovery is skipped. A local attempt that stalls is cancelled after a bounded budget so the read still reaches a selected peer, and a snapshot that is behind, fenced, or unavailable falls through to peer placement.
+- **Ingress-local replica reads.** Fresh policy and membership must select the local snapshot's node session. An eligible snapshot avoids a peer hop and still proves position and current owner before releasing the result. Local and remote attempts share the same five-second selection and query deadline.
 - **Coordination kernel.** The pure coordination kernel in [`src/coordination/mod.rs`](../src/coordination/mod.rs) chooses transitions without I/O. Actor adapters gather observations, call the kernel, then execute effects. This separation lets the simulator and TLA+ model replay the same decisions.
 
 <a id="actor-ownership"></a>

@@ -565,7 +565,8 @@ async fn a_failed_coalesced_root_keeps_every_covered_commit_recoverable() {
         Store::new(object_store),
     );
     let session = SessionId::from_bytes([81; 16]);
-    let leader = NodeId::from_bytes([82; 16]);
+    let leader = NodeId::from_bytes(*session.as_bytes());
+    let follower_session = SessionId::from_bytes([83; 16]);
     let follower = NodeId::from_bytes([83; 16]);
     let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
         SqlWorkerPool::new(1, 1).unwrap(),
@@ -577,7 +578,21 @@ async fn a_failed_coalesced_root_keeps_every_covered_commit_recoverable() {
     let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
     runtime.install_node_lease(lease.clone()).unwrap();
     let gate = DurabilityGate::new(session, leader, 1, [follower]).unwrap();
-    let transport: Arc<dyn NodeLogTransport> = Arc::new(TestNodeTransport::default());
+    let follower_directory = tempfile::tempdir().unwrap();
+    let follower_store = cellule_runtime::FollowerStore::open(
+        follower_directory.path().to_owned(),
+        Limits::default(),
+        DiskBudget::new(1 << 30),
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(
+        cellule_runtime::node::log_transport::LocalFollowerTransport::new(
+            follower,
+            follower_store.clone(),
+        ),
+    );
+    let responses = Arc::new(RecordingResponses::default());
+    runtime.install_telemetry(responses.clone()).unwrap();
     let shipper =
         NodeLogShipper::new(gate.clone(), Arc::clone(&transport), Limits::default()).unwrap();
     let authority = Arc::new(TestNodeAuthority::default());
@@ -589,13 +604,14 @@ async fn a_failed_coalesced_root_keeps_every_covered_commit_recoverable() {
                 gate,
                 shipper,
                 node_authority,
-                transport,
+                transport.clone(),
                 lease,
             )),
         )
         .unwrap();
     let handle = bootstrap_on(&runtime, &fixture, session).await;
-    pausing.arm();
+    // Let the first root upload, then hold its CAS while commits 2..4 queue.
+    pausing.arm_next_update();
 
     let first = tokio::time::timeout(
         std::time::Duration::from_secs(2),
@@ -643,7 +659,7 @@ async fn a_failed_coalesced_root_keeps_every_covered_commit_recoverable() {
         assert_eq!(outcome.commit_sequence(), u64::from(sequence) + 1);
     }
 
-    // Every later object write fails, so the coalesced root cannot publish.
+    // The paused first CAS succeeds; subsequent writes for the coalesced 2..4 range fail.
     pausing.fail_puts();
     pausing.release();
     // The publication path retries a storage failure until its fleet grace
@@ -676,10 +692,20 @@ async fn a_failed_coalesced_root_keeps_every_covered_commit_recoverable() {
         .root
         .as_ref()
         .map_or(0, |root| root.commit_sequence);
-    assert!(
-        sequence < 4,
-        "a failed coalesced root must not publish the commits it covered, root was {sequence}"
+    assert_eq!(
+        sequence, 1,
+        "the first root must publish before the coalesced range fails"
     );
+    assert!(
+        responses
+            .1
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|timing| { timing.commit_sequence == 4 && !timing.succeeded }),
+        "the failing publication must cover the queued 2..4 range"
+    );
+    assert!(follower_store.retained_bytes() > 0);
     // Object coverage never advances for the covered commits: their recoverable
     // proof is the follower log that already released them, and the runtime
     // reports the remainder as recovery work instead of a clean close.
@@ -692,6 +718,97 @@ async fn a_failed_coalesced_root_keeps_every_covered_commit_recoverable() {
             .any(|(_, covered)| *covered >= 4),
         "a failed coalesced root must not claim object coverage"
     );
+    // Recover from the actual fsynced follower suffix and prove all four recorded
+    // outcomes survive without executing any handler again.
+    pausing.allow_puts();
+    let successor = SessionId::from_bytes([84; 16]);
+    let fenced = fence_log_session(&fixture.layout, session, successor, follower_session, 1).await;
+    let recovery = cellule_runtime::node::log_recovery::NodeLogRecovery::from_fenced(
+        transport,
+        &fenced,
+        Limits::default(),
+    )
+    .unwrap();
+    let manifests = cellule_runtime::recovery::manifest::RecoveryManifestStore::new(
+        fixture.layout.clone(),
+        Limits::default(),
+    );
+    let coordinator =
+        cellule_runtime::node::log_recovery::RecoveryCoordinator::new(recovery, manifests.clone());
+    let catalog = cellule_runtime::cell::catalog::CellCatalog::new(
+        fixture.layout.clone(),
+        fixture.target.tenant(),
+    );
+    let control = CellAuthority::new(fixture.layout.clone());
+    let inventory =
+        cellule_runtime::node::log_recovery::recoverable_cells(&catalog, &control, session, 10)
+            .await
+            .unwrap();
+    let directory = cellule_runtime::node::NodeDirectory::new(
+        fixture.layout.clone(),
+        Digest::from_bytes([90; 32]),
+        Digest::from_bytes([91; 32]),
+        Digest::from_bytes([92; 32]),
+    );
+    let completed = coordinator
+        .recover_and_seal(&directory, fenced, inventory, 10_002)
+        .await
+        .unwrap();
+    let attached = completed.controls.into_iter().next().unwrap();
+    let successor_runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        2 * 1024 * 1024,
+        successor,
+    )
+    .unwrap();
+    let restored = successor_runtime
+        .takeover_restored(
+            catalog
+                .lookup(fixture.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap(),
+            fixture.replica.clone(),
+            control,
+            attached,
+            completed.takeover,
+            manifests,
+            fixture
+                ._directory
+                .path()
+                .join("coalesced-failure-successor.sqlite"),
+            Owner {
+                session: successor,
+                endpoint: "https://successor.internal".into(),
+            },
+        )
+        .await
+        .unwrap();
+    for sequence in 0_u8..4 {
+        let outcome = restored
+            .execute(
+                mutation_identity_window(100 + sequence, 10, 10_000),
+                Digest::from_bytes([101 + sequence; 32]),
+                30,
+                1_024,
+                1_024,
+                |_| panic!("a recovered acknowledged command must not execute again"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.commit_sequence(), u64::from(sequence) + 1);
+    }
+    let value = restored
+        .query(64, 64, |connection| {
+            let value = connection
+                .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))?;
+            Ok(value.to_be_bytes().to_vec())
+        })
+        .await
+        .unwrap();
+    assert_eq!(i64::from_be_bytes(value.try_into().unwrap()), 4);
+    restored.drain().await.unwrap();
+    successor_runtime.shutdown().await.unwrap();
 }
 
 /// One published root must cover every commit that queued behind it.

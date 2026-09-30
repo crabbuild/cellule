@@ -183,6 +183,7 @@ async fn owner_lookup_fixture() -> (PeerHttpRoundTrip, CellTarget, Arc<CountingO
         Digest::from_bytes([23; 32]),
         SigningKey::from_bytes(&[27; 32]),
         Arc::new(TestClients),
+        Arc::new(InMemory::new()),
     )
     .await
 }
@@ -193,11 +194,12 @@ async fn owner_lookup_fixture_with_endpoint(
     fleet: Digest,
     signing_key: SigningKey,
     clients: Arc<dyn PeerHttpClientFactory>,
+    backend: Arc<dyn object_store::ObjectStore>,
 ) -> (PeerHttpRoundTrip, CellTarget, Arc<CountingObjectStore>) {
     let application = ApplicationId::from_bytes([21; 16]);
     let tenant = TenantId::from_bytes([22; 16]);
     let digest = Digest::from_bytes([23; 32]);
-    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let counted = Arc::new(CountingObjectStore::new(backend));
     let layout = CellStorageLayout::new(
         Store::new(counted.clone()),
         Path::from("owner-lookup-performance"),
@@ -257,6 +259,51 @@ async fn owner_lookup_fixture_with_endpoint(
         SessionId::from_bytes([29; 16]),
     );
     (transport, target, counted)
+}
+
+#[tokio::test]
+async fn concurrent_cold_routes_share_one_authority_and_enrollment_lookup() {
+    use object_store::throttle::{ThrottleConfig, ThrottledStore};
+    let backend = ThrottledStore::new(
+        InMemory::new(),
+        ThrottleConfig {
+            wait_get_per_call: Duration::from_millis(10),
+            ..ThrottleConfig::default()
+        },
+    );
+    let (transport, target, counted) = owner_lookup_fixture_with_endpoint(
+        "https://owner.example:443".into(),
+        Digest::from_bytes([23; 32]),
+        Digest::from_bytes([23; 32]),
+        SigningKey::from_bytes(&[27; 32]),
+        Arc::new(TestClients),
+        Arc::new(backend),
+    )
+    .await;
+    let table = transport.routes();
+    for _ in 0..2 {
+        counted.reset();
+        let routes = futures_util::future::join_all((0..16).map(|_| table.route(&target))).await;
+        assert!(
+            routes
+                .into_iter()
+                .all(|route| matches!(route.unwrap(), RouteDecision::Remote(_)))
+        );
+        assert_eq!(counted.counts().body_requests(), 2);
+        table.invalidate(&target, SessionId::from_bytes([26; 16]));
+    }
+    // Cancelling a provider read releases the per-Cell gate immediately.
+    counted.reset();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(5), table.route(&target))
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        table.route(&target).await.unwrap(),
+        RouteDecision::Remote(_)
+    ));
+    assert_eq!(counted.counts().body_requests(), 3);
 }
 
 #[tokio::test]
@@ -880,7 +927,7 @@ fn peer_openssl() -> Option<String> {
 ///
 /// The leaf is valid for localhost client and server authentication under the
 /// generated CA, which is the minimum the loader verifies before use.
-fn generate_peer_identity(label: &str) -> Option<(std::path::PathBuf, LoadedPeerTls)> {
+pub(super) fn generate_peer_identity(label: &str) -> Option<(std::path::PathBuf, LoadedPeerTls)> {
     // macOS ships LibreSSL as `openssl`, which cannot create Ed25519 keys. Try
     // the usual OpenSSL 3 locations before reporting that the fixture is
     // unavailable, so the suite still runs wherever one is installed.
@@ -1054,6 +1101,7 @@ async fn owner_lookup_performance() {
         tls.fleet(),
         tls.signing_key().clone(),
         Arc::new(tls.client_identity()),
+        Arc::new(InMemory::new()),
     )
     .await;
     let response = cellule_runtime::peer::encode_peer_reply(&peer_wire::PeerReply {

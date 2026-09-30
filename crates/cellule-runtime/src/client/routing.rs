@@ -98,10 +98,10 @@ impl ReplicaReadRouter {
 
     /// Executes a typed read on a replica already admitted by this node.
     ///
-    /// An ingress that holds an admitted snapshot answers without reading
-    /// authority, policy, or membership, and without a peer hop. The snapshot
-    /// still proves its position and current owner before it releases a result,
-    /// so this shortcut removes placement reads only — never a release gate.
+    /// Fresh placement must still select this snapshot's node session. An
+    /// admitted snapshot avoids a peer hop; policy withdrawal and membership
+    /// changes apply through the same selection used by remote queries. The
+    /// snapshot separately proves its position and current owner at release.
     ///
     /// Returns `None` when the node holds no usable snapshot, when the snapshot
     /// is behind, fenced, or unavailable, or when the local attempt outlives
@@ -141,7 +141,14 @@ impl ReplicaReadRouter {
         let Ok(replica) = resolver.resolve(target.clone()).await else {
             return Ok(None);
         };
-        let expected = replica.description();
+        let (expected, selected) = self.selected(target).await?;
+        if replica.description() != expected
+            || !selected
+                .iter()
+                .any(|node| node.session() == replica.session())
+        {
+            return Ok(None);
+        }
         let operation = peer.registry().query_contract::<Q>(target.namespace())?;
         super::validate_description(peer.registry(), Q::MODULE, expected, operation)?;
         super::local::validate_minimum(expected, minimum)?;

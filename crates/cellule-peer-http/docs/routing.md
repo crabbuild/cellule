@@ -12,13 +12,14 @@ hint is populated only after exact control and signed node-record validation.
 | Fresh (within 15 s and one second inside the signed lease) | Resolve the endpoint with no object read. |
 | Past its refresh window but inside the lease | Use the hint and run one background refresh per Cell. |
 | Refresh landing on the same owner session | Reuse the enrolled node record; read control only. |
-| Cold route, or any route after a refusal | Re-read control and the signed node record. A retired session fails closed. |
+| Cold route, or any route after a refusal | Re-read control and the signed node record. Concurrent misses share a successful lookup per Cell; a retired session fails closed. |
 | Proven not-started refusal | Drop the attempted session, leave a short tombstone, and refresh once inside the original deadline. |
 
 An invalid or lost response remains an unknown outcome and is never resent
 blindly. The receiver still authorizes the peer and fences stale owners, and a
-receiver that already owns the Cell resolves it from its live actor map without
-reading catalog or control.
+receiver with a live node-session guard resolves a resident Cell from actor
+admission without reading catalog or control. An object-only runtime checks
+fresh authority because it has no session guard.
 
 | Response | Meaning |
 | --- | --- |
@@ -145,18 +146,29 @@ throughput attribution is tracked separately by the entity workload and the
 
 ## Client-side reuse
 
-`cellule-runtime` keeps two bounded, advisory caches per client capability:
+`cellule-runtime` reuses lease-fenced actor admission and a bounded description cache:
 
 | Reuse | Bound | What it removes | What still fences it |
 | --- | --- | --- | --- |
-| Local route (`CellId` → catalog proof + control) | 2 s, 4,096 Cells | The catalog and authority reads a repeated local invocation used to pay | The actor revalidates the expected description on every dispatch; a release or takeover drops the route |
+| Local actor capability | 4,096 Cells, live node lease and actor admission | Catalog and authority reads, periodic cache refreshes, and repeated actor lookups | Session fencing and closure of the exact admission token stop reuse; unleased runtimes read fresh authority |
 | Observed description (`CellId` → description) | 30 s, 4,096 Cells | The Describe hop of every routed invocation | Every receiver validates the shipped description; a fenced refusal drops the entry |
 
-A receiver can also resolve from its live actor map with
-`ResidentPeerCellResolver`, which reads no catalog or control on a resident hit
-and falls back to the storage path on a miss.
+A receiver can also use `ResidentPeerCellResolver`: a resident hit under a live
+node lease reads no catalog or control. Unleased runtimes and misses use fresh
+storage observations. Cached descriptions are invalidated on local fencing or
+the corresponding decoded peer refusal; ambiguous commands are reconciled.
+Drain, migration and handoff close the cached capability's admission token.
+The next lookup can resolve a replacement actor; every SQL dispatch still checks
+its token and node lease. Single-Cell local and peer dispatch avoid allocating a
+temporary handle map. A nonowner forwarding runtime checks local presence once
+and skips the additional resident lookup.
 
-Measured locally on the `perf/routing-tier1` branch, using the counting in-memory
+Cold owner lookups use bounded per-Cell gates shared by the routing table and
+HTTP adapter. After waiting, a caller checks the signed lease of the populated
+hint. Cancellation releases its gate; failed lookups retain their original
+errors. Local and unowned decisions still require fresh control observations.
+
+Historical measurements from PR #27's `perf/routing-tier1` branch, using the counting in-memory
 provider plus a 2 ms per-GET throttle that matches the small-object GET p95 in
 the write-capacity run:
 
@@ -167,6 +179,98 @@ the write-capacity run:
 | Forwarded command, first | 2 peer hops (Describe, then dispatch) | — |
 | Forwarded command, repeated | 1 peer hop | — |
 
-Run `cargo test -p cellule-runtime --features test-support --test protocol
-client::routing -- --include-ignored --nocapture` to reproduce. The counts are
-deterministic; the latency depends on the throttle model, not on a provider.
+Current routing regressions run with `cargo test -p cellule-runtime --features
+test-support --test protocol client::routing -- --include-ignored --nocapture`.
+The ignored throttle model compares unleased authority reads with leased
+resident routing; it does not reproduce the historical revision's timings.
+
+## RustFS routing measurement
+
+The ignored `performance_tests::rustfs_owner_routing_latency_throughput` test
+uses an explicit RustFS endpoint, bucket, and unique prefix. It measures local
+and signed forwarded queries and commands at concurrency 1 and 16 through an
+empty ingress runtime's local-or-peer client and a
+generated pinned mTLS endpoint and the canonical receiver dispatcher. Repeated
+query bursts cross the former two-second route-cache lifetime. Separate local
+lanes measure the first request through a fresh client at concurrency 1 and 16.
+Every command
+checks its receipt, the final root is authenticated at origin, and a separate
+runtime reconstructs that root and checks the counter value.
+Forced cold owner-hint bursts count duplicate discovery reads. Adjacent
+direct-handle controls alternate order for both reads and durable writes;
+publication telemetry separates immutable preparation and authority CAS. A
+second receiver using uncached resident resolution supplies an adjacent
+forwarded-query control on the same runtime and mTLS connection.
+
+Set `CELLULE_TEST_ENDPOINT`, `CELLULE_TEST_BUCKET`, `CELLULE_TEST_PREFIX`,
+`AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` to an isolated local fixture.
+Set `CELLULE_PERF_EVIDENCE` to an existing external directory to retain samples.
+Then run:
+
+```sh
+CARGO_TARGET_DIR="$HOME/Workspace/crabbuild-target/<checkout>" \
+  cargo test --release -p cellule-peer-http --locked \
+  performance_tests::rustfs_owner_routing_latency_throughput \
+  -- --exact --ignored --nocapture
+```
+
+The burst throughput includes its deliberate pacing. Other lanes report
+completed calls per elapsed workload second. All measurements include the
+fixture's owner renewals and signed membership heartbeats that occur during
+active measurement windows; burst sleep intervals are excluded from the
+counters and included in elapsed time. Use identical
+workloads and alternating baseline/candidate runs before attributing changes.
+
+### Local RustFS results, 2026-09-30
+
+Three release runs per version alternated baseline/candidate, candidate/baseline,
+baseline/candidate against the same pinned RustFS image, with its data on a
+Colima ext4 volume. Baseline was merged `70bd25f`; both versions used the
+identical measurement harness with 4,096 queries per lane and 128 commands per
+write lane. Each run reconstructed its final root and verified all 768
+acknowledged mutations, including the paired write control (4,608 in total).
+The owner used a published signed advertisement, a live node lease, and lease
+renewals. The forwarding ingress was an empty object-only runtime; a separate
+regression covers Required-node forwarding without the redundant resident probe.
+The table reports medians of three runs, not production SLOs.
+
+| Query workload | Requests/s, baseline → candidate | p50 ms, baseline → candidate | Provider GETs |
+| --- | ---: | ---: | ---: |
+| Fresh local client, concurrency 1 | 248 → 6,405 | 3.533 → 0.121 | 12,288 → 0 per 4,096 queries |
+| Fresh local client, concurrency 16 | 1,279 → 11,386 | 9.477 → 0.713 | 12,288 → 0 per 4,096 queries |
+| Warm local, concurrency 1 | 6,654 → 9,231 | 0.104 → 0.080 | 3 → 0 per 4,096 queries |
+| Warm local, concurrency 16 | 9,398 → 14,833 | 0.698 → 0.524 | 0 → 0 per 4,096 queries |
+| Local bursts after two-second expiry, concurrency 16 | Paced | 9.635 → 1.062 | 192 → 0 per 64 queries |
+| Forced cold forwarded routes, concurrency 16 | 920 → 1,529 | 14.878 → 8.302 | 128 → 8 per 64 queries |
+| Warm forwarded, concurrency 1 | 1,999 → 2,305 | 0.430 → 0.384 | 0 → 0 per 4,096 queries |
+| Warm forwarded, concurrency 16 | 2,713 → 2,699 | 3.442 → 3.394 | 0 → 0 per 4,096 queries |
+
+Cold forwarded bursts share two discovery GETs among 16 callers. Queries then
+use one peer hop each. The local paired routed/direct latency ratio fell from
+1.295 to 1.036; the forwarded cached/uncached receiver ratio was 1.005 and 0.999.
+This control shows no material receiver-cache overhead over the peer connection.
+Earlier matched runs had lower candidate warm-forwarded throughput; their
+samples are retained. These shared-workstation runs do not establish a general
+warm-forwarded throughput win.
+
+| Durable command workload | Commands/s, baseline → candidate |
+| --- | ---: |
+| Local, concurrency 1 | 39.434 → 41.985 |
+| Local, concurrency 16 | 39.114 → 39.878 |
+| Forwarded, concurrency 1 | 39.653 → 34.647 |
+| Forwarded, concurrency 16 | 34.140 → 35.246 |
+
+The paired routed/direct durable-write ratio was 1.004 and 0.988. These results
+do not establish a write-throughput gain; immutable preparation and authority
+publication dominate. A description expiry can add a Describe hop; command
+phase counters also include the concluding readback. The fixture verifies
+mTLS, envelope signatures and static application authorization, but does not
+qualify production caller enrollment, a remote network, or a production fleet.
+
+Raw samples, run logs, executable digests, matched source manifests and the
+isolated verification logs are retained outside the repository under
+`$HOME/Workspace/crabbuild-target/cellule-harden-routing-evidence-5ca5/pr-qualification`.
+To reproduce the comparison, copy the test module, test registration and its
+only additional dev dependencies (`blake3`, `tempfile`) into the baseline
+snapshot; keep production source at `70bd25f`, use identical command settings,
+and alternate three baseline and three candidate runs against the same fixture.

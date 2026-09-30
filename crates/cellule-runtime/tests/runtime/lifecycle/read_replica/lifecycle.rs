@@ -4,6 +4,73 @@ use super::*;
 
 pub(super) struct ReadLogicalTime;
 
+#[tokio::test(flavor = "multi_thread")]
+async fn replica_rejects_session_expiry_while_release_reads_are_stalled() {
+    let store = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+    let fixture = fixture_with_limits_and_store(
+        b"replica-release-lease-expiry",
+        Limits::default(),
+        Store::new(store.clone()),
+    );
+    let owner = SessionId::from_bytes([44; 16]);
+    let runtime = CellRuntime::new(SqlWorkerPool::new(1, 1).unwrap(), 8 << 20, owner).unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, owner).await;
+    let registry = compiled_reader_registry();
+    let directory = owner_directory_for(&fixture, owner, &registry, 3_000).await;
+    let expires = directory
+        .load(owner, now_ms())
+        .await
+        .unwrap()
+        .unwrap()
+        .advertisement()
+        .expires_at_ms();
+    let reader_runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 512).unwrap(),
+        8 << 20,
+        SessionId::from_bytes([45; 16]),
+    )
+    .unwrap();
+    let reader = CellReadReplica::open(
+        reader_runtime.clone(),
+        registry,
+        CellAuthority::new(fixture.layout.clone()),
+        directory,
+        fixture.replica.clone(),
+        fixture.target.clone(),
+        &fixture._directory.path().join("expiry-reader.sqlite"),
+    )
+    .await
+    .unwrap();
+    store.arm_gets();
+    let pending_reader = reader.clone();
+    let pending = tokio::spawn(async move { pending_reader.query::<ReadCounter>(None, 0).await });
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        store.wait_until_get_blocked(),
+    )
+    .await
+    .unwrap();
+    let remaining = expires - now_ms();
+    if remaining > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(remaining as u64 + 20)).await;
+    }
+    store.release_gets();
+    let result = pending.await.unwrap();
+    reader.close();
+    drop(reader);
+    reader_runtime.shutdown().await.unwrap();
+    handle.drain().await.unwrap();
+    runtime.shutdown().await.unwrap();
+    assert!(
+        remaining > 0,
+        "the release reads must start before lease expiry"
+    );
+    assert!(
+        matches!(result, Err(cellule_runtime::Error::Fenced)),
+        "an expired owner session released a replica result: {result:?}"
+    );
+}
+
 impl Query for ReadLogicalTime {
     const MODULE: &'static str = MODULE;
     const ID: u32 = 2;

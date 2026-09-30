@@ -280,6 +280,7 @@ name = "cellule-peer-http"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "blake3",
  "cellule-runtime",
  "cellule-store",
  "ed25519-dalek",
@@ -290,6 +291,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "sha2",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-rustls",

@@ -392,6 +392,15 @@ async fn owner_directory(
     session: SessionId,
     registry: &Registry,
 ) -> NodeDirectory {
+    owner_directory_for(fixture, session, registry, 15_000).await
+}
+
+async fn owner_directory_for(
+    fixture: &Fixture,
+    session: SessionId,
+    registry: &Registry,
+    lifetime_ms: i64,
+) -> NodeDirectory {
     let fleet = Digest::from_bytes([9; 32]);
     let image = Digest::from_bytes([10; 32]);
     let release = registry.release_digest();
@@ -410,7 +419,7 @@ async fn owner_directory(
                 &ed25519_dalek::SigningKey::from_bytes(&[13; 32]),
                 1,
                 now,
-                now + 15_000,
+                now + lifetime_ms,
                 registry.module_digests(),
                 vec![1],
                 NodeFailureDomain::default(),
@@ -664,8 +673,8 @@ async fn exercise_replica_read(fixture: &Fixture) {
     );
     assert_eq!(
         control_reads.0.load(Ordering::Relaxed),
-        0,
-        "a locally admitted snapshot must not re-resolve placement"
+        1,
+        "a locally admitted snapshot must observe current placement"
     );
     // A local resolver that never answers is abandoned after a bounded
     // attempt instead of hanging the read. The only selected reader here is
@@ -674,7 +683,7 @@ async fn exercise_replica_read(fixture: &Fixture) {
     let cancelled = Arc::new(AtomicUsize::new(0));
     let stalled_client = owner_client
         .with_read_replicas(
-            stalled_router,
+            stalled_router.clone(),
             peer_client.clone(),
             Some((
                 reader_node.session(),
@@ -763,6 +772,31 @@ async fn exercise_replica_read(fixture: &Fixture) {
         ))
     ));
     let withdrawn_policy = policy.update(&selected_policy, 0).await.unwrap();
+    assert!(
+        stalled_router
+            .query_local::<ReadCounter>(
+                &peer_client,
+                &ReplicaResolver(reader.clone()),
+                &fixture.target,
+                None,
+                &0,
+            )
+            .await
+            .unwrap()
+            .is_none(),
+        "the optional local route must not return a withdrawn snapshot"
+    );
+    assert!(
+        matches!(
+            local_client
+                .query::<ReadCounter>(&fixture.target, None, 0)
+                .await,
+            Err(InvocationError::NotStarted(
+                cellule_runtime::Error::ReplicaUnavailable
+            ))
+        ),
+        "locally admitted replica must honor withdrawal of reader policy"
+    );
     assert!(matches!(
         replica_client
             .query::<ReadCounter>(&fixture.target, None, 0)

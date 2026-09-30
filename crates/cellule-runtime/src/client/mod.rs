@@ -724,11 +724,10 @@ impl CellClient {
         handle: CellHandle,
         telemetry: CellTelemetryHandle,
     ) -> Self {
-        let primary = handle.clone();
         let transport = Arc::new(LocalCellTransport {
             registry: registry.clone(),
-            handles: Arc::new(HashMap::from([(handle.cell_id(), handle)])),
-            handle: primary,
+            handles: None,
+            handle,
             telemetry,
         });
         Self::new(registry, transport)
@@ -771,7 +770,7 @@ impl CellClient {
             registry.clone(),
             Arc::new(LocalCellTransport {
                 registry,
-                handles: Arc::new(local),
+                handles: Some(Arc::new(local)),
                 handle: primary,
                 telemetry,
             }),
@@ -780,8 +779,9 @@ impl CellClient {
 
     /// Routes to any Cell currently owned by this local runtime.
     ///
-    /// The catalog and authority are checked for each invocation. This does
-    /// not acquire an idle Cell or forward to another node; callers must
+    /// A resident actor under a live node lease supplies the route without
+    /// metadata reads. Other routes check fresh catalog and authority. This
+    /// does not acquire an idle Cell or forward to another node; callers must
     /// arrange ownership before sending an operation.
     #[must_use]
     pub fn local_runtime(
@@ -795,7 +795,8 @@ impl CellClient {
 
     /// Routes a target to its current local owner or an authenticated peer.
     ///
-    /// A local actor hit rechecks catalog and authority state. A local miss
+    /// A lease-fenced resident actor supplies a local route without metadata.
+    /// Unleased local actors check fresh catalog and authority. A local miss
     /// delegates without those reads; the peer round trip resolves the remote
     /// owner and verifies enrollment. This does not acquire an idle Cell.
     #[must_use]
@@ -807,8 +808,9 @@ impl CellClient {
         principal: crate::peer::PeerPrincipal,
         round_trip: Arc<dyn crate::peer::PeerRoundTrip>,
     ) -> Self {
-        Self::peer(registry, signer, principal, round_trip)
-            .with_local_resolver(Arc::new(RuntimeLocalResolver::new(runtime, layout, true)))
+        Self::peer(Arc::clone(&registry), signer, principal, round_trip).with_local_resolver(
+            Arc::new(RuntimeLocalResolver::new(registry, runtime, layout, true)),
+        )
     }
 
     /// Resolves a local owner before delegating to this client's transport.
@@ -1025,22 +1027,6 @@ impl CellClient {
                 .local
                 .as_ref()
                 .map(|(session, resolver)| (*session, resolver.as_ref()));
-            // A snapshot this node already admitted answers without placement
-            // reads or a peer hop. Its release gate still proves the snapshot's
-            // position and current owner, so only discovery is skipped.
-            if let Some((_, resolver)) = local
-                && let Some(observed) = Box::pin(replicas.router.query_local::<Q>(
-                    &replicas.peer,
-                    resolver,
-                    target,
-                    minimum,
-                    &input,
-                ))
-                .await
-                .map_err(InvocationError::NotStarted)?
-            {
-                return Ok(observed);
-            }
             // Placement and replica admission carry large I/O futures. Keep
             // that optional state off every caller's owner-query stack frame.
             return Box::pin(replicas.router.query::<Q>(
@@ -1177,12 +1163,13 @@ impl CellClient {
 
     /// Drops a cached description after the owner refused the exact one shipped.
     ///
-    /// A fenced refusal means the live contract no longer matches the cached
-    /// description, so the next call must read a fresh one. Other failures keep
+    /// Local fencing and the peer's decoded unavailable refusal invalidate the
+    /// observation, so the next call reads a fresh description. This never
+    /// replays the refused command or an ambiguous outcome. Other failures keep
     /// the entry: they describe capacity, transport, or business outcomes
     /// rather than a changed Cell contract.
     fn invalidate_description(&self, cell: CellId, error: &Error) {
-        if matches!(error, Error::Fenced) {
+        if matches!(error, Error::Fenced | Error::CellNotActive) {
             self.descriptions.invalidate(cell);
         }
     }

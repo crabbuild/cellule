@@ -25,6 +25,8 @@ url = "2"
 x509-cert = "0.2.5"
 
 [dev-dependencies]
+blake3.workspace = true
+tempfile.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "tokio"] }
 cellule-store = { workspace = true, features = ["test-support"] }
 object_store.workspace = true

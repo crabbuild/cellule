@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Instant};
+use std::{future::Future, pin::Pin, sync::Arc, time::Instant};
 
 use futures_util::future::BoxFuture;
 use prost::Message;
@@ -219,7 +219,7 @@ impl PeerDispatcher {
         }
         let transport = LocalCellTransport {
             registry: Arc::clone(&self.registry),
-            handles: Arc::new(HashMap::from([(handle.cell_id(), handle.clone())])),
+            handles: None,
             handle,
             telemetry: self.telemetry.clone(),
         };

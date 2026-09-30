@@ -20,6 +20,7 @@ mod acquire;
 mod admission;
 mod lifecycle;
 mod requests;
+pub(crate) mod routes;
 mod runtime;
 mod state;
 mod task;
@@ -363,6 +364,23 @@ impl CellRuntime {
     /// Returns the node telemetry sink this runtime reports through.
     pub(crate) fn telemetry(&self) -> &crate::fleet::telemetry::CellTelemetryHandle {
         &self.inner.telemetry
+    }
+
+    /// Resolves from actor admission only when a node-session lease fences this runtime.
+    ///
+    /// An object-only runtime has no session guard: its routing adapter must
+    /// read fresh authority instead of treating the actor map as ownership.
+    pub(crate) async fn leased_resident_handle(
+        &self,
+        target: &CellTarget,
+        role: CatalogRole,
+    ) -> crate::Result<Option<CellHandle>> {
+        if matches!(self.inner.node_lease.as_ref(), RuntimeNodeLease::ObjectOnly) {
+            return Ok(None);
+        }
+        let handle = self.resident_handle(target, role).await?;
+        self.ensure_running()?;
+        Ok(handle)
     }
 
     /// Resolves a verified resident owner without reading catalog or authority objects.

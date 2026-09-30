@@ -13,11 +13,12 @@ use crate::registry::Registry;
 use crate::{Error, Result};
 
 use super::PeerCellResolver;
+use crate::cell::actor::routes::LeasedResidentRoutes;
 
 /// Resolves an inbound peer target from the live actor map before storage.
 ///
-/// A resident hit reads no catalog or authority object, which removes the
-/// per-hop metadata reads a forwarded invocation used to pay on the receiver.
+/// A resident hit under a live node lease reads no catalog or authority object.
+/// Object-only runtimes have no session fence and always check fresh authority.
 /// A miss falls back to the same catalog and authority reads the storage path
 /// always performed, so wiring this resolver changes no execution contract:
 /// the dispatcher still rechecks the target, and the actor still validates the
@@ -27,6 +28,7 @@ pub struct ResidentPeerCellResolver {
     runtime: CellRuntime,
     layout: CellStorageLayout,
     registry: Arc<Registry>,
+    routes: LeasedResidentRoutes,
 }
 
 impl ResidentPeerCellResolver {
@@ -34,6 +36,7 @@ impl ResidentPeerCellResolver {
     #[must_use]
     pub fn new(runtime: CellRuntime, layout: CellStorageLayout, registry: Arc<Registry>) -> Self {
         Self {
+            routes: LeasedResidentRoutes::new(runtime.clone()),
             runtime,
             layout,
             registry,
@@ -55,17 +58,17 @@ impl PeerCellResolver for ResidentPeerCellResolver {
                 .namespace_contract(target.namespace())
                 .map(|(_, descriptor)| descriptor.role)
                 .ok_or(Error::Peer("peer target namespace is not registered"))?;
-            if let Some(handle) = resolver.runtime.resident_handle(&target, role).await? {
+            if let Some(handle) = resolver.routes.resolve(&target, role).await? {
                 return Ok(handle);
             }
-            let catalog = CellCatalog::new(resolver.layout.clone(), target.tenant())
-                .lookup(target.cell_id())
-                .await?
-                .ok_or(Error::Control("target Cell is not cataloged"))?;
-            let control = CellAuthority::new(resolver.layout.clone())
-                .load(target.cell_id())
-                .await?
-                .ok_or(Error::Control("target Cell has no authority record"))?;
+            let catalog = CellCatalog::new(resolver.layout.clone(), target.tenant());
+            let authority = CellAuthority::new(resolver.layout.clone());
+            let (catalog, control) = tokio::join!(
+                catalog.lookup(target.cell_id()),
+                authority.load(target.cell_id())
+            );
+            let catalog = catalog?.ok_or(Error::Control("target Cell is not cataloged"))?;
+            let control = control?.ok_or(Error::Control("target Cell has no authority record"))?;
             resolver
                 .runtime
                 .local_handle(catalog, &control)

@@ -62,6 +62,10 @@ fn permille(used: u64, limit: u64) -> crate::Result<u16> {
 }
 
 impl CellRuntime {
+    pub(crate) fn session(&self) -> SessionId {
+        self.inner.session
+    }
+
     /// Starts one dispatcher on the current Tokio runtime.
     pub fn new(
         pool: SqlWorkerPool,

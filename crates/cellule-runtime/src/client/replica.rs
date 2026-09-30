@@ -14,6 +14,7 @@ use crate::cell::actor::CellRuntime;
 use crate::control::authority::CellAuthority;
 use crate::control::{Control, ControlState, Owner};
 use crate::fleet::resource::ResourceReservation;
+use crate::identity::SessionId;
 use crate::node::NodeDirectory;
 
 const QUERY_DEADLINE: Duration = Duration::from_secs(5);
@@ -46,6 +47,10 @@ struct ReplicaSnapshot {
 }
 
 impl CellReadReplica {
+    pub(crate) fn session(&self) -> SessionId {
+        self.runtime.session()
+    }
+
     pub(crate) fn description(&self) -> CellDescription {
         self.expected
     }
@@ -354,10 +359,17 @@ impl CellReadReplica {
         let now_ms = unix_time_ms()?;
         let (current, live) = tokio::try_join!(
             self.authority.load(self.expected.cell),
-            self.directory.is_live(snapshot.owner.session, now_ms)
+            self.directory.load_if_live(snapshot.owner.session, now_ms)
         )?;
         let current = current.ok_or(Error::Fenced)?;
-        if !self.same_owner_and_code(current.value(), snapshot) || !live {
+        // Either provider read may stall beyond the observed lease. Admission
+        // and expiry must still hold when the result is actually released.
+        let release_ms = unix_time_ms()?;
+        let live = live.is_some_and(|node| node.advertisement().expires_at_ms() > release_ms);
+        if self.query_gate.is_closed()
+            || !self.same_owner_and_code(current.value(), snapshot)
+            || !live
+        {
             return Err(Error::Fenced);
         }
         Ok(())

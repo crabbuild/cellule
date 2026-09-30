@@ -8,7 +8,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -94,6 +94,7 @@ impl PeerHttpRoundTrip {
                 owners: Mutex::new(HashMap::new()),
                 sessions: Mutex::new(HashMap::new()),
                 refreshing: Mutex::new(HashSet::new()),
+                lookups: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -228,12 +229,7 @@ impl PeerHttpRoundTrip {
     async fn load_owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
         match self
             .hints
-            .lookup_owner(
-                self.scope.as_ref(),
-                self.session,
-                target,
-                SessionReuse::Verify,
-            )
+            .lookup_uncached(self.scope.as_ref(), self.session, target)
             .await?
         {
             OwnerLookup::Remote(peer, _) => Ok(peer),
@@ -435,6 +431,7 @@ struct OwnerHints {
     owners: Mutex<HashMap<CellId, CachedOwner>>,
     sessions: Mutex<HashMap<SessionId, CachedSession>>,
     refreshing: Mutex<HashSet<CellId>>,
+    lookups: Mutex<HashMap<CellId, Weak<tokio::sync::Mutex<()>>>>,
 }
 
 /// A Cell owner hint, its lease bound, and whether it wants a refresh.
@@ -566,12 +563,7 @@ impl CellRouteTable {
         }
         match self
             .hints
-            .lookup_owner(
-                self.scope.as_ref(),
-                self.session,
-                target,
-                SessionReuse::Verify,
-            )
+            .lookup_uncached(self.scope.as_ref(), self.session, target)
             .await?
         {
             OwnerLookup::Local => Ok(RouteDecision::Local),
@@ -606,6 +598,44 @@ enum SessionReuse {
 }
 
 impl OwnerHints {
+    async fn lookup_uncached(
+        &self,
+        scope: &dyn PeerTargetScope,
+        session: SessionId,
+        target: &CellTarget,
+    ) -> cellule_runtime::Result<OwnerLookup> {
+        scope.check_target(target)?;
+        let gate = {
+            let mut lookups = self
+                .lookups
+                .lock()
+                .map_err(|_| CellError::Peer("owner lookup gates are poisoned"))?;
+            if let Some(gate) = lookups.get(&target.cell_id()).and_then(Weak::upgrade) {
+                gate
+            } else {
+                if lookups.len() >= MAX_OWNER_HINTS {
+                    lookups.retain(|_, gate| gate.strong_count() != 0);
+                    if lookups.len() >= MAX_OWNER_HINTS {
+                        return Err(CellError::Capacity("concurrent owner lookups"));
+                    }
+                }
+                let gate = Arc::new(tokio::sync::Mutex::new(()));
+                lookups.insert(target.cell_id(), Arc::downgrade(&gate));
+                gate
+            }
+        };
+        let _lookup = gate.lock().await;
+        // A preceding lookup may have populated the shared hint while this
+        // caller waited. Refusal tombstones and the signed lease still bound it.
+        if let Some(route) = self.cached_owner(target.cell_id(), now_ms()?) {
+            return Ok(OwnerLookup::Remote(route.peer, route.lease_expires_at_ms));
+        }
+        // The permit is owned by this future: cancellation releases it without
+        // leaving a detached lookup or blocking subsequent callers.
+        self.lookup_owner(scope, session, target, SessionReuse::Verify)
+            .await
+    }
+
     /// Refreshes one stale hint without blocking its caller.
     ///
     /// At most one refresh per Cell is in flight; a failure leaves the current
@@ -621,7 +651,7 @@ impl OwnerHints {
             let Ok(mut refreshing) = self.refreshing.lock() else {
                 return;
             };
-            if !refreshing.insert(cell) {
+            if refreshing.len() >= MAX_OWNER_HINTS || !refreshing.insert(cell) {
                 return;
             }
         }
@@ -960,3 +990,6 @@ fn validate_request(request: &[u8], timeout_ms: u32) -> cellule_runtime::Result<
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod performance_tests;
