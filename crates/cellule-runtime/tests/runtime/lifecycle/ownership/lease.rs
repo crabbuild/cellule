@@ -90,6 +90,54 @@ async fn node_lease_expiry_hides_an_inflight_committed_command() {
         Err(cellule_runtime::Error::Fenced)
     ));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn node_lease_expiry_hides_an_inflight_query_result() {
+    let fixture = fixture_for(b"node-lease-query-output-gate");
+    let session = SessionId::from_bytes([45; 16]);
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        2 * 1024 * 1024,
+        session,
+        ReplicaHost::default(),
+    )
+    .unwrap();
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, session).await;
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (resume_tx, resume_rx) = mpsc::channel();
+
+    let query = tokio::spawn(async move {
+        handle
+            .query(1, 16, move |_connection| {
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                Ok(b"stale-result".to_vec())
+            })
+            .await
+    });
+    tokio::task::spawn_blocking(move || {
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    lease.fence();
+    resume_tx.send(()).unwrap();
+
+    assert!(matches!(
+        query.await.unwrap(),
+        Err(cellule_runtime::Error::Fenced)
+    ));
+    let shutdown = runtime.shutdown().await;
+    assert!(matches!(
+        shutdown,
+        Ok(()) | Err(cellule_runtime::Error::Fenced)
+    ));
+    assert_eq!(runtime.stats().active_cells(), 0);
+}
 #[tokio::test]
 async fn activation_rejects_control_owned_by_another_node_session() {
     let fixture = fixture();
