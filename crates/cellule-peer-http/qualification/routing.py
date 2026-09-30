@@ -129,8 +129,9 @@ def measure(version, mode, index, binary, evidence):
         if row["elapsed_s"] <= 0:
             raise RuntimeError(f"Invalid elapsed time: {lane}")
         # The log rounds seconds to six places and throughput to three.
-        rounding = row["calls"] * 0.0000005 / row["elapsed_s"] ** 2 + 0.001
-        if abs(row["calls"] / row["elapsed_s"] - row["throughput"]) > rounding:
+        minimum_rate = row["calls"] / (row["elapsed_s"] + 0.0000005) - 0.0005
+        maximum_rate = row["calls"] / max(row["elapsed_s"] - 0.0000005, 1e-12) + 0.0005
+        if not minimum_rate <= row["throughput"] <= maximum_rate:
             raise RuntimeError(f"Throughput mismatch: {lane}")
         expected_calls = (1 if lane.endswith("_cold") else 192 if lane.endswith("_expired_bursts")
                           else 64 if lane.endswith("_uncached_route") else COMMANDS if lane.endswith("_command")
@@ -147,9 +148,11 @@ def measure(version, mode, index, binary, evidence):
         if version == "candidate" and lane in ("local_query", "forwarded_query"):
             expected_reads = 0 if mode == "leased" else row["calls"]
             expected_hops = row["calls"] if lane == "forwarded_query" else 0
-            # Long forwarded lanes can cross the sender's 15-second refresh
-            # window. The ordinary golden test checks exactly one receiver read.
-            refresh_budget = math.ceil(row["elapsed_s"] / 15) + 1 if lane == "forwarded_query" else 0
+            # The fixture renews its 15-second signed lease every five seconds.
+            # A fresh sender enrollment has at least nine seconds of reuse;
+            # expiry can require control + enrollment reads during long lanes.
+            # The ordinary golden test checks exactly one receiver read.
+            refresh_budget = 2 * math.ceil(row["elapsed_s"] / 9) + 1 if lane == "forwarded_query" else 0
             if not expected_reads <= row["reads"] <= expected_reads + refresh_budget or row["hops"] != expected_hops:
                 raise RuntimeError(f"Routing work changed: {mode} {lane} {row}")
         if version == "candidate" and lane.endswith("_expired_bursts"):
