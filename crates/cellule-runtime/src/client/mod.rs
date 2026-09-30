@@ -1025,6 +1025,22 @@ impl CellClient {
                 .local
                 .as_ref()
                 .map(|(session, resolver)| (*session, resolver.as_ref()));
+            // A snapshot this node already admitted answers without placement
+            // reads or a peer hop. Its release gate still proves the snapshot's
+            // position and current owner, so only discovery is skipped.
+            if let Some((_, resolver)) = local
+                && let Some(observed) = Box::pin(replicas.router.query_local::<Q>(
+                    &replicas.peer,
+                    resolver,
+                    target,
+                    minimum,
+                    &input,
+                ))
+                .await
+                .map_err(InvocationError::NotStarted)?
+            {
+                return Ok(observed);
+            }
             // Placement and replica admission carry large I/O futures. Keep
             // that optional state off every caller's owner-query stack frame.
             return Box::pin(replicas.router.query::<Q>(

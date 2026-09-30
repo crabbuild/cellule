@@ -13,6 +13,13 @@ use crate::{Error, Result};
 use super::{CellDescription, EncodedQuery, Observed, Receipt, local::unix_time_ms};
 use crate::codec::{decode_wire, encode_wire};
 
+/// Upper bound on one local snapshot attempt before peer placement is tried.
+///
+/// A snapshot resolves from this node's memory, so a stall here is a defect
+/// rather than a slow peer. The bound keeps it from consuming the read's
+/// deadline and leaves the remaining time to the selected readers.
+const LOCAL_ATTEMPT_BUDGET: Duration = Duration::from_millis(500);
+
 /// Selects read replicas from authoritative policy and signed live membership.
 ///
 /// Clone this router across callers to share outstanding-attempt counts. These
@@ -96,6 +103,94 @@ impl ReplicaReadRouter {
     /// unreachable node from the shared snapshot.
     async fn invalidate_membership(&self) {
         self.directory.invalidate_reader_membership().await;
+    }
+
+    /// Executes a typed read on a replica already admitted by this node.
+    ///
+    /// An ingress that holds an admitted snapshot answers without reading
+    /// authority, policy, or membership, and without a peer hop. The snapshot
+    /// still proves its position and current owner before it releases a result,
+    /// so this shortcut removes placement reads only — never a release gate.
+    ///
+    /// Returns `None` when the node holds no usable snapshot, when the snapshot
+    /// is behind, fenced, or unavailable, or when the local attempt outlives
+    /// [`LOCAL_ATTEMPT_BUDGET`]: the caller then resolves placement and tries
+    /// the selected readers with the rest of its deadline. Contract, codec, and
+    /// receipt failures are returned because no other candidate can repair them.
+    pub async fn query_local<Q: Query>(
+        &self,
+        peer: &ReplicaPeerClient,
+        resolver: &dyn PeerReplicaResolver,
+        target: &CellTarget,
+        minimum: Option<Receipt>,
+        input: &Q::Input,
+    ) -> Result<Option<Observed<Q::Output>>> {
+        match tokio::time::timeout(
+            LOCAL_ATTEMPT_BUDGET,
+            self.query_local_inner::<Q>(peer, resolver, target, minimum, input),
+        )
+        .await
+        {
+            Ok(result) => result,
+            // A snapshot resolves from this node's memory, so a stalled
+            // resolver is a defect. Cancelling it here leaves the read's
+            // remaining budget to the selected peers.
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn query_local_inner<Q: Query>(
+        &self,
+        peer: &ReplicaPeerClient,
+        resolver: &dyn PeerReplicaResolver,
+        target: &CellTarget,
+        minimum: Option<Receipt>,
+        input: &Q::Input,
+    ) -> Result<Option<Observed<Q::Output>>> {
+        let Ok(replica) = resolver.resolve(target.clone()).await else {
+            return Ok(None);
+        };
+        let expected = replica.description();
+        let operation = peer.registry().query_contract::<Q>(target.namespace())?;
+        super::validate_description(peer.registry(), Q::MODULE, expected, operation)?;
+        super::local::validate_minimum(expected, minimum)?;
+        let input = encode_wire(input, operation.input_limit)?;
+        let query = EncodedQuery {
+            target: target.clone(),
+            expected,
+            minimum,
+            now_ms: unix_time_ms()?,
+            module: Q::MODULE,
+            operation_id: Q::ID,
+            codec_version: Q::CODEC_VERSION,
+            input,
+            input_limit: operation.input_limit,
+            output_limit: operation.output_limit,
+        };
+        let result = match replica.query_encoded(query).await {
+            Ok(result) => result,
+            // A local snapshot that cannot serve this read leaves other
+            // selected replicas to the caller's placement path.
+            Err(
+                Error::ReplicaBehind { .. }
+                | Error::ReplicaUnavailable
+                | Error::Fenced
+                | Error::Deadline
+                | Error::CellNotActive,
+            ) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if result.receipt.cell != expected.cell
+            || result.receipt.incarnation != expected.incarnation
+            || minimum
+                .is_some_and(|minimum| result.receipt.commit_sequence < minimum.commit_sequence)
+        {
+            return Err(Error::Peer("read replica returned an invalid receipt"));
+        }
+        Ok(Some(Observed {
+            output: decode_wire(&result.output, operation.output_limit)?,
+            receipt: result.receipt,
+        }))
     }
 
     /// Executes a typed read on a selected replica and returns its serving node.

@@ -113,6 +113,37 @@ impl PeerReplicaResolver for ReplicaResolver {
     }
 }
 
+/// A local snapshot resolver that never answers, to prove the bounded attempt.
+struct StalledReplicaResolver(Arc<AtomicUsize>);
+
+/// Counts cancellations, so the test observes that the attempt was abandoned.
+struct StalledGuard(Arc<AtomicUsize>);
+
+impl Drop for StalledGuard {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl PeerReplicaResolver for StalledReplicaResolver {
+    fn resolve(
+        &self,
+        _target: CellTarget,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = cellule_runtime::Result<CellReadReplica>>
+                + Send
+                + 'static,
+        >,
+    > {
+        let cancelled = Arc::clone(&self.0);
+        Box::pin(async move {
+            let _guard = StalledGuard(cancelled);
+            std::future::pending().await
+        })
+    }
+}
+
 struct NoOwner;
 
 impl PeerCellResolver for NoOwner {
@@ -582,6 +613,24 @@ async fn exercise_replica_read(fixture: &Fixture) {
             .output,
         0
     );
+    // A peer-resolved read pays placement: it observes authority before it can
+    // reach a selected reader. (The policy read is part of the same path; this
+    // fixture instruments the authority handle only.)
+    control_reads.0.store(0, Ordering::Relaxed);
+    assert_eq!(
+        replica_client
+            .query::<ReadCounter>(&fixture.target, None, 0)
+            .await
+            .unwrap()
+            .output,
+        0
+    );
+    assert_eq!(
+        control_reads.0.load(Ordering::Relaxed),
+        1,
+        "a peer-resolved read observes authority for placement"
+    );
+    let stalled_router = router.clone();
     let local_client = owner_client
         .with_read_replicas(
             router,
@@ -600,6 +649,61 @@ async fn exercise_replica_read(fixture: &Fixture) {
             .unwrap()
             .output,
         0
+    );
+    // A snapshot this node already admitted answers without placement reads.
+    // Its release gate still proves position and current owner inside the
+    // reader, which holds its own authority handle.
+    control_reads.0.store(0, Ordering::Relaxed);
+    assert_eq!(
+        local_client
+            .query::<ReadCounter>(&fixture.target, None, 0)
+            .await
+            .unwrap()
+            .output,
+        0
+    );
+    assert_eq!(
+        control_reads.0.load(Ordering::Relaxed),
+        0,
+        "a locally admitted snapshot must not re-resolve placement"
+    );
+    // A local resolver that never answers is abandoned after a bounded
+    // attempt instead of hanging the read. The only selected reader here is
+    // that same stalled node, so placement reports the replica unavailable
+    // rather than waiting on a snapshot that will never arrive.
+    let cancelled = Arc::new(AtomicUsize::new(0));
+    let stalled_client = owner_client
+        .with_read_replicas(
+            stalled_router,
+            peer_client.clone(),
+            Some((
+                reader_node.session(),
+                Arc::new(StalledReplicaResolver(Arc::clone(&cancelled)))
+                    as Arc<dyn PeerReplicaResolver>,
+            )),
+        )
+        .unwrap()
+        .with_read_policy(ReadPolicy::Replica);
+    let started = std::time::Instant::now();
+    let stalled = stalled_client
+        .query::<ReadCounter>(&fixture.target, None, 0)
+        .await;
+    assert!(
+        matches!(
+            stalled,
+            Err(InvocationError::NotStarted(
+                cellule_runtime::Error::ReplicaUnavailable
+            ))
+        ),
+        "a stalled local snapshot must fall through to placement, got {stalled:?}"
+    );
+    assert!(
+        cancelled.load(Ordering::Relaxed) >= 1,
+        "the bounded local attempt must cancel the stalled snapshot"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(8),
+        "a stalled local snapshot must not hang the read"
     );
     let committed = handle
         .execute(
@@ -773,6 +877,7 @@ async fn exercise_replica_read(fixture: &Fixture) {
     ));
     drop(replica_client);
     drop(local_client);
+    drop(stalled_client);
     drop(configured);
     drop(reader);
     drop(refreshed);
