@@ -56,12 +56,14 @@ def verify_object_operations(control: Path, node: int, observations: list[dict])
 
 def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dict:
     responses = rows(control / f"node-{node}-responses.tsv")
+    executions = rows(control / f"node-{node}-executions.tsv")
     publications = rows(control / f"node-{node}-publications.tsv")
     phases = rows(control / f"node-{node}-phases.tsv")
     captures = rows(control / f"node-{node}-captures.tsv")
     costs = rows(control / f"node-{node}-publication-costs.tsv")
     appends = rows(control / f"node-{node}-follower-appends.tsv")
     assert responses, f"node {node}: missing command response evidence"
+    assert executions, f"node {node}: missing command execution evidence"
     assert publications, f"node {node}: missing publication evidence"
     assert phases and captures and costs, f"node {node}: missing LTX or publication phase evidence"
     sources = {"Recorded", "Fleet", "Object"}
@@ -69,6 +71,10 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         assert row["source"] in sources
         assert int(row["at_ms"]) > 0
         assert int(row["response_us"]) >= int(row["confirmation_us"]) >= 0
+    for row in executions:
+        assert int(row["at_ms"]) > 0
+        assert int(row["queue_wait_us"]) >= 0 and int(row["worker_round_trip_us"]) >= 0
+        assert row["succeeded"] in {"true", "false"}
     seen = set()
     for row in publications:
         key = (row["cell"], int(row["sequence"]))
@@ -101,6 +107,7 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
             continue
         start, end = window["started_ms"], window["ended_ms"]
         selected_responses = [row for row in responses if start <= int(row["at_ms"]) <= end]
+        selected_executions = [row for row in executions if start <= int(row["at_ms"]) <= end]
         selected_publications = [row for row in publications if start <= int(row["at_ms"]) <= end]
         selected_phases = [row for row in phases if start <= int(row["at_ms"]) <= end]
         selected_captures = [row for row in captures if start <= int(row["at_ms"]) <= end]
@@ -112,6 +119,9 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
             response_sources=response_sources,
             response_latency=distribution([int(row["response_us"]) for row in selected_responses]),
             confirmation_latency=distribution([int(row["confirmation_us"]) for row in selected_responses]),
+            actor_queue=distribution([int(row["queue_wait_us"]) for row in selected_executions]),
+            worker_round_trip=distribution([int(row["worker_round_trip_us"]) for row in selected_executions]),
+            worker_failures=sum(row["succeeded"] == "false" for row in selected_executions),
             publication_total=distribution([int(row["total_us"]) for row in selected_publications]),
             publication_queue=distribution([int(row["queue_wait_us"]) for row in selected_publications]),
             publication_preparation=distribution([int(row["preparation_us"]) for row in selected_publications]),
@@ -136,6 +146,8 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
     return dict(response_sources={source: sum(row["source"] == source for row in responses)
                                   for source in sorted(sources)},
                 response_latency=distribution([int(row["response_us"]) for row in responses]),
+                actor_queue=distribution([int(row["queue_wait_us"]) for row in executions]),
+                worker_round_trip=distribution([int(row["worker_round_trip_us"]) for row in executions]),
                 publication_total=distribution([int(row["total_us"]) for row in publications]),
                 capture_total=distribution([int(row["total_us"]) for row in captures]),
                 uploaded_objects=sum(int(row["objects"]) for row in costs),

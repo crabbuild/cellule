@@ -148,6 +148,7 @@ pub(super) struct PerfFixture {
 pub(super) struct DurabilityRecorder {
     proofs: Mutex<Vec<(DurabilitySource, Duration)>>,
     responses: Mutex<Vec<(i64, CommandResponseSource, Duration, Duration)>>,
+    executions: Mutex<Vec<(i64, Duration, Duration, bool)>>,
     publications: Mutex<Vec<(i64, cellule_runtime::CellId, PublicationTiming)>>,
     phases: Mutex<Vec<(i64, LtxPhase, Duration, bool)>>,
     captures: Mutex<Vec<(i64, CaptureTiming, bool)>>,
@@ -167,6 +168,10 @@ impl DurabilityRecorder {
 
     pub(super) fn responses(&self) -> Vec<(i64, CommandResponseSource, Duration, Duration)> {
         self.responses.lock().unwrap().clone()
+    }
+
+    pub(super) fn executions(&self) -> Vec<(i64, Duration, Duration, bool)> {
+        self.executions.lock().unwrap().clone()
     }
 
     pub(super) fn publications(&self) -> Vec<(i64, cellule_runtime::CellId, PublicationTiming)> {
@@ -205,6 +210,18 @@ impl CellTelemetry for DurabilityRecorder {
             .lock()
             .unwrap()
             .push((now_ms(), source, elapsed, confirmation));
+    }
+
+    fn command_execution(
+        &self,
+        queue_wait: Duration,
+        worker_round_trip: Duration,
+        succeeded: bool,
+    ) {
+        self.executions
+            .lock()
+            .unwrap()
+            .push((now_ms(), queue_wait, worker_round_trip, succeeded));
     }
 
     fn publication_completed(&self, cell: cellule_runtime::CellId, timing: PublicationTiming) {

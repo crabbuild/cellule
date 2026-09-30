@@ -146,11 +146,12 @@ pub(super) async fn execute_command(
     effect_id: u64,
 ) -> TaskResult {
     let execution_started = std::time::Instant::now();
+    let queue_wait = command.queued_at.elapsed();
     tracing::debug!(
         target: "cellule_runtime::action",
         parent: &command.trace,
         event = "cell_execution_started",
-        actor_queue_us = command.queued_at.elapsed().as_micros(),
+        actor_queue_us = queue_wait.as_micros(),
     );
     let deadline = SqlDeadline::new(std::time::Instant::now() + SQL_WALL_DEADLINE);
     let execution = match command.handler.take() {
@@ -198,6 +199,11 @@ pub(super) async fn execute_command(
             match tokio::time::timeout_at(deadline.at().into(), &mut operation).await {
                 Ok(result) => result,
                 Err(_) => {
+                    command.telemetry.command_execution(
+                        queue_wait,
+                        execution_started.elapsed(),
+                        false,
+                    );
                     let fenced = !deadline.cancel_queued();
                     tracing::warn!(cell = ?command.cell, sql_started = fenced, "Cell SQL command deadline expired");
                     if fenced {
@@ -227,6 +233,9 @@ pub(super) async fn execute_command(
         }
         None => Err(Error::Fenced),
     };
+    command
+        .telemetry
+        .command_execution(queue_wait, execution_started.elapsed(), execution.is_ok());
     tracing::debug!(
         target: "cellule_runtime::action",
         parent: &command.trace,

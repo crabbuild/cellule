@@ -19,6 +19,13 @@ arrival-latency distribution over every scheduled action, including rejected
 and late arrivals. The earlier resource, logical object-operation, receipt,
 and readback files remain required.
 
+A subsequent instrumentation revision adds `node-N-executions.tsv` with actor
+queue wait and SQL worker round trip per attempted command. This observation
+ends before durability submission and proof. The verifier reports both
+distributions per window, which helps distinguish owner admission and worker
+occupancy from storage publication without treating either as a durable
+response. The first CI result below predates this file.
+
 The new `--workload capacity` selector fixes the fleet at three owners and
 12 writable Cells. The initial CI run scheduled 10-second points at 2, 4, 16,
 64, 256, and 1024 actions per node per second. The next run adds 24, 32, 48,

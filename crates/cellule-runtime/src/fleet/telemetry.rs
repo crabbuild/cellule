@@ -154,6 +154,16 @@ pub trait CellTelemetry: Send + Sync {
     ) {
     }
 
+    /// Records the actor queue wait and SQL worker round trip for one command.
+    /// The outcome describes worker execution, before durability proof.
+    fn command_execution(
+        &self,
+        _queue_wait: Duration,
+        _worker_round_trip: Duration,
+        _succeeded: bool,
+    ) {
+    }
+
     /// Records background root progress separately from the response winner.
     /// Cell IDs and sequences are for local trace correlation, never metric labels.
     fn publication_completed(&self, _cell: CellId, _timing: PublicationTiming) {}
@@ -255,6 +265,17 @@ impl CellTelemetryHandle {
     ) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.command_response(source, elapsed, confirmation);
+        }
+    }
+
+    pub(crate) fn command_execution(
+        &self,
+        queue_wait: Duration,
+        worker_round_trip: Duration,
+        succeeded: bool,
+    ) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.command_execution(queue_wait, worker_round_trip, succeeded);
         }
     }
 

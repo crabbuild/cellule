@@ -84,6 +84,9 @@ class EntityTimingEvidence(unittest.TestCase):
         (self.root / "node-0-responses.tsv").write_text(
             "at_ms\tsource\tresponse_us\tconfirmation_us\n"
             "100001\tFleet\t1200\t900\n100002\tObject\t2000\t1800\n")
+        (self.root / "node-0-executions.tsv").write_text(
+            "at_ms\tqueue_wait_us\tworker_round_trip_us\tsucceeded\n"
+            "100001\t100\t300\ttrue\n100002\t200\t400\ttrue\n")
         (self.root / "node-0-publications.tsv").write_text(
             "at_ms\tcell\tsequence\tqueue_wait_us\tpreparation_us\tauthority_us\ttotal_us\tsucceeded\n"
             "100003\tcell-1\t1\t100\t1000\t200\t1500\ttrue\n")
@@ -103,11 +106,18 @@ class EntityTimingEvidence(unittest.TestCase):
         self.assertEqual(report["response_sources"], dict(Fleet=1, Object=1, Recorded=0))
         self.assertEqual(self.windows[0]["node_durability"][0]["published_roots_per_second"], 0.1)
         self.assertEqual(self.windows[0]["node_durability"][0]["uploaded_objects"], 2)
+        self.assertEqual(self.windows[0]["node_durability"][0]["actor_queue"]["count"], 2)
 
     def test_incomplete_timing_evidence_is_rejected(self):
         (self.root / "node-0-publications.tsv").write_text(
             "at_ms\tcell\tsequence\tqueue_wait_us\tpreparation_us\tauthority_us\ttotal_us\tsucceeded\n")
         with self.assertRaisesRegex(AssertionError, "missing publication evidence"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_missing_execution_evidence_is_rejected(self):
+        (self.root / "node-0-executions.tsv").write_text(
+            "at_ms\tqueue_wait_us\tworker_round_trip_us\tsucceeded\n")
+        with self.assertRaisesRegex(AssertionError, "missing command execution evidence"):
             verify_timing_evidence(self.root, 0, self.windows)
 
     def test_duplicate_publication_is_rejected(self):

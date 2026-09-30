@@ -45,6 +45,7 @@ pub(super) struct NodeObservations {
     object_operations: BufWriter<File>,
     durability: BufWriter<File>,
     responses: BufWriter<File>,
+    executions: BufWriter<File>,
     publications: BufWriter<File>,
     phases: BufWriter<File>,
     captures: BufWriter<File>,
@@ -65,6 +66,7 @@ impl NodeObservations {
             object_operations: create("object-operations"),
             durability: create("durability"),
             responses: create("responses"),
+            executions: create("executions"),
             publications: create("publications"),
             phases: create("phases"),
             captures: create("captures"),
@@ -183,6 +185,20 @@ impl NodeObservations {
             )
             .unwrap();
         }
+        writeln!(
+            self.executions,
+            "at_ms\tqueue_wait_us\tworker_round_trip_us\tsucceeded"
+        )
+        .unwrap();
+        for (at_ms, queue_wait, worker_round_trip, succeeded) in durability.executions() {
+            writeln!(
+                self.executions,
+                "{at_ms}\t{}\t{}\t{succeeded}",
+                queue_wait.as_micros(),
+                worker_round_trip.as_micros()
+            )
+            .unwrap();
+        }
         writeln!(self.publications, "at_ms\tcell\tsequence\tqueue_wait_us\tpreparation_us\tauthority_us\ttotal_us\tsucceeded").unwrap();
         for (at_ms, cell, timing) in durability.publications() {
             writeln!(
@@ -238,6 +254,7 @@ impl NodeObservations {
         self.object_operations.flush().unwrap();
         self.durability.flush().unwrap();
         self.responses.flush().unwrap();
+        self.executions.flush().unwrap();
         self.publications.flush().unwrap();
         self.phases.flush().unwrap();
         self.captures.flush().unwrap();
