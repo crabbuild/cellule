@@ -36,6 +36,23 @@ pub struct EnrolledPeerVerifier {
 }
 
 impl EnrolledPeerVerifier {
+    /// Authorizes one append from this fresh mTLS-bound enrollment observation.
+    ///
+    /// Consume the proof rather than keeping it as an append authorization cache.
+    /// The caller must obtain it for this request and supply the current time
+    /// after enrollment I/O. Certificate, fleet, image and release validation
+    /// were performed by `NodeDirectory::peer_verifier` on this exact record.
+    pub fn authorize_log_append(
+        self,
+        member: NodeId,
+        log_epoch: u64,
+        covered_through: u64,
+        now_ms: i64,
+    ) -> Result<NodeLogStatus> {
+        self.advertisement.validate_at(now_ms)?;
+        log::authorize_advertised_append(&self.advertisement, member, log_epoch, covered_through)
+    }
+
     /// Verifies the signed request while rechecking the enrollment's lifetime.
     pub fn verify(
         &self,

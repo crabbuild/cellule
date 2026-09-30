@@ -19,6 +19,7 @@ use crate::peer::{PeerOperation, PeerPrincipal, PeerSigner, wire as peer_wire};
 
 // Capability modules keep the fixture-heavy suite navigable; the shared
 // fixtures stay here.
+mod append_authorization;
 mod candidates;
 mod log;
 mod placement;

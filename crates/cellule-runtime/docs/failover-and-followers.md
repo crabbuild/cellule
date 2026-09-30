@@ -719,6 +719,19 @@ Before writing, a follower verifies:
 5. `cellule-ltx` inspection matches every declared `SegmentInfo` field
 6. The sequence is the expected next value or an exact duplicate
 
+For each append, an embedding service may load one fresh canonical enrollment
+with `NodeDirectory::peer_verifier`, check that the wire leader equals the mTLS
+caller, and consume the returned proof with
+`EnrolledPeerVerifier::authorize_log_append`. The proof binds certificate, key,
+fleet, image, and release to that same signed observation. Append authorization
+rechecks lease expiry after provider I/O and verifies the member, log epoch,
+open phase, and object-covered watermark before writing. The authorization
+observation is the canonical read for this request; a concurrent authority
+change after that read does not trigger a second read. Obtain a new proof for
+every request. Never retain it as an enrollment cache. Local follower fencing,
+frame validation, durable append, and the final response fence remain the
+embedding service's responsibility.
+
 Full per-Cell predecessor validation happens when building the recovery
 overlay. A follower cannot cheaply hold every Cell root just to validate an
 interleaved append.

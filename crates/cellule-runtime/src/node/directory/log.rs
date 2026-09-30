@@ -20,20 +20,7 @@ impl NodeDirectory {
             .load(leader, now_ms)
             .await?
             .ok_or(Error::PeerAuthorization("node-log leader is not live"))?;
-        let log = current
-            .advertisement
-            .log
-            .as_ref()
-            .ok_or(Error::PeerAuthorization(
-                "node-log leader has no enrolled log",
-            ))?;
-        log.permits_append(current.advertisement.node, member, log_epoch)?;
-        if covered_through > log.tiered_through() {
-            return Err(Error::PeerAuthorization(
-                "node-log append watermark exceeds authority",
-            ));
-        }
-        Ok(log.clone())
+        authorize_advertised_append(&current.advertisement, member, log_epoch, covered_through)
     }
 
     /// Verifies the leader may retire this member's fully object-covered epoch.
@@ -278,4 +265,23 @@ impl NodeDirectory {
         next.log = None;
         self.update_advertisement(observed, next, now_ms).await
     }
+}
+
+/// Shared checks for an already authenticated, live canonical observation.
+pub(super) fn authorize_advertised_append(
+    advertisement: &NodeAdvertisement,
+    member: NodeId,
+    log_epoch: u64,
+    covered_through: u64,
+) -> Result<NodeLogStatus> {
+    let log = advertisement.log.as_ref().ok_or(Error::PeerAuthorization(
+        "node-log leader has no enrolled log",
+    ))?;
+    log.permits_append(advertisement.node, member, log_epoch)?;
+    if covered_through > log.tiered_through() {
+        return Err(Error::PeerAuthorization(
+            "node-log append watermark exceeds authority",
+        ));
+    }
+    Ok(log.clone())
 }
