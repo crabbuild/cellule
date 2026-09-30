@@ -1,6 +1,7 @@
 //! Cumulative provider operations and per-node Linux resource samples.
 
 use super::*;
+use crate::performance_fixture::DurabilityRecorder;
 use cellule_store::{StorageObservation, StorageObserver, StorageOperation, StorageOutcome};
 use std::{
     fs::File,
@@ -37,6 +38,12 @@ pub(super) struct NodeObservations {
     resources: BufWriter<File>,
     objects: BufWriter<File>,
     durability: BufWriter<File>,
+    responses: BufWriter<File>,
+    publications: BufWriter<File>,
+    phases: BufWriter<File>,
+    captures: BufWriter<File>,
+    publication_costs: BufWriter<File>,
+    follower_appends: BufWriter<File>,
 }
 
 impl NodeObservations {
@@ -45,11 +52,17 @@ impl NodeObservations {
             BufWriter::new(File::create(sync.join(format!("node-{node}-{name}.tsv"))).unwrap())
         };
         let mut resources = create("resources");
-        writeln!(resources, "at_ms\tboot_ms\tstage\tactive_cells\tworker_jobs\tprimitive_jobs\thydration_jobs\tretained_bytes\tdisk_reserved_bytes\tdisk_bytes\tcpu_usage_us\tthrottled_us\tmemory_current_bytes\tmemory_peak_bytes\tgateway_local\tgateway_forwarded\tobject_started\tobject_finished\tbytes_read\tbytes_written").unwrap();
+        writeln!(resources, "at_ms\tboot_ms\tstage\tactive_cells\tworker_jobs\tprimitive_jobs\thydration_jobs\tretained_bytes\tunpublished_node_log_bytes\tdisk_reserved_bytes\tdisk_bytes\tcpu_usage_us\tthrottled_us\tmemory_current_bytes\tmemory_peak_bytes\tgateway_local\tgateway_forwarded\tobject_started\tobject_finished\tbytes_read\tbytes_written").unwrap();
         Self {
             resources,
             objects: create("objects"),
             durability: create("durability"),
+            responses: create("responses"),
+            publications: create("publications"),
+            phases: create("phases"),
+            captures: create("captures"),
+            publication_costs: create("publication-costs"),
+            follower_appends: create("follower-appends"),
         }
     }
 
@@ -88,6 +101,7 @@ impl NodeObservations {
             stats.primitive_jobs() as u64,
             stats.hydration_jobs() as u64,
             stats.retained_bytes() as u64,
+            stats.unpublished_node_log_bytes(),
             stats.local_disk_reserved_bytes(),
             disk_bytes(root),
             cpu_value("usage_usec"),
@@ -110,7 +124,7 @@ impl NodeObservations {
         self.resources.flush().unwrap();
     }
 
-    pub(super) fn finish(&mut self, storage: &StorageCounters, waits: &[Duration]) {
+    pub(super) fn finish(&mut self, storage: &StorageCounters, durability: &DurabilityRecorder) {
         writeln!(self.objects, "operation\toutcome\tcount").unwrap();
         for operation in StorageOperation::ALL {
             for outcome in StorageOutcome::ALL {
@@ -126,12 +140,84 @@ impl NodeObservations {
             }
         }
         writeln!(self.durability, "object_wait_us").unwrap();
+        let waits = durability.object_waits();
         assert!(!waits.is_empty());
-        for wait in waits {
+        for wait in &waits {
             writeln!(self.durability, "{}", wait.as_micros()).unwrap();
+        }
+        writeln!(
+            self.responses,
+            "at_ms\tsource\tresponse_us\tconfirmation_us"
+        )
+        .unwrap();
+        for (at_ms, source, elapsed, confirmation) in durability.responses() {
+            writeln!(
+                self.responses,
+                "{at_ms}\t{source:?}\t{}\t{}",
+                elapsed.as_micros(),
+                confirmation.as_micros()
+            )
+            .unwrap();
+        }
+        writeln!(self.publications, "at_ms\tcell\tsequence\tqueue_wait_us\tpreparation_us\tauthority_us\ttotal_us\tsucceeded").unwrap();
+        for (at_ms, cell, timing) in durability.publications() {
+            writeln!(
+                self.publications,
+                "{at_ms}\t{cell:?}\t{}\t{}\t{}\t{}\t{}\t{}",
+                timing.commit_sequence,
+                timing.queue_wait.as_micros(),
+                timing.preparation.as_micros(),
+                timing.authority.as_micros(),
+                timing.total.as_micros(),
+                timing.succeeded
+            )
+            .unwrap();
+        }
+        writeln!(self.phases, "at_ms\tphase\telapsed_us\tsucceeded").unwrap();
+        for (at_ms, phase, elapsed, succeeded) in durability.phases() {
+            writeln!(
+                self.phases,
+                "{at_ms}\t{phase:?}\t{}\t{succeeded}",
+                elapsed.as_micros()
+            )
+            .unwrap();
+        }
+        writeln!(self.captures, "at_ms\ttotal_us\tpreparation_us\tschema_check_us\twal_read_us\tpage_collection_us\tverification_us\tencode_us\tlocal_write_us\tfsync_us\tcheckpoint_us\twal_bytes\tltx_bytes\tsucceeded").unwrap();
+        for (at_ms, timing, succeeded) in durability.captures() {
+            writeln!(
+                self.captures,
+                "{at_ms}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{succeeded}",
+                timing.total_nanos / 1000,
+                timing.preparation_nanos / 1000,
+                timing.schema_check_nanos / 1000,
+                timing.wal_read_nanos / 1000,
+                timing.page_collection_nanos / 1000,
+                timing.verification_nanos / 1000,
+                timing.encode_nanos / 1000,
+                timing.local_write_nanos / 1000,
+                timing.fsync_nanos / 1000,
+                timing.checkpoint_nanos / 1000,
+                timing.wal_bytes,
+                timing.ltx_bytes
+            )
+            .unwrap();
+        }
+        writeln!(self.publication_costs, "at_ms\tobjects\tbytes").unwrap();
+        for (at_ms, objects, bytes) in durability.publication_costs() {
+            writeln!(self.publication_costs, "{at_ms}\t{objects}\t{bytes}").unwrap();
+        }
+        writeln!(self.follower_appends, "at_ms\tacknowledged\tbytes").unwrap();
+        for (at_ms, acknowledged, bytes) in durability.follower_appends() {
+            writeln!(self.follower_appends, "{at_ms}\t{acknowledged}\t{bytes}").unwrap();
         }
         self.objects.flush().unwrap();
         self.durability.flush().unwrap();
+        self.responses.flush().unwrap();
+        self.publications.flush().unwrap();
+        self.phases.flush().unwrap();
+        self.captures.flush().unwrap();
+        self.publication_costs.flush().unwrap();
+        self.follower_appends.flush().unwrap();
     }
 }
 

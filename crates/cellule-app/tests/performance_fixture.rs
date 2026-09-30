@@ -8,7 +8,8 @@ use std::{
 };
 
 use cellule_host::{CellNode, CellNodeBuilder};
-use cellule_runtime::fleet::telemetry::CellTelemetry;
+use cellule_ltx::{CaptureTiming, LtxPhase};
+use cellule_runtime::fleet::telemetry::{CellTelemetry, CommandResponseSource, PublicationTiming};
 use cellule_runtime::node::lease::NodeLeaseGuard;
 use cellule_runtime::node::log::DurabilitySource;
 use cellule_runtime::peer::{
@@ -144,22 +145,101 @@ pub(super) struct PerfFixture {
 }
 
 #[derive(Default)]
-pub(super) struct DurabilityRecorder(Mutex<Vec<(DurabilitySource, Duration)>>);
+pub(super) struct DurabilityRecorder {
+    proofs: Mutex<Vec<(DurabilitySource, Duration)>>,
+    responses: Mutex<Vec<(i64, CommandResponseSource, Duration, Duration)>>,
+    publications: Mutex<Vec<(i64, cellule_runtime::CellId, PublicationTiming)>>,
+    phases: Mutex<Vec<(i64, LtxPhase, Duration, bool)>>,
+    captures: Mutex<Vec<(i64, CaptureTiming, bool)>>,
+    publication_costs: Mutex<Vec<(i64, u64, u64)>>,
+    follower_appends: Mutex<Vec<(i64, bool, u64)>>,
+}
 
 impl DurabilityRecorder {
     pub(super) fn object_waits(&self) -> Vec<Duration> {
-        self.0
+        self.proofs
             .lock()
             .unwrap()
             .iter()
             .filter_map(|(source, waited)| (*source == DurabilitySource::Object).then_some(*waited))
             .collect()
     }
+
+    pub(super) fn responses(&self) -> Vec<(i64, CommandResponseSource, Duration, Duration)> {
+        self.responses.lock().unwrap().clone()
+    }
+
+    pub(super) fn publications(&self) -> Vec<(i64, cellule_runtime::CellId, PublicationTiming)> {
+        self.publications.lock().unwrap().clone()
+    }
+
+    pub(super) fn phases(&self) -> Vec<(i64, LtxPhase, Duration, bool)> {
+        self.phases.lock().unwrap().clone()
+    }
+
+    pub(super) fn captures(&self) -> Vec<(i64, CaptureTiming, bool)> {
+        self.captures.lock().unwrap().clone()
+    }
+
+    pub(super) fn publication_costs(&self) -> Vec<(i64, u64, u64)> {
+        self.publication_costs.lock().unwrap().clone()
+    }
+
+    pub(super) fn follower_appends(&self) -> Vec<(i64, bool, u64)> {
+        self.follower_appends.lock().unwrap().clone()
+    }
 }
 
 impl CellTelemetry for DurabilityRecorder {
     fn durability_proof(&self, source: DurabilitySource, waited: Duration) {
-        self.0.lock().unwrap().push((source, waited));
+        self.proofs.lock().unwrap().push((source, waited));
+    }
+
+    fn command_response(
+        &self,
+        source: CommandResponseSource,
+        elapsed: Duration,
+        confirmation: Duration,
+    ) {
+        self.responses
+            .lock()
+            .unwrap()
+            .push((now_ms(), source, elapsed, confirmation));
+    }
+
+    fn publication_completed(&self, cell: cellule_runtime::CellId, timing: PublicationTiming) {
+        self.publications
+            .lock()
+            .unwrap()
+            .push((now_ms(), cell, timing));
+    }
+
+    fn ltx_phase(&self, phase: LtxPhase, elapsed: Duration, succeeded: bool) {
+        self.phases
+            .lock()
+            .unwrap()
+            .push((now_ms(), phase, elapsed, succeeded));
+    }
+
+    fn ltx_capture(&self, timing: &CaptureTiming, succeeded: bool) {
+        self.captures
+            .lock()
+            .unwrap()
+            .push((now_ms(), *timing, succeeded));
+    }
+
+    fn publication_cost(&self, objects: u64, bytes: u64) {
+        self.publication_costs
+            .lock()
+            .unwrap()
+            .push((now_ms(), objects, bytes));
+    }
+
+    fn node_log_append(&self, acknowledged: bool, bytes: u64) {
+        self.follower_appends
+            .lock()
+            .unwrap()
+            .push((now_ms(), acknowledged, bytes));
     }
 }
 

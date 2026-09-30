@@ -14,9 +14,11 @@ use std::{
 use tokio::task::JoinSet;
 
 const WINDOW_SECONDS: usize = 10;
+const CAPACITY_DRAIN_GRACE_US: u64 = 2_000_000;
 
 struct Window {
     id: usize,
+    prefix: &'static str,
     nodes: usize,
     shape: &'static str,
     rate_per_node: usize,
@@ -26,8 +28,8 @@ struct Window {
 impl Window {
     fn label(&self) -> String {
         format!(
-            "entities-{}-{}-{}",
-            self.nodes, self.shape, self.rate_per_node
+            "{}-{}-{}-{}",
+            self.prefix, self.nodes, self.shape, self.rate_per_node
         )
     }
 }
@@ -48,6 +50,16 @@ struct Sample {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "Compose controller required for scheduled entity traffic on 3/5/10/20 nodes"]
 async fn entity_process_scaling() {
+    run_entity_process(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Compose controller required for fixed-Cell scheduled capacity traffic"]
+async fn entity_process_capacity() {
+    run_entity_process(true).await;
+}
+
+async fn run_entity_process(capacity: bool) {
     let sync = env::var("CELLULE_PERF_PROCESS_SYNC").unwrap();
     let sync = Path::new(&sync);
     let mut controller = Controller::new(sync);
@@ -58,11 +70,24 @@ async fn entity_process_scaling() {
         *ApplicationId::from_bytes([82; 16]).as_bytes(),
     );
     let authority = CellAuthority::new(layout.clone());
-    let mut owners = BufWriter::new(File::create(sync.join("entity-owners.tsv")).unwrap());
+    let evidence_prefix = if capacity { "capacity" } else { "entity" };
+    let window_prefix = if capacity { "capacity" } else { "entities" };
+    let stages: &[usize] = if capacity { &[3] } else { &[3, 5, 10, 20] };
+    let mut owners =
+        BufWriter::new(File::create(sync.join(format!("{evidence_prefix}-owners.tsv"))).unwrap());
     writeln!(owners, "stage\tentity\tcell\towner\tepoch\tincarnation").unwrap();
     let mut expected = Vec::new();
     let mut window_id = 0;
-    for nodes in [3, 5, 10, 20] {
+    let mut capacity_windows = capacity.then(|| {
+        let mut output = BufWriter::new(File::create(sync.join("capacity-windows.tsv")).unwrap());
+        writeln!(
+            output,
+            "window_id\tshape\trate_per_node\tconcurrency\tfully_served"
+        )
+        .unwrap();
+        output
+    });
+    for &nodes in stages {
         assert_eq!(
             controller.command("scale", nodes).await,
             (0..nodes).collect::<Vec<_>>()
@@ -114,20 +139,53 @@ async fn entity_process_scaling() {
         }
         owners.flush().unwrap();
         for shape in ["uniform", "hot", "skewed"] {
-            for (rate_per_node, concurrency) in [(1, 4), (4, 16), (16, 64)] {
+            let mut served = false;
+            let mut overloaded = false;
+            let points: &[(usize, usize)] = if capacity {
+                &[
+                    (2, 8),
+                    (4, 16),
+                    (16, 64),
+                    (64, 128),
+                    (256, 256),
+                    (1024, 256),
+                ]
+            } else {
+                &[(1, 4), (4, 16), (16, 64)]
+            };
+            for &(rate_per_node, concurrency) in points {
                 let window = Window {
                     id: window_id,
+                    prefix: window_prefix,
                     nodes,
                     shape,
                     rate_per_node,
                     concurrency,
                 };
-                run_window(sync, &window, client.clone(), &mut expected).await;
+                let fully_served = run_window(sync, &window, client.clone(), &mut expected).await;
+                if let Some(output) = capacity_windows.as_mut() {
+                    writeln!(
+                        output,
+                        "{window_id}\t{shape}\t{rate_per_node}\t{concurrency}\t{fully_served}"
+                    )
+                    .unwrap();
+                    output.flush().unwrap();
+                }
                 window_id += 1;
+                served |= fully_served;
+                if capacity && !fully_served {
+                    overloaded = true;
+                    break;
+                }
+            }
+            if capacity {
+                assert!(served, "{shape}: no fully served capacity point");
+                assert!(overloaded, "{shape}: rate ramp did not reach overload");
             }
         }
-        let mut roots =
-            BufWriter::new(File::create(sync.join(format!("entity-roots-{nodes}.tsv"))).unwrap());
+        let mut roots = BufWriter::new(
+            File::create(sync.join(format!("{evidence_prefix}-roots-{nodes}.tsv"))).unwrap(),
+        );
         writeln!(
             roots,
             "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest"
@@ -156,7 +214,7 @@ async fn entity_process_scaling() {
         assert!(counts.iter().all(|count| *count > 0));
         assert!(counts.iter().max().unwrap() - counts.iter().min().unwrap() <= 1);
         publish_marker(
-            &sync.join(format!("entity-ingress-{nodes}.txt")),
+            &sync.join(format!("{evidence_prefix}-ingress-{nodes}.txt")),
             counts
                 .iter()
                 .map(usize::to_string)
@@ -171,7 +229,7 @@ async fn entity_process_scaling() {
         let _ = server.await;
     }
     publish_marker(&sync.join("stop"), []);
-    for node in 0..20 {
+    for node in 0..stages[stages.len() - 1] {
         wait_for_marker(&sync.join(format!("node-{node}.done"))).await;
     }
     assert!(
@@ -210,7 +268,7 @@ async fn run_window(
     window: &Window,
     client: Arc<EntityReferenceClient>,
     expected: &mut [u64],
-) {
+) -> bool {
     let rate = window.nodes * window.rate_per_node;
     let planned = rate * WINDOW_SECONDS;
     let label = window.label();
@@ -308,6 +366,9 @@ async fn run_window(
     println!(
         "ENTITY_WINDOW label={label} planned={planned} complete={complete} elapsed_us={elapsed_us}"
     );
+    complete == planned
+        && (window.prefix != "capacity"
+            || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + CAPACITY_DRAIN_GRACE_US)
 }
 
 fn retain_sample(output: &mut BufWriter<File>, samples: &mut Vec<Sample>, sample: Sample) {

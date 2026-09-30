@@ -10,8 +10,10 @@ from pathlib import Path
 STAGES = (3, 5, 10, 20)
 SHAPES = ("uniform", "hot", "skewed")
 POINTS = ((1, 4), (4, 16), (16, 64))
+CAPACITY_POINTS = ((2, 8), (4, 16), (16, 64), (64, 128), (256, 256), (1024, 256))
 CELLS_PER_NODE = 4
 SECONDS = 10
+CAPACITY_DRAIN_GRACE_US = 2_000_000
 
 
 def rows(path: Path) -> list[dict]:
@@ -38,9 +40,101 @@ def distribution(values: list[int]) -> dict:
     })
 
 
+def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dict:
+    responses = rows(control / f"node-{node}-responses.tsv")
+    publications = rows(control / f"node-{node}-publications.tsv")
+    phases = rows(control / f"node-{node}-phases.tsv")
+    captures = rows(control / f"node-{node}-captures.tsv")
+    costs = rows(control / f"node-{node}-publication-costs.tsv")
+    appends = rows(control / f"node-{node}-follower-appends.tsv")
+    assert responses, f"node {node}: missing command response evidence"
+    assert publications, f"node {node}: missing publication evidence"
+    assert phases and captures and costs, f"node {node}: missing LTX or publication phase evidence"
+    sources = {"Recorded", "Fleet", "Object"}
+    for row in responses:
+        assert row["source"] in sources
+        assert int(row["at_ms"]) > 0
+        assert int(row["response_us"]) >= int(row["confirmation_us"]) >= 0
+    seen = set()
+    for row in publications:
+        key = (row["cell"], int(row["sequence"]))
+        assert key not in seen, f"node {node}: duplicate publication"
+        seen.add(key)
+        assert int(row["at_ms"]) > 0 and int(row["sequence"]) > 0
+        assert row["succeeded"] in {"true", "false"}
+        total = int(row["total_us"])
+        assert total >= 0
+        for phase in ("queue_wait_us", "preparation_us", "authority_us"):
+            assert 0 <= int(row[phase]) <= total
+    for row in phases:
+        assert int(row["at_ms"]) > 0 and int(row["elapsed_us"]) >= 0
+        assert row["succeeded"] in {"true", "false"}
+    for row in captures:
+        assert int(row["at_ms"]) > 0 and row["succeeded"] in {"true", "false"}
+        total = int(row["total_us"])
+        assert total >= 0
+        for key in ("preparation_us", "schema_check_us", "wal_read_us", "page_collection_us",
+                    "verification_us", "encode_us", "local_write_us", "fsync_us", "checkpoint_us"):
+            assert 0 <= int(row[key]) <= total
+        assert int(row["wal_bytes"]) >= 0 and int(row["ltx_bytes"]) >= 0
+    for row in costs:
+        assert int(row["at_ms"]) > 0 and int(row["objects"]) >= 0 and int(row["bytes"]) >= 0
+    for row in appends:
+        assert int(row["at_ms"]) > 0 and int(row["bytes"]) >= 0
+        assert row["acknowledged"] in {"true", "false"}
+    for window in windows:
+        if node >= window["nodes"]:
+            continue
+        start, end = window["started_ms"], window["ended_ms"]
+        selected_responses = [row for row in responses if start <= int(row["at_ms"]) <= end]
+        selected_publications = [row for row in publications if start <= int(row["at_ms"]) <= end]
+        selected_phases = [row for row in phases if start <= int(row["at_ms"]) <= end]
+        selected_captures = [row for row in captures if start <= int(row["at_ms"]) <= end]
+        selected_costs = [row for row in costs if start <= int(row["at_ms"]) <= end]
+        selected_appends = [row for row in appends if start <= int(row["at_ms"]) <= end]
+        response_sources = {source: sum(row["source"] == source for row in selected_responses)
+                            for source in sorted(sources)}
+        window.setdefault("node_durability", {})[node] = dict(
+            response_sources=response_sources,
+            response_latency=distribution([int(row["response_us"]) for row in selected_responses]),
+            confirmation_latency=distribution([int(row["confirmation_us"]) for row in selected_responses]),
+            publication_total=distribution([int(row["total_us"]) for row in selected_publications]),
+            publication_queue=distribution([int(row["queue_wait_us"]) for row in selected_publications]),
+            publication_preparation=distribution([int(row["preparation_us"]) for row in selected_publications]),
+            publication_authority=distribution([int(row["authority_us"]) for row in selected_publications]),
+            published_roots_per_second=sum(row["succeeded"] == "true" for row in selected_publications)
+            * 1_000_000 / window["elapsed_us"],
+            latest_published_sequence_by_cell={cell: max(int(row["sequence"]) for row in publications
+                                                         if row["cell"] == cell and row["succeeded"] == "true"
+                                                         and int(row["at_ms"]) <= end)
+                                               for cell in {row["cell"] for row in publications
+                                                            if row["succeeded"] == "true" and int(row["at_ms"]) <= end}},
+            failed_publications=sum(row["succeeded"] == "false" for row in selected_publications))
+        window["node_durability"][node].update(
+            ltx_phases={phase: distribution([int(row["elapsed_us"]) for row in selected_phases
+                                             if row["phase"] == phase])
+                        for phase in sorted({row["phase"] for row in selected_phases})},
+            capture_total=distribution([int(row["total_us"]) for row in selected_captures]),
+            uploaded_objects=sum(int(row["objects"]) for row in selected_costs),
+            uploaded_bytes=sum(int(row["bytes"]) for row in selected_costs),
+            follower_appends=len(selected_appends),
+            follower_append_failures=sum(row["acknowledged"] == "false" for row in selected_appends))
+    return dict(response_sources={source: sum(row["source"] == source for row in responses)
+                                  for source in sorted(sources)},
+                response_latency=distribution([int(row["response_us"]) for row in responses]),
+                publication_total=distribution([int(row["total_us"]) for row in publications]),
+                capture_total=distribution([int(row["total_us"]) for row in captures]),
+                uploaded_objects=sum(int(row["objects"]) for row in costs),
+                uploaded_bytes=sum(int(row["bytes"]) for row in costs),
+                follower_appends=len(appends),
+                completed_publications=sum(row["succeeded"] == "true" for row in publications),
+                failed_publications=sum(row["succeeded"] == "false" for row in publications))
+
+
 def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
-                  concurrency: int, window_id: int, positions: dict[int, list[int]]) -> dict:
-    label = f"entities-{nodes}-{shape}-{rate_per_node}"
+                  concurrency: int, window_id: int, positions: dict[int, list[int]],
+                  prefix: str = "entities") -> dict:
+    label = f"{prefix}-{nodes}-{shape}-{rate_per_node}"
     metadata, = rows(control / f"{label}-window.tsv")
     assert metadata["shape"] == shape
     for key, expected in dict(window_id=window_id, nodes=nodes, rate_per_node=rate_per_node,
@@ -53,7 +147,7 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
     planned = rate * SECONDS
     samples = sorted(rows(control / f"{label}.tsv"), key=lambda row: int(row["arrival"]))
     assert [int(row["arrival"]) for row in samples] == list(range(planned)), "missing or duplicate arrival"
-    successes, arrival_latencies, writes = [], [], [0] * nodes
+    successes, arrival_latencies, scheduled_latencies, writes = [], [], [], [0] * nodes
     outcomes, intervals = {}, []
     new_positions = {entity: [] for entity in range(nodes * CELLS_PER_NODE)}
     for sample in samples:
@@ -69,6 +163,7 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
         assert (entity, sample["kind"]) == destination(shape, arrival, nodes * CELLS_PER_NODE)
         assert outcome in {"ok", "resolved", "write_only", "not_started", "absent", "client_full", "scheduler_late", "read_failed"}
         outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        scheduled_latencies.append(started + elapsed - scheduled)
         if outcome in ("client_full", "scheduler_late"):
             assert elapsed == sequence == read_sequence == count == 0
             if outcome == "scheduler_late":
@@ -113,18 +208,47 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
     return dict(nodes=nodes, shape=shape, rate_per_node=rate_per_node, concurrency=concurrency,
                 planned=planned, outcomes=outcomes, fully_served_arrivals=len(successes) == planned,
                 acknowledged_writes_by_node=writes, completed_actions=len(successes),
+                latest_write_sequence_by_entity={entity: max(values, default=0)
+                                                 for entity, values in positions.items()},
+                completed_writes_per_second=sum(writes) * 1_000_000 / elapsed_us,
                 completed_per_second=len(successes) * 1_000_000 / elapsed_us,
                 service_latency=distribution(successes), arrival_latency=distribution(arrival_latencies),
+                scheduled_arrival_latency=distribution(scheduled_latencies),
                 started_ms=int(metadata["started_ms"]), ended_ms=int(metadata["ended_ms"]),
                 started_boot_ms=int(metadata["started_boot_ms"]), ended_boot_ms=int(metadata["ended_boot_ms"]),
                 wall_clock_adjustment_ms=int(metadata["ended_ms"]) - int(metadata["started_ms"]) - elapsed_us / 1000,
                 elapsed_us=elapsed_us, peak_client_inflight=peak)
 
 
-def verify_entities(control: Path) -> dict:
-    owners = rows(control / "entity-owners.tsv")
+def verify_capacity_windows(control: Path, positions: dict[int, list[int]]) -> list[dict]:
+    schedule = rows(control / "capacity-windows.tsv")
+    assert schedule, "missing capacity schedule"
+    assert [int(row["window_id"]) for row in schedule] == list(range(len(schedule))), "missing capacity window"
+    windows = []
+    for shape in SHAPES:
+        selected = [row for row in schedule if row["shape"] == shape]
+        assert 2 <= len(selected) <= len(CAPACITY_POINTS), f"{shape}: incomplete rate ramp"
+        assert [(int(row["rate_per_node"]), int(row["concurrency"])) for row in selected] == list(CAPACITY_POINTS[:len(selected)]), f"{shape}: rate ramp changed"
+        assert all(row["fully_served"] == "true" for row in selected[:-1]), f"{shape}: ramp continued after overload"
+        assert selected[-1]["fully_served"] == "false", f"{shape}: missing overload point"
+        for row in selected:
+            result = verify_window(control, 3, shape, int(row["rate_per_node"]),
+                                   int(row["concurrency"]), int(row["window_id"]), positions,
+                                   prefix="capacity")
+            result["fully_served_window"] = (result["fully_served_arrivals"] and
+                                             result["elapsed_us"] <= SECONDS * 1_000_000 + CAPACITY_DRAIN_GRACE_US)
+            assert result["fully_served_window"] == (row["fully_served"] == "true"), "mislabeled fully served rate"
+            windows.append(result)
+    assert [window["shape"] for window in windows] == [row["shape"] for row in schedule], "capacity shape order changed"
+    return windows
+
+
+def verify_entities(control: Path, capacity: bool = False) -> dict:
+    stages = (3,) if capacity else STAGES
+    evidence_prefix = "capacity" if capacity else "entity"
+    owners = rows(control / f"{evidence_prefix}-owners.tsv")
     identity = {}
-    for stage in STAGES:
+    for stage in stages:
         selected = [row for row in owners if int(row["stage"]) == stage]
         assert [int(row["entity"]) for row in selected] == list(range(stage * CELLS_PER_NODE))
         for row in selected:
@@ -132,15 +256,18 @@ def verify_entities(control: Path) -> dict:
             assert int(row["owner"]) == entity // CELLS_PER_NODE
             value = (row["cell"], row["owner"], row["epoch"], row["incarnation"])
             assert identity.setdefault(entity, value) == value, "existing Cell ownership changed"
-        ingress = list(map(int, (control / f"entity-ingress-{stage}.txt").read_text().split()))
+        ingress = list(map(int, (control / f"{evidence_prefix}-ingress-{stage}.txt").read_text().split()))
         assert len(ingress) == stage and min(ingress) > 0 and max(ingress) - min(ingress) <= 1
-    assert len({value[0] for value in identity.values()}) == 80, "entity targets collapsed"
+    assert len({value[0] for value in identity.values()}) == stages[-1] * CELLS_PER_NODE, "entity targets collapsed"
     windows, positions = [], {}
-    for nodes in STAGES:
-        for shape in SHAPES:
-            for rate, concurrency in POINTS:
-                windows.append(verify_window(control, nodes, shape, rate, concurrency, len(windows), positions))
-        roots = rows(control / f"entity-roots-{nodes}.tsv")
+    for nodes in stages:
+        if capacity:
+            windows.extend(verify_capacity_windows(control, positions))
+        else:
+            for shape in SHAPES:
+                for rate, concurrency in POINTS:
+                    windows.append(verify_window(control, nodes, shape, rate, concurrency, len(windows), positions))
+        roots = rows(control / f"{evidence_prefix}-roots-{nodes}.tsv")
         assert [int(row["entity"]) for row in roots] == list(range(nodes * CELLS_PER_NODE))
         for row in roots:
             entity = int(row["entity"])
@@ -150,14 +277,15 @@ def verify_entities(control: Path) -> dict:
         for node in range(nodes):
             assert sum(window["acknowledged_writes_by_node"][node] for window in windows if window["nodes"] == nodes) > 0
     resources = {}
-    for node in range(20):
+    for node in range(stages[-1]):
         samples = rows(control / f"node-{node}-resources.tsv")
         assert len(samples) >= 2
         assert all(int(row["active_cells"]) == CELLS_PER_NODE for row in samples)
+        assert all(int(row["unpublished_node_log_bytes"]) >= 0 for row in samples)
         for column in ("boot_ms", "cpu_usage_us", "throttled_us", "object_started", "object_finished", "bytes_read", "bytes_written"):
             values = [int(row[column]) for row in samples]
             assert values == sorted(values), f"node {node}: {column} regressed"
-        assert {int(row["stage"]) for row in samples} >= {stage for stage in STAGES if node < stage}
+        assert {int(row["stage"]) for row in samples} >= {stage for stage in stages if node < stage}
         local, forwarded = map(int, (control / f"node-{node}.counts").read_text().split())
         assert local > 0 and forwarded > 0
         observations = rows(control / f"node-{node}-objects.tsv")
@@ -170,6 +298,7 @@ def verify_entities(control: Path) -> dict:
                                max_disk_file_bytes=max(int(row["disk_bytes"]) for row in samples),
                                gateway_local=local, gateway_forwarded=forwarded, object_wait=distribution(waits),
                                logical_object_operations=sum(int(row["count"]) for row in observations))
+        resources[node]["durability"] = verify_timing_evidence(control, node, windows)
         for window in windows:
             if node >= window["nodes"]:
                 continue
@@ -183,9 +312,37 @@ def verify_entities(control: Path) -> dict:
                 logical_object_started=int(last["object_started"]) - int(first["object_started"]),
                 logical_object_finished=int(last["object_finished"]) - int(first["object_finished"]),
                 max_memory_current_bytes=max(int(row["memory_current_bytes"]) for row in observed),
+                max_unpublished_node_log_bytes=max(int(row["unpublished_node_log_bytes"]) for row in observed),
                 max_disk_file_bytes=max(int(row["disk_bytes"]) for row in observed),
                 max_worker_jobs=max(int(row["worker_jobs"]) for row in observed))
+    extra = {}
+    if capacity:
+        for window in windows:
+            root_lags = {}
+            for entity, acknowledged in window["latest_write_sequence_by_entity"].items():
+                cell = identity[entity][0]
+                owner = entity // CELLS_PER_NODE
+                published = window["node_durability"][owner]["latest_published_sequence_by_cell"].get(cell, 0)
+                root_lags[entity] = max(0, acknowledged - published)
+            window["root_lag_commits_by_entity"] = root_lags
+            window["max_root_lag_commits"] = max(root_lags.values(), default=0)
+        capacity_curves = {}
+        for shape in SHAPES:
+            selected = [window for window in windows if window["shape"] == shape]
+            fully_served = selected[-2]
+            overloaded = selected[-1]
+            capacity_curves[shape] = dict(
+                max_fully_served_rate_per_node=fully_served["rate_per_node"],
+                max_fully_served_logical_writes_per_second=fully_served["completed_writes_per_second"],
+                first_overloaded_rate_per_node=overloaded["rate_per_node"],
+                first_overloaded_outcomes=overloaded["outcomes"],
+                max_root_lag_commits_at_fully_served_rate=fully_served["max_root_lag_commits"],
+                max_root_lag_commits_at_overload=overloaded["max_root_lag_commits"],
+                published_roots_per_second=sum(
+                    node["published_roots_per_second"] for node in fully_served["node_durability"].values()),
+            )
+        extra["capacity_curves"] = capacity_curves
     return dict(integrity_verified=True, windows=windows, resources=resources,
                 verified_cells=len(positions), acknowledged_writes=sum(map(len, positions.values())),
                 raw_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                            for path in sorted(control.glob("*.tsv"))})
+                            for path in sorted(control.glob("*.tsv"))}, **extra)

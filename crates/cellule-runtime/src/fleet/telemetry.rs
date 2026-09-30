@@ -1,6 +1,7 @@
 //! Bounded operational telemetry emitted by the runtime.
 use std::{sync::Arc, time::Duration};
 
+use crate::CellId;
 use crate::fleet::pressure::PressureState;
 use crate::node::log::DurabilitySource;
 
@@ -13,6 +14,24 @@ pub enum CommandResponseSource {
     Fleet,
     /// Object publication proved the new commit.
     Object,
+}
+
+/// One completed object publication, which may finish after a follower-proof
+/// response has already been released for the same commit sequence.
+#[derive(Clone, Copy, Debug)]
+pub struct PublicationTiming {
+    /// Time spent queued behind earlier roots for this Cell.
+    pub queue_wait: Duration,
+    /// Time spent preparing the immutable root, including bounded retries.
+    pub preparation: Duration,
+    /// Time spent publishing the prepared root through authority CAS.
+    pub authority: Duration,
+    /// Time from queued publication to terminal completion.
+    pub total: Duration,
+    /// Whether object publication completed and the worker confirmed the root.
+    pub succeeded: bool,
+    /// Sequence used to correlate this observation with a request trace.
+    pub commit_sequence: u64,
 }
 
 /// Outcome of an actor-owned resident route lookup.
@@ -135,6 +154,10 @@ pub trait CellTelemetry: Send + Sync {
     ) {
     }
 
+    /// Records background root progress separately from the response winner.
+    /// Cell IDs and sequences are for local trace correlation, never metric labels.
+    fn publication_completed(&self, _cell: CellId, _timing: PublicationTiming) {}
+
     /// Records how one commit's node-log submission resolved.
     fn durability_submission(&self, _outcome: DurabilitySubmissionOutcome) {}
 
@@ -232,6 +255,12 @@ impl CellTelemetryHandle {
     ) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.command_response(source, elapsed, confirmation);
+        }
+    }
+
+    pub(crate) fn publication_completed(&self, cell: CellId, timing: PublicationTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.publication_completed(cell, timing);
         }
     }
 

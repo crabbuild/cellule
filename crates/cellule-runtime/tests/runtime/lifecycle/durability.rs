@@ -1,14 +1,17 @@
 //! Node-log durability, fleet proofs, and byte admission.
 
 use super::*;
-use cellule_runtime::fleet::telemetry::{CellTelemetry, CommandResponseSource};
+use cellule_runtime::fleet::telemetry::{CellTelemetry, CommandResponseSource, PublicationTiming};
 
 mod admission;
 mod proofs;
 mod recovery;
 
 #[derive(Default)]
-pub(super) struct RecordingResponses(pub(super) Mutex<Vec<CommandResponseSource>>);
+pub(super) struct RecordingResponses(
+    pub(super) Mutex<Vec<CommandResponseSource>>,
+    pub(super) Mutex<Vec<PublicationTiming>>,
+);
 
 impl CellTelemetry for RecordingResponses {
     fn command_response(
@@ -22,5 +25,9 @@ impl CellTelemetry for RecordingResponses {
             assert!(confirmation.is_zero());
         }
         self.0.lock().unwrap().push(source);
+    }
+
+    fn publication_completed(&self, _cell: cellule_runtime::CellId, timing: PublicationTiming) {
+        self.1.lock().unwrap().push(timing);
     }
 }

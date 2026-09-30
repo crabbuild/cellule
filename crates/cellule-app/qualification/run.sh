@@ -8,7 +8,8 @@ case "${1:-}" in
   entities) role=entities; selected=entities::hosts::entity_ledgers_are_isolated_across_three_rustfs_hosts ;;
   entity-node) role="node-${CELLULE_PERF_PROCESS_NODE:?}"; selected=entities::process::entity_process_node ;;
   entity-scale) role=driver; selected=entities::process::driver::entity_process_scaling ;;
-  *) printf 'usage: run.sh node|driver|scale|rollout|entities|entity-node|entity-scale\n' >&2; exit 2 ;;
+  entity-capacity) role=driver; selected=entities::process::driver::entity_process_capacity ;;
+  *) printf 'usage: run.sh node|driver|scale|rollout|entities|entity-node|entity-scale|entity-capacity\n' >&2; exit 2 ;;
 esac
 binary=
 for candidate in /target/release/deps/integration-*; do

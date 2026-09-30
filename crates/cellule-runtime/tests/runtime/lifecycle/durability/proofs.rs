@@ -68,6 +68,12 @@ async fn accepted_control_cas_with_lost_response_releases_once() {
             CommandResponseSource::Recorded
         ]
     );
+    {
+        let publication_timings = responses.1.lock().unwrap();
+        assert_eq!(publication_timings.len(), 1);
+        assert_eq!(publication_timings[0].commit_sequence, 1);
+        assert!(publication_timings[0].succeeded);
+    }
 
     let restored = fixture._directory.path().join("lost-cas-restored.sqlite");
     let verified = fixture.replica.open_root(&root).await.unwrap();
@@ -164,6 +170,7 @@ async fn capture_failure_after_sql_commit_fences_until_authoritative_recovery() 
     );
     runtime.shutdown().await.unwrap();
     assert_eq!(responses.0.lock().unwrap().as_slice(), &[]);
+    assert!(responses.1.lock().unwrap().is_empty());
 
     let restored = fixture._directory.path().join("capture-restored.sqlite");
     let verified = fixture.replica.open_root(&root).await.unwrap();
@@ -847,6 +854,12 @@ async fn exercise_fleet_ack_drain(lose_response: bool) {
             CommandResponseSource::Recorded
         ]
     );
+    {
+        let publication_timings = responses.1.lock().unwrap();
+        assert_eq!(publication_timings.len(), 1);
+        assert_eq!(publication_timings[0].commit_sequence, 1);
+        assert!(publication_timings[0].succeeded);
+    }
 
     let verified = fixture.replica.open_root(&published_root).await.unwrap();
     let recovered = fixture

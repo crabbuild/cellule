@@ -164,7 +164,7 @@ async fn entity_process_node() {
     observations.sample(stage, &host, directory.path(), &storage, &stats);
     assert_eq!(host.stats().active_cells(), ENTITIES_PER_NODE);
     host.shutdown().await.unwrap();
-    observations.finish(&storage, &durability.object_waits());
+    observations.finish(&storage, &durability);
     let (local, forwarded) = stats.counts();
     assert!(local > 0 && forwarded > 0);
     publish_marker(
