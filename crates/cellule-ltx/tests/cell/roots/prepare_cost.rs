@@ -50,7 +50,15 @@ async fn incremental_publish_provider_cost_model() {
         .await
         .unwrap()
         .root();
-    println!("publish 1 (cold): {counted:?}");
+    let cold = counted.counts();
+    println!(
+        "publish 1 (cold): heads={} ranges={} full={} puts={} multipart={}",
+        cold.heads,
+        cold.ranges,
+        cold.full,
+        counted.put_requests(),
+        counted.multipart_starts()
+    );
 
     for sequence in 2..=3 {
         writer
