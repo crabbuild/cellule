@@ -33,6 +33,11 @@ p95 stayed near 2 ms. Root preparation p95 was 33–37 ms of 37–43 ms
 publication p95. The serialized publication path is the measured hot
 throughput limiter; the exact subphase to change is not yet established.
 Uniform and skewed thresholds still varied between repeats.
+An independent three-repeat CI run 36659182959 again found serial object
+publication ahead of a roughly 3 ms SQL worker at hot overload, but its hot
+interval shifted to 16 fully served and 24 overloaded actions/node/s. The
+different interval strengthens the requirement for a dedicated, controlled
+A/A baseline before applying this plan's numeric improvement gate.
 
 ## Scope and invariants
 

@@ -32,7 +32,11 @@
   publication ahead of a roughly 2 ms SQL worker. Plan 003 now targets that
   measured limiter. Uniform and skewed thresholds and the follower-enabled
   lane remain unresolved. Plan 004 specifies the required networked follower
-  fixture and separate capacity evidence.
+  fixture and separate capacity evidence. CI run 36659182959 passed another
+  three object-proof repeats after the bucket-init image registry change;
+  hot throughput was fully served at 16 and overloaded at 24 actions/node/s
+  in each repeat, confirming the limiting phase while showing runner-dependent
+  absolute capacity.
 
 ## Why this matters
 
