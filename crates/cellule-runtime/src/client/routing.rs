@@ -96,15 +96,6 @@ impl ReplicaReadRouter {
         Ok((expected, selected))
     }
 
-    /// Drops the shared membership view after a reader refused an attempt.
-    ///
-    /// A fenced or inactive reader proves the discovery snapshot is stale, so
-    /// the next query rescans signed membership instead of retrying the same
-    /// unreachable node from the shared snapshot.
-    async fn invalidate_membership(&self) {
-        self.directory.invalidate_reader_membership().await;
-    }
-
     /// Executes a typed read on a replica already admitted by this node.
     ///
     /// An ingress that holds an admitted snapshot answers without reading
@@ -280,14 +271,10 @@ impl ReplicaReadRouter {
                         ));
                     }
                     Err(error @ Error::ReplicaBehind { .. }) => behind = Some(error),
-                    Err(Error::Fenced) => {
-                        fenced = true;
-                        self.invalidate_membership().await;
-                    }
+                    Err(Error::Fenced) => fenced = true,
                     Err(error @ Error::PeerAuthorization(_)) => return Err(error),
                     Err(error @ Error::CellNotActive) => {
                         tracing::debug!(cell = ?target.cell_id(), error = %error, "selected read replica is not active");
-                        self.invalidate_membership().await;
                     }
                     Err(error) => {
                         tracing::debug!(cell = ?target.cell_id(), error = %error, "selected read replica unavailable")

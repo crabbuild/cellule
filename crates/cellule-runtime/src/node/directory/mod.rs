@@ -101,15 +101,6 @@ impl NodeDirectory {
         result
     }
 
-    /// Drops the shared reader-membership snapshot.
-    ///
-    /// A reader attempt that a signed node refuses proves that this process
-    /// holds a stale membership view. Discovery is advisory, so the next
-    /// selection rescans instead of retrying the same unreachable node.
-    pub(crate) async fn invalidate_reader_membership(&self) {
-        self.reader_membership.write().await.take();
-    }
-
     /// Loads and verifies one exact, currently valid boot session.
     pub async fn load(
         &self,
