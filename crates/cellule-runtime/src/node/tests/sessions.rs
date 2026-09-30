@@ -1,6 +1,50 @@
 //! Session listing, claims, collection, and withdrawal.
 
 use super::*;
+use cellule_store::test_support::CountingObjectStore;
+
+#[tokio::test]
+async fn live_advertisement_lookup_reads_once_and_excludes_expired_sessions() {
+    let store = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let directory = NodeDirectory::new(
+        CellStorageLayout::new(Store::new(store.clone()), Path::from("root"), [9; 16]),
+        Digest::from_bytes([2; 32]),
+        Digest::from_bytes([4; 32]),
+        Digest::from_bytes([5; 32]),
+    );
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let session = SessionId::from_bytes([8; 16]);
+    let observed = directory
+        .create(advertisement_for(session, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+
+    let before = store.counts().body_requests();
+    let live = directory.load_if_live(session, NOW_MS + 1).await.unwrap();
+    assert_eq!(live.unwrap().advertisement().session(), session);
+    assert_eq!(store.counts().body_requests() - before, 1);
+
+    let before = store.counts().body_requests();
+    assert!(
+        directory
+            .load_if_live(session, NOW_MS + 10_000)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.counts().body_requests() - before, 1);
+
+    directory.withdraw(&observed, NOW_MS + 1).await.unwrap();
+    let before = store.counts().body_requests();
+    assert!(
+        directory
+            .load_if_live(session, NOW_MS + 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.counts().body_requests() - before, 1);
+}
 
 #[tokio::test]
 async fn stable_follower_node_resolves_a_new_session_for_old_log_recovery() {

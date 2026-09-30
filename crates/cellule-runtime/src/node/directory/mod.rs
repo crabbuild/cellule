@@ -117,10 +117,38 @@ impl NodeDirectory {
         }))
     }
 
+    /// Loads one signed, in-scope boot session only while its lease is live.
+    ///
+    /// Missing, tombstoned, and expired sessions return `None`. A malformed,
+    /// misplaced, or foreign record fails closed. Unlike a separate
+    /// [`Self::is_live`] followed by [`Self::load`], this makes one canonical
+    /// object-store read and checks the lease on the same observed version.
+    pub async fn load_if_live(
+        &self,
+        session: SessionId,
+        now_ms: i64,
+    ) -> Result<Option<VersionedNodeAdvertisement>> {
+        let Some((advertisement, token)) = self.load_canonical(session).await? else {
+            return Ok(None);
+        };
+        self.validate_scope(&advertisement)?;
+        if advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
+            return Err(Error::Node("advertisement is not currently valid"));
+        }
+        if advertisement.expires_at_ms <= now_ms {
+            return Ok(None);
+        }
+        self.validate(&advertisement, now_ms)?;
+        Ok(Some(VersionedNodeAdvertisement {
+            advertisement,
+            token,
+        }))
+    }
+
     /// Inspects one signed advertisement without requiring its lease to remain live.
     ///
-    /// This is an operational read only: callers must use [`Self::load`] or
-    /// [`Self::is_live`] for admission and takeover decisions.
+    /// This is an operational read only: callers must use [`Self::load`],
+    /// [`Self::load_if_live`], or [`Self::is_live`] for admission and takeover.
     pub async fn inspect_advertisement(
         &self,
         session: SessionId,
