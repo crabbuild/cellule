@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::cell::actor::CellRuntime;
-use crate::cell::actor::routes::LeasedResidentRoutes;
+use crate::cell::actor::routes::{ResidentRoute, ResidentRoutes};
 use crate::cell::catalog::CellCatalog;
 use crate::control::authority::CellAuthority;
 use crate::fleet::telemetry::RouteCacheOutcome;
@@ -75,7 +75,7 @@ pub(super) struct RuntimeLocalResolver {
     runtime: CellRuntime,
     layout: CellStorageLayout,
     remote_on_miss: bool,
-    routes: LeasedResidentRoutes,
+    routes: ResidentRoutes,
 }
 
 impl RuntimeLocalResolver {
@@ -87,7 +87,7 @@ impl RuntimeLocalResolver {
     ) -> Self {
         Self {
             registry,
-            routes: LeasedResidentRoutes::new(runtime.clone()),
+            routes: ResidentRoutes::new(runtime.clone()),
             runtime,
             layout,
             remote_on_miss,
@@ -122,12 +122,19 @@ impl LocalCellResolver for RuntimeLocalResolver {
                 resolver.telemetry().route_cache(RouteCacheOutcome::Miss);
                 return Ok(None);
             }
-            if let Some(handle) = resolver.routes.resolve(&target, role).await? {
-                resolver.telemetry().route_cache(RouteCacheOutcome::Hit);
-                return Ok(Some(handle));
+            let authority = CellAuthority::new(resolver.layout.clone());
+            match resolver.routes.resolve(&target, role, &authority).await? {
+                ResidentRoute::Owned(handle) => {
+                    resolver.telemetry().route_cache(RouteCacheOutcome::Hit);
+                    return Ok(Some(handle));
+                }
+                ResidentRoute::NotOwned => {
+                    resolver.telemetry().route_cache(RouteCacheOutcome::Miss);
+                    return Ok(None);
+                }
+                ResidentRoute::Missing => {}
             }
             let catalog = CellCatalog::new(resolver.layout.clone(), target.tenant());
-            let authority = CellAuthority::new(resolver.layout.clone());
             let (catalog, control) = tokio::join!(catalog.lookup(cell), authority.load(cell));
             let catalog = catalog?.ok_or(Error::Control("target Cell is not cataloged"))?;
             let control = control?.ok_or(Error::Control("target Cell has no authority record"))?;

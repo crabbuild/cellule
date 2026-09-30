@@ -249,6 +249,16 @@ fn report(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires isolated RustFS endpoint, bucket, prefix and explicit fixture credentials"]
 async fn rustfs_owner_routing_latency_throughput() {
+    run_rustfs_owner_routing_latency_throughput(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated RustFS endpoint, bucket, prefix and explicit fixture credentials"]
+async fn rustfs_object_only_routing_latency_throughput() {
+    run_rustfs_owner_routing_latency_throughput(false).await;
+}
+
+async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
     let Some((certificate_dir, tls)) = super::tests::generate_peer_identity("rustfs-routing")
     else {
         panic!("OpenSSL 3 is required for this explicit mTLS qualification");
@@ -337,7 +347,12 @@ async fn rustfs_owner_routing_latency_throughput() {
         )
         .await
         .unwrap();
-    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+    let constructor = if leased {
+        CellRuntime::new_with_replica_host_requiring_node_lease
+    } else {
+        CellRuntime::new_with_replica_host
+    };
+    let runtime = constructor(
         SqlWorkerPool::new(2, 32).unwrap(),
         16 << 20,
         owner_session,
@@ -346,7 +361,9 @@ async fn rustfs_owner_routing_latency_throughput() {
     .unwrap();
     let lease =
         NodeLeaseGuard::new(now_ms().unwrap(), enrolled.advertisement().expires_at_ms()).unwrap();
-    runtime.install_node_lease(lease.clone()).unwrap();
+    if leased {
+        runtime.install_node_lease(lease.clone()).unwrap();
+    }
     let publications = Arc::new(PublicationSamples::default());
     runtime.install_telemetry(publications.clone()).unwrap();
     let disk = tempfile::tempdir().unwrap();
@@ -535,6 +552,18 @@ async fn rustfs_owner_routing_latency_throughput() {
             counted.put_requests(),
             hops.load(Ordering::Relaxed),
         );
+        // Keep warm-route samples separate from the 30-second Describe cache.
+        // The fixture's observed contract is fixed; every request still crosses
+        // the receiver's authority/lease and actor admission gates.
+        let query_client =
+            client
+                .clone()
+                .with_observed_description(cellule_runtime::client::CellDescription {
+                    cell: target.cell_id(),
+                    incarnation: IncarnationId::from_bytes([77; 16]),
+                    code: registry.module_code(MODULE).unwrap(),
+                    schema: 1,
+                });
         if route == "local" {
             // Separate first-request throughput from warm reused-client throughput.
             // Each fresh transport must establish its description and route.
@@ -578,7 +607,7 @@ async fn rustfs_owner_routing_latency_throughput() {
             for index in 0..queries {
                 let mut durations = [Duration::ZERO; 2];
                 for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
-                    let selected = if lane == 0 { &direct } else { client };
+                    let selected = if lane == 0 { &direct } else { &query_client };
                     let started = Instant::now();
                     assert_eq!(
                         selected
@@ -599,6 +628,10 @@ async fn rustfs_owner_routing_latency_throughput() {
             );
         }
         for concurrency in [1, 16] {
+            if route == "forwarded" {
+                transport.routes().invalidate(&target, owner_session);
+                transport.routes().route(&target).await.unwrap();
+            }
             counted.reset();
             hops.store(0, Ordering::Relaxed);
             let started = Instant::now();
@@ -606,7 +639,7 @@ async fn rustfs_owner_routing_latency_throughput() {
             for _ in 0..queries / concurrency {
                 let results = futures_util::future::join_all((0..concurrency).map(|_| async {
                     let start = Instant::now();
-                    let result = client.query::<Read>(&target, None, ()).await.unwrap();
+                    let result = query_client.query::<Read>(&target, None, ()).await.unwrap();
                     assert_eq!(result.output, expected);
                     start.elapsed()
                 }))
@@ -631,7 +664,7 @@ async fn rustfs_owner_routing_latency_throughput() {
                     uncached_receiver.store(lane == 0, Ordering::Release);
                     let started = Instant::now();
                     assert_eq!(
-                        client
+                        query_client
                             .query::<Read>(&target, None, ())
                             .await
                             .unwrap()
@@ -660,7 +693,7 @@ async fn rustfs_owner_routing_latency_throughput() {
                     futures_util::future::join_all((0..16).map(|_| async {
                         let started = Instant::now();
                         assert_eq!(
-                            client
+                            query_client
                                 .query::<Read>(&target, None, ())
                                 .await
                                 .unwrap()
@@ -688,14 +721,20 @@ async fn rustfs_owner_routing_latency_throughput() {
         let mut puts = 0;
         let mut peer_hops = 0;
         let burst_window = Instant::now();
-        for _ in 0..4 {
+        for _ in 0..12 {
             tokio::time::sleep(Duration::from_millis(2100)).await;
+            if route == "forwarded" {
+                // Isolate the receiver's expired admission-cache window from
+                // the sender's independent 15-second background refresh.
+                transport.routes().invalidate(&target, owner_session);
+                transport.routes().route(&target).await.unwrap();
+            }
             counted.reset();
             hops.store(0, Ordering::Relaxed);
             let results = futures_util::future::join_all((0..16).map(|_| async {
                 let start = Instant::now();
                 assert_eq!(
-                    client
+                    query_client
                         .query::<Read>(&target, None, ())
                         .await
                         .unwrap()

@@ -151,17 +151,28 @@ throughput attribution is tracked separately by the entity workload and the
 | Reuse | Bound | What it removes | What still fences it |
 | --- | --- | --- | --- |
 | Local actor capability | 4,096 Cells, live node lease and actor admission | Catalog and authority reads, periodic cache refreshes, and repeated actor lookups | Session fencing and closure of the exact admission token stop reuse; unleased runtimes read fresh authority |
+| Unleased resident catalog identity | 4,096 Cells, actor admission | Repeated catalog head and page reads | Every invocation still reads fresh Cell authority and rechecks actor identity/admission after I/O |
 | Observed description (`CellId` → description) | 30 s, 4,096 Cells | The Describe hop of every routed invocation | Every receiver validates the shipped description; a fenced refusal drops the entry |
 
 A receiver can also use `ResidentPeerCellResolver`: a resident hit under a live
-node lease reads no catalog or control. Unleased runtimes and misses use fresh
-storage observations. Cached descriptions are invalidated on local fencing or
+node lease reads no catalog or control. An unleased resident hit reuses its
+immutable catalog identity and reads control once per invocation; its ownership
+observation is never cached. A miss reads catalog and control. Cached descriptions are invalidated on local fencing or
 the corresponding decoded peer refusal; ambiguous commands are reconciled.
 Drain, migration and handoff close the cached capability's admission token.
 The next lookup can resolve a replacement actor; every SQL dispatch still checks
 its token and node lease. Single-Cell local and peer dispatch avoid allocating a
 temporary handle map. A nonowner forwarding runtime checks local presence once
 and skips the additional resident lookup.
+
+`performance_tests::rustfs_object_only_routing_latency_throughput` runs the same
+SQL, mTLS forwarding, concurrency, write-proof and recovery workload as the
+lease-backed benchmark with an unleased owner. Keep both modes in a performance
+comparison: zero-read ownership reuse requires a node-session lease, while the
+unleased path pays one authority round trip for each invocation. The ordinary
+protocol test `unleased_local_and_peer_routes_reuse_catalog_but_read_fresh_control`
+checks exact read counts and origin failures; takeover, release/replacement and
+session-fencing tests cover refusal and invalidation.
 
 Cold owner lookups use bounded per-Cell gates shared by the routing table and
 HTTP adapter. After waiting, a caller checks the signed lease of the populated
@@ -220,6 +231,23 @@ fixture's owner renewals and signed membership heartbeats that occur during
 active measurement windows; burst sleep intervals are excluded from the
 counters and included in elapsed time. Use identical
 workloads and alternating baseline/candidate runs before attributing changes.
+
+The reference Compose workflow also runs a matched routing job on its own
+runner. It builds isolated baseline and candidate snapshots with identical
+test wiring, freezes the release binaries, and alternates three runs per
+version in both leased and object-only modes. Artifacts retain revisions,
+digests, every raw latency sample, object-read/hop counts, and exact recovery
+results. The gate requires median-run p95/p99 within 10% and completed-call
+throughput within 10%; paced throughput is excluded because it includes sleep.
+Historical unleased zero-read routing is reported but cannot qualify a fresh
+authority latency target.
+
+Warm queries use the fixture's observed description. Twelve paced bursts per
+route cross the old two-second resident-cache window; the sender is enrolled
+before each timed forwarded burst so its independent refresh does not obscure
+receiver latency. Cold and fresh-client lanes still include discovery and
+Describe. Manual workflow runs accept `routing_baseline` and `routing_only`
+to repeat a specific comparison without repeating Compose scaling.
 
 ### Local RustFS results, 2026-09-30
 
