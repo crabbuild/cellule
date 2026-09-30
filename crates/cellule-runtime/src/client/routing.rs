@@ -89,15 +89,6 @@ impl ReplicaReadRouter {
         Ok((expected, selected))
     }
 
-    /// Drops the shared membership view after a reader refused an attempt.
-    ///
-    /// A fenced or inactive reader proves the discovery snapshot is stale, so
-    /// the next query rescans signed membership instead of retrying the same
-    /// unreachable node from the shared snapshot.
-    async fn invalidate_membership(&self) {
-        self.directory.invalidate_reader_membership().await;
-    }
-
     /// Executes a typed read on a selected replica and returns its serving node.
     ///
     /// Selection and all attempts share one five-second deadline. Each attempt
@@ -105,6 +96,12 @@ impl ReplicaReadRouter {
     /// resolver may serve this node's admitted views without a self-dial. The
     /// caller must perform its product authorization before invoking this route.
     /// There is no owner fallback when replicas are absent, behind or fenced.
+    ///
+    /// A refused attempt does not drop the shared membership snapshot. Doing so
+    /// once per refusal made every reader re-scan signed membership inside the
+    /// next selection, and under a mixed read/write load that starved the
+    /// per-attempt deadline until reads failed as unavailable. Discovery keeps
+    /// its one-second bound instead.
     pub async fn query<Q: Query>(
         &self,
         peer: &ReplicaPeerClient,
@@ -185,14 +182,10 @@ impl ReplicaReadRouter {
                         ));
                     }
                     Err(error @ Error::ReplicaBehind { .. }) => behind = Some(error),
-                    Err(Error::Fenced) => {
-                        fenced = true;
-                        self.invalidate_membership().await;
-                    }
+                    Err(Error::Fenced) => fenced = true,
                     Err(error @ Error::PeerAuthorization(_)) => return Err(error),
                     Err(error @ Error::CellNotActive) => {
                         tracing::debug!(cell = ?target.cell_id(), error = %error, "selected read replica is not active");
-                        self.invalidate_membership().await;
                     }
                     Err(error) => {
                         tracing::debug!(cell = ?target.cell_id(), error = %error, "selected read replica unavailable")
