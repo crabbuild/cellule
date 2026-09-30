@@ -16,6 +16,7 @@ cellule-runtime.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+bytes.workspace = true
 cellule-host.workspace = true
 cellule-runtime = { workspace = true, features = ["test-support"] }
 cellule-ltx = { workspace = true, features = ["replica"] }
@@ -23,6 +24,7 @@ cellule-store.workspace = true
 ed25519-dalek.workspace = true
 futures-util.workspace = true
 object_store.workspace = true
+prost.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
 tokio-util.workspace = true

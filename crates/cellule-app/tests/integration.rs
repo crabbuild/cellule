@@ -74,6 +74,7 @@ mod host;
 mod performance;
 mod performance_fixture;
 mod primitives;
+mod process_follower;
 mod process_node;
 mod process_performance;
 mod process_recruitment;

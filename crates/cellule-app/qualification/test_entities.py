@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from entities import destination, verify_capacity_windows, verify_object_operations, verify_timing_evidence, verify_window
+from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_timing_evidence, verify_window
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -218,6 +218,21 @@ class ObjectOperationEvidence(unittest.TestCase):
                 verify_object_operations(Path(root), 0, expected)
             expected[0]["count"] = "1"
             self.assertEqual(len(verify_object_operations(Path(root), 0, expected)), 1)
+
+
+class FollowerProofEvidence(unittest.TestCase):
+    def test_follower_lane_requires_proof_and_acknowledged_append(self):
+        resources = {0: dict(durability=dict(response_sources=dict(Fleet=0),
+                                            acknowledged_follower_appends=1))}
+        with self.assertRaisesRegex(AssertionError, "no follower-proof responses"):
+            verify_follower_proof(resources)
+        resources[0]["durability"]["response_sources"]["Fleet"] = 1
+        resources[0]["durability"]["acknowledged_follower_appends"] = 0
+        with self.assertRaisesRegex(AssertionError, "missing acknowledged follower append"):
+            verify_follower_proof(resources)
+        resources[0]["durability"]["acknowledged_follower_appends"] = 2
+        self.assertEqual(verify_follower_proof(resources),
+                         dict(follower_proof_responses=1, follower_appends=2))
 
 
 if __name__ == "__main__":

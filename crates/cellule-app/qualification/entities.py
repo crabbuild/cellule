@@ -142,7 +142,8 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
             uploaded_objects=sum(int(row["objects"]) for row in selected_costs),
             uploaded_bytes=sum(int(row["bytes"]) for row in selected_costs),
             follower_appends=len(selected_appends),
-            follower_append_failures=sum(row["acknowledged"] == "false" for row in selected_appends))
+            follower_append_failures=sum(row["acknowledged"] == "false" for row in selected_appends),
+            follower_append_bytes=sum(int(row["bytes"]) for row in selected_appends))
     return dict(response_sources={source: sum(row["source"] == source for row in responses)
                                   for source in sorted(sources)},
                 response_latency=distribution([int(row["response_us"]) for row in responses]),
@@ -153,6 +154,8 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
                 uploaded_objects=sum(int(row["objects"]) for row in costs),
                 uploaded_bytes=sum(int(row["bytes"]) for row in costs),
                 follower_appends=len(appends),
+                acknowledged_follower_appends=sum(row["acknowledged"] == "true" for row in appends),
+                follower_append_bytes=sum(int(row["bytes"]) for row in appends),
                 completed_publications=sum(row["succeeded"] == "true" for row in publications),
                 failed_publications=sum(row["succeeded"] == "false" for row in publications))
 
@@ -271,7 +274,18 @@ def verify_capacity_windows(control: Path, positions: dict[int, list[int]]) -> l
     return windows
 
 
-def verify_entities(control: Path, capacity: bool = False) -> dict:
+def verify_follower_proof(resources: dict) -> dict:
+    fleet_proofs = sum(resource["durability"]["response_sources"]["Fleet"]
+                       for resource in resources.values())
+    acknowledged_appends = sum(resource["durability"]["acknowledged_follower_appends"]
+                               for resource in resources.values())
+    assert fleet_proofs > 0, "follower lane returned no follower-proof responses"
+    assert acknowledged_appends > 0, "missing acknowledged follower append evidence"
+    return dict(follower_proof_responses=fleet_proofs, follower_appends=acknowledged_appends)
+
+
+def verify_entities(control: Path, capacity: bool = False, follower: bool = False) -> dict:
+    assert not follower or capacity
     stages = (3,) if capacity else STAGES
     evidence_prefix = "capacity" if capacity else "entity"
     owners = rows(control / f"{evidence_prefix}-owners.tsv")
@@ -359,6 +373,8 @@ def verify_entities(control: Path, capacity: bool = False) -> dict:
                 bytes_written=sum(int(row["bytes_written"]) for row in selected_objects))
     extra = {}
     if capacity:
+        if follower:
+            extra.update(verify_follower_proof(resources))
         for window in windows:
             root_lags = {}
             for entity, acknowledged in window["latest_write_sequence_by_entity"].items():

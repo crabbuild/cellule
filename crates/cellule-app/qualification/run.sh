@@ -9,7 +9,8 @@ case "${1:-}" in
   entity-node) role="node-${CELLULE_PERF_PROCESS_NODE:?}"; selected=entities::process::entity_process_node ;;
   entity-scale) role=driver; selected=entities::process::driver::entity_process_scaling ;;
   entity-capacity) role=driver; selected=entities::process::driver::entity_process_capacity ;;
-  *) printf 'usage: run.sh node|driver|scale|rollout|entities|entity-node|entity-scale|entity-capacity\n' >&2; exit 2 ;;
+  entity-capacity-follower) role=driver; selected=entities::process::driver::entity_process_capacity_follower ;;
+  *) printf 'usage: run.sh node|driver|scale|rollout|entities|entity-node|entity-scale|entity-capacity|entity-capacity-follower\n' >&2; exit 2 ;;
 esac
 binary=
 for candidate in /target/release/deps/integration-*; do

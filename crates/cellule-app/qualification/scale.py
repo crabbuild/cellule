@@ -126,7 +126,7 @@ def verify_reader_loss(control: Path, killed_node: int) -> dict:
 
 class Fleet:
     def __init__(self, state: Path, project: str, overrides: list[Path], workload: str = "readers"):
-        assert workload in ("readers", "entities", "capacity")
+        assert workload in ("readers", "entities", "capacity", "capacity-follower")
         self.workload = workload
         self.state = state.resolve(strict=True)
         self.project = project
@@ -136,7 +136,8 @@ class Fleet:
         existing = self.run("docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}")
         if existing.strip():
             raise ValueError("project already has containers; retain it and choose a fresh project")
-        evidence_name = {"readers": "scaling", "entities": "entity-scaling", "capacity": "entity-capacity"}[workload]
+        evidence_name = {"readers": "scaling", "entities": "entity-scaling", "capacity": "entity-capacity",
+                         "capacity-follower": "entity-capacity-follower"}[workload]
         self.evidence = self.state / "evidence" / evidence_name
         self.evidence.mkdir(mode=0o1777)
         self.evidence.chmod(0o1777)
@@ -151,22 +152,25 @@ class Fleet:
         node = config["services"]["node-0"]
         # Twenty live nodes plus one killed boot. New boots have new identities;
         # restarting a deterministic fixture session would bypass expiry fencing.
-        for index in range(3, 3 if workload == "capacity" else 21):
+        for index in range(3, 3 if workload.startswith("capacity") else 21):
             added = copy.deepcopy(node)
             added["environment"].update(
                 CELLULE_PERF_PROCESS_NODE=str(index),
                 CELLULE_PERF_PROCESS_ADVERTISE=f"node-{index}:8080",
             )
             config["services"][f"node-{index}"] = added
-        config["services"]["driver"]["command"] = [{"readers": "scale", "entities": "entity-scale", "capacity": "entity-capacity"}[workload]]
-        if workload in ("entities", "capacity"):
+        config["services"]["driver"]["command"] = [{"readers": "scale", "entities": "entity-scale", "capacity": "entity-capacity",
+                                                   "capacity-follower": "entity-capacity-follower"}[workload]]
+        if workload in ("entities", "capacity", "capacity-follower"):
             for name, service in config["services"].items():
                 if name.startswith("node-"):
                     service["command"] = ["entity-node"]
-        if workload == "capacity":
+        if workload.startswith("capacity"):
             for name, service in config["services"].items():
                 if name.startswith("node-") or name == "driver":
                     service["environment"]["CELLULE_PERF_PROCESS_ROOT"] = f"capacity-{project}"
+                if workload == "capacity-follower" and name.startswith("node-"):
+                    service["environment"]["CELLULE_PERF_PROCESS_FOLLOWER"] = "1"
         for service in config["services"].values():
             for volume in service.get("volumes", []):
                 if volume["target"] == "/evidence":
@@ -275,7 +279,7 @@ class Fleet:
         self.verify()
 
     def verify(self) -> None:
-        stages = (3,) if self.workload == "capacity" else (3, 5, 10, 20)
+        stages = (3,) if self.workload.startswith("capacity") else (3, 5, 10, 20)
         assert len(self.active) == stages[-1] and len(self.killed) == (1 if self.workload == "readers" else 0)
         assert [(event["action"], event["argument"]) for event in self.events if event["action"] == "scale"] == [
             ("scale", stage) for stage in stages
@@ -308,10 +312,11 @@ class Fleet:
             binaries.add((self.evidence / f"{role}-binary.sha256").read_text().split()[0])
         assert len(binaries) == 1
         source = (self.state / "evidence/source-revision.txt").read_text().strip()
-        if self.workload in ("entities", "capacity"):
+        if self.workload in ("entities", "capacity", "capacity-follower"):
             result = dict(workload=self.workload, source=source, binary_sha256=binaries.pop(),
                           roles=reports, events=self.events,
-                          **verify_entities(self.control, capacity=self.workload == "capacity"))
+                          **verify_entities(self.control, capacity=self.workload.startswith("capacity"),
+                                            follower=self.workload == "capacity-follower"))
             (self.evidence / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
             print(f"Verified entity integrity and resources at {stages} nodes; evidence: {self.evidence}", flush=True)
             return
@@ -345,7 +350,7 @@ def main() -> None:
     parser.add_argument("--state", type=Path, required=True, help="prepared source, binary and evidence directory")
     parser.add_argument("--project", required=True, help="fresh Compose project; stopped containers are retained")
     parser.add_argument("--compose-file", type=Path, action="append", default=[], help="explicit image/cache override")
-    parser.add_argument("--workload", choices=("readers", "entities", "capacity"), default="readers", help="reader replacement, scaling, or fixed 12-Cell capacity traffic")
+    parser.add_argument("--workload", choices=("readers", "entities", "capacity", "capacity-follower"), default="readers", help="reader replacement, scaling, or fixed 12-Cell capacity traffic")
     args = parser.parse_args()
     fleet = Fleet(args.state, args.project, args.compose_file, args.workload)
     try:

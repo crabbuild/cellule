@@ -2,9 +2,11 @@
 
 use super::super::fleet::{GatewayStats, start_gateway_peer_server};
 use super::super::performance_fixture::{node_session, now_ms, rustfs_store};
+use super::super::process_follower;
 use super::super::process_node;
 use super::super::process_performance::{publish_address, wait_for_marker};
 use super::*;
+use cellule_runtime::follower::FollowerStore;
 use cellule_runtime::peer::PeerVerifier;
 use std::{
     env,
@@ -61,6 +63,7 @@ async fn entity_process_node() {
         .parse()
         .unwrap();
     assert!(node < 20);
+    let follower_enabled = env::var("CELLULE_PERF_PROCESS_FOLLOWER").as_deref() == Ok("1");
     let sync = env::var("CELLULE_PERF_PROCESS_SYNC").unwrap();
     let sync = Path::new(&sync);
     let application = compiled_entities();
@@ -76,20 +79,38 @@ async fn entity_process_node() {
     let listener = TcpListener::bind(env::var("CELLULE_PERF_PROCESS_BIND").unwrap())
         .await
         .unwrap();
+    let follower_listener = if follower_enabled {
+        Some(TcpListener::bind("0.0.0.0:8081").await.unwrap())
+    } else {
+        None
+    };
     let address = tokio::net::lookup_host(env::var("CELLULE_PERF_PROCESS_ADVERTISE").unwrap())
         .await
         .unwrap()
         .next()
         .unwrap();
     let endpoint = format!("https://{address}");
-    let (host, durability, readers) = process_node::start(
+    let (host, durability, readers) = process_node::start_configured(
         node,
         application.clone(),
         &layout,
         directory.path(),
         endpoint.clone(),
+        follower_enabled,
     )
     .await;
+    let follower_server = follower_listener.map(|listener| {
+        let store = host
+            .owned_component::<FollowerStore>(cellule_host::FOLLOWER_STORE_COMPONENT)
+            .unwrap();
+        process_follower::serve(
+            listener,
+            cellule_runtime::identity::NodeId::from_bytes(*node_session(node).as_bytes()),
+            (*store).clone(),
+            process_node::directory(&layout, &registry),
+            process_node::signing_key(node),
+        )
+    });
     let mut handles = Vec::new();
     for entity in node * ENTITIES_PER_NODE..(node + 1) * ENTITIES_PER_NODE {
         handles.push(
@@ -129,6 +150,16 @@ async fn entity_process_node() {
         )),
     );
     publish_address(&sync.join(format!("node-{node}.ready")), address);
+    if follower_enabled {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while host.runtime().node_durability().is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "follower enrollment did not complete"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
     publish_marker(&sync.join(format!("node-{node}.serving")), []);
     let mut observations = observation::NodeObservations::new(sync, node);
     let mut next_sample = Instant::now();
@@ -174,4 +205,8 @@ async fn entity_process_node() {
     publish_marker(&sync.join(format!("node-{node}.done")), []);
     server.abort();
     let _ = server.await;
+    if let Some(server) = follower_server {
+        server.abort();
+        let _ = server.await;
+    }
 }

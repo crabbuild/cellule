@@ -50,16 +50,22 @@ struct Sample {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "Compose controller required for scheduled entity traffic on 3/5/10/20 nodes"]
 async fn entity_process_scaling() {
-    run_entity_process(false).await;
+    run_entity_process(false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "Compose controller required for fixed-Cell scheduled capacity traffic"]
 async fn entity_process_capacity() {
-    run_entity_process(true).await;
+    run_entity_process(true, false).await;
 }
 
-async fn run_entity_process(capacity: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Compose controller required for networked follower-proof capacity traffic"]
+async fn entity_process_capacity_follower() {
+    run_entity_process(true, true).await;
+}
+
+async fn run_entity_process(capacity: bool, follower_enabled: bool) {
     let sync = env::var("CELLULE_PERF_PROCESS_SYNC").unwrap();
     let sync = Path::new(&sync);
     let mut controller = Controller::new(sync);
@@ -94,6 +100,9 @@ async fn run_entity_process(capacity: bool) {
         );
         for node in 0..nodes {
             wait_for_marker(&sync.join(format!("node-{node}.serving"))).await;
+        }
+        if follower_enabled {
+            assert_eq!(nodes, 3);
         }
         let addresses = endpoints(sync, nodes).await;
         publish_marker(&sync.join("entity-stage.request"), nodes.to_string());
