@@ -80,5 +80,5 @@ shares the sender hint and passes a known description through
 `with_observed_description`. A product comparison should schedule the same
 local and forwarded actions across hot and many-Cell stages, retain owner-loss
 and receipt evidence, and count object-store requests per action. Write
-throughput attribution is tracked separately by the entity workload and
-[`plans/002-write-throughput-bottleneck.md`](../../../plans/002-write-throughput-bottleneck.md).
+throughput attribution is tracked separately by the entity workload and the
+[write-capacity report](../../cellule-app/performance/2026-09-29-write-capacity.md).

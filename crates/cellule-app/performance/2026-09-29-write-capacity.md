@@ -180,9 +180,9 @@ Owner `not_started` capacity refusals began at the 32 actions/node/s point.
 Together these observations identify serialized object publication as the
 hot Cell throughput limiter on this object-proof profile. They do not yet
 distinguish predecessor verification, directory work, immutable uploads, or
-compaction within preparation; [Plan 003](../../../plans/003-hot-cell-publication-critical-path.md)
-requires that split before code changes. Uniform and skewed thresholds varied
-between repeats, so this result is specific to the hot shape.
+compaction within preparation; that split is required before code changes.
+Uniform and skewed thresholds varied between repeats, so this result is
+specific to the hot shape.
 
 The three `verification.json` SHA-256 digests are
 `40e4908a169013a80fe873f4aaf0d6f355872545a72212addb0d712281724e31`,
@@ -215,7 +215,7 @@ p95 37–43 ms, and root preparation p95 32–38 ms. Provider requests per
 acknowledged write were 11.66–11.73. This independently supports serial
 object publication as the hot Cell limiter, while the lower hot rate interval
 than run 36655966439 shows that exact throughput is sensitive to the shared
-CI runner. Plan 003 requires a controlled A/A baseline before claiming a
+CI runner. A controlled A/A baseline is required before claiming a
 code-change gain.
 
 The `verification.json` SHA-256 digests for repeats 1–3 are
@@ -344,11 +344,12 @@ overload point identifies the harness admission limit until runtime and
 provider phase evidence demonstrates a narrower Cell limiter.
 
 The existing entity host does not enroll a follower durability lane, so this
-profile cannot supply the separate follower-enabled comparison. [Plan 004](../../../plans/004-follower-enabled-capacity-lane.md)
-specifies the required fixture and evidence. The added
-publication observation aggregates root preparation and provider I/O; it
-cannot by itself distinguish predecessor GET/HEAD, immutable PUT, and provider
-wait inside that phase. Those limits prevent selecting a safe implementation
+profile cannot supply the separate follower-enabled comparison. That lane
+requires a networked node-log transport, authority enrollment fixture, and
+recovery evidence. The added publication observation aggregates root
+preparation and provider I/O; it cannot by itself distinguish predecessor
+GET/HEAD, immutable PUT, and provider wait inside that phase. Those limits
+prevent selecting a safe implementation
 change from this revision alone.
 
 The 2026-09-29 workstation did not provide an isolated provider environment.
@@ -373,8 +374,8 @@ above. That binary predates the fixed-Cell capacity selector and cannot run
 it; create a new source snapshot and release binary for the capacity runs.
 This is a compile result, not an execution result.
 
-Plan 003 requires a dedicated provider environment and a repeatable A/A
-rate interval before modifying publication. It then splits root preparation
-into predecessor reads, directory work, uploads, provider wait, and CAS.
-Plan 004 runs the follower-enabled lane separately, with recovery proof and
+A publication optimization requires a dedicated provider environment and a
+repeatable A/A rate interval before modifying publication. It then splits root
+preparation into predecessor reads, directory work, uploads, provider wait,
+and CAS. A follower-enabled lane runs separately, with recovery proof and
 eventual root drain alongside response throughput.
