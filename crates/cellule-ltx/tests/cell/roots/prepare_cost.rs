@@ -4,6 +4,17 @@
 //! inside root preparation. This model counts the provider operations each
 //! publish needs and prices them with the p95 latencies those runs recorded, so
 //! a change to predecessor verification can be judged before it is written.
+//!
+//! Recorded result (2026-09-30, in-memory provider plus the throttle below):
+//! an incremental publish needs **2 HEADs, 0 GETs, and 6 PUTs**. Root and
+//! directory bodies come from the process metadata cache, so predecessor
+//! verification costs two HEADs — roughly 3 ms of the recorded 33-38 ms
+//! preparation p95 — while the six mandatory immutable uploads dominate it.
+//! A predecessor-graph cache would therefore buy about a tenth of preparation
+//! for a new trust assumption in the durable path, which is why it is not
+//! implemented. Revisit this measurement before proposing one: it only becomes
+//! worthwhile if the HEAD count grows with root shape (for example a root with
+//! many segments whose pages are not cached).
 
 use std::time::{Duration, Instant};
 
