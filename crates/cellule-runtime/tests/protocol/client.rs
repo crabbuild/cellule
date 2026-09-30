@@ -607,6 +607,7 @@ impl PeerRoundTrip for LoopbackRoundTrip {
 }
 
 mod effects;
+mod publication;
 mod routing;
 mod telemetry;
 mod typed;
