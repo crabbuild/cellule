@@ -724,9 +724,9 @@ impl CellClient {
 
     /// Routes a target to its current local owner or an authenticated peer.
     ///
-    /// Every invocation rechecks catalog and authority state. The peer round
-    /// trip must resolve the current remote owner and verify its enrollment;
-    /// this constructor does not acquire an idle Cell.
+    /// A local actor hit rechecks catalog and authority state. A local miss
+    /// delegates without those reads; the peer round trip resolves the remote
+    /// owner and verifies enrollment. This does not acquire an idle Cell.
     #[must_use]
     pub fn runtime_with_peer(
         registry: Arc<Registry>,
@@ -736,8 +736,13 @@ impl CellClient {
         principal: crate::peer::PeerPrincipal,
         round_trip: Arc<dyn crate::peer::PeerRoundTrip>,
     ) -> Self {
-        Self::peer(registry, signer, principal, round_trip)
-            .with_local_resolver(Arc::new(RuntimeLocalResolver { runtime, layout }))
+        Self::peer(registry, signer, principal, round_trip).with_local_resolver(Arc::new(
+            RuntimeLocalResolver {
+                runtime,
+                layout,
+                remote_on_miss: true,
+            },
+        ))
     }
 
     /// Resolves a local owner before delegating to this client's transport.

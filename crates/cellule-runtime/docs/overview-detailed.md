@@ -38,11 +38,13 @@ The public HTTP server owns authentication and repository policy. The runtime ow
 The direct green route is local execution. The orange route is the single authenticated peer hop when another node owns the Cell. Both converge on the same registry, actor, SQLite, and LTX publication path.
 
 `CellClient::local_runtime` resolves a newly admitted local Cell through its
-catalog and owner record for each call. It serves embedded, single-node routing;
-`CellClient::runtime_with_peer` uses the same local path when this node owns the
-Cell and an authenticated peer round trip when another node owns it. The product
-server supplies the peer transport and owner lookup; neither constructor
-acquires an idle Cell.
+catalog and owner record for each call, reading those independent records in
+parallel. It serves embedded, single-node routing;
+`CellClient::runtime_with_peer` first asks the local actor whether it has a
+dispatchable handle. A local hit verifies catalog and owner authority as before;
+a miss delegates without those metadata reads to an authenticated peer round
+trip. The product server supplies the peer transport and owner lookup; neither
+constructor acquires an idle Cell.
 
 The dependency direction follows the same boundary:
 
