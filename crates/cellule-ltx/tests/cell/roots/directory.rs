@@ -104,10 +104,9 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
     let backend = Arc::new(InMemory::new());
     let cell = [85; 32];
     let incarnation = [86; 16];
-    // Cache persistence is the subject of this test. Give it private job
-    // admission so unrelated concurrent tests cannot make optional fills
-    // disappear before the restart boundary.
-    let cache_jobs = Arc::new(tokio::sync::Semaphore::new(4));
+    // Cache persistence is the subject of this test. Give concurrent directory
+    // node fills ample private admission so optional fills are not skipped.
+    let cache_jobs = Arc::new(tokio::sync::Semaphore::new(64));
     let cache_host = Host::default()
         .with_local_disk_budget(DiskBudget::new(64 * 1024 * 1024))
         .with_job_slots(cache_jobs.clone())
@@ -127,7 +126,8 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
     assert_eq!(warm.directory_height(), 1);
     warm.paged().read_page(1).await.unwrap();
     cache_host.drain_cache_fills().await;
-    assert!(cache_host.directory_cache_stats().unwrap().entries() >= 1);
+    let warm_cache_stats = cache_host.directory_cache_stats().unwrap();
+    assert!(warm_cache_stats.entries() >= 1);
     drop(first);
     drop(warm_replica);
 
@@ -155,6 +155,7 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
         .with_directory_cache(cache_root)
         .await
         .unwrap();
+    let restart_cache_stats = cached_host.directory_cache_stats().unwrap();
     let cached = replica(cached_store, cell, incarnation).with_host(cached_host);
     let cached_root = cached.open_root(&root).await.unwrap();
     cached_reads.store(0, Ordering::SeqCst);
@@ -163,7 +164,7 @@ async fn directory_cache_survives_replica_restart_without_directory_origin_read(
 
     assert!(
         cached_bytes < uncached_bytes,
-        "a restarted replica must avoid the persisted directory-node origin read"
+        "a restarted replica must avoid the persisted directory-node origin read (uncached={uncached_bytes}, cached={cached_bytes}, warm_cache={warm_cache_stats:?}, restart_cache={restart_cache_stats:?})"
     );
 }
 #[tokio::test]
