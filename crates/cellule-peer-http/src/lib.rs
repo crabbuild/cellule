@@ -5,7 +5,7 @@ mod tls;
 pub use tls::{LoadedPeerTls, PeerTlsClient, PeerTlsIdentity, PeerTlsListener, TlsError};
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -15,7 +15,7 @@ use std::{
 use cellule_runtime::Error as CellError;
 use cellule_runtime::cell::application::ApplicationIdentity;
 use cellule_runtime::control::authority::CellAuthority;
-use cellule_runtime::identity::{CellTarget, Digest, SessionId};
+use cellule_runtime::identity::{CellId, CellTarget, Digest, SessionId};
 use cellule_runtime::node::{NodeAdvertisement, NodeDirectory};
 use cellule_runtime::peer::{PeerRoundTrip, wire as peer_wire};
 use futures_util::StreamExt;
@@ -23,6 +23,9 @@ use http::{StatusCode, header};
 
 const PEER_FORWARD_PATH: &str = "internal/cells/v1/forward";
 const MAX_PEER_CLIENTS: usize = 1_024;
+const MAX_OWNER_HINTS: usize = 4_096;
+const OWNER_HINT_LIFETIME: Duration = Duration::from_secs(5);
+const OWNER_LEASE_MARGIN_MS: i64 = 1_000;
 /// Content type accepted by the private peer forwarding endpoint.
 pub const PROTOBUF_MEDIA_TYPE: &str = "application/x-protobuf";
 
@@ -61,6 +64,7 @@ pub struct PeerHttpRoundTrip {
     tls: Arc<dyn PeerHttpClientFactory>,
     session: SessionId,
     clients: Arc<Mutex<VecDeque<CachedPeerClient>>>,
+    owners: Arc<Mutex<HashMap<CellId, CachedOwner>>>,
 }
 
 impl PeerHttpRoundTrip {
@@ -80,6 +84,7 @@ impl PeerHttpRoundTrip {
             tls,
             session,
             clients: Arc::new(Mutex::new(VecDeque::new())),
+            owners: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -106,23 +111,34 @@ impl PeerHttpRoundTrip {
                 }
             }
             let remaining_ms = remaining_timeout(started, timeout_ms)?;
-            let owner = tokio::time::timeout(
-                Duration::from_millis(u64::from(remaining_ms)),
-                self.owner(&target),
-            )
-            .await
-            .map_err(|_| CellError::Deadline)??;
+            let owner =
+                tokio::time::timeout(Duration::from_millis(u64::from(remaining_ms)), async {
+                    if last_retry.is_some() {
+                        self.refresh_owner(&target).await
+                    } else {
+                        self.owner(&target).await
+                    }
+                })
+                .await
+                .map_err(|_| CellError::Deadline)??;
             let remaining_ms = remaining_timeout(started, timeout_ms)?;
             match self.send_once(&owner, request.clone(), remaining_ms).await {
                 Ok(PeerHttpAttempt::Reply(reply)) => return Ok(reply),
-                Ok(PeerHttpAttempt::Retry(error, delay)) => last_retry = Some((error, delay)),
+                Ok(PeerHttpAttempt::Retry(error, delay)) => {
+                    self.invalidate_owner(target.cell_id(), owner.session);
+                    last_retry = Some((error, delay));
+                }
                 Ok(PeerHttpAttempt::Unknown(error)) => {
+                    self.invalidate_owner(target.cell_id(), owner.session);
                     return Err(CellError::PeerTransportUnknown {
                         context: "peer HTTP response was lost or invalid",
                         source: Box::new(error),
                     });
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    self.invalidate_owner(target.cell_id(), owner.session);
+                    return Err(error);
+                }
             }
         }
         Err(last_retry.map_or(CellError::CellNotActive, |(error, _)| error))
@@ -162,6 +178,20 @@ impl PeerHttpRoundTrip {
 
     async fn owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
         self.scope.check_target(target)?;
+        let now = now_ms()?;
+        if let Some(owner) = self.cached_owner(target.cell_id(), now) {
+            return Ok(owner);
+        }
+        self.load_owner(target).await
+    }
+
+    async fn refresh_owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
+        self.scope.check_target(target)?;
+        self.load_owner(target).await
+    }
+
+    async fn load_owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
+        let lookup_started = Instant::now();
         let control = self
             .authority
             .load(target.cell_id())
@@ -187,12 +217,116 @@ impl PeerHttpRoundTrip {
                 "Cell owner endpoint is not enrolled",
             ));
         }
-        Ok(RemotePeer {
+        let remote = RemotePeer {
             session: owner.session,
             endpoint: url::Url::parse(advertisement.endpoint()).map_err(peer_transport)?,
             certificate: advertisement.certificate(),
             public_key: advertisement.verifying_key()?.to_bytes(),
-        })
+        };
+        self.remember_owner(
+            target.cell_id(),
+            remote.clone(),
+            advertisement.expires_at_ms(),
+            now_ms,
+            lookup_started,
+        );
+        Ok(remote)
+    }
+
+    fn cached_owner(&self, cell: CellId, now_ms: i64) -> Option<RemotePeer> {
+        let Ok(mut owners) = self.owners.lock() else {
+            return None;
+        };
+        let observed = owners.get(&cell)?;
+        if observed.expires_at <= Instant::now()
+            || observed.lease_expires_at_ms <= now_ms.saturating_add(OWNER_LEASE_MARGIN_MS)
+        {
+            owners.remove(&cell);
+            return None;
+        }
+        observed.owner.clone()
+    }
+
+    fn remember_owner(
+        &self,
+        cell: CellId,
+        owner: RemotePeer,
+        lease_expires_at_ms: i64,
+        observed_at_ms: i64,
+        lookup_started: Instant,
+    ) {
+        let lease_margin = lease_expires_at_ms
+            .saturating_sub(observed_at_ms)
+            .saturating_sub(OWNER_LEASE_MARGIN_MS);
+        let Ok(lease_margin) = u64::try_from(lease_margin) else {
+            return;
+        };
+        if lease_margin == 0 {
+            return;
+        }
+        let lifetime = OWNER_HINT_LIFETIME.min(Duration::from_millis(lease_margin));
+        let Some(expires_at) = Instant::now().checked_add(lifetime) else {
+            return;
+        };
+        let Ok(mut owners) = self.owners.lock() else {
+            return;
+        };
+        if owners
+            .get(&cell)
+            .is_some_and(|current| current.lookup_started > lookup_started)
+        {
+            return;
+        }
+        if owners.len() >= MAX_OWNER_HINTS
+            && !owners.contains_key(&cell)
+            && let Some(evicted) = owners.keys().next().copied()
+        {
+            owners.remove(&evicted);
+        }
+        owners.insert(
+            cell,
+            CachedOwner {
+                owner: Some(owner),
+                expires_at,
+                lease_expires_at_ms,
+                lookup_started,
+            },
+        );
+    }
+
+    fn invalidate_owner(&self, cell: CellId, session: SessionId) {
+        let Ok(mut owners) = self.owners.lock() else {
+            return;
+        };
+        if owners.get(&cell).is_some_and(|cached| {
+            cached
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.session != session)
+        }) {
+            return;
+        }
+        let now = Instant::now();
+        let Some(expires_at) = now.checked_add(OWNER_HINT_LIFETIME) else {
+            return;
+        };
+        if owners.len() >= MAX_OWNER_HINTS
+            && !owners.contains_key(&cell)
+            && let Some(evicted) = owners.keys().next().copied()
+        {
+            owners.remove(&evicted);
+        }
+        // Keep a short tombstone so a lookup started before this refusal
+        // cannot repopulate the invalidated session after the lock is released.
+        owners.insert(
+            cell,
+            CachedOwner {
+                owner: None,
+                expires_at,
+                lease_expires_at_ms: i64::MAX,
+                lookup_started: now,
+            },
+        );
     }
 
     fn client(&self, owner: &RemotePeer) -> cellule_runtime::Result<reqwest::Client> {
@@ -377,15 +511,24 @@ impl Clone for PeerHttpRoundTrip {
             tls: Arc::clone(&self.tls),
             session: self.session,
             clients: Arc::clone(&self.clients),
+            owners: Arc::clone(&self.owners),
         }
     }
 }
 
+#[derive(Clone)]
 struct RemotePeer {
     session: SessionId,
     endpoint: url::Url,
     certificate: Digest,
     public_key: [u8; 32],
+}
+
+struct CachedOwner {
+    owner: Option<RemotePeer>,
+    expires_at: Instant,
+    lease_expires_at_ms: i64,
+    lookup_started: Instant,
 }
 
 struct CachedPeerClient {

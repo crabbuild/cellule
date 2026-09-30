@@ -17,13 +17,16 @@ pub(super) async fn run(
     let mut cells = HashMap::<CellId, ActiveCell>::new();
     let mut transitioning = HashSet::<CellId>::new();
     let mut tasks = JoinSet::<TaskResult>::new();
+    let mut renewals = RenewalScheduler::new();
     let mut next_generation = 0_u64;
     let mut shutdown = None::<ShutdownState>;
     let mut pressure = match PressureClassifier::new(800, 600, 1_000) {
         Ok(classifier) => classifier,
         Err(_) => return,
     };
-    let mut movement = match MovementBudget::new(2, 1_000) {
+    // Requested releases have their own bounded capacity so a cold scan does
+    // not consume the two-per-second automatic pressure-shedding allowance.
+    let mut movement = match MovementBudget::with_requested_limit(2, 32, 1_000) {
         Ok(budget) => budget,
         Err(_) => return,
     };
@@ -54,6 +57,7 @@ pub(super) async fn run(
                 finish_shutdown(&mut shutdown);
                 return;
             };
+            let renewed = matches!(result, TaskResult::Renewed { .. });
             super::tasks::handle_task(
                 result,
                 &pool,
@@ -67,6 +71,9 @@ pub(super) async fn run(
                 &mut movement,
                 &mut movement_permits,
             );
+            if renewed {
+                renewals.finished();
+            }
             continue;
         }
         if tasks.is_empty() {
@@ -89,7 +96,8 @@ pub(super) async fn run(
                     handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &mut movement, &mut movement_permits, &mut next_generation);
                 }
                 _ = renewal_tick.tick() => {
-                    start_due_renewals(&pool, &mut cells, &mut tasks, &node_lease);
+                    renewals.scan_due(&cells);
+                    renewals.dispatch(&pool, &mut cells, &mut tasks, &node_lease);
                 }
                 _ = hydration_tick.tick() => {
                     start_background_hydration(
@@ -132,7 +140,11 @@ pub(super) async fn run(
                     }
                     while let Some(result) = tasks.join_next().await {
                         let Ok(result) = result else { return; };
+                        let renewed = matches!(result, TaskResult::Renewed { .. });
                         super::tasks::handle_task(result, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &unpublished_node_log_bytes, &publications, &mut movement, &mut movement_permits);
+                        if renewed {
+                            renewals.finished();
+                        }
                     }
                     break;
                 };
@@ -142,10 +154,18 @@ pub(super) async fn run(
                 let Some(Ok(result)) = result else {
                     return;
                 };
+                let renewed = matches!(result, TaskResult::Renewed { .. });
                 super::tasks::handle_task(result, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &unpublished_node_log_bytes, &publications, &mut movement, &mut movement_permits);
+                if renewed {
+                    renewals.finished();
+                    if !shutdown.as_ref().is_some_and(|state| state.draining) {
+                        renewals.dispatch(&pool, &mut cells, &mut tasks, &node_lease);
+                    }
+                }
             }
             _ = renewal_tick.tick() => {
-                start_due_renewals(&pool, &mut cells, &mut tasks, &node_lease);
+                renewals.scan_due(&cells);
+                renewals.dispatch(&pool, &mut cells, &mut tasks, &node_lease);
             }
             _ = hydration_tick.tick() => {
                 start_background_hydration(
@@ -228,7 +248,7 @@ fn classify_pressure_sample(
     let state = pressure.observe(sample)?;
     telemetry.pressure_state(state);
     if matches!(state, PressureState::Shedding | PressureState::Critical)
-        && movement_permits.len() < 2
+        && movement.in_flight() < 2
     {
         let _ = start_bounded_evictions(
             1,
@@ -691,7 +711,7 @@ pub(super) fn handle_message(
                 let _ = reply.send(Err(Error::CellDraining));
                 return;
             }
-            let Ok(mut permit) = movement.try_start(unix_millis()) else {
+            let Ok(mut permit) = movement.try_start_requested(unix_millis()) else {
                 let _ = reply.send(Err(Error::Capacity("movement budget")));
                 return;
             };

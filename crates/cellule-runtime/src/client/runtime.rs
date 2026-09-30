@@ -33,7 +33,11 @@ impl RuntimeCellTransport {
     ) -> Self {
         Self {
             registry,
-            resolver: Arc::new(RuntimeLocalResolver { runtime, layout }),
+            resolver: Arc::new(RuntimeLocalResolver {
+                runtime,
+                layout,
+                remote_on_miss: false,
+            }),
             remote: None,
         }
     }
@@ -71,6 +75,7 @@ impl RuntimeCellTransport {
 pub(super) struct RuntimeLocalResolver {
     pub(super) runtime: CellRuntime,
     pub(super) layout: CellStorageLayout,
+    pub(super) remote_on_miss: bool,
 }
 
 impl LocalCellResolver for RuntimeLocalResolver {
@@ -80,14 +85,21 @@ impl LocalCellResolver for RuntimeLocalResolver {
     ) -> Pin<Box<dyn Future<Output = Result<Option<CellHandle>>> + Send + 'static>> {
         let resolver = self.clone();
         Box::pin(async move {
-            let catalog = CellCatalog::new(resolver.layout.clone(), target.tenant())
-                .lookup(target.cell_id())
-                .await?
-                .ok_or(Error::Control("target Cell is not cataloged"))?;
-            let control = CellAuthority::new(resolver.layout)
-                .load(target.cell_id())
-                .await?
-                .ok_or(Error::Control("target Cell has no authority record"))?;
+            if resolver.remote_on_miss
+                && !resolver.runtime.has_local_owner(target.cell_id()).await?
+            {
+                // No local actor can execute this request. The peer route
+                // resolves remote ownership and its receiver fences stale hints.
+                return Ok(None);
+            }
+            let catalog = CellCatalog::new(resolver.layout.clone(), target.tenant());
+            let authority = CellAuthority::new(resolver.layout);
+            let (catalog, control) = tokio::join!(
+                catalog.lookup(target.cell_id()),
+                authority.load(target.cell_id())
+            );
+            let catalog = catalog?.ok_or(Error::Control("target Cell is not cataloged"))?;
+            let control = control?.ok_or(Error::Control("target Cell has no authority record"))?;
             resolver.runtime.local_handle(catalog, &control).await
         })
     }

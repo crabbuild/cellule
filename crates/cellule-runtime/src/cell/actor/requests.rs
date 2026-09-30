@@ -146,11 +146,12 @@ pub(super) async fn execute_command(
     effect_id: u64,
 ) -> TaskResult {
     let execution_started = std::time::Instant::now();
+    let queue_wait = command.queued_at.elapsed();
     tracing::debug!(
         target: "cellule_runtime::action",
         parent: &command.trace,
         event = "cell_execution_started",
-        actor_queue_us = command.queued_at.elapsed().as_micros(),
+        actor_queue_us = queue_wait.as_micros(),
     );
     let deadline = SqlDeadline::new(std::time::Instant::now() + SQL_WALL_DEADLINE);
     let execution = match command.handler.take() {
@@ -198,6 +199,11 @@ pub(super) async fn execute_command(
             match tokio::time::timeout_at(deadline.at().into(), &mut operation).await {
                 Ok(result) => result,
                 Err(_) => {
+                    command.telemetry.command_execution(
+                        queue_wait,
+                        execution_started.elapsed(),
+                        false,
+                    );
                     let fenced = !deadline.cancel_queued();
                     tracing::warn!(cell = ?command.cell, sql_started = fenced, "Cell SQL command deadline expired");
                     if fenced {
@@ -227,6 +233,9 @@ pub(super) async fn execute_command(
         }
         None => Err(Error::Fenced),
     };
+    command
+        .telemetry
+        .command_execution(queue_wait, execution_started.elapsed(), execution.is_ok());
     tracing::debug!(
         target: "cellule_runtime::action",
         parent: &command.trace,
@@ -371,6 +380,8 @@ pub(super) fn start_publication(
     pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
+    use crate::fleet::telemetry::PublicationTiming;
+
     let Some(mut publisher) = active.publisher.take() else {
         return;
     };
@@ -383,6 +394,7 @@ pub(super) fn start_publication(
         - i128::from(active.published_sequence);
     let incarnation = active.incarnation;
     let commit_sequence = publication.pending.outcome().commit_sequence();
+    let queue_wait = publication.submitted_at.elapsed();
     tracing::debug!(
         target: "cellule_runtime::action",
         event = "cell_publication_started",
@@ -409,8 +421,11 @@ pub(super) fn start_publication(
         let mut publication_proof = Some(publication.proof);
         let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
         let mut retry_delay = std::time::Duration::from_millis(100);
+        let mut preparation = std::time::Duration::ZERO;
+        let mut authority = std::time::Duration::ZERO;
         let result = async {
             let expected = publication.pending.outcome().clone();
+            let preparation_started = std::time::Instant::now();
             let prepared = loop {
                 match publisher.prepare(&publication.pending).await {
                     Ok(prepared) => break prepared,
@@ -432,7 +447,9 @@ pub(super) fn start_publication(
                     Err(error) => return Err(error),
                 }
             };
+            preparation = preparation_started.elapsed();
             pool.bind_prepared(cell, prepared.clone()).await?;
+            let authority_started = std::time::Instant::now();
             let root = loop {
                 match publisher
                     .publish_prepared(&prepared, publication.pending.next_due_ms())
@@ -457,6 +474,7 @@ pub(super) fn start_publication(
                     Err(error) => return Err(error),
                 }
             };
+            authority = authority_started.elapsed();
             if let Some(durability) = publication.durability.as_ref() {
                 durability.prove_object().await?;
             } else {
@@ -471,6 +489,14 @@ pub(super) fn start_publication(
             Ok(())
         }
         .await;
+        publisher.record_publication_timing(PublicationTiming {
+            queue_wait,
+            preparation,
+            authority,
+            total: publication.submitted_at.elapsed(),
+            succeeded: result.is_ok(),
+            commit_sequence,
+        });
         tracing::debug!(
             target: "cellule_runtime::action",
             event = "cell_publication_completed",

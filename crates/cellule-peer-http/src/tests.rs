@@ -1,9 +1,13 @@
 use super::*;
 use axum::{Router, body::Body, response::Response, routing::post};
+use cellule_runtime::cell::catalog::{CatalogEntry, CatalogRole, CellCatalog};
+use cellule_runtime::control::{ControlState, Owner, Transition};
+use cellule_runtime::identity::IncarnationId;
 use cellule_runtime::identity::{ApplicationId, NamespaceId, NodeId, TenantId};
 use cellule_runtime::ltx::CellStorageLayout;
 use cellule_runtime::node::{NodeCapacity, NodeFailureDomain};
 use cellule_store::Store;
+use cellule_store::test_support::CountingObjectStore;
 use ed25519_dalek::SigningKey;
 use object_store::{memory::InMemory, path::Path};
 
@@ -101,7 +105,10 @@ async fn both_routes_reject_exhausted_deadlines_before_dispatch() {
     }
 }
 
-async fn http_attempt(status: StatusCode, delay: Option<&'static str>) -> PeerHttpAttempt {
+async fn http_attempt(
+    status: StatusCode,
+    delay: Option<&'static str>,
+) -> cellule_runtime::Result<PeerHttpAttempt> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let router = Router::new().route(
@@ -133,7 +140,7 @@ async fn http_attempt(status: StatusCode, delay: Option<&'static str>) -> PeerHt
     let result = transport.send_once(&peer, vec![1], 5_000).await;
     stop.send(()).unwrap();
     server.await.unwrap();
-    result.unwrap()
+    result
 }
 
 #[tokio::test]
@@ -143,7 +150,7 @@ async fn admission_responses_preserve_retry_delay() {
         StatusCode::SERVICE_UNAVAILABLE,
     ] {
         assert!(matches!(
-            http_attempt(status, Some("2")).await,
+            http_attempt(status, Some("2")).await.unwrap(),
             PeerHttpAttempt::Retry(CellError::Capacity(_), delay) if delay == Duration::from_secs(2)
         ));
     }
@@ -153,8 +160,750 @@ async fn admission_responses_preserve_retry_delay() {
 async fn server_failure_or_invalid_success_remains_unknown() {
     for status in [StatusCode::INTERNAL_SERVER_ERROR, StatusCode::OK] {
         assert!(matches!(
-            http_attempt(status, None).await,
+            http_attempt(status, None).await.unwrap(),
             PeerHttpAttempt::Unknown(_)
         ));
     }
+}
+
+#[tokio::test]
+async fn authentication_refusal_is_not_an_owner_retry() {
+    for status in [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN] {
+        assert!(matches!(
+            http_attempt(status, None).await,
+            Err(CellError::PeerAuthorization(_))
+        ));
+    }
+}
+
+async fn owner_lookup_fixture() -> (PeerHttpRoundTrip, CellTarget, Arc<CountingObjectStore>) {
+    owner_lookup_fixture_with_endpoint(
+        "https://owner.example:443".into(),
+        Digest::from_bytes([23; 32]),
+        Digest::from_bytes([23; 32]),
+        SigningKey::from_bytes(&[27; 32]),
+        Arc::new(TestClients),
+    )
+    .await
+}
+
+async fn owner_lookup_fixture_with_endpoint(
+    endpoint: String,
+    certificate: Digest,
+    fleet: Digest,
+    signing_key: SigningKey,
+    clients: Arc<dyn PeerHttpClientFactory>,
+) -> (PeerHttpRoundTrip, CellTarget, Arc<CountingObjectStore>) {
+    let application = ApplicationId::from_bytes([21; 16]);
+    let tenant = TenantId::from_bytes([22; 16]);
+    let digest = Digest::from_bytes([23; 32]);
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let layout = CellStorageLayout::new(
+        Store::new(counted.clone()),
+        Path::from("owner-lookup-performance"),
+        *application.as_bytes(),
+    );
+    let target = CellTarget::new(
+        tenant,
+        application,
+        NamespaceId::from_bytes([24; 16]),
+        b"partition",
+    )
+    .unwrap();
+    let catalog = CellCatalog::new(layout.clone(), tenant);
+    let proof = catalog
+        .provision(CatalogEntry::new(&target, CatalogRole::Sql, digest, 1).unwrap())
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout.clone());
+    let directory = NodeDirectory::new(layout, fleet, digest, digest);
+    let now = now_ms().unwrap();
+    let advertisement = NodeAdvertisement::sign(
+        NodeId::from_bytes([25; 16]),
+        SessionId::from_bytes([26; 16]),
+        endpoint,
+        fleet,
+        certificate,
+        digest,
+        digest,
+        &signing_key,
+        1,
+        now,
+        now + 30_000,
+        vec![digest],
+        vec![1],
+        NodeFailureDomain::default(),
+        NodeCapacity::default(),
+    )
+    .unwrap();
+    directory.create(advertisement.clone(), now).await.unwrap();
+    authority
+        .create_initial(
+            &proof,
+            IncarnationId::from_bytes([28; 16]),
+            Owner {
+                session: advertisement.session(),
+                endpoint: advertisement.endpoint().to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    counted.reset();
+    let transport = PeerHttpRoundTrip::new(
+        Arc::new(ApplicationIdentity::new(tenant, application)),
+        authority,
+        directory,
+        clients,
+        SessionId::from_bytes([29; 16]),
+    );
+    (transport, target, counted)
+}
+
+#[tokio::test]
+async fn exact_owner_lookup_reads_control_and_signed_session() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let owner = transport.owner(&target).await.unwrap();
+    assert_eq!(owner.session, SessionId::from_bytes([26; 16]));
+    assert_eq!(counted.counts().body_requests(), 2);
+    transport.owner(&target).await.unwrap();
+    assert_eq!(counted.counts().body_requests(), 2);
+}
+
+#[tokio::test]
+async fn invalidated_hint_resolves_a_signed_owner_after_authority_takeover() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let old = transport.owner(&target).await.unwrap();
+    let now = now_ms().unwrap();
+    let successor = NodeAdvertisement::sign(
+        NodeId::from_bytes([35; 16]),
+        SessionId::from_bytes([36; 16]),
+        "https://successor.example:443".into(),
+        Digest::from_bytes([23; 32]),
+        Digest::from_bytes([23; 32]),
+        Digest::from_bytes([23; 32]),
+        Digest::from_bytes([23; 32]),
+        &SigningKey::from_bytes(&[37; 32]),
+        1,
+        now,
+        now + 30_000,
+        vec![Digest::from_bytes([23; 32])],
+        vec![1],
+        NodeFailureDomain::default(),
+        NodeCapacity::default(),
+    )
+    .unwrap();
+    transport
+        .directory
+        .create(successor.clone(), now)
+        .await
+        .unwrap();
+    let observed = transport
+        .authority
+        .load(target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let next = observed
+        .value()
+        .takeover(Owner {
+            session: successor.session(),
+            endpoint: successor.endpoint().to_owned(),
+        })
+        .unwrap();
+    transport
+        .authority
+        .transition(&observed, next, Transition::Takeover)
+        .await
+        .unwrap();
+    counted.reset();
+    assert_eq!(transport.owner(&target).await.unwrap().session, old.session);
+    assert_eq!(counted.counts().body_requests(), 0);
+    transport.invalidate_owner(target.cell_id(), old.session);
+    assert_eq!(
+        transport.owner(&target).await.unwrap().session,
+        successor.session()
+    );
+    assert_eq!(counted.counts().body_requests(), 2);
+}
+
+#[tokio::test]
+async fn retired_owner_session_fails_closed_after_hint_invalidation() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let owner = transport.owner(&target).await.unwrap();
+    let now = now_ms().unwrap();
+    let enrolled = transport
+        .directory
+        .load(owner.session, now)
+        .await
+        .unwrap()
+        .unwrap();
+    transport.directory.withdraw(&enrolled, now).await.unwrap();
+    transport.invalidate_owner(target.cell_id(), owner.session);
+    counted.reset();
+    assert!(transport.owner(&target).await.is_err());
+    assert_eq!(counted.counts().body_requests(), 2);
+}
+
+#[tokio::test]
+async fn tombstoned_cell_is_not_routed_from_an_invalidated_hint() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let old = transport.owner(&target).await.unwrap();
+    let observed = transport
+        .authority
+        .load(target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut next = observed.value().clone();
+    next.epoch += 1;
+    next.revision += 1;
+    next.progress += 1;
+    next.state = ControlState::Tombstoned;
+    next.owner = None;
+    transport
+        .authority
+        .transition(&observed, next, Transition::Tombstone)
+        .await
+        .unwrap();
+    transport.invalidate_owner(target.cell_id(), old.session);
+    counted.reset();
+    assert!(matches!(
+        transport.owner(&target).await,
+        Err(CellError::CellNotActive)
+    ));
+    assert_eq!(counted.counts().body_requests(), 1);
+}
+
+#[tokio::test]
+async fn owner_hint_is_shared_scoped_and_invalidated_by_session() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let owner = transport.owner(&target).await.unwrap();
+    let clone = transport.clone();
+    clone.owner(&target).await.unwrap();
+    assert_eq!(counted.counts().body_requests(), 2);
+
+    let foreign = CellTarget::new(
+        TenantId::from_bytes([31; 16]),
+        target.application(),
+        target.namespace(),
+        target.partition(),
+    )
+    .unwrap();
+    assert!(matches!(
+        clone.owner(&foreign).await,
+        Err(CellError::PeerAuthorization(_))
+    ));
+    assert_eq!(counted.counts().body_requests(), 2);
+
+    transport.invalidate_owner(target.cell_id(), SessionId::from_bytes([32; 16]));
+    clone.owner(&target).await.unwrap();
+    assert_eq!(counted.counts().body_requests(), 2);
+    transport.invalidate_owner(target.cell_id(), owner.session);
+    clone.owner(&target).await.unwrap();
+    assert_eq!(counted.counts().body_requests(), 4);
+}
+
+#[tokio::test]
+async fn delayed_old_lookup_cannot_replace_new_owner_hint() {
+    let (transport, target, _) = owner_lookup_fixture().await;
+    let old_started = Instant::now();
+    let new_started = old_started + Duration::from_millis(1);
+    let now = now_ms().unwrap();
+    let peer = RemotePeer {
+        session: SessionId::from_bytes([33; 16]),
+        endpoint: "https://new.example:443".parse().unwrap(),
+        certificate: Digest::from_bytes([34; 32]),
+        public_key: [35; 32],
+    };
+    transport.remember_owner(
+        target.cell_id(),
+        peer.clone(),
+        now + 10_000,
+        now,
+        new_started,
+    );
+    let old = RemotePeer {
+        session: SessionId::from_bytes([36; 16]),
+        ..peer
+    };
+    transport.remember_owner(target.cell_id(), old, now + 10_000, now, old_started);
+    assert_eq!(
+        transport.owner(&target).await.unwrap().session,
+        peer.session
+    );
+    transport.invalidate_owner(target.cell_id(), peer.session);
+    transport.remember_owner(
+        target.cell_id(),
+        RemotePeer {
+            session: SessionId::from_bytes([36; 16]),
+            endpoint: "https://old.example:443".parse().unwrap(),
+            certificate: Digest::from_bytes([34; 32]),
+            public_key: [35; 32],
+        },
+        now + 10_000,
+        now,
+        old_started,
+    );
+    assert!(
+        transport
+            .owners
+            .lock()
+            .unwrap()
+            .get(&target.cell_id())
+            .unwrap()
+            .owner
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn near_expired_owner_lease_is_not_cached() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let now = now_ms().unwrap();
+    let peer = RemotePeer {
+        session: SessionId::from_bytes([37; 16]),
+        endpoint: "https://old.example:443".parse().unwrap(),
+        certificate: Digest::from_bytes([38; 32]),
+        public_key: [39; 32],
+    };
+    transport.remember_owner(target.cell_id(), peer, now + 500, now, Instant::now());
+    assert_eq!(
+        transport.owner(&target).await.unwrap().session,
+        SessionId::from_bytes([26; 16])
+    );
+    assert_eq!(counted.counts().body_requests(), 2);
+}
+
+#[tokio::test]
+async fn expired_owner_hint_forces_exact_lookup_for_concurrent_callers() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    transport.owner(&target).await.unwrap();
+    transport
+        .owners
+        .lock()
+        .unwrap()
+        .get_mut(&target.cell_id())
+        .unwrap()
+        .expires_at = Instant::now() - Duration::from_millis(1);
+    counted.reset();
+    let calls = (0..5).map(|_| {
+        let transport = transport.clone();
+        let target = target.clone();
+        async move { transport.owner(&target).await.unwrap() }
+    });
+    let owners = futures_util::future::join_all(calls).await;
+    assert!(
+        owners
+            .iter()
+            .all(|owner| owner.session == owners[0].session)
+    );
+    assert!(counted.counts().body_requests() >= 2);
+    assert!(counted.counts().body_requests() <= 10);
+}
+
+#[tokio::test]
+async fn owner_hint_cache_stays_bounded() {
+    let (transport, target, _) = owner_lookup_fixture().await;
+    let owner = transport.owner(&target).await.unwrap();
+    let now = now_ms().unwrap();
+    for index in 0..MAX_OWNER_HINTS + 32 {
+        let mut bytes = [0; 32];
+        bytes[..8].copy_from_slice(&(index as u64).to_be_bytes());
+        transport.remember_owner(
+            CellId::from_bytes(bytes),
+            owner.clone(),
+            now + 10_000,
+            now,
+            Instant::now(),
+        );
+    }
+    assert_eq!(transport.owners.lock().unwrap().len(), MAX_OWNER_HINTS);
+}
+
+#[tokio::test]
+async fn ambiguous_peer_response_does_not_retry_cached_route() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let server_hits = Arc::clone(&hits);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = Router::new().route(
+        "/internal/cells/v1/forward",
+        post(move || {
+            server_hits.fetch_add(1, Ordering::Relaxed);
+            async {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::from("bad"))
+                    .unwrap()
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let now = now_ms().unwrap();
+    let peer = RemotePeer {
+        session: SessionId::from_bytes([26; 16]),
+        endpoint: format!("http://{address}/").parse().unwrap(),
+        certificate: Digest::from_bytes([23; 32]),
+        public_key: [27; 32],
+    };
+    transport.remember_owner(target.cell_id(), peer, now + 10_000, now, Instant::now());
+    assert!(matches!(
+        transport.send_inner(target.clone(), vec![1], 1_000).await,
+        Err(CellError::PeerTransportUnknown { .. })
+    ));
+    assert_eq!(hits.load(Ordering::Relaxed), 1);
+    assert_eq!(counted.counts().body_requests(), 0);
+    assert!(
+        transport
+            .owners
+            .lock()
+            .unwrap()
+            .get(&target.cell_id())
+            .unwrap()
+            .owner
+            .is_none()
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn cancelled_send_releases_owner_hint_for_next_request() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = Router::new().route(
+        "/internal/cells/v1/forward",
+        post({
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            move || {
+                let started = Arc::clone(&started);
+                let release = Arc::clone(&release);
+                async move {
+                    started.notify_one();
+                    release.notified().await;
+                    Response::new(Body::empty())
+                }
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let now = now_ms().unwrap();
+    let owner = RemotePeer {
+        session: SessionId::from_bytes([26; 16]),
+        endpoint: format!("http://{address}/").parse().unwrap(),
+        certificate: Digest::from_bytes([23; 32]),
+        public_key: [27; 32],
+    };
+    transport.remember_owner(target.cell_id(), owner, now + 10_000, now, Instant::now());
+    let sender = transport.clone();
+    let request_target = target.clone();
+    let request =
+        tokio::spawn(async move { sender.send_inner(request_target, vec![1], 5_000).await });
+    started.notified().await;
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        transport.owner(&target).await.unwrap().session,
+        SessionId::from_bytes([26; 16])
+    );
+    assert_eq!(counted.counts().body_requests(), 0);
+    release.notify_one();
+    server.abort();
+}
+
+#[tokio::test]
+async fn not_started_refusal_refreshes_authority_without_resending_to_stale_peer() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let server_hits = Arc::clone(&hits);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = Router::new().route(
+        "/internal/cells/v1/forward",
+        post(move || {
+            server_hits.fetch_add(1, Ordering::Relaxed);
+            async {
+                Response::builder()
+                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                    .body(Body::empty())
+                    .unwrap()
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    let now = now_ms().unwrap();
+    let peer = RemotePeer {
+        session: SessionId::from_bytes([26; 16]),
+        endpoint: format!("http://{address}/").parse().unwrap(),
+        certificate: Digest::from_bytes([23; 32]),
+        public_key: [27; 32],
+    };
+    transport.remember_owner(target.cell_id(), peer, now + 10_000, now, Instant::now());
+    assert!(
+        transport
+            .send_inner(target.clone(), vec![1], 1_000)
+            .await
+            .is_err()
+    );
+    assert_eq!(hits.load(Ordering::Relaxed), 1);
+    assert_eq!(counted.counts().body_requests(), 2);
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "manual adapter owner-lookup baseline"]
+async fn owner_lookup_performance() {
+    use std::time::Instant;
+
+    let mut raw = String::from("lane\tconcurrency\telapsed_us\n");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let certificate_dir = std::env::temp_dir().join(format!(
+        "cellule-peer-bench-cert-{}-{}",
+        std::process::id(),
+        now_ms().unwrap()
+    ));
+    std::fs::create_dir(&certificate_dir).unwrap();
+    let openssl = |args: &[&str]| {
+        let output = std::process::Command::new("openssl")
+            .args(args)
+            .current_dir(&certificate_dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    openssl(&[
+        "req",
+        "-x509",
+        "-newkey",
+        "ed25519",
+        "-nodes",
+        "-keyout",
+        "ca.key",
+        "-out",
+        "ca.crt",
+        "-subj",
+        "/CN=Cellule benchmark CA",
+        "-days",
+        "1",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign,cRLSign",
+    ]);
+    openssl(&[
+        "req",
+        "-new",
+        "-newkey",
+        "ed25519",
+        "-nodes",
+        "-keyout",
+        "leaf.key",
+        "-out",
+        "leaf.csr",
+        "-subj",
+        "/CN=localhost",
+    ]);
+    std::fs::write(certificate_dir.join("leaf.ext"), "subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=digitalSignature\n").unwrap();
+    openssl(&[
+        "x509",
+        "-req",
+        "-in",
+        "leaf.csr",
+        "-CA",
+        "ca.crt",
+        "-CAkey",
+        "ca.key",
+        "-CAcreateserial",
+        "-out",
+        "leaf.crt",
+        "-days",
+        "1",
+        "-extfile",
+        "leaf.ext",
+    ]);
+    let tls = LoadedPeerTls::load(
+        &certificate_dir.join("leaf.crt"),
+        &certificate_dir.join("leaf.key"),
+        &certificate_dir.join("ca.crt"),
+        "localhost",
+    )
+    .unwrap();
+    let (transport, target, counted) = owner_lookup_fixture_with_endpoint(
+        format!("https://localhost:{}/", address.port()),
+        tls.certificate(),
+        tls.fleet(),
+        tls.signing_key().clone(),
+        Arc::new(tls.client_identity()),
+    )
+    .await;
+    let response = cellule_runtime::peer::encode_peer_reply(&peer_wire::PeerReply {
+        outcome: Some(peer_wire::peer_reply::Outcome::Read(peer_wire::ReadReply {
+            receipt: None,
+            result: Some(peer_wire::read_reply::Result::Description(
+                peer_wire::CellDescription {
+                    cell_id: target.cell_id().as_bytes().to_vec(),
+                    incarnation: vec![28; 16],
+                    code: vec![23; 32],
+                    schema: 1,
+                },
+            )),
+        })),
+    })
+    .unwrap();
+    let response = Arc::new(response);
+    let router = Router::new().route(
+        "/internal/cells/v1/forward",
+        post(move || {
+            let response = Arc::clone(&response);
+            async move {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, PROTOBUF_MEDIA_TYPE)
+                    .header(header::CACHE_CONTROL, "no-store")
+                    .body(Body::from(response.as_ref().clone()))
+                    .unwrap()
+            }
+        }),
+    );
+    let tls_listener = tls.listener(listener);
+    let server = tokio::spawn(async move { axum::serve(tls_listener, router).await.unwrap() });
+    let peer = Arc::new(RemotePeer {
+        session: SessionId::from_bytes([26; 16]),
+        endpoint: format!("https://localhost:{}/", address.port())
+            .parse()
+            .unwrap(),
+        certificate: tls.certificate(),
+        public_key: tls.signing_key().verifying_key().to_bytes(),
+    });
+    let cold_before = counted.counts().body_requests();
+    let cold_started = Instant::now();
+    transport
+        .send_inner(target.clone(), vec![1], 5_000)
+        .await
+        .unwrap();
+    let cold_us = cold_started.elapsed().as_micros();
+    let cold_reads = counted.counts().body_requests() - cold_before;
+    raw.push_str(&format!("cold_adapter\t1\t{cold_us}\n"));
+    println!("PERF cold_adapter elapsed_us={cold_us} reads={cold_reads}");
+    for concurrency in [1_usize, 16] {
+        let before = counted.counts().body_requests();
+        let started = Instant::now();
+        let mut samples = Vec::with_capacity(1_024);
+        for _ in 0..(1_024 / concurrency) {
+            let calls = (0..concurrency).map(|_| {
+                let transport = transport.clone();
+                let target = target.clone();
+                async move {
+                    let call = Instant::now();
+                    transport.owner(&target).await.unwrap();
+                    call.elapsed().as_micros()
+                }
+            });
+            samples.extend(futures_util::future::join_all(calls).await);
+        }
+        let total = started.elapsed();
+        let reads = counted.counts().body_requests() - before;
+        assert_eq!(samples.len(), 1_024);
+        assert!(reads <= 2 * samples.len());
+        samples.sort_unstable();
+        for sample in &samples {
+            raw.push_str(&format!("owner_lookup\t{concurrency}\t{sample}\n"));
+        }
+        println!(
+            "PERF owner_lookup concurrency={concurrency} calls={} elapsed_ms={:.3} throughput_per_s={:.1} p50_us={} p95_us={} p99_us={} reads={reads}",
+            samples.len(),
+            total.as_secs_f64() * 1_000.0,
+            samples.len() as f64 / total.as_secs_f64(),
+            samples[samples.len() / 2],
+            samples[samples.len() * 95 / 100],
+            samples[samples.len() * 99 / 100],
+        );
+        let started = Instant::now();
+        let mut network_samples = Vec::with_capacity(1_024);
+        for _ in 0..(1_024 / concurrency) {
+            let calls = (0..concurrency).map(|_| {
+                let transport = transport.clone();
+                let peer = Arc::clone(&peer);
+                async move {
+                    let call = Instant::now();
+                    assert!(matches!(
+                        transport.send_once(&peer, vec![1], 5_000).await.unwrap(),
+                        PeerHttpAttempt::Reply(_)
+                    ));
+                    call.elapsed().as_micros()
+                }
+            });
+            network_samples.extend(futures_util::future::join_all(calls).await);
+        }
+        let network_total = started.elapsed();
+        network_samples.sort_unstable();
+        for sample in &network_samples {
+            raw.push_str(&format!("peer_http\t{concurrency}\t{sample}\n"));
+        }
+        println!(
+            "PERF peer_http concurrency={concurrency} calls={} elapsed_ms={:.3} throughput_per_s={:.1} p50_us={} p95_us={} p99_us={}",
+            network_samples.len(),
+            network_total.as_secs_f64() * 1_000.0,
+            network_samples.len() as f64 / network_total.as_secs_f64(),
+            network_samples[network_samples.len() / 2],
+            network_samples[network_samples.len() * 95 / 100],
+            network_samples[network_samples.len() * 99 / 100],
+        );
+        // Refresh an expired observation outside the warm lane. Every sample
+        // below begins with the same live owner hint in the candidate.
+        transport.owner(&target).await.unwrap();
+        let reads_before = counted.counts().body_requests();
+        let started = Instant::now();
+        let mut full_samples = Vec::with_capacity(1_024);
+        for _ in 0..(1_024 / concurrency) {
+            let calls = (0..concurrency).map(|_| {
+                let transport = transport.clone();
+                let target = target.clone();
+                async move {
+                    let call = Instant::now();
+                    transport.send_inner(target, vec![1], 5_000).await.unwrap();
+                    call.elapsed().as_micros()
+                }
+            });
+            full_samples.extend(futures_util::future::join_all(calls).await);
+        }
+        let full_total = started.elapsed();
+        let reads = counted.counts().body_requests() - reads_before;
+        full_samples.sort_unstable();
+        assert_eq!(full_samples.len(), 1_024);
+        for sample in &full_samples {
+            raw.push_str(&format!("full_adapter\t{concurrency}\t{sample}\n"));
+        }
+        println!(
+            "PERF full_adapter concurrency={concurrency} calls={} elapsed_ms={:.3} throughput_per_s={:.1} p50_us={} p95_us={} p99_us={} reads={reads}",
+            full_samples.len(),
+            full_total.as_secs_f64() * 1_000.0,
+            full_samples.len() as f64 / full_total.as_secs_f64(),
+            full_samples[full_samples.len() / 2],
+            full_samples[full_samples.len() * 95 / 100],
+            full_samples[full_samples.len() * 99 / 100],
+        );
+    }
+    server.abort();
+    let report = std::env::temp_dir().join(format!(
+        "cellule-peer-owner-lookup-{}-{}.tsv",
+        std::process::id(),
+        now_ms().unwrap()
+    ));
+    std::fs::write(&report, raw).unwrap();
+    println!("PERF raw={}", report.display());
+    std::fs::remove_dir_all(certificate_dir).unwrap();
 }

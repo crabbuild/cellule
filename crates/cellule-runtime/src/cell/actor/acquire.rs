@@ -7,6 +7,27 @@
 use super::*;
 
 impl CellRuntime {
+    /// Checks actor-owned admission before a peer route reads Cell metadata.
+    ///
+    /// A miss only means this process has no currently dispatchable handle;
+    /// the peer transport remains responsible for resolving remote authority.
+    pub(crate) async fn has_local_owner(&self, cell: CellId) -> crate::Result<bool> {
+        self.ensure_running()?;
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::Lookup {
+                cell,
+                require_resident: false,
+                reply,
+            })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        let local = response.await.map_err(|_| Error::RuntimeClosed)?;
+        self.ensure_running()?;
+        Ok(local.is_some())
+    }
+
     /// Resolves an active local owner without exposing the dispatcher's Cell map.
     pub async fn local_handle(
         &self,

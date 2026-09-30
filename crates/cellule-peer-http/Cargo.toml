@@ -25,6 +25,6 @@ url = "2"
 x509-cert = "0.2.5"
 
 [dev-dependencies]
-cellule-store.workspace = true
+cellule-store = { workspace = true, features = ["test-support"] }
 object_store.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

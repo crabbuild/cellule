@@ -453,6 +453,10 @@ async fn fixture() -> Fixture {
 }
 
 async fn fixture_with_limits(limits: Limits) -> Fixture {
+    fixture_with_store(limits, Store::new(Arc::new(InMemory::new()))).await
+}
+
+async fn fixture_with_store(limits: Limits, store: Store) -> Fixture {
     let registry = registry();
     let target = CellTarget::new(
         TenantId::from_bytes([1; 16]),
@@ -463,7 +467,6 @@ async fn fixture_with_limits(limits: Limits) -> Fixture {
     .unwrap();
     let cell = target.cell_id();
     let incarnation = IncarnationId::from_bytes([4; 16]);
-    let store = Store::new(Arc::new(InMemory::new()));
     let layout = CellStorageLayout::new(store, Path::from("client"), [2; 16]);
     let replica = CellReplica::new(
         layout.clone(),

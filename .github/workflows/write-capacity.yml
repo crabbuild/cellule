@@ -1,0 +1,147 @@
+name: Cell write capacity qualification
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/write-capacity.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
+      - "crates/cellule-app/**"
+      - "crates/cellule-host/**"
+      - "crates/cellule-runtime/**"
+      - "crates/cellule-ltx/**"
+      - "crates/cellule-store/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cell-write-capacity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  object-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Pin one source and release binary
+        run: |
+          set -euo pipefail
+          build_state="$RUNNER_TEMP/cell-write-capacity-build"
+          printf 'CELLULE_CAPACITY_BUILD_STATE=%s\n' "$build_state" >> "$GITHUB_ENV"
+          mkdir -p "$build_state/source" "$build_state/target-linux" "$build_state/evidence"
+          git archive HEAD | tar -x -C "$build_state/source"
+          git rev-parse HEAD > "$build_state/evidence/source-revision.txt"
+          uname -a > "$build_state/evidence/host.txt"
+          docker info --format '{{json .}}' > "$build_state/evidence/docker-info.json"
+          python3 -B -m unittest discover \
+            -s crates/cellule-app/qualification -p 'test_*.py'
+          CELLULE_REFERENCE_STATE="$build_state" \
+            docker compose -p cell-write-capacity-build \
+              -f "$build_state/source/crates/cellule-app/qualification/compose.yaml" \
+              run --name cell-write-capacity-build build \
+              2>&1 | tee "$build_state/evidence/build.log"
+          binary=$(find "$build_state/target-linux/release/deps" -maxdepth 1 \
+            -type f -executable -name 'integration-*')
+          test -n "$binary"
+          test "$(printf '%s\n' "$binary" | wc -l)" -eq 1
+          sha256sum "$binary" > "$build_state/evidence/binary.sha256"
+      - name: Run three fresh object-proof capacity repeats
+        run: |
+          set -euo pipefail
+          for repeat in 1 2 3; do
+            run_state="$RUNNER_TEMP/cell-write-capacity-run-$repeat"
+            mkdir -p "$run_state/evidence"
+            ln -s "$CELLULE_CAPACITY_BUILD_STATE/source" "$run_state/source"
+            ln -s "$CELLULE_CAPACITY_BUILD_STATE/target-linux" "$run_state/target-linux"
+            cp "$CELLULE_CAPACITY_BUILD_STATE/evidence/source-revision.txt" "$run_state/evidence/"
+            cp "$CELLULE_CAPACITY_BUILD_STATE/evidence/host.txt" "$run_state/evidence/"
+            cp "$CELLULE_CAPACITY_BUILD_STATE/evidence/docker-info.json" "$run_state/evidence/"
+            chmod 1777 "$run_state/evidence"
+            python3 "$run_state/source/crates/cellule-app/qualification/scale.py" \
+              --state "$run_state" --project "cell-write-capacity-r$repeat" \
+              --workload capacity
+          done
+      - name: Retain provider image identity
+        if: always()
+        run: |
+          docker image ls -a --digests --no-trunc \
+            > "$CELLULE_CAPACITY_BUILD_STATE/evidence/images.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cell-write-capacity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cell-write-capacity-build/evidence/
+            ${{ runner.temp }}/cell-write-capacity-run-*/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  follower-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Pin follower lane source and release binary
+        run: |
+          set -euo pipefail
+          build_state="$RUNNER_TEMP/cell-follower-capacity-build"
+          printf 'CELLULE_FOLLOWER_BUILD_STATE=%s\n' "$build_state" >> "$GITHUB_ENV"
+          mkdir -p "$build_state/source" "$build_state/target-linux" "$build_state/evidence"
+          git archive HEAD | tar -x -C "$build_state/source"
+          git rev-parse HEAD > "$build_state/evidence/source-revision.txt"
+          uname -a > "$build_state/evidence/host.txt"
+          docker info --format '{{json .}}' > "$build_state/evidence/docker-info.json"
+          python3 -B -m unittest discover \
+            -s crates/cellule-app/qualification -p 'test_*.py'
+          CELLULE_REFERENCE_STATE="$build_state" \
+            docker compose -p cell-follower-capacity-build \
+              -f "$build_state/source/crates/cellule-app/qualification/compose.yaml" \
+              pull --quiet build rustfs bucket-init
+          CELLULE_REFERENCE_STATE="$build_state" \
+            docker compose -p cell-follower-capacity-build \
+              -f "$build_state/source/crates/cellule-app/qualification/compose.yaml" \
+              run --name cell-follower-capacity-build build \
+              2>&1 | tee "$build_state/evidence/build.log"
+          binary=$(find "$build_state/target-linux/release/deps" -maxdepth 1 \
+            -type f -executable -name 'integration-*')
+          test -n "$binary"
+          test "$(printf '%s\n' "$binary" | wc -l)" -eq 1
+          sha256sum "$binary" > "$build_state/evidence/binary.sha256"
+      - name: Run three fresh follower-proof capacity repeats
+        run: |
+          set -euo pipefail
+          for repeat in 1 2 3; do
+            run_state="$RUNNER_TEMP/cell-follower-capacity-run-$repeat"
+            mkdir -p "$run_state/evidence"
+            ln -s "$CELLULE_FOLLOWER_BUILD_STATE/source" "$run_state/source"
+            ln -s "$CELLULE_FOLLOWER_BUILD_STATE/target-linux" "$run_state/target-linux"
+            cp "$CELLULE_FOLLOWER_BUILD_STATE/evidence/source-revision.txt" "$run_state/evidence/"
+            cp "$CELLULE_FOLLOWER_BUILD_STATE/evidence/host.txt" "$run_state/evidence/"
+            cp "$CELLULE_FOLLOWER_BUILD_STATE/evidence/docker-info.json" "$run_state/evidence/"
+            chmod 1777 "$run_state/evidence"
+            python3 "$run_state/source/crates/cellule-app/qualification/scale.py" \
+              --state "$run_state" --project "cell-follower-capacity-r$repeat" \
+              --workload capacity-follower
+          done
+      - name: Retain provider image identity
+        if: always()
+        run: |
+          docker image ls -a --digests --no-trunc \
+            > "$CELLULE_FOLLOWER_BUILD_STATE/evidence/images.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cell-follower-capacity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cell-follower-capacity-build/evidence/
+            ${{ runner.temp }}/cell-follower-capacity-run-*/evidence/
+          if-no-files-found: error
+          retention-days: 7

@@ -4,8 +4,9 @@ import csv
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from entities import verify_window
+from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_coverage, verify_timing_evidence, verify_window
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -73,6 +74,207 @@ class EntityWindowEvidence(unittest.TestCase):
         self.change("-readback", lambda rows: rows[5].update(actual="2", expected="2"))
         result = self.verify()
         self.assertEqual((result["fully_served_arrivals"], result["completed_actions"]), (False, 29))
+
+
+class EntityTimingEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        (self.root / "node-0-responses.tsv").write_text(
+            "at_ms\tsource\tresponse_us\tconfirmation_us\n"
+            "100001\tFleet\t1200\t900\n100002\tObject\t2000\t1800\n")
+        (self.root / "node-0-executions.tsv").write_text(
+            "at_ms\tqueue_wait_us\tworker_round_trip_us\tsucceeded\n"
+            "100001\t100\t300\ttrue\n100002\t200\t400\ttrue\n")
+        (self.root / "node-0-publications.tsv").write_text(
+            "at_ms\tcell\tsequence\tqueue_wait_us\tpreparation_us\tauthority_us\ttotal_us\tsucceeded\n"
+            "100003\tcell-1\t1\t100\t1000\t200\t1500\ttrue\n")
+        (self.root / "node-0-phases.tsv").write_text(
+            "at_ms\tphase\telapsed_us\tsucceeded\n100003\tCapture\t700\ttrue\n")
+        (self.root / "node-0-captures.tsv").write_text(
+            "at_ms\ttotal_us\tpreparation_us\tschema_check_us\twal_read_us\tpage_collection_us\tverification_us\tencode_us\tlocal_write_us\tfsync_us\tcheckpoint_us\twal_bytes\tltx_bytes\tsucceeded\n"
+            "100003\t700\t100\t20\t100\t100\t50\t50\t50\t100\t50\t4096\t2048\ttrue\n")
+        (self.root / "node-0-publication-costs.tsv").write_text(
+            "at_ms\tobjects\tbytes\n100003\t2\t2048\n")
+        (self.root / "node-0-follower-appends.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\n")
+        (self.root / "node-0-follower-network.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\tduration_us\n")
+        (self.root / "node-0-node-log-events.tsv").write_text(
+            "at_ms\tepoch\tphase\tcovered_through\n")
+        self.windows = [dict(nodes=3, started_ms=100000, ended_ms=110000, elapsed_us=10_000_000)]
+
+    def test_response_winner_and_later_publication_are_separate(self):
+        report = verify_timing_evidence(self.root, 0, self.windows)
+        self.assertEqual(report["response_sources"], dict(Fleet=1, Object=1, Recorded=0))
+        self.assertEqual(self.windows[0]["node_durability"][0]["published_roots_per_second"], 0.1)
+        self.assertEqual(self.windows[0]["node_durability"][0]["uploaded_objects"], 2)
+        self.assertEqual(self.windows[0]["node_durability"][0]["actor_queue"]["count"], 2)
+
+    def test_incomplete_timing_evidence_is_rejected(self):
+        (self.root / "node-0-publications.tsv").write_text(
+            "at_ms\tcell\tsequence\tqueue_wait_us\tpreparation_us\tauthority_us\ttotal_us\tsucceeded\n")
+        with self.assertRaisesRegex(AssertionError, "missing publication evidence"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_missing_execution_evidence_is_rejected(self):
+        (self.root / "node-0-executions.tsv").write_text(
+            "at_ms\tqueue_wait_us\tworker_round_trip_us\tsucceeded\n")
+        with self.assertRaisesRegex(AssertionError, "missing command execution evidence"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_duplicate_publication_is_rejected(self):
+        path = self.root / "node-0-publications.tsv"
+        lines = path.read_text().splitlines()
+        path.write_text("\n".join(lines + [lines[-1]]) + "\n")
+        with self.assertRaisesRegex(AssertionError, "duplicate publication"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_active_marker_after_coverage_does_not_reset_covered_sequence(self):
+        path = self.root / "node-0-node-log-events.tsv"
+        path.write_text("at_ms\tepoch\tphase\tcovered_through\n"
+                        "100001\t1\tenrolled\t0\n"
+                        "100002\t1\tcoverage\t1\n"
+                        "100003\t1\tactive\t0\n"
+                        "100004\t1\tcoverage\t2\n"
+                        "100005\t1\tclosed\t2\n")
+        report = verify_timing_evidence(self.root, 0, self.windows)
+        self.assertEqual(report["node_log_covered_through"], 2)
+        self.assertEqual(self.windows[0]["node_durability"][0]["node_log_covered_through"], 2)
+
+        path.write_text(path.read_text().replace("100004\t1\tcoverage\t2",
+                                                 "100004\t1\tcoverage\t0"))
+        with self.assertRaisesRegex(AssertionError, "node-log coverage regressed"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+
+class CapacityScheduleEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.schedule = self.root / "capacity-windows.tsv"
+        self.write_schedule([
+            (0, "uniform", 2, 8, "true"), (1, "uniform", 4, 16, "false"),
+            (2, "hot", 2, 8, "true"), (3, "hot", 4, 16, "false"),
+            (4, "skewed", 2, 8, "true"), (5, "skewed", 4, 16, "false"),
+        ])
+
+    def write_schedule(self, entries):
+        self.schedule.write_text(
+            "window_id\tshape\trate_per_node\tconcurrency\tfully_served\n" +
+            "".join("\t".join(map(str, entry)) + "\n" for entry in entries))
+
+    def write_complete_windows(self):
+        counts = [0] * 12
+        sequences = [1] * 12
+        for window_id, shape, rate, concurrency, _ in [
+            (0, "uniform", 2, 8, True), (1, "uniform", 4, 16, False),
+            (2, "hot", 2, 8, True), (3, "hot", 4, 16, False),
+            (4, "skewed", 2, 8, True), (5, "skewed", 4, 16, False),
+        ]:
+            label = f"capacity-3-{shape}-{rate}"
+            started_ms = 100000 + window_id * 20000
+            (self.root / f"{label}-window.tsv").write_text(
+                "window_id\tnodes\tshape\trate_per_node\tconcurrency\tseconds\tstarted_ms\tended_ms\tstarted_boot_ms\tended_boot_ms\telapsed_us\n"
+                f"{window_id}\t3\t{shape}\t{rate}\t{concurrency}\t10\t{started_ms}\t{started_ms + 10000}\t{started_ms}\t{started_ms + 10000}\t10000000\n")
+            samples = ["arrival\tscheduled_us\tstarted_us\telapsed_us\tentity\tkind\toutcome\tsequence\tread_sequence\tcount"]
+            planned = 30 * rate
+            for arrival in range(planned):
+                entity, kind = destination(shape, arrival, 12)
+                scheduled = arrival * 1_000_000 // (3 * rate)
+                if rate == 4 and arrival == planned - 1:
+                    samples.append(f"{arrival}\t{scheduled}\t10000000\t0\t{entity}\t{kind}\tscheduler_late\t0\t0\t0")
+                    continue
+                sequence = 0
+                if kind == "write":
+                    counts[entity] += 1
+                    sequences[entity] += 2
+                    sequence = sequences[entity]
+                samples.append(f"{arrival}\t{scheduled}\t{scheduled + 10}\t1000\t{entity}\t{kind}\tok\t{sequence}\t{sequences[entity]}\t{counts[entity]}")
+            (self.root / f"{label}.tsv").write_text("\n".join(samples) + "\n")
+            (self.root / f"{label}-readback.tsv").write_text(
+                "entity\texpected\tactual\tsequence\n" +
+                "".join(f"{entity}\t{counts[entity]}\t{counts[entity]}\t{sequences[entity]}\n"
+                        for entity in range(12)))
+
+    def test_complete_report_requires_all_shapes_and_overload(self):
+        self.write_complete_windows()
+        windows = verify_capacity_windows(self.root, {})
+        self.assertEqual(len(windows), 6)
+        self.assertEqual([window["fully_served_window"] for window in windows], [True, False] * 3)
+
+    def test_completed_arrivals_with_slow_drain_are_not_supported(self):
+        self.write_complete_windows()
+        path = self.root / "capacity-3-uniform-2-window.tsv"
+        path.write_text(path.read_text().replace("10000000\n", "12100000\n"))
+        with self.assertRaisesRegex(AssertionError, "mislabeled fully served rate"):
+            verify_capacity_windows(self.root, {})
+
+    def test_incomplete_report_is_rejected(self):
+        self.write_schedule([(0, "uniform", 1, 4, "true")])
+        with self.assertRaisesRegex(AssertionError, "incomplete rate ramp"):
+            verify_capacity_windows(self.root, {})
+
+    def test_rate_mislabeled_as_fully_served_is_rejected(self):
+        self.write_schedule([
+            (0, "uniform", 2, 8, "true"), (1, "uniform", 4, 16, "false"),
+            (2, "hot", 2, 8, "true"), (3, "hot", 4, 16, "false"),
+            (4, "skewed", 2, 8, "true"), (5, "skewed", 4, 16, "false"),
+        ])
+        with patch("entities.verify_window", return_value=dict(fully_served_arrivals=False)):
+            with self.assertRaisesRegex(AssertionError, "mislabeled fully served rate"):
+                verify_capacity_windows(self.root, {})
+
+
+class ObjectOperationEvidence(unittest.TestCase):
+    def test_missing_provider_operation_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "node-0-object-operations.tsv"
+            path.write_text("at_ms\toperation\toutcome\tduration_us\tbytes_read\tbytes_written\n"
+                            "100000\tput\tsuccess\t500\t0\t4096\n")
+            expected = [dict(operation="put", outcome="success", count="2")]
+            with self.assertRaisesRegex(AssertionError, "samples disagree"):
+                verify_object_operations(Path(root), 0, expected)
+            expected[0]["count"] = "1"
+            self.assertEqual(len(verify_object_operations(Path(root), 0, expected)), 1)
+
+
+class FollowerProofEvidence(unittest.TestCase):
+    def test_follower_lane_requires_proof_and_acknowledged_append(self):
+        resources = {0: dict(durability=dict(response_sources=dict(Fleet=0),
+                                            acknowledged_follower_appends=1,
+                                            acknowledged_network_appends=1,
+                                            node_log_phases=dict(enrolled=1, active=1, closed=1),
+                                            node_log_epochs=[1]))}
+        with self.assertRaisesRegex(AssertionError, "no follower-proof responses"):
+            verify_follower_proof(resources)
+        resources[0]["durability"]["response_sources"]["Fleet"] = 1
+        resources[0]["durability"]["acknowledged_follower_appends"] = 0
+        with self.assertRaisesRegex(AssertionError, "missing acknowledged follower append"):
+            verify_follower_proof(resources)
+        resources[0]["durability"]["acknowledged_follower_appends"] = 2
+        resources[0]["durability"]["acknowledged_network_appends"] = 0
+        with self.assertRaisesRegex(AssertionError, "missing network follower append"):
+            verify_follower_proof(resources)
+        resources[0]["durability"]["acknowledged_network_appends"] = 2
+        self.assertEqual(verify_follower_proof(resources),
+                         dict(follower_proof_responses=1, follower_appends=2,
+                              network_follower_appends=2))
+        resources[0]["durability"]["node_log_phases"]["active"] = 0
+        with self.assertRaisesRegex(AssertionError, "did not enroll, activate, and close"):
+            verify_follower_proof(resources)
+
+    def test_root_drain_requires_every_acknowledged_sequence(self):
+        identity = {0: ("cell", "0", "1", "incarnation")}
+        positions = {0: [1, 2]}
+        roots = [dict(entity="0", cell="cell", owner="0", epoch="1",
+                      incarnation="incarnation", root_sequence="1")]
+        with self.assertRaisesRegex(AssertionError, "published root does not cover writes"):
+            verify_root_coverage(roots, positions, identity, 1)
+        roots[0]["root_sequence"] = "2"
+        verify_root_coverage(roots, positions, identity, 1)
 
 
 if __name__ == "__main__":

@@ -160,7 +160,7 @@ pub enum MovementKind {
     Receive,
 }
 
-/// Synchronous concurrency/rate budget for pressure movement.
+/// Synchronous concurrency/rate budgets for pressure and requested movement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovementBudget {
     limit: u32,
@@ -168,12 +168,27 @@ pub struct MovementBudget {
     interval_ms: i64,
     window_started_ms: i64,
     completed_in_window: u32,
+    requested_limit: u32,
+    requested_used: u32,
+    requested_window_started_ms: i64,
+    requested_completed_in_window: u32,
 }
 
 impl MovementBudget {
-    /// Creates a budget of `limit` movements per `interval_ms` window.
+    /// Creates equal budgets for pressure and requested movement.
     pub fn new(limit: u32, interval_ms: i64) -> Result<Self> {
-        if limit == 0 || interval_ms <= 0 {
+        Self::with_requested_limit(limit, limit, interval_ms)
+    }
+
+    /// Sets independent budgets for automatic pressure movement and explicit
+    /// release requests. Each limit bounds both in-flight work and completions
+    /// per interval; neither class can consume the other's reserved capacity.
+    pub fn with_requested_limit(
+        limit: u32,
+        requested_limit: u32,
+        interval_ms: i64,
+    ) -> Result<Self> {
+        if limit == 0 || requested_limit == 0 || interval_ms <= 0 {
             return Err(Error::Capacity("movement budget"));
         }
         Ok(Self {
@@ -182,11 +197,14 @@ impl MovementBudget {
             interval_ms,
             window_started_ms: 0,
             completed_in_window: 0,
+            requested_limit,
+            requested_used: 0,
+            requested_window_started_ms: 0,
+            requested_completed_in_window: 0,
         })
     }
 
-    /// Reserves one movement, failing when the window is spent or time ran
-    /// backwards.
+    /// Reserves one automatic pressure movement.
     pub fn try_start(&mut self, now_ms: i64) -> Result<MovementPermit> {
         if now_ms < self.window_started_ms {
             return Err(Error::Control("movement time regressed"));
@@ -199,7 +217,32 @@ impl MovementBudget {
             return Err(Error::Capacity("movement budget"));
         }
         self.used += 1;
-        Ok(MovementPermit { completed: false })
+        Ok(MovementPermit {
+            completed: false,
+            requested: false,
+        })
+    }
+
+    /// Reserves one explicit release without consuming pressure-shedding
+    /// capacity. The caller still performs its generation and preflight checks.
+    pub fn try_start_requested(&mut self, now_ms: i64) -> Result<MovementPermit> {
+        if now_ms < self.requested_window_started_ms {
+            return Err(Error::Control("movement time regressed"));
+        }
+        if now_ms.saturating_sub(self.requested_window_started_ms) >= self.interval_ms {
+            self.requested_window_started_ms = now_ms;
+            self.requested_completed_in_window = 0;
+        }
+        if self.requested_used >= self.requested_limit
+            || self.requested_completed_in_window >= self.requested_limit
+        {
+            return Err(Error::Capacity("movement budget"));
+        }
+        self.requested_used += 1;
+        Ok(MovementPermit {
+            completed: false,
+            requested: true,
+        })
     }
 
     /// Finishes a reservation: frees its slot and counts it in the window.
@@ -208,11 +251,17 @@ impl MovementBudget {
             return;
         }
         permit.completed = true;
-        self.used = self.used.saturating_sub(1);
-        self.completed_in_window = self.completed_in_window.saturating_add(1);
+        if permit.requested {
+            self.requested_used = self.requested_used.saturating_sub(1);
+            self.requested_completed_in_window =
+                self.requested_completed_in_window.saturating_add(1);
+        } else {
+            self.used = self.used.saturating_sub(1);
+            self.completed_in_window = self.completed_in_window.saturating_add(1);
+        }
     }
 
-    /// Returns the reservations that have not completed yet.
+    /// Returns automatic pressure movements that have not completed yet.
     #[must_use]
     pub const fn in_flight(self) -> u32 {
         self.used
@@ -224,4 +273,5 @@ impl MovementBudget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovementPermit {
     completed: bool,
+    requested: bool,
 }

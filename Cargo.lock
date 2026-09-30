@@ -224,6 +224,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "blake3",
+ "bytes",
  "cellule-host",
  "cellule-ltx",
  "cellule-runtime",
@@ -231,6 +232,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "object_store",
+ "prost",
  "tempfile",
  "tokio",
  "tokio-util",

@@ -2,6 +2,7 @@
 
 use super::*;
 use cellule_runtime::cell::actor::CellHandle;
+use cellule_store::test_support::CountingObjectStore;
 
 #[tokio::test]
 async fn local_resolver_refusal_never_dispatches_to_the_underlying_owner() {
@@ -573,6 +574,101 @@ async fn runtime_client_forwards_to_the_remote_owner() {
             .output,
         1
     );
+    caller.shutdown().await.unwrap();
+    fixture.handle().drain().await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_runtime_route_skips_local_metadata_without_skipping_local_owner_validation() {
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let fixture = fixture_with_store(Limits::default(), Store::new(counted.clone())).await;
+    let caller = CellRuntime::new(
+        SqlWorkerPool::new(1, 4).unwrap(),
+        4 * 1024 * 1024,
+        SessionId::from_bytes([64; 16]),
+    )
+    .unwrap();
+    let signer = Arc::new(PeerSigner::new(
+        SessionId::from_bytes([65; 16]),
+        fixture.registry.release_digest(),
+        ed25519_dalek::SigningKey::from_bytes(&[66; 32]),
+    ));
+    let round_trip: Arc<dyn PeerRoundTrip> = Arc::new(LoopbackRoundTrip {
+        verifier: Arc::new(PeerVerifier::new(
+            SessionId::from_bytes([65; 16]),
+            fixture.registry.release_digest(),
+            signer.verifying_key(),
+        )),
+        dispatcher: Arc::new(PeerDispatcher::new(
+            Arc::clone(&fixture.registry),
+            Arc::new(LocalResolver {
+                target: fixture.target.clone(),
+                handle: fixture.handle().clone(),
+            }),
+            Arc::new(RepositoryAuthorizer),
+        )),
+    });
+    let description = CellDescription {
+        cell: fixture.target.cell_id(),
+        incarnation: fixture.incarnation,
+        code: fixture.registry.module_code(MODULE).unwrap(),
+        schema: 1,
+    };
+    let principal = PeerPrincipal {
+        issuer: "https://identity.example".into(),
+        subject: "alice".into(),
+        actions: vec!["repository.issue.create".into()],
+    };
+    let remote = CellClient::runtime_with_peer(
+        Arc::clone(&fixture.registry),
+        caller.clone(),
+        fixture.layout.clone(),
+        Arc::clone(&signer),
+        principal.clone(),
+        Arc::clone(&round_trip),
+    );
+    counted.reset();
+    assert_eq!(
+        remote
+            .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap()
+            .output,
+        0
+    );
+    assert_eq!(counted.counts().body_requests(), 0);
+
+    let remote = remote.with_observed_description(description);
+    counted.reset();
+    assert_eq!(
+        remote
+            .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap()
+            .output,
+        0
+    );
+    assert_eq!(counted.counts().body_requests(), 0);
+
+    let local = CellClient::runtime_with_peer(
+        Arc::clone(&fixture.registry),
+        fixture.runtime.as_ref().unwrap().clone(),
+        fixture.layout.clone(),
+        signer,
+        principal,
+        round_trip,
+    )
+    .with_observed_description(description);
+    counted.reset();
+    assert_eq!(
+        local
+            .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap()
+            .output,
+        0
+    );
+    assert_eq!(counted.counts().body_requests(), 3);
     caller.shutdown().await.unwrap();
     fixture.handle().drain().await.unwrap();
 }

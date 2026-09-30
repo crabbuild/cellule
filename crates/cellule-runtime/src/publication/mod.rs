@@ -2,7 +2,7 @@
 use crate::cell::executor::{CellExecutor, StoredOutcome};
 use crate::control::Transition;
 use crate::control::authority::{CellAuthority, VersionedControl};
-use crate::fleet::telemetry::DurabilitySubmissionOutcome;
+use crate::fleet::telemetry::{DurabilitySubmissionOutcome, PublicationTiming};
 use crate::identity::{ApplicationId, encode_hex};
 use crate::node::durability::NodeDurability;
 use crate::node::log::CommitTicket;
@@ -115,6 +115,11 @@ impl CellPublisher {
     pub(crate) fn record_object_proof(&self, waited: std::time::Duration) {
         self.telemetry
             .durability_proof(crate::node::log::DurabilitySource::Object, waited);
+    }
+
+    pub(crate) fn record_publication_timing(&self, timing: PublicationTiming) {
+        self.telemetry
+            .publication_completed(self.observed.value().cell, timing);
     }
 
     /// Returns the control version the publisher last observed.

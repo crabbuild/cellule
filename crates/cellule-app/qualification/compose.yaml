@@ -72,7 +72,7 @@ services:
     restart: "no"
 
   bucket-init:
-    image: public.ecr.aws/aws-cli/aws-cli:2.27.41@sha256:1c2d7a51b1ff4f460bc3f1e1ee46a6cef47c7429ad9089ef99012a95e472a1a5
+    image: amazon/aws-cli:2.27.41@sha256:bc6b7bba44ce38f9604ede49c584824af919047ea03fbcc7c7610671fdef95d8
     environment: *storage
     command: [--endpoint-url, http://rustfs:9000, s3api, create-bucket, --bucket, cellule-reference-app]
     depends_on:
