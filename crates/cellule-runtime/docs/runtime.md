@@ -490,7 +490,7 @@ The node scheduler:
 | Enter shedding | 80 percent on any dimension | Sustained for one second |
 | Return to normal | Below 60 percent | Sustained for one second |
 
-**Eviction.** While shedding, the actor starts one bounded eviction per sample through the same movement budget and victim selection a transfer uses, so a hot node releases settled Cells instead of admitting work it cannot hold. A brief spike never triggers a move.
+**Eviction.** While shedding, the actor starts one bounded eviction per sample using its two-in-flight, two-completions-per-second pressure budget and the same victim selection a transfer uses. A brief spike never triggers a move. Explicit `release_idle_cell` calls have a separate 32-in-flight, 32-completions-per-second budget, so a cold repository scan cannot spend the automatic pressure-shedding allowance. Both paths still require the same generation, settled-work and authoritative-release checks; the larger requested-release budget is an admission bound, not a measured sustainable object-store rate.
 
 <a id="drain"></a>
 ## Drain in ownership order

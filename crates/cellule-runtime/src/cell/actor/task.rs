@@ -24,7 +24,9 @@ pub(super) async fn run(
         Ok(classifier) => classifier,
         Err(_) => return,
     };
-    let mut movement = match MovementBudget::new(2, 1_000) {
+    // Requested releases have their own bounded capacity so a cold scan does
+    // not consume the two-per-second automatic pressure-shedding allowance.
+    let mut movement = match MovementBudget::with_requested_limit(2, 32, 1_000) {
         Ok(budget) => budget,
         Err(_) => return,
     };
@@ -246,7 +248,7 @@ fn classify_pressure_sample(
     let state = pressure.observe(sample)?;
     telemetry.pressure_state(state);
     if matches!(state, PressureState::Shedding | PressureState::Critical)
-        && movement_permits.len() < 2
+        && movement.in_flight() < 2
     {
         let _ = start_bounded_evictions(
             1,
@@ -709,7 +711,7 @@ pub(super) fn handle_message(
                 let _ = reply.send(Err(Error::CellDraining));
                 return;
             }
-            let Ok(mut permit) = movement.try_start(unix_millis()) else {
+            let Ok(mut permit) = movement.try_start_requested(unix_millis()) else {
                 let _ = reply.send(Err(Error::Capacity("movement budget")));
                 return;
             };
