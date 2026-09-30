@@ -97,6 +97,29 @@ fn movement_budget_bounds_concurrency_and_rate() {
     assert_eq!(budget.in_flight(), 1);
 }
 
+#[test]
+fn requested_releases_do_not_spend_pressure_shedding_budget() {
+    assert!(MovementBudget::with_requested_limit(2, 0, 100).is_err());
+    let mut budget = MovementBudget::with_requested_limit(1, 2, 100).unwrap();
+    let mut requested_a = budget.try_start_requested(0).unwrap();
+    let mut requested_b = budget.try_start_requested(0).unwrap();
+    assert!(budget.try_start_requested(0).is_err());
+
+    let mut pressure = budget.try_start(0).unwrap();
+    assert_eq!(budget.in_flight(), 1);
+    assert!(budget.try_start(0).is_err());
+    budget.complete(&mut requested_a);
+    budget.complete(&mut requested_a);
+    budget.complete(&mut requested_b);
+    assert!(budget.try_start_requested(0).is_err());
+
+    budget.complete(&mut pressure);
+    assert_eq!(budget.in_flight(), 0);
+    assert!(budget.try_start(0).is_err());
+    let _requested = budget.try_start_requested(100).unwrap();
+    let _pressure = budget.try_start(100).unwrap();
+}
+
 #[tokio::test]
 async fn node_reports_every_pressure_tier_it_classifies() {
     let session = SessionId::from_bytes([123; 16]);
