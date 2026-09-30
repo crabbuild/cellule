@@ -148,65 +148,111 @@ pub(in crate::cell::actor) fn start_transfer_inspection(
     });
 }
 
-pub(in crate::cell::actor) fn start_due_renewals(
-    pool: &SqlWorkerPool,
-    cells: &mut HashMap<CellId, ActiveCell>,
-    tasks: &mut JoinSet<TaskResult>,
-    node_lease: &RuntimeNodeLease,
-) {
-    let active_renewals = cells.values().filter(|active| active.renewing()).count();
-    let mut available = MAX_RENEWALS_IN_FLIGHT.saturating_sub(active_renewals);
-    if available == 0 {
-        return;
+/// Due owners are scanned once per tick, then drained in deadline order as
+/// renewal I/O completes. Rebuilding the pending set bounds stale entries
+/// when Cells depart or change generation while all I/O slots are occupied.
+pub(in crate::cell::actor) struct RenewalScheduler {
+    due: Vec<(std::time::Instant, [u8; 32], u64)>,
+    in_flight: usize,
+}
+
+impl RenewalScheduler {
+    pub(in crate::cell::actor) fn new() -> Self {
+        Self {
+            due: Vec::new(),
+            in_flight: 0,
+        }
     }
-    let now = std::time::Instant::now();
-    for (cell, active) in cells.iter_mut() {
-        if available == 0 {
-            break;
+
+    pub(in crate::cell::actor) fn scan_due(&mut self, cells: &HashMap<CellId, ActiveCell>) {
+        self.due.clear();
+        let now = std::time::Instant::now();
+        for (cell, active) in cells {
+            let Some(publisher) = active.publisher.as_ref() else {
+                continue;
+            };
+            if publisher.renewal_due(now) {
+                self.due
+                    .push((publisher.renewal_at(), *cell.as_bytes(), active.generation));
+            }
         }
-        if active
-            .publisher
-            .as_ref()
-            .is_none_or(|publisher| !publisher.renewal_due(now))
-        {
-            continue;
-        }
-        match active.coordination.step(CoordinationInput::BeginRenewal {
-            queue_empty: active.queue.is_empty(),
-            publication_idle: active.coordination.publication_count() == 0,
-            lease_live: node_lease.check().is_ok(),
-        }) {
-            CoordinationDecision::Started => {}
-            CoordinationDecision::Fence => {
-                fence_active(active);
+        // Pop the oldest deadline first. Identity breaks ties independently of
+        // HashMap iteration order, so newly due Cells cannot overtake old debt.
+        self.order_due();
+    }
+
+    fn order_due(&mut self) {
+        self.due.sort_unstable_by(|left, right| right.cmp(left));
+    }
+
+    fn next_due(&mut self) -> Option<(CellId, u64)> {
+        self.due
+            .pop()
+            .map(|(_, bytes, generation)| (CellId::from_bytes(bytes), generation))
+    }
+
+    pub(in crate::cell::actor) fn finished(&mut self) {
+        self.in_flight = self.in_flight.saturating_sub(1);
+    }
+
+    pub(in crate::cell::actor) fn dispatch(
+        &mut self,
+        pool: &SqlWorkerPool,
+        cells: &mut HashMap<CellId, ActiveCell>,
+        tasks: &mut JoinSet<TaskResult>,
+        node_lease: &RuntimeNodeLease,
+    ) {
+        let now = std::time::Instant::now();
+        while self.in_flight < MAX_RENEWALS_IN_FLIGHT {
+            let Some((cell, generation)) = self.next_due() else {
+                break;
+            };
+            let Some(active) = cells.get_mut(&cell) else {
+                continue;
+            };
+            if active.generation != generation
+                || active
+                    .publisher
+                    .as_ref()
+                    .is_none_or(|publisher| !publisher.renewal_due(now))
+            {
                 continue;
             }
-            _ => continue,
+            match active.coordination.step(CoordinationInput::BeginRenewal {
+                queue_empty: active.queue.is_empty(),
+                publication_idle: active.coordination.publication_count() == 0,
+                lease_live: node_lease.check().is_ok(),
+            }) {
+                CoordinationDecision::Started => {}
+                CoordinationDecision::Fence => {
+                    fence_active(active);
+                    continue;
+                }
+                _ => continue,
+            }
+            let Some(mut publisher) = active.publisher.take() else {
+                active
+                    .coordination
+                    .step(CoordinationInput::FinishRenewal { fenced: true });
+                continue;
+            };
+            let effect_id = active.begin_task(CoordinationEffect::Renewal);
+            self.in_flight += 1;
+            let pool = pool.clone();
+            tasks.spawn(async move {
+                let result = publisher.renew().await;
+                if result.is_err() {
+                    let _ = pool.fence(cell).await;
+                }
+                TaskResult::Renewed {
+                    cell,
+                    generation,
+                    effect_id,
+                    publisher: Box::new(publisher),
+                    result,
+                }
+            });
         }
-        let Some(mut publisher) = active.publisher.take() else {
-            active
-                .coordination
-                .step(CoordinationInput::FinishRenewal { fenced: true });
-            continue;
-        };
-        let generation = active.generation;
-        let effect_id = active.begin_task(CoordinationEffect::Renewal);
-        available -= 1;
-        let cell = *cell;
-        let pool = pool.clone();
-        tasks.spawn(async move {
-            let result = publisher.renew().await;
-            if result.is_err() {
-                let _ = pool.fence(cell).await;
-            }
-            TaskResult::Renewed {
-                cell,
-                generation,
-                effect_id,
-                publisher: Box::new(publisher),
-                result,
-            }
-        });
     }
 }
 
@@ -328,4 +374,34 @@ pub(in crate::cell::actor) fn start_orphan_deactivate(
         }
     });
     transitioning.insert(cell);
+}
+
+#[cfg(test)]
+mod renewal_tests {
+    use super::*;
+
+    #[test]
+    fn due_owners_are_ordered_and_stale_entries_are_discarded_on_scan() {
+        let mut scheduler = RenewalScheduler::new();
+        let now = std::time::Instant::now();
+        for index in (0_u64..1_000).rev() {
+            let mut bytes = [0; 32];
+            bytes[..8].copy_from_slice(&index.to_be_bytes());
+            scheduler
+                .due
+                .push((now + std::time::Duration::from_millis(index), bytes, index));
+        }
+        scheduler.order_due();
+        for index in 0_u64..1_000 {
+            let mut bytes = [0; 32];
+            bytes[..8].copy_from_slice(&index.to_be_bytes());
+            assert_eq!(
+                scheduler.next_due(),
+                Some((CellId::from_bytes(bytes), index))
+            );
+        }
+        scheduler.due.push((now, [7; 32], 1));
+        scheduler.scan_due(&HashMap::new());
+        assert!(scheduler.due.is_empty());
+    }
 }
