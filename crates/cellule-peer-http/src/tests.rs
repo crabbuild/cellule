@@ -753,22 +753,46 @@ async fn not_started_refusal_refreshes_authority_without_resending_to_stale_peer
     server.abort();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "manual adapter owner-lookup baseline"]
-async fn owner_lookup_performance() {
-    use std::time::Instant;
+/// Returns the first OpenSSL 3 binary that can create Ed25519 keys.
+fn peer_openssl() -> Option<String> {
+    let mut candidates = Vec::new();
+    if let Ok(configured) = std::env::var("CELLULE_TEST_OPENSSL") {
+        candidates.push(configured);
+    }
+    candidates.extend(
+        ["openssl", "/opt/homebrew/bin/openssl", "openssl3"]
+            .into_iter()
+            .map(str::to_owned),
+    );
+    candidates.into_iter().find(|binary| {
+        std::process::Command::new(binary)
+            .args(["version"])
+            .output()
+            .map(|output| {
+                output.status.success()
+                    && !String::from_utf8_lossy(&output.stdout).contains("LibreSSL")
+            })
+            .unwrap_or(false)
+    })
+}
 
-    let mut raw = String::from("lane\tconcurrency\telapsed_us\n");
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
+/// Generates a CA and one Ed25519 leaf for a local mTLS peer fixture.
+///
+/// The leaf is valid for localhost client and server authentication under the
+/// generated CA, which is the minimum the loader verifies before use.
+fn generate_peer_identity(label: &str) -> Option<(std::path::PathBuf, LoadedPeerTls)> {
+    // macOS ships LibreSSL as `openssl`, which cannot create Ed25519 keys. Try
+    // the usual OpenSSL 3 locations before reporting that the fixture is
+    // unavailable, so the suite still runs wherever one is installed.
+    let binary = peer_openssl()?;
     let certificate_dir = std::env::temp_dir().join(format!(
-        "cellule-peer-bench-cert-{}-{}",
+        "cellule-peer-{label}-{}-{}",
         std::process::id(),
         now_ms().unwrap()
     ));
-    std::fs::create_dir(&certificate_dir).unwrap();
+    std::fs::create_dir_all(&certificate_dir).unwrap();
     let openssl = |args: &[&str]| {
-        let output = std::process::Command::new("openssl")
+        let output = std::process::Command::new(&binary)
             .args(args)
             .current_dir(&certificate_dir)
             .output()
@@ -779,6 +803,7 @@ async fn owner_lookup_performance() {
             String::from_utf8_lossy(&output.stderr)
         );
     };
+
     openssl(&[
         "req",
         "-x509",
@@ -790,7 +815,7 @@ async fn owner_lookup_performance() {
         "-out",
         "ca.crt",
         "-subj",
-        "/CN=Cellule benchmark CA",
+        "/CN=Cellule test CA",
         "-days",
         "1",
         "-addext",
@@ -811,7 +836,11 @@ async fn owner_lookup_performance() {
         "-subj",
         "/CN=localhost",
     ]);
-    std::fs::write(certificate_dir.join("leaf.ext"), "subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=digitalSignature\n").unwrap();
+    std::fs::write(
+        certificate_dir.join("leaf.ext"),
+        "subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=digitalSignature\n",
+    )
+    .unwrap();
     openssl(&[
         "x509",
         "-req",
@@ -836,6 +865,89 @@ async fn owner_lookup_performance() {
         "localhost",
     )
     .unwrap();
+    Some((certificate_dir, tls))
+}
+
+/// The default listener keeps HTTP/1.1, so an HTTP/1.1-only peer keeps working.
+#[tokio::test]
+async fn default_listener_negotiates_http_1_1() {
+    let Some((certificate_dir, tls)) = generate_peer_identity("alpn-h1") else {
+        eprintln!("skipping: no OpenSSL 3 binary available for the peer identity fixture");
+        return;
+    };
+    assert_eq!(
+        peer_request_version(tls, false).await,
+        http::Version::HTTP_11
+    );
+    std::fs::remove_dir_all(certificate_dir).unwrap();
+}
+
+/// Advertising h2 negotiates multiplexed HTTP/2 end to end over pinned mTLS.
+#[tokio::test]
+async fn http2_listener_negotiates_http_2() {
+    let Some((certificate_dir, tls)) = generate_peer_identity("alpn-h2") else {
+        eprintln!("skipping: no OpenSSL 3 binary available for the peer identity fixture");
+        return;
+    };
+    assert_eq!(peer_request_version(tls, true).await, http::Version::HTTP_2);
+    std::fs::remove_dir_all(certificate_dir).unwrap();
+}
+
+/// Serves one pinned-mTLS request and returns the protocol the peer spoke.
+async fn peer_request_version(tls: LoadedPeerTls, http2: bool) -> http::Version {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = Router::new().route(
+        "/internal/cells/v1/forward",
+        post(|| async {
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from("ok"))
+                .unwrap()
+        }),
+    );
+    let client = tls
+        .client_identity()
+        .client(
+            tls.certificate(),
+            tls.signing_key().verifying_key().to_bytes(),
+        )
+        .unwrap();
+    let tls = if http2 {
+        tls.with_http2().unwrap()
+    } else {
+        tls
+    };
+    let acceptor = tls.listener(listener);
+    let server = tokio::spawn(async move { axum::serve(acceptor, router).await.unwrap() });
+    let response = client
+        .post(format!(
+            "https://localhost:{}/internal/cells/v1/forward",
+            address.port()
+        ))
+        .header(header::CONTENT_TYPE, PROTOBUF_MEDIA_TYPE)
+        .body(vec![1_u8])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let version = response.version();
+    server.abort();
+    version
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "manual adapter owner-lookup baseline"]
+async fn owner_lookup_performance() {
+    use std::time::Instant;
+
+    let mut raw = String::from("lane\tconcurrency\telapsed_us\n");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let Some((certificate_dir, tls)) = generate_peer_identity("bench") else {
+        eprintln!("skipping: no OpenSSL 3 binary available for the peer identity fixture");
+        return;
+    };
     let (transport, target, counted) = owner_lookup_fixture_with_endpoint(
         format!("https://localhost:{}/", address.port()),
         tls.certificate(),

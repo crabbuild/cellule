@@ -44,6 +44,29 @@ The same timeout governs resolution, sending, and pacing. A delay that consumes
 the budget returns a deadline error without sleeping. Other invalid results
 are never guessed to have failed before execution.
 
+## Transport protocol
+
+The client offers `h2` then `http/1.1` on the pinned mTLS connection, so a hot
+owner multiplexes concurrent peer requests over one connection instead of
+opening one connection per request. A peer that speaks only HTTP/1.1 selects
+`http/1.1` from that list, so the offer never forces a protocol the peer cannot
+serve.
+
+The listener default stays HTTP/1.1. ALPN selects the protocol before any
+request bytes flow, so a listener that advertises `h2` in front of an
+HTTP/1.1-only server fails the first request instead of falling back. An
+embedding that serves HTTP/2 enables it explicitly:
+
+```rust
+let identity = identity.with_http2()?;
+let listener = identity.listener(listener);
+```
+
+Both paths are covered end to end over a generated mTLS identity: the default
+listener negotiates HTTP/1.1, and `with_http2` negotiates HTTP/2
+(`tests::default_listener_negotiates_http_1_1`,
+`tests::http2_listener_negotiates_http_2`).
+
 ## Local adapter comparison, 2026-09-29
 
 Run the ignored `tests::owner_lookup_performance` benchmark exactly once per

@@ -55,6 +55,10 @@ const ED25519_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.101.112"
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_PENDING_HANDSHAKES: usize = 128;
 const FLEET_DIGEST_DOMAIN: &[u8] = b"crab.peer-ca.v1\0";
+/// ALPN identifier for HTTP/1.1.
+const HTTP_11: &[u8] = b"http/1.1";
+/// ALPN identifier for HTTP/2.
+const HTTP_2: &[u8] = b"h2";
 
 /// Loaded private peer identity and its verified mTLS server configuration.
 pub struct LoadedPeerTls {
@@ -117,7 +121,11 @@ impl LoadedPeerTls {
                 context: "Cell peer certificate or private key is invalid",
                 source: Box::new(source),
             })?;
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        // The listener default stays HTTP/1.1: ALPN selects a protocol before
+        // any request bytes flow, so advertising h2 in front of an HTTP/1.1
+        // server would break the first request. An embedding that serves h2
+        // opts in with `with_http2`.
+        config.alpn_protocols = vec![HTTP_11.to_vec()];
         let certificate = sha256_digest(certificates[0].as_ref());
 
         Ok(Self {
@@ -139,6 +147,31 @@ impl LoadedPeerTls {
             acceptor: TlsAcceptor::from(Arc::clone(&self.config)),
             handshakes: FuturesUnordered::new(),
         }
+    }
+
+    /// Advertises HTTP/2 in addition to HTTP/1.1 on this identity's listener.
+    ///
+    /// Enable this only when the HTTP layer behind the listener speaks HTTP/2.
+    /// ALPN selects the protocol before any request bytes flow, so a listener
+    /// that advertises h2 in front of an HTTP/1.1-only server fails the first
+    /// request instead of falling back.
+    pub fn with_http2(mut self) -> Result<Self> {
+        let verifier = WebPkiClientVerifier::builder(Arc::clone(&self.roots))
+            .build()
+            .map_err(|source| TlsError::Setup {
+                context: "Cell peer CA cannot verify clients",
+                source: Box::new(source),
+            })?;
+        let mut config = ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(self.certificates.clone(), self.private_key.clone_key())
+            .map_err(|source| TlsError::Setup {
+                context: "Cell peer certificate or private key is invalid",
+                source: Box::new(source),
+            })?;
+        config.alpn_protocols = vec![HTTP_2.to_vec(), HTTP_11.to_vec()];
+        self.config = Arc::new(config);
+        Ok(self)
     }
 
     /// Returns the key that signs this node's advertisement and peer requests.
@@ -211,7 +244,11 @@ impl PeerTlsClient {
                 context: "Cell peer client identity is invalid",
                 source: Box::new(source),
             })?;
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        // Offering h2 first lets an h2-capable owner multiplex concurrent peer
+        // requests over one connection. A server that only speaks HTTP/1.1
+        // selects http/1.1 from this list, so the offer never forces a
+        // protocol the peer cannot serve.
+        config.alpn_protocols = vec![HTTP_2.to_vec(), HTTP_11.to_vec()];
         reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
