@@ -56,7 +56,9 @@ pub(super) fn handle_published(
     effect_id: u64,
     publisher: Box<CellPublisher>,
     retained_bytes: u64,
-    node_logged: bool,
+    node_log_bytes: u64,
+    covered: u64,
+    covered_node_logs: u64,
     next_due_ms: Option<i64>,
     commit_sequence: u64,
     mut result: crate::Result<()>,
@@ -97,17 +99,25 @@ pub(super) fn handle_published(
     }
     active.publisher = Some(*publisher);
     active.publication_bytes = active.publication_bytes.saturating_sub(retained_bytes);
-    if node_logged && object_published {
-        active.unpublished_node_logs = active.unpublished_node_logs.saturating_sub(1);
-        subtract_unpublished_bytes(unpublished_node_log_bytes, retained_bytes);
+    if object_published && covered_node_logs > 0 {
+        active.unpublished_node_logs = active
+            .unpublished_node_logs
+            .saturating_sub(usize::try_from(covered_node_logs).unwrap_or(usize::MAX));
+        subtract_unpublished_bytes(unpublished_node_log_bytes, node_log_bytes);
     }
-    let decision = active
-        .coordination
-        .step(CoordinationInput::FinishPublication {
-            fenced,
-            succeeded: result.is_ok(),
-        });
-    if matches!(decision, CoordinationDecision::Fence) {
+    // One queued publication per covered commit was accounted at admission, so
+    // each of them completes here.
+    let mut fence = false;
+    for _ in 0..covered {
+        let decision = active
+            .coordination
+            .step(CoordinationInput::FinishPublication {
+                fenced,
+                succeeded: result.is_ok(),
+            });
+        fence |= matches!(decision, CoordinationDecision::Fence);
+    }
+    if fence {
         fence_active(active);
     } else {
         // Only the completed object path can wake snapshot readers. Fleet proof

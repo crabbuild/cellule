@@ -650,6 +650,42 @@ impl SqlWorkerPool {
         receive(response).await
     }
 
+    /// Binds the proposal that covers every retained commit.
+    pub async fn bind_prepared_all(
+        &self,
+        cell: CellId,
+        cuts: cellule_ltx::CaptureBatch,
+        prepared: cellule_ltx::PreparedRoot,
+    ) -> Result<usize> {
+        let (reply, response) = oneshot::channel();
+        self.send(
+            cell,
+            WorkerCommand::BindPreparedAll {
+                cell,
+                cuts: Box::new(cuts),
+                prepared: Box::new(prepared),
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
+    /// Releases every retained result the published root covers, oldest first.
+    pub(crate) async fn confirm_published_range(
+        &self,
+        cell: CellId,
+        root: cellule_ltx::RootRef,
+    ) -> Result<Vec<StoredOutcome>> {
+        let (reply, response) = oneshot::channel();
+        self.send(
+            cell,
+            WorkerCommand::ConfirmPublishedRange { cell, root, reply },
+        )
+        .await?;
+        receive(response).await
+    }
+
     pub(crate) async fn bind_migration_prepared(
         &self,
         cell: CellId,
@@ -1108,6 +1144,19 @@ enum WorkerCommand {
         cell: CellId,
         prepared: Box<cellule_ltx::PreparedRoot>,
         reply: oneshot::Sender<Result<()>>,
+    },
+    /// Binds one proposal that covers every worker-retained commit.
+    BindPreparedAll {
+        cell: CellId,
+        cuts: Box<cellule_ltx::CaptureBatch>,
+        prepared: Box<cellule_ltx::PreparedRoot>,
+        reply: oneshot::Sender<Result<usize>>,
+    },
+    /// Releases every worker-retained result the published root covers.
+    ConfirmPublishedRange {
+        cell: CellId,
+        root: cellule_ltx::RootRef,
+        reply: oneshot::Sender<Result<Vec<StoredOutcome>>>,
     },
     BindMigrationPrepared {
         cell: CellId,

@@ -274,6 +274,38 @@ pub struct CellExecutor {
     fenced: bool,
 }
 
+/// Merges retained captures into one append, oldest first.
+///
+/// Each retained commit keeps only its own incremental cut, so a root that
+/// covers several commits must append every one of them. The merged batch keeps
+/// the newest capture's position and timing because it ends there.
+pub(crate) fn merge_captures<'a>(
+    captures: impl IntoIterator<Item = &'a CaptureBatch>,
+) -> Option<CaptureBatch> {
+    let mut merged: Option<CaptureBatch> = None;
+    let mut segments = Vec::new();
+    for capture in captures {
+        segments.extend(capture.segments.iter().cloned());
+        match merged.as_mut() {
+            Some(current) => {
+                current.position = capture.position;
+                current.timing = capture.timing;
+            }
+            None => {
+                merged = Some(CaptureBatch {
+                    segments: Vec::new(),
+                    position: capture.position,
+                    timing: capture.timing,
+                });
+            }
+        }
+    }
+    merged.map(|mut current| {
+        current.segments = segments;
+        current
+    })
+}
+
 impl CellExecutor {
     pub(crate) fn interrupt_handle(&self) -> cellule_ltx::rusqlite::InterruptHandle {
         self.db.interrupt_handle()
@@ -998,6 +1030,54 @@ impl CellExecutor {
         Ok(())
     }
 
+    /// Pins one proposal that covers every retained commit.
+    ///
+    /// Coalescing is only sound when the proposal continues exactly the merged
+    /// captures of the retained commits, so this rejects any proposal whose
+    /// position or sequence does not match the newest retained commit.
+    pub(crate) fn bind_prepared_all(
+        &mut self,
+        prepared: &cellule_ltx::PreparedRoot,
+        merged: &CaptureBatch,
+    ) -> Result<usize> {
+        // The covered range is the proposal's, not the queue's back: a commit
+        // recorded while this proposal was prepared stays for its own
+        // publication.
+        let newest = self
+            .pending
+            .iter()
+            .find(|pending| pending.outcome.commit_sequence() == prepared.root().commit_sequence)
+            .ok_or(Error::PendingPublication)?;
+        let root = prepared.root();
+        if root.cell != *self.cell.as_bytes()
+            || root.incarnation != *self.incarnation.as_bytes()
+            || root.position != merged.position
+            || root.position != newest.cuts.position
+            || prepared.verified().schema() != self.schema
+        {
+            return Err(Error::Command(
+                "prepared root does not cover pending commits",
+            ));
+        }
+        // Only commits at or below the proposal's sequence are covered; a commit
+        // recorded while the proposal was prepared stays unbound for its own
+        // publication.
+        let mut covered = 0;
+        for pending in &mut self.pending {
+            if pending.outcome.commit_sequence() > root.commit_sequence {
+                continue;
+            }
+            if pending.prepared.is_some_and(|existing| existing != root) {
+                return Err(Error::Command(
+                    "prepared root does not cover pending commits",
+                ));
+            }
+            pending.prepared = Some(root);
+            covered += 1;
+        }
+        Ok(covered)
+    }
+
     /// Pins the immutable proposal for the pending schema migration.
     pub fn bind_migration_prepared(&mut self, prepared: &cellule_ltx::PreparedRoot) -> Result<()> {
         let pending = self
@@ -1021,21 +1101,71 @@ impl CellExecutor {
     }
 
     /// Releases the stored result only after the published root proves inclusion.
+    ///
+    /// A root that covers more than the oldest retained commit is refused before
+    /// anything is pruned or released, so the retained set stays reconcilable.
     pub fn confirm_published(&mut self, root: &cellule_ltx::RootRef) -> Result<StoredOutcome> {
-        let pending = self.pending.front().ok_or(Error::PendingPublication)?;
-        if pending.prepared.as_ref() != Some(root) {
+        if self
+            .pending
+            .front()
+            .is_none_or(|front| front.outcome.commit_sequence() != root.commit_sequence)
+        {
             return Err(Error::Command(
                 "published root does not match prepared commit",
             ));
         }
-        self.db.prune_captured(&pending.cuts)?;
-        let pending = self.pending.pop_front().ok_or(Error::PendingPublication)?;
-        self.pending_bytes = self
-            .pending_bytes
-            .checked_sub(pending.retained_bytes())
-            .ok_or(Error::Control("pending publication accounting underflow"))?;
+        let mut outcomes = self.confirm_published_range(root)?;
+        match outcomes.pop() {
+            Some(outcome) if outcomes.is_empty() => Ok(outcome),
+            _ => Err(Error::Command(
+                "published root covered more than the prepared commit",
+            )),
+        }
+    }
+
+    /// Releases every stored result the published root covers, oldest first.
+    ///
+    /// One root may continue the merged captures of several retained commits.
+    /// Every covered commit must already be bound to this exact root, so a root
+    /// that skips an earlier commit is refused rather than releasing an outcome
+    /// whose own commit nothing published.
+    pub(crate) fn confirm_published_range(
+        &mut self,
+        root: &cellule_ltx::RootRef,
+    ) -> Result<Vec<StoredOutcome>> {
+        let index = self
+            .pending
+            .iter()
+            .position(|pending| pending.outcome.commit_sequence() == root.commit_sequence)
+            .ok_or(Error::Command(
+                "published root does not match prepared commit",
+            ))?;
+        if self
+            .pending
+            .iter()
+            .take(index.saturating_add(1))
+            .any(|pending| pending.prepared.as_ref() != Some(root))
+        {
+            return Err(Error::Command(
+                "published root does not cover an earlier commit",
+            ));
+        }
+        // Prune every covered cut before removing any accounting, so a failure
+        // leaves the retained set intact for reconciliation.
+        for pending in self.pending.iter().take(index.saturating_add(1)) {
+            self.db.prune_captured(&pending.cuts)?;
+        }
+        let covered: Vec<PendingCommit> = self.pending.drain(..=index).collect();
+        let mut outcomes = Vec::with_capacity(covered.len());
+        for pending in covered {
+            self.pending_bytes = self
+                .pending_bytes
+                .checked_sub(pending.retained_bytes())
+                .ok_or(Error::Control("pending publication accounting underflow"))?;
+            outcomes.push(pending.outcome);
+        }
         self.published_sequence = root.commit_sequence;
-        Ok(pending.outcome)
+        Ok(outcomes)
     }
 
     /// Finalizes local migration state after its exact schema-bearing root publishes.

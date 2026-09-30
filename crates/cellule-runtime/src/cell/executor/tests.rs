@@ -119,6 +119,83 @@ fn full_pending_publication_budget_refuses_new_commands() {
     ));
 }
 
+/// Coalescing one root over several retained commits must append every
+/// retained cut, and the range confirmation must release exactly those commits.
+#[tokio::test]
+async fn one_prepared_root_covers_every_retained_commit() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let cell = CellId::from_bytes([71; 32]);
+    let incarnation = IncarnationId::from_bytes([72; 16]);
+    let mut connection = cellule_ltx::rusqlite::Connection::open(&path).unwrap();
+    crate::cell::schema::install_runtime_schema(&mut connection, cell, incarnation, 1).unwrap();
+    drop(connection);
+    let db = Db::open(&path, cellule_ltx::Limits::default()).unwrap();
+    let mut executor = CellExecutor::new(db, cell, incarnation, 1);
+
+    // Two commands commit locally and become durable behind their fleet proofs,
+    // which is what lets a second commit exist while the first is unpublished.
+    for sequence in 1_u64..=2 {
+        let identity = MutationIdentity {
+            request_id: RequestId::from_bytes([sequence as u8; 16]),
+            issued_at_ms: 10,
+            expires_at_ms: 10_000,
+        };
+        assert!(matches!(
+            executor
+                .execute(
+                    identity,
+                    Digest::from_bytes([sequence as u8; 32]),
+                    20,
+                    1 << 20,
+                    |transaction| {
+                        transaction.execute(
+                            "UPDATE sys_meta SET logical_time_ms = logical_time_ms + 1",
+                            [],
+                        )?;
+                        Ok(HandlerOutcome::Success(vec![sequence as u8]))
+                    },
+                )
+                .unwrap(),
+            CommandExecution::Pending
+        ));
+        executor.confirm_durable(sequence).unwrap();
+    }
+
+    let merged = merge_captures(executor.pending.iter().map(|pending| pending.cuts()))
+        .expect("retained cuts");
+    // Each commit retained one incremental cut; the merge appends both and ends
+    // at the newest commit's position.
+    assert_eq!(merged.segments.len(), 2, "both commits must be appended");
+    assert_eq!(
+        merged.position,
+        executor.latest_pending().unwrap().cuts().position
+    );
+
+    let layout = cellule_ltx::CellStorageLayout::new(
+        cellule_store::Store::new(std::sync::Arc::new(object_store::memory::InMemory::new())),
+        object_store::path::Path::from("coalesced"),
+        [73; 16],
+    );
+    let replica =
+        cellule_ltx::CellReplica::new(layout, [71; 32], [72; 16], cellule_ltx::Limits::default())
+            .unwrap();
+    let prepared = replica.prepare(None, &merged, 2, 1).await.unwrap();
+    assert_eq!(prepared.root().commit_sequence, 2);
+    assert_eq!(prepared.root().position, merged.position);
+
+    assert_eq!(executor.bind_prepared_all(&prepared, &merged).unwrap(), 2);
+    assert!(
+        executor.confirm_published(&prepared.root()).is_err(),
+        "the single-commit confirmation must refuse a coalesced root"
+    );
+    let outcomes = executor.confirm_published_range(&prepared.root()).unwrap();
+    assert_eq!(outcomes.len(), 2);
+    assert_eq!(outcomes[0].commit_sequence(), 1);
+    assert_eq!(outcomes[1].commit_sequence(), 2);
+    assert!(executor.pending().is_none());
+}
+
 #[test]
 fn restored_executor_rejects_root_sequence_ahead_of_sqlite_metadata() {
     let directory = tempfile::TempDir::new().unwrap();

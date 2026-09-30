@@ -385,23 +385,64 @@ pub(super) fn start_publication(
     let Some(mut publisher) = active.publisher.take() else {
         return;
     };
-    let Some(publication) = active.publications.pop_front() else {
+    // Coalescing publishes one root for every queued commit. It is only sound
+    // once each covered commit reached its follower proof, because that proof is
+    // what allowed the commits to queue behind an unpublished one.
+    let coalesce = active.publications.len() > 1
+        && active
+            .publications
+            .iter()
+            .all(|queued| queued.durability.is_some());
+    let coverage: Vec<QueuedPublication> = if coalesce {
+        active.publications.drain(..).collect()
+    } else {
+        match active.publications.pop_front() {
+            Some(queued) => vec![queued],
+            None => {
+                active.publisher = Some(publisher);
+                return;
+            }
+        }
+    };
+    let Some(merged) =
+        crate::cell::executor::merge_captures(coverage.iter().map(|queued| queued.pending.cuts()))
+    else {
         active.publisher = Some(publisher);
         return;
     };
-    let node_logged = publication.durability.is_some();
-    let root_sequence_lag = i128::from(publication.pending.outcome().commit_sequence())
+    let Some(newest) = coverage.last() else {
+        active.publisher = Some(publisher);
+        return;
+    };
+    let covered = coverage.len();
+    let retained_bytes: u64 = coverage
+        .iter()
+        .map(|queued| queued.pending.retained_bytes())
+        .sum();
+    let node_log_bytes: u64 = coverage
+        .iter()
+        .filter(|queued| queued.durability.is_some())
+        .map(|queued| queued.pending.retained_bytes())
+        .sum();
+    let covered_node_logs = coverage
+        .iter()
+        .filter(|queued| queued.durability.is_some())
+        .count() as u64;
+    let node_logged = newest.durability.is_some();
+    let root_sequence_lag = i128::from(newest.pending.outcome().commit_sequence())
         - i128::from(active.published_sequence);
     let incarnation = active.incarnation;
-    let commit_sequence = publication.pending.outcome().commit_sequence();
-    let queue_wait = publication.submitted_at.elapsed();
+    let commit_sequence = newest.pending.outcome().commit_sequence();
+    let newest_submitted_at = newest.submitted_at;
+    let queue_wait = newest_submitted_at.elapsed();
     tracing::debug!(
         target: "cellule_runtime::action",
         event = "cell_publication_started",
         cell = ?cell,
         incarnation = ?incarnation,
         commit_sequence,
-        queue_wait_ms = publication.submitted_at.elapsed().as_millis(),
+        covered,
+        queue_wait_ms = newest_submitted_at.elapsed().as_millis(),
         pending_publications = active.coordination.publication_count(),
         publication_bytes = active.publication_bytes,
         root_sequence_lag = %root_sequence_lag,
@@ -412,28 +453,50 @@ pub(super) fn start_publication(
     // Moving the publisher out of ActiveCell is the serialization token for
     // root preparation and CAS; no second object publisher can overtake it.
     let pool = pool.clone();
-    let retained_reservation = publication.retained_reservation;
-    let published_next_due_ms = publication.pending.next_due_ms();
-    let published_commit_sequence = publication.pending.outcome().commit_sequence();
+    let published_next_due_ms = newest.pending.next_due_ms();
+    let published_commit_sequence = commit_sequence;
+    let mut proofs = Vec::with_capacity(covered);
+    let mut durabilities = Vec::with_capacity(covered);
+    let mut expected = Vec::with_capacity(covered);
+    let mut reservations = Vec::with_capacity(covered);
+    let mut pendings = Vec::with_capacity(covered);
+    for queued in coverage {
+        proofs.push(queued.proof);
+        durabilities.push(queued.durability);
+        expected.push(queued.pending.outcome().clone());
+        reservations.push(queued.retained_reservation);
+        pendings.push(queued.pending);
+    }
     tasks.spawn(async move {
-        let _retained_reservation = retained_reservation;
-        let retained_bytes = publication.pending.retained_bytes();
-        let mut publication_proof = Some(publication.proof);
+        let _retained_reservations = reservations;
+        let mut publication_proofs = Some(proofs);
         let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
         let mut retry_delay = std::time::Duration::from_millis(100);
         let mut preparation = std::time::Duration::ZERO;
         let mut authority = std::time::Duration::ZERO;
         let result = async {
-            let expected = publication.pending.outcome().clone();
             let preparation_started = std::time::Instant::now();
             let prepared = loop {
-                match publisher.prepare(&publication.pending).await {
+                let attempt = if covered == 1 {
+                    publisher.prepare(&pendings[0]).await
+                } else {
+                    publisher
+                        .prepare_batch(&merged, published_commit_sequence)
+                        .await
+                };
+                match attempt {
                     Ok(prepared) => break prepared,
                     Err(error) if node_logged && is_storage_publication_error(&error) => {
-                        if let Some(durability) = publication.durability.as_ref() {
+                        if let Some(durability) = durabilities.iter().flatten().next() {
                             wait_for_fleet_proof(durability, fleet_deadline).await?;
                         }
-                        if let Some(proof) = publication_proof.take() {
+                        // A lone covered commit learns about the retryable
+                        // storage failure while the Cell keeps retrying; a
+                        // coalesced range resolves together at the end.
+                        if covered == 1
+                            && let Some(mut proofs) = publication_proofs.take()
+                            && let Some(proof) = proofs.pop()
+                        {
                             let _ = proof.send(Err(error));
                         }
                         if std::time::Instant::now() >= fleet_deadline {
@@ -448,19 +511,26 @@ pub(super) fn start_publication(
                 }
             };
             preparation = preparation_started.elapsed();
-            pool.bind_prepared(cell, prepared.clone()).await?;
+            if covered == 1 {
+                pool.bind_prepared(cell, prepared.clone()).await?;
+            } else {
+                pool.bind_prepared_all(cell, merged, prepared.clone()).await?;
+            }
             let authority_started = std::time::Instant::now();
             let root = loop {
                 match publisher
-                    .publish_prepared(&prepared, publication.pending.next_due_ms())
+                    .publish_prepared(&prepared, published_next_due_ms)
                     .await
                 {
                     Ok(root) => break root,
                     Err(error) if node_logged && is_storage_publication_error(&error) => {
-                        if let Some(durability) = publication.durability.as_ref() {
+                        if let Some(durability) = durabilities.iter().flatten().next() {
                             wait_for_fleet_proof(durability, fleet_deadline).await?;
                         }
-                        if let Some(proof) = publication_proof.take() {
+                        if covered == 1
+                            && let Some(mut proofs) = publication_proofs.take()
+                            && let Some(proof) = proofs.pop()
+                        {
                             let _ = proof.send(Err(error));
                         }
                         if std::time::Instant::now() >= fleet_deadline {
@@ -475,13 +545,27 @@ pub(super) fn start_publication(
                 }
             };
             authority = authority_started.elapsed();
-            if let Some(durability) = publication.durability.as_ref() {
+            let mut logged = false;
+            for durability in durabilities.iter().flatten() {
+                logged = true;
                 durability.prove_object().await?;
-            } else {
-                publisher.record_object_proof(publication.submitted_at.elapsed());
             }
-            let published = pool.confirm_published(cell, root).await?;
-            if published != expected {
+            if !logged {
+                publisher.record_object_proof(newest_submitted_at.elapsed());
+            }
+            // The published root covers every queued commit, so the range
+            // confirmation releases exactly the outcomes it continues.
+            let published = if covered == 1 {
+                vec![pool.confirm_published(cell, root).await?]
+            } else {
+                pool.confirm_published_range(cell, root).await?
+            };
+            if published.len() != expected.len()
+                || published
+                    .iter()
+                    .zip(expected.iter())
+                    .any(|(released, queued)| released != queued)
+            {
                 return Err(Error::Control(
                     "published result does not match queued commit",
                 ));
@@ -493,7 +577,7 @@ pub(super) fn start_publication(
             queue_wait,
             preparation,
             authority,
-            total: publication.submitted_at.elapsed(),
+            total: newest_submitted_at.elapsed(),
             succeeded: result.is_ok(),
             commit_sequence,
         });
@@ -503,7 +587,8 @@ pub(super) fn start_publication(
             cell = ?cell,
             incarnation = ?incarnation,
             commit_sequence,
-            publication_lag_ms = publication.submitted_at.elapsed().as_millis(),
+            covered,
+            publication_lag_ms = newest_submitted_at.elapsed().as_millis(),
             succeeded = result.is_ok(),
             "Cell LTX publication completed"
         );
@@ -513,8 +598,11 @@ pub(super) fn start_publication(
             // here so an operator can distinguish storage failure from fencing.
             tracing::warn!(cell = ?cell, commit_sequence, error = ?error, "Cell publication fenced its owner");
         }
-        if let Some(proof) = publication_proof {
-            let _ = proof.send(if fenced { Err(Error::Fenced) } else { Ok(()) });
+        // Every covered commit waits on this root, so each proof is answered.
+        if let Some(proofs) = publication_proofs {
+            for proof in proofs {
+                let _ = proof.send(if fenced { Err(Error::Fenced) } else { Ok(()) });
+            }
         }
         if fenced {
             let _ = pool.fence(cell).await;
@@ -525,7 +613,9 @@ pub(super) fn start_publication(
             effect_id,
             publisher: Box::new(publisher),
             retained_bytes,
-            node_logged,
+            node_log_bytes,
+            covered: covered as u64,
+            covered_node_logs,
             next_due_ms: published_next_due_ms,
             commit_sequence: published_commit_sequence,
             result,

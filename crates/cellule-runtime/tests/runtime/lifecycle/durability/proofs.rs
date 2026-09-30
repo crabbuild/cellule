@@ -547,6 +547,287 @@ async fn follower_proofs_advance_logical_head_and_bound_the_object_backlog() {
             .is_some_and(|(epoch, covered)| *epoch == 1 && *covered >= 65)
     );
 }
+use cellule_store::test_support::CountingObjectStore;
+
+/// A coalesced root that cannot publish must leave every covered commit
+/// recoverable rather than half-released.
+///
+/// The follower proofs already acknowledged the covered commands, so the failure
+/// may not invent a second outcome: it must keep the authority root where it
+/// was and let the node log carry the commits until recovery.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_coalesced_root_keeps_every_covered_commit_recoverable() {
+    let pausing = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+    let object_store: Arc<dyn ObjectStore> = pausing.clone();
+    let fixture = fixture_with_limits_and_store(
+        b"coalesced-failure",
+        Limits::default(),
+        Store::new(object_store),
+    );
+    let session = SessionId::from_bytes([81; 16]);
+    let leader = NodeId::from_bytes([82; 16]);
+    let follower = NodeId::from_bytes([83; 16]);
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        2 * 1024 * 1024,
+        session,
+        ReplicaHost::default(),
+    )
+    .unwrap();
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let gate = DurabilityGate::new(session, leader, 1, [follower]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(TestNodeTransport::default());
+    let shipper =
+        NodeLogShipper::new(gate.clone(), Arc::clone(&transport), Limits::default()).unwrap();
+    let authority = Arc::new(TestNodeAuthority::default());
+    let node_authority: Arc<dyn NodeLogAuthority> = authority.clone();
+    runtime
+        .install_node_durability(
+            fixture.target.application(),
+            Arc::new(NodeDurability::new(
+                gate,
+                shipper,
+                node_authority,
+                transport,
+                lease,
+            )),
+        )
+        .unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, session).await;
+    pausing.arm();
+
+    let first = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        handle.execute(
+            mutation_identity_window(100, 10, 10_000),
+            Digest::from_bytes([101; 32]),
+            20,
+            1_024,
+            1_024,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(first.commit_sequence(), 1);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        pausing.wait_until_blocked(),
+    )
+    .await
+    .unwrap();
+
+    for sequence in 1_u8..4 {
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            handle.execute(
+                mutation_identity_window(100 + sequence, 10, 10_000),
+                Digest::from_bytes([101 + sequence; 32]),
+                20 + i64::from(sequence),
+                1_024,
+                1_024,
+                |transaction| {
+                    transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                    Ok(HandlerOutcome::Success(Vec::new()))
+                },
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(outcome.commit_sequence(), u64::from(sequence) + 1);
+    }
+
+    // Every later object write fails, so the coalesced root cannot publish.
+    pausing.fail_puts();
+    pausing.release();
+    // The publication path retries a storage failure until its fleet grace
+    // deadline, so draining must wait that budget out before reporting.
+    let drained = tokio::time::timeout(std::time::Duration::from_secs(20), handle.drain()).await;
+    assert!(
+        matches!(drained, Ok(Ok(()))),
+        "accepted work must finish before the failure is reported: {drained:?}"
+    );
+    // Unpublished commits remain, so the runtime refuses to close cleanly and
+    // recovery owns them instead of reporting a clean shutdown.
+    let shutdown = runtime.shutdown().await;
+    assert!(
+        matches!(
+            shutdown,
+            Err(cellule_runtime::Error::PendingPublication) | Err(cellule_runtime::Error::Fenced)
+        ),
+        "a failed coalesced root must leave recovery work behind: {shutdown:?}"
+    );
+
+    // The covered commits stay uncovered in the object store: the authority
+    // root is still the one that reached it, and the node log carries the rest.
+    let released = CellAuthority::new(fixture.layout.clone())
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let sequence = released
+        .value()
+        .root
+        .as_ref()
+        .map_or(0, |root| root.commit_sequence);
+    assert!(
+        sequence < 4,
+        "a failed coalesced root must not publish the commits it covered, root was {sequence}"
+    );
+    // Object coverage never advances for the covered commits: their recoverable
+    // proof is the follower log that already released them, and the runtime
+    // reports the remainder as recovery work instead of a clean close.
+    assert!(
+        !authority
+            .coverage
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, covered)| *covered >= 4),
+        "a failed coalesced root must not claim object coverage"
+    );
+}
+
+/// One published root must cover every commit that queued behind it.
+///
+/// While every object write is paused, four commands acknowledge on their
+/// follower proofs; the first root is already in flight, so the rest queue
+/// behind it. Coalescing must publish fewer roots than commits, and the last
+/// root must still name the newest commit.
+#[tokio::test(flavor = "multi_thread")]
+async fn one_published_root_covers_every_queued_commit() {
+    let pausing = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+    let counted = Arc::new(CountingObjectStore::new(pausing.clone()));
+    let fixture = fixture_with_limits_and_store(
+        b"coalesced-command",
+        Limits::default(),
+        Store::new(counted.clone()),
+    );
+    let session = SessionId::from_bytes([71; 16]);
+    let leader = NodeId::from_bytes([72; 16]);
+    let follower = NodeId::from_bytes([73; 16]);
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        2 * 1024 * 1024,
+        session,
+        ReplicaHost::default(),
+    )
+    .unwrap();
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let gate = DurabilityGate::new(session, leader, 1, [follower]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(TestNodeTransport::default());
+    let shipper =
+        NodeLogShipper::new(gate.clone(), Arc::clone(&transport), Limits::default()).unwrap();
+    let authority = Arc::new(TestNodeAuthority::default());
+    let node_authority: Arc<dyn NodeLogAuthority> = authority.clone();
+    runtime
+        .install_node_durability(
+            fixture.target.application(),
+            Arc::new(NodeDurability::new(
+                gate,
+                shipper,
+                node_authority,
+                transport,
+                lease,
+            )),
+        )
+        .unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, session).await;
+    let baseline_control = CellAuthority::new(fixture.layout.clone())
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let baseline = baseline_control.value().revision;
+    let baseline_puts = counted.put_requests();
+    pausing.arm();
+
+    let first = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        handle.execute(
+            mutation_identity_window(80, 10, 10_000),
+            Digest::from_bytes([90; 32]),
+            20,
+            1_024,
+            1_024,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(first.commit_sequence(), 1);
+    // The first root is now unpublished, so the remaining commits queue behind
+    // it instead of each publishing their own root.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        pausing.wait_until_blocked(),
+    )
+    .await
+    .unwrap();
+
+    for sequence in 1_u8..4 {
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            handle.execute(
+                mutation_identity_window(80 + sequence, 10, 10_000),
+                Digest::from_bytes([90 + sequence; 32]),
+                20 + i64::from(sequence),
+                1_024,
+                1_024,
+                |transaction| {
+                    transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                    Ok(HandlerOutcome::Success(Vec::new()))
+                },
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(outcome.commit_sequence(), u64::from(sequence) + 1);
+    }
+
+    pausing.release();
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle.drain())
+        .await
+        .unwrap()
+        .unwrap();
+    runtime.shutdown().await.unwrap();
+
+    let released = CellAuthority::new(fixture.layout.clone())
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(released.value().root.as_ref().unwrap().commit_sequence, 4);
+    // Control advances once per published root, so four commits must need fewer
+    // transitions than commits: the first root is already in flight, and the
+    // remaining three coalesce behind it.
+    let transitions = released.value().revision.saturating_sub(baseline);
+    assert!(
+        transitions < 4,
+        "four commits must coalesce into fewer roots, control advanced {transitions} times"
+    );
+    // Publishing one root per commit would upload at least the segment body,
+    // index, directory node, segment page, and root document for each of the
+    // four commits; a coalesced range shares the last three.
+    let uploads = counted.put_requests().saturating_sub(baseline_puts);
+    assert!(
+        uploads < 24,
+        "coalescing must not upload one full object set per commit, uploaded {uploads}"
+    );
+}
+
 struct FaultFollowerTransport {
     inner: cellule_runtime::node::log_transport::LocalFollowerTransport,
     after_object_failure: Option<Arc<PausingStore>>,

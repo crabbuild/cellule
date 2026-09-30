@@ -391,8 +391,14 @@ pub(super) enum TaskResult {
         generation: u64,
         effect_id: u64,
         publisher: Box<CellPublisher>,
+        /// Bytes every commit this root covers retained.
         retained_bytes: u64,
-        node_logged: bool,
+        /// Retained bytes whose response was gated on the node log.
+        node_log_bytes: u64,
+        /// Commits this root covers.
+        covered: u64,
+        /// Covered commits whose response was gated on the node log.
+        covered_node_logs: u64,
         next_due_ms: Option<i64>,
         commit_sequence: u64,
         result: crate::Result<()>,

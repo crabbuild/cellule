@@ -301,6 +301,22 @@ impl CellPublisher {
         result
     }
 
+    /// Prepares one root that continues several retained commits.
+    ///
+    /// The caller merges the covered commits' captures in lineage order, so the
+    /// proposal appends every retained cut and ends at the newest commit.
+    pub(crate) async fn prepare_batch(
+        &mut self,
+        cuts: &cellule_ltx::CaptureBatch,
+        commit_sequence: u64,
+    ) -> Result<cellule_ltx::PreparedRoot> {
+        let result = self
+            .prepare_append(cuts, commit_sequence, self.observed.value().schema)
+            .await;
+        self.record_publication_cost();
+        result
+    }
+
     pub(crate) async fn prepare_initial(
         &mut self,
         cuts: &cellule_ltx::CaptureBatch,

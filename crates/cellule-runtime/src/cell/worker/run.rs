@@ -327,6 +327,25 @@ fn run_worker_command(
                 .and_then(|cell| cell.executor.bind_prepared(&prepared));
             let _ = reply.send(result);
         }
+        WorkerCommand::BindPreparedAll {
+            cell,
+            cuts,
+            prepared,
+            reply,
+        } => {
+            let result = cells
+                .get_mut(&cell)
+                .ok_or(Error::CellNotActive)
+                .and_then(|cell| cell.executor.bind_prepared_all(&prepared, &cuts));
+            let _ = reply.send(result);
+        }
+        WorkerCommand::ConfirmPublishedRange { cell, root, reply } => {
+            let result = cells
+                .get_mut(&cell)
+                .ok_or(Error::CellNotActive)
+                .and_then(|cell| cell.executor.confirm_published_range(&root));
+            let _ = reply.send(result);
+        }
         WorkerCommand::BindMigrationPrepared {
             cell,
             prepared,
