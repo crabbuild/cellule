@@ -1,6 +1,6 @@
 //! Test-only authenticated network transport for private-disk follower lanes.
 
-use super::performance_fixture::now_ms;
+use super::performance_fixture::{DurabilityRecorder, now_ms};
 use bytes::Bytes;
 use cellule_host::{FacilityResult, NodeDurabilityProvider};
 use cellule_ltx::Limits;
@@ -29,7 +29,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    sync::{Mutex, Semaphore},
 };
 
 const REQUEST_DOMAIN: &[u8] = b"cellule.test-follower.request.v1\0";
@@ -173,9 +173,16 @@ async fn follower_address(node: &NodeAdvertisement) -> Result<SocketAddr> {
     let endpoint = node
         .endpoint()
         .strip_prefix("https://")
-        .and_then(|address| address.strip_suffix(":8080"))
         .ok_or(Error::Peer("follower endpoint is invalid"))?;
-    tokio::net::lookup_host(format!("{endpoint}:8081"))
+    let (host, gateway_port) = endpoint
+        .rsplit_once(':')
+        .ok_or(Error::Peer("follower endpoint has no gateway port"))?;
+    let follower_port = gateway_port
+        .parse::<u16>()
+        .ok()
+        .and_then(|port| port.checked_add(1))
+        .ok_or(Error::Peer("follower endpoint port is invalid"))?;
+    tokio::net::lookup_host(format!("{host}:{follower_port}"))
         .await
         .map_err(transport_io)?
         .next()
@@ -221,6 +228,7 @@ pub(super) struct ProcessFollowerTransport {
     key: SigningKey,
     directory: NodeDirectory,
     members: StdMutex<HashMap<NodeId, CachedMember>>,
+    observation: Option<Arc<DurabilityRecorder>>,
 }
 
 struct CachedMember {
@@ -237,11 +245,13 @@ impl ProcessFollowerTransport {
         key: SigningKey,
         directory: NodeDirectory,
         members: HashMap<NodeId, NodeAdvertisement>,
+        observation: Option<Arc<DurabilityRecorder>>,
     ) -> Result<Self> {
         Ok(Self {
             session,
             key,
             directory,
+            observation,
             members: StdMutex::new(
                 members
                     .into_iter()
@@ -309,6 +319,25 @@ impl ProcessFollowerTransport {
     }
 
     async fn round_trip(&self, member: NodeId, mut request: RequestWire) -> Result<ResponseWire> {
+        let append = request.operation == Operation::Append as u32;
+        let append_bytes = request.frames.iter().map(Vec::len).sum::<usize>();
+        let started = Instant::now();
+        let result = self.round_trip_inner(member, &mut request).await;
+        if append && let Some(observation) = &self.observation {
+            observation.record_follower_network(
+                result.is_ok(),
+                u64::try_from(append_bytes).unwrap_or(u64::MAX),
+                started.elapsed(),
+            );
+        }
+        result
+    }
+
+    async fn round_trip_inner(
+        &self,
+        member: NodeId,
+        request: &mut RequestWire,
+    ) -> Result<ResponseWire> {
         let enrolled = self.member(member).await?;
         if enrolled.node() != member || enrolled.expires_at_ms() <= now_ms() {
             return Err(Error::Fenced);
@@ -460,11 +489,16 @@ pub(super) fn serve(
     key: SigningKey,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let slots = Arc::new(Semaphore::new(512));
         while let Ok((socket, _)) = listener.accept().await {
+            let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
+                continue;
+            };
             let store = store.clone();
             let directory = directory.clone();
             let key = key.clone();
             tokio::spawn(async move {
+                let _slot = slot;
                 let _ = tokio::time::timeout(
                     REQUEST_TIMEOUT,
                     serve_one(socket, member, store, directory, key),
@@ -706,6 +740,7 @@ pub(super) struct ProcessDurabilityProvider {
     key: SigningKey,
     lease: NodeLeaseGuard,
     telemetry: CellTelemetryHandle,
+    observation: Arc<DurabilityRecorder>,
 }
 
 impl ProcessDurabilityProvider {
@@ -714,12 +749,14 @@ impl ProcessDurabilityProvider {
         key: SigningKey,
         lease: NodeLeaseGuard,
         telemetry: CellTelemetryHandle,
+        observation: Arc<DurabilityRecorder>,
     ) -> Self {
         Self {
             enrollment,
             key,
             lease,
             telemetry,
+            observation,
         }
     }
 }
@@ -786,6 +823,7 @@ impl NodeDurabilityProvider for ProcessDurabilityProvider {
                     self.key.clone(),
                     self.enrollment.directory.clone(),
                     enrolled,
+                    Some(Arc::clone(&self.observation)),
                 )?);
                 let authority: Arc<dyn NodeLogAuthority> = Arc::new(self.enrollment.clone());
                 NodeDurabilityConfig::new(
@@ -810,6 +848,83 @@ impl NodeDurabilityProvider for ProcessDurabilityProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cellule_ltx::{Db, NodeFrameScope, encode_node_frame};
+    use cellule_runtime::identity::Digest;
+    use cellule_runtime::ltx::CellStorageLayout;
+    use cellule_runtime::node::log_recovery::NodeLogRecovery;
+    use cellule_runtime::node::{NODE_LOG_PROTOCOL_VERSION, NodeCapacity, NodeFailureDomain};
+    use cellule_store::Store;
+    use object_store::{memory::InMemory, path::Path};
+
+    fn advertisement(
+        node: NodeId,
+        session: SessionId,
+        key: &SigningKey,
+        endpoint: String,
+        issued_at: i64,
+        lifetime_ms: i64,
+    ) -> NodeAdvertisement {
+        NodeAdvertisement::sign(
+            node,
+            session,
+            endpoint,
+            Digest::from_bytes([10; 32]),
+            Digest::from_bytes([11; 32]),
+            Digest::from_bytes([12; 32]),
+            Digest::from_bytes([13; 32]),
+            key,
+            1,
+            issued_at,
+            issued_at + lifetime_ms,
+            vec![Digest::from_bytes([14; 32])],
+            vec![1],
+            NodeFailureDomain::default(),
+            NodeCapacity {
+                free_memory_bytes: 1 << 20,
+                free_disk_bytes: 1 << 20,
+                follower_free_bytes: 1 << 20,
+                job_credits: 4,
+                log_protocol: NODE_LOG_PROTOCOL_VERSION,
+                ..NodeCapacity::default()
+            },
+        )
+        .unwrap()
+    }
+
+    fn frame(limits: Limits) -> Bytes {
+        let source = tempfile::TempDir::new().unwrap();
+        let mut database = Db::open(&source.path().join("cell.sqlite"), limits).unwrap();
+        database
+            .transaction(|transaction| {
+                transaction.execute_batch(
+                    "CREATE TABLE events(id INTEGER PRIMARY KEY, body TEXT NOT NULL);\
+                     INSERT INTO events(body) VALUES ('survives')",
+                )
+            })
+            .unwrap();
+        let capture = database.capture().unwrap();
+        let segment = capture.segments.first().unwrap();
+        let encoded = encode_node_frame(
+            NodeFrameScope {
+                leader_session: [1; 16],
+                log_epoch: 1,
+                node_sequence: 1,
+                application: [3; 16],
+                cell: [4; 32],
+                incarnation: [5; 16],
+                cell_epoch: 1,
+                commit_sequence: 1,
+            },
+            segment.info().clone(),
+            Bytes::from(std::fs::read(segment.path()).unwrap()),
+            limits,
+        )
+        .unwrap()
+        .encoded()
+        .clone();
+        database.close().unwrap();
+        encoded
+    }
 
     #[test]
     fn signed_envelope_binds_sender_key_domain_and_body() {
@@ -878,5 +993,190 @@ mod tests {
             .await
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn owner_loss_seals_and_reads_exact_unpublished_network_tail() {
+        let limits = Limits::default();
+        let layout = CellStorageLayout::new(
+            Store::new(Arc::new(InMemory::new())),
+            Path::from("follower-network-test"),
+            [15; 16],
+        );
+        let directory = NodeDirectory::new(
+            layout,
+            Digest::from_bytes([10; 32]),
+            Digest::from_bytes([12; 32]),
+            Digest::from_bytes([13; 32]),
+        );
+        let leader = SessionId::from_bytes([1; 16]);
+        let member = NodeId::from_bytes([2; 16]);
+        let claimant = SessionId::from_bytes([3; 16]);
+        let leader_key = SigningKey::from_bytes(&[21; 32]);
+        let member_key = SigningKey::from_bytes(&[22; 32]);
+        let claimant_key = SigningKey::from_bytes(&[23; 32]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let follower_port = listener.local_addr().unwrap().port();
+        let gateway_port = follower_port.checked_sub(1).unwrap();
+        let endpoint = format!("https://127.0.0.1:{gateway_port}");
+        let issued_at = now_ms();
+        let leader_record = directory
+            .create(
+                advertisement(
+                    NodeId::from_bytes([1; 16]),
+                    leader,
+                    &leader_key,
+                    "https://127.0.0.1:8080".into(),
+                    issued_at,
+                    2_000,
+                ),
+                issued_at,
+            )
+            .await
+            .unwrap();
+        let member_record = directory
+            .create(
+                advertisement(
+                    member,
+                    SessionId::from_bytes([2; 16]),
+                    &member_key,
+                    endpoint,
+                    now_ms(),
+                    30_000,
+                ),
+                now_ms(),
+            )
+            .await
+            .unwrap();
+        let enrolled = directory
+            .recruit_log(&leader_record, 1, 1, 3, now_ms())
+            .await
+            .unwrap();
+        let root = tempfile::TempDir::new().unwrap();
+        let store = FollowerStore::open(
+            root.path().join("follower"),
+            limits,
+            cellule_ltx::DiskBudget::new(1 << 20),
+        )
+        .unwrap();
+        let server = serve(listener, member, store, directory.clone(), member_key);
+        let members = HashMap::from([(member, member_record.advertisement().clone())]);
+        let transport = ProcessFollowerTransport::new(
+            leader,
+            leader_key.clone(),
+            directory.clone(),
+            members.clone(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            transport
+                .append(
+                    NodeId::from_bytes([9; 16]),
+                    AppendRequest {
+                        leader_session: leader,
+                        log_epoch: 1,
+                        frames: vec![Bytes::from_static(b"untrusted")],
+                        covered_through: 0,
+                    },
+                )
+                .await
+                .is_err()
+        );
+        let expected = frame(limits);
+        let receipt = transport
+            .append(
+                member,
+                AppendRequest {
+                    leader_session: leader,
+                    log_epoch: 1,
+                    frames: vec![expected.clone()],
+                    covered_through: 0,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.durable_through, 1);
+        let enrollment = ProcessEnrollment::new(enrolled, directory.clone(), leader);
+        let next = advertisement(
+            NodeId::from_bytes([1; 16]),
+            leader,
+            &leader_key,
+            "https://127.0.0.1:8080".into(),
+            now_ms(),
+            2_000,
+        );
+        let (activated, refreshed) = tokio::join!(enrollment.activate(1), enrollment.refresh(next));
+        activated.unwrap();
+        refreshed.unwrap();
+        assert!(
+            directory
+                .load(leader, now_ms())
+                .await
+                .unwrap()
+                .unwrap()
+                .advertisement()
+                .log()
+                .unwrap()
+                .active()
+        );
+        assert!(
+            transport
+                .append(
+                    member,
+                    AppendRequest {
+                        leader_session: leader,
+                        log_epoch: 2,
+                        frames: vec![expected.clone()],
+                        covered_through: 0,
+                    }
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            transport
+                .retire(
+                    member,
+                    RetireRequest {
+                        leader_session: leader,
+                        log_epoch: 1,
+                        covered_through: 1,
+                    }
+                )
+                .await
+                .is_err()
+        );
+        let claimant_record = directory
+            .create(
+                advertisement(
+                    NodeId::from_bytes([3; 16]),
+                    claimant,
+                    &claimant_key,
+                    "https://127.0.0.1:8082".into(),
+                    now_ms(),
+                    30_000,
+                ),
+                now_ms(),
+            )
+            .await
+            .unwrap();
+        let _ = claimant_record;
+        tokio::time::sleep(Duration::from_millis(2_100)).await;
+        let fenced = directory
+            .claim_expired(leader, claimant, now_ms())
+            .await
+            .unwrap();
+        assert_eq!(fenced.log().unwrap().tiered_through(), 0);
+        let recovery_transport: Arc<dyn NodeLogTransport> = Arc::new(
+            ProcessFollowerTransport::new(claimant, claimant_key, directory, members, None)
+                .unwrap(),
+        );
+        let recovery = NodeLogRecovery::from_fenced(recovery_transport, &fenced, limits).unwrap();
+        let sealed = recovery.ensure_sealed().await.unwrap();
+        assert_eq!(sealed.frame_count(), 1);
+        assert_eq!(sealed.frames[0].encoded(), &expected);
+        server.abort();
+        let _ = server.await;
     }
 }

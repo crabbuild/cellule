@@ -99,6 +99,8 @@ class EntityTimingEvidence(unittest.TestCase):
             "at_ms\tobjects\tbytes\n100003\t2\t2048\n")
         (self.root / "node-0-follower-appends.tsv").write_text(
             "at_ms\tacknowledged\tbytes\n")
+        (self.root / "node-0-follower-network.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\tduration_us\n")
         self.windows = [dict(nodes=3, started_ms=100000, ended_ms=110000, elapsed_us=10_000_000)]
 
     def test_response_winner_and_later_publication_are_separate(self):
@@ -223,7 +225,8 @@ class ObjectOperationEvidence(unittest.TestCase):
 class FollowerProofEvidence(unittest.TestCase):
     def test_follower_lane_requires_proof_and_acknowledged_append(self):
         resources = {0: dict(durability=dict(response_sources=dict(Fleet=0),
-                                            acknowledged_follower_appends=1))}
+                                            acknowledged_follower_appends=1,
+                                            acknowledged_network_appends=1))}
         with self.assertRaisesRegex(AssertionError, "no follower-proof responses"):
             verify_follower_proof(resources)
         resources[0]["durability"]["response_sources"]["Fleet"] = 1
@@ -231,8 +234,13 @@ class FollowerProofEvidence(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "missing acknowledged follower append"):
             verify_follower_proof(resources)
         resources[0]["durability"]["acknowledged_follower_appends"] = 2
+        resources[0]["durability"]["acknowledged_network_appends"] = 0
+        with self.assertRaisesRegex(AssertionError, "missing network follower append"):
+            verify_follower_proof(resources)
+        resources[0]["durability"]["acknowledged_network_appends"] = 2
         self.assertEqual(verify_follower_proof(resources),
-                         dict(follower_proof_responses=1, follower_appends=2))
+                         dict(follower_proof_responses=1, follower_appends=2,
+                              network_follower_appends=2))
 
 
 if __name__ == "__main__":

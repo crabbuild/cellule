@@ -121,6 +121,7 @@ pub(super) async fn start_configured(
             follower_signer,
             lease.clone(),
             host.runtime().telemetry_handle(),
+            Arc::clone(&durability),
         ));
         let configuration = NodeDurabilitySupervisorConfig::new(
             ApplicationId::from_bytes([82; 16]),
@@ -194,7 +195,7 @@ pub(super) async fn start_configured(
             Arc::new(cellule_runtime::peer::PeerSigner::new(
                 node_session(node),
                 host.application().registry().release_digest(),
-                SigningKey::from_bytes(&[93; 32]),
+                signing_key(node),
             )),
             cellule_runtime::peer::PeerPrincipal {
                 issuer: "reference-runtime".into(),

@@ -206,6 +206,11 @@ async fn entity_process_node() {
     server.abort();
     let _ = server.await;
     if let Some(server) = follower_server {
+        // Other owners can still be retiring their lanes during concurrent
+        // shutdown; keep every follower listener available until all drain.
+        for peer in 0..3 {
+            wait_for_marker(&sync.join(format!("node-{peer}.done"))).await;
+        }
         server.abort();
         let _ = server.await;
     }

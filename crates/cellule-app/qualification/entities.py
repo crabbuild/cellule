@@ -62,6 +62,7 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
     captures = rows(control / f"node-{node}-captures.tsv")
     costs = rows(control / f"node-{node}-publication-costs.tsv")
     appends = rows(control / f"node-{node}-follower-appends.tsv")
+    network = rows(control / f"node-{node}-follower-network.tsv")
     assert responses, f"node {node}: missing command response evidence"
     assert executions, f"node {node}: missing command execution evidence"
     assert publications, f"node {node}: missing publication evidence"
@@ -102,6 +103,10 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
     for row in appends:
         assert int(row["at_ms"]) > 0 and int(row["bytes"]) >= 0
         assert row["acknowledged"] in {"true", "false"}
+    for row in network:
+        assert int(row["at_ms"]) > 0
+        assert int(row["bytes"]) >= 0 and int(row["duration_us"]) >= 0
+        assert row["acknowledged"] in {"true", "false"}
     for window in windows:
         if node >= window["nodes"]:
             continue
@@ -113,6 +118,7 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         selected_captures = [row for row in captures if start <= int(row["at_ms"]) <= end]
         selected_costs = [row for row in costs if start <= int(row["at_ms"]) <= end]
         selected_appends = [row for row in appends if start <= int(row["at_ms"]) <= end]
+        selected_network = [row for row in network if start <= int(row["at_ms"]) <= end]
         response_sources = {source: sum(row["source"] == source for row in selected_responses)
                             for source in sorted(sources)}
         window.setdefault("node_durability", {})[node] = dict(
@@ -143,7 +149,9 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
             uploaded_bytes=sum(int(row["bytes"]) for row in selected_costs),
             follower_appends=len(selected_appends),
             follower_append_failures=sum(row["acknowledged"] == "false" for row in selected_appends),
-            follower_append_bytes=sum(int(row["bytes"]) for row in selected_appends))
+            follower_append_bytes=sum(int(row["bytes"]) for row in selected_appends),
+            follower_network_latency=distribution([int(row["duration_us"]) for row in selected_network]),
+            follower_network_bytes=sum(int(row["bytes"]) for row in selected_network))
     return dict(response_sources={source: sum(row["source"] == source for row in responses)
                                   for source in sorted(sources)},
                 response_latency=distribution([int(row["response_us"]) for row in responses]),
@@ -156,6 +164,8 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
                 follower_appends=len(appends),
                 acknowledged_follower_appends=sum(row["acknowledged"] == "true" for row in appends),
                 follower_append_bytes=sum(int(row["bytes"]) for row in appends),
+                acknowledged_network_appends=sum(row["acknowledged"] == "true" for row in network),
+                follower_network_latency=distribution([int(row["duration_us"]) for row in network]),
                 completed_publications=sum(row["succeeded"] == "true" for row in publications),
                 failed_publications=sum(row["succeeded"] == "false" for row in publications))
 
@@ -279,9 +289,13 @@ def verify_follower_proof(resources: dict) -> dict:
                        for resource in resources.values())
     acknowledged_appends = sum(resource["durability"]["acknowledged_follower_appends"]
                                for resource in resources.values())
+    network_appends = sum(resource["durability"]["acknowledged_network_appends"]
+                          for resource in resources.values())
     assert fleet_proofs > 0, "follower lane returned no follower-proof responses"
     assert acknowledged_appends > 0, "missing acknowledged follower append evidence"
-    return dict(follower_proof_responses=fleet_proofs, follower_appends=acknowledged_appends)
+    assert network_appends > 0, "missing network follower append evidence"
+    return dict(follower_proof_responses=fleet_proofs, follower_appends=acknowledged_appends,
+                network_follower_appends=network_appends)
 
 
 def verify_entities(control: Path, capacity: bool = False, follower: bool = False) -> dict:

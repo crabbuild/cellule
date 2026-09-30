@@ -225,6 +225,60 @@ and `bfbef7176b533f326d1e536122a814afbf6e2b7d8bbcfe3184574fcbac0b4940`.
 The downloaded artifact is under
 `$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36659182959`.
 
+## First networked follower-proof comparison
+
+[CI run 36662251677](https://github.com/crabbuild/cellule/actions/runs/36662251677)
+passed both capacity jobs, each with three fresh-provider repeats and the same
+release binary (`69ad461750472d181e1a326a2d4f5e6ef8ade22ca14920e9b4c4e40ad83bf45f`).
+The test-merge source was `f2a5db377cbc11da01278914bc6fa1996b4b4565`.
+The follower lane used a signed TCP endpoint, two private-disk followers per
+owner, and the object-only lane's 12 Cells, arrivals, resource limits, and
+readback rules. Every acknowledged write passed readback, and final published
+roots covered all receipts. Follower response winners were Fleet/Object
+2,245/24, 3,740/7, and 4,657/24 across repeats 1–3. The object lane used
+only Object proofs.
+
+| Shape | Object fully served offered rate, repeats 1–3 | Follower fully served offered rate, repeats 1–3 | Follower first overloaded rate |
+| --- | --- | --- | --- |
+| Uniform writes | 16, 32, 32 actions/node/s | 4, 24, 24 actions/node/s | 16, 32, 32 |
+| One hot writable Cell | 24, 16, 24 | 16, 4, 16 | 24, 16, 24 |
+| Skewed, 20% writes | 48, 64, 64 | 24, 32, 48 | 32, 48, 64 |
+
+At the common hot rate of 16 actions/node/s, all object repeats were fully
+served with action p95 of 48.06–56.90 ms. Follower repeats 1 and 3 were fully
+served with p95 of 17.12–26.37 ms; repeat 2 missed four scheduled arrivals
+despite p95 of 21.58 ms among successful actions. Hot follower overload at
+24 actions/node/s returned 168–238 owner capacity refusals in repeats 1 and
+3. The follower path reduces response latency at this matched point, but its
+fully served throughput bound is lower and variable on these shared runners.
+The two jobs used different runners, so repeat numbers are not paired host
+measurements.
+
+The response and publication capacities differ. A fully served hot follower
+window in repeat 1 completed about 48 writes/s while publishing 46.56 roots/s
+and ended 13 commits ahead of its root. Its final root did drain and cover
+every acknowledged receipt. Uniform fully served windows in repeats 2 and 3
+ended one commit ahead. These are response-supported windows; their published
+roots/s and remaining lag must be read separately. The first overloaded
+uniform and skewed follower points were mostly isolated scheduler-late
+arrivals, so they do not establish storage saturation.
+
+The three follower `verification.json` SHA-256 digests are
+`c927b09f8f0200b05548d02827aba28434014b8fa1dc7cea0e983f0893001e6e`,
+`2e2e9a657fc200103224f2830804f9f9d629b390b91500498800cb74f38ee8b7`,
+and `12f93bc42bd015f081f528504ff82f580edfe8db3c78eef7b5d1a52e53d6f75c`.
+The corresponding object digests are
+`7ddbbf67f22b8554738c73b73d2be76338f52deb46bb9223f1cda83dca22edca`,
+`2cf37c2a34158f9e79a58850fc64873924642149fdd83b7e2d9d326adc90a24f`,
+and `64c9182aa10c691a8ae32da608b9533f8a0384b02f08f6c9e8e0d3e438f83ac9`.
+Raw logs, samples, provider digests, and these reports are under
+`$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36662251677`.
+The enclosing PR check failed in its separate reader smoke because that
+fixture still used a shared signing key after advertisements switched to
+per-node keys. The next revision corrects that mismatch and adds network
+append duration evidence; this capacity result remains valid for its pinned
+binary and must be followed by a clean full rerun.
+
 After preparing a fresh source/binary snapshot with the Compose qualification
 guide, run each repeat with a new state directory and Compose project:
 

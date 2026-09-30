@@ -51,6 +51,7 @@ pub(super) struct NodeObservations {
     captures: BufWriter<File>,
     publication_costs: BufWriter<File>,
     follower_appends: BufWriter<File>,
+    follower_network: BufWriter<File>,
 }
 
 impl NodeObservations {
@@ -72,6 +73,7 @@ impl NodeObservations {
             captures: create("captures"),
             publication_costs: create("publication-costs"),
             follower_appends: create("follower-appends"),
+            follower_network: create("follower-network"),
         }
     }
 
@@ -250,6 +252,19 @@ impl NodeObservations {
         for (at_ms, acknowledged, bytes) in durability.follower_appends() {
             writeln!(self.follower_appends, "{at_ms}\t{acknowledged}\t{bytes}").unwrap();
         }
+        writeln!(
+            self.follower_network,
+            "at_ms\tacknowledged\tbytes\tduration_us"
+        )
+        .unwrap();
+        for (at_ms, acknowledged, bytes, elapsed) in durability.follower_network() {
+            writeln!(
+                self.follower_network,
+                "{at_ms}\t{acknowledged}\t{bytes}\t{}",
+                elapsed.as_micros()
+            )
+            .unwrap();
+        }
         self.objects.flush().unwrap();
         self.object_operations.flush().unwrap();
         self.durability.flush().unwrap();
@@ -260,6 +275,7 @@ impl NodeObservations {
         self.captures.flush().unwrap();
         self.publication_costs.flush().unwrap();
         self.follower_appends.flush().unwrap();
+        self.follower_network.flush().unwrap();
     }
 }
 
