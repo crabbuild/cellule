@@ -119,6 +119,31 @@ and `d0e41bf722a143149742c47477885d7ea4442a7717d09f7cb6083c916df03e43`.
 The downloaded artifact is under
 `$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36651191247`.
 
+## Actor and worker timing attempt
+
+[CI run 36653277555, attempt 1](https://github.com/crabbuild/cellule/actions/runs/36653277555)
+passed readback and evidence integrity in all three repeats. The source
+snapshot was `7e1c89c20d62b403ebcace3d208381bcfdfd6485`; the binary SHA-256
+was `d8778c143fe99b9ff5ff2a4c619bba8f7e8a3cdd7548d1d3a92d6fd64fe22880`.
+All response proofs were Object and root lag was zero at window ends. The
+fully served uniform rate varied from 2 to 16 actions/node/s, while the first
+overloaded skewed rate ranged from 4 to 16. Some windows stopped after a
+single scheduler-late arrival at 4 actions/node/s with 0.8–2.1% node CPU use
+and no CPU throttling. Worker, publication, and provider tail timings also
+spiked at these low rates. This attempt does not yield a stable saturation
+point or one repeatable dominant phase. A same-revision rerun on a fresh CI
+runner is required before selecting a write-path change.
+Attempt 2 built the same revision but could not start the first repeat:
+the pinned `bucket-init` image pull returned `toomanyrequests: Data limit
+exceeded` from its public registry. It produced no capacity measurements.
+
+The attempt-1 `verification.json` SHA-256 digests are
+`b1282ef781b4ca9d962fb43dbf2949662e589ce7737f730fd276473689483673`,
+`288e0b50d79780bf4540b9ca2d988880a8d494ca47285a151d5f91964fbd257f`,
+and `d9abe2dc3ca698dda71e586da118bc8af0e7fdf2b97b982d963ff4946d108e18`.
+The downloaded artifact is under
+`$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36653277555`.
+
 After preparing a fresh source/binary snapshot with the Compose qualification
 guide, run each repeat with a new state directory and Compose project:
 

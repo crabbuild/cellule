@@ -19,10 +19,15 @@
 - **Execution update, 2026-09-29:** Separate response, publication, LTX,
   capture, and upload observations are implemented. A fixed 12-Cell capacity
   selector and verifier are implemented and locally tested. Three isolated
-  object-proof repeats passed in CI run 36649534205. They established tested
-  lower bounds but did not identify one limiter; a finer rate ramp and
-  per-operation provider timing are being qualified. A follower-enabled lane
-  and a measured-limiter follow-up remain.
+  object-proof repeats passed in CI runs 36649534205 and 36651191247. The
+  finer rate ramp and per-operation provider timing narrowed tested bounds,
+  but the owner response/publication gap and scheduler-late skewed arrivals
+  leave the limiter unresolved. Actor queue and SQL worker timing passed
+  integrity checks in CI run 36653277555 attempt 1, but host scheduling
+  outliers at 4 actions/node/s made its saturation curves inconclusive. A
+  same-revision rerun built but could not start because the bucket-init image
+  registry rate-limited the pull. A follower-enabled lane and a
+  measured-limiter follow-up remain.
 
 ## Why this matters
 
