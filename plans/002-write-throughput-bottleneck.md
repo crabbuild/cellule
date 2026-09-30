@@ -18,10 +18,11 @@
 - **Planned at:** `dc387a8`, 2026-09-29
 - **Execution update, 2026-09-29:** Separate response, publication, LTX,
   capture, and upload observations are implemented. A fixed 12-Cell capacity
-  selector and verifier are implemented and locally tested. A dedicated
-  GitHub Actions workflow is ready to run three isolated object-proof repeats.
-  Its execution, a follower-enabled lane, and a measured-limiter follow-up
-  remain.
+  selector and verifier are implemented and locally tested. Three isolated
+  object-proof repeats passed in CI run 36649534205. They established tested
+  lower bounds but did not identify one limiter; a finer rate ramp and
+  per-operation provider timing are being qualified. A follower-enabled lane
+  and a measured-limiter follow-up remain.
 
 ## Why this matters
 

@@ -6,7 +6,10 @@ use cellule_store::{StorageObservation, StorageObserver, StorageOperation, Stora
 use std::{
     fs::File,
     io::{BufWriter, Write},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 #[derive(Default)]
@@ -16,6 +19,7 @@ pub(super) struct StorageCounters {
     outcomes: [[AtomicU64; 9]; 11],
     bytes_read: AtomicU64,
     bytes_written: AtomicU64,
+    samples: Mutex<Vec<(i64, StorageObservation)>>,
 }
 
 impl StorageObserver for StorageCounters {
@@ -31,12 +35,14 @@ impl StorageObserver for StorageCounters {
         self.bytes_written
             .fetch_add(observation.bytes_written, Ordering::Relaxed);
         self.finished.fetch_add(1, Ordering::Relaxed);
+        self.samples.lock().unwrap().push((now_ms(), observation));
     }
 }
 
 pub(super) struct NodeObservations {
     resources: BufWriter<File>,
     objects: BufWriter<File>,
+    object_operations: BufWriter<File>,
     durability: BufWriter<File>,
     responses: BufWriter<File>,
     publications: BufWriter<File>,
@@ -56,6 +62,7 @@ impl NodeObservations {
         Self {
             resources,
             objects: create("objects"),
+            object_operations: create("object-operations"),
             durability: create("durability"),
             responses: create("responses"),
             publications: create("publications"),
@@ -139,6 +146,23 @@ impl NodeObservations {
                 .unwrap();
             }
         }
+        writeln!(
+            self.object_operations,
+            "at_ms\toperation\toutcome\tduration_us\tbytes_read\tbytes_written"
+        )
+        .unwrap();
+        for (at_ms, observation) in storage.samples.lock().unwrap().iter() {
+            writeln!(
+                self.object_operations,
+                "{at_ms}\t{}\t{}\t{}\t{}\t{}",
+                observation.operation.label(),
+                observation.outcome.label(),
+                observation.duration.as_micros(),
+                observation.bytes_read,
+                observation.bytes_written
+            )
+            .unwrap();
+        }
         writeln!(self.durability, "object_wait_us").unwrap();
         let waits = durability.object_waits();
         assert!(!waits.is_empty());
@@ -211,6 +235,7 @@ impl NodeObservations {
             writeln!(self.follower_appends, "{at_ms}\t{acknowledged}\t{bytes}").unwrap();
         }
         self.objects.flush().unwrap();
+        self.object_operations.flush().unwrap();
         self.durability.flush().unwrap();
         self.responses.flush().unwrap();
         self.publications.flush().unwrap();

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+from collections import Counter
 import csv
 import hashlib
 from pathlib import Path
@@ -10,7 +11,9 @@ from pathlib import Path
 STAGES = (3, 5, 10, 20)
 SHAPES = ("uniform", "hot", "skewed")
 POINTS = ((1, 4), (4, 16), (16, 64))
-CAPACITY_POINTS = ((2, 8), (4, 16), (16, 64), (64, 128), (256, 256), (1024, 256))
+CAPACITY_POINTS = ((2, 8), (4, 16), (16, 64), (24, 96), (32, 128),
+                   (48, 192), (64, 256), (96, 256), (128, 256),
+                   (192, 256), (256, 256), (1024, 256))
 CELLS_PER_NODE = 4
 SECONDS = 10
 CAPACITY_DRAIN_GRACE_US = 2_000_000
@@ -38,6 +41,17 @@ def distribution(values: list[int]) -> dict:
         f"p{p}_ms": ordered[(len(ordered) * p + 99) // 100 - 1] / 1000
         for p in (50, 95, 99, 100)
     })
+
+
+def verify_object_operations(control: Path, node: int, observations: list[dict]) -> list[dict]:
+    samples = rows(control / f"node-{node}-object-operations.tsv")
+    assert Counter((row["operation"], row["outcome"]) for row in samples) == {
+        (row["operation"], row["outcome"]): int(row["count"]) for row in observations
+        if int(row["count"]) > 0}, "object operation samples disagree with counters"
+    for row in samples:
+        assert int(row["at_ms"]) > 0
+        assert all(int(row[key]) >= 0 for key in ("duration_us", "bytes_read", "bytes_written"))
+    return samples
 
 
 def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dict:
@@ -147,7 +161,7 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
     planned = rate * SECONDS
     samples = sorted(rows(control / f"{label}.tsv"), key=lambda row: int(row["arrival"]))
     assert [int(row["arrival"]) for row in samples] == list(range(planned)), "missing or duplicate arrival"
-    successes, arrival_latencies, scheduled_latencies, writes = [], [], [], [0] * nodes
+    successes, arrival_latencies, scheduled_latencies, writes, actions = [], [], [], [0] * nodes, [0] * nodes
     outcomes, intervals = {}, []
     new_positions = {entity: [] for entity in range(nodes * CELLS_PER_NODE)}
     for sample in samples:
@@ -180,6 +194,7 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
             assert read_sequence >= max(sequence, 1)
             assert sequence > 0 if sample["kind"] == "write" else sequence == 0
             successes.append(elapsed)
+            actions[entity // CELLS_PER_NODE] += 1
             arrival_latencies.append(started + elapsed - scheduled)
         else:
             assert read_sequence == count == 0
@@ -208,6 +223,7 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
     return dict(nodes=nodes, shape=shape, rate_per_node=rate_per_node, concurrency=concurrency,
                 planned=planned, outcomes=outcomes, fully_served_arrivals=len(successes) == planned,
                 acknowledged_writes_by_node=writes, completed_actions=len(successes),
+                completed_actions_by_node=actions,
                 latest_write_sequence_by_entity={entity: max(values, default=0)
                                                  for entity, values in positions.items()},
                 completed_writes_per_second=sum(writes) * 1_000_000 / elapsed_us,
@@ -292,6 +308,7 @@ def verify_entities(control: Path, capacity: bool = False) -> dict:
         assert len(observations) == 99 and len({(row["operation"], row["outcome"]) for row in observations}) == 99
         assert all(int(row["count"]) >= 0 for row in observations)
         assert any(row["operation"] == "put" and row["outcome"] == "success" and int(row["count"]) > 0 for row in observations)
+        object_operations = verify_object_operations(control, node, observations)
         waits = [int(row["object_wait_us"]) for row in rows(control / f"node-{node}-durability.tsv")]
         assert waits and min(waits) >= 0
         resources[node] = dict(samples=len(samples), max_memory_current_bytes=max(int(row["memory_current_bytes"]) for row in samples),
@@ -315,6 +332,19 @@ def verify_entities(control: Path, capacity: bool = False) -> dict:
                 max_unpublished_node_log_bytes=max(int(row["unpublished_node_log_bytes"]) for row in observed),
                 max_disk_file_bytes=max(int(row["disk_bytes"]) for row in observed),
                 max_worker_jobs=max(int(row["worker_jobs"]) for row in observed))
+            selected_objects = [row for row in object_operations
+                                if window["started_ms"] <= int(row["at_ms"]) <= window["ended_ms"]]
+            window.setdefault("node_store", {})[node] = dict(
+                operations={operation: distribution([int(row["duration_us"]) for row in selected_objects
+                                                     if row["operation"] == operation])
+                            for operation in sorted({row["operation"] for row in selected_objects})},
+                outcomes=dict(Counter(row["outcome"] for row in selected_objects)),
+                requests_per_acknowledged_write=(len(selected_objects)
+                                                 / max(1, window["acknowledged_writes_by_node"][node])),
+                requests_per_completed_action=(len(selected_objects)
+                                               / max(1, window["completed_actions_by_node"][node])),
+                bytes_read=sum(int(row["bytes_read"]) for row in selected_objects),
+                bytes_written=sum(int(row["bytes_written"]) for row in selected_objects))
     extra = {}
     if capacity:
         for window in windows:

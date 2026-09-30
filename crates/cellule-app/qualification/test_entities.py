@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from entities import destination, verify_capacity_windows, verify_timing_evidence, verify_window
+from entities import destination, verify_capacity_windows, verify_object_operations, verify_timing_evidence, verify_window
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -195,6 +195,19 @@ class CapacityScheduleEvidence(unittest.TestCase):
         with patch("entities.verify_window", return_value=dict(fully_served_arrivals=False)):
             with self.assertRaisesRegex(AssertionError, "mislabeled fully served rate"):
                 verify_capacity_windows(self.root, {})
+
+
+class ObjectOperationEvidence(unittest.TestCase):
+    def test_missing_provider_operation_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "node-0-object-operations.tsv"
+            path.write_text("at_ms\toperation\toutcome\tduration_us\tbytes_read\tbytes_written\n"
+                            "100000\tput\tsuccess\t500\t0\t4096\n")
+            expected = [dict(operation="put", outcome="success", count="2")]
+            with self.assertRaisesRegex(AssertionError, "samples disagree"):
+                verify_object_operations(Path(root), 0, expected)
+            expected[0]["count"] = "1"
+            self.assertEqual(len(verify_object_operations(Path(root), 0, expected)), 1)
 
 
 if __name__ == "__main__":

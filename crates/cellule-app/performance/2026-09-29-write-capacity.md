@@ -20,15 +20,16 @@ and late arrivals. The earlier resource, logical object-operation, receipt,
 and readback files remain required.
 
 The new `--workload capacity` selector fixes the fleet at three owners and
-12 writable Cells. It schedules 10-second points at 2, 4, 16, 64, 256, and
-1024 actions per node per second, stopping each shape at its first overloaded
+12 writable Cells. The initial CI run scheduled 10-second points at 2, 4, 16,
+64, 256, and 1024 actions per node per second. The next run adds 24, 32, 48,
+96, 128, and 192 to narrow the overload interval. Each shape stops at its first overloaded
 point. A point is fully served only when every scheduled action succeeds and
 admitted work drains within 12 seconds of its 10-second arrival window. The
 verifier requires at least one fully served point and one overloaded
 point for uniform, hot, and skewed traffic; it rejects missing arrivals,
 misstated success, incomplete readback, or an incomplete rate ramp. It reports
 the last fully served logical write rate separately from the first overloaded
-rate. This profile has not yet been run in the isolated provider environment.
+rate. The first isolated object-proof result is summarized below.
 
 The dedicated `Cell write capacity qualification` GitHub Actions workflow
 builds one release binary and runs three object-proof repeats on a fresh
@@ -36,6 +37,45 @@ runner. Each repeat has its own Compose project, RustFS volume, object prefix,
 and evidence directory. It uploads raw samples, logs, the binary digest, and
 provider details even if a repeat fails. Its output requires review before a
 capacity claim; the follower-enabled comparison remains separate.
+
+## First isolated object-proof result
+
+[CI run 36649534205](https://github.com/crabbuild/cellule/actions/runs/36649534205)
+passed three fresh-provider repeats on the same binary, with 12 Cells and
+readback verification in every run. The source snapshot was
+`4837fc823c198f51a85b01528a6c7aaf6b1f4470`; the release integration
+binary SHA-256 was
+`2b3aa0b36df5d2c278fe2f3e524a6258c5f886ddedab927057bd4c8db76834a3`.
+The RustFS image was pinned at
+`sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858`.
+All response proofs were Object; each verified window reported zero root
+sequence lag at its end.
+
+| Shape | Highest fully served offered rate | Fully served logical writes/s | First overloaded offered rate | Fully served action p95 / p99 across repeats |
+| --- | ---: | ---: | ---: | ---: |
+| Uniform writes | 16 actions/node/s | 47.99–48.00 | 64 actions/node/s | 17.68–32.05 / 120.89–161.14 ms |
+| One hot writable Cell | 16 actions/node/s | 47.99–48.00 | 64 actions/node/s | 40.84–52.06 / 56.45–76.39 ms |
+| Skewed, 20% writes | 64 actions/node/s | 38.39–38.40 | 256 actions/node/s | 18.26–20.21 / 36.98–43.24 ms |
+
+These are tested lower bounds, not precise saturation points. The overloaded
+uniform windows had client concurrency rejection and owner capacity refusals;
+hot windows had 976–982 owner capacity refusals plus 47–55 writes whose
+receipt-bound read failed; skewed windows had 1,911–2,227 scheduler-late
+arrivals and 469–667 read failures. The upper rate cannot be reported as
+sustainable even though some writes completed. No node showed cgroup CPU
+throttling. Capture p95 stayed below 2 ms in overloaded windows, whereas
+root preparation and response waits were much longer. The current aggregate
+provider counters cannot isolate GET/HEAD/PUT time inside preparation or
+separate owner admission queueing from provider wait. A second run with raw
+per-operation provider timing is needed before choosing one limiter.
+
+The three `verification.json` files have SHA-256 digests
+`35b859c9f9f66aa46da1c797fae5d691a52af907760cf3c4bacc7d79ec809fe2`,
+`8a3b951a95a1b9e2b2b00ab8954df53c2783acf352cf529f684fc00be2cd6111`,
+and `9d13723e28d4989a87dc60d88b7c84780c125d716ef1d3b1504eb1895fd9efc7`
+for repeats 1–3 respectively. Each report contains hashes of its raw TSVs.
+The downloaded artifact is under
+`$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36649534205`.
 
 After preparing a fresh source/binary snapshot with the Compose qualification
 guide, run each repeat with a new state directory and Compose project:

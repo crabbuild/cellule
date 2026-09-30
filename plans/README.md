@@ -7,7 +7,7 @@ and process evidence outside the checkout.
 | Order | Plan | Priority | Effort | Status |
 | --- | --- | --- | --- | --- |
 | 1 | [Cut forwarded routing work and prove the capacity gain](001-forwarded-routing-and-capacity.md) | P1 | L | DONE: bounded adapter hint and three paired comparisons; product ingress follow-up is external |
-| 2 | [Measure the write-throughput limit](002-write-throughput-bottleneck.md) | P1 | M | IN PROGRESS: fixed-Cell selector and CI object-proof runner ready; provider evidence and follower lane pending |
+| 2 | [Measure the write-throughput limit](002-write-throughput-bottleneck.md) | P1 | M | IN PROGRESS: three object-proof repeats verified; finer provider attribution and follower lane pending |
 
 Status values: TODO, IN PROGRESS, DONE, BLOCKED (with reason), REJECTED (with
 reason). Update the row after executing the plan.
