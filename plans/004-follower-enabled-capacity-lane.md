@@ -13,7 +13,9 @@
   `NodeLogTransport` or authority enrollment adapter.
 - **Risk:** HIGH for transport authorization, CAS ordering, and recovery.
 - **Depends on:** [Plan 002](002-write-throughput-bottleneck.md).
-- **Status:** TODO.
+- **Status:** IN PROGRESS. The signed network lane, three-repeat capacity
+  evidence, and exact sealed-tail owner-loss test pass. A full process-kill
+  takeover of an acknowledged, unpublished capacity write is still required.
 
 The existing three-process fixture in
 `crates/cellule-app/tests/entities/process.rs` starts object-only nodes.
@@ -91,16 +93,16 @@ durability or publication semantics as part of this measurement.
 
 ## Verification and done criteria
 
-- [ ] Focused transport authorization, enrollment/CAS, cancellation, and
+- [x] Focused transport authorization, enrollment/CAS, cancellation, and
       owner-loss recovery tests pass.
-- [ ] Parser tests reject missing follower proof, readback, and root-drain
+- [x] Parser tests reject missing follower proof, readback, and root-drain
       evidence; format, Clippy, boundaries, module layout, and docs checks pass.
-- [ ] Three follower-enabled repeats for each shape have a fully served and
+- [x] Three follower-enabled repeats for each shape have a fully served and
       overloaded point with the same fixed schedule and resource profile as
       the object-proof lane.
 - [ ] Every acknowledged receipt survives owner loss or has an exact
       authority-pinned object root; no unsafe replay or false success occurs.
-- [ ] Raw logs, samples, source/binary/image digests, and checksums are kept
+- [x] Raw logs, samples, source/binary/image digests, and checksums are kept
       outside the checkout; the dated report distinguishes response throughput
       from eventual publication throughput.
 

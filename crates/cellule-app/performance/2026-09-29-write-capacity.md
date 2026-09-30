@@ -279,6 +279,50 @@ per-node keys. The next revision corrects that mismatch and adds network
 append duration evidence; this capacity result remains valid for its pinned
 binary and must be followed by a clean full rerun.
 
+## Clean follower-proof rerun and variability
+
+[CI run 36663653146](https://github.com/crabbuild/cellule/actions/runs/36663653146)
+passed the workspace smoke and both three-repeat capacity jobs. The
+test-merge source was `74933c331e477c36f01b0fb508fa555bf897d19f`, and both
+capacity lanes used release binary SHA-256
+`e4e48c7c50c8dc5a1a2c1f542fb3df6d38517e93fbc8926476c2024dcaf9c5bd`.
+The source and binary were
+pinned within the run; each repeat used a fresh provider volume and the same
+12-Cell schedule. Every acknowledged write passed readback, every final root
+covered its receipts, and no node reported CPU throttling.
+
+| Shape | Object fully served offered rate, repeats 1–3 | Follower fully served offered rate, repeats 1–3 |
+| --- | --- | --- |
+| Uniform writes | 2, 4, 4 actions/node/s | 16, 4, 4 actions/node/s |
+| One hot writable Cell | 4, 4, 16 | 4, 4, 2 |
+| Skewed, 20% writes | 4, 4, 4 | 2, 4, 2 |
+
+Most first-overload points in both lanes missed only 1–20 scheduled arrivals,
+including at 4 actions/node/s. They cannot identify a stable storage throughput
+limit. At the fully served hot point, object action p95 ranged from 50.42 to
+147.86 ms; follower action p95 ranged from 58.33 to 155.84 ms. The new
+end-to-end member append measurement had owner-0 p95 of 17.38–141.02 ms at
+the follower hot fully served points. It includes member resolution, TCP,
+authority lookup, and follower fsync; it does not yet attribute those phases.
+The follower owner used 13.14–14.35 object-provider requests per acknowledged
+hot write versus 11.12–11.69 in the object lane. This is consistent with
+extra authority reads in the signed append path, but the current counters do
+not prove which read or provider wait caused the tail. The first run's hot
+latency gain is therefore an observed result on that pinned binary, not a
+repeatable improvement across runners. A controlled A/A baseline and phase
+split are needed before optimizing this transport path.
+
+Follower `verification.json` SHA-256 digests are
+`697bb3e5f88d90a9cf6fc802ebf025a643a3cbf479b3254838e5410ada557fb7`,
+`f97b12e31794e9767c48e713010f1087c684a025ee44625272b1afb0bf0362c7`,
+and `28c5fcfb130f23a2f4b2842804fd64dc99a62f46f9a5225677dd8bb762e462c6`.
+Object digests are
+`264f2b65f81fff66ba8d87b246b551fb2840bb8859bf74aa9de415c4a3afee7f`,
+`cd37d078b95f4b870db37bb22cecd455b196c29b044b5b9bfc24c078f72add6c`,
+and `93c6b119f3e76a0cf1a2319703c9f0956cb2e28970d4d28b84af2bf918b521b4`.
+Raw evidence and provider image digests are under
+`$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36663653146`.
+
 After preparing a fresh source/binary snapshot with the Compose qualification
 guide, run each repeat with a new state directory and Compose project:
 

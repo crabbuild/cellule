@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_timing_evidence, verify_window
+from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_coverage, verify_timing_evidence, verify_window
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -101,6 +101,8 @@ class EntityTimingEvidence(unittest.TestCase):
             "at_ms\tacknowledged\tbytes\n")
         (self.root / "node-0-follower-network.tsv").write_text(
             "at_ms\tacknowledged\tbytes\tduration_us\n")
+        (self.root / "node-0-node-log-events.tsv").write_text(
+            "at_ms\tepoch\tphase\tcovered_through\n")
         self.windows = [dict(nodes=3, started_ms=100000, ended_ms=110000, elapsed_us=10_000_000)]
 
     def test_response_winner_and_later_publication_are_separate(self):
@@ -226,7 +228,9 @@ class FollowerProofEvidence(unittest.TestCase):
     def test_follower_lane_requires_proof_and_acknowledged_append(self):
         resources = {0: dict(durability=dict(response_sources=dict(Fleet=0),
                                             acknowledged_follower_appends=1,
-                                            acknowledged_network_appends=1))}
+                                            acknowledged_network_appends=1,
+                                            node_log_phases=dict(enrolled=1, active=1, closed=1),
+                                            node_log_epochs=[1]))}
         with self.assertRaisesRegex(AssertionError, "no follower-proof responses"):
             verify_follower_proof(resources)
         resources[0]["durability"]["response_sources"]["Fleet"] = 1
@@ -241,6 +245,19 @@ class FollowerProofEvidence(unittest.TestCase):
         self.assertEqual(verify_follower_proof(resources),
                          dict(follower_proof_responses=1, follower_appends=2,
                               network_follower_appends=2))
+        resources[0]["durability"]["node_log_phases"]["active"] = 0
+        with self.assertRaisesRegex(AssertionError, "did not enroll, activate, and close"):
+            verify_follower_proof(resources)
+
+    def test_root_drain_requires_every_acknowledged_sequence(self):
+        identity = {0: ("cell", "0", "1", "incarnation")}
+        positions = {0: [1, 2]}
+        roots = [dict(entity="0", cell="cell", owner="0", epoch="1",
+                      incarnation="incarnation", root_sequence="1")]
+        with self.assertRaisesRegex(AssertionError, "published root does not cover writes"):
+            verify_root_coverage(roots, positions, identity, 1)
+        roots[0]["root_sequence"] = "2"
+        verify_root_coverage(roots, positions, identity, 1)
 
 
 if __name__ == "__main__":

@@ -155,6 +155,7 @@ pub(super) struct DurabilityRecorder {
     publication_costs: Mutex<Vec<(i64, u64, u64)>>,
     follower_appends: Mutex<Vec<(i64, bool, u64)>>,
     follower_network: Mutex<Vec<(i64, bool, u64, Duration)>>,
+    node_log_events: Mutex<Vec<(i64, u64, &'static str, u64)>>,
 }
 
 impl DurabilityRecorder {
@@ -209,6 +210,17 @@ impl DurabilityRecorder {
 
     pub(super) fn follower_network(&self) -> Vec<(i64, bool, u64, Duration)> {
         self.follower_network.lock().unwrap().clone()
+    }
+
+    pub(super) fn record_node_log_event(&self, epoch: u64, phase: &'static str, through: u64) {
+        self.node_log_events
+            .lock()
+            .unwrap()
+            .push((now_ms(), epoch, phase, through));
+    }
+
+    pub(super) fn node_log_events(&self) -> Vec<(i64, u64, &'static str, u64)> {
+        self.node_log_events.lock().unwrap().clone()
     }
 }
 

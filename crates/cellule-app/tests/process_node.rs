@@ -109,7 +109,12 @@ pub(super) async fn start_configured(
         .await
         .unwrap();
     let lease = NodeLeaseGuard::new(now_ms(), observed.advertisement().expires_at_ms()).unwrap();
-    let enrollment = ProcessEnrollment::new(observed, directory.clone(), node_session(node));
+    let enrollment = ProcessEnrollment::new(
+        observed,
+        directory.clone(),
+        node_session(node),
+        follower_enabled.then(|| Arc::clone(&durability)),
+    );
     let shutdown = CancellationToken::new();
     let tasks = host
         .install_task_group(CancellationToken::new(), shutdown.clone())

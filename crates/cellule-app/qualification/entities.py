@@ -63,6 +63,7 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
     costs = rows(control / f"node-{node}-publication-costs.tsv")
     appends = rows(control / f"node-{node}-follower-appends.tsv")
     network = rows(control / f"node-{node}-follower-network.tsv")
+    log_events = rows(control / f"node-{node}-node-log-events.tsv")
     assert responses, f"node {node}: missing command response evidence"
     assert executions, f"node {node}: missing command execution evidence"
     assert publications, f"node {node}: missing publication evidence"
@@ -107,6 +108,13 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         assert int(row["at_ms"]) > 0
         assert int(row["bytes"]) >= 0 and int(row["duration_us"]) >= 0
         assert row["acknowledged"] in {"true", "false"}
+    last_covered = 0
+    for row in log_events:
+        assert int(row["at_ms"]) > 0 and int(row["epoch"]) > 0
+        assert row["phase"] in {"enrolled", "active", "coverage", "closed"}
+        covered = int(row["covered_through"])
+        assert covered >= last_covered, "node-log coverage regressed"
+        last_covered = covered
     for window in windows:
         if node >= window["nodes"]:
             continue
@@ -119,6 +127,8 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         selected_costs = [row for row in costs if start <= int(row["at_ms"]) <= end]
         selected_appends = [row for row in appends if start <= int(row["at_ms"]) <= end]
         selected_network = [row for row in network if start <= int(row["at_ms"]) <= end]
+        covered_before_end = [int(row["covered_through"]) for row in log_events
+                              if int(row["at_ms"]) <= end]
         response_sources = {source: sum(row["source"] == source for row in selected_responses)
                             for source in sorted(sources)}
         window.setdefault("node_durability", {})[node] = dict(
@@ -151,7 +161,8 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
             follower_append_failures=sum(row["acknowledged"] == "false" for row in selected_appends),
             follower_append_bytes=sum(int(row["bytes"]) for row in selected_appends),
             follower_network_latency=distribution([int(row["duration_us"]) for row in selected_network]),
-            follower_network_bytes=sum(int(row["bytes"]) for row in selected_network))
+            follower_network_bytes=sum(int(row["bytes"]) for row in selected_network),
+            node_log_covered_through=max(covered_before_end, default=0))
     return dict(response_sources={source: sum(row["source"] == source for row in responses)
                                   for source in sorted(sources)},
                 response_latency=distribution([int(row["response_us"]) for row in responses]),
@@ -166,6 +177,9 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
                 follower_append_bytes=sum(int(row["bytes"]) for row in appends),
                 acknowledged_network_appends=sum(row["acknowledged"] == "true" for row in network),
                 follower_network_latency=distribution([int(row["duration_us"]) for row in network]),
+                node_log_phases=dict(Counter(row["phase"] for row in log_events)),
+                node_log_epochs=sorted({int(row["epoch"]) for row in log_events}),
+                node_log_covered_through=last_covered,
                 completed_publications=sum(row["succeeded"] == "true" for row in publications),
                 failed_publications=sum(row["succeeded"] == "false" for row in publications))
 
@@ -294,8 +308,23 @@ def verify_follower_proof(resources: dict) -> dict:
     assert fleet_proofs > 0, "follower lane returned no follower-proof responses"
     assert acknowledged_appends > 0, "missing acknowledged follower append evidence"
     assert network_appends > 0, "missing network follower append evidence"
+    for resource in resources.values():
+        phases = resource["durability"]["node_log_phases"]
+        assert phases.get("enrolled", 0) == phases.get("active", 0) == phases.get("closed", 0) == 1, \
+            "follower generation did not enroll, activate, and close exactly once"
+        assert resource["durability"]["node_log_epochs"] == [1], "follower epoch changed"
     return dict(follower_proof_responses=fleet_proofs, follower_appends=acknowledged_appends,
                 network_follower_appends=network_appends)
+
+
+def verify_root_coverage(roots: list[dict], positions: dict[int, list[int]],
+                         identity: dict[int, tuple], cells: int) -> None:
+    assert [int(row["entity"]) for row in roots] == list(range(cells))
+    for row in roots:
+        entity = int(row["entity"])
+        assert (row["cell"], row["owner"], row["epoch"], row["incarnation"]) == identity[entity]
+        assert positions[entity], f"Cell {entity} received no acknowledged writes"
+        assert int(row["root_sequence"]) >= max(positions[entity]), "published root does not cover writes"
 
 
 def verify_entities(control: Path, capacity: bool = False, follower: bool = False) -> dict:
@@ -324,12 +353,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
                 for rate, concurrency in POINTS:
                     windows.append(verify_window(control, nodes, shape, rate, concurrency, len(windows), positions))
         roots = rows(control / f"{evidence_prefix}-roots-{nodes}.tsv")
-        assert [int(row["entity"]) for row in roots] == list(range(nodes * CELLS_PER_NODE))
-        for row in roots:
-            entity = int(row["entity"])
-            assert (row["cell"], row["owner"], row["epoch"], row["incarnation"]) == identity[entity]
-            assert positions[entity], f"Cell {entity} received no acknowledged writes"
-            assert int(row["root_sequence"]) >= max(positions[entity]), "published root does not cover writes"
+        verify_root_coverage(roots, positions, identity, nodes * CELLS_PER_NODE)
         for node in range(nodes):
             assert sum(window["acknowledged_writes_by_node"][node] for window in windows if window["nodes"] == nodes) > 0
     resources = {}

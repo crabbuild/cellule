@@ -645,6 +645,7 @@ pub(super) struct ProcessEnrollment {
     pub(super) observed: Arc<Mutex<VersionedNodeAdvertisement>>,
     directory: NodeDirectory,
     session: SessionId,
+    observation: Option<Arc<DurabilityRecorder>>,
 }
 
 impl ProcessEnrollment {
@@ -652,11 +653,19 @@ impl ProcessEnrollment {
         observed: VersionedNodeAdvertisement,
         directory: NodeDirectory,
         session: SessionId,
+        observation: Option<Arc<DurabilityRecorder>>,
     ) -> Self {
         Self {
             observed: Arc::new(Mutex::new(observed)),
             directory,
             session,
+            observation,
+        }
+    }
+
+    fn record_log_event(&self, epoch: u64, phase: &'static str, through: u64) {
+        if let Some(observation) = &self.observation {
+            observation.record_node_log_event(epoch, phase, through);
         }
     }
 
@@ -694,6 +703,7 @@ impl NodeLogAuthority for ProcessEnrollment {
                 return Err(Error::Fenced);
             }
             *observed = self.directory.activate_log(&observed, now_ms()).await?;
+            self.record_log_event(epoch, "active", 0);
             Ok(())
         })
     }
@@ -712,6 +722,7 @@ impl NodeLogAuthority for ProcessEnrollment {
                 .directory
                 .advance_log_coverage(&observed, through, now_ms())
                 .await?;
+            self.record_log_event(epoch, "coverage", through);
             Ok(())
         })
     }
@@ -730,6 +741,7 @@ impl NodeLogAuthority for ProcessEnrollment {
                 .directory
                 .close_log(&observed, barrier, now_ms())
                 .await?;
+            self.record_log_event(barrier.log_epoch(), "closed", barrier.covered_through());
             Ok(())
         })
     }
@@ -798,6 +810,7 @@ impl NodeDurabilityProvider for ProcessDurabilityProvider {
                         return Ok(None);
                     };
                     *observed = next;
+                    self.enrollment.record_log_event(1, "enrolled", 0);
                 }
                 let log = observed
                     .advertisement()
@@ -1028,7 +1041,7 @@ mod tests {
                     &leader_key,
                     "https://127.0.0.1:8080".into(),
                     issued_at,
-                    2_000,
+                    5_000,
                 ),
                 issued_at,
             )
@@ -1097,14 +1110,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(receipt.durable_through, 1);
-        let enrollment = ProcessEnrollment::new(enrolled, directory.clone(), leader);
+        let mut interrupted = request(Operation::Append, leader, 1);
+        interrupted.sender = leader.as_bytes().to_vec();
+        interrupted.member = member.as_bytes().to_vec();
+        interrupted.frames = vec![expected.to_vec()];
+        interrupted.deadline_ms = now_ms() + MAX_DEADLINE_AHEAD_MS;
+        let mut socket = TcpStream::connect(("127.0.0.1", follower_port))
+            .await
+            .unwrap();
+        send(
+            &mut socket,
+            &signed(interrupted.encode_to_vec(), &leader_key, REQUEST_DOMAIN),
+            MAX_REQUEST_BYTES,
+        )
+        .await
+        .unwrap();
+        drop(socket);
+        let retried = transport
+            .append(
+                member,
+                AppendRequest {
+                    leader_session: leader,
+                    log_epoch: 1,
+                    frames: vec![expected.clone()],
+                    covered_through: 0,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(retried.durable_through, 1);
+        let enrollment = ProcessEnrollment::new(enrolled, directory.clone(), leader, None);
         let next = advertisement(
             NodeId::from_bytes([1; 16]),
             leader,
             &leader_key,
             "https://127.0.0.1:8080".into(),
             now_ms(),
-            2_000,
+            5_000,
         );
         let (activated, refreshed) = tokio::join!(enrollment.activate(1), enrollment.refresh(next));
         activated.unwrap();
@@ -1162,7 +1204,7 @@ mod tests {
             .await
             .unwrap();
         let _ = claimant_record;
-        tokio::time::sleep(Duration::from_millis(2_100)).await;
+        tokio::time::sleep(Duration::from_millis(5_100)).await;
         let fenced = directory
             .claim_expired(leader, claimant, now_ms())
             .await

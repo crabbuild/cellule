@@ -52,6 +52,7 @@ pub(super) struct NodeObservations {
     publication_costs: BufWriter<File>,
     follower_appends: BufWriter<File>,
     follower_network: BufWriter<File>,
+    node_log_events: BufWriter<File>,
 }
 
 impl NodeObservations {
@@ -74,6 +75,7 @@ impl NodeObservations {
             publication_costs: create("publication-costs"),
             follower_appends: create("follower-appends"),
             follower_network: create("follower-network"),
+            node_log_events: create("node-log-events"),
         }
     }
 
@@ -265,6 +267,10 @@ impl NodeObservations {
             )
             .unwrap();
         }
+        writeln!(self.node_log_events, "at_ms\tepoch\tphase\tcovered_through").unwrap();
+        for (at_ms, epoch, phase, through) in durability.node_log_events() {
+            writeln!(self.node_log_events, "{at_ms}\t{epoch}\t{phase}\t{through}").unwrap();
+        }
         self.objects.flush().unwrap();
         self.object_operations.flush().unwrap();
         self.durability.flush().unwrap();
@@ -276,6 +282,7 @@ impl NodeObservations {
         self.publication_costs.flush().unwrap();
         self.follower_appends.flush().unwrap();
         self.follower_network.flush().unwrap();
+        self.node_log_events.flush().unwrap();
     }
 }
 

@@ -37,6 +37,19 @@
   hot throughput was fully served at 16 and overloaded at 24 actions/node/s
   in each repeat, confirming the limiting phase while showing runner-dependent
   absolute capacity.
+- **Execution update, 2026-09-30:** The separate signed-network follower lane
+  passed three fresh-provider repeats in each of CI runs 36662251677 and
+  36663653146, with the object-only lane built from the same source and
+  binary in each run. The verifier checked scheduled arrivals, Fleet/Object
+  response winners, final root coverage, readback, resource samples, and
+  private-disk follower append receipts. A focused network test recovered an
+  exact unpublished sealed tail after owner expiry; the runtime lifecycle
+  test separately exercises root reconstruction and replay. Follower p95
+  improved at matched hot rate on the first run, but the second run had large
+  provider and scheduler variance in both lanes, so a stable throughput or
+  latency advantage is not established. The hot object-proof limiter remains
+  serial publication; Plan 003 requires controlled subphase evidence before
+  changing it. Plan 004 tracks stronger process-kill recovery qualification.
 
 ## Why this matters
 
@@ -204,7 +217,7 @@ measurements and a regression test for its corresponding invariant. Update
 - [x] A single measured bottleneck has a follow-up implementation plan, or
       the report says precisely why the evidence is inconclusive.
 - [x] Focused tests, parser tests, format, lint, boundaries, and docs checks pass.
-- [ ] The follower-enabled lane runs separately with its own proof, response,
+- [x] The follower-enabled lane runs separately with its own proof, response,
       root-drain, and recovery evidence on the same scheduled shapes.
 
 ## STOP conditions
