@@ -311,8 +311,10 @@ impl ActiveCell {
     }
 }
 
+/// Retains unobserved release failures even before shutdown is requested.
+#[derive(Default)]
 pub(super) struct ShutdownState {
-    pub(super) reply: oneshot::Sender<crate::Result<()>>,
+    pub(super) reply: Option<oneshot::Sender<crate::Result<()>>>,
     pub(super) draining: bool,
     pub(super) error: Option<Error>,
 }

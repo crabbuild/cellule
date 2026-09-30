@@ -107,25 +107,23 @@ pub(super) fn handle_deactivated(
         movement.complete(&mut permit);
     }
     transitioning.remove(&cell);
-    let runtime_waiting = shutdown_drain || shutdown.as_ref().is_some_and(|state| state.draining);
-    match (reply, runtime_waiting) {
-        (Some(reply), true) => {
-            if result.is_err() {
-                fail_shutdown(
+    let runtime_waiting = shutdown_drain || shutdown.draining;
+    match reply {
+        Some(reply) => {
+            let failed = result.is_err();
+            match reply.send(result) {
+                Err(Err(error)) => fail_shutdown(shutdown, error),
+                _ if runtime_waiting && failed => fail_shutdown(
                     shutdown,
                     Error::Control("one or more Cells failed to drain"),
-                );
+                ),
+                _ => {}
             }
-            let _ = reply.send(result);
         }
-        (Some(reply), false) => {
-            let _ = reply.send(result);
-        }
-        (None, true) => {
+        None => {
             if let Err(error) = result {
                 fail_shutdown(shutdown, error);
             }
         }
-        (None, false) => {}
     }
 }

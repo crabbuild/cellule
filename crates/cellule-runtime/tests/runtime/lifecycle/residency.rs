@@ -1603,7 +1603,12 @@ async fn node_lease_loss_during_hydration_cannot_promote_a_stale_owner() {
         .join("lease-loss-recovered.sqlite");
     assert_eq!(verified.restore(&recovered).await.unwrap(), root.position);
     drop(restored);
-    runtime.shutdown().await.unwrap();
+    // Hydration closed the Cell before shutdown. Its failed ownership release
+    // remains observable even though no deactivation task is pending now.
+    assert!(matches!(
+        runtime.shutdown().await,
+        Err(cellule_runtime::Error::Fenced)
+    ));
     assert_eq!(runtime.local_disk_budget().used(), 0);
 }
 

@@ -2,20 +2,18 @@
 
 use super::*;
 
-pub(super) fn fail_shutdown(shutdown: &mut Option<ShutdownState>, error: Error) {
-    if let Some(state) = shutdown.as_mut()
-        && state.error.is_none()
-    {
-        state.error = Some(error);
+pub(super) fn fail_shutdown(shutdown: &mut ShutdownState, error: Error) {
+    if shutdown.error.is_none() {
+        shutdown.error = Some(error);
     }
 }
 
-pub(super) fn finish_shutdown(shutdown: &mut Option<ShutdownState>) {
-    let Some(mut state) = shutdown.take() else {
+pub(super) fn finish_shutdown(shutdown: &mut ShutdownState) {
+    let Some(reply) = shutdown.reply.take() else {
         return;
     };
-    let result = state.error.take().map_or(Ok(()), Err);
-    let _ = state.reply.send(result);
+    let result = shutdown.error.take().map_or(Ok(()), Err);
+    let _ = reply.send(result);
 }
 
 pub(super) fn subtract_unpublished_bytes(total: &AtomicU64, bytes: u64) {

@@ -48,7 +48,7 @@ pub(super) fn handle_activated(
                 );
                 return;
             }
-            if shutdown.as_ref().is_some_and(|state| state.draining) {
+            if shutdown.draining {
                 admission.draining.store(true, Ordering::Release);
                 admission.requests.close();
                 admission.bytes.close();

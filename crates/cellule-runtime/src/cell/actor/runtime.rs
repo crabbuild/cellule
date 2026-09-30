@@ -344,6 +344,9 @@ impl CellRuntime {
     }
 
     /// Stops admission, drains accepted work, closes every Cell, and releases ownership.
+    ///
+    /// Returns the first unobserved background release failure, including one
+    /// completed before shutdown was requested, after closing the remaining work.
     pub async fn shutdown(&self) -> crate::Result<()> {
         if self
             .inner

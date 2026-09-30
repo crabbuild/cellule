@@ -131,10 +131,9 @@ async fn node_lease_expiry_hides_an_inflight_query_result() {
         query.await.unwrap(),
         Err(cellule_runtime::Error::Fenced)
     ));
-    let shutdown = runtime.shutdown().await;
     assert!(matches!(
-        shutdown,
-        Ok(()) | Err(cellule_runtime::Error::Fenced)
+        runtime.shutdown().await,
+        Err(cellule_runtime::Error::Fenced)
     ));
     assert_eq!(runtime.stats().active_cells(), 0);
 }

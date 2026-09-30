@@ -19,7 +19,7 @@ pub(super) async fn run(
     let mut tasks = JoinSet::<TaskResult>::new();
     let mut renewals = RenewalScheduler::new();
     let mut next_generation = 0_u64;
-    let mut shutdown = None::<ShutdownState>;
+    let mut shutdown = ShutdownState::default();
     let mut pressure = match PressureClassifier::new(800, 600, 1_000) {
         Ok(classifier) => classifier,
         Err(_) => return,
@@ -41,7 +41,7 @@ pub(super) async fn run(
     pressure_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pressure_tick.tick().await;
     loop {
-        if shutdown.as_ref().is_some_and(|state| state.draining) {
+        if shutdown.draining {
             if tasks.is_empty() {
                 if !cells.is_empty() || !transitioning.is_empty() {
                     fail_shutdown(
@@ -80,7 +80,7 @@ pub(super) async fn run(
             tokio::select! {
                 message = receiver.recv() => {
                     let Some(message) = message else {
-                        if shutdown.is_some() {
+                        if shutdown.reply.is_some() {
                             start_shutdown_drain(
                                 &pool,
                                 &mut cells,
@@ -127,7 +127,7 @@ pub(super) async fn run(
         tokio::select! {
             message = receiver.recv() => {
                 let Some(message) = message else {
-                    if shutdown.is_some() {
+                    if shutdown.reply.is_some() {
                         start_shutdown_drain(
                             &pool,
                             &mut cells,
@@ -158,7 +158,7 @@ pub(super) async fn run(
                 super::tasks::handle_task(result, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &unpublished_node_log_bytes, &publications, &mut movement, &mut movement_permits);
                 if renewed {
                     renewals.finished();
-                    if !shutdown.as_ref().is_some_and(|state| state.draining) {
+                    if !shutdown.draining {
                         renewals.dispatch(&pool, &mut cells, &mut tasks, &node_lease);
                     }
                 }
@@ -269,16 +269,13 @@ pub(super) fn start_shutdown_drain(
     cells: &mut HashMap<CellId, ActiveCell>,
     transitioning: &mut HashSet<CellId>,
     tasks: &mut JoinSet<TaskResult>,
-    shutdown: &mut Option<ShutdownState>,
+    shutdown: &mut ShutdownState,
     node_lease: &RuntimeNodeLease,
 ) {
-    let Some(state) = shutdown.as_mut() else {
-        return;
-    };
-    if state.draining {
+    if shutdown.reply.is_none() || shutdown.draining {
         return;
     }
-    state.draining = true;
+    shutdown.draining = true;
     let mut ready = Vec::new();
     for (cell, active) in cells.iter_mut() {
         if let Some(transfer) = active.transfer.take() {
@@ -324,7 +321,7 @@ pub(super) fn handle_message(
     cells: &mut HashMap<CellId, ActiveCell>,
     transitioning: &mut HashSet<CellId>,
     tasks: &mut JoinSet<TaskResult>,
-    shutdown: &mut Option<ShutdownState>,
+    shutdown: &mut ShutdownState,
     node_lease: &RuntimeNodeLease,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
     pressure: &mut PressureClassifier,
@@ -785,16 +782,14 @@ pub(super) fn handle_message(
             let _ = reply.send(result);
         }
         Message::Shutdown { reply } => {
-            if shutdown.is_some() {
+            if shutdown.reply.is_some() {
                 let _ = reply.send(Err(Error::RuntimeClosed));
                 return;
             }
             receiver.close();
-            *shutdown = Some(ShutdownState {
-                reply,
-                draining: false,
-                error: None,
-            });
+            // Completed background releases may already have failed. Keep
+            // their first unobserved error until all remaining work is closed.
+            shutdown.reply = Some(reply);
         }
     }
 }
