@@ -57,8 +57,12 @@ use cellule_runtime::fleet::telemetry::{CellTelemetry, PublicationTiming};
 use cellule_runtime::identity::CellId;
 use cellule_store::test_support::CountingObjectStore;
 use object_store::throttle::{ThrottleConfig, ThrottledStore};
+use object_store::{
+    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
+    PutMode, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
+};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Provider p95 latencies recorded by the 2026-09-29 write-capacity run:
@@ -94,6 +98,173 @@ impl CellTelemetry for PublicationRecorder {
     fn ltx_phase(&self, phase: cellule_ltx::LtxPhase, elapsed: Duration, _succeeded: bool) {
         self.phases.lock().unwrap().push((phase, elapsed));
     }
+}
+
+/// A provider wrapper that holds the control CAS until the test releases it.
+///
+/// Immutable Cell objects use `PutMode::Create`, so gating `PutMode::Update`
+/// gates exactly the authority transition. The gate stays disarmed until the
+/// fixture is up, because provisioning publishes its own control successor.
+#[derive(Debug)]
+struct HeldControlCasStore {
+    inner: Arc<InMemory>,
+    armed: AtomicBool,
+    cas_reached: Arc<tokio::sync::Notify>,
+    cas_release: Arc<tokio::sync::Semaphore>,
+}
+
+impl std::fmt::Display for HeldControlCasStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("held-control-cas-store")
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for HeldControlCasStore {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        options: PutOptions,
+    ) -> object_store::Result<PutResult> {
+        if self.armed.load(Ordering::SeqCst) && matches!(&options.mode, PutMode::Update(_)) {
+            // Wake the test, then block the CAS until it releases the gate.
+            self.cas_reached.notify_one();
+            let permit =
+                self.cas_release
+                    .acquire()
+                    .await
+                    .map_err(|_| object_store::Error::Generic {
+                        store: "held-control-cas-store",
+                        source: Box::new(std::io::Error::other("control CAS gate closed")),
+                    })?;
+            permit.forget();
+        }
+        self.inner.put_opts(location, payload, options).await
+    }
+
+    async fn put_multipart_opts(
+        &self,
+        location: &Path,
+        options: PutMultipartOptions,
+    ) -> object_store::Result<Box<dyn MultipartUpload>> {
+        self.inner.put_multipart_opts(location, options).await
+    }
+
+    async fn get_opts(
+        &self,
+        location: &Path,
+        options: GetOptions,
+    ) -> object_store::Result<GetResult> {
+        self.inner.get_opts(location, options).await
+    }
+
+    fn delete_stream(
+        &self,
+        locations: futures_util::stream::BoxStream<'static, object_store::Result<Path>>,
+    ) -> futures_util::stream::BoxStream<'static, object_store::Result<Path>> {
+        self.inner.delete_stream(locations)
+    }
+
+    fn list(
+        &self,
+        prefix: Option<&Path>,
+    ) -> futures_util::stream::BoxStream<'static, object_store::Result<ObjectMeta>> {
+        self.inner.list(prefix)
+    }
+
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
+        self.inner.list_with_delimiter(prefix).await
+    }
+
+    async fn copy_opts(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: CopyOptions,
+    ) -> object_store::Result<()> {
+        self.inner.copy_opts(from, to, options).await
+    }
+}
+
+/// A read must never observe a commit whose root has not been published.
+///
+/// The lane holds the control CAS, so the commit is recorded and uploaded but
+/// not yet authoritative. A read may be rejected or wait, but it must never
+/// report the unproven mutation; once the CAS lands, the same read sees it.
+///
+/// Today the requirement is enforced by keeping the Cell busy until the proof
+/// lands. Pipelining removes that gate, so this test is the contract the
+/// explicit proof watermark must keep satisfying.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reads_never_observe_a_commit_before_its_root_publishes() {
+    let cas_reached = Arc::new(tokio::sync::Notify::new());
+    let cas_release = Arc::new(tokio::sync::Semaphore::new(0));
+    let store = Arc::new(HeldControlCasStore {
+        inner: Arc::new(InMemory::new()),
+        armed: AtomicBool::new(false),
+        cas_reached: Arc::clone(&cas_reached),
+        cas_release: Arc::clone(&cas_release),
+    });
+    let fixture = fixture_with_store(Limits::default(), Store::new(store.clone())).await;
+    let client = CellClient::local(Arc::clone(&fixture.registry), fixture.handle().clone());
+    assert_eq!(
+        client
+            .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap()
+            .output,
+        0
+    );
+
+    store.armed.store(true, Ordering::SeqCst);
+    let command = {
+        let client = client.clone();
+        let target = fixture.target.clone();
+        tokio::spawn(async move {
+            client
+                .command::<CreateComment>(&target, mutation_identity(41), b"gated".to_vec())
+                .await
+        })
+    };
+    // The publication path is now blocked inside the control CAS.
+    cas_reached.notified().await;
+    assert!(
+        !command.is_finished(),
+        "the control CAS did not hold the publication, so this lane proves nothing"
+    );
+
+    let mut read = {
+        let client = client.clone();
+        let target = fixture.target.clone();
+        tokio::spawn(async move { client.query::<CountComments>(&target, None, ()).await })
+    };
+    let mut read_finished_early = false;
+    tokio::select! {
+        finished = &mut read => {
+            read_finished_early = true;
+            let error = finished
+                .unwrap()
+                .expect_err("a read served a commit before its root published");
+            assert!(
+                matches!(error, InvocationError::NotStarted(_)),
+                "unexpected read failure: {error:?}"
+            );
+        }
+        () = tokio::time::sleep(Duration::from_millis(300)) => {}
+    }
+
+    cas_release.add_permits(1);
+    command.await.unwrap().unwrap();
+    let observed = if read_finished_early {
+        client
+            .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap()
+    } else {
+        read.await.unwrap().unwrap()
+    };
+    assert_eq!(observed.output, 1, "the published commit must be readable");
 }
 
 /// Summarizes one LTX phase over the commands of a measurement level.
