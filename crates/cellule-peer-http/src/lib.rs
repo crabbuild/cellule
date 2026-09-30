@@ -518,8 +518,11 @@ pub enum RouteDecision {
     Local,
     /// Another enrolled session owns it; dial the route or forward through it.
     Remote(CellRoute),
-    /// No reachable peer owner: the Cell is idle, tombstoned, absent, or its
-    /// owner session is not currently enrolled.
+    /// Control proves no peer owner: the Cell is idle, tombstoned, or absent.
+    ///
+    /// An owner that is not currently enrolled fails with `CellNotActive`
+    /// instead, so an ingress can tell a transient enrollment gap from a Cell
+    /// that genuinely has no owner.
     Unowned,
 }
 
