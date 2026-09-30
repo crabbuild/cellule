@@ -669,8 +669,19 @@ async fn remote_runtime_route_skips_local_metadata_without_skipping_local_owner_
         0
     );
     assert_eq!(counted.counts().body_requests(), 3);
-    caller.shutdown().await.unwrap();
     fixture.handle().drain().await.unwrap();
+
+    // A peer still holding the old handle must refuse after the owner drains,
+    // even though the forwarding node no longer reads catalog or control.
+    counted.reset();
+    assert!(matches!(
+        remote
+            .query::<CountComments>(&fixture.target, None, ())
+            .await,
+        Err(InvocationError::NotStarted(_))
+    ));
+    assert_eq!(counted.counts().body_requests(), 0);
+    caller.shutdown().await.unwrap();
 }
 #[tokio::test]
 async fn typed_client_rejects_conflicting_identity_receipt_and_module_before_execution() {
