@@ -293,11 +293,13 @@ async fn invalidated_hint_resolves_a_signed_owner_after_authority_takeover() {
     )
     .unwrap();
     transport
+        .hints
         .directory
         .create(successor.clone(), now)
         .await
         .unwrap();
     let observed = transport
+        .hints
         .authority
         .load(target.cell_id())
         .await
@@ -311,6 +313,7 @@ async fn invalidated_hint_resolves_a_signed_owner_after_authority_takeover() {
         })
         .unwrap();
     transport
+        .hints
         .authority
         .transition(&observed, next, Transition::Takeover)
         .await
@@ -318,7 +321,9 @@ async fn invalidated_hint_resolves_a_signed_owner_after_authority_takeover() {
     counted.reset();
     assert_eq!(transport.owner(&target).await.unwrap().session, old.session);
     assert_eq!(counted.counts().body_requests(), 0);
-    transport.invalidate_owner(target.cell_id(), old.session);
+    transport
+        .hints
+        .invalidate_owner(target.cell_id(), old.session);
     assert_eq!(
         transport.owner(&target).await.unwrap().session,
         successor.session()
@@ -332,13 +337,21 @@ async fn retired_owner_session_fails_closed_after_hint_invalidation() {
     let owner = transport.owner(&target).await.unwrap();
     let now = now_ms().unwrap();
     let enrolled = transport
+        .hints
         .directory
         .load(owner.session, now)
         .await
         .unwrap()
         .unwrap();
-    transport.directory.withdraw(&enrolled, now).await.unwrap();
-    transport.invalidate_owner(target.cell_id(), owner.session);
+    transport
+        .hints
+        .directory
+        .withdraw(&enrolled, now)
+        .await
+        .unwrap();
+    transport
+        .hints
+        .invalidate_owner(target.cell_id(), owner.session);
     counted.reset();
     assert!(transport.owner(&target).await.is_err());
     assert_eq!(counted.counts().body_requests(), 2);
@@ -349,6 +362,7 @@ async fn tombstoned_cell_is_not_routed_from_an_invalidated_hint() {
     let (transport, target, counted) = owner_lookup_fixture().await;
     let old = transport.owner(&target).await.unwrap();
     let observed = transport
+        .hints
         .authority
         .load(target.cell_id())
         .await
@@ -361,11 +375,14 @@ async fn tombstoned_cell_is_not_routed_from_an_invalidated_hint() {
     next.state = ControlState::Tombstoned;
     next.owner = None;
     transport
+        .hints
         .authority
         .transition(&observed, next, Transition::Tombstone)
         .await
         .unwrap();
-    transport.invalidate_owner(target.cell_id(), old.session);
+    transport
+        .hints
+        .invalidate_owner(target.cell_id(), old.session);
     counted.reset();
     assert!(matches!(
         transport.owner(&target).await,
@@ -395,10 +412,14 @@ async fn owner_hint_is_shared_scoped_and_invalidated_by_session() {
     ));
     assert_eq!(counted.counts().body_requests(), 2);
 
-    transport.invalidate_owner(target.cell_id(), SessionId::from_bytes([32; 16]));
+    transport
+        .hints
+        .invalidate_owner(target.cell_id(), SessionId::from_bytes([32; 16]));
     clone.owner(&target).await.unwrap();
     assert_eq!(counted.counts().body_requests(), 2);
-    transport.invalidate_owner(target.cell_id(), owner.session);
+    transport
+        .hints
+        .invalidate_owner(target.cell_id(), owner.session);
     clone.owner(&target).await.unwrap();
     assert_eq!(counted.counts().body_requests(), 4);
 }
@@ -415,7 +436,7 @@ async fn delayed_old_lookup_cannot_replace_new_owner_hint() {
         certificate: Digest::from_bytes([34; 32]),
         public_key: [35; 32],
     };
-    transport.remember_owner(
+    transport.hints.remember_owner(
         target.cell_id(),
         peer.clone(),
         now + 10_000,
@@ -426,13 +447,17 @@ async fn delayed_old_lookup_cannot_replace_new_owner_hint() {
         session: SessionId::from_bytes([36; 16]),
         ..peer
     };
-    transport.remember_owner(target.cell_id(), old, now + 10_000, now, old_started);
+    transport
+        .hints
+        .remember_owner(target.cell_id(), old, now + 10_000, now, old_started);
     assert_eq!(
         transport.owner(&target).await.unwrap().session,
         peer.session
     );
-    transport.invalidate_owner(target.cell_id(), peer.session);
-    transport.remember_owner(
+    transport
+        .hints
+        .invalidate_owner(target.cell_id(), peer.session);
+    transport.hints.remember_owner(
         target.cell_id(),
         RemotePeer {
             session: SessionId::from_bytes([36; 16]),
@@ -446,6 +471,7 @@ async fn delayed_old_lookup_cannot_replace_new_owner_hint() {
     );
     assert!(
         transport
+            .hints
             .owners
             .lock()
             .unwrap()
@@ -466,7 +492,9 @@ async fn near_expired_owner_lease_is_not_cached() {
         certificate: Digest::from_bytes([38; 32]),
         public_key: [39; 32],
     };
-    transport.remember_owner(target.cell_id(), peer, now + 500, now, Instant::now());
+    transport
+        .hints
+        .remember_owner(target.cell_id(), peer, now + 500, now, Instant::now());
     assert_eq!(
         transport.owner(&target).await.unwrap().session,
         SessionId::from_bytes([26; 16])
@@ -475,16 +503,24 @@ async fn near_expired_owner_lease_is_not_cached() {
 }
 
 #[tokio::test]
-async fn expired_owner_hint_forces_exact_lookup_for_concurrent_callers() {
+async fn stale_owner_hint_is_served_while_one_refresh_runs() {
     let (transport, target, counted) = owner_lookup_fixture().await;
-    transport.owner(&target).await.unwrap();
+    let owner = transport.owner(&target).await.unwrap();
     transport
+        .hints
         .owners
         .lock()
         .unwrap()
         .get_mut(&target.cell_id())
         .unwrap()
         .expires_at = Instant::now() - Duration::from_millis(1);
+    // The hint is past its refresh window but still inside the signed lease.
+    assert!(matches!(
+        transport
+            .hints
+            .cached_owner(target.cell_id(), now_ms().unwrap()),
+        Some(CachedRoute::Stale(_))
+    ));
     counted.reset();
     let calls = (0..5).map(|_| {
         let transport = transport.clone();
@@ -497,8 +533,57 @@ async fn expired_owner_hint_forces_exact_lookup_for_concurrent_callers() {
             .iter()
             .all(|owner| owner.session == owners[0].session)
     );
-    assert!(counted.counts().body_requests() >= 2);
-    assert!(counted.counts().body_requests() <= 10);
+    assert_eq!(owners[0].session, owner.session);
+    // One background refresh revalidates the hint; concurrent callers share it
+    // instead of each paying a synchronous control-and-session lookup.
+    let mut refreshed = false;
+    for _ in 0..200 {
+        if matches!(
+            transport
+                .hints
+                .cached_owner(target.cell_id(), now_ms().unwrap()),
+            Some(CachedRoute::Fresh(_))
+        ) {
+            refreshed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(refreshed, "background refresh did not revalidate the hint");
+    assert_eq!(counted.counts().body_requests(), 1);
+}
+
+#[tokio::test]
+async fn background_refresh_reuses_the_enrolled_session_record() {
+    let (transport, target, counted) = owner_lookup_fixture().await;
+    transport.owner(&target).await.unwrap();
+    assert_eq!(counted.counts().body_requests(), 2);
+    counted.reset();
+    // A hint refresh reuses the enrolled record and reads only control.
+    transport
+        .hints
+        .load_owner(
+            transport.scope.as_ref(),
+            transport.session,
+            &target,
+            SessionReuse::Reuse,
+        )
+        .await
+        .unwrap();
+    assert_eq!(counted.counts().body_requests(), 1);
+    counted.reset();
+    // A synchronous lookup still proves enrollment from the signed record.
+    transport
+        .hints
+        .load_owner(
+            transport.scope.as_ref(),
+            transport.session,
+            &target,
+            SessionReuse::Verify,
+        )
+        .await
+        .unwrap();
+    assert_eq!(counted.counts().body_requests(), 2);
 }
 
 #[tokio::test]
@@ -509,7 +594,7 @@ async fn owner_hint_cache_stays_bounded() {
     for index in 0..MAX_OWNER_HINTS + 32 {
         let mut bytes = [0; 32];
         bytes[..8].copy_from_slice(&(index as u64).to_be_bytes());
-        transport.remember_owner(
+        transport.hints.remember_owner(
             CellId::from_bytes(bytes),
             owner.clone(),
             now + 10_000,
@@ -517,7 +602,10 @@ async fn owner_hint_cache_stays_bounded() {
             Instant::now(),
         );
     }
-    assert_eq!(transport.owners.lock().unwrap().len(), MAX_OWNER_HINTS);
+    assert_eq!(
+        transport.hints.owners.lock().unwrap().len(),
+        MAX_OWNER_HINTS
+    );
 }
 
 #[tokio::test]
@@ -549,7 +637,9 @@ async fn ambiguous_peer_response_does_not_retry_cached_route() {
         certificate: Digest::from_bytes([23; 32]),
         public_key: [27; 32],
     };
-    transport.remember_owner(target.cell_id(), peer, now + 10_000, now, Instant::now());
+    transport
+        .hints
+        .remember_owner(target.cell_id(), peer, now + 10_000, now, Instant::now());
     assert!(matches!(
         transport.send_inner(target.clone(), vec![1], 1_000).await,
         Err(CellError::PeerTransportUnknown { .. })
@@ -558,6 +648,7 @@ async fn ambiguous_peer_response_does_not_retry_cached_route() {
     assert_eq!(counted.counts().body_requests(), 0);
     assert!(
         transport
+            .hints
             .owners
             .lock()
             .unwrap()
@@ -600,7 +691,9 @@ async fn cancelled_send_releases_owner_hint_for_next_request() {
         certificate: Digest::from_bytes([23; 32]),
         public_key: [27; 32],
     };
-    transport.remember_owner(target.cell_id(), owner, now + 10_000, now, Instant::now());
+    transport
+        .hints
+        .remember_owner(target.cell_id(), owner, now + 10_000, now, Instant::now());
     let sender = transport.clone();
     let request_target = target.clone();
     let request =
@@ -646,7 +739,9 @@ async fn not_started_refusal_refreshes_authority_without_resending_to_stale_peer
         certificate: Digest::from_bytes([23; 32]),
         public_key: [27; 32],
     };
-    transport.remember_owner(target.cell_id(), peer, now + 10_000, now, Instant::now());
+    transport
+        .hints
+        .remember_owner(target.cell_id(), peer, now + 10_000, now, Instant::now());
     assert!(
         transport
             .send_inner(target.clone(), vec![1], 1_000)

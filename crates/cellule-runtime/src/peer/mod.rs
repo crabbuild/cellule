@@ -13,6 +13,7 @@ mod validation;
 
 pub use dispatch::{
     PeerAuthorizer, PeerCellResolver, PeerDispatcher, PeerReplicaControl, PeerReplicaResolver,
+    ResidentPeerCellResolver,
 };
 pub(crate) use transport::PeerClientTransport;
 pub use transport::PeerRoundTrip;

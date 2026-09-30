@@ -360,6 +360,11 @@ pub struct MigratedCell {
 }
 
 impl CellRuntime {
+    /// Returns the node telemetry sink this runtime reports through.
+    pub(crate) fn telemetry(&self) -> &crate::fleet::telemetry::CellTelemetryHandle {
+        &self.inner.telemetry
+    }
+
     /// Resolves a verified resident owner without reading catalog or authority objects.
     pub async fn resident_handle(
         &self,

@@ -340,13 +340,24 @@ impl CellReadReplica {
         Ok(())
     }
 
+    /// Confirms the exact snapshot against live authority and the signed lease.
+    ///
+    /// Both observations are required before a result is released. They are
+    /// intentionally read on every release rather than cached: this gate is
+    /// what stops a replica fenced by a takeover, a drained query gate, or a
+    /// retired owner session from answering. The two reads are independent, so
+    /// they run together and cost one provider round trip instead of two.
     async fn confirm_authority(&self, snapshot: &ReplicaSnapshot) -> Result<()> {
-        self.confirm_snapshot(snapshot).await?;
-        if !self
-            .directory
-            .is_live(snapshot.owner.session, unix_time_ms()?)
-            .await?
-        {
+        if self.query_gate.is_closed() {
+            return Err(Error::Fenced);
+        }
+        let now_ms = unix_time_ms()?;
+        let (current, live) = tokio::try_join!(
+            self.authority.load(self.expected.cell),
+            self.directory.is_live(snapshot.owner.session, now_ms)
+        )?;
+        let current = current.ok_or(Error::Fenced)?;
+        if !self.same_owner_and_code(current.value(), snapshot) || !live {
             return Err(Error::Fenced);
         }
         Ok(())

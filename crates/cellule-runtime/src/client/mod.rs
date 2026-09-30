@@ -6,10 +6,10 @@ use std::{
     marker::PhantomData,
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use cellule_ltx::rusqlite::OptionalExtension;
@@ -32,6 +32,18 @@ use crate::{Error, Result};
 
 const CELL_COMMAND_TAG: u16 = 10;
 const MAX_STATE_STREAM_CHUNKS: usize = 1_024;
+
+/// Maximum Cell descriptions retained by one client capability.
+const MAX_CACHED_DESCRIPTIONS: usize = 4_096;
+
+/// How long one observed Cell description is reused without a Describe call.
+///
+/// A description carries the Cell identity, incarnation, code digest, and
+/// schema. Those change only when a Cell is recreated or migrated, and every
+/// receiver still validates the shipped description before execution, so the
+/// bound is a revalidation cadence rather than a correctness gate. A fenced
+/// refusal drops the entry immediately.
+const DESCRIPTION_TTL: Duration = Duration::from_secs(30);
 
 #[cfg(test)]
 mod tests;
@@ -356,6 +368,7 @@ impl<C: Command> PreparedCommand<C> {
         async move {
             let started = Instant::now();
             tracing::debug!(target: "cellule_runtime::action", event = "cell_invocation_started");
+            let cell = self.request.expected.cell;
             let result = match self.client.transport.command(self.request).await {
                 Ok(outcome) => decode_pending::<C::Output>(&self.evidence, outcome),
                 Err(Error::OutcomeUnknown {
@@ -367,7 +380,10 @@ impl<C: Command> PreparedCommand<C> {
                 {
                     Err(InvocationError::Pending(Box::new(self.evidence)))
                 }
-                Err(error) => Err(InvocationError::NotStarted(error)),
+                Err(error) => {
+                    self.client.invalidate_description(cell, &error);
+                    Err(InvocationError::NotStarted(error))
+                }
             };
             let (outcome, receipt) = match &result {
                 Ok(committed) => ("committed", Some(committed.receipt)),
@@ -530,9 +546,63 @@ pub struct CellClient {
     registry: Arc<Registry>,
     transport: Arc<dyn CellTransport>,
     observed_description: Option<CellDescription>,
+    descriptions: Arc<Descriptions>,
     blob_artifact_store: Option<crate::BlobArtifactStore>,
     read_policy: ReadPolicy,
     replicas: Option<Arc<routing::ReplicaClient>>,
+}
+
+/// One description read from an owner, with the time it was observed.
+struct ObservedDescription {
+    description: CellDescription,
+    observed_at: Instant,
+}
+
+/// Bounded cache of descriptions this capability observed from an owner.
+///
+/// Clones share one cache, so a long-lived host capability describes a Cell
+/// once per incarnation instead of once per invocation. Entries are advisory:
+/// every receiver still validates the shipped description against its live
+/// owner before executing, and a fenced refusal drops the entry so the next
+/// call re-reads authority through a fresh Describe.
+#[derive(Default)]
+struct Descriptions {
+    entries: Mutex<HashMap<CellId, ObservedDescription>>,
+}
+
+impl Descriptions {
+    fn get(&self, cell: CellId) -> Option<CellDescription> {
+        let entries = self.entries.lock().ok()?;
+        let observed = entries.get(&cell)?;
+        (observed.observed_at.elapsed() < DESCRIPTION_TTL).then_some(observed.description)
+    }
+
+    fn insert(&self, description: CellDescription) {
+        let Ok(mut entries) = self.entries.lock() else {
+            return;
+        };
+        if entries.len() >= MAX_CACHED_DESCRIPTIONS && !entries.contains_key(&description.cell) {
+            // One entry covers one Cell contract. Evicting an arbitrary entry
+            // only costs the next caller a Describe round trip.
+            let Some(evicted) = entries.keys().next().copied() else {
+                return;
+            };
+            entries.remove(&evicted);
+        }
+        entries.insert(
+            description.cell,
+            ObservedDescription {
+                description,
+                observed_at: Instant::now(),
+            },
+        );
+    }
+
+    fn invalidate(&self, cell: CellId) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.remove(&cell);
+        }
+    }
 }
 
 impl CellClient {
@@ -542,6 +612,7 @@ impl CellClient {
             registry,
             transport,
             observed_description: None,
+            descriptions: Arc::new(Descriptions::default()),
             blob_artifact_store: None,
             read_policy: ReadPolicy::CurrentOwner,
             replicas: None,
@@ -736,13 +807,8 @@ impl CellClient {
         principal: crate::peer::PeerPrincipal,
         round_trip: Arc<dyn crate::peer::PeerRoundTrip>,
     ) -> Self {
-        Self::peer(registry, signer, principal, round_trip).with_local_resolver(Arc::new(
-            RuntimeLocalResolver {
-                runtime,
-                layout,
-                remote_on_miss: true,
-            },
-        ))
+        Self::peer(registry, signer, principal, round_trip)
+            .with_local_resolver(Arc::new(RuntimeLocalResolver::new(runtime, layout, true)))
     }
 
     /// Resolves a local owner before delegating to this client's transport.
@@ -995,7 +1061,7 @@ impl CellClient {
         let input = encode_wire(&input, operation.input_limit)
             .map_err(Error::from)
             .map_err(InvocationError::NotStarted)?;
-        let observation = self
+        let observation = match self
             .transport
             .query(EncodedQuery {
                 target: target.clone(),
@@ -1010,7 +1076,13 @@ impl CellClient {
                 output_limit: operation.output_limit,
             })
             .await
-            .map_err(InvocationError::NotStarted)?;
+        {
+            Ok(observation) => observation,
+            Err(error) => {
+                self.invalidate_description(target.cell_id(), &error);
+                return Err(InvocationError::NotStarted(error));
+            }
+        };
         if observation.receipt.cell != description.cell
             || observation.receipt.incarnation != description.incarnation
             || minimum.is_some_and(|minimum| {
@@ -1039,7 +1111,9 @@ impl CellClient {
             )));
         }
         let now_ms = unix_time_ms().map_err(InvocationError::NotStarted)?;
-        self.transport
+        let cell = pending.target.cell_id();
+        match self
+            .transport
             .resolve(EncodedResolve {
                 target: pending.target.clone(),
                 expected: description,
@@ -1049,7 +1123,13 @@ impl CellClient {
                 max_result_bytes: pending.max_result_bytes,
             })
             .await
-            .map_err(InvocationError::NotStarted)
+        {
+            Ok(resolution) => Ok(resolution),
+            Err(error) => {
+                self.invalidate_description(cell, &error);
+                Err(InvocationError::NotStarted(error))
+            }
+        }
     }
 
     async fn describe<T>(
@@ -1058,11 +1138,18 @@ impl CellClient {
     ) -> std::result::Result<CellDescription, InvocationError<T>> {
         let description = match self.observed_description {
             Some(description) => description,
-            None => self
-                .transport
-                .describe(target.clone())
-                .await
-                .map_err(InvocationError::NotStarted)?,
+            None => match self.descriptions.get(target.cell_id()) {
+                Some(description) => description,
+                None => {
+                    let description = self
+                        .transport
+                        .describe(target.clone())
+                        .await
+                        .map_err(InvocationError::NotStarted)?;
+                    self.descriptions.insert(description);
+                    description
+                }
+            },
         };
         if description.cell != target.cell_id() {
             return Err(InvocationError::NotStarted(Error::Command(
@@ -1070,5 +1157,17 @@ impl CellClient {
             )));
         }
         Ok(description)
+    }
+
+    /// Drops a cached description after the owner refused the exact one shipped.
+    ///
+    /// A fenced refusal means the live contract no longer matches the cached
+    /// description, so the next call must read a fresh one. Other failures keep
+    /// the entry: they describe capacity, transport, or business outcomes
+    /// rather than a changed Cell contract.
+    fn invalidate_description(&self, cell: CellId, error: &Error) {
+        if matches!(error, Error::Fenced) {
+            self.descriptions.invalidate(cell);
+        }
     }
 }

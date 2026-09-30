@@ -5,7 +5,7 @@ mod tls;
 pub use tls::{LoadedPeerTls, PeerTlsClient, PeerTlsIdentity, PeerTlsListener, TlsError};
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -24,7 +24,15 @@ use http::{StatusCode, header};
 const PEER_FORWARD_PATH: &str = "internal/cells/v1/forward";
 const MAX_PEER_CLIENTS: usize = 1_024;
 const MAX_OWNER_HINTS: usize = 4_096;
-const OWNER_HINT_LIFETIME: Duration = Duration::from_secs(5);
+const MAX_SESSION_HINTS: usize = 4_096;
+/// How long one owner hint is served before a background refresh is wanted.
+///
+/// The hint is a routing shortcut, never authority: the receiver fences a
+/// stale owner and the sender refreshes on the first refusal. The bound stays
+/// well inside the signed node lease that caps every hint's hard lifetime.
+const OWNER_HINT_TTL: Duration = Duration::from_secs(15);
+/// How long a refused owner tombstone blocks an older in-flight lookup.
+const OWNER_TOMBSTONE_TTL: Duration = Duration::from_secs(5);
 const OWNER_LEASE_MARGIN_MS: i64 = 1_000;
 /// Content type accepted by the private peer forwarding endpoint.
 pub const PROTOBUF_MEDIA_TYPE: &str = "application/x-protobuf";
@@ -59,12 +67,10 @@ impl PeerTargetScope for ApplicationIdentity {
 /// Sends signed Cell requests to the current enrolled owner over HTTP.
 pub struct PeerHttpRoundTrip {
     scope: Arc<dyn PeerTargetScope>,
-    authority: CellAuthority,
-    directory: NodeDirectory,
     tls: Arc<dyn PeerHttpClientFactory>,
     session: SessionId,
     clients: Arc<Mutex<VecDeque<CachedPeerClient>>>,
-    owners: Arc<Mutex<HashMap<CellId, CachedOwner>>>,
+    hints: Arc<OwnerHints>,
 }
 
 impl PeerHttpRoundTrip {
@@ -79,12 +85,16 @@ impl PeerHttpRoundTrip {
     ) -> Self {
         Self {
             scope,
-            authority,
-            directory,
             tls,
             session,
             clients: Arc::new(Mutex::new(VecDeque::new())),
-            owners: Arc::new(Mutex::new(HashMap::new())),
+            hints: Arc::new(OwnerHints {
+                authority,
+                directory,
+                owners: Mutex::new(HashMap::new()),
+                sessions: Mutex::new(HashMap::new()),
+                refreshing: Mutex::new(HashSet::new()),
+            }),
         }
     }
 
@@ -125,18 +135,18 @@ impl PeerHttpRoundTrip {
             match self.send_once(&owner, request.clone(), remaining_ms).await {
                 Ok(PeerHttpAttempt::Reply(reply)) => return Ok(reply),
                 Ok(PeerHttpAttempt::Retry(error, delay)) => {
-                    self.invalidate_owner(target.cell_id(), owner.session);
+                    self.hints.invalidate_owner(target.cell_id(), owner.session);
                     last_retry = Some((error, delay));
                 }
                 Ok(PeerHttpAttempt::Unknown(error)) => {
-                    self.invalidate_owner(target.cell_id(), owner.session);
+                    self.hints.invalidate_owner(target.cell_id(), owner.session);
                     return Err(CellError::PeerTransportUnknown {
                         context: "peer HTTP response was lost or invalid",
                         source: Box::new(error),
                     });
                 }
                 Err(error) => {
-                    self.invalidate_owner(target.cell_id(), owner.session);
+                    self.hints.invalidate_owner(target.cell_id(), owner.session);
                     return Err(error);
                 }
             }
@@ -179,10 +189,18 @@ impl PeerHttpRoundTrip {
     async fn owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
         self.scope.check_target(target)?;
         let now = now_ms()?;
-        if let Some(owner) = self.cached_owner(target.cell_id(), now) {
-            return Ok(owner);
+        match self.hints.cached_owner(target.cell_id(), now) {
+            Some(CachedRoute::Fresh(owner)) => Ok(owner),
+            Some(CachedRoute::Stale(owner)) => {
+                // The hint is still inside the signed node lease, so it names
+                // an enrolled endpoint. Serve it and refresh in the background
+                // so the next call needs no lookup. A moved owner refuses this
+                // request and the sender refreshes once inside the deadline.
+                self.spawn_refresh(target.clone());
+                Ok(owner)
+            }
+            None => self.load_owner(target).await,
         }
-        self.load_owner(target).await
     }
 
     async fn refresh_owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
@@ -190,143 +208,42 @@ impl PeerHttpRoundTrip {
         self.load_owner(target).await
     }
 
+    /// Refreshes one stale hint without blocking its caller.
+    ///
+    /// At most one refresh per Cell is in flight; a failure leaves the current
+    /// hint in place until its lease bound or the next refusal.
+    fn spawn_refresh(&self, target: CellTarget) {
+        let cell = target.cell_id();
+        {
+            let Ok(mut refreshing) = self.hints.refreshing.lock() else {
+                return;
+            };
+            if !refreshing.insert(cell) {
+                return;
+            }
+        }
+        let hints = Arc::clone(&self.hints);
+        let scope = Arc::clone(&self.scope);
+        let session = self.session;
+        tokio::spawn(async move {
+            let _ = hints
+                .load_owner(scope.as_ref(), session, &target, SessionReuse::Reuse)
+                .await;
+            if let Ok(mut refreshing) = hints.refreshing.lock() {
+                refreshing.remove(&cell);
+            }
+        });
+    }
+
     async fn load_owner(&self, target: &CellTarget) -> cellule_runtime::Result<RemotePeer> {
-        let lookup_started = Instant::now();
-        let control = self
-            .authority
-            .load(target.cell_id())
-            .await?
-            .ok_or(CellError::CellNotActive)?;
-        let owner = control
-            .value()
-            .owner
-            .as_ref()
-            .ok_or(CellError::CellNotActive)?;
-        if owner.session == self.session {
-            return Err(CellError::CellNotActive);
-        }
-        let now_ms = now_ms()?;
-        let enrolled = self
-            .directory
-            .load(owner.session, now_ms)
-            .await?
-            .ok_or(CellError::CellNotActive)?;
-        let advertisement = enrolled.advertisement();
-        if advertisement.endpoint() != owner.endpoint {
-            return Err(CellError::PeerAuthorization(
-                "Cell owner endpoint is not enrolled",
-            ));
-        }
-        let remote = RemotePeer {
-            session: owner.session,
-            endpoint: url::Url::parse(advertisement.endpoint()).map_err(peer_transport)?,
-            certificate: advertisement.certificate(),
-            public_key: advertisement.verifying_key()?.to_bytes(),
-        };
-        self.remember_owner(
-            target.cell_id(),
-            remote.clone(),
-            advertisement.expires_at_ms(),
-            now_ms,
-            lookup_started,
-        );
-        Ok(remote)
-    }
-
-    fn cached_owner(&self, cell: CellId, now_ms: i64) -> Option<RemotePeer> {
-        let Ok(mut owners) = self.owners.lock() else {
-            return None;
-        };
-        let observed = owners.get(&cell)?;
-        if observed.expires_at <= Instant::now()
-            || observed.lease_expires_at_ms <= now_ms.saturating_add(OWNER_LEASE_MARGIN_MS)
-        {
-            owners.remove(&cell);
-            return None;
-        }
-        observed.owner.clone()
-    }
-
-    fn remember_owner(
-        &self,
-        cell: CellId,
-        owner: RemotePeer,
-        lease_expires_at_ms: i64,
-        observed_at_ms: i64,
-        lookup_started: Instant,
-    ) {
-        let lease_margin = lease_expires_at_ms
-            .saturating_sub(observed_at_ms)
-            .saturating_sub(OWNER_LEASE_MARGIN_MS);
-        let Ok(lease_margin) = u64::try_from(lease_margin) else {
-            return;
-        };
-        if lease_margin == 0 {
-            return;
-        }
-        let lifetime = OWNER_HINT_LIFETIME.min(Duration::from_millis(lease_margin));
-        let Some(expires_at) = Instant::now().checked_add(lifetime) else {
-            return;
-        };
-        let Ok(mut owners) = self.owners.lock() else {
-            return;
-        };
-        if owners
-            .get(&cell)
-            .is_some_and(|current| current.lookup_started > lookup_started)
-        {
-            return;
-        }
-        if owners.len() >= MAX_OWNER_HINTS
-            && !owners.contains_key(&cell)
-            && let Some(evicted) = owners.keys().next().copied()
-        {
-            owners.remove(&evicted);
-        }
-        owners.insert(
-            cell,
-            CachedOwner {
-                owner: Some(owner),
-                expires_at,
-                lease_expires_at_ms,
-                lookup_started,
-            },
-        );
-    }
-
-    fn invalidate_owner(&self, cell: CellId, session: SessionId) {
-        let Ok(mut owners) = self.owners.lock() else {
-            return;
-        };
-        if owners.get(&cell).is_some_and(|cached| {
-            cached
-                .owner
-                .as_ref()
-                .is_some_and(|owner| owner.session != session)
-        }) {
-            return;
-        }
-        let now = Instant::now();
-        let Some(expires_at) = now.checked_add(OWNER_HINT_LIFETIME) else {
-            return;
-        };
-        if owners.len() >= MAX_OWNER_HINTS
-            && !owners.contains_key(&cell)
-            && let Some(evicted) = owners.keys().next().copied()
-        {
-            owners.remove(&evicted);
-        }
-        // Keep a short tombstone so a lookup started before this refusal
-        // cannot repopulate the invalidated session after the lock is released.
-        owners.insert(
-            cell,
-            CachedOwner {
-                owner: None,
-                expires_at,
-                lease_expires_at_ms: i64::MAX,
-                lookup_started: now,
-            },
-        );
+        self.hints
+            .load_owner(
+                self.scope.as_ref(),
+                self.session,
+                target,
+                SessionReuse::Verify,
+            )
+            .await
     }
 
     fn client(&self, owner: &RemotePeer) -> cellule_runtime::Result<reqwest::Client> {
@@ -506,13 +423,280 @@ impl Clone for PeerHttpRoundTrip {
     fn clone(&self) -> Self {
         Self {
             scope: Arc::clone(&self.scope),
-            authority: self.authority.clone(),
-            directory: self.directory.clone(),
             tls: Arc::clone(&self.tls),
             session: self.session,
             clients: Arc::clone(&self.clients),
-            owners: Arc::clone(&self.owners),
+            hints: Arc::clone(&self.hints),
         }
+    }
+}
+
+/// Shared owner-routing state: Cell hints, session hints, and refresh single-flight.
+struct OwnerHints {
+    authority: CellAuthority,
+    directory: NodeDirectory,
+    owners: Mutex<HashMap<CellId, CachedOwner>>,
+    sessions: Mutex<HashMap<SessionId, CachedSession>>,
+    refreshing: Mutex<HashSet<CellId>>,
+}
+
+/// A Cell owner hint and whether it wants a background refresh.
+enum CachedRoute {
+    /// The hint is inside its refresh window.
+    Fresh(RemotePeer),
+    /// The hint is lease-valid but past its refresh window.
+    Stale(RemotePeer),
+}
+
+/// Whether a lookup may reuse an already enrolled session advertisement.
+///
+/// A synchronous lookup — a cold route or one after a refusal — always re-reads
+/// the signed node record so a retired session fails closed. Only a background
+/// refresh of a hint that is still inside its lease reuses the record: the
+/// request that hint already serves is fenced by the receiver either way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionReuse {
+    /// Re-read the signed node record.
+    Verify,
+    /// Reuse the enrolled record while its lease margin holds.
+    Reuse,
+}
+
+impl OwnerHints {
+    /// Loads and enrolls the current owner for one target.
+    ///
+    /// One control read is always required: it names the owner session and its
+    /// enrolled endpoint. The signed advertisement behind that session is
+    /// reused while its lease holds, so a refresh that lands on the same
+    /// session costs one object read instead of two.
+    async fn load_owner(
+        &self,
+        scope: &dyn PeerTargetScope,
+        session: SessionId,
+        target: &CellTarget,
+        reuse: SessionReuse,
+    ) -> cellule_runtime::Result<RemotePeer> {
+        scope.check_target(target)?;
+        let lookup_started = Instant::now();
+        let control = self
+            .authority
+            .load(target.cell_id())
+            .await?
+            .ok_or(CellError::CellNotActive)?;
+        let owner = control
+            .value()
+            .owner
+            .as_ref()
+            .ok_or(CellError::CellNotActive)?;
+        if owner.session == session {
+            return Err(CellError::CellNotActive);
+        }
+        let now = now_ms()?;
+        let enrolled = if reuse == SessionReuse::Reuse {
+            self.cached_session(owner.session, &owner.endpoint, now)
+        } else {
+            None
+        };
+        let (endpoint, certificate, public_key, lease_expires_at_ms) = match enrolled {
+            Some(enrolled) => enrolled,
+            None => {
+                let loaded = self
+                    .directory
+                    .load(owner.session, now)
+                    .await?
+                    .ok_or(CellError::CellNotActive)?;
+                let advertisement = loaded.advertisement();
+                if advertisement.endpoint() != owner.endpoint {
+                    return Err(CellError::PeerAuthorization(
+                        "Cell owner endpoint is not enrolled",
+                    ));
+                }
+                let public_key = advertisement.verifying_key()?.to_bytes();
+                let enrolled = EnrolledSession {
+                    endpoint: advertisement.endpoint().to_string(),
+                    certificate: advertisement.certificate(),
+                    public_key,
+                    lease_expires_at_ms: advertisement.expires_at_ms(),
+                };
+                self.remember_session(owner.session, &enrolled, lookup_started);
+                (
+                    enrolled.endpoint,
+                    enrolled.certificate,
+                    enrolled.public_key,
+                    enrolled.lease_expires_at_ms,
+                )
+            }
+        };
+        let remote = RemotePeer {
+            session: owner.session,
+            endpoint: url::Url::parse(&endpoint).map_err(peer_transport)?,
+            certificate,
+            public_key,
+        };
+        self.remember_owner(
+            target.cell_id(),
+            remote.clone(),
+            lease_expires_at_ms,
+            now,
+            lookup_started,
+        );
+        Ok(remote)
+    }
+
+    fn cached_owner(&self, cell: CellId, now_ms: i64) -> Option<CachedRoute> {
+        let Ok(mut owners) = self.owners.lock() else {
+            return None;
+        };
+        let observed = owners.get(&cell)?;
+        // Hard bound: never route past the signed node lease margin.
+        if observed.lease_expires_at_ms <= now_ms.saturating_add(OWNER_LEASE_MARGIN_MS) {
+            owners.remove(&cell);
+            return None;
+        }
+        let owner = observed.owner.clone()?;
+        if observed.expires_at <= Instant::now() {
+            Some(CachedRoute::Stale(owner))
+        } else {
+            Some(CachedRoute::Fresh(owner))
+        }
+    }
+
+    fn cached_session(
+        &self,
+        session: SessionId,
+        endpoint: &str,
+        now_ms: i64,
+    ) -> Option<(String, Digest, [u8; 32], i64)> {
+        let mut sessions = self.sessions.lock().ok()?;
+        let observed = sessions.get(&session)?;
+        if observed.lease_expires_at_ms <= now_ms.saturating_add(OWNER_LEASE_MARGIN_MS) {
+            sessions.remove(&session);
+            return None;
+        }
+        if observed.endpoint != endpoint {
+            return None;
+        }
+        Some((
+            observed.endpoint.clone(),
+            observed.certificate,
+            observed.public_key,
+            observed.lease_expires_at_ms,
+        ))
+    }
+
+    fn remember_session(
+        &self,
+        session: SessionId,
+        enrolled: &EnrolledSession,
+        lookup_started: Instant,
+    ) {
+        let Ok(mut sessions) = self.sessions.lock() else {
+            return;
+        };
+        if sessions
+            .get(&session)
+            .is_some_and(|current| current.lookup_started > lookup_started)
+        {
+            return;
+        }
+        if sessions.len() >= MAX_SESSION_HINTS
+            && !sessions.contains_key(&session)
+            && let Some(evicted) = sessions.keys().next().copied()
+        {
+            sessions.remove(&evicted);
+        }
+        sessions.insert(
+            session,
+            CachedSession {
+                endpoint: enrolled.endpoint.clone(),
+                certificate: enrolled.certificate,
+                public_key: enrolled.public_key,
+                lease_expires_at_ms: enrolled.lease_expires_at_ms,
+                lookup_started,
+            },
+        );
+    }
+
+    fn remember_owner(
+        &self,
+        cell: CellId,
+        owner: RemotePeer,
+        lease_expires_at_ms: i64,
+        observed_at_ms: i64,
+        lookup_started: Instant,
+    ) {
+        let lease_margin = lease_expires_at_ms
+            .saturating_sub(observed_at_ms)
+            .saturating_sub(OWNER_LEASE_MARGIN_MS);
+        let Ok(lease_margin) = u64::try_from(lease_margin) else {
+            return;
+        };
+        if lease_margin == 0 {
+            return;
+        }
+        let lifetime = OWNER_HINT_TTL.min(Duration::from_millis(lease_margin));
+        let Some(expires_at) = Instant::now().checked_add(lifetime) else {
+            return;
+        };
+        let Ok(mut owners) = self.owners.lock() else {
+            return;
+        };
+        if owners
+            .get(&cell)
+            .is_some_and(|current| current.lookup_started > lookup_started)
+        {
+            return;
+        }
+        if owners.len() >= MAX_OWNER_HINTS
+            && !owners.contains_key(&cell)
+            && let Some(evicted) = owners.keys().next().copied()
+        {
+            owners.remove(&evicted);
+        }
+        owners.insert(
+            cell,
+            CachedOwner {
+                owner: Some(owner),
+                expires_at,
+                lease_expires_at_ms,
+                lookup_started,
+            },
+        );
+    }
+
+    fn invalidate_owner(&self, cell: CellId, session: SessionId) {
+        let Ok(mut owners) = self.owners.lock() else {
+            return;
+        };
+        if owners.get(&cell).is_some_and(|cached| {
+            cached
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.session != session)
+        }) {
+            return;
+        }
+        let now = Instant::now();
+        let Some(expires_at) = now.checked_add(OWNER_TOMBSTONE_TTL) else {
+            return;
+        };
+        if owners.len() >= MAX_OWNER_HINTS
+            && !owners.contains_key(&cell)
+            && let Some(evicted) = owners.keys().next().copied()
+        {
+            owners.remove(&evicted);
+        }
+        // Keep a short tombstone so a lookup started before this refusal
+        // cannot repopulate the invalidated session after the lock is released.
+        owners.insert(
+            cell,
+            CachedOwner {
+                owner: None,
+                expires_at,
+                lease_expires_at_ms: i64::MAX,
+                lookup_started: now,
+            },
+        );
     }
 }
 
@@ -529,6 +713,22 @@ struct CachedOwner {
     expires_at: Instant,
     lease_expires_at_ms: i64,
     lookup_started: Instant,
+}
+
+struct CachedSession {
+    endpoint: String,
+    certificate: Digest,
+    public_key: [u8; 32],
+    lease_expires_at_ms: i64,
+    lookup_started: Instant,
+}
+
+/// One verified signed advertisement, reduced to what routing needs.
+struct EnrolledSession {
+    endpoint: String,
+    certificate: Digest,
+    public_key: [u8; 32],
+    lease_expires_at_ms: i64,
 }
 
 struct CachedPeerClient {

@@ -6,6 +6,11 @@
 
 use super::*;
 
+/// How long one signed membership scan is shared across selections.
+///
+/// Discovery stays bounded to one second so a recruited, replaced, or expired
+/// reader is observed promptly; a refused attempt now also invalidates the
+/// snapshot, so a stale entry costs one rescan instead of one scan per query.
 const READER_MEMBERSHIP_TTL: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub(super) struct ReaderMembership {

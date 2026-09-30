@@ -21,6 +21,10 @@ use crate::{Error, Result};
 
 use super::{VerifiedPeerRequest, wire, wire_description};
 
+mod resident;
+
+pub use resident::ResidentPeerCellResolver;
+
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
 
 /// Resolves only a currently active owner on the receiving node.

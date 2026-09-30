@@ -45,6 +45,18 @@ pub enum ResidentRouteOutcome {
     Refused,
 }
 
+/// Outcome of a client-side local route cache lookup.
+///
+/// A hit means the invocation skipped the catalog and authority reads that a
+/// cold route needs. A miss means those reads ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RouteCacheOutcome {
+    /// A cached route still matched the live actor.
+    Hit,
+    /// No cached route applied, so ownership was re-read from storage.
+    Miss,
+}
+
 /// Outcome of one commit's attempt to use the node's enrolled follower lane.
 ///
 /// A commit that cannot use its lane still succeeds through object coverage, so
@@ -185,6 +197,9 @@ pub trait CellTelemetry: Send + Sync {
 
     /// Records a bounded-cardinality resident route result.
     fn resident_route(&self, _outcome: ResidentRouteOutcome) {}
+
+    /// Records whether a client invocation reused a cached local route.
+    fn route_cache(&self, _outcome: RouteCacheOutcome) {}
 
     /// Records one finite LTX phase outcome.
     fn ltx_phase(&self, _phase: cellule_ltx::LtxPhase, _elapsed: Duration, _succeeded: bool) {}
@@ -345,6 +360,12 @@ impl CellTelemetryHandle {
             if outcome == ResidentRouteOutcome::Hit {
                 telemetry.ltx_logical_read(cellule_ltx::LtxReadOrigin::Resident);
             }
+        }
+    }
+
+    pub(crate) fn route_cache(&self, outcome: RouteCacheOutcome) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.route_cache(outcome);
         }
     }
 

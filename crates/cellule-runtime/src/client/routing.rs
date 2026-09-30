@@ -17,6 +17,12 @@ use crate::codec::{decode_wire, encode_wire};
 ///
 /// Clone this router across callers to share outstanding-attempt counts. These
 /// counts describe this ingress only, not execution load from other ingresses.
+///
+/// Placement is deliberately not cached: an administrative policy withdrawal
+/// and a control-state change must take effect on the next query, which the
+/// replica freshness tests assert. A refused attempt still drops the shared
+/// membership snapshot, so a stale reader costs one rescan instead of one scan
+/// per query.
 #[derive(Clone)]
 pub struct ReplicaReadRouter {
     authority: CellAuthority,
@@ -81,6 +87,15 @@ impl ReplicaReadRouter {
             )
             .await?;
         Ok((expected, selected))
+    }
+
+    /// Drops the shared membership view after a reader refused an attempt.
+    ///
+    /// A fenced or inactive reader proves the discovery snapshot is stale, so
+    /// the next query rescans signed membership instead of retrying the same
+    /// unreachable node from the shared snapshot.
+    async fn invalidate_membership(&self) {
+        self.directory.invalidate_reader_membership().await;
     }
 
     /// Executes a typed read on a selected replica and returns its serving node.
@@ -170,8 +185,15 @@ impl ReplicaReadRouter {
                         ));
                     }
                     Err(error @ Error::ReplicaBehind { .. }) => behind = Some(error),
-                    Err(Error::Fenced) => fenced = true,
+                    Err(Error::Fenced) => {
+                        fenced = true;
+                        self.invalidate_membership().await;
+                    }
                     Err(error @ Error::PeerAuthorization(_)) => return Err(error),
+                    Err(error @ Error::CellNotActive) => {
+                        tracing::debug!(cell = ?target.cell_id(), error = %error, "selected read replica is not active");
+                        self.invalidate_membership().await;
+                    }
                     Err(error) => {
                         tracing::debug!(cell = ?target.cell_id(), error = %error, "selected read replica unavailable")
                     }
