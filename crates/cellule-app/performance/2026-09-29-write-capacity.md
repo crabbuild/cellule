@@ -28,15 +28,15 @@ response. The first CI result below predates this file.
 
 The new `--workload capacity` selector fixes the fleet at three owners and
 12 writable Cells. The initial CI run scheduled 10-second points at 2, 4, 16,
-64, 256, and 1024 actions per node per second. The next run adds 24, 32, 48,
-96, 128, and 192 to narrow the overload interval. Each shape stops at its first overloaded
+64, 256, and 1024 actions per node per second. The second run added 24, 32,
+48, 96, 128, and 192 to narrow the overload interval. Each shape stops at its first overloaded
 point. A point is fully served only when every scheduled action succeeds and
 admitted work drains within 12 seconds of its 10-second arrival window. The
 verifier requires at least one fully served point and one overloaded
 point for uniform, hot, and skewed traffic; it rejects missing arrivals,
 misstated success, incomplete readback, or an incomplete rate ramp. It reports
 the last fully served logical write rate separately from the first overloaded
-rate. The first isolated object-proof result is summarized below.
+rate. The first and second isolated object-proof results are summarized below.
 
 The dedicated `Cell write capacity qualification` GitHub Actions workflow
 builds one release binary and runs three object-proof repeats on a fresh
@@ -73,8 +73,8 @@ sustainable even though some writes completed. No node showed cgroup CPU
 throttling. Capture p95 stayed below 2 ms in overloaded windows, whereas
 root preparation and response waits were much longer. The current aggregate
 provider counters cannot isolate GET/HEAD/PUT time inside preparation or
-separate owner admission queueing from provider wait. A second run with raw
-per-operation provider timing is needed before choosing one limiter.
+separate owner admission queueing from provider wait. The second run below
+adds raw per-operation provider timing.
 
 The three `verification.json` files have SHA-256 digests
 `35b859c9f9f66aa46da1c797fae5d691a52af907760cf3c4bacc7d79ec809fe2`,
@@ -83,6 +83,41 @@ and `9d13723e28d4989a87dc60d88b7c84780c125d716ef1d3b1504eb1895fd9efc7`
 for repeats 1–3 respectively. Each report contains hashes of its raw TSVs.
 The downloaded artifact is under
 `$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36649534205`.
+
+## Finer object-proof result
+
+[CI run 36651191247](https://github.com/crabbuild/cellule/actions/runs/36651191247)
+passed three fresh-provider repeats with all acknowledged writes verified by
+readback. The source snapshot was
+`f46c98c66a78c84bac2244eb739d7548d4ceb056`; the release binary SHA-256
+was `b75352d08f379318f0a872fce7286d13590715eb49aecf7d53cc2cc7906bca7a`.
+All response proofs were Object, every window ended with zero root sequence
+lag, and no node reported CPU throttling.
+
+| Shape | Highest fully served offered rate across repeats | Fully served logical writes/s | First overloaded offered rate |
+| --- | --- | --- | --- |
+| Uniform writes | 24, 32, 32 actions/node/s | 71.96, 95.89, 95.88 | 32, 48, 48 actions/node/s |
+| One hot writable Cell | 24, 24, 16 actions/node/s | 71.99, 71.92, 47.99 | 32, 32, 24 actions/node/s |
+| Skewed, 20% writes | 24, 24, 16 actions/node/s | 14.40, 14.40, 9.60 | 32, 32, 24 actions/node/s |
+
+The threshold varies between repeats. Uniform overload mixed scheduler-late
+arrivals with owner refusals in two repeats; hot overload mainly returned
+owner `not_started` capacity refusals. Skewed overload was only 3–5
+scheduler-late arrivals despite low CPU use, so it is a harness scheduling
+limit, not evidence of a Cell write limit. At hot overload, owner 0 response
+p95 was 77–169 ms while publication p95 was 36–42 ms and capture p95 stayed
+under 1 ms. Its provider PUT p95 was 6.7–7.5 ms, GET p95 1.9–2.1 ms, and
+HEAD p95 1.4–1.6 ms. Provider operations can overlap, so these percentiles
+cannot be added to infer one command's critical path. The gap between owner
+response and publication requires the actor queue and SQL worker timings added
+after this run before choosing a write-path optimization.
+
+The three `verification.json` SHA-256 digests are
+`1624b007bd18b19b0e5b498a4cdc307fcfdc30a2320c2ebbd0271f097838c31f`,
+`11d03fdc4835bd00a9fc0c90211cb9fd3a21d543ef4f91dc9abb4a64dd15d51c`,
+and `d0e41bf722a143149742c47477885d7ea4442a7717d09f7cb6083c916df03e43`.
+The downloaded artifact is under
+`$HOME/Workspace/crabbuild-target/cellule-capacity-5ca5/ci-run-36651191247`.
 
 After preparing a fresh source/binary snapshot with the Compose qualification
 guide, run each repeat with a new state directory and Compose project:
