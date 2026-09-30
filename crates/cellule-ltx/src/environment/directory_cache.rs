@@ -155,6 +155,7 @@ pub(crate) struct DirectoryCache {
     max_bytes: u64,
     state: Mutex<DirectoryCacheState>,
     fills: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    index_writes: Mutex<()>,
 }
 
 #[cfg(feature = "replica")]
@@ -237,6 +238,7 @@ impl DirectoryCache {
                 reservations,
             }),
             fills: Mutex::new(HashMap::new()),
+            index_writes: Mutex::new(()),
         }
     }
 
@@ -516,6 +518,13 @@ impl DirectoryCache {
     }
 
     pub(crate) fn persist_index(&self) {
+        // Different keys fill concurrently. Serialize before taking the
+        // membership snapshot through its rename, so an older snapshot cannot
+        // overwrite a later fill's index after both jobs have drained.
+        let _write = self
+            .index_writes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let entries = match self.state.lock() {
             Ok(state) => state.entries.clone(),
             Err(poisoned) => poisoned.into_inner().entries.clone(),

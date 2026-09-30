@@ -232,6 +232,58 @@ fn directory_cache_serializes_concurrent_fills_for_one_key() {
     assert_eq!(cache.budget.used(), 8);
 }
 
+#[cfg(feature = "replica")]
+#[test]
+fn directory_cache_concurrent_fills_preserve_restart_membership() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let root = directory.path().join("directory-cache");
+    let (entered, blocked) = std::sync::mpsc::channel();
+    let (resume, released) = std::sync::mpsc::channel();
+    let filesystem = Arc::new(FaultFs::default());
+    *filesystem.index_pause.lock().unwrap() = Some(IndexPause { entered, released });
+    let cache = Arc::new(DirectoryCache::new(filesystem.clone(), root.clone(), 64));
+    std::thread::scope(|scope| {
+        let first_cache = cache.clone();
+        let first = scope.spawn(move || first_cache.put("first", b"first-node", 64).unwrap());
+        blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Hold the first membership snapshot immediately before rename. A
+        // second key can fill concurrently, but cannot publish its index ahead
+        // of that older snapshot and then be lost when the first write resumes.
+        let second_cache = cache.clone();
+        let (finished, completion) = std::sync::mpsc::channel();
+        let second = scope.spawn(move || {
+            second_cache.put("second", b"second-node", 64).unwrap();
+            finished.send(()).unwrap();
+        });
+        let overtook = completion.recv_timeout(Duration::from_millis(250)).is_ok();
+        resume.send(()).unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
+        drop(cache);
+        let restarted = DirectoryCache::new(filesystem, root, 64);
+        assert_eq!(
+            restarted.stats().entries(),
+            2,
+            "a later fill disappeared from the persisted index"
+        );
+        assert_eq!(
+            restarted.get("first", 64).unwrap(),
+            Some(b"first-node".to_vec())
+        );
+        assert_eq!(
+            restarted.get("second", 64).unwrap(),
+            Some(b"second-node".to_vec())
+        );
+        assert!(!overtook, "a newer index overtook a paused older snapshot");
+    });
+}
+
+#[cfg(feature = "replica")]
+struct IndexPause {
+    entered: std::sync::mpsc::Sender<()>,
+    released: std::sync::mpsc::Receiver<()>,
+}
+
 struct TestClock;
 impl Clock for TestClock {
     fn unix_millis(&self) -> i64 {
@@ -247,6 +299,8 @@ struct FaultFs {
     reject_create: AtomicBool,
     panic_create: AtomicBool,
     creates: AtomicUsize,
+    #[cfg(feature = "replica")]
+    index_pause: std::sync::Mutex<Option<IndexPause>>,
 }
 impl FileSystem for FaultFs {
     fn open(&self, path: &Path) -> io::Result<Box<dyn FileIo>> {
@@ -276,6 +330,14 @@ impl FileSystem for FaultFs {
         DirectFileSystem.create_dir_all(path)
     }
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        #[cfg(feature = "replica")]
+        if to.file_name().is_some_and(|name| name == "index-v1.json") {
+            let pause = self.index_pause.lock().unwrap().take();
+            if let Some(pause) = pause {
+                pause.entered.send(()).unwrap();
+                pause.released.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+        }
         DirectFileSystem.rename(from, to)
     }
     fn remove_file(&self, path: &Path) -> io::Result<()> {

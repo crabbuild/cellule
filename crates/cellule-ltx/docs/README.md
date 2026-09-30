@@ -865,7 +865,9 @@ These are per-operation correctness bounds, not an RSS quota.
 - **Eviction.** Eviction can cause later misses; cache bytes never replace
   exact-root page authentication. New immutable views still have separate
   demand-cache identities.
-- **Directory cache membership.** `Host::with_directory_cache(root).await?` opens
+- **Directory cache membership.** Concurrent fills serialize membership snapshots
+  through index installation, so an older fill cannot erase a newer entry on
+  restart. `Host::with_directory_cache(root).await?` opens
   persistent cache membership on an admitted blocking job. Restart reads at most
   16 MiB of index input and retains at most 16,384 entries within the shared disk
   budget.
