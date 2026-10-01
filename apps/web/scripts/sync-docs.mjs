@@ -54,6 +54,7 @@ const assetFiles = tracked.filter(
 );
 const assetSet = new Set(assetFiles);
 const manifest = [];
+const authoredPages = [];
 const diagrams = [];
 await mkdir(path.join(webRoot, "content/docs"), { recursive: true });
 await mkdir(path.join(webRoot, "lib"), { recursive: true });
@@ -245,22 +246,38 @@ async function copyAuthored(directory, relative = "") {
     if (entry.isDirectory())
       await copyAuthored(path.join(directory, entry.name), next);
     else {
+      const source = path.join(directory, entry.name);
+      const content = await readFile(source);
+      if (/\.mdx?$/.test(entry.name)) {
+        const tree = parser.parse(
+          content.toString().replace(/^---[\s\S]*?---\n/, ""),
+        );
+        const sourcePath = path
+          .relative(repoRoot, source)
+          .replaceAll(path.sep, "/");
+        const slug = next
+          .replaceAll(path.sep, "/")
+          .replace(/\.mdx?$/, "")
+          .replace(/(?:^|\/)index$/, "");
+        authoredPages.push({ sourcePath, url: `/docs${slug ? `/${slug}` : ""}` });
+        visit(tree, (node) => {
+          if (node.type === "code" && node.lang === "mermaid")
+            diagrams.push({ source: sourcePath, code: node.value });
+        });
+      }
       const destination = path.join(webRoot, "content/docs", next);
       await mkdir(path.dirname(destination), { recursive: true });
-      await writeGenerated(
-        destination,
-        await readFile(path.join(directory, entry.name)),
-      );
+      await writeGenerated(destination, content);
     }
   }
 }
 await copyAuthored(path.join(webRoot, "content/authored"));
 await writeGenerated(
   path.join(webRoot, "lib/docs-manifest.json"),
-  JSON.stringify({ pages: manifest, diagrams }, null, 2),
+  JSON.stringify({ pages: manifest, authoredPages, diagrams }, null, 2),
 );
 await removeStale(path.join(webRoot, "content/docs"));
 await removeStale(path.join(webRoot, "public/repository"));
 console.log(
-  `Synced ${manifest.length} canonical documents, ${diagrams.length} diagrams, and ${assetFiles.length} assets.`,
+  `Synced ${manifest.length} canonical and ${authoredPages.length} authored documents, ${diagrams.length} diagrams, and ${assetFiles.length} assets.`,
 );

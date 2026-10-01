@@ -36,8 +36,8 @@ npm run test:web
 check validates the website pages and every canonical document route, search,
 Markdown endpoints, unknown-page responses, mobile overflow, theme switching,
 clipboard copy, interactive explorers, tenant/target selection, owner handoff,
-example walkthroughs and retry explanations, diagram zoom/download, and all repository
-Mermaid diagrams rendered as SVG. Screenshots are saved under the ignored
+example walkthroughs and retry explanations, diagram zoom/download, and all
+repository and authored Mermaid diagrams rendered as SVG. Screenshots are saved under the ignored
 `apps/web/test-results/` directory. CI runs this against the production build.
 
 ## Content ownership
@@ -73,6 +73,14 @@ npm run generate:content -w @cellule/web
 New repository documents must be tracked by Git to join the collection. Authored
 MDX belongs in `content/authored/` and is copied into the generated collection.
 The link checker validates every internal documentation route and anchor.
+
+The Eight primitives guides include complete Rust functions. Run
+`python3 scripts/check-doc-rust-fences.py` for syntax and
+`python3 scripts/check-web-rust-examples.py` to compile authored examples
+against the current framework libraries. On workstations, set `CARGO_TARGET_DIR`
+to this checkout's directory under the mounted Workspace target volume. Rust CI
+runs both checks; website CI validates all authored routes and SVG diagrams.
+
 Generated content, manifests, public repository assets, `.source/`, and `.next/`
 are ignored. The lockfile is committed.
 

@@ -66,6 +66,8 @@ assert.equal(
 );
 for (const page of manifest.pages)
   assert(documents.has(page.url), `Missing canonical page ${page.sourcePath}`);
+for (const page of manifest.authoredPages)
+  assert(documents.has(page.url), `Missing authored page ${page.sourcePath}`);
 for (const { tree, file } of documents.values()) {
   const assets = [];
   visit(tree, (node) => {

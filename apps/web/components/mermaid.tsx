@@ -9,6 +9,7 @@ export function Mermaid({ code }: { code: string }) {
   const id = `diagram-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   const root = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState("");
+  const [naturalWidth, setNaturalWidth] = useState<number>();
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(1);
   useEffect(() => {
@@ -36,7 +37,19 @@ export function Mermaid({ code }: { code: string }) {
               },
             });
             const result = await mermaid.render(id, code);
-            if (!cancelled) setSvg(result.svg);
+            if (!cancelled) {
+              const renderedSVG = new DOMParser().parseFromString(
+                result.svg,
+                "image/svg+xml",
+              ).documentElement;
+              const width = Number(
+                renderedSVG.getAttribute("viewBox")?.trim().split(/[\s,]+/)[2],
+              );
+              setNaturalWidth(
+                Number.isFinite(width) && width > 0 ? width : undefined,
+              );
+              setSvg(result.svg);
+            }
           } catch (cause) {
             if (!cancelled)
               setError(
@@ -99,7 +112,11 @@ export function Mermaid({ code }: { code: string }) {
         {svg ? (
           <div
             className="mermaid-svg"
-            style={{ width: `${zoom * 100}%`, minWidth: `${zoom * 360}px` }}
+            style={{
+              width: `${zoom * 100}%`,
+              minWidth: `${zoom * 360}px`,
+              maxWidth: naturalWidth ? `${zoom * naturalWidth}px` : undefined,
+            }}
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         ) : (

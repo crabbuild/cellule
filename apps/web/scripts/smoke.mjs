@@ -27,6 +27,7 @@ for (const route of [
   ...marketing,
   "/docs",
   ...manifest.pages.map((page) => page.url),
+  ...manifest.authoredPages.map((page) => page.url),
 ]) {
   const response = await fetch(new URL(route, origin));
   assert.equal(response.status, 200, `${route} must render`);
@@ -84,6 +85,47 @@ page.on("pageerror", (error) =>
 );
 await mkdir(path.join(root, "test-results"), { recursive: true });
 try {
+  // Validate repository and authored Mermaid charts, including those below the fold.
+  const bundle = await build({
+    stdin: {
+      contents:
+        'import mermaid from "mermaid"; window.celluleMermaid = mermaid;',
+      resolveDir: root,
+    },
+    bundle: true,
+    write: false,
+    format: "iife",
+    platform: "browser",
+  });
+  const chartPage = await context.newPage();
+  await chartPage.setContent("<html><body></body></html>");
+  await chartPage.addScriptTag({ content: bundle.outputFiles[0].text });
+  const chartErrors = await chartPage.evaluate(async (diagrams) => {
+    const failed = [];
+    window.celluleMermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+    });
+    for (let i = 0; i < diagrams.length; i++) {
+      try {
+        const { svg } = await window.celluleMermaid.render(
+          `validation-${i}`,
+          diagrams[i].code,
+        );
+        if (!svg.includes("<svg")) throw new Error("Missing SVG output");
+      } catch (error) {
+        failed.push(`${diagrams[i].source}: ${error.message}`);
+      }
+    }
+    return failed;
+  }, manifest.diagrams);
+  assert.deepEqual(
+    chartErrors,
+    [],
+    "Every documentation diagram must render as SVG",
+  );
+  await chartPage.close();
+
   await page.goto(origin, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Explore Jobs", exact: true }).click();
   assert.match(
@@ -359,12 +401,21 @@ try {
   const diagram = page.locator("[data-diagram]").first();
   await diagram.scrollIntoViewIfNeeded();
   await diagram.locator(".mermaid-svg svg").waitFor();
+  const initialDiagramWidth = await diagram
+    .locator(".mermaid-svg svg")
+    .evaluate((svg) => svg.getBoundingClientRect().width);
   await diagram.getByRole("button", { name: "Zoom in", exact: true }).click();
   assert.equal(
     await diagram
       .locator(".mermaid-svg")
       .evaluate((element) => element.style.width),
     "125%",
+  );
+  assert(
+    (await diagram
+      .locator(".mermaid-svg svg")
+      .evaluate((svg) => svg.getBoundingClientRect().width)) > initialDiagramWidth,
+    "Zoom must increase the rendered diagram size",
   );
   const downloadPromise = page.waitForEvent("download");
   await diagram
@@ -387,12 +438,58 @@ try {
     "Canonical explicit anchors must survive Markdown compilation",
   );
 
+  const primitiveGuides = manifest.authoredPages.filter((guide) =>
+    guide.url.startsWith("/docs/primitives"),
+  );
+  assert.equal(
+    primitiveGuides.length,
+    9,
+    "Overview and all eight guides must exist",
+  );
+  for (const guide of primitiveGuides) {
+    await page.goto(new URL(guide.url, origin).href, { waitUntil: "networkidle" });
+    const diagrams = page.locator("[data-diagram]");
+    assert(
+      (await diagrams.count()) >= 2,
+      `${guide.url} needs explanatory diagrams`,
+    );
+    for (const diagram of await diagrams.all()) {
+      await diagram.scrollIntoViewIfNeeded();
+      await diagram.locator(".mermaid-svg svg").waitFor();
+      assert.equal(await diagram.locator('[role="alert"]').count(), 0);
+      assert(
+        await diagram.locator(".mermaid-svg svg").evaluate((svg) =>
+          svg.getBoundingClientRect().width <= Math.max(360, svg.viewBox.baseVal.width) + 1,
+        ),
+        `${guide.url} must not stretch a narrow diagram beyond its natural width`,
+      );
+    }
+    assert(
+      (await page.locator("pre code").count()) >= 1,
+      `${guide.url} needs examples`,
+    );
+  }
+  await page.goto(new URL("/docs/primitives", origin).href, {
+    waitUntil: "networkidle",
+  });
+  await page.getByRole("button", { name: "Follower proof", exact: true }).click();
+  for (let i = 0; i < 4; i++)
+    await page.getByRole("button", { name: "Next step", exact: true }).click();
+  assert.match(await page.locator(".gate").innerText(), /open/);
+  await page.goto(new URL("/docs/primitives/effects", origin).href, {
+    waitUntil: "networkidle",
+  });
+  await page.locator("#follow-duplicate-delivery").scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: path.join(root, "test-results/effects-guide.png"),
+  });
+
   await page.setViewportSize({ width: 390, height: 844 });
   for (const route of [
     ...marketing,
     "/docs",
     "/docs/guides/architecture",
-    "/docs/primitives/activities",
+    ...primitiveGuides.map((guide) => guide.url),
   ]) {
     await page.goto(new URL(route, origin).href, { waitUntil: "networkidle" });
     assert(
@@ -485,48 +582,9 @@ try {
     "Desktop/mobile layouts, search dialog, clipboard, themes, explorer interactions, and SVG controls passed.",
   );
 
-  // Validate every canonical Mermaid chart, including diagrams far below the fold.
-  const bundle = await build({
-    stdin: {
-      contents:
-        'import mermaid from "mermaid"; window.celluleMermaid = mermaid;',
-      resolveDir: root,
-    },
-    bundle: true,
-    write: false,
-    format: "iife",
-    platform: "browser",
-  });
-  const chartPage = await context.newPage();
-  await chartPage.setContent("<html><body></body></html>");
-  await chartPage.addScriptTag({ content: bundle.outputFiles[0].text });
-  const chartErrors = await chartPage.evaluate(async (diagrams) => {
-    const failed = [];
-    window.celluleMermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-    });
-    for (let i = 0; i < diagrams.length; i++) {
-      try {
-        const { svg } = await window.celluleMermaid.render(
-          `validation-${i}`,
-          diagrams[i].code,
-        );
-        if (!svg.includes("<svg")) throw new Error("Missing SVG output");
-      } catch (error) {
-        failed.push(`${diagrams[i].source}: ${error.message}`);
-      }
-    }
-    return failed;
-  }, manifest.diagrams);
-  assert.deepEqual(
-    chartErrors,
-    [],
-    "Every canonical diagram must render as SVG",
-  );
   assert.deepEqual(errors, [], "Pages must not emit browser errors");
   console.log(
-    `Passed ${marketing.length} website pages, ${manifest.pages.length} canonical docs, search, Markdown routes, interaction and mobile checks, and ${manifest.diagrams.length} SVG diagrams.`,
+    `Passed ${marketing.length} website pages, ${manifest.pages.length} canonical and ${manifest.authoredPages.length} authored docs, search, Markdown routes, interaction and mobile checks, and ${manifest.diagrams.length} SVG diagrams.`,
   );
 } finally {
   await browser.close();

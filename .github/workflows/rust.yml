@@ -53,6 +53,8 @@ jobs:
         run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
       - name: Test
         run: cargo test --workspace --all-features --locked
+      - name: Compile website Rust examples
+        run: python3 scripts/check-web-rust-examples.py
       - name: Run SQL example
         run: cargo run -p cellule-app --example sql --locked
       - name: Run Blob example
