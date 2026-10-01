@@ -264,6 +264,45 @@ try {
     .getByRole("button", { name: "Inspect Jobs Cell", exact: true })
     .click();
   assert.match(await page.locator(".cell-inspector").innerText(), /shard\/0/);
+  const hive = page.locator(".cell-map");
+  assert.equal(await hive.locator(".cell-node").count(), 6);
+  assert.equal(await hive.locator(".cell-icon").count(), 6);
+  assert.match(
+    await hive.locator(".cell-hive-center").textContent(),
+    /cellule\./,
+  );
+  const hiveRadii = await hive.evaluate((svg) => {
+    const center = svg
+      .querySelector(".cell-hive-center > path")
+      .getBoundingClientRect();
+    const x = center.x + center.width / 2;
+    const y = center.y + center.height / 2;
+    return [...svg.querySelectorAll(".cell-node > path")].map((node) => {
+      const box = node.getBoundingClientRect();
+      return Math.hypot(box.x + box.width / 2 - x, box.y + box.height / 2 - y);
+    });
+  });
+  assert(
+    Math.max(...hiveRadii) - Math.min(...hiveRadii) < 1,
+    "Six surrounding hexagons must form an equal-radius hive around Cellule",
+  );
+  for (const name of [
+    "Orders",
+    "Settings",
+    "Assets",
+    "Runs",
+    "Jobs",
+    "Timers",
+  ]) {
+    await page
+      .getByRole("button", { name: `Inspect ${name} Cell`, exact: true })
+      .focus();
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.locator(".cell-inspector strong").innerText(),
+      name,
+    );
+  }
   await page.getByRole("button", { name: "Next step", exact: true }).click();
   assert.match(
     await page.locator(".step-detail").innerText(),
@@ -283,6 +322,31 @@ try {
     await page.locator(".recovery-detail").innerText(),
     /fails without activating/,
   );
+  const recovery = page.locator(".recovery-svg");
+  assert.equal(await recovery.locator(".recovery-icon").count(), 4);
+  assert.match(
+    await recovery.locator(".recovery-stage").nth(2).textContent(),
+    /Restore blocked/,
+  );
+  assert.match(
+    await recovery.locator(".recovery-stage").nth(3).textContent(),
+    /No Cell activation/,
+  );
+  await page
+    .getByRole("button", { name: "Verified chunks", exact: true })
+    .click();
+  assert.match(
+    await recovery.locator(".recovery-stage").nth(2).textContent(),
+    /State \+ request ledger/,
+  );
+  assert.match(
+    await recovery.locator(".recovery-gate").textContent(),
+    /ACTIVATION ALLOWED/,
+  );
+  await recovery.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: path.join(root, "test-results/recovery-icons-desktop.png"),
+  });
   await page
     .getByRole("button", { name: "cellule-ltx Capture and restore" })
     .click();
@@ -585,6 +649,33 @@ try {
       document.querySelector(
         '[aria-label="Scrollable receipt and read diagram"]',
       ).scrollLeft > 0,
+  );
+  await page.goto(new URL("/architecture", origin).href, {
+    waitUntil: "networkidle",
+  });
+  await page.getByRole("button", { name: "Timers", exact: true }).click();
+  assert.match(await page.locator(".cell-inspector").innerText(), /Cron|CRON/);
+  assert(await page.locator(".hive-scroll-hint").isVisible());
+  assert(await page.locator(".recovery-scroll-hint").isVisible());
+  const selectedHex = await page
+    .locator(".cell-node.selected > path")
+    .boundingBox();
+  const hiveViewport = await page
+    .getByRole("region", { name: "Scrollable Cell hive" })
+    .boundingBox();
+  assert(
+    selectedHex.x >= hiveViewport.x - 1 &&
+      selectedHex.x + selectedHex.width <=
+        hiveViewport.x + hiveViewport.width + 1,
+    "Selecting a Cell must bring its hexagon into the mobile viewport",
+  );
+  const recoveryViewport = page.getByRole("region", {
+    name: "Scrollable recovery stages",
+  });
+  await recoveryViewport.focus();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(
+    () => document.querySelector(".recovery-viewport").scrollLeft > 0,
   );
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(new URL("/docs/guides/architecture", origin).href, {

@@ -3,6 +3,22 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import { primitives } from "@/lib/primitives";
+import {
+  CalendarClock,
+  Database,
+  DatabaseBackup,
+  FileCheck2,
+  FileWarning,
+  FolderArchive,
+  ListTodo,
+  ShieldCheck,
+  LockKeyhole,
+  SlidersHorizontal,
+  Workflow,
+  OctagonX,
+} from "lucide-react";
+import { CelluleMark } from "./brand";
+import { useDiagramFocus } from "./use-diagram-focus";
 
 const cells = [
   {
@@ -10,120 +26,164 @@ const cells = [
     partition: "order/42",
     primitive: "SQL",
     label: "Relational state and recorded request outcomes.",
-    x: 180,
-    y: 167,
+    x: 230.8,
+    y: 114.8,
+    icon: Database,
   },
   {
     name: "Settings",
     partition: "scope/team",
     primitive: "KV",
     label: "Scoped values, conditional checks, and atomic updates.",
-    x: 309,
-    y: 91,
+    x: 389.2,
+    y: 114.8,
+    icon: SlidersHorizontal,
   },
   {
-    name: "Jobs",
-    partition: "shard/0",
-    primitive: "Queue",
-    label: "At-least-once messages with explicit claim leases.",
-    x: 309,
-    y: 242,
+    name: "Assets",
+    partition: "object/attachment",
+    primitive: "Blob",
+    label: "Staged content and durable references to published Blob artifacts.",
+    x: 468.4,
+    y: 252,
+    icon: FolderArchive,
   },
   {
     name: "Runs",
     partition: "welcome/42",
     primitive: "Workflow",
     label: "Durable decisions with supervised external activities.",
-    x: 440,
-    y: 167,
+    x: 389.2,
+    y: 389.2,
+    icon: Workflow,
+  },
+  {
+    name: "Jobs",
+    partition: "shard/0",
+    primitive: "Queue",
+    label: "At-least-once messages with explicit claim leases.",
+    x: 230.8,
+    y: 389.2,
+    icon: ListTodo,
+  },
+  {
+    name: "Timers",
+    partition: "schedule/reminder",
+    primitive: "Cron",
+    label:
+      "Recorded, deduplicated schedule occurrences with explicit maintenance.",
+    x: 151.6,
+    y: 252,
+    icon: CalendarClock,
   },
 ];
+const cellHexagon = "M0 -88l76.2 44v88L0 88l-76.2-44v-88z";
+
 export function CellExplorer() {
   const [selected, setSelected] = useState(0);
   const cell = cells[selected];
   const id = useId();
+  const viewport = useDiagramFocus(cell.name);
   return (
     <div className="cell-explorer">
       <div className="explorer-heading">
         <span className="mono">ONE APPLICATION · MANY CELLS</span>
         <span className="diagram-badge">Explore a Cell</span>
       </div>
-      <svg
-        viewBox="0 0 620 365"
-        className="cell-map"
-        aria-labelledby={`${id}-title ${id}-desc`}
-        role="group"
+      <div
+        className="cell-hive-viewport"
+        ref={viewport}
+        role="region"
+        tabIndex={0}
+        aria-label="Scrollable Cell hive"
       >
-        <title id={`${id}-title`}>Independent SQLite-backed Cells</title>
-        <desc id={`${id}-desc`}>
-          Orders, Settings, Jobs and Runs each have a separate state partition
-          and one fenced writer. Choose a Cell below to explore it.
-        </desc>
-        <defs>
-          <pattern
-            id={`${id}-grid`}
-            width="26"
-            height="26"
-            patternUnits="userSpaceOnUse"
-          >
-            <circle cx="1" cy="1" r="1" fill="currentColor" opacity=".12" />
-          </pattern>
-        </defs>
-        <rect width="620" height="365" fill={`url(#${id}-grid)`} />
-        {cells.map((item, i) => (
-          <g
-            key={item.name}
-            role="button"
-            tabIndex={0}
-            aria-label={`Inspect ${item.name} Cell`}
-            aria-pressed={selected === i}
-            onClick={() => setSelected(i)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                setSelected(i);
-              }
-            }}
-            className={i === selected ? "cell-node selected" : "cell-node"}
-          >
-            <path d={`M${item.x} ${item.y - 82}l71 41v82l-71 41-71-41v-82z`} />
-            <text
-              x={item.x}
-              y={item.y - 17}
-              textAnchor="middle"
-              className="cell-label"
+        <svg
+          viewBox="0 0 620 515"
+          className="cell-map"
+          aria-labelledby={`${id}-title ${id}-desc`}
+          role="group"
+        >
+          <title id={`${id}-title`}>
+            Cellule surrounded by six independent Cells
+          </title>
+          <desc id={`${id}-desc`}>
+            Orders, Settings, Assets, Runs, Jobs, and Timers each have separate
+            SQLite state and one fenced writer. The center represents the
+            embedded Cellule framework, not another Cell or a shared database.
+            Select a surrounding hexagon to inspect its identity.
+          </desc>
+          <defs>
+            <pattern
+              id={`${id}-grid`}
+              width="26"
+              height="26"
+              patternUnits="userSpaceOnUse"
             >
-              {item.name}
+              <circle cx="1" cy="1" r="1" fill="currentColor" opacity=".1" />
+            </pattern>
+          </defs>
+          <rect width="620" height="515" fill={`url(#${id}-grid)`} />
+          <g className="cell-hive-center" transform="translate(310 252)">
+            <path d={cellHexagon} />
+            <g transform="translate(-17 -57)">
+              <CelluleMark />
+            </g>
+            <text y="8" textAnchor="middle" className="cell-label">
+              cellule.
             </text>
-            <text
-              x={item.x}
-              y={item.y + 8}
-              textAnchor="middle"
-              className="cell-role"
-            >
-              {item.primitive}
-            </text>
-            <rect
-              x={item.x - 40}
-              y={item.y + 26}
-              width="80"
-              height="22"
-              rx="11"
-            />
-            <text
-              x={item.x}
-              y={item.y + 41}
-              textAnchor="middle"
-              className="cell-writer"
-            >
-              one writer
+            <text y="33" textAnchor="middle" className="cell-role">
+              Embedded framework
             </text>
           </g>
-        ))}
-        <text x="30" y="338" className="map-note">
-          STABLE IDENTITY. MOVABLE OWNERSHIP.
-        </text>
-      </svg>
+          {cells.map((item, i) => {
+            const Icon = item.icon;
+            return (
+              <g
+                key={item.name}
+                transform={`translate(${item.x} ${item.y})`}
+                role="button"
+                tabIndex={0}
+                aria-label={`Inspect ${item.name} Cell`}
+                aria-pressed={selected === i}
+                onClick={() => setSelected(i)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelected(i);
+                  }
+                }}
+                className={i === selected ? "cell-node selected" : "cell-node"}
+              >
+                <path d={cellHexagon} />
+                <Icon
+                  x={-13}
+                  y={-55}
+                  width={26}
+                  height={26}
+                  className="cell-icon"
+                  aria-hidden="true"
+                />
+                <text y="-2" textAnchor="middle" className="cell-label">
+                  {item.name}
+                </text>
+                <text y="21" textAnchor="middle" className="cell-role">
+                  {item.primitive}
+                </text>
+                <rect x="-40" y="35" width="80" height="20" rx="10" />
+                <text y="49" textAnchor="middle" className="cell-writer">
+                  one writer
+                </text>
+              </g>
+            );
+          })}
+          <text x="310" y="503" textAnchor="middle" className="map-note">
+            STABLE IDENTITY · INDEPENDENT STATE
+          </text>
+        </svg>
+      </div>
+      <p className="hive-scroll-hint">
+        Swipe across the hive, or select a Cell below.
+      </p>
       <div className="cell-selector" aria-label="Select a Cell">
         {cells.map((item, i) => (
           <button
@@ -135,7 +195,7 @@ export function CellExplorer() {
           </button>
         ))}
       </div>
-      <div className="cell-inspector" aria-live="polite">
+      <div className="cell-inspector" aria-live="polite" aria-atomic="true">
         <div>
           <span className="mono">{cell.primitive} CELL</span>
           <strong>{cell.name}</strong>
@@ -143,7 +203,7 @@ export function CellExplorer() {
         </div>
         <dl>
           <div>
-            <dt>Partition</dt>
+            <dt>Example partition</dt>
             <dd>{cell.partition}</dd>
           </div>
           <div>
@@ -152,6 +212,10 @@ export function CellExplorer() {
           </div>
         </dl>
       </div>
+      <p className="hive-caption">
+        The center is the embedded framework. Each surrounding Cell has its own
+        SQLite state and fenced writer; the hive does not share a transaction.
+      </p>
     </div>
   );
 }
@@ -388,8 +452,39 @@ export function LayerExplorer() {
 }
 export function RecoveryExplorer() {
   const [valid, setValid] = useState(true);
+  const id = useId();
+  const stages = [
+    {
+      title: "Pinned root",
+      label: "SELECT AUTHORITY",
+      detail: "Authority selects state",
+      note: "Exact committed root",
+      icon: LockKeyhole,
+    },
+    {
+      title: "Verify every chunk",
+      label: "VERIFY BYTES",
+      detail: valid ? "Checksums + endpoints" : "Checksum mismatch",
+      note: valid ? "All required bytes verified" : "Verification fails here",
+      icon: valid ? FileCheck2 : FileWarning,
+    },
+    {
+      title: valid ? "Exact SQLite state" : "Restore blocked",
+      label: "RESTORE STATE",
+      detail: valid ? "State + request ledger" : "No partial reconstruction",
+      note: valid ? "Byte-identical restore" : "Required proof is missing",
+      icon: DatabaseBackup,
+    },
+    {
+      title: valid ? "Fenced successor" : "No Cell activation",
+      label: "ACTIVATE WRITER",
+      detail: valid ? "Resume recovered Cell" : "No writer is activated",
+      note: valid ? "Verified before activation" : "Preserve the failure",
+      icon: valid ? ShieldCheck : OctagonX,
+    },
+  ];
   return (
-    <div className="interactive-panel">
+    <div className="interactive-panel recovery-panel">
       <div className="panel-top">
         <span className="mono">EXACT RECOVERY</span>
         <div className="segmented">
@@ -401,48 +496,99 @@ export function RecoveryExplorer() {
           </button>
         </div>
       </div>
-      <svg
-        viewBox="0 0 720 170"
-        role="img"
-        aria-label={
-          valid
-            ? "Authority root to verified chunks to restored SQLite"
-            : "Invalid chunk fails verification and blocks activation"
-        }
-        className="recovery-svg"
+      <div
+        className="recovery-viewport"
+        role="region"
+        tabIndex={0}
+        aria-label="Scrollable recovery stages"
       >
-        <path d="M175 80h65m200 0h65" />
-        <g>
-          <rect x="15" y="40" width="160" height="80" rx="12" />
-          <text x="95" y="75" textAnchor="middle">
-            Pinned root
-          </text>
-          <text x="95" y="96" textAnchor="middle" className="small-svg">
-            Authority selects state
-          </text>
-        </g>
-        <g>
-          <rect x="240" y="40" width="200" height="80" rx="12" />
-          <text x="340" y="75" textAnchor="middle">
-            Verify every chunk
-          </text>
-          <text x="340" y="96" textAnchor="middle" className="small-svg">
+        <svg
+          viewBox="0 0 960 310"
+          role="img"
+          aria-labelledby={`${id}-title ${id}-desc`}
+          className="recovery-svg"
+        >
+          <title id={`${id}-title`}>
             {valid
-              ? "Bytes + checksums + endpoints"
-              : "Checksum does not match"}
+              ? "Authority root to verified chunks to restored SQLite and active successor"
+              : "Invalid chunk fails verification and blocks restoration and activation"}
+          </title>
+          <desc id={`${id}-desc`}>
+            {valid
+              ? "Authority selects the pinned root. Recovery verifies all required bytes, reconstructs SQLite and its request ledger byte-identically, then activates the fenced successor."
+              : "A checksum mismatch at the verification stage blocks restoration and Cell activation. A partial or plausible snapshot cannot replace the required proof."}
+          </desc>
+          <defs>
+            <marker
+              id={`${id}-arrow`}
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto"
+            >
+              <path d="M0 0L10 5L0 10z" fill="currentColor" />
+            </marker>
+          </defs>
+          {[0, 1, 2].map((i) => (
+            <path
+              key={i}
+              d={`M${214 + i * 241} 142h49`}
+              className={`recovery-connector ${!valid && i > 0 ? "is-blocked" : ""}`}
+              markerEnd={`url(#${id}-arrow)`}
+            />
+          ))}
+          {stages.map((stage, i) => {
+            const Icon = stage.icon;
+            return (
+              <g
+                key={stage.label}
+                transform={`translate(${24 + i * 241} 35)`}
+                className={`recovery-stage ${!valid && i === 1 ? "is-failed" : !valid && i > 1 ? "is-blocked" : ""}`}
+              >
+                <rect width="190" height="219" rx="14" />
+                <text x="18" y="28" className="recovery-step">
+                  0{i + 1} · {stage.label}
+                </text>
+                <Icon
+                  x="18"
+                  y="49"
+                  width="36"
+                  height="36"
+                  className="recovery-icon"
+                  aria-hidden="true"
+                />
+                <text x="18" y="118" className="recovery-title">
+                  {stage.title}
+                </text>
+                <text x="18" y="145" className="recovery-copy">
+                  {stage.detail}
+                </text>
+                <path d="M18 164h154" className="recovery-divider" />
+                <text x="18" y="187" className="recovery-copy">
+                  {stage.note}
+                </text>
+              </g>
+            );
+          })}
+          <text
+            x="480"
+            y="289"
+            textAnchor="middle"
+            className={`recovery-gate ${valid ? "is-verified" : "is-failed"}`}
+          >
+            {valid
+              ? "VERIFIED STATE → ACTIVATION ALLOWED"
+              : "VERIFICATION FAILED → ACTIVATION BLOCKED"}
           </text>
-        </g>
-        <g className={valid ? "verified" : "failed"}>
-          <rect x="505" y="40" width="200" height="80" rx="12" />
-          <text x="605" y="75" textAnchor="middle">
-            {valid ? "Exact SQLite state" : "Recovery fails"}
-          </text>
-          <text x="605" y="96" textAnchor="middle" className="small-svg">
-            {valid ? "Activate fenced successor" : "No Cell activation"}
-          </text>
-        </g>
-      </svg>
-      <p className="recovery-detail" aria-live="polite">
+        </svg>
+      </div>
+      <p className="recovery-scroll-hint">
+        Swipe to follow all four stages, or focus the diagram and use the arrow
+        keys.
+      </p>
+      <p className="recovery-detail" aria-live="polite" aria-atomic="true">
         {valid
           ? "A successor restores the authority-pinned root and resumes the recovered request ledger. Ownership changes; Cell identity stays stable."
           : "A plausible snapshot or partial listing cannot substitute for verified bytes. Recovery fails without activating the Cell."}
@@ -450,6 +596,7 @@ export function RecoveryExplorer() {
     </div>
   );
 }
+
 export function PrimitiveDiagram({ id }: { id: string }) {
   const primitive = primitives.find((item) => item.id === id);
   if (!primitive) return null;
