@@ -37,6 +37,35 @@ on every subsequent observation.
 
 ## Journal bound fleet actions
 
+### Fleet boot admission
+
+For a fleet-managed host, load its retained `NodeIntent` and pass it to
+`CellNodeBuilder::with_fleet_startup_intent` before building. The leased runtime
+holds its shared writer, reader and follower gate before the application can
+install a lease. An Active row must name this boot; a maintenance predecessor
+can build with admission held until the journal validates its successor.
+The offline unleased maintenance builder rejects this configuration.
+
+| Startup boundary | Required behavior |
+| --- | --- |
+| Build | Validate the retained intent, hold new roles, and install its sticky Cordoned/Draining mode. Missing or ambiguous rows fail before build. |
+| Enroll boot | Journal Pending before canonical directory creation. Only New permits first execution; an Existing request requires canonical inspection and its exact original evidence. |
+| Confirm | Call `confirm_fleet_startup(journal, enrollment_key)` after Established publication and lease installation. `FleetEnrollmentJournal::load_boot` reads the exact established boot and current intent in one transaction. Missing, pending, retired or foreign evidence cannot open admission. |
+| Start | Install required facilities/task supervision and finish probes, then call `start()`. Confirmation alone keeps the hold. Start checks the owned components and opens Active admission, or enters `NodeState::Maintenance` under retained cordon/drain. |
+| Route requests | Serving probes use `is_ready()`. Authorized management uses `is_management_ready()`, which includes Maintenance. Fleet action/inspection endpoints remain available there; new roles stay closed. |
+| Close | Join accepted work and runtime shutdown before fencing/withdrawing the boot and retiring its registry obligation. A canonical permanent session tombstone can settle a lost withdrawal reply; absence or expiry cannot. |
+
+Confirmation is a cancellable read. Concurrent confirmations cannot overwrite a
+newer checked intent with an older reply; a read that finishes after shutdown
+cannot reopen the node. Local startup checks do not replace an application's
+atomic enrollment policy, authentication, complete registry import or ongoing
+intent supervision. A journal transition after confirmation must still reach
+the shared local gate through the authorized maintenance action path.
+
+The [reference example](../examples/fleet_operations/README.md) wires this order
+to actual signed directory enrollment and one durable SQLite transaction domain.
+Reader/follower producers and complete fleet observation remain integration work.
+
 Install `CellNode::install_fleet_actions` during startup with a fleet/application
 scope, stable physical NodeId, an application-owned `FleetActionJournal`, and
 trusted `FleetCellProvider` inputs. The provider resolves catalog, replica,
@@ -59,7 +88,7 @@ same new-writer, reader, and follower admission gate after exact boot-bound
 journal acceptance. Existing owners keep serving until their movement barrier.
 Fresh inspection uses its separate request-bound method. The caller-driven
 reconciler supports cordon and settled movement; complete observation wiring,
-busy maintenance and role finalization remain under implementation in the
+complete primitive maintenance coverage and role finalization remain under implementation in the
 [fleet operations plan](../../../docs/fleet-operations-plan.md).
 
 | Event | Action executor behavior |
@@ -196,7 +225,8 @@ The application supplies the durable backend, authorization, and canonical
 enrollment evidence. The [fleet journal example](../examples/fleet_operations/README.md)
 implements all three journal contracts in one local SQLite transaction domain.
 Its focused tests exercise independent clients, lost commit replies and
-reconstruction. Complete observer coverage, enrollment producer wiring,
+reconstruction. Boot production uses the startup barrier above. Complete observer
+coverage, reader/follower producer wiring,
 maintenance finalization, and process/provider qualification remain required.
 
 

@@ -8,6 +8,7 @@ async fn measured_overload_moves_real_cells_after_durable_controller_reconstruct
     assert_eq!(summary.max_inflight, 2);
     assert!(summary.max_restore_bytes > 0 && summary.max_restore_bytes <= 8 << 30);
     assert_eq!(summary.joined_nodes, 3);
+    assert_eq!(summary.boot_retirements, 3);
     assert_eq!(summary.receiver_nodes, 2);
 }
 
@@ -24,5 +25,6 @@ async fn new_controller_adopts_lost_releases_after_real_expiry_and_joins_receive
     assert_eq!(summary.max_inflight, 2);
     assert!(summary.max_restore_bytes > 0 && summary.max_restore_bytes <= 8 << 30);
     assert_eq!(summary.joined_nodes, 3);
+    assert_eq!(summary.boot_retirements, 3);
     assert_eq!(summary.receiver_nodes, 2);
 }

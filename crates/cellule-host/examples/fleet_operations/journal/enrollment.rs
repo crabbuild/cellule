@@ -1,6 +1,38 @@
 use super::*;
 
 impl FleetEnrollmentJournal for SqliteJournal {
+    fn load_boot(
+        &self,
+        scope: FleetScope,
+        node: NodeId,
+        key: Digest,
+    ) -> FleetAdapterFuture<'_, Option<cellule_host::fleet::FleetBootObservation>> {
+        Box::pin(async move {
+            let observed = self
+                .run(move |db| {
+                    db.check_scope(scope)?;
+                    let (Some(intent), Some(enrollment)) = (db.intent(node)?, db.enrollment(key)?)
+                    else {
+                        return Ok(None);
+                    };
+                    Ok(Some(cellule_host::fleet::FleetBootObservation::new(
+                        intent, enrollment,
+                    )?))
+                })
+                .await?;
+            #[cfg(test)]
+            {
+                // Hold only the reply after the read transaction has joined.
+                // Another client can advance intent without a locked database.
+                let pause = self.inner.boot_reply.lock().unwrap().take();
+                if let Some(pause) = pause {
+                    let _ = pause.captured.send(());
+                    let _ = pause.resume.await;
+                }
+            }
+            Ok(observed)
+        })
+    }
     fn register_initial_intent<'a>(
         &'a self,
         intent: &'a NodeIntent,

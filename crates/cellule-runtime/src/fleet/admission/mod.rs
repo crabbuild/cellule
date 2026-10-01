@@ -16,6 +16,24 @@ struct State {
     pressure: NodePressure,
     sequence: u64,
     observed_at_ms: Option<i64>,
+    startup: Startup,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Startup {
+    Unconfigured,
+    Held,
+    Confirmed,
+}
+
+impl State {
+    fn effective_mode(self) -> NodeMode {
+        if self.startup == Startup::Held && self.mode == NodeMode::Active {
+            NodeMode::Cordoned
+        } else {
+            self.mode
+        }
+    }
 }
 
 /// One node's local writer, new-reader, and new-follower admission gate.
@@ -33,6 +51,7 @@ impl Default for NodeAdmission {
                 pressure: NodePressure::Normal,
                 sequence: 0,
                 observed_at_ms: None,
+                startup: Startup::Unconfigured,
             })),
         }
     }
@@ -45,7 +64,7 @@ impl NodeAdmission {
             .state
             .read()
             .map_err(|_| Error::Node("node admission lock poisoned"))?
-            .mode)
+            .effective_mode())
     }
 
     /// Checks current local admission; a stale peer advertisement cannot reopen it.
@@ -54,12 +73,61 @@ impl NodeAdmission {
             .state
             .read()
             .map_err(|_| Error::Node("node admission lock poisoned"))?;
-        if state.mode != NodeMode::Active {
+        if state.effective_mode() != NodeMode::Active {
             return Err(Error::CellDraining);
         }
         if state.pressure != NodePressure::Normal {
             return Err(Error::Capacity("node pressure"));
         }
+        Ok(())
+    }
+
+    /// Holds every new role before a fleet boot is enrolled. Install before
+    /// exposing the runtime or installing its required node lease. The hold
+    /// reports Cordoned until confirmation; it does not refresh measurements.
+    pub fn hold_startup(&self) -> Result<()> {
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| Error::Node("node admission lock poisoned"))?;
+        if state.startup != Startup::Unconfigured {
+            return Err(Error::Node("node startup admission already configured"));
+        }
+        let sequence = state
+            .sequence
+            .checked_add(1)
+            .ok_or(Error::Node("node admission sequence overflow"))?;
+        state.startup = Startup::Held;
+        state.sequence = sequence;
+        Ok(())
+    }
+
+    /// Confirms application-checked durable boot enrollment in its retained
+    /// mode. This only removes the startup hold: cordon, drain and pressure
+    /// remain independent. Returning to service requires a new runtime/session.
+    pub fn confirm_startup(&self, mode: NodeMode) -> Result<()> {
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| Error::Node("node admission lock poisoned"))?;
+        if state.startup == Startup::Unconfigured {
+            return Err(Error::Node("node startup admission is not configured"));
+        }
+        let mode = match (state.mode, mode) {
+            (NodeMode::Draining, _) | (_, NodeMode::Draining) => NodeMode::Draining,
+            (NodeMode::Cordoned, _) | (_, NodeMode::Cordoned) => NodeMode::Cordoned,
+            _ => NodeMode::Active,
+        };
+        if state.startup == Startup::Confirmed && state.mode == mode {
+            return Ok(());
+        }
+        let sequence = state
+            .sequence
+            .checked_add(1)
+            .ok_or(Error::Node("node admission sequence overflow"))?;
+        state.mode = mode;
+        state.startup = Startup::Confirmed;
+        state.sequence = sequence;
         Ok(())
     }
 
@@ -101,7 +169,7 @@ impl NodeAdmission {
         Ok(state
             .observed_at_ms
             .map(|observed_at_ms| NodeOperationalSample {
-                mode: state.mode,
+                mode: state.effective_mode(),
                 pressure: state.pressure,
                 sequence: state.sequence,
                 observed_at_ms,
@@ -139,7 +207,7 @@ impl NodeAdmission {
             .state
             .read()
             .map_err(|_| Error::Node("node admission lock poisoned"))?;
-        if state.mode != NodeMode::Active {
+        if state.effective_mode() != NodeMode::Active {
             return Err(Error::CellDraining);
         }
         if state.pressure != NodePressure::Normal {

@@ -49,10 +49,32 @@ impl CellNode {
             .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
         if *state == NodeState::Starting {
             self.require_components_present()?;
-            *state = NodeState::Ready;
+            let startup = self
+                .fleet_startup
+                .lock()
+                .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?;
+            if let Some(startup) = startup.as_ref() {
+                if !startup.confirmed {
+                    return Err(Error::Control(
+                        "CellNode fleet boot enrollment is unconfirmed",
+                    ));
+                }
+                self.runtime
+                    .node_admission()
+                    .confirm_startup(startup.intent.mode())?;
+                *state = if self.runtime.node_admission().mode()?
+                    == cellule_runtime::node::NodeMode::Active
+                {
+                    NodeState::Ready
+                } else {
+                    NodeState::Maintenance
+                };
+            } else {
+                *state = NodeState::Ready;
+            }
             return Ok(());
         }
-        if *state == NodeState::Ready {
+        if matches!(*state, NodeState::Ready | NodeState::Maintenance) {
             return Ok(());
         }
         Err(Error::Control(

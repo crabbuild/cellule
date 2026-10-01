@@ -158,7 +158,7 @@ fn retained_action_failure(error: Arc<Error>) -> Error {
     }
 }
 
-pub(super) fn operation(error: OperationError) -> Error {
+pub(crate) fn operation(error: OperationError) -> Error {
     Error::FleetOperation(Box::new(error))
 }
 

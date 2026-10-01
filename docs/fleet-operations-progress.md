@@ -4,6 +4,86 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 boot enrollment and startup barrier checkpoint
+
+Configured fleet hosts hold the runtime's existing writer, reader and follower
+gate before a lease can expose acquisition. `with_fleet_startup_intent` validates
+the retained physical row before runtime construction. Confirmation reads the
+exact Established boot and current intent through the new required atomic
+`FleetEnrollmentJournal::load_boot` contract. It records checked intent while
+leaving admission held. `start()` checks required facilities/task supervision
+before removing the hold. Cordon/drain and pressure remain independent and
+sticky; changing admission preserves the original measurement timestamp.
+
+A maintenance reboot enters `NodeState::Maintenance`: `is_ready()` stays false,
+while `is_management_ready()` exposes authorized action and inspection paths.
+The executor remains bound to this host's physical node, scope and session.
+Lifecycle/startup locking rejects a delayed proof older than a newer confirmed
+intent and rejects reads completing after shutdown. Applications still own
+authorization and delivery of intent transitions after startup confirmation.
+
+The executable now accepts Pending before actual signed canonical directory
+creation, publishes checked Established evidence, derives the lease guard from
+that advertisement, confirms the boot and starts the host. Existing ambiguous
+acceptance cannot repeat an unobserved creation. Independent SQLite reopening
+adopts a lost Established reply with the original evidence and time. Boot
+advertisements publish zero receive capacity until readiness; all samples are
+the actual runtime classifier output.
+
+Application boot owners remain retained through joined runtime shutdown,
+guard fencing, canonical directory withdrawal and registry retirement. A
+permanent exact-session tombstone adopts an already committed withdrawal;
+absence/expiry alone cannot settle an obligation. Replay checks the original
+spec and Established evidence and preserves a committed retirement. Both real
+movement commands require all three boot rows Retired at the final registry
+revision in addition to their existing resource-ledger checks.
+
+Seven public startup cases cover missing/Pending/foreign rows, contradictory
+same-revision modes, wrong Active boots, lost acceptance/Established replies,
+required-component checks, racing cordon, maintenance reboot management,
+delayed stale reads/shutdown and canonical withdrawal/retirement replay. Tests
+use actual local hosts, directory signing/validation and SQLite transactions.
+Initial fixtures incorrectly used a 60-second advertisement lifetime, mismatched
+directory image, a timestamp preceding the runtime sample and a stale registry
+version. Existing validators rejected them. A closed-journal assertion expected
+an IO error; the final test verifies its original `RuntimeClosed` source. Those
+fixture corrections did not alter any production qualification profile.
+
+| Final source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `5fc341bc31b098b3bacee3b7a8e98aca4f4c1d07` |
+| Complete repository Rust/Cargo manifest | 588 tracked/nonignored paths; sorted SHA256, two spaces, relative path lines. Manifest SHA256 `fbb3715e14316c2943866ab4c2a07a6b1d5517a90ed8db5b1cd850e9c320aa7d`. |
+| Runtime admission library selection | 4 passed; 491 filtered, none ignored. Two cases are new. |
+| Complete public host node target | 69 passed; none filtered or ignored. |
+| Complete executable example target | 51 passed; none filtered or ignored. Seven cases are new. |
+| Distinct scoped cases | 124 passed. |
+| Host/runtime library, public node and example Clippy | All features, warnings denied; passed. |
+| Host/runtime API documentation | All features, warnings denied; passed. |
+| Actual executable commands | Overload and controller-restart: each released/activated/retired two Cells, checked two receipts, joined three nodes and retired three boots. Peak restore charge 2,550,136,832 bytes under the unchanged 8-GiB/two-move budget. Replacement also adopted two lost replies at epoch 2 and joined two expired unused reservations. |
+| Static gates | Format, diff whitespace, module/boundaries, 108 Rust snippets, 1148 Markdown links, and 28 SQL/peer assertions with 565 links passed. |
+
+Commands use Rust/Cargo 1.97.0, the lockfile, `CARGO_INCREMENTAL=0` and the
+checkout's Workspace target directory. This finite local reference has no
+production heartbeat provider, complete reader/follower enrollment producers,
+complete observer, process-fault campaign or distributed journal qualification.
+The full plan remains active: role evacuation/finalization, remaining primitive
+and failure matrices, continuous-load convergence, runnable maintenance/receiver
+loss and W9–W10 deployment/operational qualification remain required.
+
+Baseline CI `5fc341b` passed MSRV (36914686533 / 110545650679), contract
+(36914686490), fuzz (36914686514), website (36914686782), fast/negative TLC
+(36914686630), object/follower capacity (36914686675) and Compose smoke
+(36914686644 / 110546093110). Broad TLC/simulator jobs were skipped. Routing
+(36914686644 / 110546092620) was still running when recorded.
+Workspace (36914686533 / 110545650944) failed the real controller-restart example
+at its strict two-lost-release assertion: 43 passed, one failed. Original log is
+retained at `/tmp/cellule-fleet-ci-36914686533-workspace.log`. The failing report
+did not identify which condition failed. The final source retains every assertion
+and the same three-second profile and now includes the complete bounded report,
+lost-reply count and original node completion in failure output. Local complete
+example runs pass, but they do not establish the CI failure's cause or resolution.
+This source requires its own CI; earlier routing failure evidence remains below.
+
 ## October 1 2026 public primitive maintenance checkpoint
 
 Five new public cases exercise `release_maintenance_cell_at` with actual typed

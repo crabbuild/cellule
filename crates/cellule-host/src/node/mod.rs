@@ -4,6 +4,11 @@ use super::*;
 use crate::builder::append_required_components;
 use crate::durability::run_node_durability_supervisor;
 
+pub(crate) struct FleetStartup {
+    pub(crate) intent: cellule_runtime::fleet::operations::NodeIntent,
+    pub(crate) confirmed: bool,
+}
+
 /// One started application host with an ordered drain/shutdown boundary.
 pub struct CellNode {
     pub(super) application: Arc<CompiledApplication>,
@@ -16,6 +21,7 @@ pub struct CellNode {
     pub(super) facilities: Arc<Mutex<Vec<CellNodeFacility>>>,
     pub(super) required_components: Arc<Mutex<Vec<&'static str>>>,
     pub(super) task_group: Arc<Mutex<Option<Arc<CellNodeTaskGroup>>>>,
+    pub(super) fleet_startup: Mutex<Option<FleetStartup>>,
 }
 impl CellNode {
     /// Returns the compiled application artifact owned by this node.
@@ -46,6 +52,20 @@ impl CellNode {
                 .ok()
                 .and_then(|task_group| task_group.as_ref().map(|group| group.is_healthy()))
                 .unwrap_or(false)
+    }
+    /// Reports management/recovery availability, including a drained-mode boot
+    /// whose durable enrollment is confirmed but whose serving gate stays shut.
+    #[must_use]
+    pub fn is_management_ready(&self) -> bool {
+        matches!(
+            self.state(),
+            NodeState::Ready | NodeState::ScalingDown | NodeState::Maintenance
+        ) && self
+            .task_group
+            .lock()
+            .ok()
+            .and_then(|tasks| tasks.as_ref().map(|group| group.is_healthy()))
+            .unwrap_or(false)
     }
     /// Returns current shared runtime admission metrics.
     #[must_use]

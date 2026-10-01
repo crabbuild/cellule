@@ -36,6 +36,14 @@ struct Inner {
     profile: FleetProfile,
     #[cfg(test)]
     lose_commit_reply: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    boot_reply: Mutex<Option<BootReplyPause>>,
+}
+
+#[cfg(test)]
+struct BootReplyPause {
+    captured: tokio::sync::oneshot::Sender<()>,
+    resume: tokio::sync::oneshot::Receiver<()>,
 }
 
 struct Activity {
@@ -108,6 +116,8 @@ impl SqliteJournal {
                 profile,
                 #[cfg(test)]
                 lose_commit_reply: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                boot_reply: Mutex::new(None),
             }),
         })
     }
@@ -167,6 +177,31 @@ impl SqliteJournal {
                 Ok(value)
             })
             .await?
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_next_boot_reply(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (captured, observed) = tokio::sync::oneshot::channel();
+        let (resume, paused) = tokio::sync::oneshot::channel();
+        let mut slot = self.inner.boot_reply.lock().unwrap();
+        assert!(slot.is_none());
+        *slot = Some(BootReplyPause {
+            captured,
+            resume: paused,
+        });
+        (observed, resume)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lose_next_commit_reply(&self) {
+        self.inner
+            .lose_commit_reply
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub async fn close(&self) -> JournalResult<()> {

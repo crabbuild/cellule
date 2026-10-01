@@ -18,7 +18,7 @@ mod reconciler;
 pub use actions::FleetActionCompletion;
 pub use cells::{FleetCellInputs, FleetCellProvider, FleetRecoveryInputs};
 pub use controller::{FleetJournal, FleetJournalSnapshot};
-pub use enrollment::{FleetEnrollmentAcceptance, FleetEnrollmentJournal};
+pub use enrollment::{FleetBootObservation, FleetEnrollmentAcceptance, FleetEnrollmentJournal};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};
 pub use reconciler::{
     FleetAttemptFailure, FleetObservation, FleetObserver, FleetOwnedCell, FleetReconcileReport,
@@ -26,6 +26,7 @@ pub use reconciler::{
 };
 
 pub(crate) use actions::FleetActionExecutor;
+pub(crate) use actions::operation;
 
 /// Stable name of the node-owned finite fleet-action executor.
 pub const FLEET_ACTION_COMPONENT: &str = "fleet-actions";

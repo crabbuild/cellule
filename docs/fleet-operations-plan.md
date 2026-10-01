@@ -57,8 +57,9 @@ tree. The detailed contracts later in this document govern each step.
 1. **Establish the checkpoint.** Read the root and affected crate guides,
    inventory the current diff, and record the source fingerprint. Compare
    existing code with W1–W4 before adding another implementation of a contract.
-2. **Finish observation coverage.** Wire boot, reader, and follower enrollment
-   producers to `FleetEnrollmentJournal`. Compose bounded ownership and role
+2. **Finish observation coverage.** Reuse the reference boot producer and host
+   startup barrier; wire reader and follower producers to `FleetEnrollmentJournal`.
+   Compose bounded ownership and role
    pages into `FleetObserver`; compare the membership and registry revisions
    before and after collection. An incomplete scan returns a typed blocker.
 3. **Connect transport and driver.** Implement the application's `FleetTransport`
@@ -104,7 +105,7 @@ package, reuse matching work, and run its gates before marking it complete.
 | W3 | Bounded actor ownership pages; worker measurements and conservative costs; residence and stable samples; mutation revision checks; persisted follower-lane pages; expired/fenced log-reference discovery; host managed-reader pages. | Complete the observer's membership/enrollment barrier and host action consumption, including accepted queries and retained peer views. Run all W3 gates against the current diff before marking the package complete. |
 | W4 | Runtime receiver preparation reserves actual Cell, memory, descriptor, affine SQL-job, and scoped LTX disk credit. The host journals source/receiver effects, confirms acquisition/recovery input before CAS and recovery position before actor admission, checks current serving, and owns work across dropped waiters. CleaningReceiver preserves release evidence and charged permits; unused credit can retire before ordinary admitted activation resumes. Public local tests cover receipt preservation, refusal, duplicates, basis faults, post-release cleanup, source loss, and ordinary-acquisition races. A separate fresh inspection path bypasses historical Inspect results and cannot start recovery; its finite jobs share the existing action bound and drain. | Complete recovery across receiver sessions and refusal/unknown reconciliation, complete observer consumption, maintenance role actions, durable production adapters, and all process/provider and W4 exit assertions. |
 | W5 | Public caller-driven reconciler and observation/transport contracts; production calls to the existing planner and reducer; phase CAS before dispatch, fresh serving checks, cooldown/post-batch journal reads, and permit projections. SQLite-backed sequencing tests exercise simulated effects, lost replies, deadlines and competing drivers. The overload executable moves two real Cells across three leased runtimes; controller-restart changes claimant after actual lease expiry and adopts lost releases. Maintenance now dispatches exact journal-bound Cordon, commits Cordoned then BeginEvacuation, and applies retained intent before donor selection. Partial fresh observations can evacuate settled normal-pressure donors; operation deadlines bound new moves. | Complete producer/observer wiring and the full W5 failure/concurrency evidence; source/receiver failure adoption, cross-session recovery, busy maintenance and all W5 exit evidence. |
-| W6 | Node-owned monotonic maintenance Cordon closes the existing shared role gate after acceptance. Driver retries/adopts lost cordon results and starts settled evacuation; deadlines and optional scheduling stop preserve intent. | Busy Cell quiescence and primitive completion paths, enrollment/startup barriers, and all W6 assertions. |
+| W6 | Node-owned monotonic Cordon closes the shared role gate. Driver retries/adopts lost results and dispatches explicit busy maintenance release using the peak receiver envelope. Canonical quiescence retains accepted foreground and native primitive completion. Public SQL, Queue, Effect, Activity and Workflow cases cover selected receipt/lease/expiry/waiter faults. Configured host startup holds all new roles until atomic Established boot/current intent confirmation and required probes; retained drain exposes management without serving. The example wires actual signed canonical boot enrollment and joined withdrawal/retirement. | Complete primitive/fault matrix, Cron and Blob external owners, reader/follower producer barriers, ongoing intent supervision, sustained traffic, and all W6 assertions. |
 | W7–W10 | Implementation targets and acceptance requirements below. | Role evacuation/finalization, complete maintenance and failure examples, fault qualification, and runbooks. |
 
 This planning pass does not certify the Rust implementation or provider/process
@@ -268,6 +269,7 @@ present API; the pseudocode below specifies the remaining orchestration.
 
 | Surface | Current state | Implementation instruction |
 | --- | --- | --- |
+| `CellNodeBuilder::with_fleet_startup_intent` and `CellNode::confirm_fleet_startup` | Present host startup barrier. | Load retained physical intent before build, journal canonical boot enrollment, then confirm its exact key. Confirmation keeps admission held until `start()` validates required facilities; Maintenance exposes management while serving/new roles stay closed. |
 | `CellNode::install_fleet_actions(scope, node, journal, cells)` | Present in host `node/fleet.rs`. | Install once during startup, before readiness. Supply the shared atomic action journal and trusted local Cell inputs. |
 | `CellNode::apply_fleet_action(action, now_ms)` | Present; returns a retained `FleetActionCompletion`. | Movement actions use this path. Check `committed`, retain unknown outcomes, and obtain fresh serving evidence. Maintenance integration remains required. |
 | `CellNode::inspect_fleet_action(request)` | Present; returns `FleetInspectionObservation`. | Use a fresh nonce, exact head/registry and endpoint, and exclusive capture deadline. Authenticate and validate the full request plus original capture interval; recheck head/registry when committing dependent decisions. Inspection starts no acquisition or cleanup effect; the shared lane can settle prior completed work. |
@@ -363,15 +365,16 @@ record, spawn one task per Cell, or expose Cell IDs as metric labels.
 
 ### Application startup and adapter handoff
 
-Implement and demonstrate this order in W8. The startup intent barrier and
-complete observer and startup intent barrier remain implementation targets; the local
-`install_fleet_actions(scope, node, journal, cells)` signature is present in the
-working tree. Its local receiver behavior has focused evidence; the full
-reconciler, maintenance, and deployment gates remain incomplete.
+The host startup intent barrier and reference boot producer implement the order
+below. Complete observer/role production, ongoing supervision and the full W8
+maintenance/deployment evidence remain required. See the
+[host startup contract](../crates/cellule-host/docs/lifecycle.md#fleet-boot-admission)
+and [recorded evidence](fleet-operations-progress.md).
 
 1. Load a stable physical NodeId, create a fresh boot session, and read its
    committed intent. Missing or ambiguous intent cannot open acquisition.
-   Install Cordoned/Draining intent before a startup path can admit new roles.
+   Pass it to `with_fleet_startup_intent` before build. The shared gate holds
+   writer/reader/follower admission, including under an Active row.
 2. Construct canonical catalog/storage inputs and the shared resource ledger.
    Build the CellNode with required owned components, including fleet actions.
    Install its lease through the startup path that keeps readiness closed.
@@ -379,11 +382,16 @@ reconciler, maintenance, and deployment gates remain incomplete.
    durability, reader, follower, and primitive facilities. The Cell provider
    resolves exact identity and local paths; remote requests carry no credentials
    or filesystem paths. Lookup performs no authority mutation or activation.
-4. Commit enrollment in the revisioned registry, reconcile retained obligations,
+4. Accept Pending in the shared registry before canonical boot advertisement,
+   publish checked Established evidence, and call `confirm_fleet_startup` with
+   the exact original enrollment key. Its journal read includes current intent
+   in the same transaction. Reconcile retained obligations,
    and publish signed observations from actual local samples. Complete ordinary
    startup probes. Open serving readiness only under the committed intent and
    local admission state. A draining reboot keeps its management/recovery path
-   available while rejecting new role enrollment.
+   available via `is_management_ready()` while rejecting new role enrollment.
+   Confirmation leaves the startup hold until `start()` checks required
+   components. Continued intent changes require the authorized action path.
 5. Compose one reconciler with the journal, observer, transport, and validated
    profile. Supervise its caller-driven loop; wake on progress and otherwise
    use the proposed 15-second interval. A dropped reconciliation waiter leaves

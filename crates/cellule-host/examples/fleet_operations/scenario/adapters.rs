@@ -110,7 +110,10 @@ impl FleetTransport for LocalFleet {
                 if !completion.committed
                     || !matches!(completion.outcome.outcome, FleetOutcome::Released(_))
                 {
-                    return Err(invalid("release failed before injected reply loss"));
+                    return Err(std::io::Error::other(format!(
+                        "release failed before injected reply loss: {completion:?}"
+                    ))
+                    .into());
                 }
                 self.lost_release_replies
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);

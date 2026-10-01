@@ -110,9 +110,9 @@ impl FleetReconcileReport {
 
 /// One caller-driven controller facade; it starts no scheduler or runtime.
 ///
-/// The current path cordons maintenance nodes and executes settled movement.
-/// Busy maintenance and node role
-/// finalization require their host barriers; an unfinished maintenance operation
+/// The path cordons maintenance nodes, executes settled movement, and invokes
+/// explicit busy maintenance release. Node role evacuation and finalization
+/// require their host barriers; an unfinished maintenance operation
 /// remains visible and cannot be reported complete by this facade.
 pub struct FleetReconciler {
     scope: FleetScope,

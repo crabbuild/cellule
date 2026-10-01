@@ -9,6 +9,9 @@ pub enum NodeState {
     Starting,
     /// The node serves Cells and may take new ownership.
     Ready,
+    /// A confirmed fleet boot exposes management/recovery while retained
+    /// cordon/drain intent keeps serving and new role admission closed.
+    Maintenance,
     /// Scale-down started: the node still serves but takes no new ownership.
     ScalingDown,
     /// The node is releasing its Cells and refuses new work.

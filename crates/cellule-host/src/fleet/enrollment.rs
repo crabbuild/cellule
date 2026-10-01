@@ -1,10 +1,52 @@
 use cellule_runtime::fleet::operations::{
-    EnrollmentEvent, EnrollmentRecord, EnrollmentSpec, FleetScope, NodeIntent, OperationId,
-    RegistryVersion,
+    EnrollmentEvent, EnrollmentRecord, EnrollmentRole, EnrollmentSpec, EnrollmentStatus,
+    FleetScope, NodeIntent, OperationError, OperationId, RegistryVersion,
 };
 use cellule_runtime::identity::{Digest, NodeId, SessionId};
 
 use super::FleetAdapterFuture;
+
+/// Current physical intent and established boot obligation read atomically.
+/// Canonical advertisement evidence is verified by the trusted journal adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FleetBootObservation {
+    intent: NodeIntent,
+    enrollment: EnrollmentRecord,
+}
+
+impl FleetBootObservation {
+    /// Checks an established boot against the same transaction's current intent.
+    /// An Active enrollment may finish after a cordon, without reopening it.
+    pub fn new(intent: NodeIntent, enrollment: EnrollmentRecord) -> Result<Self, OperationError> {
+        intent.to_bytes()?;
+        enrollment.to_bytes()?;
+        let spec = enrollment.spec();
+        let EnrollmentRole::Node { mode } = spec.role else {
+            return Err(OperationError::Conflict);
+        };
+        if enrollment.status() != EnrollmentStatus::Established
+            || spec.source.is_some()
+            || spec.scope != intent.scope()
+            || spec.target.node != intent.node()
+            || spec.target.session != intent.session()
+            || spec.target.intent_revision > intent.revision()
+            || (spec.target.intent_revision == intent.revision() && mode != intent.mode())
+        {
+            return Err(OperationError::Conflict);
+        }
+        Ok(Self { intent, enrollment })
+    }
+    /// Returns the current retained physical-node intent.
+    #[must_use]
+    pub const fn intent(&self) -> &NodeIntent {
+        &self.intent
+    }
+    /// Returns the established original boot obligation and canonical evidence.
+    #[must_use]
+    pub const fn enrollment(&self) -> &EnrollmentRecord {
+        &self.enrollment
+    }
+}
 
 /// Atomic pending enrollment or its original retained request.
 pub enum FleetEnrollmentAcceptance {
@@ -23,6 +65,16 @@ pub enum FleetEnrollmentAcceptance {
 /// Advance the shared RegistryVersion atomically with every actual row change;
 /// exact duplicates return original records without refreshing evidence time.
 pub trait FleetEnrollmentJournal: Send + Sync + 'static {
+    /// Loads current intent and the exact established boot in one transaction.
+    /// Missing rows return None. Pending/refused/retired, foreign-role/session
+    /// or contradictory rows fail closed. Never return a cached older intent.
+    fn load_boot(
+        &self,
+        scope: FleetScope,
+        node: NodeId,
+        key: Digest,
+    ) -> FleetAdapterFuture<'_, Option<FleetBootObservation>>;
+
     /// Creates an initial Active physical-node row only when absent. An existing
     /// identical row is idempotent; any different row conflicts. Never overwrite
     /// an older retained cordon with a boot's default configuration.

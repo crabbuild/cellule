@@ -1,12 +1,79 @@
 use super::*;
 use crate::fleet::{
     FLEET_ACTION_COMPONENT, FleetActionCompletion, FleetActionExecutor, FleetActionJournal,
-    FleetCellProvider,
+    FleetCellProvider, FleetEnrollmentJournal,
 };
 use cellule_runtime::fleet::operations::{FleetAction, FleetScope};
 use cellule_runtime::identity::NodeId;
 
 impl CellNode {
+    /// Confirms startup against an atomic current-intent/established-boot read.
+    /// The application first journals Pending, performs canonical directory
+    /// enrollment and publishes checked evidence. Missing, pending or ambiguous
+    /// evidence leaves all new roles and readiness closed. This read is safely
+    /// cancellable. Start removes the hold only after all owned startup probes.
+    pub async fn confirm_fleet_startup(
+        &self,
+        journal: &dyn FleetEnrollmentJournal,
+        enrollment_key: cellule_runtime::Digest,
+    ) -> cellule_runtime::Result<()> {
+        let original = self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .as_ref()
+            .map(|startup| startup.intent.clone())
+            .ok_or(Error::Control("CellNode fleet startup is not configured"))?;
+        let observed = journal
+            .load_boot(original.scope(), original.node(), enrollment_key)
+            .await
+            .map_err(|source| Error::Facility {
+                name: "fleet-enrollment-journal",
+                source,
+            })?
+            .ok_or(Error::Control("CellNode fleet boot enrollment is absent"))?;
+        let intent = observed.intent();
+        let enrollment = observed.enrollment();
+        if intent.scope() != original.scope()
+            || intent.node() != original.node()
+            || intent.session() != self.session
+            || intent.revision() < original.revision()
+            || enrollment.spec().key().map_err(crate::fleet::operation)? != enrollment_key
+        {
+            return Err(Error::Fenced);
+        }
+        // Lifecycle-before-startup matches start(). Shutdown cannot race an
+        // asynchronous read into reopening the already-draining host.
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
+        if *state != NodeState::Starting {
+            return Err(Error::CellDraining);
+        }
+        let mut startup = self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?;
+        let startup = startup
+            .as_mut()
+            .ok_or(Error::Control("CellNode fleet startup is not configured"))?;
+        if intent.revision() < startup.intent.revision()
+            || (intent.revision() == startup.intent.revision() && intent != &startup.intent)
+        {
+            return Err(Error::Fenced);
+        }
+        match intent.mode() {
+            cellule_runtime::node::NodeMode::Active => {}
+            cellule_runtime::node::NodeMode::Cordoned => self.runtime.node_admission().cordon()?,
+            cellule_runtime::node::NodeMode::Draining => {
+                self.runtime.node_admission().begin_drain()?
+            }
+        }
+        startup.intent = intent.clone();
+        startup.confirmed = true;
+        Ok(())
+    }
     /// Captures read-only request-bound evidence through the owned fleet lane.
     /// Authenticate the caller first. The node checks current journal state and
     /// actual authority/actor readiness; cached effect replies are not consulted
@@ -16,7 +83,7 @@ impl CellNode {
         request: cellule_runtime::fleet::operations::FleetInspectionRequest,
     ) -> Result<Arc<cellule_runtime::fleet::operations::FleetInspectionObservation>, Arc<Error>>
     {
-        if !self.is_ready() {
+        if !self.is_management_ready() {
             return Err(Arc::new(Error::CellDraining));
         }
         let executor = self
@@ -38,6 +105,15 @@ impl CellNode {
         journal: Arc<dyn FleetActionJournal>,
         cells: Arc<dyn FleetCellProvider>,
     ) -> cellule_runtime::Result<()> {
+        if let Some(startup) = self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .as_ref()
+            && (startup.intent.scope() != scope || startup.intent.node() != node)
+        {
+            return Err(Error::Fenced);
+        }
         let executor = Arc::new(FleetActionExecutor::new(
             self.runtime.clone(),
             scope,
@@ -62,8 +138,9 @@ impl CellNode {
     /// Executes a journal-bound movement or cordon independently of its waiter.
     ///
     /// Applications authenticate the caller before invoking this local boundary.
-    /// The current executor supports settled movement, receiver inspection, and
-    /// maintenance cordon through the shared new-role gate. Role settlement and
+    /// The executor supports settled movement, explicit busy maintenance
+    /// release, receiver inspection, and cordon through the shared role gate.
+    /// Role settlement and
     /// finalization require their host barriers and are refused. Count a
     /// result only when `committed` is true, then inspect current serving evidence.
     /// Raw Inspect actions are refused: use `inspect_fleet_action` so a durable
@@ -73,7 +150,7 @@ impl CellNode {
         action: FleetAction,
         now_ms: i64,
     ) -> Result<Arc<FleetActionCompletion>, Arc<Error>> {
-        if !self.is_ready() {
+        if !self.is_management_ready() {
             return Err(Arc::new(Error::CellDraining));
         }
         let executor = self

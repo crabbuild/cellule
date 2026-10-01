@@ -4,6 +4,7 @@
 
 mod adapters;
 mod application;
+mod startup;
 #[cfg(test)]
 mod tests;
 
@@ -103,6 +104,7 @@ pub(super) struct ScenarioSummary {
     pub max_inflight: usize,
     pub max_restore_bytes: u64,
     pub joined_nodes: usize,
+    pub boot_retirements: usize,
     pub receiver_nodes: usize,
     pub lost_release_replies: usize,
     pub controller_epoch: u64,
@@ -133,13 +135,50 @@ async fn execute(restart: bool) -> JournalResult<ScenarioSummary> {
     };
     let journal = Arc::new(SqliteJournal::open(path.clone(), scope(), profile, clock()?).await?);
     let mut nodes = Vec::new();
-    let result = run(&root, path, journal.clone(), &mut nodes, profile, restart).await;
+    let mut boots = Vec::new();
+    let result = run(
+        &root,
+        path,
+        journal.clone(),
+        &mut nodes,
+        &mut boots,
+        profile,
+        restart,
+    )
+    .await;
     let mut cleanup_error = None;
     for node in &nodes {
         if let Err(error) = node.shutdown().await
             && cleanup_error.is_none()
         {
             cleanup_error = Some(Box::new(error) as JournalError);
+        }
+    }
+    for boot in &boots {
+        if let Err(error) = boot.withdraw(&journal).await
+            && cleanup_error.is_none()
+        {
+            cleanup_error = Some(error);
+        }
+    }
+    if result.is_ok() && cleanup_error.is_none() {
+        let checked = async {
+            let version = journal.load_snapshot(scope()).await?.registry();
+            let page = journal.enrollments_page(version, None, 128).await?;
+            if boots.len() != nodes.len()
+                || page.next().is_some()
+                || page.entries().len() != boots.len()
+                || page.entries().iter().any(|entry| {
+                    entry.status() != cellule_runtime::fleet::operations::EnrollmentStatus::Retired
+                })
+            {
+                return Err(invalid("example boot registry still has obligations"));
+            }
+            Ok::<_, JournalError>(())
+        }
+        .await;
+        if let Err(error) = checked {
+            cleanup_error = Some(error);
         }
     }
     if let Err(error) = journal.close().await
@@ -181,6 +220,7 @@ async fn execute(restart: bool) -> JournalResult<ScenarioSummary> {
         return Err(error);
     }
     summary.joined_nodes = nodes.len();
+    summary.boot_retirements = boots.len();
     Ok(summary)
 }
 
@@ -189,6 +229,7 @@ async fn run(
     path: PathBuf,
     journal: Arc<SqliteJournal>,
     nodes: &mut Vec<Arc<CellNode>>,
+    boots: &mut Vec<startup::BootOwner>,
     profile: FleetProfile,
     restart: bool,
 ) -> JournalResult<ScenarioSummary> {
@@ -242,7 +283,20 @@ async fn run(
         );
     }
     let records = Arc::new(records);
+    let directory = cellule_runtime::node::NodeDirectory::new(
+        layout.clone(),
+        scope().fleet,
+        Digest::from_bytes([31; 32]),
+        application.registry().release_digest(),
+    );
     for index in 0..3 {
+        let intent = journal
+            .register_initial_intent(&NodeIntent::initial(
+                scope(),
+                node_id(index),
+                session(index),
+            )?)
+            .await?;
         let node = Arc::new(
             CellNodeBuilder::new(application.clone())
                 .with_runtime(
@@ -251,18 +305,12 @@ async fn run(
                 )
                 .with_replica_host(Host::default().with_local_disk_budget(DiskBudget::new(8 << 30)))
                 .with_session(session(index))
+                .with_fleet_startup_intent(intent.clone())
                 .build()?,
         );
         // Register the runtime owner immediately so any later setup failure
         // still joins it before dropping private paths or the journal.
         nodes.push(node.clone());
-        journal
-            .register_initial_intent(&NodeIntent::initial(
-                scope(),
-                node_id(index),
-                session(index),
-            )?)
-            .await?;
         node.install_task_group(CancellationToken::new(), CancellationToken::new())?;
         node.install_fleet_actions(
             scope(),
@@ -274,8 +322,23 @@ async fn run(
                 root: root.path().into(),
             }),
         )?;
-        let now = clock()?;
-        node.install_node_lease_for_startup(NodeLeaseGuard::new(now, now + 60_000)?)?;
+        let ad = startup::advertisement(index, &node, &intent).await?;
+        let expires = ad.expires_at_ms();
+        let spec = startup::spec(&intent)?;
+        let boot_index = boots.len();
+        boots.push(startup::BootOwner {
+            node: node.clone(),
+            directory: directory.clone(),
+            spec: spec.clone(),
+            advertisement: ad.clone(),
+            guard: None,
+        });
+        let boot = startup::enroll(&journal, &directory, &spec, ad, clock()?).await?;
+        let guard = NodeLeaseGuard::new(clock()?, expires)?;
+        node.install_node_lease_for_startup(guard.clone())?;
+        boots[boot_index].guard = Some(guard);
+        node.confirm_fleet_startup(journal.as_ref(), boot.spec().key()?)
+            .await?;
         node.start()?;
     }
     let mut acknowledged = HashMap::new();
@@ -408,9 +471,13 @@ async fn run(
                 != 2
             || lost.snapshot.head().attempts().len() != 2
         {
-            return Err(invalid(
-                "reply loss did not retain both unconfirmed releases",
-            ));
+            return Err(std::io::Error::other(format!(
+                "reply loss did not retain both unconfirmed releases: {lost:?}; lost replies={}",
+                fleet
+                    .lost_release_replies
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            ))
+            .into());
         }
         let expires = lost
             .snapshot
@@ -485,6 +552,7 @@ async fn settle(
         max_inflight: specs.len(),
         max_restore_bytes: specs.iter().map(|spec| spec.cost.disk_bytes).sum(),
         joined_nodes: 0,
+        boot_retirements: 0,
         receiver_nodes: specs
             .iter()
             .map(|spec| spec.destination)

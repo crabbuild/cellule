@@ -259,6 +259,15 @@ store integrations must install `runtime.node_admission()` using
 `FollowerStore::with_node_admission` before sharing the store. Existing enrolled
 tail appends and existing reader refreshes continue under their normal fences.
 
+Fleet-managed hosts additionally hold this same gate with
+`NodeAdmission::hold_startup` before installing a lease. While held, an otherwise
+Active node reports Cordoned. `confirm_startup(mode)` removes only that hold;
+it preserves a racing cordon/drain and pressure, increments the measurement
+sequence, and leaves the original sample time unchanged. The host calls it only
+after atomic boot/intent confirmation and required startup checks. These local
+methods supply no remote authorization or canonical enrollment proof. See
+[fleet boot admission](../../cellule-host/docs/lifecycle.md#fleet-boot-admission).
+
 Old strict JSON readers reject the added schema 3 field. Deploy upgraded
 readers throughout the fleet while continuing schema 2 output, then enable
 schema 3 production through application rollout policy. Complete the
@@ -1000,5 +1009,5 @@ The driver can plan with it only for the exact boot/node of a retained Evacuatin
 maintenance operation and a fresh authenticated collection barrier. Receiver
 preparation precedes source quiescence and rechecks the actual cost. Ordinary
 pressure/count moves retain their settled-sample rules. Complete primitive
-acceptance, startup intent barriers and role finalization remain required by the
+acceptance, reader/follower producer wiring and role finalization remain required by the
 [fleet implementation plan](../../../docs/fleet-operations-plan.md).

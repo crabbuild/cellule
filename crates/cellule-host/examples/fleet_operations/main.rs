@@ -23,7 +23,7 @@ async fn main() -> JournalResult<()> {
             scenario::overload().await?
         };
         println!(
-            "released={} activated={} retired={} receipt_checks={} max_inflight={} max_restore_bytes={} joined_nodes={} receiver_nodes={} lost_release_replies={} controller_epoch={} expired_receiver_cleanups={} blocker_count={}",
+            "released={} activated={} retired={} receipt_checks={} max_inflight={} max_restore_bytes={} joined_nodes={} boot_retirements={} receiver_nodes={} lost_release_replies={} controller_epoch={} expired_receiver_cleanups={} blocker_count={}",
             summary.released,
             summary.activated,
             summary.retired,
@@ -31,6 +31,7 @@ async fn main() -> JournalResult<()> {
             summary.max_inflight,
             summary.max_restore_bytes,
             summary.joined_nodes,
+            summary.boot_retirements,
             summary.receiver_nodes,
             summary.lost_release_replies,
             summary.controller_epoch,

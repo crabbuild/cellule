@@ -23,7 +23,23 @@ independent SQLite controller client before settling movement. Both receiver
 nodes restore state, resolve the original command outcomes and confirm the old
 source handles are fenced. Exit joins all three runtimes and the journal and
 checks their resource ledgers are empty. Output separates release, activation,
-retirement, receipt checks, shared budget maxima and advisory blockers.
+retirement, receipt checks, shared budget maxima and advisory blockers. It also
+reports three confirmed boot retirements after joined runtime shutdown.
+
+Each boot now registers its retained physical intent, builds with the shared
+startup hold, journals Pending, and creates its actual signed advertisement in
+the canonical `NodeDirectory`. Established publication and an atomic boot/intent
+read precede `start()`. Confirmation preserves the role hold until the ordinary
+required-component checks pass. Boot advertisements expose zero receive capacity
+before readiness; later observations use actual runtime samples. The finite
+example derives its local lease guard from the canonical advertisement's expiry;
+it uses no production heartbeat/provider implementation.
+
+The application owns each original boot advertisement until all runtimes join.
+Cleanup fences its guard, withdraws through the canonical directory, checks the
+permanent session tombstone, and retires the exact registry obligation. Replay
+can adopt an already committed withdrawal or retirement. A missing advertisement,
+lease expiry or unresolved Pending record alone cannot prove closure.
 
 This measures **admission pressure**, not physical disk usage or throughput. The
 actor retains its existing local eviction budget; fleet counts cover only its
@@ -81,6 +97,7 @@ the host library remains provider neutral.
 | Controller and permits | `BEGIN IMMEDIATE` compares the complete head and registry version, then invokes the pure reducer and current intent allocation gate. |
 | Maintenance | Publish the physical-node intent and retained operation with the head. Keep the original request separately from later deadline and boot changes. Earlier cordons survive later operations. |
 | Enrollment | Check exact source/target intent rows and publish Pending in one transaction. Full input comparison precedes current intent checks on replay. Pending remains an obligation after expiry. |
+| Boot confirmation | Read current physical intent and the exact Established node enrollment in one transaction; reject pending/settled/foreign records. No cached older intent can open readiness. |
 | Action acceptance | Check current head, permit, endpoint and intents before inserting the immutable acceptance. Key includes action digest, physical node and boot; source and receiver inspections remain distinct. |
 | Unaccepted action | `ResolveUnaccepted` checks that the exact attempt/effect/endpoint has no acceptance in the same `BEGIN IMMEDIATE` transaction that advances the head revision. A delayed old envelope then fails; an acceptance that won the race prevents retry. Both permits remain charged. |
 | Results and recovery | Retain original acquisition/recovery inputs and positions. Require matching basis/evidence before publishing successful activation or recovery. Unknown may advance to checked completion; terminal results are immutable. |
@@ -123,6 +140,13 @@ The separate `scenario::tests` cases invoke the same real-node implementations
 as the `overload` and `controller-restart` commands. The model tests do not create Cell actors. Planned
 maintenance and receiver-loss scenarios still require their complete barriers;
 controller replacement here retains all three live node sessions.
+
+Public startup cases cover missing/Pending/foreign records, lost acceptance and
+Established replies, a cordon racing accepted enrollment, a drained-mode reboot
+with management available, delayed stale confirmation, shutdown racing a read,
+original backend errors, and canonical boot withdrawal/retirement replay. They
+use real local runtimes/directory/SQLite with explicit reply faults. They do not
+cover process crashes, a distributed journal or a complete role registry.
 
 The journal's cooldown and post-batch queries compare the complete expected
 snapshot and walk only its committed progress chain, one bounded page at a time.

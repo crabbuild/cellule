@@ -11,6 +11,7 @@ pub struct CellNodeBuilder {
     pub(super) node_retained_bytes: Option<usize>,
     pub(super) required_components: Vec<&'static str>,
     pub(super) follower_store: Option<(PathBuf, ReplicaLimits, DiskBudget)>,
+    pub(super) fleet_startup: Option<cellule_runtime::fleet::operations::NodeIntent>,
 }
 
 pub(crate) struct CellNodeParts {
@@ -21,6 +22,7 @@ pub(crate) struct CellNodeParts {
     pub(super) node_retained_bytes: usize,
     pub(super) required_components: Vec<&'static str>,
     pub(super) follower_store: Option<(PathBuf, ReplicaLimits, DiskBudget)>,
+    pub(super) fleet_startup: Option<cellule_runtime::fleet::operations::NodeIntent>,
 }
 
 impl CellNodeBuilder {
@@ -35,6 +37,7 @@ impl CellNodeBuilder {
             node_retained_bytes: None,
             required_components: Vec::new(),
             follower_store: None,
+            fleet_startup: None,
         }
     }
 
@@ -57,6 +60,19 @@ impl CellNodeBuilder {
     #[must_use]
     pub fn with_session(mut self, session: SessionId) -> Self {
         self.session = Some(session);
+        self
+    }
+
+    /// Holds writer/reader/follower admission until this boot's established
+    /// enrollment and current intent are read from the shared fleet journal.
+    /// Supply the retained physical-node row; missing or ambiguous rows must
+    /// fail before building. A draining predecessor cannot reopen this boot.
+    #[must_use]
+    pub fn with_fleet_startup_intent(
+        mut self,
+        intent: cellule_runtime::fleet::operations::NodeIntent,
+    ) -> Self {
+        self.fleet_startup = Some(intent);
         self
     }
 
@@ -91,6 +107,7 @@ impl CellNodeBuilder {
             node_retained_bytes,
             required_components,
             follower_store,
+            fleet_startup,
         } = self.required_parts()?;
         let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
             pool,
@@ -99,6 +116,15 @@ impl CellNodeBuilder {
             replica_host,
         )?;
         install_application_limits(&runtime, &application)?;
+        if let Some(intent) = &fleet_startup {
+            let admission = runtime.node_admission();
+            admission.hold_startup()?;
+            match intent.mode() {
+                cellule_runtime::node::NodeMode::Active => {}
+                cellule_runtime::node::NodeMode::Cordoned => admission.cordon()?,
+                cellule_runtime::node::NodeMode::Draining => admission.begin_drain()?,
+            }
+        }
         let node = CellNode {
             application,
             runtime,
@@ -110,6 +136,10 @@ impl CellNodeBuilder {
             facilities: Arc::new(Mutex::new(Vec::new())),
             required_components: Arc::new(Mutex::new(required_components)),
             task_group: Arc::new(Mutex::new(None)),
+            fleet_startup: Mutex::new(fleet_startup.map(|intent| crate::node::FleetStartup {
+                intent,
+                confirmed: false,
+            })),
         };
         node.install_follower_store(follower_store)?;
         Ok(node)
@@ -120,6 +150,9 @@ impl CellNodeBuilder {
     /// This path intentionally uses object-only runtime admission: the caller
     /// must keep the host private and may not expose serving readiness.
     pub fn build_unleased_for_maintenance(self) -> cellule_runtime::Result<CellNode> {
+        if self.fleet_startup.is_some() {
+            return Err(Error::Control("fleet startup requires a leased host"));
+        }
         let CellNodeParts {
             application,
             pool,
@@ -128,6 +161,7 @@ impl CellNodeBuilder {
             node_retained_bytes,
             required_components,
             follower_store,
+            fleet_startup: _,
         } = self.required_parts()?;
         let runtime =
             CellRuntime::new_with_replica_host(pool, node_retained_bytes, session, replica_host)?;
@@ -143,6 +177,7 @@ impl CellNodeBuilder {
             facilities: Arc::new(Mutex::new(Vec::new())),
             required_components: Arc::new(Mutex::new(required_components)),
             task_group: Arc::new(Mutex::new(None)),
+            fleet_startup: Mutex::new(None),
         };
         node.install_follower_store(follower_store)?;
         Ok(node)
@@ -161,6 +196,14 @@ impl CellNodeBuilder {
         if session.as_bytes().iter().all(|byte| *byte == 0) {
             return Err(Error::Control("CellNode node session is zero"));
         }
+        if let Some(intent) = &self.fleet_startup {
+            intent.to_bytes().map_err(crate::fleet::operation)?;
+            if intent.mode() == cellule_runtime::node::NodeMode::Active
+                && intent.session() != session
+            {
+                return Err(Error::Fenced);
+            }
+        }
         let node_retained_bytes = self
             .node_retained_bytes
             .filter(|bytes| *bytes != 0)
@@ -173,6 +216,7 @@ impl CellNodeBuilder {
             node_retained_bytes,
             required_components: self.required_components,
             follower_store: self.follower_store,
+            fleet_startup: self.fleet_startup,
         })
     }
 }
