@@ -6,6 +6,7 @@ use cellule_runtime::fleet::telemetry::{CellTelemetry, CommandResponseSource, Pu
 mod admission;
 mod proofs;
 mod recovery;
+mod retirement;
 
 #[derive(Default)]
 pub(super) struct RecordingResponses(

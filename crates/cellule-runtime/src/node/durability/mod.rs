@@ -8,7 +8,8 @@ use crate::identity::NodeId;
 use crate::identity::SessionId;
 use crate::node::lease::NodeLeaseGuard;
 use crate::node::log::{
-    CommitTicket, DurabilityGate, DurabilityProof, DurabilitySource, NodeLogRotationBarrier,
+    CommitTicket, DurabilityGate, DurabilityProof, DurabilitySource, NodeLogRetirementObservation,
+    NodeLogRetirementProof, NodeLogRotationBarrier,
 };
 use crate::node::log_shipper::{NodeLogShipper, NodeLogSubmission};
 use crate::node::log_transport::NodeLogTransport;
@@ -120,6 +121,8 @@ pub struct NodeDurability {
     activated: OnceCell<()>,
     object_coverage: Mutex<()>,
     shutdown: Mutex<()>,
+    retirement: std::sync::Mutex<Option<Arc<NodeLogRetirementObservation>>>,
+    retirement_proof: OnceCell<Arc<NodeLogRetirementProof>>,
     closed: std::sync::atomic::AtomicBool,
 }
 
@@ -143,6 +146,8 @@ impl NodeDurability {
             activated: OnceCell::new(),
             object_coverage: Mutex::new(()),
             shutdown: Mutex::new(()),
+            retirement: std::sync::Mutex::new(None),
+            retirement_proof: OnceCell::new(),
             closed: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -251,19 +256,76 @@ impl NodeDurability {
         Ok(proof)
     }
 
-    /// Drains accepted frames and permanently closes fleet issuance for this epoch.
+    /// Returns this binding's exact enrolled log epoch.
+    pub fn log_epoch(&self) -> Result<u64> {
+        self.gate.log_epoch()
+    }
+
+    /// Returns the latest joined member results, preserving individual errors.
+    /// This observation does not assert complete retirement or current authority.
+    pub fn retirement_observation(&self) -> Result<Option<Arc<NodeLogRetirementObservation>>> {
+        Ok(self
+            .retirement
+            .lock()
+            .map_err(|_| Error::Node("node-log retirement lock poisoned"))?
+            .clone())
+    }
+
+    /// Drains accepted frames and closes this epoch using ordinary best-effort
+    /// member retirement. Inspect retained results before fleet finalization.
     pub async fn shutdown(&self) -> Result<()> {
+        self.shutdown_epoch(false).await.map(|_| ())
+    }
+
+    /// Closes this epoch only after every member confirms its exact append fence.
+    /// Object coverage still precedes retirement. A failed member blocks the
+    /// authority close and remains retryable; healthy siblings are joined first.
+    /// Ordinary closure without complete receipts cannot later manufacture proof.
+    pub async fn shutdown_for_maintenance(&self) -> Result<Arc<NodeLogRetirementProof>> {
+        self.shutdown_epoch(true).await?.ok_or(Error::Node(
+            "node-log member retirement remains unconfirmed",
+        ))
+    }
+
+    async fn shutdown_epoch(
+        &self,
+        require_confirmation: bool,
+    ) -> Result<Option<Arc<NodeLogRetirementProof>>> {
         let _shutdown = self.shutdown.lock().await;
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Ok(());
+            let proof = self.retirement_proof.get().cloned();
+            if require_confirmation && proof.is_none() {
+                return Err(Error::Node(
+                    "node-log member retirement remains unconfirmed",
+                ));
+            }
+            return Ok(proof);
         }
         self.shipper.shutdown().await?;
         let barrier = self.gate.begin_rotation()?;
-        crate::node::log::retire_node_log(Arc::clone(&self.transport), &barrier).await?;
+        let observation = Arc::new(
+            crate::node::log::retire_node_log(Arc::clone(&self.transport), &barrier).await?,
+        );
+        *self
+            .retirement
+            .lock()
+            .map_err(|_| Error::Node("node-log retirement lock poisoned"))? =
+            Some(Arc::clone(&observation));
+        let confirmation = observation.confirmed();
+        let proof = if require_confirmation {
+            Some(Arc::new(confirmation?))
+        } else {
+            confirmation.ok().map(Arc::new)
+        };
         self.authority.close(&barrier).await?;
+        if let Some(proof) = &proof {
+            self.retirement_proof
+                .set(Arc::clone(proof))
+                .map_err(|_| Error::Node("node-log retirement proof already installed"))?;
+        }
         self.closed
             .store(true, std::sync::atomic::Ordering::Release);
-        Ok(())
+        Ok(proof)
     }
 }
 

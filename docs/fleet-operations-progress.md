@@ -4,6 +4,68 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 confirmed member retirement checkpoint
+
+`NodeDurability::shutdown_for_maintenance` now shares the existing shipper drain,
+contiguous object-publication barrier and authority close path. It joins every
+original member, retains individual source errors and requires every exact
+retirement receipt before authority closure. A failed response remains retryable
+with the original leader, epoch, complete member set and watermark. The opaque
+member proof is cached only after canonical authority closure succeeds.
+
+Ordinary `shutdown`, `rotate_node_log` and `close_node_log` preserve documented
+best-effort retirement. Their successful epoch closure cannot establish complete
+member confirmation when a response was lost. Contradictory successful receipts
+still block authority closure in both modes. An observation's `confirmed()`
+proof describes member append fences only; it does not assert directory closure,
+lane deletion, journal settlement, replacement policy or safe physical shutdown.
+
+Five new public cases use actual SQLite commands, native follower stores and
+canonical Cell publication. They cover lost retirement replies after fsync,
+joining a delayed healthy sibling before returning another member's failure,
+exact-scope retry and cached proof, cancellation before authority close,
+best-effort closure that cannot be upgraded into proof, contradictory receipts
+in both modes, and incomplete object publication blocking all retirement RPCs.
+Every case reopens follower storage, observes persisted Retired fences and
+rejects old appends, then restores the exact authority root and reads the counter
+and original `sys_requests` response. The source authority fixture records
+callbacks; these cases do not qualify authenticated directory CAS, separate
+processes or provider failure.
+
+| Source and focused verification | Recorded value |
+| --- | --- |
+| Baseline | `9c99d3ac620821fa21e11fe462b1046cca898305` |
+| Rust/Cargo manifest | 595 tracked/nonignored `.rs`, `Cargo.toml` and `Cargo.lock` paths; sorted SHA256, two spaces, relative path lines. SHA256 `f2d51309c3797d0a27e57b7dcf5da8459e66835f9911529e368c1e16fcadfe22`. |
+| Public durability selection | `cargo test -p cellule-runtime --test runtime --all-features --locked runtime::lifecycle::durability::`: 21 passed, 176 filtered, none ignored; includes five new cases. |
+| Node library selection | `cargo test -p cellule-runtime --lib --all-features --locked node::`: 89 passed, 406 filtered, none ignored. |
+| Distinct scoped cases | 110 passed. The separate initial five-case retirement run is included in the public selection, not counted again. |
+| Runtime lint | `cargo clippy -p cellule-runtime --lib --test runtime --all-features --locked -- -D warnings`: passed. |
+| Host compatibility | `cargo check -p cellule-host --lib --test node --all-features --locked`: passed; this is compilation, not host scenario execution. |
+| Runtime API documentation | All features, warnings denied; passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, 110 Rust snippets, 1150 Markdown links and 28 SQL/peer assertions with 566 links passed. |
+
+Commands use Rust/Cargo 1.97.0, the lockfile, `CARGO_INCREMENTAL=0` and
+`$HOME/Workspace/crabbuild-target/cellule-f9383af7-fleet-operations`.
+The source manifest is retained at
+`/tmp/cellule-fleet-member-retirement-rust-cargo-manifest.txt`. Persisted IDs,
+object paths, receipt fields, LTX formats and signed message bytes are unchanged.
+Additional node, lint, host compilation and documentation logs are retained
+under `/tmp/cellule-fleet-member-retirement-{node,clippy,host,docs}.log`.
+
+Baseline `9c99d3a` passed Rust (36937784705), capacity (36937784385), contract
+(36937784326), website (36937784644), fuzz (36937784399), model (36937784598) and
+Compose smoke (36937784915 / 110622398881). Compose routing
+110622399162 remained running when inspected. A model workflow's success does
+not establish that optional broad campaigns ran. Earlier failure evidence
+remains below; these baseline results do not qualify the new implementation.
+
+The host's automatic rotation still uses ordinary best-effort closure. Requested
+maintenance rotation, durable follower enrollment before recruitment CAS,
+complete role observation and journal retirement remain unwired. A member
+proof alone must not complete SettleRoles or Finalize. Remaining W6–W10 matrices,
+sustained convergence, all scenario deliverables, process/provider/mixed-binary
+qualification and operator rollout/runbooks remain part of the active goal.
+
 ## October 1 2026 managed reader producer checkpoint
 
 `CellNode::install_fleet_reader_enrollment` binds the existing manager to the

@@ -3,16 +3,20 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use futures_util::future::join_all;
 use tokio::sync::Notify;
 
 use crate::identity::NodeId;
 use crate::identity::SessionId;
-use crate::node::log_transport::{NodeLogTransport, RetireRequest};
+use crate::node::log_transport::NodeLogTransport;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 use crate::{Error, Result};
 
 mod recovery;
+mod retirement;
+pub(crate) use retirement::retire_node_log;
+pub use retirement::{
+    NodeLogMemberRetirement, NodeLogRetirementObservation, NodeLogRetirementProof,
+};
 
 pub use recovery::*;
 
@@ -260,6 +264,11 @@ impl DurabilityGate {
             .checked_add(1)
             .ok_or(Error::Node("node sequence overflow"))?;
         Ok(())
+    }
+
+    /// Returns this gate's immutable enrolled epoch, including after rotation.
+    pub fn log_epoch(&self) -> Result<u64> {
+        Ok(self.lock()?.log_epoch)
     }
 
     pub(crate) fn shipping_scope(&self) -> Result<(SessionId, u64, Vec<NodeId>)> {
@@ -535,32 +544,6 @@ pub async fn close_node_log(
     let barrier = gate.begin_rotation()?;
     retire_node_log(transport, &barrier).await?;
     directory.close_log(observed, &barrier, now_ms).await
-}
-
-pub(crate) async fn retire_node_log(
-    transport: Arc<dyn NodeLogTransport>,
-    barrier: &NodeLogRotationBarrier,
-) -> Result<()> {
-    let retirements = join_all(barrier.members().iter().map(|member| {
-        let transport = Arc::clone(&transport);
-        let member = *member;
-        let request = RetireRequest {
-            leader_session: barrier.leader_session(),
-            log_epoch: barrier.log_epoch(),
-            covered_through: barrier.covered_through(),
-        };
-        async move { transport.retire(member, request).await }
-    }))
-    .await;
-    let expected_base = barrier.covered_through().saturating_add(1);
-    for receipt in retirements.into_iter().flatten() {
-        if receipt.base_sequence != expected_base
-            || receipt.durable_through != barrier.covered_through()
-        {
-            return Err(Error::Node("follower retire receipt differs"));
-        }
-    }
-    Ok(())
 }
 
 fn validate_ticket(state: &GateState, ticket: CommitTicket) -> Result<()> {
