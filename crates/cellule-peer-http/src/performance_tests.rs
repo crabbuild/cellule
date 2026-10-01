@@ -11,7 +11,7 @@ use cellule_runtime::{
     client::CellClient,
     fleet::telemetry::{CellTelemetry, PublicationTiming},
     identity::{ApplicationId, IncarnationId, NamespaceId, NodeId, RequestId, TenantId},
-    ltx::{CellReplica, CellStorageLayout, Host, Limits},
+    ltx::{CellReplica, CellStorageLayout, Host, Limits, LtxPhase},
     node::{NodeAdvertisement, NodeCapacity, NodeFailureDomain, lease::NodeLeaseGuard},
     peer::{
         PeerAuthorizer, PeerCellResolver, PeerDispatcher, PeerPrincipal, PeerSigner, PeerVerifier,
@@ -195,18 +195,63 @@ impl PeerCellResolver for UncachedResident {
 }
 
 #[derive(Default)]
-struct PublicationSamples(Mutex<HashMap<u64, PublicationTiming>>);
+struct PublicationSamples {
+    timings: Mutex<HashMap<u64, PublicationTiming>>,
+    events: Mutex<Vec<(u128, u128, LtxPhase, bool)>>,
+    completions: Mutex<Vec<(u64, u128)>>,
+}
+fn wall_ns() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+}
 impl CellTelemetry for PublicationSamples {
     fn publication_completed(&self, _: CellId, timing: PublicationTiming) {
-        self.0
+        self.completions
+            .lock()
+            .unwrap()
+            .push((timing.commit_sequence, wall_ns()));
+        self.timings
             .lock()
             .unwrap()
             .insert(timing.commit_sequence, timing);
     }
+    fn ltx_phase(&self, phase: LtxPhase, elapsed: Duration, succeeded: bool) {
+        if matches!(phase, LtxPhase::Compaction | LtxPhase::RootPreparation) {
+            let end = wall_ns();
+            self.events
+                .lock()
+                .unwrap()
+                .push((end - elapsed.as_nanos(), end, phase, succeeded));
+        }
+    }
 }
 impl PublicationSamples {
+    fn trace(&self) {
+        if let Ok(directory) = std::env::var("CELLULE_PERF_EVIDENCE") {
+            let mut output = String::from("start_wall_ns\tend_wall_ns\tphase\tsucceeded\n");
+            for (start, end, phase, succeeded) in self.events.lock().unwrap().iter() {
+                output.push_str(&format!("{start}\t{end}\t{phase:?}\t{succeeded}\n"));
+            }
+            std::fs::write(
+                std::path::Path::new(&directory).join("ltx-phase-events.tsv"),
+                output,
+            )
+            .unwrap();
+            let mut output = String::from("sequence\tend_wall_ns\n");
+            for (sequence, end) in self.completions.lock().unwrap().iter() {
+                output.push_str(&format!("{sequence}\t{end}\n"));
+            }
+            std::fs::write(
+                std::path::Path::new(&directory).join("publication-completions.tsv"),
+                output,
+            )
+            .unwrap();
+        }
+    }
     fn report(&self, lane: &str, concurrency: usize, first: u64, last: u64) {
-        let samples = self.0.lock().unwrap();
+        let samples = self.timings.lock().unwrap();
         let timings = (first..=last)
             .map(|sequence| samples[&sequence])
             .collect::<Vec<_>>();
@@ -847,6 +892,7 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
             let started = Instant::now();
             let mut samples = Vec::new();
             let mut sequences = HashSet::new();
+            let mut command_events = Vec::with_capacity(commands);
             for batch in 0..commands / concurrency {
                 let results =
                     futures_util::future::join_all((0..concurrency).map(|slot| async move {
@@ -856,6 +902,7 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
                         id[1] = concurrency as u8;
                         id[8..].copy_from_slice(&(index as u64).to_be_bytes());
                         let now = now_ms().unwrap();
+                        let wall_start = wall_ns();
                         let start = Instant::now();
                         let committed = client
                             .command::<Increment>(
@@ -870,12 +917,13 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
                             .await
                             .unwrap();
                         assert_eq!(committed.output, committed.receipt.commit_sequence);
-                        (start.elapsed(), committed.receipt)
+                        (start.elapsed(), committed.receipt, wall_start, wall_ns())
                     }))
                     .await;
-                for (sample, receipt) in results {
+                for (sample, receipt, wall_start, wall_end) in results {
                     assert!(sequences.insert(receipt.commit_sequence));
                     samples.push(sample);
+                    command_events.push((receipt.commit_sequence, wall_start, wall_end, sample));
                 }
             }
             expected += commands as u64;
@@ -898,6 +946,21 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
                 expected - commands as u64 + 1,
                 expected,
             );
+            if let Ok(directory) = std::env::var("CELLULE_PERF_EVIDENCE") {
+                let mut output = String::from("sequence\tstart_wall_ns\tend_wall_ns\tlatency_ns\n");
+                for (sequence, start, end, latency) in command_events {
+                    output.push_str(&format!(
+                        "{sequence}\t{start}\t{end}\t{}\n",
+                        latency.as_nanos()
+                    ));
+                }
+                std::fs::write(
+                    std::path::Path::new(&directory)
+                        .join(format!("{route}_command-c{concurrency}.events.tsv")),
+                    output,
+                )
+                .unwrap();
+            }
             gate.finish(&stage).await;
         }
     }
@@ -998,6 +1061,7 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
     server.abort();
     let _ = server.await;
     std::fs::remove_dir_all(certificate_dir).unwrap();
+    publications.trace();
     println!(
         "RUSTFS correctness=passed commands={expected} final_sequence={expected} peer=mTLS+signed+authorized"
     );

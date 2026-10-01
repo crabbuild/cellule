@@ -17,14 +17,14 @@ async def coordinate(workers, schedule, evidence):
             streams[version].flush()
             match = re.fullmatch(rb"RUSTFS gate (ready|done)=([^\s]+)\n", line)
             if match:
-                await events[version].put((match[1].decode(), match[2].decode(), time.monotonic_ns()))
-        await events[version].put(("exit", await process.wait(), time.monotonic_ns()))
+                await events[version].put((match[1].decode(), match[2].decode(), time.monotonic_ns(), time.time_ns()))
+        await events[version].put(("exit", await process.wait(), time.monotonic_ns(), time.time_ns()))
 
     async def expect(version, kind, stage):
         event = await asyncio.wait_for(events[version].get(), timeout=600)
         if event[:2] != (kind, stage):
             raise RuntimeError(f"Coordinator expected {version} {kind} {stage}, received {event[:2]}")
-        return event[2]
+        return event[2:]
 
     async def send(version, message):
         process = processes[version]
@@ -46,12 +46,15 @@ async def coordinate(workers, schedule, evidence):
                 raise RuntimeError(f"Invalid measurement order: {order}")
             record = {"stage": stage, "order": order, "windows": {}}
             for version in order:
-                record["windows"][version] = {"ready_ns": await expect(version, "ready", stage)}
+                ready, wall = await expect(version, "ready", stage)
+                record["windows"][version] = {"ready_ns": ready, "ready_wall_ns": wall}
             # Both fixtures are idle and ready. No measured work overlaps.
             for version in order:
                 record["windows"][version]["start_ns"] = time.monotonic_ns()
+                record["windows"][version]["start_wall_ns"] = time.time_ns()
                 await send(version, f"start {stage}")
-                record["windows"][version]["done_ns"] = await expect(version, "done", stage)
+                done, wall = await expect(version, "done", stage)
+                record["windows"][version].update(done_ns=done, done_wall_ns=wall)
             trace.append(record)
             evidence.write_text(json.dumps(trace, indent=2) + "\n")
             for version in order:
