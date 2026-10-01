@@ -91,6 +91,7 @@ impl crate::environment::FileIo for TimedFileIo {
 
 fn add_elapsed(total: &AtomicU64, started: Instant, finished: Instant) {
     let elapsed = nanos(finished.saturating_duration_since(started));
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
     let _ = total.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         Some(current.saturating_add(elapsed))
     });

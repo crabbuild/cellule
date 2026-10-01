@@ -111,12 +111,15 @@ impl DiskBudget {
     }
 
     fn add(&self, bytes: u64) -> crate::Result<()> {
-        self.inner
+        #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
+        let updated = self
+            .inner
             .used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes)
                     .filter(|next| *next <= self.inner.capacity)
-            })
+            });
+        updated
             .map(|_| ())
             .map_err(|_| crate::LtxError::Limit(crate::LimitKind::LocalDiskBytes))
     }
@@ -166,11 +169,14 @@ impl DiskBudget {
     }
 
     fn remove(&self, bytes: u64) -> crate::Result<()> {
-        self.inner
+        #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
+        let updated = self
+            .inner
             .used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_sub(bytes)
-            })
+            });
+        updated
             .map(|_| ())
             .map_err(|_| crate::LtxError::InvalidState("local disk reservation underflow"))
     }

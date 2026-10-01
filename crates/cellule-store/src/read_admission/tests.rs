@@ -28,12 +28,11 @@ fn charge(
     counter: &AtomicU64,
     amount: u64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    counter
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-            left.checked_sub(amount)
-        })
-        .map(|_| ())
-        .map_err(|_| Box::new(Exhausted) as _)
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
+    let updated = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+        left.checked_sub(amount)
+    });
+    updated.map(|_| ()).map_err(|_| Box::new(Exhausted) as _)
 }
 
 #[async_trait::async_trait]

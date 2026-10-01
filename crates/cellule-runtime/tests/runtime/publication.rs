@@ -117,6 +117,7 @@ impl ObjectStore for LostUpdateResponseStore {
             return Ok(result);
         }
         self.updates.fetch_add(1, Ordering::SeqCst);
+        #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
         if self
             .remaining_failures
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
