@@ -52,8 +52,10 @@ use crate::support::fixtures::{mutation_identity_window, now_ms};
 pub mod durability;
 pub mod execution;
 pub mod idle;
+pub mod inventory;
 pub mod ownership;
 pub mod read_replica;
+pub mod receiver;
 pub mod residency;
 
 #[derive(Debug)]
@@ -531,7 +533,7 @@ async fn fence_log_session(
         .unwrap();
     directory
         .create(
-            signed(member, "https://follower.internal:8081", 10_000, 20_000),
+            signed(member, "https://follower.internal:8081", 1, 20_000),
             2,
         )
         .await
@@ -547,7 +549,7 @@ async fn fence_log_session(
     if claimant != member {
         directory
             .create(
-                signed(claimant, "https://claimant.internal:8081", 10_000, 20_000),
+                signed(claimant, "https://claimant.internal:8081", 1, 20_000),
                 3,
             )
             .await

@@ -14,14 +14,22 @@ use tokio::{
 };
 
 mod handle;
+mod inventory;
+pub use inventory::{
+    CellInventoryCursor, CellInventoryEntry, CellInventoryPage, OwnedCellObservation,
+};
 use state::*;
 use task::*;
 mod acquire;
+mod acquisition_observer;
+pub use acquisition_observer::{AcquisitionObservation, AcquisitionObserver};
 mod admission;
 mod lifecycle;
+mod receiver;
 mod requests;
 pub(crate) mod routes;
 mod runtime;
+pub use receiver::{PreparedCellReceiver, ReceiverState};
 mod state;
 mod task;
 mod tasks;
@@ -46,6 +54,7 @@ use crate::coordination::{
     AdmissionKind, CoordinationDecision, CoordinationEffect, CoordinationInput, CoordinationState,
     RejectReason, Residency,
 };
+use crate::fleet::admission::NodeAdmission;
 use crate::fleet::eviction::{EvictionObservation, EvictionState, select_victims};
 use crate::fleet::pressure::{
     MovementBudget, MovementPermit, PressureClassifier, PressureSample, PressureState,

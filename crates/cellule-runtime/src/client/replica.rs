@@ -69,6 +69,7 @@ impl CellReadReplica {
         target: CellTarget,
         destination: &Path,
     ) -> Result<Self> {
+        runtime.node_admission().check_new_role()?;
         let admission = Arc::new(runtime.reserve_read_view()?);
         let replica = runtime.replica_for_read(replica);
         let cell = target.cell_id();

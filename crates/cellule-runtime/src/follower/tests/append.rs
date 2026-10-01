@@ -3,6 +3,79 @@
 use super::*;
 
 #[tokio::test]
+async fn cordon_blocks_new_lanes_while_existing_tail_appends_and_restart_remain_safe() {
+    let limits = cellule_ltx::Limits::default();
+    let source = tempfile::TempDir::new().unwrap();
+    let mut database = Db::open(&source.path().join("cell.sqlite"), limits).unwrap();
+    database
+        .transaction(|transaction| {
+            transaction.execute_batch(
+                "CREATE TABLE events(id INTEGER PRIMARY KEY, body TEXT NOT NULL);\
+         INSERT INTO events(body) VALUES ('one')",
+            )
+        })
+        .unwrap();
+    let capture = database.capture().unwrap();
+    let segment = capture.segments.first().unwrap();
+    let root = tempfile::TempDir::new().unwrap();
+    let disk = cellule_ltx::DiskBudget::new(1 << 30);
+    let gate = crate::fleet::admission::NodeAdmission::default();
+    let store = FollowerStore::open(root.path().to_owned(), limits, disk.clone())
+        .unwrap()
+        .with_node_admission(gate.clone());
+    let leader = SessionId::from_bytes([1; 16]);
+    store
+        .append(leader, 2, vec![frame(1, segment, limits)], 0)
+        .await
+        .unwrap();
+    gate.observe(crate::fleet::pressure::PressureState::Shedding, 100)
+        .unwrap();
+    assert_eq!(
+        store
+            .append(leader, 2, vec![frame(2, segment, limits)], 0)
+            .await
+            .unwrap()
+            .durable_through,
+        2
+    );
+    assert!(matches!(
+        store
+            .append(leader, 3, vec![frame(1, segment, limits)], 0)
+            .await,
+        Err(Error::Capacity("node pressure"))
+    ));
+    assert!(!lane_directory(root.path(), Lane { leader, epoch: 3 }).exists());
+    assert_eq!(store.lanes.lock().unwrap().len(), 1);
+    gate.cordon().unwrap();
+    gate.observe(crate::fleet::pressure::PressureState::Normal, 200)
+        .unwrap();
+    assert!(matches!(
+        store
+            .append(leader, 3, vec![frame(1, segment, limits)], 0)
+            .await,
+        Err(Error::CellDraining)
+    ));
+    drop(store);
+    let restarted = FollowerStore::open(root.path().to_owned(), limits, disk)
+        .unwrap()
+        .with_node_admission(gate);
+    assert_eq!(
+        restarted
+            .append(leader, 2, vec![frame(2, segment, limits)], 0)
+            .await
+            .unwrap()
+            .durable_through,
+        2
+    );
+    assert!(matches!(
+        restarted
+            .append(leader, 3, vec![frame(1, segment, limits)], 0)
+            .await,
+        Err(Error::CellDraining)
+    ));
+}
+
+#[tokio::test]
 async fn append_recovers_torn_suffix_deduplicates_and_seals() {
     let limits = cellule_ltx::Limits::default();
     let source = tempfile::TempDir::new().unwrap();

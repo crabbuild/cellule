@@ -2,15 +2,66 @@
 
 use super::*;
 
+use cellule_runtime::cell::actor::{AcquisitionObservation, AcquisitionObserver};
+
+#[derive(Default)]
+struct RecordedAcquisition {
+    before: std::sync::Mutex<Vec<cellule_runtime::control::Control>>,
+    restored: std::sync::Mutex<Vec<cellule_runtime::control::Control>>,
+    fail_at: u8,
+}
+impl AcquisitionObserver for RecordedAcquisition {
+    fn before_claim<'a>(
+        &'a self,
+        input: &'a cellule_runtime::control::Control,
+    ) -> AcquisitionObservation<'a> {
+        Box::pin(async move {
+            self.before.lock().unwrap().push(input.clone());
+            if self.fail_at == 1 {
+                return Err(cellule_runtime::Error::Peer(
+                    "injected lost recovery input recording reply",
+                ));
+            }
+            Ok(())
+        })
+    }
+    fn before_activation<'a>(
+        &'a self,
+        input: &'a cellule_runtime::control::Control,
+        restored: &'a cellule_runtime::control::Control,
+    ) -> AcquisitionObservation<'a> {
+        Box::pin(async move {
+            assert_eq!(self.before.lock().unwrap().last(), Some(input));
+            assert_eq!(restored.state, ControlState::Recovering);
+            assert!(restored.recovery.is_none());
+            self.restored.lock().unwrap().push(restored.clone());
+            if self.fail_at == 2 {
+                return Err(cellule_runtime::Error::Peer(
+                    "injected lost recovered position recording reply",
+                ));
+            }
+            Ok(())
+        })
+    }
+}
+
 #[tokio::test]
 async fn takeover_resumes_pinned_recovery_before_serving() {
-    recover_retained_tail(false).await;
+    recover_retained_tail(false, 0).await;
 }
 #[tokio::test]
 async fn recovery_seals_already_rooted_tail_without_an_empty_manifest() {
-    recover_retained_tail(true).await;
+    recover_retained_tail(true, 0).await;
 }
-async fn recover_retained_tail(rooted: bool) {
+#[tokio::test]
+async fn recovery_recording_failure_before_cas_preserves_attached_tail_and_owner() {
+    recover_retained_tail(false, 1).await;
+}
+#[tokio::test]
+async fn recovery_recording_failure_before_admission_keeps_materialized_root_recoverable() {
+    recover_retained_tail(false, 2).await;
+}
+async fn recover_retained_tail(rooted: bool, fail_at: u8) {
     let fixture = fixture_for(b"recovered-takeover");
     let handle = activate(&fixture, 16 * 1024 * 1024).await;
     drop(handle);
@@ -230,8 +281,13 @@ async fn recover_retained_tail(rooted: bool) {
         successor,
     )
     .unwrap();
+    let input = attached.value().clone();
+    let recorder = Arc::new(RecordedAcquisition {
+        fail_at,
+        ..RecordedAcquisition::default()
+    });
     let restored = runtime
-        .takeover_restored(
+        .takeover_restored_observed(
             proof,
             fixture.replica.clone(),
             authority.clone(),
@@ -243,9 +299,52 @@ async fn recover_retained_tail(rooted: bool) {
                 session: successor,
                 endpoint: "https://recovered-successor.internal:8081".into(),
             },
+            Some(recorder.clone()),
         )
-        .await
-        .unwrap();
+        .await;
+    assert_eq!(
+        recorder.before.lock().unwrap().as_slice(),
+        std::slice::from_ref(&input)
+    );
+    if fail_at != 0 {
+        let error = restored.err().unwrap();
+        assert!(matches!(error, cellule_runtime::Error::Peer(message)
+            if message == if fail_at == 1 { "injected lost recovery input recording reply" }
+                else { "injected lost recovered position recording reply" }));
+        let current = authority
+            .load(fixture.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(runtime.stats().active_cells(), 0);
+        assert_eq!(runtime.stats().worker_jobs(), 0);
+        if fail_at == 1 {
+            assert_eq!(current.value(), &input);
+            assert!(current.value().recovery.is_some());
+            assert!(recorder.restored.lock().unwrap().is_empty());
+        } else {
+            let recorded = recorder.restored.lock().unwrap()[0].clone();
+            assert_eq!(current.value().state, ControlState::Idle);
+            assert!(current.value().recovery.is_none());
+            assert_eq!(current.value().root, recorded.root);
+            assert_eq!(
+                current.value().root.as_ref().unwrap().commit_sequence,
+                predecessor.commit_sequence + 1
+            );
+            let root = current.value().ltx_root().unwrap();
+            fixture.replica.open_root(&root).await.unwrap();
+        }
+        runtime.shutdown().await.unwrap();
+        return;
+    }
+    let restored = restored.unwrap();
+    let recorded = recorder.restored.lock().unwrap()[0].clone();
+    assert!(input.recovery.is_some() && recorded.recovery.is_none());
+    assert_eq!(recorded.epoch, input.epoch + 1);
+    assert_eq!(
+        recorded.root.as_ref().unwrap().commit_sequence,
+        predecessor.commit_sequence + 1
+    );
 
     assert_eq!(
         restored

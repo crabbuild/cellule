@@ -307,7 +307,8 @@ impl CellNode {
         let Some((root, limits, disk)) = configuration else {
             return Ok(());
         };
-        let store = FollowerStore::open(root, limits, disk)?;
+        let store = FollowerStore::open(root, limits, disk)?
+            .with_node_admission(self.runtime.node_admission());
         self.install_owned_component(FOLLOWER_STORE_COMPONENT, Arc::new(store))
     }
 

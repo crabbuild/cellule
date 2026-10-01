@@ -31,6 +31,7 @@ pub struct NodeAdvertisement {
     pub(super) placement_version: u32,
     pub(super) placement_signature: [u8; 64],
     pub(super) placement: Option<NodePlacementCapacity>,
+    pub(super) operational_sample: Option<NodeOperationalSample>,
 }
 
 impl NodeAdvertisement {
@@ -78,6 +79,7 @@ impl NodeAdvertisement {
             placement_version: 0,
             placement_signature: [0; 64],
             placement: None,
+            operational_sample: None,
         };
         advertisement.validate_shape()?;
         advertisement.signature = signing_key.sign(&advertisement.signing_bytes()?).to_bytes();
@@ -192,13 +194,72 @@ impl NodeAdvertisement {
         placement: NodePlacementCapacity,
         signing_key: &SigningKey,
     ) -> Result<Self> {
+        if signing_key.verifying_key().to_bytes() != self.public_key {
+            return Err(Error::Node(
+                "placement key differs from the boot-session key",
+            ));
+        }
         placement.validated()?;
         self.placement = Some(placement);
         self.placement_version = PLACEMENT_SCHEMA_VERSION;
+        self.operational_sample = None;
         self.placement_signature = signing_key
             .sign(&self.placement_signing_bytes()?)
             .to_bytes();
         Ok(self)
+    }
+
+    /// Emits schema 3 only after the application has completed reader rollout.
+    /// The sample must come from local admission and classifier state. The
+    /// schema 2 builder remains the default bridge writer with identical bytes.
+    pub fn with_operational_placement(
+        mut self,
+        placement: NodePlacementCapacity,
+        sample: NodeOperationalSample,
+        signing_key: &SigningKey,
+    ) -> Result<Self> {
+        if signing_key.verifying_key().to_bytes() != self.public_key {
+            return Err(Error::Node(
+                "placement key differs from the boot-session key",
+            ));
+        }
+        self.placement = Some(placement.validated()?);
+        self.operational_sample = Some(sample.validated()?);
+        self.placement_version = OPERATIONAL_PLACEMENT_SCHEMA_VERSION;
+        self.validate_shape()?;
+        self.placement_signature = signing_key
+            .sign(&self.placement_signing_bytes()?)
+            .to_bytes();
+        Ok(self)
+    }
+
+    /// Returns the explicit operational sample only for an understood schema.
+    #[must_use]
+    pub const fn operational_sample(&self) -> Option<NodeOperationalSample> {
+        if self.placement_version == OPERATIONAL_PLACEMENT_SCHEMA_VERSION {
+            self.operational_sample
+        } else {
+            None
+        }
+    }
+
+    /// Checks signed mode/pressure for all new remote role selections. Identity
+    /// advertisements without an operational block retain bridge behavior.
+    #[must_use]
+    pub fn accepts_new_roles(&self, now_ms: i64) -> bool {
+        if now_ms < self.issued_at_ms
+            || now_ms >= self.expires_at_ms
+            || self.placement_version > OPERATIONAL_PLACEMENT_SCHEMA_VERSION
+        {
+            return false;
+        }
+        self.operational_sample.is_none_or(|sample| {
+            self.placement_version == OPERATIONAL_PLACEMENT_SCHEMA_VERSION
+                && self.has_signed_placement()
+                && sample.accepts_roles()
+                && sample.observed_at_ms <= now_ms
+                && now_ms.saturating_sub(sample.observed_at_ms) <= MAX_ADVERTISEMENT_LIFETIME_MS
+        })
     }
 
     /// Reports whether this advertisement carries an authenticated placement
@@ -206,9 +267,16 @@ impl NodeAdvertisement {
     /// eligible for weighted ownership placement.
     #[must_use]
     pub fn has_signed_placement(&self) -> bool {
-        self.placement_version == PLACEMENT_SCHEMA_VERSION
-            && self.placement.is_some()
+        matches!(
+            self.placement_version,
+            PLACEMENT_SCHEMA_VERSION | OPERATIONAL_PLACEMENT_SCHEMA_VERSION
+        ) && self.placement.is_some()
             && self.placement_signature.iter().any(|byte| *byte != 0)
+    }
+
+    pub(crate) fn verify_placement(&self) -> Result<()> {
+        self.validate_shape()?;
+        self.verify_signature()
     }
 
     /// Returns the node-log status, when the node has an enrolled log.
@@ -288,6 +356,25 @@ impl NodeAdvertisement {
         if let Some(placement) = self.placement {
             placement.validated()?;
         }
+        match (self.placement_version, self.operational_sample) {
+            (OPERATIONAL_PLACEMENT_SCHEMA_VERSION, Some(sample)) => {
+                sample.validated()?;
+                if sample.observed_at_ms > self.issued_at_ms || self.placement.is_none() {
+                    return Err(Error::Node(
+                        "operational sample is ahead of its advertisement",
+                    ));
+                }
+            }
+            (OPERATIONAL_PLACEMENT_SCHEMA_VERSION, None) => {
+                return Err(Error::Node("operational placement sample is missing"));
+            }
+            (0..=PLACEMENT_SCHEMA_VERSION, Some(_)) => {
+                return Err(Error::Node(
+                    "operational sample uses a legacy placement schema",
+                ));
+            }
+            _ => {}
+        }
         if self.module_digests.is_empty()
             || self.module_digests.len() > MAX_MODULES
             || !self
@@ -317,7 +404,7 @@ impl NodeAdvertisement {
                     return Err(Error::Node("legacy placement record carries a signature"));
                 }
             }
-            PLACEMENT_SCHEMA_VERSION => {
+            PLACEMENT_SCHEMA_VERSION | OPERATIONAL_PLACEMENT_SCHEMA_VERSION => {
                 if !self.has_signed_placement() {
                     return Err(Error::Node("placement signature is missing"));
                 }
@@ -506,6 +593,29 @@ pub(super) fn validate_successor(
     current: &NodeAdvertisement,
     next: &NodeAdvertisement,
 ) -> Result<()> {
+    if let Some(previous) = current.operational_sample {
+        match next.operational_sample {
+            Some(sample) => {
+                if sample.sequence < previous.sequence
+                    || sample.observed_at_ms < previous.observed_at_ms
+                    || (sample.sequence == previous.sequence
+                        && (sample != previous
+                            || current.capacity != next.capacity
+                            || current.placement != next.placement))
+                {
+                    return Err(Error::Node(
+                        "operational sample regressed or changed without a sequence",
+                    ));
+                }
+            }
+            None if !previous.accepts_roles() => {
+                return Err(Error::Node(
+                    "operational withdrawal would hide closed admission",
+                ));
+            }
+            None => {}
+        }
+    }
     if !same_boot_identity(current, next)
         || current.log != next.log
         || current.generation.checked_add(1) != Some(next.generation)

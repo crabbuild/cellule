@@ -27,3 +27,159 @@ bound waiting for that lane. Fleet-level pacing stays in the movement planner.
 The node retains lease maintenance while accepted work and covered log tails
 are drained. See [the framework integration guide](../../../docs/framework.md) for service
 startup order.
+
+The host retains one runtime shutdown task and its original result. A deadline
+cancels the join waiter; accepted runtime drain continues. A later drain joins
+that task instead of calling runtime shutdown twice. Facility failures remain
+inspectable, and the host reaches Stopped only after every required phase
+succeeds. A retained runtime failure preserves its original error as a source
+on every subsequent observation.
+
+## Journal bound fleet actions
+
+Install `CellNode::install_fleet_actions` during startup with a fleet/application
+scope, stable physical NodeId, an application-owned `FleetActionJournal`, and
+trusted `FleetCellProvider` inputs. The provider resolves catalog, replica,
+canonical authority, private local destination, and this node's leased owner.
+Its lookup performs no hydration or takeover; remote callers supply no local
+paths or credentials.
+For failed-source recovery, `recovery_inputs` supplies an existing canonical
+`NodeTakeoverProof` and recovery manifest store. Ordinary node recovery first
+fences the failed session and seals/pins its required tail; the provider lookup
+performs none of those effects.
+The application authenticates management requests. The journal atomically
+checks the current controller epoch, head, permit, intent, endpoint, and
+deadline when first accepting an action. `AcceptedFleetAction` validates its
+shape and exact inputs; its Rust type supplies no remote authorization.
+
+`apply_fleet_action` executes settled source Release with
+`release_idle_cell_at`, actual receiver preparation, canonical activation,
+resource cleanup and failed-source recovery. Fresh inspection uses its separate
+request-bound method. The caller-driven reconciler now has a settled-movement
+path; complete observation wiring and busy maintenance remain under implementation in the
+[fleet operations plan](../../../docs/fleet-operations-plan.md).
+
+| Event | Action executor behavior |
+| --- | --- |
+| First acceptance | Commit acceptance, recheck deadline, then invoke the canonical actor release for the exact session, generation, incarnation and epoch. |
+| Prepare receiver | Validate catalog/Cell/incarnation and current release/schema support; reserve actual runtime/LTX resources before returning Reserved. A refusal preserves the original error and leaves the source serving. |
+| Activate receiver | Confirm the exact Idle acquisition basis is durably retained before ordinary ownership CAS; consume prepared credit through canonical restore and actor activation. |
+| Acquisition-basis reply lost | Keep authority untouched and the prepared credit charged. Repeating the same accepted action confirms the original basis and capture time before takeover. |
+| Unused credit after release | Journal CleaningReceiver, cancel/join that credit, and retain the source position and fleet permit. Cleanup returns to Released, with no claim of pre-release cancellation. After confirmed cleanup, ordinary admitted acquisition may resume. |
+| Ordinary acquisition on the preferred session | Free the unused preparation without closing the ordinary writer. Verify current authority, actor readiness, and the required release position. Matching session alone never proves prepared credit was consumed. |
+| Recover unresolved source release | Journal Recovering, cancel proved-unused preparation, validate canonical failed-session proof, and confirm `RecoveryBasis` before ownership CAS. Confirm `RecoveryEvidence` after exact recovery publication and before actor admission. Return Recovered only with current actor/authority proof. |
+| Recovery input reply lost | No ownership CAS starts. Retain the original input/time; an unchanged full canonical control permits confirming that basis and continuing the accepted action. |
+| Recovery position reply lost | No actor is admitted. Canonical rollback preserves the materialized root; the attempt stays charged and Unknown. Ordinary acquisition can restore serving, after which inspection verifies it against the retained recovery evidence. |
+| Duplicate | Compare the full immutable specification, including cost and physical identities. Join current work or return its committed result. |
+| Dropped caller | Retain and finish execution plus journal publication independently of the caller. |
+| Result publication failure | Retain the original checked result. A subsequent dispatch or drain retries publication without releasing again. |
+| Existing acceptance without a result | Record Unknown and retain the fleet permit; never infer the original release root from current authority. |
+| Node drain | Stop new action admission and join retained finite work before runtime shutdown. Keep task handles and checked results when a deadline cancels the drain waiter. |
+| Action task fails | Join every accepted sibling job, settle resources, and retain the original join error across repeated drain calls. Runtime cleanup still runs; consuming a task handle cannot make a later shutdown report success. |
+
+`FleetActionCompletion::committed` is true only after confirmed durable result
+publication. Preserve its separate execution and journal errors in correlated
+diagnostics. A committed Released result proves source release; destination
+serving still requires fresh authority and actor evidence. A replay returns a
+retained observation; it does not refresh that proof. The executor checks a
+new serving observation through the normal FIFO query/lease boundary and
+compares actor inventory with current authority. The receiver's local receipt
+retires only after confirmed result publication and accepted-task completion.
+Later inspection uses retained journal evidence after local retirement.
+
+Clean release and recovery remain separate in status and history. A source-epoch
+Idle root after a lost release reply can be a recovery input only with canonical
+failed-session proof; a later root alone cannot manufacture Released. Recovery
+uses `AcquisitionObserver` recording points through the same ordinary acquisition,
+exact-root restoration, and rollback path. The journal atomically binds basis
+and evidence to original acceptance, rejects changed inputs, and returns the
+original time for identical writes.
+
+The executor uses at most two retained action jobs and charges their envelopes,
+results, and acquisition inputs to the existing node retained-byte ledger.
+Unknown work retains its fleet permit in the journal. A missing local receipt,
+caller timeout, or expired reservation alone proves neither resource settlement
+nor successful movement. These local gates do not establish complete fleet
+maintenance or process/provider qualification.
+
+## Fresh fleet inspection
+
+Use `CellNode::inspect_fleet_action` for current evidence. A retained
+Inspect reply is historical and cannot establish current serving.
+`apply_fleet_action` refuses raw Inspect dispatch; use the request-bound method.
+Effects and observations use the same finite task owner, shared action bound and
+runtime ledger; shutdown joins accepted inspections after dropped waiters.
+
+| Boundary | Required behavior |
+| --- | --- |
+| Request | Build `FleetInspectionRequest` from the current head's Inspect action and exact `RegistryVersion`. Name the physical node/boot, a new nonce for this pass and an exclusive capture deadline. |
+| Authorization | `FleetActionJournal::authorize_inspection` checks current head, registry revision and endpoint intent in one read transaction. Cached acceptance/result records cannot satisfy it. |
+| Capture | Inspect actual actor/authority state. Recovery inspection cannot start acquisition; missing recovery position remains Unknown. Retained release and resource-settlement proofs remain historical facts. |
+| Response | `FleetInspectionObservation` retains the original capture start/end and full request. `validate_for` rejects mismatched nonce, endpoint, payload, registry or authorization, future time, expired deadline and an over-age capture interval. |
+| Dependent decision | Authenticate the reply, check its required position, and compare the head/registry versions again when committing the reducer transition. A failed inspection preserves the charged attempt. |
+
+The observation codecs use new record kinds 17 and 18. Existing effect and
+result encodings remain unchanged. Deploy readers before these producers;
+decoding a record does not authenticate its origin or prove a complete roster.
+
+## Caller driven fleet reconciliation
+
+Construct `FleetReconciler::new(scope, claimant, profile, journal, observer,
+transport)` with the same validated profile as the journal. Supervise one
+application loop calling `reconcile_once(clock, deadline)`. The facade starts
+no timer, runtime, or detached effect task. Time is logical milliseconds in the
+node/journal clock domain. Supply a clock callback returning `Result<i64>`;
+each boundary reads it directly and rejects regression. The deadline is a
+Tokio monotonic instant.
+Honor the report's suggested wake time: committed forward progress requests an
+immediate next pass, while unresolved or cancelled work uses periodic retry.
+Counts for clean release, fresh activation, canonical recovery, and cancellation
+are separate and describe transitions committed during this pass.
+
+| Boundary | Reconciler behavior |
+| --- | --- |
+| Controller | Claim or renew by CAS, preserving every charged attempt across lease replacement. |
+| Existing work | Inspect uncertain phases first; commit each dependent transition against the complete head and registry version. |
+| Planning | Verify signed inputs, require complete fresh membership for count moves, and project unresolved receive costs before pressure relief uses any remaining shared budget. |
+| Dispatch | Commit the phase before sending; check full retained acceptance and result binding. Transport timeout retains the phase and permit. |
+| Endpoint failure | Reserve a bounded deadline share for each charged attempt and planning. Retain each original endpoint error in `failures` and advance healthy siblings. After an ambiguous timeout, reread the journal and controller epoch before continuing. Journal errors stop the pass. |
+| Serving | Consume request-bound fresh actor/authority evidence before activation or retirement. A historical receipt cannot replace the current check. |
+| History | Atomically retire with progress; read incarnation-specific cooldown and the global post-batch time from committed history. |
+| Operator stop | Disable new allocations while accepted work continues through inspection and cleanup. |
+
+`FleetObserver` owns authenticated membership and bounded page collection.
+`FleetTransport` owns endpoint authorization and exact boot routing to the public
+node action/inspection APIs. The current public driver tests combine the local
+SQLite adapter with simulated effects. Real leased-node observer integration,
+source/receiver failure adoption, busy maintenance, and role finalization remain
+required by the [fleet plan](../../../docs/fleet-operations-plan.md).
+
+## Shared fleet journal and enrollment transactions
+
+`FleetJournal` extends the action and enrollment journal contracts. Its
+`FleetJournalSnapshot` reads the head and shared `RegistryVersion` together.
+`compare_exchange` checks both exact versions, controller fencing, and reducer
+invariants in the same durable transaction. Allocate also checks scheduling
+policy and current retained source/receiver intents. Maintenance changes retain
+the physical-node row and operation; retirement commits exact history with its
+permit release. Older completed operations and cordons remain reachable.
+
+`FleetEnrollmentJournal` records Pending before starting ordinary boot, reader,
+or follower enrollment. Only New authorizes first execution. Existing compares
+the full spec and returns its original state; an unknown Pending record needs
+inspection. Producers check intent revisions inside acceptance, retain failed
+boots, and publish checked completion/refusal/closure evidence. Reboot lease
+enrollment carries the retained mode and cannot open readiness under a cordon.
+
+Registry pages require an exact shared revision and a limit in 1..=128. A changed
+revision restarts the scan. Bootstrap requires a controlled pause and complete
+import; an empty live directory does not establish coverage. Stop/resume updates
+this same registry version and blocks only new planned allocations. Previously
+accepted actions and their resource obligations still reconcile.
+
+The application supplies the durable backend, authorization, and canonical
+enrollment evidence. The [fleet journal example](../examples/fleet_operations/README.md)
+implements all three journal contracts in one local SQLite transaction domain.
+Its focused tests exercise independent clients, lost commit replies and
+reconstruction. Complete observer coverage, enrollment producer wiring,
+maintenance finalization, and process/provider qualification remain required.

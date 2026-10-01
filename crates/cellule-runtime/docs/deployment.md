@@ -236,6 +236,114 @@ The service chooses each signed advertisement lifetime, up to 30 seconds. An exp
 
 Local admission remains authoritative. An advertisement cannot force a node to accept work after its measured budget is exhausted.
 
+### Operational observations and the reader rollout
+
+`NodeAdvertisement::with_placement_capacity` continues to emit schema 2.
+Upgraded readers also understand schema 3 through
+`NodeAdvertisement::with_operational_placement`. Schema 3 signs the node's
+`Active`, `Cordoned`, or `Draining` mode, stable pressure tier, and measurement
+sequence/time. Pressure and lifecycle mode are separate; measured free capacity
+is retained on cordoned nodes. Writer, reader, follower, and recovery-executor
+selection reject a schema 3 node whose mode or pressure closes new admission.
+
+Use `CellRuntime::operational_sample` for the local classifier output. It is
+unknown until the first successful observation. Reading it or republishing a
+heartbeat does not refresh its time. A changed measurement needs a new
+sequence; directory refresh rejects regressing samples and changed capacity
+under an unchanged sequence. The transient `Recovering` marker cannot be signed.
+
+The runtime's shared `NodeAdmission` gate closes new writer and reader
+acquisition during pressure and keeps a cordon sticky after pressure recovery.
+The host installs it on its follower store before readiness. Direct follower
+store integrations must install `runtime.node_admission()` using
+`FollowerStore::with_node_admission` before sharing the store. Existing enrolled
+tail appends and existing reader refreshes continue under their normal fences.
+
+Old strict JSON readers reject the added schema 3 field. Deploy upgraded
+readers throughout the fleet while continuing schema 2 output, then enable
+schema 3 production through application rollout policy. Complete the
+[fleet operations plan](../../../docs/fleet-operations-plan.md) before enabling
+automatic movement. The operation records and local gate are foundations;
+the full executor, busy-Cell maintenance, and foreign follower evacuation still
+require the remaining work packages and qualification.
+
+### Observe local ownership in bounded pages
+
+`CellRuntime::fleet_cells_page(cursor, limit)` observes all local owners,
+including busy/draining actors and outstanding activation/close/release tasks.
+Choose a limit from 1 through 128. Each returned page holds one MiB of native
+byte admission until dropped; cancellation retains that admission until the
+actor finishes or discards its response.
+
+The opaque cursor is bound to the runtime session and ownership topology.
+Restart a scan when topology changes. SQL activity can change advisory row
+details between pages; a complete topology scan never authorizes release.
+Actions still need fresh Cell authority, session, and generation checks.
+
+| Observation | Interpretation |
+| --- | --- |
+| `Owned` | Verified target and generation, distinct residence/last-use times, available published position, and local blockers. |
+| `Transitioning` | A local lifecycle task still owns this Cell's obligation; include it in drain diagnostics. |
+| Missing cost | Receiver demand is unknown; block proactive movement until worker/resource accounting establishes a conservative bound. |
+
+Worker probes measure logical SQLite bytes, persisted-work classes, and commit
+sequence through the serialized SQL path. `database_bytes` is the current
+logical size; `cost` reserves conservative restore demand derived from the
+validated LTX limits. Native-memory cost is admission accounting, not measured
+process RSS. A mutation invalidates the sample. A late probe from an older
+inventory revision cannot recreate demand or clear newer unknown work.
+
+`sampled_at_ms` belongs to the worker probe; reading a page does not refresh it.
+`stable_observations` counts distinct unchanged worker samples and is capped at
+two. Ordinary movement needs two fresh samples. Unknown schema, failed probes,
+unpublished sequence mismatch, clock regression, and samples at least 30
+seconds old keep costs unknown. The existing background loop admits at most
+32 inventory probes at once through the shared worker-job ledger.
+
+The counts include obligations outside the returned page. For a bounded status
+sample, callers can read them without collecting every row:
+
+```rust
+use cellule_runtime::cell::actor::CellRuntime;
+
+async fn remaining_local_obligations(runtime: &CellRuntime) -> cellule_runtime::Result<usize> {
+    let page = runtime.fleet_cells_page(None, 128).await?;
+    Ok(page.owned_cells().saturating_add(page.transitioning_cells()))
+}
+```
+
+Zero local obligations does not prove relocation, reader replacement, foreign
+follower safety, or successful host shutdown. The fleet completion contract
+requires each of those separate proofs.
+
+### Observe foreign follower obligations
+
+`FollowerStore::fleet_lanes_page(cursor, limit, now_ms)` reports persisted
+leader/epoch lanes, including cold lanes after store reopen. Pages contain at
+most 128 entries and retain one MiB from the existing follower-index memory
+budget until dropped. Cancelled calls keep that charge until the blocking scan
+finishes. The scan serializes with existing lane creation, append, seal,
+retirement, and collection. Commit cordon before using it as a local enrollment
+barrier. Changed topology or a newly opened store invalidates its cursor.
+
+Open and sealed lanes remain obligations. Retired lanes retain their durable
+append fence, even after canonical retirement removes their chunks. Quarantine
+and malformed filesystem entries require diagnosis; they cannot establish an
+empty safe-to-stop node. Observation never seals, retires, or deletes a tail.
+
+Pair local pages with
+`NodeDirectory::follower_logs_page(member, cursor, limit, now_ms)`. That scan
+includes current log references in inactive/expired advertisements and
+fenced/recovering tombstones. It retains a bounded window and refuses more than
+10,000 directory records. Heartbeat and coverage updates preserve topology;
+epoch or ensemble changes require restarting pagination. Apply the caller's
+deadline and obtain the fleet observer's membership/enrollment barrier:
+object-store listing alone is not an atomic proof that no reference exists.
+
+Recheck each exact epoch through the existing directory authorization and
+recovery path before settling it. Zero local writer count, a dead leader, or
+zero unretired local lanes alone cannot authorize maintenance shutdown.
+
 <a id="size-node-profiles-and-admission"></a>
 ## Size node profiles and admission
 
@@ -570,6 +678,140 @@ Drain ordering against reader admission:
   authority and prevents a clean fleet-to-object transition.
 - Every phase uses the same absolute shutdown deadline.
 - A failed drain must not authorize a durability-mode change.
+
+### Prepare capacity before releasing a Cell
+
+`CellRuntime::prepare_receiver` binds an exact movement attempt, catalog proof,
+receiver session, destination, cost, and expiry. It reserves an actual Cell
+slot, conservative native memory and descriptors, the Cell's affine SQL worker,
+and disk credit through the ordinary node ledgers. A partial refusal returns
+its tokens and leaves source authority untouched. Cost must cover the incoming
+replica's validated LTX bounds. Catalog target and replica Cell/incarnation
+must match the immutable attempt before any resource admission.
+
+```rust
+use std::path::PathBuf;
+use cellule_runtime::cell::actor::{CellRuntime, PreparedCellReceiver};
+use cellule_runtime::cell::catalog::CatalogProof;
+use cellule_runtime::fleet::operations::MoveAttemptSpec;
+use cellule_runtime::ltx::CellReplica;
+
+fn prepare_receive(
+    runtime: &CellRuntime,
+    attempt: MoveAttemptSpec,
+    catalog: CatalogProof,
+    replica: CellReplica,
+    destination: PathBuf,
+    now_ms: i64,
+) -> cellule_runtime::Result<PreparedCellReceiver> {
+    let expires_at_ms = attempt.deadline_ms;
+    runtime.prepare_receiver(attempt, catalog, replica, destination, expires_at_ms, now_ms)
+}
+```
+
+The runtime retains at most two local receipts. Dropping the opaque reference
+does not cancel credit; `prepared_receiver(attempt_id)` recovers a lost reply.
+An exact duplicate returns the existing lifecycle without another charge.
+Expiry permits explicit cancellation; it does not free credit automatically.
+
+| API | Contract |
+| --- | --- |
+| `activate_prepared_receiver` | Checks the exact Idle incarnation and receiver session, and an authority epoch at least as new as the source, then transfers tokens through canonical takeover, root verification, SQLite open, and actor activation. Accepted work survives a dropped waiter. |
+| `cancel_prepared_receiver` | Returns unused credit synchronously. Refuses after activation was accepted; inspect authority and actor readiness to reconcile that work. |
+| `PreparedCellReceiver::state` | Local lifecycle hint. `Activated` requires fresh authority and actor checks; `Failed` does not prove ownership is absent. |
+| `retire_prepared_receiver` | Removes a joined terminal receipt after the application durably records and reconciles its result. Never reuses an attempt identity or closes its serving actor. |
+| `shutdown` | Cancels unused preparation and joins accepted acquisition before closing actors and workers, including canonical rollback of a failed claim. Retained opaque references do not keep resources alive. |
+
+These are trusted local mechanisms. The host fleet executor binds scope/session,
+retains accepted work, and journals exact source release and receiver results.
+It records the checked Idle acquisition input before its ownership CAS; an
+ambiguous basis-write reply prevents takeover. After release, unused-credit
+cleanup preserves relocation state and the fleet permit. Receiver readiness
+and resource settlement are independent proofs, including when ordinary cold
+acquisition wins on the preferred session.
+
+The application supplies authentication and durable adapter semantics. A cached
+action result still needs fresh authority and actor checks before being counted
+as currently serving. `CellNode::inspect_fleet_action` captures that check using
+`FleetInspectionRequest` and `FleetInspectionObservation`. Bind the complete
+request to a new nonce, exact head action, retained registry version, endpoint
+and capture deadline. Validate the original interval when consuming the reply;
+republication cannot refresh it. The adapter checks current journal authorization
+in one read transaction; the host performs actor/authority checks without using
+cached Inspect success or starting recovery. Recheck both journal versions when
+committing a dependent transition. A failed inspection retains the permit.
+Recovery across receiver sessions, the recurring reconciler,
+busy maintenance, role evacuation, and deployment qualification remain work in
+the
+[fleet operations plan](../../../docs/fleet-operations-plan.md).
+
+### Retain failed source recovery evidence
+
+`AcquisitionObserver` supplies two confirmed recording points on canonical
+`acquire_idle_restored_observed` and `takeover_restored_observed`:
+
+| Recording point | Required behavior |
+| --- | --- |
+| `before_claim` | Retain the exact input before ownership CAS. A changed predecessor is another input that the recorder explicitly accepts or rejects. A lost write reply aborts before CAS. |
+| `before_activation` | Retain that same input and the actual control after optional pinned-overlay publication, before actor admission. Failure uses canonical acquisition rollback and cannot admit a writer. |
+
+The ordinary methods delegate to these same paths without a recorder. These
+trusted callbacks grant no authority and authenticate no caller. Their caller
+must own acquisition independently of transport cancellation; the host fleet
+executor provides that finite-task ownership.
+
+`RecoveryBasis` binds an accepted recovery action to its exact failed source,
+canonical control, and original capture time. Construction requires existing
+`NodeTakeoverProof`. `RecoveryEvidence` checks the exact takeover and optional
+canonical recovery-publication transition. Its root is the required recovery
+position, not a current-serving witness. Recovered completion also checks the
+live successor actor and current authority. Receiver cleanup remains an
+independent prerequisite for retiring the charged fleet permit.
+
+Local host tests exercise source loss, an unobserved release CAS, lost recording
+replies, later root advancement, and dropped waiters. Public runtime tests
+exercise the callbacks with a pinned follower tail. These tests do not establish
+controller restart durability, cross-session receiver failover, or the fleet
+plan's process/provider campaign.
+
+### Retain intent and enrollment before fleet orchestration
+
+The pure `fleet::operations` registry records define these adapter contracts:
+
+| Record or gate | Contract |
+| --- | --- |
+| `NodeIntent::advance_maintenance` | Conditionally advances the retained physical-node row with the head transaction. A different maintenance operation cannot overwrite a cordon. Reboot adoption advances the intent revision. |
+| `RegistryVersion` | One revision shared by every intent and enrollment mutation. Record the controlled bootstrap barrier; recheck this same version after collecting observations. A marker alone does not prove coverage. |
+| `RegistryVersion::set_scheduling` | Revision-checked stop/resume. A new registry starts stopped; enabling requires bootstrap. Stopping preserves accepted work, charged permits, and retained cordons. |
+| `RegistryVersion::authorize_allocation` | Invoke inside the allocation transaction with exact current intent rows. Reject a cordoned receiver, changed boot, stopped policy, or a draining source outside its current evacuation operation. The head reducer still checks fencing and budgets. |
+| `EnrollmentRecord` | First Pending acceptance checks exact source/target boot and intent revisions. Retain unknown work after lease expiry. Compare the full spec on duplicate request identities. |
+| `IntentPage` and `EnrollmentPage` | At most 128 sorted rows and one MiB per page. Keep older cordons and failed-session obligations; carry the same registry version through every cursor request. |
+
+Reader records name the exact Cell and published position. Follower records name
+the source boot and node-log epoch. Boot enrollment records carry the retained
+mode: a reboot may enroll its maintenance lease in Draining mode while writer,
+reader, and follower admission remains closed. Boot enrollment does not open
+readiness or clear intent.
+
+Only checked ordinary enrollment, definite refusal, or canonical role retirement
+advances an enrollment record. Evidence digests identify the application's
+retained proofs; decoding them supplies no authority or authentication. Duplicates
+return the original proof and transition time. A timeout is not refusal, and
+expiry never retires an unknown obligation.
+
+The host exposes `FleetJournal` and `FleetEnrollmentJournal` alongside the action
+journal. Implement all three against the same transaction domain. Conditional
+head publication must retain intent/operation changes and progress atomically;
+enrollment acceptance must linearize current intent checks with Pending. These
+records and pure tests do not establish complete fleet observation. The host's
+[fleet journal example](../../cellule-host/examples/fleet_operations/README.md)
+implements these contracts in one local SQLite transaction domain, with focused
+lost-reply and reconstruction evidence. The host's caller-driven reconciler now
+uses the existing planner and reducer for settled movement; its initial tests
+use simulated effects against that journal. Enrollment producers, complete
+observation collection, leased-node driver integration and maintenance execution
+remain implementation work. Local SQLite evidence
+does not qualify a distributed journal provider or process-crash behavior.
 
 <a id="back-up-immutable-roots"></a>
 ## Back up immutable roots and release metadata

@@ -26,6 +26,27 @@ impl CellNode {
             .release_idle_cell(cell, source, generation)
             .await
     }
+    /// Releases one exact approved source identity and captures its final position.
+    ///
+    /// The application must authorize and durably accept its fleet action before
+    /// invoking this local mechanism. The runtime rechecks session, generation,
+    /// incarnation and epoch; its canonical close/release task supplies the root.
+    /// A subsequent authority observation is never substituted for that result.
+    pub async fn release_idle_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: cellule_runtime::identity::IncarnationId,
+        epoch: u64,
+    ) -> cellule_runtime::Result<cellule_runtime::fleet::operations::PublishedPosition> {
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        self.runtime
+            .release_idle_cell_at(cell, source, generation, incarnation, epoch)
+            .await
+    }
     /// Stops new Cell acquisition while retaining the lease and current owners.
     pub fn begin_scale_down(&self) -> cellule_runtime::Result<()> {
         let mut state = self

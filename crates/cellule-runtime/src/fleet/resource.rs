@@ -744,6 +744,35 @@ mod tests {
     }
 
     #[test]
+    fn prepared_ltx_disk_credit_inherits_one_runtime_charge() {
+        let ledger = ResourceLedger::new(ResourceCost::zero().with_disk_bytes(10));
+        let parent = cellule_ltx::DiskBudget::new(10);
+        parent
+            .install_admission(Arc::new(LedgerDiskAdmission::new(
+                crate::identity::SessionId::from_bytes([10; 16]),
+                &ledger,
+            )))
+            .unwrap();
+        let prepared = parent.try_reserve(10).unwrap().into_budget();
+        let file = prepared.try_reserve(6).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        prepared.finish_preparation().unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 6);
+        let competing = parent.try_reserve(4).unwrap();
+        assert!(file.try_grow(1).is_err());
+        assert_eq!(file.bytes(), 6);
+        assert_eq!(prepared.used(), 6);
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        drop(competing);
+        file.try_grow(4).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        drop(prepared);
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        drop(file);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
+
+    #[test]
     fn ltx_host_admissions_share_one_runtime_ledger() {
         let ledger = ResourceLedger::new(
             ResourceCost::zero()

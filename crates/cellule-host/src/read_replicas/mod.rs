@@ -26,13 +26,30 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+mod inventory;
 mod recruitment;
+pub use inventory::{ReaderInventoryCursor, ReaderInventoryPage};
 pub use recruitment::ReadReplicaRecruiter;
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 const RECONCILE_BATCH: usize = 64;
 const RECONCILE_DEADLINE: Duration = Duration::from_secs(30);
 const MAX_LIVE_NODES: usize = 10_000;
+const MAX_READ_VIEWS: usize = 10_000;
+
+struct ActiveReaders {
+    views: HashMap<CellId, CellReadReplica>,
+    topology: Uuid,
+}
+
+impl Default for ActiveReaders {
+    fn default() -> Self {
+        Self {
+            views: HashMap::new(),
+            topology: Uuid::now_v7(),
+        }
+    }
+}
 
 /// Admitted immutable readers sharing one node runtime and current placement policy.
 ///
@@ -51,7 +68,7 @@ pub struct ReadReplicaManager {
     limits: Limits,
     closed: CancellationToken,
     activation: Arc<Mutex<()>>,
-    active: Arc<RwLock<HashMap<CellId, CellReadReplica>>>,
+    active: Arc<RwLock<ActiveReaders>>,
 }
 
 impl ReadReplicaManager {
@@ -82,7 +99,7 @@ impl ReadReplicaManager {
             limits,
             closed: CancellationToken::new(),
             activation: Arc::new(Mutex::new(())),
-            active: Arc::new(RwLock::new(HashMap::new())),
+            active: Arc::new(RwLock::new(ActiveReaders::default())),
         }
     }
 
@@ -184,7 +201,7 @@ impl ReadReplicaManager {
             return Err(Error::Fenced);
         }
         let path = self.destination(cell).await?;
-        let existing = { self.active.read().await.get(&cell).cloned() };
+        let existing = { self.active.read().await.views.get(&cell).cloned() };
         if let Some(existing) = existing {
             match existing.refresh(&path).await {
                 Ok(receipt) if self.still_selected(cell).await? => return Ok(receipt),
@@ -197,6 +214,9 @@ impl ReadReplicaManager {
                 }
                 Err(error) => return Err(error),
             }
+        }
+        if self.active.read().await.views.len() >= MAX_READ_VIEWS {
+            return Err(Error::Capacity("node read-view inventory bound"));
         }
         let replica = CellReplica::new(
             self.layout.clone(),
@@ -218,7 +238,9 @@ impl ReadReplicaManager {
         if !self.still_selected(cell).await? {
             return Err(Error::Fenced);
         }
-        self.active.write().await.insert(cell, reader);
+        let mut active = self.active.write().await;
+        active.topology = Uuid::now_v7();
+        active.views.insert(cell, reader);
         Ok(receipt)
     }
 
@@ -296,7 +318,14 @@ impl ReadReplicaManager {
             if self.closed.is_cancelled() {
                 return Ok(());
             }
-            let mut readers = self.active.read().await.keys().copied().collect::<Vec<_>>();
+            let mut readers = self
+                .active
+                .read()
+                .await
+                .views
+                .keys()
+                .copied()
+                .collect::<Vec<_>>();
             readers.sort_by_key(|cell| cell.as_bytes().to_owned());
             let count = readers.len().min(RECONCILE_BATCH);
             for _ in 0..count {
@@ -325,7 +354,7 @@ impl ReadReplicaManager {
         // installed concurrently for the same Cell after an epoch change.
         let _activation = self.activation.lock().await;
         self.ensure_open()?;
-        let current = self.active.read().await.get(&cell).cloned();
+        let current = self.active.read().await.views.get(&cell).cloned();
         let Some(reader) = current else {
             return Ok(());
         };
@@ -362,7 +391,9 @@ impl ReadReplicaManager {
     }
 
     async fn remove_locked(&self, cell: CellId) {
-        if let Some(reader) = self.active.write().await.remove(&cell) {
+        let mut active = self.active.write().await;
+        if let Some(reader) = active.views.remove(&cell) {
+            active.topology = Uuid::now_v7();
             reader.close();
         }
     }
@@ -373,7 +404,9 @@ impl ReadReplicaManager {
         // adapters must neither strand drain nor reopen snapshots afterward.
         self.closed.cancel();
         let _activation = self.activation.lock().await;
-        for (_, reader) in self.active.write().await.drain() {
+        let mut active = self.active.write().await;
+        active.topology = Uuid::now_v7();
+        for (_, reader) in active.views.drain() {
             reader.close();
         }
     }
@@ -398,6 +431,7 @@ impl PeerReplicaResolver for ReadReplicaManager {
                 .active
                 .read()
                 .await
+                .views
                 .get(&target.cell_id())
                 .cloned()
                 .ok_or(Error::ReplicaUnavailable)

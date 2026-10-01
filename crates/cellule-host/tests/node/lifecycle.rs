@@ -3,6 +3,89 @@
 use super::*;
 
 #[tokio::test]
+async fn operational_pressure_recovers_acquisition_without_clearing_a_cordon() {
+    use cellule_runtime::fleet::pressure::{PressureSample, PressureState};
+    use cellule_runtime::node::NodeMode;
+
+    let node = CellNodeBuilder::new(application())
+        .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+        .with_replica_host(ReplicaHost::default())
+        .with_session(SessionId::from_bytes([96; 16]))
+        .build()
+        .unwrap();
+    node.install_task_group(CancellationToken::new(), CancellationToken::new())
+        .unwrap();
+    node.install_node_lease_for_startup(NodeLeaseGuard::new(0, 60_000).unwrap())
+        .unwrap();
+    node.start().unwrap();
+    let at_ms = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    let sample = |offset, used| PressureSample {
+        at_ms: at_ms + offset,
+        memory_used_permille: used,
+        disk_used_permille: used,
+        jobs_used_permille: 0,
+        stale: false,
+    };
+    node.runtime()
+        .observe_pressure(sample(0, 900))
+        .await
+        .unwrap();
+    assert_eq!(
+        node.runtime()
+            .observe_pressure(sample(1_000, 900))
+            .await
+            .unwrap(),
+        PressureState::Critical
+    );
+    assert!(!node.runtime().is_acquiring());
+    node.runtime()
+        .observe_pressure(sample(2_000, 0))
+        .await
+        .unwrap();
+    assert_eq!(
+        node.runtime()
+            .observe_pressure(sample(3_000, 0))
+            .await
+            .unwrap(),
+        PressureState::Normal
+    );
+    assert!(node.runtime().is_acquiring());
+    node.runtime().stop_acquiring().unwrap();
+    node.runtime()
+        .observe_pressure(sample(4_000, 900))
+        .await
+        .unwrap();
+    node.runtime()
+        .observe_pressure(sample(5_000, 900))
+        .await
+        .unwrap();
+    node.runtime()
+        .observe_pressure(sample(6_000, 0))
+        .await
+        .unwrap();
+    assert_eq!(
+        node.runtime()
+            .observe_pressure(sample(7_000, 0))
+            .await
+            .unwrap(),
+        PressureState::Normal
+    );
+    let observed = node.runtime().operational_sample().unwrap().unwrap();
+    assert_eq!(observed.mode, NodeMode::Cordoned);
+    assert_eq!(observed.observed_at_ms, at_ms + 7_000);
+    assert!(!node.runtime().is_acquiring());
+    assert!(node.is_ready());
+    node.drain().await.unwrap();
+    assert_eq!(node.state(), NodeState::Stopped);
+}
+
+#[tokio::test]
 async fn node_shutdown_is_idempotent_and_returns_stopped_state() {
     let pool = SqlWorkerPool::new(1, 1).unwrap();
     let host = ReplicaHost::default();

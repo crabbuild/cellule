@@ -128,6 +128,10 @@ impl CellPublisher {
         &self.observed
     }
 
+    pub(crate) fn resource_limits(&self) -> cellule_ltx::Limits {
+        self.replica.limits()
+    }
+
     /// Returns the Cell storage layout this publisher writes through.
     #[must_use]
     pub(crate) fn layout(&self) -> &cellule_ltx::CellStorageLayout {

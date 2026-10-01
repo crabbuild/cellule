@@ -2,6 +2,78 @@
 
 use super::*;
 
+/// Signed role-admission mode, independent of measured resource capacity.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeMode {
+    /// The node may admit new roles if its pressure and ledgers permit them.
+    #[default]
+    Active,
+    /// Existing roles continue while new role acquisition is closed.
+    Cordoned,
+    /// Accepted work and role obligations are being settled for shutdown.
+    Draining,
+}
+
+/// Stable pressure tier published by the node's existing classifier.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodePressure {
+    /// Normal measured pressure.
+    #[default]
+    Normal,
+    /// Optional receive is paused, including when the local sample is stale.
+    Constrained,
+    /// Sustained pressure on at least one resource dimension.
+    Shedding,
+    /// Sustained critical memory and disk pressure.
+    Critical,
+}
+
+impl TryFrom<crate::fleet::pressure::PressureState> for NodePressure {
+    type Error = Error;
+
+    fn try_from(state: crate::fleet::pressure::PressureState) -> Result<Self> {
+        use crate::fleet::pressure::PressureState;
+        match state {
+            PressureState::Normal => Ok(Self::Normal),
+            PressureState::Constrained => Ok(Self::Constrained),
+            PressureState::Shedding => Ok(Self::Shedding),
+            PressureState::Critical => Ok(Self::Critical),
+            PressureState::Recovering => Err(Error::Node("transient pressure is not a wire tier")),
+        }
+    }
+}
+
+/// Schema 3 operational sample; republication must preserve its sample identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeOperationalSample {
+    /// Role-admission mode at the time of the sample.
+    pub mode: NodeMode,
+    /// Stable output of the local hysteretic pressure classifier.
+    pub pressure: NodePressure,
+    /// Strictly increasing sequence scoped to the boot session.
+    pub sequence: u64,
+    /// Logical time of measurement, not time of heartbeat republication.
+    pub observed_at_ms: i64,
+}
+
+impl NodeOperationalSample {
+    /// Validates sample identity and nonnegative observation time.
+    pub const fn validated(self) -> Result<Self> {
+        if self.sequence == 0 || self.observed_at_ms < 0 {
+            return Err(Error::Node("operational sample identity is invalid"));
+        }
+        Ok(self)
+    }
+
+    /// Whether this sample admits proactive writer, reader, or follower receive.
+    #[must_use]
+    pub fn accepts_roles(self) -> bool {
+        self.mode == NodeMode::Active && self.pressure == NodePressure::Normal
+    }
+}
+
 /// Capacity hints published by one node boot session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodeCapacity {

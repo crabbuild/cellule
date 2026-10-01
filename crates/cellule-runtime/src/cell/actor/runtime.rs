@@ -154,6 +154,7 @@ impl CellRuntime {
         let publications = broadcast::Sender::new(PUBLICATION_NOTIFICATIONS);
         let node_lease = Arc::new(node_lease);
         let unpublished_node_log_bytes = Arc::new(AtomicU64::new(0));
+        let node_admission = NodeAdmission::default();
         runtime.spawn(run(
             receiver,
             pool.clone(),
@@ -161,6 +162,7 @@ impl CellRuntime {
             Arc::clone(&unpublished_node_log_bytes),
             telemetry.clone(),
             publications.clone(),
+            node_admission.clone(),
         ));
         Ok(Self {
             inner: Arc::new(RuntimeInner {
@@ -169,10 +171,11 @@ impl CellRuntime {
                 resources,
                 primitive_jobs,
                 shutting_down: AtomicBool::new(false),
-                accepting_cells: AtomicBool::new(true),
+                node_admission,
                 session,
                 pool,
                 replica_host,
+                receivers: std::sync::Mutex::new(receiver::ReceiverRegistry::default()),
                 application_limits: OnceLock::new(),
                 node_lease,
                 node_durability: Arc::new(std::sync::RwLock::new(None)),
@@ -352,6 +355,7 @@ impl CellRuntime {
     /// Returns the first unobserved background release failure, including one
     /// completed before shutdown was requested, after closing the remaining work.
     pub async fn shutdown(&self) -> crate::Result<()> {
+        self.inner.node_admission.begin_drain()?;
         if self
             .inner
             .shutting_down
@@ -361,6 +365,9 @@ impl CellRuntime {
             return Err(Error::RuntimeClosed);
         }
         self.inner.primitive_jobs.close();
+        // Cancel unused receiver credit and join accepted takeover before the
+        // actor/worker close barrier. Retained caller handles are weak references.
+        let receivers = self.drain_prepared_receivers().await;
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
@@ -376,21 +383,32 @@ impl CellRuntime {
         // Admission and replica work are stopped. Optional fills outlive their
         // readers, so keep artifacts/executors until accepted fills complete.
         self.inner.replica_host.drain_cache_fills().await;
-        drain.and(workers).and(durability)
+        receivers.and(drain).and(workers).and(durability)
     }
 
     /// Stops new Cell acquisition while existing owners continue serving.
     pub fn stop_acquiring(&self) -> crate::Result<()> {
         self.ensure_running()?;
-        self.inner.accepting_cells.store(false, Ordering::Release);
-        Ok(())
+        self.inner.node_admission.cordon()
     }
 
     /// Reports whether a new owner may be acquired on this node.
     #[must_use]
     pub fn is_acquiring(&self) -> bool {
         !self.inner.shutting_down.load(Ordering::Acquire)
-            && self.inner.accepting_cells.load(Ordering::Acquire)
+            && self.inner.node_admission.check_new_role().is_ok()
+    }
+
+    /// Shares the node's lifecycle and pressure gate with local role facilities.
+    /// The host installs this gate on its follower store before readiness.
+    #[must_use]
+    pub fn node_admission(&self) -> NodeAdmission {
+        self.inner.node_admission.clone()
+    }
+
+    /// Returns the stable local classifier sample without refreshing its time.
+    pub fn operational_sample(&self) -> crate::Result<Option<crate::node::NodeOperationalSample>> {
+        self.inner.node_admission.sample()
     }
 
     /// Starts bounded, actor-owned eviction of safe idle Cells.
@@ -441,6 +459,39 @@ impl CellRuntime {
         response.await.map_err(|_| Error::RuntimeClosed)?
     }
 
+    /// Observes a bounded page of all local owners and lifecycle transitions.
+    ///
+    /// The cursor pins ownership topology, not SQL state or authority. Changed
+    /// topology rejects the cursor; restart the scan. Busy/draining Cells are
+    /// retained, and each release still needs fresh generation/authority checks.
+    /// The page owns retained-byte admission until dropped, including when its
+    /// caller cancels before receiving the actor's response.
+    pub async fn fleet_cells_page(
+        &self,
+        cursor: Option<CellInventoryCursor>,
+        limit: usize,
+    ) -> crate::Result<CellInventoryPage> {
+        self.ensure_running()?;
+        inventory::validate_limit(limit)?;
+        let retained = self.inner.resources.try_reserve(
+            ResourceCost::zero()
+                .with_retained_bytes(crate::fleet::operations::MAX_PAGE_BYTES as usize),
+        )?;
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::FleetCellsPage {
+                session: self.inner.session,
+                cursor,
+                limit,
+                retained,
+                reply,
+            })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
     /// Lists tenant-scoped targets of active, non-draining owners for maintenance.
     ///
     /// Targets come from verified activation proofs, including owners whose
@@ -476,21 +527,62 @@ impl CellRuntime {
         source: SessionId,
         generation: u64,
     ) -> crate::Result<()> {
+        let (reply, response) = oneshot::channel();
+        self.request_idle_release(cell, source, generation, None, DrainReply::Unit(reply))
+            .await?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    /// Releases an exact source identity and returns the canonical final position.
+    ///
+    /// The actor checks incarnation and ownership epoch before closing admission,
+    /// then its existing worker-close/publication path captures the exact released
+    /// root. A later authority read cannot replace this proof with a newer root.
+    pub async fn release_idle_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+    ) -> crate::Result<crate::fleet::operations::PublishedPosition> {
+        if epoch == 0 {
+            return Err(Error::Fenced);
+        }
+        let (reply, response) = oneshot::channel();
+        self.request_idle_release(
+            cell,
+            source,
+            generation,
+            Some((incarnation, epoch)),
+            DrainReply::Position(reply),
+        )
+        .await?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    async fn request_idle_release(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        expected: Option<(crate::identity::IncarnationId, u64)>,
+        reply: DrainReply,
+    ) -> crate::Result<()> {
         self.ensure_running()?;
         if source != self.inner.session || generation == 0 {
             return Err(Error::Fenced);
         }
-        let (reply, response) = oneshot::channel();
         self.inner
             .sender
             .send(Message::ReleaseIdleCell {
                 cell,
                 generation,
+                expected,
                 reply,
             })
             .await
-            .map_err(|_| Error::RuntimeClosed)?;
-        response.await.map_err(|_| Error::RuntimeClosed)?
+            .map_err(|_| Error::RuntimeClosed)
     }
 
     /// Feeds one measured node sample into the actor-owned hysteretic pressure

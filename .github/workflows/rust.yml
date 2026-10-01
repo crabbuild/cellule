@@ -81,6 +81,8 @@ jobs:
             --locked -- --ignored --exact --list | grep -Fx "$smoke_test: test"
           cargo test -p cellule-app --test integration "$smoke_test" \
             --locked -- --ignored --exact --nocapture
+      - name: Test fleet journal and public controller models
+        run: cargo test -p cellule-host --example fleet_operations --all-features --locked
       - name: Test local LTX without replica
         run: cargo test -p cellule-ltx --no-default-features --locked
       - name: Test replica feature

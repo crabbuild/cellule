@@ -1,0 +1,135 @@
+use super::*;
+
+impl FleetEnrollmentJournal for SqliteJournal {
+    fn register_initial_intent<'a>(
+        &'a self,
+        intent: &'a NodeIntent,
+    ) -> FleetAdapterFuture<'a, NodeIntent> {
+        let intent = intent.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(intent.scope())?;
+            if NodeIntent::initial(intent.scope(), intent.node(), intent.session())? != intent {
+                return Err(OperationError::Conflict.into());
+            }
+            if let Some(existing) = db.intent(intent.node())? {
+                if existing != intent {
+                    return Err(OperationError::Conflict.into());
+                }
+                return Ok(existing);
+            }
+            db.write_intent(&intent)?;
+            Ok(intent)
+        }))
+    }
+    fn rebind_active_intent<'a>(
+        &'a self,
+        original: &'a NodeIntent,
+        session: SessionId,
+        revision: u64,
+    ) -> FleetAdapterFuture<'a, NodeIntent> {
+        let original = original.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(original.scope())?;
+            let next = original.rebind_active(session, revision)?;
+            let current = db.required_intent(original.node())?;
+            if current == next {
+                return Ok(current);
+            }
+            if current != original {
+                return Err(OperationError::Conflict.into());
+            }
+            db.write_intent(&next)?;
+            Ok(next)
+        }))
+    }
+    fn return_to_service(
+        &self,
+        scope: FleetScope,
+        node: NodeId,
+        operation: OperationId,
+        session: SessionId,
+        revision: u64,
+    ) -> FleetAdapterFuture<'_, NodeIntent> {
+        Box::pin(self.run(move |db| {
+            db.check_scope(scope)?;
+            let completed = db.operation(operation)?.ok_or(OperationError::NotFound)?;
+            let old = db.required_intent(node)?;
+            let predecessor = NodeIntent::maintenance(scope, &completed)?;
+            let next = predecessor.return_to_service(&completed, session, revision)?;
+            if old == next {
+                return Ok(old);
+            }
+            if old != predecessor {
+                return Err(OperationError::Conflict.into());
+            }
+            db.write_intent(&next)?;
+            Ok(next)
+        }))
+    }
+    fn bootstrap_registry(
+        &self,
+        expected: RegistryVersion,
+    ) -> FleetAdapterFuture<'_, RegistryVersion> {
+        Box::pin(self.run(move |db| {
+            db.check_version(expected)?;
+            let next = expected.bootstrap(expected.revision())?;
+            db.set_registry(next)?;
+            Ok(next)
+        }))
+    }
+    fn accept_enrollment<'a>(
+        &'a self,
+        spec: &'a EnrollmentSpec,
+        now_ms: i64,
+    ) -> FleetAdapterFuture<'a, FleetEnrollmentAcceptance> {
+        let spec = spec.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(spec.scope)?;
+            if let Some(original) = db.enrollment(spec.key()?)? {
+                original.validate_replay(&spec)?;
+                return Ok(FleetEnrollmentAcceptance::Existing(original));
+            }
+            let source = spec
+                .source
+                .map(|endpoint| db.required_intent(endpoint.node))
+                .transpose()?;
+            let target = db.required_intent(spec.target.node)?;
+            let pending = EnrollmentRecord::pending(spec, source.as_ref(), &target, now_ms)?;
+            db.write_enrollment(&pending)?;
+            Ok(FleetEnrollmentAcceptance::New(pending))
+        }))
+    }
+    fn publish_enrollment_result<'a>(
+        &'a self,
+        original: &'a EnrollmentRecord,
+        event: EnrollmentEvent,
+        now_ms: i64,
+    ) -> FleetAdapterFuture<'a, EnrollmentRecord> {
+        let original = original.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(original.spec().scope)?;
+            let current = db
+                .enrollment(original.spec().key()?)?
+                .ok_or(OperationError::NotFound)?;
+            current.validate_replay(original.spec())?;
+            if current.accepted_at_ms() != original.accepted_at_ms() {
+                return Err(OperationError::Conflict.into());
+            }
+            let next = current.apply(event, now_ms)?;
+            if next != current {
+                db.write_enrollment(&next)?;
+            }
+            Ok(next)
+        }))
+    }
+    fn load_enrollment(
+        &self,
+        scope: FleetScope,
+        key: Digest,
+    ) -> FleetAdapterFuture<'_, Option<EnrollmentRecord>> {
+        Box::pin(self.run(move |db| {
+            db.check_scope(scope)?;
+            db.enrollment(key)
+        }))
+    }
+}

@@ -13,6 +13,7 @@ pub(super) async fn run(
     unpublished_node_log_bytes: Arc<AtomicU64>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     publications: broadcast::Sender<CatalogEntry>,
+    admission: NodeAdmission,
 ) {
     let mut cells = HashMap::<CellId, ActiveCell>::new();
     let mut transitioning = HashSet::<CellId>::new();
@@ -93,7 +94,7 @@ pub(super) async fn run(
                         }
                         break;
                     };
-                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &mut movement, &mut movement_permits, &mut next_generation);
+                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &admission, &mut movement, &mut movement_permits, &mut next_generation);
                 }
                 _ = renewal_tick.tick() => {
                     renewals.scan_due(&cells);
@@ -114,6 +115,7 @@ pub(super) async fn run(
                         &pool,
                         &telemetry,
                         &mut pressure,
+                        &admission,
                         &mut cells,
                         &mut transitioning,
                         &mut tasks,
@@ -148,7 +150,7 @@ pub(super) async fn run(
                     }
                     break;
                 };
-                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &mut movement, &mut movement_permits, &mut next_generation);
+                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &admission, &mut movement, &mut movement_permits, &mut next_generation);
             }
             result = tasks.join_next() => {
                 let Some(Ok(result)) = result else {
@@ -182,6 +184,7 @@ pub(super) async fn run(
                     &pool,
                     &telemetry,
                     &mut pressure,
+                    &admission,
                     &mut cells,
                     &mut transitioning,
                     &mut tasks,
@@ -197,10 +200,15 @@ pub(super) async fn run(
 ///
 /// A ledger that cannot be read, or a node without configured limits, yields no
 /// sample: pressure policy must never stop the actor loop.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the sample shares the actor ledger, classifier, admission gate, and movement state"
+)]
 fn sample_node_pressure(
     pool: &SqlWorkerPool,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
     pressure: &mut PressureClassifier,
+    admission: &NodeAdmission,
     cells: &mut HashMap<CellId, ActiveCell>,
     transitioning: &mut HashSet<CellId>,
     tasks: &mut JoinSet<TaskResult>,
@@ -217,6 +225,7 @@ fn sample_node_pressure(
         sample,
         telemetry,
         pressure,
+        admission,
         pool,
         cells,
         transitioning,
@@ -238,6 +247,7 @@ fn classify_pressure_sample(
     sample: PressureSample,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
     pressure: &mut PressureClassifier,
+    admission: &NodeAdmission,
     pool: &SqlWorkerPool,
     cells: &mut HashMap<CellId, ActiveCell>,
     transitioning: &mut HashSet<CellId>,
@@ -246,6 +256,7 @@ fn classify_pressure_sample(
     movement_permits: &mut HashMap<CellId, MovementPermit>,
 ) -> crate::Result<PressureState> {
     let state = pressure.observe(sample)?;
+    admission.observe(state, sample.at_ms)?;
     telemetry.pressure_state(state);
     if matches!(state, PressureState::Shedding | PressureState::Critical)
         && movement.in_flight() < 2
@@ -325,6 +336,7 @@ pub(super) fn handle_message(
     node_lease: &RuntimeNodeLease,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
     pressure: &mut PressureClassifier,
+    admission: &NodeAdmission,
     movement: &mut MovementBudget,
     movement_permits: &mut HashMap<CellId, MovementPermit>,
     next_generation: &mut u64,
@@ -365,26 +377,33 @@ pub(super) fn handle_message(
                         bootstrap_and_publish(cell, &pool, &mut publisher, *activation).await
                     }
                 };
-                let (result, persisted_work) = match result {
-                    Ok(hydration) => {
-                        match pool.interrupt_handle(cell).await {
-                            Ok(interrupt) => {
-                                let persisted_work =
-                                    pool.persisted_work_inventory(cell, role).await;
-                                (Ok((Arc::new(interrupt), hydration)), persisted_work)
-                            }
-                            Err(error) => {
-                                let result =
-                                    match cleanup_failed_activation(cell, &pool, &mut publisher)
-                                        .await
-                                    {
-                                        Ok(()) => error,
-                                        Err(cleanup) => cleanup,
-                                    };
-                                (Err(result), Err(Error::CellNotActive))
-                            }
+                let (result, inventory) = match result {
+                    Ok(hydration) => match pool.interrupt_handle(cell).await {
+                        Ok(interrupt) => {
+                            let inventory = pool
+                                .fleet_inventory(
+                                    cell,
+                                    role,
+                                    unix_millis(),
+                                    SqlDeadline::new(std::time::Instant::now() + SQL_WALL_DEADLINE),
+                                )
+                                .await;
+                            (Ok((Arc::new(interrupt), hydration)), inventory)
                         }
-                    }
+                        Err(error) => {
+                            let result = match cleanup_failed_activation(
+                                cell,
+                                &pool,
+                                &mut publisher,
+                            )
+                            .await
+                            {
+                                Ok(()) => error,
+                                Err(cleanup) => cleanup,
+                            };
+                            (Err(result), Err(Error::CellNotActive))
+                        }
+                    },
                     Err(error) => {
                         let result =
                             match cleanup_failed_activation(cell, &pool, &mut publisher).await {
@@ -403,7 +422,7 @@ pub(super) fn handle_message(
                     admission,
                     reply,
                     result,
-                    persisted_work,
+                    inventory,
                 }
             });
         }
@@ -609,7 +628,7 @@ pub(super) fn handle_message(
                     let _ = reply.send(Err(rejection_error(reason)));
                     return;
                 }
-                active.drain = Some(reply);
+                active.drain = Some(DrainReply::Unit(reply));
                 if matches!(
                     schedule(active, node_lease.check().is_ok()),
                     CoordinationDecision::ReadyToDeactivate
@@ -623,7 +642,7 @@ pub(super) fn handle_message(
                 let _ = reply.send(Err(rejection_error(reason)));
                 return;
             }
-            active.drain = Some(reply);
+            active.drain = Some(DrainReply::Unit(reply));
             match schedule(active, node_lease.check().is_ok()) {
                 CoordinationDecision::ReadyToDeactivate => {
                     start_deactivate(cell, pool, cells, transitioning, tasks);
@@ -662,6 +681,24 @@ pub(super) fn handle_message(
                 .collect();
             let _ = reply.send(Ok(candidates));
         }
+        Message::FleetCellsPage {
+            session,
+            cursor,
+            limit,
+            retained,
+            reply,
+        } => {
+            let result = inventory::collect_page(
+                cells,
+                transitioning,
+                *next_generation,
+                session,
+                cursor,
+                limit,
+                retained,
+            );
+            let _ = reply.send(result);
+        }
         Message::ActiveCatalogEntries { reply } => {
             if node_lease.check().is_err() {
                 let _ = reply.send(Err(Error::Fenced));
@@ -690,6 +727,7 @@ pub(super) fn handle_message(
         Message::ReleaseIdleCell {
             cell,
             generation,
+            expected,
             reply,
         } => {
             if node_lease.check().is_err() {
@@ -700,6 +738,23 @@ pub(super) fn handle_message(
                 let _ = reply.send(Err(Error::CellNotActive));
                 return;
             };
+            if let Some((incarnation, epoch)) = expected {
+                if active.incarnation != incarnation || active.generation != generation {
+                    let _ = reply.send(Err(Error::Fenced));
+                    return;
+                }
+                match active.publisher.as_ref() {
+                    Some(publisher) if publisher.control().value().epoch != epoch => {
+                        let _ = reply.send(Err(Error::Fenced));
+                        return;
+                    }
+                    None => {
+                        let _ = reply.send(Err(Error::CellDraining));
+                        return;
+                    }
+                    Some(_) => {}
+                }
+            }
             if active.generation != generation
                 || active.draining()
                 || active.transfer.is_some()
@@ -772,6 +827,7 @@ pub(super) fn handle_message(
                 sample,
                 telemetry,
                 pressure,
+                admission,
                 pool,
                 cells,
                 transitioning,
@@ -824,6 +880,9 @@ pub(super) fn reject_fenced_message(message: Message) {
             let _ = reply.send(Err(Error::Fenced));
         }
         Message::IdleTransferCandidates { reply } => {
+            let _ = reply.send(Err(Error::Fenced));
+        }
+        Message::FleetCellsPage { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));
         }
         Message::ActiveCatalogEntries { reply } => {

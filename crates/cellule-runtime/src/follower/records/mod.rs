@@ -25,7 +25,7 @@ pub(in crate::follower) struct IndexReservation {
     bytes: u64,
 }
 impl IndexReservation {
-    fn new(used: &Arc<Mutex<u64>>, bytes: u64) -> Result<Self> {
+    pub(in crate::follower) fn new(used: &Arc<Mutex<u64>>, bytes: u64) -> Result<Self> {
         let mut current = used
             .lock()
             .map_err(|_| Error::Node("follower index reservation lock poisoned"))?;

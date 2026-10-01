@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::identity::NodeId;
 use crate::identity::{CellId, SessionId};
-use crate::node::{NodeAdvertisement, NodePlacementCapacity};
+use crate::node::{NodeAdvertisement, NodeMode, NodePlacementCapacity, NodePressure};
 use crate::{Error, Result};
 
 const MAX_OBSERVATION_AGE_MS: i64 = 30_000;
@@ -21,9 +21,8 @@ const BALANCE_DEADBAND_PERCENT: u128 = 2;
 
 /// Pressure class supplied by the signed node observation.
 ///
-/// The signed placement block carries measured counters rather than the node's
-/// hysteretic tier, so derivation currently reaches only the critical class;
-/// soft and hard pressure remain local until the tier is signed.
+/// Schema 3 carries the stable local tier explicitly. Schema 2 bridge readers
+/// retain the original zero-headroom derivation until the producer rollout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PlacementPressure {
     /// No pressure: the node accepts placements.
@@ -89,6 +88,7 @@ impl PlacementObservation {
         now_ms: i64,
         current_owner: bool,
     ) -> Result<Self> {
+        advertisement.verify_placement()?;
         let placement = advertisement
             .placement_capacity()
             .ok_or(Error::Node("placement snapshot is missing"))?;
@@ -118,7 +118,9 @@ impl PlacementObservation {
         Self {
             node: advertisement.node(),
             session: advertisement.session(),
-            observed_at_ms: advertisement.issued_at_ms(),
+            observed_at_ms: advertisement
+                .operational_sample()
+                .map_or(advertisement.issued_at_ms(), |sample| sample.observed_at_ms),
             memory_capacity_bytes: placement.memory_capacity_bytes,
             free_memory_bytes: capacity.free_memory_bytes,
             disk_capacity_bytes: placement.disk_capacity_bytes,
@@ -130,14 +132,25 @@ impl PlacementObservation {
             publication_backlog: placement.publication_backlog,
             hydration_backlog: placement.hydration_backlog,
             primitive_backlog: placement.primitive_backlog,
-            // Only an empty ledger is visible to a peer while the hysteretic
-            // tier stays local.
-            pressure: if capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0 {
-                PlacementPressure::Critical
-            } else {
-                PlacementPressure::Normal
-            },
-            draining: capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0,
+            pressure: advertisement.operational_sample().map_or_else(
+                || {
+                    if capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0 {
+                        PlacementPressure::Critical
+                    } else {
+                        PlacementPressure::Normal
+                    }
+                },
+                |sample| match sample.pressure {
+                    NodePressure::Normal => PlacementPressure::Normal,
+                    NodePressure::Constrained => PlacementPressure::Constrained,
+                    NodePressure::Shedding => PlacementPressure::Shedding,
+                    NodePressure::Critical => PlacementPressure::Critical,
+                },
+            ),
+            draining: advertisement.operational_sample().map_or_else(
+                || capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0,
+                |sample| sample.mode != NodeMode::Active,
+            ),
             authenticated: true,
             current_owner,
         }
@@ -157,6 +170,8 @@ pub enum PlacementEligibility {
     Draining,
     /// The node reports critical pressure.
     CriticalPressure,
+    /// The stable node tier pauses proactive receive before critical pressure.
+    Pressure,
     /// Free memory is below the placement reserve.
     NoMemoryHeadroom,
     /// Free disk is below the placement reserve.
@@ -643,6 +658,9 @@ impl PlacementPlanner {
         }
         if observation.pressure >= PlacementPressure::Critical {
             return PlacementEligibility::CriticalPressure;
+        }
+        if observation.pressure != PlacementPressure::Normal {
+            return PlacementEligibility::Pressure;
         }
         if observation.memory_capacity_bytes == 0 || observation.free_memory_bytes == 0 {
             return PlacementEligibility::NoMemoryHeadroom;

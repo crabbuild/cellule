@@ -20,7 +20,7 @@ pub(super) fn handle_activated(
         Arc<cellule_ltx::rusqlite::InterruptHandle>,
         Option<cellule_ltx::Hydration>,
     )>,
-    persisted_work: crate::Result<crate::primitives::maintenance::PersistedWorkInventory>,
+    inventory: crate::Result<crate::cell::worker::WorkerCellInventory>,
 ) {
     let TaskContext {
         pool,
@@ -91,9 +91,19 @@ pub(super) fn handle_activated(
                     Residency::Sparse
                 }
             });
-            let persisted_work = match persisted_work {
-                Ok(inventory) => inventory,
-                Err(_) => {
+            let resource_limits = publisher.resource_limits();
+            let mut demand = inventory::CellDemandState::default();
+            let persisted_work = match inventory {
+                Ok(sample) => {
+                    if let Err(error) = demand.record(sample, resource_limits, published_sequence) {
+                        tracing::debug!(cell = ?cell, error = ?error, "Cell demand remains unknown after activation");
+                        crate::primitives::maintenance::PersistedWorkInventory::unknown()
+                    } else {
+                        sample.persisted_work
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(cell = ?cell, error = ?error, "Cell inventory remains unknown after activation");
                     // An inventory read is a safety precondition for
                     // eviction. Unknown accounting must remain ineligible.
                     crate::primitives::maintenance::PersistedWorkInventory::unknown()
@@ -102,6 +112,7 @@ pub(super) fn handle_activated(
             // A restored or bootstrapped owner can already have a reader policy.
             // Its hint is advisory; receivers still reload the new authority.
             let _ = publications.send(catalog.entry().clone());
+            let resident_since_ms = unix_millis();
             cells.insert(
                 cell,
                 ActiveCell {
@@ -121,10 +132,14 @@ pub(super) fn handle_activated(
                     queue: VecDeque::new(),
                     coordination: CoordinationState::serving_with_residency(true, residency),
                     persisted_work,
+                    demand,
+                    resource_limits,
                     inventory_refreshing: false,
+                    inventory_revision: 1,
                     drain: None,
                     transfer: None,
-                    last_used_ms: unix_millis(),
+                    resident_since_ms,
+                    last_used_ms: resident_since_ms,
                     last_work_at: std::time::Instant::now(),
                     compaction_retry_at: std::time::Instant::now(),
                     hydration_retry_at: std::time::Instant::now(),

@@ -74,6 +74,9 @@ pub enum Error {
     /// The peer is authenticated but not authorized for this operation.
     #[error("Cell peer authorization denied: {0}")]
     PeerAuthorization(&'static str),
+    /// A fleet receiver request failed its exact operation contract.
+    #[error("Cell fleet operation failed")]
+    FleetOperation(#[source] Box<crate::fleet::operations::OperationError>),
     /// A node advertisement or directory record failed validation.
     #[error("invalid Cell node advertisement: {0}")]
     Node(&'static str),

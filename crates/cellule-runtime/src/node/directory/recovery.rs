@@ -103,7 +103,7 @@ impl NodeDirectory {
             .await?
             .ok_or(Error::Node("node recovery claimant is not live"))?;
         if require_recovery_eligibility
-            && !recovery_executor_eligible(claimant_advertisement.advertisement())
+            && !recovery_executor_eligible(claimant_advertisement.advertisement(), now_ms)
         {
             return Err(Error::Capacity("node recovery claimant is not eligible"));
         }
@@ -252,7 +252,8 @@ impl NodeDirectory {
             .iter()
             .filter_map(|member| {
                 live.iter().find(|advertisement| {
-                    advertisement.node() == *member && recovery_executor_eligible(advertisement)
+                    advertisement.node() == *member
+                        && recovery_executor_eligible(advertisement, now_ms)
                 })
             })
             .min_by(|left, right| left.node().as_bytes().cmp(right.node().as_bytes()))
@@ -311,7 +312,7 @@ impl NodeDirectory {
             .load(claimant, now_ms)
             .await?
             .ok_or(Error::Node("node recovery claimant is not live"))?;
-        if !recovery_executor_eligible(claimant_advertisement.advertisement()) {
+        if !recovery_executor_eligible(claimant_advertisement.advertisement(), now_ms) {
             return Ok(Vec::new());
         }
         if claimant_node.is_some_and(|node| claimant_advertisement.advertisement.node() != node) {
@@ -459,7 +460,7 @@ impl NodeDirectory {
                     if !live_sessions.insert(node) {
                         return Err(Error::Node("multiple live sessions advertise one node"));
                     }
-                    if recovery_executor_eligible(&advertisement) {
+                    if recovery_executor_eligible(&advertisement, now_ms) {
                         live_nodes.insert(node);
                     }
                     live.push(*advertisement);

@@ -724,6 +724,13 @@ impl CellReplica {
         self.limits
     }
 
+    /// Returns the fixed Cell and incarnation binding of every immutable operation.
+    /// This scope provides no authority or selected root.
+    #[must_use]
+    pub const fn scope(&self) -> ([u8; 32], [u8; 16]) {
+        (self.cell, self.incarnation)
+    }
+
     /// Returns the cumulative immutable publication cost this replica paid.
     ///
     /// The ledger covers every object the replica uploaded: segment bodies and

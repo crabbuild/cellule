@@ -9,6 +9,8 @@ use object_store::{
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+mod inventory;
+
 struct SparseActivation {
     _source: tempfile::TempDir,
     _destination: tempfile::TempDir,
@@ -132,6 +134,7 @@ async fn sparse_fault_pool_progresses_under_saturated_sql_workers() {
                 1,
                 first.root,
                 first_reservation,
+                None,
             ),
             pool.activate_restored(
                 second.cell,
@@ -141,6 +144,7 @@ async fn sparse_fault_pool_progresses_under_saturated_sql_workers() {
                 1,
                 second.root,
                 second_reservation,
+                None,
             ),
         )
     })
@@ -223,6 +227,7 @@ async fn background_hydration_leaves_both_workers_query_admission_available() {
             1,
             activation.root,
             pool.reserve_activation().unwrap(),
+            None,
         )
         .await
         .unwrap();
@@ -362,6 +367,7 @@ async fn rustfs_worker_interference(worker_count: usize) {
             1,
             activation.root,
             pool.reserve_activation().unwrap(),
+            None,
         )
         .await
         .unwrap();
@@ -473,6 +479,7 @@ async fn rustfs_worker_interference(worker_count: usize) {
             1,
             cold.root,
             pool.reserve_activation().unwrap(),
+            None,
         )
         .await
         .unwrap();

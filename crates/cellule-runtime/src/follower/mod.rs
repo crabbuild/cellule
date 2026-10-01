@@ -12,7 +12,12 @@ use crate::identity::SessionId;
 use crate::{Error, Result};
 
 mod directory;
+mod inventory;
 mod records;
+
+pub use inventory::{
+    FollowerInventoryCursor, FollowerInventoryPage, FollowerLaneObservation, FollowerLaneState,
+};
 
 use directory::*;
 use records::*;
@@ -137,6 +142,8 @@ pub struct FollowerStore {
     index_used: Arc<Mutex<u64>>,
     quarantined_entries: usize,
     scan_counter: ScanCounter,
+    admission: crate::fleet::admission::NodeAdmission,
+    inventory_scope: [u8; 16],
 }
 
 impl FollowerStore {
@@ -167,7 +174,21 @@ impl FollowerStore {
             index_used: Arc::new(Mutex::new(0)),
             quarantined_entries,
             scan_counter: new_scan_counter(),
+            admission: crate::fleet::admission::NodeAdmission::default(),
+            inventory_scope: rand::random(),
         })
+    }
+
+    /// Installs the runtime's shared gate before the store is shared or serves
+    /// traffic. Cordon blocks entirely new lanes while existing acknowledged
+    /// tails remain appendable under their normal epoch authorization.
+    #[must_use]
+    pub fn with_node_admission(
+        mut self,
+        admission: crate::fleet::admission::NodeAdmission,
+    ) -> Self {
+        self.admission = admission;
+        self
     }
 
     #[cfg(test)]
@@ -215,6 +236,10 @@ impl FollowerStore {
             return Err(Error::Node("invalid follower append batch"));
         }
         let lane = Lane { leader, epoch };
+        validate_lane(lane)?;
+        if !lane_directory(&self.root, lane).exists() {
+            self.admission.check_new_role()?;
+        }
         let lock = self.lane_lock(lane)?;
         let root = self.root.clone();
         let limits = self.limits;
@@ -224,6 +249,8 @@ impl FollowerStore {
         let growth = encoded_bytes
             .and_then(|bytes| bytes.checked_add((frames.len() * RECORD_HEADER_BYTES) as u64))
             .ok_or(Error::Node("follower append byte count overflow"))?;
+        let admission = self.admission.clone();
+        let lanes = Arc::clone(&self.lanes);
         tokio::task::spawn_blocking(move || {
             let retained = retained
                 .lock()
@@ -232,20 +259,36 @@ impl FollowerStore {
             let mut state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
-            let result = append_sync(
-                &root,
-                lane,
-                frames,
-                covered_through,
-                limits,
-                &index_used,
-                &mut state,
-                &scan_counter,
-            );
+            let result = (|| {
+                if !lane_directory(&root, lane).exists() {
+                    admission.admit(|| ensure_lane_directories(&root, lane))?;
+                }
+                append_sync(
+                    &root,
+                    lane,
+                    frames,
+                    covered_through,
+                    limits,
+                    &index_used,
+                    &mut state,
+                    &scan_counter,
+                )
+            })();
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
             if result.is_err() {
                 *state = None;
+                if !lane_directory(&root, lane).exists()
+                    && let Ok(mut lanes) = lanes.lock()
+                {
+                    // Cordon may win after the precheck but before enrollment.
+                    // Rejected transient lanes must not accumulate in memory.
+                    if lanes.get(&lane).is_some_and(|registered| {
+                        Arc::ptr_eq(registered, &lock) && Arc::strong_count(registered) == 2
+                    }) {
+                        lanes.remove(&lane);
+                    }
+                }
             }
             settle_disk_reservation(result, resize)
         })

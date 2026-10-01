@@ -40,5 +40,32 @@ concrete application need. Any new capability must integrate with the current
 registry, owner admission, maintenance budget, and host lifecycle; former APIs
 from earlier codebases are not part of today's supported surface.
 
+## Fleet operations implementation plan
+
+The [fleet operations design and implementation plan](fleet-operations-plan.md)
+specifies the proposed reconciliation path for overload relief, ownership
+balancing, and resumable node maintenance. It includes signed pressure state,
+busy-Cell drain, follower obligations, controller recovery, compatibility,
+work packages, and acceptance checks. The plan also specifies reservation
+ownership, an enrollment barrier for safe finalization, the source map, and the
+first executable implementation slice.
+
+Start with the plan's [implementation brief](fleet-operations-plan.md#implementation-brief)
+and [application startup recipe](fleet-operations-plan.md#application-startup-and-adapter-handoff)
+for the delivery order and required integration adapters.
+
+The working tree now contains operation records, schema 3 readers,
+shared local admission reasons, host movement actions, a local durable journal,
+and a caller-driven reconciler with SQLite-backed sequencing tests. Complete
+enrollment/observation wiring, leased-node driver integration, the maintenance
+workflow, and measured fleet
+qualification remain in progress; these foundations do not establish fleet
+operation support by themselves.
+
+Follow the plan's [execution checkpoints](fleet-operations-plan.md#execution-checkpoints)
+for the three delivery milestones: settled Cell movement, complete node
+maintenance, then deployment qualification. Each milestone specifies the
+public behavior, verification commands, and evidence required for completion.
+
 For proof levels and receipt requirements, read the
 [delivery evidence guide](../crates/cellule-runtime/docs/delivery.md).

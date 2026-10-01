@@ -40,6 +40,13 @@ pub(in crate::cell::actor) fn start_next(
         // Durable command outcomes, effects, Queue rows, and Workflow runs
         // remain release obligations until a fresh inventory proves otherwise.
         active.persisted_work = crate::primitives::maintenance::PersistedWorkInventory::unknown();
+        active.demand.clear();
+        let Some(revision) = active.inventory_revision.checked_add(1) else {
+            active.queue.push_front(work);
+            fence_active(active);
+            return;
+        };
+        active.inventory_revision = revision;
     }
     let generation = active.generation;
     active.last_used_ms = unix_millis();
@@ -270,6 +277,7 @@ pub(in crate::cell::actor) fn start_deactivate(
     let generation = active.generation;
     let pool = pool.clone();
     tasks.spawn(async move {
+        let mut released = None;
         let result = async {
             let mut publisher = active.publisher.ok_or(Error::Fenced)?;
             // A release that already published its root may leave a resume
@@ -281,6 +289,17 @@ pub(in crate::cell::actor) fn start_deactivate(
                 None => pool.deactivate(cell).await?,
             }
             publisher.release().await?;
+            let final_control = publisher.control().value();
+            if final_control.state != crate::control::ControlState::Idle
+                || final_control.owner.is_some()
+            {
+                return Err(Error::Fenced);
+            }
+            released = Some(crate::fleet::operations::PublishedPosition {
+                incarnation: final_control.incarnation,
+                epoch: final_control.epoch,
+                root: final_control.root.clone().ok_or(Error::Fenced)?,
+            });
             // A released Cell that still has a deadline publishes one bounded
             // hint key, so the scheduler finds it without scanning every shard.
             // The hint is an accelerator: a failed write costs a later Tick
@@ -305,6 +324,7 @@ pub(in crate::cell::actor) fn start_deactivate(
             reply: active.drain,
             shutdown_drain: active.coordination.is_shutdown(),
             result,
+            released,
         }
     });
 }
@@ -341,6 +361,7 @@ pub(in crate::cell::actor) fn start_fenced_deactivate(
             reply: active.drain,
             shutdown_drain: active.coordination.is_shutdown(),
             result,
+            released: None,
         }
     });
 }
@@ -371,6 +392,7 @@ pub(in crate::cell::actor) fn start_orphan_deactivate(
             reply: None,
             shutdown_drain,
             result,
+            released: None,
         }
     });
     transitioning.insert(cell);

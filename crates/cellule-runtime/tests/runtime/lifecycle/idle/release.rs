@@ -2,6 +2,138 @@
 
 use super::*;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exact_position_release_rejects_stale_identity_and_keeps_the_final_root() {
+    let fixture = fixture_for(b"exact-release-position");
+    let (runtime, handle, _) = activate_runtime(&fixture, 64 << 20).await;
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let before = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, generation, _, _) = runtime.idle_transfer_candidates().await.unwrap()[0];
+    let cell = fixture.target.cell_id();
+    let session = SessionId::from_bytes([4; 16]);
+    let incarnation = handle.incarnation();
+    let epoch = before.value().epoch;
+    for (source, activation, identity, ownership) in [
+        (
+            SessionId::from_bytes([171; 16]),
+            generation,
+            incarnation,
+            epoch,
+        ),
+        (session, generation + 1, incarnation, epoch),
+        (
+            session,
+            generation,
+            IncarnationId::from_bytes([172; 16]),
+            epoch,
+        ),
+        (session, generation, incarnation, epoch + 1),
+        (session, generation, incarnation, 0),
+    ] {
+        assert!(
+            runtime
+                .release_idle_cell_at(cell, source, activation, identity, ownership)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            authority.load(cell).await.unwrap().unwrap().value(),
+            before.value()
+        );
+    }
+    let clock = now_ms();
+    let identity = mutation_identity_window(173, clock, clock + 60_000);
+    let digest = Digest::from_bytes([173; 32]);
+    let acknowledged = handle
+        .execute(identity, digest, clock, 64, 64, |transaction| {
+            transaction.execute("UPDATE counter SET value = 41", [])?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        })
+        .await
+        .unwrap();
+    let published = authority.load(cell).await.unwrap().unwrap();
+    assert_ne!(published.value().root, before.value().root);
+    let position = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match runtime
+                .release_idle_cell_at(cell, session, generation, incarnation, epoch)
+                .await
+            {
+                Ok(position) => return position,
+                Err(cellule_runtime::Error::CellDraining) => tokio::task::yield_now().await,
+                Err(error) => panic!("exact release failed: {error}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(position.incarnation, incarnation);
+    assert_eq!(position.epoch, epoch);
+    assert_eq!(Some(&position.root), published.value().root.as_ref());
+    assert!(position.root.commit_sequence >= acknowledged.commit_sequence());
+    assert_eq!(runtime.stats().active_cells(), 0);
+    let idle = authority.load(cell).await.unwrap().unwrap();
+    assert_eq!(idle.value().state, ControlState::Idle);
+    assert!(idle.value().owner.is_none());
+    assert_eq!(Some(&position.root), idle.value().root.as_ref());
+
+    let receiver = CellRuntime::new_with_replica_host(
+        SqlWorkerPool::new(1, 2).unwrap(),
+        64 << 20,
+        SessionId::from_bytes([174; 16]),
+        ReplicaHost::default().with_local_disk_budget(DiskBudget::new(8 << 30)),
+    )
+    .unwrap();
+    let successor = receiver
+        .acquire_idle_restored(
+            handle.catalog().clone(),
+            fixture.replica.clone(),
+            authority.clone(),
+            idle,
+            fixture._directory.path().join("successor.sqlite"),
+            Owner {
+                session: SessionId::from_bytes([174; 16]),
+                endpoint: "https://successor.internal:8081".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        successor
+            .resolve(identity, digest, now_ms(), 64)
+            .await
+            .unwrap(),
+        Resolution::Committed(acknowledged)
+    );
+    successor
+        .execute(
+            mutation_identity_window(175, clock, clock + 60_000),
+            Digest::from_bytes([175; 32]),
+            now_ms(),
+            64,
+            64,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = 42", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .await
+        .unwrap();
+    let advanced = authority.load(cell).await.unwrap().unwrap();
+    assert!(advanced.value().epoch > position.epoch);
+    assert!(
+        advanced.value().root.as_ref().unwrap().commit_sequence > position.root.commit_sequence
+    );
+    assert_eq!(Some(&position.root), published.value().root.as_ref());
+    successor.drain().await.unwrap();
+    receiver.shutdown().await.unwrap();
+    runtime.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn exact_idle_release_checks_generation_and_confirms_authority_release() {
     let fixture = fixture_for(b"exact-idle-release");

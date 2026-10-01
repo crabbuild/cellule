@@ -80,6 +80,7 @@ impl NodeDirectory {
             .filter(|candidate| {
                 let capacity = candidate.capacity();
                 candidate.expires_at_ms() > now_ms
+                    && candidate.accepts_new_roles(now_ms)
                     && candidate.node() != owner_node
                     && candidate.module_digests().contains(&code)
                     && capacity.free_memory_bytes
@@ -260,6 +261,7 @@ impl NodeDirectory {
             .iter()
             .filter(|candidate| {
                 candidate.node != leader.node
+                    && candidate.accepts_new_roles(now_ms)
                     && candidate.capacity.log_protocol == NODE_LOG_PROTOCOL_VERSION
                     && candidate.capacity.follower_free_bytes >= required_follower_bytes
                     && candidate.capacity.free_memory_bytes != 0

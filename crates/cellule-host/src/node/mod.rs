@@ -12,6 +12,7 @@ pub struct CellNode {
     pub(super) state: Arc<Mutex<NodeState>>,
     pub(super) lease_installed: AtomicBool,
     pub(super) shutdown_lock: Arc<tokio::sync::Mutex<()>>,
+    pub(super) runtime_drain: tokio::sync::Mutex<RuntimeDrain>,
     pub(super) facilities: Arc<Mutex<Vec<CellNodeFacility>>>,
     pub(super) required_components: Arc<Mutex<Vec<&'static str>>>,
     pub(super) task_group: Arc<Mutex<Option<Arc<CellNodeTaskGroup>>>>,
@@ -79,6 +80,8 @@ impl CellNode {
 }
 
 mod components;
+mod fleet;
 mod lifecycle;
+pub(crate) use lifecycle::RuntimeDrain;
 mod qualification;
 mod scale_down;

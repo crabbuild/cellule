@@ -22,6 +22,7 @@ use crate::peer::{PeerOperation, PeerPrincipal, PeerSigner, wire as peer_wire};
 mod append_authorization;
 mod candidates;
 mod log;
+mod operational;
 mod placement;
 mod records;
 mod sessions;

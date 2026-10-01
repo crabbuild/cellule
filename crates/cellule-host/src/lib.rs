@@ -41,6 +41,7 @@ pub use tasks::CellNodeTaskGroup;
 mod builder;
 mod durability;
 mod facility;
+pub mod fleet;
 mod node;
 pub mod read_replicas;
 mod status;

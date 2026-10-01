@@ -10,8 +10,11 @@ use crate::node::advertisement::validate_successor;
 use super::*;
 
 mod advertisement;
+mod inventory;
 mod log;
 mod recovery;
+
+pub use inventory::{FollowerLogObservation, LogInventoryCursor, LogInventoryPage, LogLeaderState};
 
 /// Object-store directory for one fleet and compiled release.
 #[derive(Clone)]
@@ -27,6 +30,7 @@ pub struct NodeDirectory {
     // Reader placement is advisory. Authority, session authentication and
     // maintenance continue to read their canonical records directly.
     reader_membership: Arc<RwLock<Option<advertisement::ReaderMembership>>>,
+    inventory_scope: [u8; 16],
 }
 
 /// Request verifier bound to one mTLS-authenticated enrollment observation.
@@ -81,6 +85,7 @@ impl NodeDirectory {
             release,
             recovery_scan: Arc::new(RwLock::new(None)),
             reader_membership: Arc::new(RwLock::new(None)),
+            inventory_scope: rand::random(),
         }
     }
 
@@ -385,13 +390,14 @@ impl RecoveryCandidateWindow {
     }
 }
 
-pub(super) fn recovery_executor_eligible(advertisement: &NodeAdvertisement) -> bool {
+pub(super) fn recovery_executor_eligible(advertisement: &NodeAdvertisement, now_ms: i64) -> bool {
     let capacity = advertisement.capacity();
     let placement_has_headroom = advertisement.placement_capacity().is_none_or(|placement| {
         placement.active_cells < placement.max_active_cells
             && placement.running_jobs < placement.job_capacity
     });
-    capacity.log_protocol == NODE_LOG_PROTOCOL_VERSION
+    advertisement.accepts_new_roles(now_ms)
+        && capacity.log_protocol == NODE_LOG_PROTOCOL_VERSION
         && capacity.free_memory_bytes != 0
         && capacity.free_disk_bytes != 0
         && capacity.job_credits != 0
