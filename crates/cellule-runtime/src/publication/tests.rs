@@ -140,8 +140,23 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
         })
         .unwrap();
     let cuts = database.capture_deferred().unwrap();
+    let before_revision = publisher.control().value().revision;
     let prepared = publisher.prepare_append(&cuts, 38, 1).await.unwrap();
+    assert_eq!(publisher.control().value().ltx_root(), Some(at_ceiling));
+    assert_eq!(
+        publisher
+            .authority
+            .load(cell)
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .ltx_root(),
+        Some(at_ceiling)
+    );
+    assert_eq!(prepared.predecessor(), Some(at_ceiling));
     publisher.publish_prepared(&prepared, None).await.unwrap();
+    assert_eq!(publisher.control().value().revision, before_revision + 1);
     let forced = publisher.control().value().ltx_root().unwrap();
     assert!(replica.open_root(&forced).await.unwrap().segment_count() < 32);
     database.close().unwrap();
