@@ -484,6 +484,38 @@ try {
     path: path.join(root, "test-results/effects-guide.png"),
   });
 
+  // Headers and row grids must fill the table border, even for short content.
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const route of [
+      "/docs/guides/introduction",
+      "/docs/guides/quickstart",
+      "/docs/primitives",
+    ]) {
+      await page.goto(new URL(route, origin).href, { waitUntil: "networkidle" });
+      const tables = await page.locator(".prose table").evaluateAll((tables) =>
+        tables.map((table) => ({
+          right: table.getBoundingClientRect().right,
+          rowEdges: Array.from(table.rows, (row) =>
+            row.getBoundingClientRect().right,
+          ),
+        })),
+      );
+      assert(tables.length > 0, `${route} needs table layout coverage`);
+      for (const table of tables)
+        assert(
+          table.rowEdges.every((right) => Math.abs(table.right - right) <= 2),
+          `${route} has unused space inside a table border at ${width}px`,
+        );
+      assert(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth + 1,
+        ),
+        `${route} tables must not overflow the page at ${width}px`,
+      );
+    }
+  }
+
   await page.setViewportSize({ width: 390, height: 844 });
   for (const route of [
     ...marketing,

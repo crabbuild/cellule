@@ -1176,11 +1176,6 @@ kbd {
   --tw-prose-links: var(--accent);
   --tw-prose-bold: var(--ink);
 }
-.prose table {
-  display: block;
-  overflow-x: auto;
-  max-width: 100%;
-}
 .prose :not(pre) > code {
   overflow-wrap: anywhere;
 }
