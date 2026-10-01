@@ -41,6 +41,7 @@ pub(super) fn handle_executed(
         fenced = true;
     }
     if fenced {
+        tracing::warn!(?cell, error = ?result.as_ref().err(), "DIAGNOSTIC command fenced owner");
         finish_work(active, true);
         send_command_task_reply(&mut command, result);
         continue_cell(cell, pool, cells, transitioning, tasks, node_lease);

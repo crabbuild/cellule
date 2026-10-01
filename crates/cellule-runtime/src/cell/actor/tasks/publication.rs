@@ -39,6 +39,9 @@ pub(super) fn handle_proven(
         result = Err(command.operation.unknown(Error::Fenced));
         fenced = true;
     }
+    if fenced {
+        tracing::warn!(?cell, error = ?result.as_ref().err(), "DIAGNOSTIC proof fenced owner");
+    }
     finish_work(active, fenced);
     send_command_reply(&mut command, result);
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
@@ -118,6 +121,7 @@ pub(super) fn handle_published(
         fence |= matches!(decision, CoordinationDecision::Fence);
     }
     if fence {
+        tracing::warn!(?cell, error = ?result.as_ref().err(), "DIAGNOSTIC publication fenced owner");
         fence_active(active);
     } else {
         // Only the completed object path can wake snapshot readers. Fleet proof
@@ -162,6 +166,9 @@ pub(super) fn handle_compacted(
         tracing::warn!(cell = ?cell, error = ?error, "Cell compaction fenced its owner");
     }
     let fenced = result.is_err() || node_lease.check().is_err();
+    if fenced {
+        tracing::warn!(?cell, error = ?result.as_ref().err(), "DIAGNOSTIC compaction fenced owner");
+    }
     active.publisher = Some(*publisher);
     if matches!(result, Ok(None)) {
         active.compaction_retry_at = std::time::Instant::now() + COMPACTION_RETRY;
