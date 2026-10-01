@@ -111,9 +111,18 @@ flowchart LR
 
 - **`CellHandle`.** A cloneable mailbox sender. It never exposes a SQLite connection.
 - **Routing.** Stable Cell-ID routing keeps one `Db` on one operating-system thread until close.
+
 - **Bootstrap.** Bootstrap passes the runtime-configured replica host to both that worker-owned `Db` and the publisher, so local filesystem and resource admission apply to the same captured cuts.
 - **`CellNode`.** Binds the compiled application's per-namespace database and capture ceilings to its runtime before serving.
 - **Limit checks.** Every bootstrap, idle acquisition, and takeover checks the supplied `CellReplica` limits before changing ownership or opening a root. Restored paths also check the recovery-store limits. Standalone `CellRuntime` users supply their own LTX policy.
+
+| Resident routing mode | Metadata work per invocation | Ownership gate |
+| --- | --- | --- |
+| Live node-session lease | No catalog or control read | Node lease and exact actor admission token |
+| Object-only, without a node-session lease | One fresh control read; reuse immutable catalog identity | Fresh owner/code observation and actor admission after I/O |
+
+The unleased control observation is never cached. Catalog reuse cannot authorize
+an old owner after takeover, hide an origin error, or revive a drained actor.
 
 The node bounds:
 

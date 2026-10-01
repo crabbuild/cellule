@@ -8,6 +8,14 @@ struct ReaderHints {
     sent: tokio::sync::mpsc::UnboundedSender<(cellule_runtime::CellId, cellule_runtime::SessionId)>,
     stalled: Option<cellule_runtime::SessionId>,
     pending: Arc<std::sync::atomic::AtomicUsize>,
+    held: Option<Arc<HeldReaderHint>>,
+}
+
+struct HeldReaderHint {
+    session: cellule_runtime::SessionId,
+    calls: std::sync::atomic::AtomicUsize,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
 }
 
 struct PendingHint(Arc<std::sync::atomic::AtomicUsize>);
@@ -46,7 +54,15 @@ impl PeerRoundTrip for ReaderHints {
                 std::future::pending().await
             });
         }
+        let held = self.held.clone().filter(|held| {
+            session == held.session
+                && held.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+        });
         Box::pin(async move {
+            if let Some(held) = held {
+                held.entered.notify_one();
+                held.release.notified().await;
+            }
             use cellule_runtime::peer::{encode_peer_reply, wire};
             encode_peer_reply(&wire::PeerReply {
                 outcome: Some(wire::peer_reply::Outcome::Read(wire::ReadReply {
@@ -77,7 +93,16 @@ async fn publication_hints_reach_readers_beyond_the_activation_concurrency() {
     publication_hints(20, true).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn pending_reader_activation_retains_a_new_publication_hint() {
+    publication_hints_with_gate(20, true, true).await;
+}
+
 async fn publication_hints(readers: usize, stalled_reader: bool) {
+    publication_hints_with_gate(readers, stalled_reader, false).await;
+}
+
+async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_first: bool) {
     use cellule_runtime::{
         cell::application::ApplicationIdentity, node::lease::NodeLeaseGuard,
         peer::ReplicaPeerClient, read_policy::ReadPolicyStore,
@@ -175,6 +200,14 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
     .unwrap();
     let (sent, mut hints) = tokio::sync::mpsc::unbounded_channel();
     let pending = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let held = hold_first.then(|| {
+        Arc::new(HeldReaderHint {
+            session: node_session(3),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        })
+    });
     node.install_read_replica_recruitment(
         ApplicationIdentity::new(tenant, app),
         ReplicaPeerClient::new(
@@ -193,6 +226,7 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
                 sent,
                 stalled: stalled_reader.then_some(node_session(2)),
                 pending: pending.clone(),
+                held: held.clone(),
             }),
         ),
     )
@@ -207,6 +241,11 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
             tokio::time::timeout(Duration::from_secs(2), hints.recv())
                 .await
                 .unwrap()
+                .unwrap();
+        }
+        if let Some(held) = &held {
+            tokio::time::timeout(Duration::from_secs(2), held.entered.notified())
+                .await
                 .unwrap();
         }
         let client = CellClient::local(registry, handle);
@@ -225,11 +264,16 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
                 .receive_cron(identity(108, occurrence, 0), invocation(occurrence as u64))
                 .await
                 .unwrap();
+            let held_session = held
+                .as_ref()
+                .filter(|_| occurrence == 1)
+                .map(|held| held.session);
             let notified = tokio::time::timeout(Duration::from_secs(2), async {
                 let mut received = std::collections::HashSet::new();
-                for _ in 0..healthy.len() {
+                for _ in 0..healthy.len() - usize::from(held_session.is_some()) {
                     let (cell, session) = hints.recv().await.unwrap();
                     assert_eq!(cell, target.cell_id());
+                    assert_ne!(Some(session), held_session);
                     assert!(
                         received.insert(session),
                         "duplicate activation in one publication pass"
@@ -238,9 +282,21 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
                 received
             })
             .await;
+            let mut notified = notified.unwrap();
+            if let Some(held) = held.as_ref().filter(|_| occurrence == 1) {
+                // Healthy peers prove that the new publication pass prepared
+                // while this old activation remained in flight.
+                held.release.notify_one();
+                let (cell, session) = tokio::time::timeout(Duration::from_secs(2), hints.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(cell, target.cell_id());
+                assert_eq!(session, held.session);
+                assert!(notified.insert(session));
+            }
             assert_eq!(
-                notified.unwrap(),
-                healthy,
+                notified, healthy,
                 "publication was blocked or repeated a pending activation"
             );
             assert_eq!(

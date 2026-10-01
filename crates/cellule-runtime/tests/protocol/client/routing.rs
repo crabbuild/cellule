@@ -34,11 +34,15 @@ impl CellTelemetry for RouteCounters {
 }
 
 async fn counted_fixture() -> (Fixture, Arc<CountingObjectStore>) {
+    counted_fixture_with_lease(true).await
+}
+
+async fn counted_fixture_with_lease(leased: bool) -> (Fixture, Arc<CountingObjectStore>) {
     let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
     let fixture = fixture_with_store_and_lease(
         Limits::default(),
         Store::new(counted.clone()),
-        Some(cellule_runtime::node::lease::NodeLeaseGuard::new(0, 60_000).unwrap()),
+        leased.then(|| cellule_runtime::node::lease::NodeLeaseGuard::new(0, 60_000).unwrap()),
     )
     .await;
     (fixture, counted)
@@ -50,6 +54,102 @@ fn local_client(fixture: &Fixture) -> CellClient {
         fixture.runtime.clone().expect("fixture runtime is present"),
         fixture.layout.clone(),
     )
+}
+
+#[tokio::test]
+async fn unleased_local_and_peer_routes_reuse_catalog_but_read_fresh_control() {
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let fixture = fixture_with_store(Limits::default(), Store::new(counted.clone())).await;
+    let client = local_client(&fixture);
+    let control_path = fixture
+        .layout
+        .control_path(fixture.target.cell_id().as_bytes())
+        .to_string();
+
+    counted.reset();
+    assert_eq!(
+        client
+            .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap()
+            .output,
+        0
+    );
+    assert_eq!(
+        counted.counts().body_requests(),
+        2,
+        "Describe and query each read authority"
+    );
+    assert!(
+        counted
+            .requests()
+            .iter()
+            .all(|read| read.location == control_path)
+    );
+
+    let inbound = ResidentPeerCellResolver::new(
+        fixture.runtime.clone().unwrap(),
+        fixture.layout.clone(),
+        Arc::clone(&fixture.registry),
+    );
+    for _ in 0..2 {
+        counted.reset();
+        client
+            .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap();
+        assert_eq!(counted.counts().body_requests(), 1);
+        assert_eq!(counted.requests()[0].location, control_path);
+
+        counted.reset();
+        inbound.resolve(fixture.target.clone()).await.unwrap();
+        assert_eq!(counted.counts().body_requests(), 1);
+        assert_eq!(counted.requests()[0].location, control_path);
+    }
+    // Reusing catalog identity must never hide an origin outage or reuse the
+    // last successful ownership observation across requests.
+    let path = fixture
+        .layout
+        .control_path(fixture.target.cell_id().as_bytes());
+    counted.block_body_reads_for(&path);
+    // The injected provider failure is transient: retain the Store's normal
+    // retry budget, and ensure every attempt still observes only authority.
+    let attempts = usize::try_from(cellule_store::RetryPolicy::DEFAULT.max_attempts).unwrap();
+    counted.reset();
+    assert!(matches!(
+        client
+            .query::<CountComments>(&fixture.target, None, ())
+            .await,
+        Err(InvocationError::NotStarted(
+            cellule_runtime::Error::Storage(_)
+        ))
+    ));
+    assert_eq!(counted.counts().body_requests(), attempts);
+    assert!(
+        counted
+            .requests()
+            .iter()
+            .all(|read| read.location == control_path)
+    );
+    counted.reset();
+    assert!(matches!(
+        inbound.resolve(fixture.target.clone()).await,
+        Err(cellule_runtime::Error::Storage(_))
+    ));
+    assert_eq!(counted.counts().body_requests(), attempts);
+    assert!(
+        counted
+            .requests()
+            .iter()
+            .all(|read| read.location == control_path)
+    );
+    counted.unblock_body_reads_for(&path);
+    client
+        .query::<CountComments>(&fixture.target, None, ())
+        .await
+        .unwrap();
+    fixture.handle().drain().await.unwrap();
+    fixture.runtime.as_ref().unwrap().shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -95,63 +195,65 @@ async fn repeated_local_query_reads_no_cell_metadata() {
 
 #[tokio::test]
 async fn cached_route_never_serves_a_released_cell() {
-    let (fixture, _counted) = counted_fixture().await;
-    let client = local_client(&fixture);
-    client
-        .query::<CountComments>(&fixture.target, None, ())
-        .await
-        .unwrap();
-
-    let runtime = fixture.runtime.as_ref().unwrap();
-    let (cell, generation, _, _) = runtime.idle_transfer_candidates().await.unwrap()[0];
-    runtime
-        .release_idle_cell(cell, fixture.session, generation)
-        .await
-        .unwrap();
-
-    let refused = client
-        .query::<CountComments>(&fixture.target, None, ())
-        .await
-        .unwrap_err();
-    assert!(matches!(refused, InvocationError::NotStarted(_)));
-    // The cached description must not hide the loss on a later attempt either.
-    assert!(
+    for leased in [false, true] {
+        let (fixture, _counted) = counted_fixture_with_lease(leased).await;
+        let client = local_client(&fixture);
         client
             .query::<CountComments>(&fixture.target, None, ())
             .await
-            .is_err()
-    );
-    let observed = fixture
-        .authority
-        .load(fixture.target.cell_id())
-        .await
-        .unwrap()
-        .unwrap();
-    let runtime = fixture.runtime.as_ref().unwrap();
-    let replacement = runtime
-        .acquire_idle_restored(
-            fixture.proof.clone(),
-            fixture.replica.clone(),
-            fixture.authority.clone(),
-            observed,
-            fixture._directory.path().join("replacement.sqlite"),
-            Owner {
-                session: fixture.session,
-                endpoint: "https://replacement.example".into(),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        client
+            .unwrap();
+
+        let runtime = fixture.runtime.as_ref().unwrap();
+        let (cell, generation, _, _) = runtime.idle_transfer_candidates().await.unwrap()[0];
+        runtime
+            .release_idle_cell(cell, fixture.session, generation)
+            .await
+            .unwrap();
+
+        let refused = client
             .query::<CountComments>(&fixture.target, None, ())
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, InvocationError::NotStarted(_)));
+        // The cached description must not hide the loss on a later attempt either.
+        assert!(
+            client
+                .query::<CountComments>(&fixture.target, None, ())
+                .await
+                .is_err()
+        );
+        let observed = fixture
+            .authority
+            .load(fixture.target.cell_id())
             .await
             .unwrap()
-            .output,
-        0
-    );
-    replacement.drain().await.unwrap();
-    runtime.shutdown().await.unwrap();
+            .unwrap();
+        let runtime = fixture.runtime.as_ref().unwrap();
+        let replacement = runtime
+            .acquire_idle_restored(
+                fixture.proof.clone(),
+                fixture.replica.clone(),
+                fixture.authority.clone(),
+                observed,
+                fixture._directory.path().join("replacement.sqlite"),
+                Owner {
+                    session: fixture.session,
+                    endpoint: "https://replacement.example".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .query::<CountComments>(&fixture.target, None, ())
+                .await
+                .unwrap()
+                .output,
+            0
+        );
+        replacement.drain().await.unwrap();
+        runtime.shutdown().await.unwrap();
+    }
 }
 
 #[tokio::test]
