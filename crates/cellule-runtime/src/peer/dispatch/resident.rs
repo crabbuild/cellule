@@ -26,7 +26,7 @@ use crate::cell::actor::routes::{ResidentRoute, ResidentRoutes};
 #[derive(Clone)]
 pub struct ResidentPeerCellResolver {
     runtime: CellRuntime,
-    layout: CellStorageLayout,
+    authority: Arc<CellAuthority>,
     registry: Arc<Registry>,
     routes: ResidentRoutes,
 }
@@ -38,7 +38,9 @@ impl ResidentPeerCellResolver {
         Self {
             routes: ResidentRoutes::new(runtime.clone()),
             runtime,
-            layout,
+            // Clones share a stateless reader; every unleased resolve still loads
+            // fresh authority rather than caching an ownership observation.
+            authority: Arc::new(CellAuthority::new(layout)),
             registry,
         }
     }
@@ -58,16 +60,19 @@ impl PeerCellResolver for ResidentPeerCellResolver {
                 .namespace_contract(target.namespace())
                 .map(|(_, descriptor)| descriptor.role)
                 .ok_or(Error::Peer("peer target namespace is not registered"))?;
-            let authority = CellAuthority::new(resolver.layout.clone());
-            match resolver.routes.resolve(&target, role, &authority).await? {
+            match resolver
+                .routes
+                .resolve(&target, role, &resolver.authority)
+                .await?
+            {
                 ResidentRoute::Owned(handle) => return Ok(handle),
                 ResidentRoute::NotOwned => return Err(Error::CellNotActive),
                 ResidentRoute::Missing => {}
             }
-            let catalog = CellCatalog::new(resolver.layout.clone(), target.tenant());
+            let catalog = CellCatalog::new(resolver.authority.layout().clone(), target.tenant());
             let (catalog, control) = tokio::join!(
                 catalog.lookup(target.cell_id()),
-                authority.load(target.cell_id())
+                resolver.authority.load(target.cell_id())
             );
             let catalog = catalog?.ok_or(Error::Control("target Cell is not cataloged"))?;
             let control = control?.ok_or(Error::Control("target Cell has no authority record"))?;

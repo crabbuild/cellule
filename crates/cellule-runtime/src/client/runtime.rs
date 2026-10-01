@@ -73,7 +73,7 @@ impl RuntimeCellTransport {
 pub(super) struct RuntimeLocalResolver {
     registry: Arc<Registry>,
     runtime: CellRuntime,
-    layout: CellStorageLayout,
+    authority: Arc<CellAuthority>,
     remote_on_miss: bool,
     routes: ResidentRoutes,
 }
@@ -89,7 +89,9 @@ impl RuntimeLocalResolver {
             registry,
             routes: ResidentRoutes::new(runtime.clone()),
             runtime,
-            layout,
+            // Share the immutable storage binding, not authority observations.
+            // A resolver clone must not copy its path for every cached request.
+            authority: Arc::new(CellAuthority::new(layout)),
             remote_on_miss,
         }
     }
@@ -122,8 +124,11 @@ impl LocalCellResolver for RuntimeLocalResolver {
                 resolver.telemetry().route_cache(RouteCacheOutcome::Miss);
                 return Ok(None);
             }
-            let authority = CellAuthority::new(resolver.layout.clone());
-            match resolver.routes.resolve(&target, role, &authority).await? {
+            match resolver
+                .routes
+                .resolve(&target, role, &resolver.authority)
+                .await?
+            {
                 ResidentRoute::Owned(handle) => {
                     resolver.telemetry().route_cache(RouteCacheOutcome::Hit);
                     return Ok(Some(handle));
@@ -134,8 +139,9 @@ impl LocalCellResolver for RuntimeLocalResolver {
                 }
                 ResidentRoute::Missing => {}
             }
-            let catalog = CellCatalog::new(resolver.layout.clone(), target.tenant());
-            let (catalog, control) = tokio::join!(catalog.lookup(cell), authority.load(cell));
+            let catalog = CellCatalog::new(resolver.authority.layout().clone(), target.tenant());
+            let (catalog, control) =
+                tokio::join!(catalog.lookup(cell), resolver.authority.load(cell));
             let catalog = catalog?.ok_or(Error::Control("target Cell is not cataloged"))?;
             let control = control?.ok_or(Error::Control("target Cell has no authority record"))?;
             resolver.telemetry().route_cache(RouteCacheOutcome::Miss);
