@@ -4,11 +4,16 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 
 
 async def coordinate(workers, schedule, evidence):
     processes, readers, streams, events = {}, {}, {}, {}
     trace = []
+
+    def host_pressure():
+        paths = [Path('/proc/pressure') / kind for kind in ('cpu', 'io')]
+        return {path.name: path.read_text() for path in paths if path.exists()}
 
     async def read_events(version):
         process = processes[version]
@@ -44,17 +49,19 @@ async def coordinate(workers, schedule, evidence):
         for stage, order in schedule:
             if set(order) != set(workers) or len(order) != len(workers):
                 raise RuntimeError(f"Invalid measurement order: {order}")
-            record = {"stage": stage, "order": order, "windows": {}}
+            record = {"stage": stage, "order": order, "windows": {}, "host_pressure": {}}
             for version in order:
                 ready, wall = await expect(version, "ready", stage)
                 record["windows"][version] = {"ready_ns": ready, "ready_wall_ns": wall}
             # Both fixtures are idle and ready. No measured work overlaps.
             for version in order:
+                record["host_pressure"][version] = {"before": host_pressure()}
                 record["windows"][version]["start_ns"] = time.monotonic_ns()
                 record["windows"][version]["start_wall_ns"] = time.time_ns()
                 await send(version, f"start {stage}")
                 done, wall = await expect(version, "done", stage)
                 record["windows"][version].update(done_ns=done, done_wall_ns=wall)
+                record["host_pressure"][version]["after"] = host_pressure()
             trace.append(record)
             evidence.write_text(json.dumps(trace, indent=2) + "\n")
             for version in order:

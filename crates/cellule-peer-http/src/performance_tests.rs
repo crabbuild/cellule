@@ -11,7 +11,7 @@ use cellule_runtime::{
     client::CellClient,
     fleet::telemetry::{CellTelemetry, PublicationTiming},
     identity::{ApplicationId, IncarnationId, NamespaceId, NodeId, RequestId, TenantId},
-    ltx::{CellReplica, CellStorageLayout, Host, Limits, LtxPhase},
+    ltx::{CaptureTiming, CellReplica, CellStorageLayout, Host, Limits, LtxPhase},
     node::{NodeAdvertisement, NodeCapacity, NodeFailureDomain, lease::NodeLeaseGuard},
     peer::{
         PeerAuthorizer, PeerCellResolver, PeerDispatcher, PeerPrincipal, PeerSigner, PeerVerifier,
@@ -199,6 +199,8 @@ struct PublicationSamples {
     timings: Mutex<HashMap<u64, PublicationTiming>>,
     events: Mutex<Vec<(u128, u128, LtxPhase, bool)>>,
     completions: Mutex<Vec<(u64, u128)>>,
+    executions: Mutex<Vec<(u128, Duration, Duration, bool)>>,
+    captures: Mutex<Vec<(u128, CaptureTiming, bool)>>,
 }
 fn wall_ns() -> u128 {
     std::time::SystemTime::now()
@@ -207,6 +209,18 @@ fn wall_ns() -> u128 {
         .as_nanos()
 }
 impl CellTelemetry for PublicationSamples {
+    fn command_execution(&self, queue: Duration, worker: Duration, succeeded: bool) {
+        self.executions
+            .lock()
+            .unwrap()
+            .push((wall_ns(), queue, worker, succeeded));
+    }
+    fn ltx_capture(&self, timing: &CaptureTiming, succeeded: bool) {
+        self.captures
+            .lock()
+            .unwrap()
+            .push((wall_ns(), *timing, succeeded));
+    }
     fn publication_completed(&self, _: CellId, timing: PublicationTiming) {
         self.completions
             .lock()
@@ -245,6 +259,38 @@ impl PublicationSamples {
             }
             std::fs::write(
                 std::path::Path::new(&directory).join("publication-completions.tsv"),
+                output,
+            )
+            .unwrap();
+            let mut output =
+                String::from("end_wall_ns\tqueue_wait_ns\tworker_round_trip_ns\tsucceeded\n");
+            for (end, queue, worker, succeeded) in self.executions.lock().unwrap().iter() {
+                output.push_str(&format!(
+                    "{end}\t{}\t{}\t{succeeded}\n",
+                    queue.as_nanos(),
+                    worker.as_nanos()
+                ));
+            }
+            std::fs::write(
+                std::path::Path::new(&directory).join("command-execution.tsv"),
+                output,
+            )
+            .unwrap();
+            let mut output = String::from(
+                "end_wall_ns\ttotal_ns\tfsync_ns\tparent_sync_ns\tlocal_write_ns\tcheckpoint_ns\tsucceeded\n",
+            );
+            for (end, timing, succeeded) in self.captures.lock().unwrap().iter() {
+                output.push_str(&format!(
+                    "{end}\t{}\t{}\t{}\t{}\t{}\t{succeeded}\n",
+                    timing.total_nanos,
+                    timing.fsync_nanos,
+                    timing.parent_sync_nanos,
+                    timing.local_write_nanos,
+                    timing.checkpoint_nanos
+                ));
+            }
+            std::fs::write(
+                std::path::Path::new(&directory).join("capture-events.tsv"),
                 output,
             )
             .unwrap();
