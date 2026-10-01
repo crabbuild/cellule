@@ -54,15 +54,20 @@ shape and exact inputs; its Rust type supplies no remote authorization.
 
 `apply_fleet_action` executes settled source Release with
 `release_idle_cell_at`, actual receiver preparation, canonical activation,
-resource cleanup and failed-source recovery. Fresh inspection uses its separate
-request-bound method. The caller-driven reconciler now has a settled-movement
-path; complete observation wiring and busy maintenance remain under implementation in the
+resource cleanup and failed-source recovery. Maintenance Cordon closes the
+same new-writer, reader, and follower admission gate after exact boot-bound
+journal acceptance. Existing owners keep serving until their movement barrier.
+Fresh inspection uses its separate request-bound method. The caller-driven
+reconciler supports cordon and settled movement; complete observation wiring,
+busy maintenance and role finalization remain under implementation in the
 [fleet operations plan](../../../docs/fleet-operations-plan.md).
 
 | Event | Action executor behavior |
 | --- | --- |
-| First acceptance | Commit acceptance, recheck deadline, then invoke the canonical actor release for the exact session, generation, incarnation and epoch. |
+| First acceptance | Commit exact acceptance before its effect. Movement Release rechecks deadline and invokes the canonical actor release for the exact session, generation, incarnation and epoch. |
 | Prepare receiver | Validate catalog/Cell/incarnation and current release/schema support; reserve actual runtime/LTX resources before returning Reserved. A refusal preserves the original error and leaves the source serving. |
+| Maintenance Cordon | Apply retained Draining intent through the shared admission gate. Replays retain the exact acceptance/result; a dropped waiter leaves publication owned. This preserves existing obligations and uses no shutdown lane. |
+| Other maintenance effects | Refuse role settlement, finalization and maintenance inspection until their inventory and host barriers are implemented. A cordon receipt cannot establish Stopped or withdrawal. |
 | Activate receiver | Confirm the exact Idle acquisition basis is durably retained before ordinary ownership CAS; consume prepared credit through canonical restore and actor activation. |
 | Acquisition-basis reply lost | Keep authority untouched and the prepared credit charged. Repeating the same accepted action confirms the original basis and capture time before takeover. |
 | Unused credit after release | Journal CleaningReceiver, cancel/join that credit, and retain the source position and fleet permit. Cleanup returns to Released, with no claim of pre-release cancellation. After confirmed cleanup, ordinary admitted acquisition may resume. |
@@ -72,7 +77,7 @@ path; complete observation wiring and busy maintenance remain under implementati
 | Recovery position reply lost | No actor is admitted. Canonical rollback preserves the materialized root; the attempt stays charged and Unknown. Ordinary acquisition can restore serving, after which inspection verifies it against the retained recovery evidence. |
 | Duplicate | Compare the full immutable specification, including cost and physical identities. Join current work or return its committed result. |
 | Dropped caller | Retain and finish execution plus journal publication independently of the caller. |
-| Result publication failure | Retain the original checked result. A subsequent dispatch or drain retries publication without releasing again. |
+| Result publication failure | Retain the original checked result. Result delivery joins the owned task, so an immediate subsequent dispatch can retry publication. Drain also retries; neither repeats source release. |
 | Existing acceptance without a result | Record Unknown and retain the fleet permit; never infer the original release root from current authority. |
 | Node drain | Stop new action admission and join retained finite work before runtime shutdown. Keep task handles and checked results when a deadline cancels the drain waiter. |
 | Action task fails | Join every accepted sibling job, settle resources, and retain the original join error across repeated drain calls. Runtime cleanup still runs; consuming a task handle cannot make a later shutdown report success. |
@@ -140,14 +145,16 @@ are separate and describe transitions committed during this pass.
 | --- | --- |
 | Controller | Claim or renew by CAS, preserving every charged attempt across lease replacement. |
 | Existing work | Inspect uncertain phases first; commit each dependent transition against the complete head and registry version. |
-| Planning | Verify signed inputs, require complete fresh membership for count moves, and project unresolved receive costs before pressure relief uses any remaining shared budget. |
+| Maintenance | Dispatch Cordon from Requested, commit Cordoned only after a durable bound result, then commit BeginEvacuation on a later pass. These steps continue when optional scheduling is stopped. |
+| Planning | Overlay retained intents before selecting donors or receivers. Verify signed inputs, require complete fresh membership for count moves, and project unresolved receive costs before relief uses any remaining shared budget. Partial fresh inputs can evacuate settled Cells from the maintenance donor even at normal pressure. |
 | Dispatch | Commit the phase before sending; check full retained acceptance and result binding. Transport timeout retains the phase and permit. |
 | Unaccepted action | Prove absence in the same journal CAS that advances the head revision, fencing delayed old requests before retry. Accepted work remains charged and is inspected. Expired preparation/release returns to cleanup. |
 | Expired unused receiver | After proven release, cancel and join expired prepared credit before first activation. Retain the release position and fleet permits, then use canonical ordinary admission after committed cleanup. |
-| Endpoint failure | Reserve a bounded deadline share for each charged attempt and planning. Retain each original endpoint error in `failures` and advance healthy siblings. After an ambiguous timeout, reread the journal and controller epoch before continuing. Journal errors stop the pass. |
+| Endpoint failure | Reserve bounded deadline shares for charged attempts, maintenance and planning. Retain attempt errors in `failures` and the maintenance error in `maintenance_failure`. After an ambiguous timeout, reread the journal and controller epoch before continuing. Journal errors stop the pass. |
 | Serving | Consume request-bound fresh actor/authority evidence before activation or retirement. A historical receipt cannot replace the current check. |
 | History | Atomically retire with progress; read incarnation-specific cooldown and the global post-batch time from committed history. |
 | Operator stop | Disable new allocations while accepted work continues through inspection and cleanup. |
+| Maintenance deadline | Keep the cordon; stop new maintenance allocations and bound their deadlines by the operation deadline. Already accepted effects remain retained. Empty movement permits cannot prove completed role evacuation or shutdown. |
 
 `FleetObserver` owns authenticated membership and bounded page collection.
 `FleetTransport` owns endpoint authorization and exact boot routing to the public

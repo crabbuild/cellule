@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use cellule_runtime::Error;
 use cellule_runtime::cell::actor::{CellRuntime, NodeByteReservation};
 use cellule_runtime::fleet::operations::{
-    AcceptedFleetAction, FleetAction, FleetActionKind, FleetActionOutcome,
+    AcceptedFleetAction, DrainBlocker, FleetAction, FleetActionKind, FleetActionOutcome,
     FleetInspectionObservation, FleetInspectionRequest, FleetOutcome, FleetScope,
-    MAX_ACTIVE_ATTEMPTS, MAX_RECORD_BYTES, OperationError,
+    MAX_ACTIVE_ATTEMPTS, MAX_RECORD_BYTES, MaintenanceAction, OperationError,
 };
 use cellule_runtime::identity::{Digest, NodeId, SessionId};
 use tokio::{sync::watch, task::JoinHandle};
@@ -26,6 +26,26 @@ pub struct FleetActionCompletion {
     /// Original result-publication error. Retry publishes the same retained
     /// evidence and never executes the source release again.
     pub journal_error: Option<Arc<Error>>,
+}
+
+pub(super) struct ActionResult {
+    pub(super) outcome: FleetOutcome,
+    pub(super) error: Option<Error>,
+}
+
+impl ActionResult {
+    pub(super) fn checked(outcome: FleetOutcome) -> Self {
+        Self {
+            outcome,
+            error: None,
+        }
+    }
+    pub(super) fn refused(blocker: DrainBlocker, error: Error) -> Self {
+        Self {
+            outcome: FleetOutcome::Rejected(blocker),
+            error: Some(error),
+        }
+    }
 }
 
 type EffectCompletion = Result<Arc<FleetActionCompletion>, Arc<Error>>;
@@ -182,6 +202,12 @@ impl FleetActionExecutor {
         action: FleetAction,
         now_ms: i64,
     ) -> EffectCompletion {
+        if matches!(action.kind(), FleetActionKind::Maintenance { action, .. } if *action != MaintenanceAction::Cordon)
+        {
+            return Err(Arc::new(Error::Control(
+                "fleet role settlement and finalization require their host barriers",
+            )));
+        }
         if matches!(
             action.kind(),
             FleetActionKind::Movement {
@@ -214,6 +240,11 @@ impl FleetActionExecutor {
         if request.node() != self.node || request.session() != self.session {
             return Err(Arc::new(Error::Fenced));
         }
+        if !matches!(request.action().kind(), FleetActionKind::Movement { .. }) {
+            return Err(Arc::new(Error::Control(
+                "fleet maintenance inspection requires its host inventory barrier",
+            )));
+        }
         let completion = self.submit(JobRequest::Inspection(request)).await?;
         match completion.as_ref() {
             JobCompletion::Inspection(result) => Ok(Arc::clone(result)),
@@ -234,11 +265,6 @@ impl FleetActionExecutor {
             .validate_endpoint(self.node, self.session)
             .map_err(operation)
             .map_err(Arc::new)?;
-        if !matches!(action.kind(), FleetActionKind::Movement { .. }) {
-            return Err(Arc::new(Error::Control(
-                "fleet executor action is not implemented yet",
-            )));
-        }
         self.reap().await.map_err(Arc::new)?;
         let key = request.key().map_err(operation).map_err(Arc::new)?;
         let (mut response, retained_job) = {
@@ -299,6 +325,11 @@ impl FleetActionExecutor {
         loop {
             let completed = response.borrow().clone();
             if let Some(result) = completed {
+                // Sending completion precedes the task's exit. Join that short
+                // epilogue so an immediate retry can reap an unconfirmed result
+                // and retry publication instead of joining the stale receipt.
+                // The job stays owned if this waiter is dropped during the join.
+                retained_job.task.lock().await.join().await?;
                 return result;
             }
             if response.changed().await.is_err() {
@@ -351,7 +382,7 @@ impl FleetActionExecutor {
                 if accepted.action() != &action || accepted.accepted_at_ms() != now_ms {
                     return Err(Arc::new(operation(OperationError::Conflict)));
                 }
-                let result = self.perform_movement(&accepted).await;
+                let result = self.perform_action(&accepted).await;
                 (accepted, result)
             }
         };

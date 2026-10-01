@@ -113,6 +113,58 @@ impl Journal {
         });
     }
 
+    pub(super) fn reset_maintenance(&self, node: NodeId, session: SessionId) -> FleetAction {
+        let now = clock();
+        let mut state = self.state.lock().unwrap();
+        assert!(state.records.is_empty());
+        state.head = FleetHead::new(scope(), now)
+            .unwrap()
+            .claim(
+                FleetProfile::default(),
+                0,
+                SessionId::from_bytes([206; 16]),
+                now,
+            )
+            .unwrap();
+        drop(state);
+        self.transition(JournalTransition::BeginMaintenance(
+            MaintenanceOperation::new(
+                OperationId::from_bytes([207; 16]).unwrap(),
+                Digest::from_bytes([208; 32]),
+                node,
+                session,
+                2,
+                now,
+                now + 60_000,
+            )
+            .unwrap(),
+        ));
+        self.maintenance_action(MaintenanceAction::Cordon)
+    }
+
+    pub(super) fn maintenance_action(&self, effect: MaintenanceAction) -> FleetAction {
+        self.state
+            .lock()
+            .unwrap()
+            .head
+            .maintenance_action(effect, clock())
+            .unwrap()
+    }
+
+    pub(super) fn hold_next_result(&self) {
+        self.block_publication.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) async fn wait_for_result_publication(&self) {
+        tokio::time::timeout(Duration::from_secs(5), self.entered.notified())
+            .await
+            .unwrap();
+    }
+
+    pub(super) fn resume_result_publication(&self) {
+        self.resume.add_permits(1);
+    }
+
     pub(super) fn transition(&self, event: JournalTransition) {
         let mut state = self.state.lock().unwrap();
         state.head = state

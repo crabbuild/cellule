@@ -11,6 +11,7 @@ mod controller;
 mod enrollment;
 mod inspection;
 mod journal;
+mod maintenance;
 mod movement;
 mod reconciler;
 

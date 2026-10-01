@@ -59,11 +59,12 @@ impl CellNode {
         })
     }
 
-    /// Executes a journal-bound movement independently of its transport waiter.
+    /// Executes a journal-bound movement or cordon independently of its waiter.
     ///
     /// Applications authenticate the caller before invoking this local boundary.
-    /// The current executor supports settled movement and receiver inspection;
-    /// maintenance action integration remains under implementation. Count a
+    /// The current executor supports settled movement, receiver inspection, and
+    /// maintenance cordon through the shared new-role gate. Role settlement and
+    /// finalization require their host barriers and are refused. Count a
     /// result only when `committed` is true, then inspect current serving evidence.
     /// Raw Inspect actions are refused: use `inspect_fleet_action` so a durable
     /// historical acknowledgement cannot masquerade as a current observation.

@@ -14,6 +14,7 @@ use tokio::time::{Instant, timeout_at};
 use super::actions::operation;
 use super::{FleetActionCompletion, FleetAdapterFuture, FleetJournal, FleetJournalSnapshot};
 
+mod maintenance;
 mod movement;
 mod observation;
 mod planning;
@@ -92,6 +93,9 @@ pub struct FleetReconcileReport {
     /// Endpoint failures retained independently of healthy sibling progress.
     /// At most one entry per previously charged attempt; permits remain charged.
     pub failures: Vec<FleetAttemptFailure>,
+    /// Original maintenance endpoint error, independent of movement failures.
+    /// Its durable intent and phase remain retained for a later pass.
+    pub maintenance_failure: Option<Arc<Error>>,
     /// Suggested logical wake time; an application event may wake sooner.
     pub next_wake_at_ms: i64,
 }
@@ -106,7 +110,8 @@ impl FleetReconcileReport {
 
 /// One caller-driven controller facade; it starts no scheduler or runtime.
 ///
-/// The current path executes settled movement. Busy maintenance and node role
+/// The current path cordons maintenance nodes and executes settled movement.
+/// Busy maintenance and node role
 /// finalization require their host barriers; an unfinished maintenance operation
 /// remains visible and cannot be reported complete by this facade.
 pub struct FleetReconciler {
@@ -191,6 +196,7 @@ impl FleetReconciler {
             cancelled: 0,
             blockers: Vec::new(),
             failures: Vec::new(),
+            maintenance_failure: None,
             next_wake_at_ms: now_ms
                 .checked_add(self.profile.reconcile_interval_ms)
                 .ok_or(Error::Control("fleet wake time overflow"))?,
@@ -254,15 +260,42 @@ impl FleetReconciler {
                 });
             }
         }
-        if report
-            .snapshot
-            .head()
-            .maintenance()
-            .is_some_and(|m| m.phase() != MaintenancePhase::Completed)
+        if let Err(error) = self
+            .advance_maintenance(&clock.partition(2), &mut report)
+            .await
         {
-            // The future maintenance executor must prove role and shutdown
-            // barriers. Its absence cannot authorize a successful finalization.
-            report.blocked(DrainBlocker::IncompleteObservation);
+            let timed_out = matches!(
+                &error,
+                Error::Facility {
+                    name: "fleet-controller-deadline",
+                    ..
+                }
+            );
+            let endpoint_failed = matches!(
+                &error,
+                Error::Facility {
+                    name: "fleet-transport",
+                    ..
+                }
+            );
+            if !timed_out && !endpoint_failed {
+                return Err(error);
+            }
+            if timed_out {
+                // Acceptance or phase publication may have outlived its waiter.
+                let snapshot = call(
+                    clock.deadline,
+                    "fleet-journal",
+                    self.journal.load_snapshot(self.scope),
+                )
+                .await?;
+                if self.controller_epoch(&snapshot, clock.now()?)? != claimed_epoch {
+                    return Err(operation(OperationError::Fenced));
+                }
+                report.snapshot = snapshot;
+            }
+            report.blocked(DrainBlocker::OutcomeUnknown);
+            report.maintenance_failure = Some(Arc::new(error));
         }
         if report.snapshot.registry().scheduling_enabled() {
             self.plan(&clock, &mut report).await?;
@@ -272,6 +305,7 @@ impl FleetReconciler {
         if report.snapshot.head().revision() != claimed_revision
             && report.cancelled == 0
             && report.failures.is_empty()
+            && report.maintenance_failure.is_none()
         {
             // A multi-phase move must not spend one periodic interval between
             // every action and expire its admission deadline before release.

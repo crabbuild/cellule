@@ -47,6 +47,40 @@ impl FleetReconciler {
         } else if !count_fresh {
             report.blocked(DrainBlocker::StaleObservation);
         }
+        // Retained intents take precedence over cached signed advertisements.
+        let mut cursor = None;
+        loop {
+            let page = call(
+                clock.deadline,
+                "fleet-journal",
+                self.journal
+                    .intents_page(report.snapshot.registry(), cursor, 128),
+            )
+            .await?;
+            if page.version() != report.snapshot.registry() || page.after() != cursor {
+                return Err(operation(OperationError::Conflict));
+            }
+            for intent in page.entries() {
+                if let Some(node) = placements
+                    .iter_mut()
+                    .find(|node| node.node == intent.node())
+                {
+                    if node.session != intent.session() {
+                        return Err(operation(OperationError::Conflict));
+                    }
+                    node.draining |= intent.mode() != cellule_runtime::node::NodeMode::Active;
+                }
+            }
+            match page.next() {
+                Some(next)
+                    if cursor.is_none_or(|previous| next.as_bytes() > previous.as_bytes()) =>
+                {
+                    cursor = Some(next)
+                }
+                Some(_) => return Err(Error::Node("fleet intent cursor did not advance")),
+                None => break,
+            }
+        }
         let mut demands = Vec::new();
         for owned in &observation.cells {
             let row = &owned.observation;
@@ -62,7 +96,8 @@ impl FleetReconciler {
                     .maintenance()
                     .is_some_and(|operation| {
                         operation.node() == owned.node
-                            && operation.phase() != MaintenancePhase::Evacuating
+                            && (operation.phase() != MaintenancePhase::Evacuating
+                                || now >= operation.deadline_ms())
                     })
             {
                 continue;
@@ -107,40 +142,6 @@ impl FleetReconciler {
                 stable_observations: row.stable_observations,
                 settled: true,
             });
-        }
-        // Retained intents take precedence over cached signed advertisements.
-        let mut cursor = None;
-        loop {
-            let page = call(
-                clock.deadline,
-                "fleet-journal",
-                self.journal
-                    .intents_page(report.snapshot.registry(), cursor, 128),
-            )
-            .await?;
-            if page.version() != report.snapshot.registry() || page.after() != cursor {
-                return Err(operation(OperationError::Conflict));
-            }
-            for intent in page.entries() {
-                if let Some(node) = placements
-                    .iter_mut()
-                    .find(|node| node.node == intent.node())
-                {
-                    if node.session != intent.session() {
-                        return Err(operation(OperationError::Conflict));
-                    }
-                    node.draining |= intent.mode() != cellule_runtime::node::NodeMode::Active;
-                }
-            }
-            match page.next() {
-                Some(next)
-                    if cursor.is_none_or(|previous| next.as_bytes() > previous.as_bytes()) =>
-                {
-                    cursor = Some(next)
-                }
-                Some(_) => return Err(Error::Node("fleet intent cursor did not advance")),
-                None => break,
-            }
         }
         // Unknown receives stay charged independently of lagging advertisements.
         // Projection is conservative until permit retirement; pressure relief
@@ -198,11 +199,11 @@ impl FleetReconciler {
                 .as_ref()
                 .ok_or(Error::Node("fleet proposal position absent"))?;
             let cost = row.cost.ok_or(Error::Node("fleet proposal cost absent"))?;
+            let maintenance = head
+                .maintenance()
+                .filter(|m| m.node() == owned.node && m.phase() == MaintenancePhase::Evacuating);
             let id = AttemptId {
-                operation: head
-                    .maintenance()
-                    .filter(|m| m.node() == owned.node && m.phase() == MaintenancePhase::Evacuating)
-                    .map_or(operation_id, |m| m.id()),
+                operation: maintenance.map_or(operation_id, |m| m.id()),
                 sequence: head.next_sequence(),
             };
             let spec = MoveAttemptSpec {
@@ -219,7 +220,8 @@ impl FleetReconciler {
                 snapshot_digest: digest,
                 deadline_ms: now
                     .checked_add(self.profile.controller_lease_ms)
-                    .ok_or(Error::Control("fleet movement deadline overflow"))?,
+                    .ok_or(Error::Control("fleet movement deadline overflow"))?
+                    .min(maintenance.map_or(i64::MAX, |m| m.deadline_ms())),
             };
             self.commit(clock, report, JournalTransition::Allocate(spec))
                 .await?;

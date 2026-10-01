@@ -59,7 +59,7 @@ impl FleetActionExecutor {
     pub(super) async fn prepare(
         &self,
         attempt: &MoveAttempt,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         let prepared = async {
             let inputs = self.inputs(attempt).await?;
             let spec = attempt.spec();
@@ -94,7 +94,7 @@ impl FleetActionExecutor {
         // Preparation cannot change Cell authority. A definite refusal has no
         // installed credit; partial runtime admission unwinds actual tokens.
         Ok(match prepared {
-            Ok(outcome) => MovementResult::checked(outcome),
+            Ok(outcome) => ActionResult::checked(outcome),
             Err(error) => {
                 let blocker = match &error {
                     Error::Capacity(_) => DrainBlocker::ReceiverCapacity,
@@ -109,7 +109,7 @@ impl FleetActionExecutor {
                     }
                     _ => DrainBlocker::IncompleteObservation,
                 };
-                MovementResult::refused(blocker, error)
+                ActionResult::refused(blocker, error)
             }
         })
     }
@@ -136,7 +136,7 @@ impl FleetActionExecutor {
     pub(super) fn inspect_preparation(
         &self,
         attempt: &MoveAttempt,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         let prepared = self.prepared(attempt)?;
         let outcome = match prepared.state()? {
             ReceiverState::Prepared if prepared.reservation()?.expires_at_ms > wall_time_ms()? => {
@@ -145,6 +145,6 @@ impl FleetActionExecutor {
             ReceiverState::Prepared => FleetOutcome::Blocked(DrainBlocker::Deadline),
             _ => FleetOutcome::Unknown,
         };
-        Ok(MovementResult::checked(outcome))
+        Ok(ActionResult::checked(outcome))
     }
 }

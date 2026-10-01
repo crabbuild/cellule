@@ -1,7 +1,8 @@
 //! Canonical receiver admission, movement, and retained evidence.
 
 use super::actions::{
-    FleetActionCompletion, FleetActionExecutor, journal_error, operation, wall_time_ms,
+    ActionResult, FleetActionCompletion, FleetActionExecutor, journal_error, operation,
+    wall_time_ms,
 };
 use super::{FleetActionAcceptance, FleetCellInputs};
 use cellule_runtime::Error;
@@ -12,26 +13,6 @@ use cellule_runtime::fleet::operations::{
     FleetActionKind, FleetOutcome, MoveAttempt, MovementAction, PublishedPosition,
 };
 
-pub(super) struct MovementResult {
-    pub(super) outcome: FleetOutcome,
-    pub(super) error: Option<Error>,
-}
-
-impl MovementResult {
-    fn checked(outcome: FleetOutcome) -> Self {
-        Self {
-            outcome,
-            error: None,
-        }
-    }
-    fn refused(blocker: DrainBlocker, error: Error) -> Self {
-        Self {
-            outcome: FleetOutcome::Rejected(blocker),
-            error: Some(error),
-        }
-    }
-}
-
 mod activation;
 mod inspection;
 mod receiver;
@@ -41,7 +22,7 @@ impl FleetActionExecutor {
     pub(super) async fn perform_movement(
         &self,
         accepted: &AcceptedFleetAction,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         let FleetActionKind::Movement { action, attempt } = accepted.action().kind() else {
             return Err(Error::Control("fleet movement has no attempt"));
         };
@@ -52,7 +33,7 @@ impl FleetActionExecutor {
                 if now >= spec.deadline_ms
                     || attempt.reservation().is_none_or(|r| now >= r.expires_at_ms)
                 {
-                    return Ok(MovementResult::checked(FleetOutcome::Rejected(
+                    return Ok(ActionResult::checked(FleetOutcome::Rejected(
                         DrainBlocker::Deadline,
                     )));
                 }
@@ -66,7 +47,7 @@ impl FleetActionExecutor {
                     )
                     .await
                     .map(FleetOutcome::Released)
-                    .map(MovementResult::checked)
+                    .map(ActionResult::checked)
             }
             MovementAction::Recover => self.recover(accepted, attempt).await,
             MovementAction::Prepare => self.prepare(attempt).await,
@@ -82,7 +63,13 @@ impl FleetActionExecutor {
     pub(super) async fn inspect_accepted(
         &self,
         accepted: &AcceptedFleetAction,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
+        if matches!(
+            accepted.action().kind(),
+            FleetActionKind::Maintenance { .. }
+        ) {
+            return self.perform_maintenance(accepted);
+        }
         let FleetActionKind::Movement { action, attempt } = accepted.action().kind() else {
             return Err(Error::Control("accepted fleet effect is not movement"));
         };
@@ -132,9 +119,9 @@ impl FleetActionExecutor {
                             outcome: outcome.clone(),
                         };
                         basis.validate_result(&envelope).map_err(operation)?;
-                        Ok(MovementResult::checked(outcome))
+                        Ok(ActionResult::checked(outcome))
                     }
-                    _ => Ok(MovementResult::checked(FleetOutcome::Unknown)),
+                    _ => Ok(ActionResult::checked(FleetOutcome::Unknown)),
                 }
             }
             MovementAction::Cancel => self.cancel(attempt).await,

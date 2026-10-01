@@ -4,6 +4,76 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 maintenance admission checkpoint
+
+Maintenance Cordon now runs through the public node-owned action executor.
+Exact journal acceptance binds the physical node, boot, operation and retained
+intent before closing the existing writer, new-reader and new-follower role
+gate. Existing Cell owners remain available; this step releases no role and
+takes no shutdown lane. Unsupported maintenance role, finalization and
+inspection effects fail before acceptance or inventory work.
+
+The driver dispatches Cordon from Requested, commits Cordoned only after a
+checked durable result, then commits BeginEvacuation on a later pass. Lost
+replies, unconfirmed publication and Unknown retain the phase and intent.
+Maintenance has a bounded deadline share and a separate original error in
+`maintenance_failure`; an ambiguous timeout rereads the journal and epoch.
+Stopping optional scheduling still allows these intent steps. Deadline expiry
+keeps the cordon, prevents new maintenance allocations, and does not discard
+accepted work. New movement deadlines also respect the operation deadline.
+
+Retained intents now overlay signed placement samples before donor selection.
+This fixes normal-pressure maintenance donors being skipped when the roster is
+partial. Fresh partial observations can allocate settled evacuation through the
+existing planner and shared two-attempt budget. Empty permits still leave the
+operation Evacuating: complete role inventory, busy-work quiescence and joined
+shutdown/withdrawal evidence are required before completion.
+
+A rerun exposed an immediate publication-retry race: the watch result could
+arrive before its task exited, so the next dispatch joined the old unconfirmed
+receipt. Result delivery now joins the owned task's short exit sequence. A
+subsequent dispatch can retry the retained publication; dropped waiters still
+leave the task owned. The original failing run was 29 of 30 host cases; the
+final suite and ten exact-case repetitions below pass after this repair.
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Baseline | `b61768f95fe159f07db975f68950c0588ab563cc` |
+| Source manifest | 568 Rust/Cargo files; SHA256 `66e9bf466b87fd4c3c9f0ab745a726c4a505d916337fa6ba1ada2ef4e95afe44` |
+| Journal SQL | Unchanged SHA256 `6fd5c72f5e8f4bd245797dbc6f433baca0cece4d519aa954f7526b2ae61ad668` |
+| `cargo test -p cellule-host --test node node::fleet --locked` | 30 passed; 38 filtered. Four new public maintenance cases cover closed sticky admission, existing-owner query readback, duplicates, lost reply/waiter, wrong boot, stale intent and unsupported effects. Shutdown joins and checks Stopped with zero actor/retained charges. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 41 passed; none ignored or filtered. Six new driver cases use real SQLite with synthetic effects; both real-node overload/controller-restart cases also pass. |
+| Exact immediate-retry case repeated ten times | Each passed; 67 filtered per run. No delay added to the retry. |
+| `cargo clippy -p cellule-host --lib --tests --example fleet_operations --all-features --locked -- -D warnings` | Passed. |
+| Static gates | Format, boundaries, module layout, 108 Rust snippets, 1140 Markdown links, 28 SQL/peer assertions and 562 protocol links passed. |
+
+Commands used Rust 1.97.0, the recorded checkout target and
+`CARGO_INCREMENTAL=0`. Public maintenance tests use a local in-memory acceptance
+journal with real runtime/SQLite owners. The separate driver tests use durable
+SQLite and synthetic endpoint effects. These establish admission and driver
+sequencing; they do not establish complete three-node maintenance, enrollment
+producer/startup barriers, role evacuation, busy primitive quiescence or
+process/provider qualification. The full plan remains incomplete.
+
+### Baseline CI qualification result
+
+On baseline `b61768f`, workspace and MSRV
+[run 36888176019](https://github.com/crabbuild/cellule/actions/runs/36888176019),
+contract, website and decoder fuzz passed. Follower capacity in
+[run 36888175986](https://github.com/crabbuild/cellule/actions/runs/36888175986)
+and smoke in
+[run 36888176067](https://github.com/crabbuild/cellule/actions/runs/36888176067)
+also passed; routing was still pending at inspection.
+
+The same capacity run's object-proof job **failed**: the skewed window at two requests per second per node
+completed 59 of 60 planned arrivals. Arrival 49 was `scheduler_late`
+(scheduled 8,166,666 us, started 8,464,809 us); the driver reported no fully
+served skewed capacity point. Artifact 11175158203 retains the failed evidence
+with ZIP SHA256 `34b6aad753434eacd208c1c03ec49952fdea202adb62e435790b3690b807605a`.
+This is failed qualification, irrespective of other passing jobs or local
+functional tests. Profiles, deadlines and expected evidence remain unchanged;
+the updated PR must complete its own CI and the full fleet qualification work.
+
 ## October 1 2026 atomic API lint repair
 
 Workspace CI `36885649739` failed the warnings-denied lint gate on deprecated

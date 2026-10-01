@@ -159,12 +159,16 @@ impl FleetObserver for Observer {
 struct Transport {
     journal: Arc<SqliteJournal>,
     lose_release: AtomicBool,
+    lose_cordon: AtomicBool,
+    unknown_cordon: AtomicBool,
+    unconfirmed_cordon: AtomicBool,
     block_after_acceptance: AtomicBool,
     block_first_acceptance: AtomicBool,
     reject_prepare: bool,
     inspected: AtomicUsize,
     dispatched: AtomicUsize,
     released: AtomicUsize,
+    cordoned: AtomicUsize,
 }
 impl FleetTransport for Transport {
     fn dispatch<'a>(
@@ -173,6 +177,9 @@ impl FleetTransport for Transport {
         _: Instant,
     ) -> FleetAdapterFuture<'a, Arc<FleetActionCompletion>> {
         Box::pin(async move {
+            if matches!(action.kind(), FleetActionKind::Maintenance { .. }) {
+                return self.dispatch_cordon(action).await;
+            }
             let FleetActionKind::Movement {
                 action: effect,
                 attempt,
@@ -341,6 +348,97 @@ impl FleetTransport for Transport {
     }
 }
 
+impl Transport {
+    async fn dispatch_cordon(
+        &self,
+        action: &FleetAction,
+    ) -> std::result::Result<Arc<FleetActionCompletion>, Box<dyn std::error::Error + Send + Sync>>
+    {
+        let FleetActionKind::Maintenance {
+            action: MaintenanceAction::Cordon,
+            operation,
+        } = action.kind()
+        else {
+            panic!("synthetic transport only implements cordon");
+        };
+        let accepted = match self
+            .journal
+            .accept_action(
+                action,
+                operation.node(),
+                operation.session(),
+                action.issued_at_ms(),
+            )
+            .await?
+        {
+            FleetActionAcceptance::New(accepted) => {
+                self.dispatched.fetch_add(1, Ordering::SeqCst);
+                accepted
+            }
+            FleetActionAcceptance::Existing {
+                accepted,
+                result: Some(outcome),
+            } if !matches!(outcome.outcome, FleetOutcome::Unknown) => {
+                return Ok(Arc::new(FleetActionCompletion {
+                    accepted,
+                    outcome: *outcome,
+                    committed: true,
+                    execution_error: None,
+                    journal_error: None,
+                }));
+            }
+            FleetActionAcceptance::Existing { accepted, .. } => accepted,
+        };
+        if self.block_after_acceptance.load(Ordering::SeqCst)
+            || self.block_first_acceptance.swap(false, Ordering::SeqCst)
+        {
+            std::future::pending::<()>().await;
+        }
+        let unknown = self.unknown_cordon.swap(false, Ordering::SeqCst);
+        if !unknown {
+            self.cordoned.fetch_add(1, Ordering::SeqCst);
+        }
+        let outcome = FleetActionOutcome {
+            scope: scope(),
+            action_key: action.key()?,
+            node: operation.node(),
+            session: operation.session(),
+            observed_at_ms: action.issued_at_ms(),
+            outcome: if unknown {
+                FleetOutcome::Unknown
+            } else {
+                FleetOutcome::Cordoned
+            },
+        };
+        self.journal
+            .publish_action_result(&accepted, &outcome)
+            .await?;
+        if self.lose_cordon.swap(false, Ordering::SeqCst) {
+            return Err(std::io::Error::other(
+                "injected lost cordon response after durable result",
+            )
+            .into());
+        }
+        let unconfirmed = self.unconfirmed_cordon.swap(false, Ordering::SeqCst);
+        Ok(Arc::new(FleetActionCompletion {
+            accepted,
+            outcome,
+            committed: !unconfirmed,
+            execution_error: unknown.then(|| {
+                Arc::new(cellule_runtime::Error::Control(
+                    "injected unresolved cordon execution",
+                ))
+            }),
+            journal_error: unconfirmed.then(|| {
+                Arc::new(cellule_runtime::Error::Facility {
+                    name: "injected-cordon-publication",
+                    source: Box::new(std::io::Error::other("injected unconfirmed result")),
+                })
+            }),
+        }))
+    }
+}
+
 struct Fixture {
     _root: tempfile::TempDir,
     journal: Arc<SqliteJournal>,
@@ -379,12 +477,16 @@ impl Fixture {
         let transport = Arc::new(Transport {
             journal: journal.clone(),
             lose_release: AtomicBool::new(false),
+            lose_cordon: AtomicBool::new(false),
+            unknown_cordon: AtomicBool::new(false),
+            unconfirmed_cordon: AtomicBool::new(false),
             block_after_acceptance: AtomicBool::new(false),
             block_first_acceptance: AtomicBool::new(false),
             reject_prepare,
             inspected: AtomicUsize::new(0),
             dispatched: AtomicUsize::new(0),
             released: AtomicUsize::new(0),
+            cordoned: AtomicUsize::new(0),
         });
         Self {
             _root: root,
@@ -422,6 +524,254 @@ impl Fixture {
             .registry();
         self.journal.set_scheduling(version, false).await.unwrap();
     }
+
+    async fn request_maintenance(&self, deadline_ms: i64) -> MaintenanceOperation {
+        let snapshot = self.journal.load_snapshot(scope()).await.unwrap();
+        let snapshot = self
+            .journal
+            .claim_controller(
+                scope(),
+                snapshot.head().revision(),
+                SessionId::from_bytes([206; 16]),
+                NOW,
+            )
+            .await
+            .unwrap();
+        let operation = MaintenanceOperation::new(
+            OperationId::from_bytes([207; 16]).unwrap(),
+            Digest::from_bytes([208; 32]),
+            node(1),
+            session(1),
+            2,
+            NOW,
+            deadline_ms,
+        )
+        .unwrap();
+        self.journal
+            .compare_exchange(
+                &snapshot,
+                snapshot.head().controller().unwrap().epoch,
+                NOW,
+                &JournalTransition::BeginMaintenance(operation.clone()),
+            )
+            .await
+            .unwrap();
+        operation
+    }
+}
+
+#[tokio::test]
+async fn maintenance_cordon_precedes_partial_normal_pressure_evacuation() {
+    let fixture = Fixture::new(false, false, false).await;
+    let operation = fixture.request_maintenance(NOW + 20_000).await;
+    let driver = fixture.driver(206);
+    let cordoned = fixture.step(&driver, 1).await;
+    assert_eq!(
+        cordoned.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Cordoned
+    );
+    assert_eq!(cordoned.allocated, 0);
+    assert_eq!(cordoned.dispatched, 1);
+    assert!(cordoned.maintenance_failure.is_none());
+    let evacuation = fixture.step(&driver, 2).await;
+    assert_eq!(
+        evacuation.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Evacuating
+    );
+    assert_eq!(evacuation.allocated, 2);
+    for attempt in evacuation.snapshot.head().attempts() {
+        assert_eq!(attempt.spec().id.operation, operation.id());
+        assert_eq!(attempt.spec().source_node, node(1));
+        assert_ne!(attempt.spec().destination_node, node(1));
+        assert_eq!(attempt.spec().deadline_ms, operation.deadline_ms());
+    }
+    fixture.stop().await;
+    for index in 3..=6 {
+        fixture.step(&driver, index).await;
+    }
+    let retained = fixture.step(&driver, 7).await;
+    assert!(retained.snapshot.head().attempts().is_empty());
+    assert_eq!(
+        retained.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Evacuating
+    );
+    assert!(
+        retained
+            .blockers
+            .contains(&DrainBlocker::IncompleteObservation)
+    );
+    assert_eq!(fixture.transport.cordoned.load(Ordering::SeqCst), 1);
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn stopped_optional_scheduling_still_cordons_and_retains_maintenance() {
+    let fixture = Fixture::new(false, false, false).await;
+    fixture.request_maintenance(NOW + 20_000).await;
+    fixture.stop().await;
+    let driver = fixture.driver(206);
+    let cordoned = fixture.step(&driver, 1).await;
+    assert_eq!(
+        cordoned.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Cordoned
+    );
+    let evacuation = fixture.step(&driver, 2).await;
+    assert_eq!(
+        evacuation.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Evacuating
+    );
+    assert_eq!(evacuation.allocated, 0);
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn replacement_controller_adopts_lost_cordon_reply_without_repeating_effect() {
+    let fixture = Fixture::new(false, false, false).await;
+    let operation = fixture.request_maintenance(NOW + 60_000).await;
+    fixture.stop().await;
+    fixture.transport.lose_cordon.store(true, Ordering::SeqCst);
+    let lost = fixture.step(&fixture.driver(206), 1).await;
+    assert!(lost.maintenance_failure.is_some());
+    assert!(lost.failures.is_empty());
+    assert_eq!(
+        lost.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Requested
+    );
+    assert_eq!(
+        lost.next_wake_at_ms,
+        NOW + 100 + FleetProfile::default().reconcile_interval_ms
+    );
+    let replaced = fixture.step(&fixture.driver(209), 310).await;
+    assert_eq!(replaced.snapshot.head().controller().unwrap().epoch, 2);
+    assert_eq!(
+        replaced.snapshot.head().maintenance().unwrap().id(),
+        operation.id()
+    );
+    assert_eq!(
+        replaced.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Cordoned
+    );
+    assert!(replaced.maintenance_failure.is_none());
+    assert_eq!(fixture.transport.cordoned.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.transport.dispatched.load(Ordering::SeqCst), 1);
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn timed_out_cordon_retains_acceptance_and_retries_without_false_evacuation() {
+    let fixture = Fixture::new(false, false, false).await;
+    fixture.request_maintenance(NOW + 20_000).await;
+    fixture.stop().await;
+    fixture
+        .transport
+        .block_first_acceptance
+        .store(true, Ordering::SeqCst);
+    let report = fixture
+        .driver(206)
+        .reconcile_once(
+            || Ok(NOW + 100),
+            Instant::now() + Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+    assert!(report.maintenance_failure.is_some());
+    let cellule_runtime::Error::Facility { name, source } =
+        report.maintenance_failure.as_ref().unwrap().as_ref()
+    else {
+        panic!("cordon timeout source lost");
+    };
+    assert_eq!(*name, "fleet-controller-deadline");
+    assert!(source.is::<tokio::time::error::Elapsed>());
+    assert_eq!(report.dispatched, 1);
+    assert_eq!(
+        report.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Requested
+    );
+    assert_eq!(fixture.transport.cordoned.load(Ordering::SeqCst), 0);
+    let next = fixture.step(&fixture.driver(206), 2).await;
+    assert_eq!(
+        next.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Cordoned
+    );
+    assert_eq!(fixture.transport.cordoned.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.transport.dispatched.load(Ordering::SeqCst), 1);
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn unconfirmed_or_unknown_cordon_retains_phase_and_original_error() {
+    for unknown in [false, true] {
+        let fixture = Fixture::new(false, false, false).await;
+        fixture.request_maintenance(NOW + 20_000).await;
+        fixture.stop().await;
+        if unknown {
+            fixture
+                .transport
+                .unknown_cordon
+                .store(true, Ordering::SeqCst);
+        } else {
+            fixture
+                .transport
+                .unconfirmed_cordon
+                .store(true, Ordering::SeqCst);
+        }
+        let driver = fixture.driver(206);
+        let report = fixture.step(&driver, 1).await;
+        assert_eq!(
+            report.snapshot.head().maintenance().unwrap().phase(),
+            MaintenancePhase::Requested
+        );
+        assert_eq!(report.allocated, 0);
+        assert_eq!(
+            report.next_wake_at_ms,
+            NOW + 100 + FleetProfile::default().reconcile_interval_ms
+        );
+        let error = report.maintenance_failure.unwrap();
+        if unknown {
+            assert!(matches!(
+                error.as_ref(),
+                cellule_runtime::Error::Control("injected unresolved cordon execution")
+            ));
+            assert!(report.blockers.contains(&DrainBlocker::OutcomeUnknown));
+        } else {
+            let cellule_runtime::Error::Facility { name, source } = error.as_ref() else {
+                panic!("publication source lost");
+            };
+            assert_eq!(*name, "injected-cordon-publication");
+            assert!(source.is::<std::io::Error>());
+            assert!(report.blockers.contains(&DrainBlocker::PendingPublication));
+        }
+        let replay = fixture.step(&fixture.driver(206), 2).await;
+        assert_eq!(
+            replay.snapshot.head().maintenance().unwrap().phase(),
+            MaintenancePhase::Cordoned
+        );
+        assert!(replay.maintenance_failure.is_none());
+        assert_eq!(fixture.transport.cordoned.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.transport.dispatched.load(Ordering::SeqCst), 1);
+        fixture.journal.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn expired_maintenance_still_closes_admission_but_allocates_no_new_moves() {
+    let fixture = Fixture::new(false, false, false).await;
+    fixture.request_maintenance(NOW + 100).await;
+    let driver = fixture.driver(206);
+    let cordoned = fixture.step(&driver, 2).await;
+    assert_eq!(
+        cordoned.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Cordoned
+    );
+    assert!(cordoned.blockers.contains(&DrainBlocker::Deadline));
+    let evacuation = fixture.step(&driver, 3).await;
+    assert_eq!(evacuation.allocated, 0);
+    assert!(evacuation.blockers.contains(&DrainBlocker::Deadline));
+    assert_eq!(
+        evacuation.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Evacuating
+    );
+    fixture.journal.close().await.unwrap();
 }
 
 #[tokio::test]

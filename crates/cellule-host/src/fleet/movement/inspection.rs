@@ -4,10 +4,10 @@ impl FleetActionExecutor {
     pub(super) async fn cancel(
         &self,
         attempt: &MoveAttempt,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         if self.runtime.prepared_receiver(attempt.spec().id)?.is_none() {
             return if self.confirmed_credit_settlement(attempt).await? {
-                Ok(MovementResult::checked(FleetOutcome::ReceiverCleaned))
+                Ok(ActionResult::checked(FleetOutcome::ReceiverCleaned))
             } else {
                 Err(Error::Peer(
                     "receiver cleanup has no retained resource proof",
@@ -24,9 +24,9 @@ impl FleetActionExecutor {
                     attempt.phase(),
                     AttemptPhase::Activated | AttemptPhase::CleaningReceiver
                 ) => {}
-            _ => return Ok(MovementResult::checked(FleetOutcome::Unknown)),
+            _ => return Ok(ActionResult::checked(FleetOutcome::Unknown)),
         }
-        Ok(MovementResult::checked(FleetOutcome::ReceiverCleaned))
+        Ok(ActionResult::checked(FleetOutcome::ReceiverCleaned))
     }
 
     pub(super) async fn confirmed_credit_settlement(
@@ -99,7 +99,7 @@ impl FleetActionExecutor {
     pub(in crate::fleet) async fn inspect(
         &self,
         attempt: &MoveAttempt,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         let spec = attempt.spec();
         if self.session == spec.source {
             let original = self
@@ -132,10 +132,10 @@ impl FleetActionExecutor {
                     && original.spec() == spec
                     && matches!(result.outcome, FleetOutcome::Released(_))
                 {
-                    return Ok(MovementResult::checked(result.outcome));
+                    return Ok(ActionResult::checked(result.outcome));
                 }
             }
-            return Ok(MovementResult::checked(FleetOutcome::Unknown));
+            return Ok(ActionResult::checked(FleetOutcome::Unknown));
         }
         if matches!(
             attempt.phase(),
@@ -164,17 +164,17 @@ impl FleetActionExecutor {
             {
                 return self.recovered_serving(&accepted, attempt, &inputs).await;
             }
-            return Ok(MovementResult::checked(FleetOutcome::Unknown));
+            return Ok(ActionResult::checked(FleetOutcome::Unknown));
         }
         if self.runtime.prepared_receiver(spec.id)?.is_some() {
             let prepared = self.prepared(attempt)?;
             match prepared.state()? {
                 ReceiverState::Prepared => return self.inspect_preparation(attempt),
                 ReceiverState::Cancelled => {
-                    return Ok(MovementResult::checked(FleetOutcome::ReceiverCleaned));
+                    return Ok(ActionResult::checked(FleetOutcome::ReceiverCleaned));
                 }
                 ReceiverState::Activated if attempt.released().is_some() => {}
-                _ => return Ok(MovementResult::checked(FleetOutcome::Unknown)),
+                _ => return Ok(ActionResult::checked(FleetOutcome::Unknown)),
             }
         }
         // The bounded local receipt can retire after result publication. Its
@@ -239,15 +239,15 @@ impl FleetActionExecutor {
                     } else {
                         accepted.validate_result(&checked).map_err(operation)?;
                     }
-                    return Ok(MovementResult::checked(outcome));
+                    return Ok(ActionResult::checked(outcome));
                 }
                 (FleetOutcome::ReceiverCleaned, MovementAction::Cancel) => {
-                    return Ok(MovementResult::checked(FleetOutcome::ReceiverCleaned));
+                    return Ok(ActionResult::checked(FleetOutcome::ReceiverCleaned));
                 }
                 _ => {}
             }
         }
-        Ok(MovementResult::checked(FleetOutcome::Unknown))
+        Ok(ActionResult::checked(FleetOutcome::Unknown))
     }
 
     pub(in crate::fleet) async fn retire_receiver_receipt(

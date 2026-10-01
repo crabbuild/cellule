@@ -79,7 +79,7 @@ impl FleetActionExecutor {
         &self,
         accepted: &AcceptedFleetAction,
         attempt: &MoveAttempt,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         // Ordinary recovery must not compete with this attempt's unused affine
         // worker reservation. Only the tracked Prepared/Cancelled state proves
         // that no acquisition used it; never close an active writer for cleanup.
@@ -89,7 +89,7 @@ impl FleetActionExecutor {
                 ReceiverState::Prepared | ReceiverState::Cancelled => {
                     self.runtime.cancel_prepared_receiver(&credit)?
                 }
-                _ => return Ok(MovementResult::checked(FleetOutcome::Unknown)),
+                _ => return Ok(ActionResult::checked(FleetOutcome::Unknown)),
             }
         } else if !self.confirmed_credit_settlement(attempt).await? {
             return Err(Error::Peer("recovery lacks unused-credit cleanup proof"));
@@ -156,7 +156,7 @@ impl FleetActionExecutor {
         &self,
         accepted: &AcceptedFleetAction,
         attempt: &MoveAttempt,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         accepted
             .validate_replay(accepted.action(), self.node, self.session)
             .map_err(operation)?;
@@ -194,7 +194,7 @@ impl FleetActionExecutor {
                 .await?
                 .ok_or(Error::Fenced)?;
             if current.value() != basis.control() {
-                return Ok(MovementResult::checked(FleetOutcome::Unknown));
+                return Ok(ActionResult::checked(FleetOutcome::Unknown));
             }
             // Unchanged full control (including monotonic revision/epoch) proves
             // this retained input was not acquired; reconfirm it before CAS.
@@ -207,7 +207,7 @@ impl FleetActionExecutor {
         accepted: &AcceptedFleetAction,
         attempt: &MoveAttempt,
         inputs: &FleetCellInputs,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         let recovery = self
             .journal
             .load_recovery_evidence(accepted)
@@ -231,6 +231,6 @@ impl FleetActionExecutor {
             outcome: outcome.clone(),
         };
         accepted.validate_result(&envelope).map_err(operation)?;
-        Ok(MovementResult::checked(outcome))
+        Ok(ActionResult::checked(outcome))
     }
 }

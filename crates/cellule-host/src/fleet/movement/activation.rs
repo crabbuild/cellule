@@ -5,7 +5,7 @@ impl FleetActionExecutor {
         &self,
         accepted: &AcceptedFleetAction,
         attempt: &MoveAttempt,
-    ) -> cellule_runtime::Result<MovementResult> {
+    ) -> cellule_runtime::Result<ActionResult> {
         let prepared = match self.runtime.prepared_receiver(attempt.spec().id)? {
             Some(_) => {
                 let prepared = self.prepared(attempt)?;
@@ -16,7 +16,7 @@ impl FleetActionExecutor {
                     {
                         None
                     }
-                    _ => return Ok(MovementResult::checked(FleetOutcome::Unknown)),
+                    _ => return Ok(ActionResult::checked(FleetOutcome::Unknown)),
                 }
             }
             None if self.confirmed_credit_settlement(attempt).await? => None,
@@ -46,7 +46,7 @@ impl FleetActionExecutor {
             return self
                 .serving(attempt, &inputs)
                 .await
-                .map(MovementResult::checked);
+                .map(ActionResult::checked);
         }
         let basis =
             AcquisitionBasis::new(accepted.clone(), observed.value().clone(), wall_time_ms()?)
@@ -97,7 +97,7 @@ impl FleetActionExecutor {
             outcome: outcome.clone(),
         };
         retained.validate_result(&envelope).map_err(operation)?;
-        Ok(MovementResult::checked(outcome))
+        Ok(ActionResult::checked(outcome))
     }
 
     pub(super) async fn serving(
