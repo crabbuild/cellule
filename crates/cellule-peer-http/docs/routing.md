@@ -54,6 +54,10 @@ acknowledgements. Socket setup failures reject the connection and retain the
 I/O error in the listener log. A real mTLS accept test verifies the socket
 option for both protocols.
 
+The TLS stream wrapper preserves scatter/gather writes so the HTTP server can
+submit response headers and bodies together without flattening them first.
+A real mTLS response test verifies that delegation.
+
 The client offers `h2` then `http/1.1` on the pinned mTLS connection, so a hot
 owner multiplexes concurrent peer requests over one connection instead of
 opening one connection per request. A peer that speaks only HTTP/1.1 selects

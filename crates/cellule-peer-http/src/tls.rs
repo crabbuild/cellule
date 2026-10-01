@@ -448,6 +448,18 @@ impl AsyncRead for PeerTlsStream {
 }
 
 impl AsyncWrite for PeerTlsStream {
+    fn is_write_vectored(&self) -> bool {
+        self.stream.is_write_vectored()
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffers: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write_vectored(context, buffers)
+    }
+
     fn poll_write(
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
@@ -594,6 +606,71 @@ fn install_crypto_provider() {
 mod tests {
     use super::*;
     use axum::serve::Listener;
+
+    #[tokio::test]
+    async fn scatter_gather_peer_reply_round_trips_over_mutual_tls() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let Some((directory, tls)) = crate::tests::generate_peer_identity("vectored-reply") else {
+            eprintln!("skipping: no OpenSSL 3 binary available for the peer identity fixture");
+            return;
+        };
+        let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = tcp.local_addr().unwrap();
+        let client = tls
+            .client_identity()
+            .client(
+                tls.certificate(),
+                tls.signing_key().verifying_key().to_bytes(),
+            )
+            .unwrap();
+        let mut listener = tls.listener(tcp);
+        let request = tokio::spawn(async move {
+            client
+                .get(format!("https://localhost:{}", address.port()))
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        });
+        let (mut stream, _) = tokio::time::timeout(HANDSHAKE_TIMEOUT, listener.accept())
+            .await
+            .unwrap();
+        assert!(
+            stream.is_write_vectored(),
+            "preserve the TLS stream's scatter/gather capability"
+        );
+        let mut reader = tokio::io::BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).await.unwrap() > 0);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        drop(reader);
+        let headers = b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n";
+        let body = b"peer-body";
+        let written = stream
+            .write_vectored(&[io::IoSlice::new(headers), io::IoSlice::new(body)])
+            .await
+            .unwrap();
+        assert_eq!(
+            written,
+            headers.len() + body.len(),
+            "small headers/body fit the TLS plaintext buffer together"
+        );
+        stream.flush().await.unwrap();
+        assert_eq!(
+            &tokio::time::timeout(HANDSHAKE_TIMEOUT, request)
+                .await
+                .unwrap()
+                .unwrap()[..],
+            body
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[tokio::test]
     async fn accepted_mutual_tls_peer_disables_nagle_for_both_protocols() {
