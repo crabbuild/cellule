@@ -38,7 +38,8 @@ permissions:
 
 concurrency:
   group: cell-reference-compose-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Finish frozen comparisons and retain their evidence before testing a new head.
+  cancel-in-progress: false
 
 jobs:
   smoke:
