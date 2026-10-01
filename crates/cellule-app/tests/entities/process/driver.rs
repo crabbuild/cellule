@@ -150,7 +150,9 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         for shape in ["uniform", "hot", "skewed"] {
             let mut served = false;
             let mut overloaded = false;
-            let points: &[(usize, usize)] = if capacity {
+            let points: &[(usize, usize)] = if capacity && shape == "uniform" {
+                &[(2, 8), (4, 16), (16, 64), (24, 96), (32, 128), (48, 192)]
+            } else if capacity {
                 &[
                     (2, 8),
                     (4, 16),
@@ -190,7 +192,9 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
                 served |= fully_served;
                 if capacity && !fully_served {
                     overloaded = true;
-                    break;
+                    if shape != "uniform" {
+                        break;
+                    }
                 }
             }
             if capacity {

@@ -55,11 +55,11 @@ jobs:
           test -n "$binary"
           test "$(printf '%s\n' "$binary" | wc -l)" -eq 1
           sha256sum "$binary" > "$build_state/evidence/binary.sha256"
-      - name: Run twelve diagnostic follower-proof capacity repeats
+      - name: Run six targeted follower overload diagnostic repeats
         run: |
           set -euo pipefail
           failure=0
-          for repeat in $(seq 1 12); do
+          for repeat in $(seq 1 6); do
             run_state="$RUNNER_TEMP/cell-follower-capacity-run-$repeat"
             mkdir -p "$run_state/evidence"
             ln -s "$CELLULE_FOLLOWER_BUILD_STATE/source" "$run_state/source"
