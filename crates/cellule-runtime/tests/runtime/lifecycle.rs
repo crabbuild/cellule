@@ -191,7 +191,7 @@ impl ObjectStore for PausingStore {
     ) -> object_store::Result<PutResult> {
         if self
             .transient_put_failures
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()
@@ -268,7 +268,7 @@ impl ObjectStore for PausingStore {
         if options.range.is_some()
             && self
                 .transient_get_failures
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok()
