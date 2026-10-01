@@ -47,6 +47,17 @@ are never guessed to have failed before execution.
 
 ## Transport protocol
 
+The private mTLS listener enables `TCP_NODELAY` on accepted sockets before the
+handshake. Small TLS records and peer replies are sent promptly across both
+HTTP/1.1 and HTTP/2; they do not wait for Nagle buffering and delayed TCP
+acknowledgements. Socket setup failures reject the connection and retain the
+I/O error in the listener log. A real mTLS accept test verifies the socket
+option for both protocols.
+
+The TLS stream wrapper preserves scatter/gather writes so the HTTP server can
+submit response headers and bodies together without flattening them first.
+A real mTLS response test verifies that delegation.
+
 The client offers `h2` then `http/1.1` on the pinned mTLS connection, so a hot
 owner multiplexes concurrent peer requests over one connection instead of
 opening one connection per request. A peer that speaks only HTTP/1.1 selects
@@ -151,17 +162,28 @@ throughput attribution is tracked separately by the entity workload and the
 | Reuse | Bound | What it removes | What still fences it |
 | --- | --- | --- | --- |
 | Local actor capability | 4,096 Cells, live node lease and actor admission | Catalog and authority reads, periodic cache refreshes, and repeated actor lookups | Session fencing and closure of the exact admission token stop reuse; unleased runtimes read fresh authority |
+| Unleased resident catalog identity | 4,096 Cells, actor admission | Repeated catalog head and page reads | Every invocation still reads fresh Cell authority and rechecks actor identity/admission after I/O |
 | Observed description (`CellId` → description) | 30 s, 4,096 Cells | The Describe hop of every routed invocation | Every receiver validates the shipped description; a fenced refusal drops the entry |
 
 A receiver can also use `ResidentPeerCellResolver`: a resident hit under a live
-node lease reads no catalog or control. Unleased runtimes and misses use fresh
-storage observations. Cached descriptions are invalidated on local fencing or
+node lease reads no catalog or control. An unleased resident hit reuses its
+immutable catalog identity and reads control once per invocation; its ownership
+observation is never cached. A miss reads catalog and control. Cached descriptions are invalidated on local fencing or
 the corresponding decoded peer refusal; ambiguous commands are reconciled.
 Drain, migration and handoff close the cached capability's admission token.
 The next lookup can resolve a replacement actor; every SQL dispatch still checks
 its token and node lease. Single-Cell local and peer dispatch avoid allocating a
 temporary handle map. A nonowner forwarding runtime checks local presence once
 and skips the additional resident lookup.
+
+`performance_tests::rustfs_object_only_routing_latency_throughput` runs the same
+SQL, mTLS forwarding, concurrency, write-proof and recovery workload as the
+lease-backed benchmark with an unleased owner. Keep both modes in a performance
+comparison: zero-read ownership reuse requires a node-session lease, while the
+unleased path pays one authority round trip for each invocation. The ordinary
+protocol test `unleased_local_and_peer_routes_reuse_catalog_but_read_fresh_control`
+checks exact read counts and origin failures; takeover, release/replacement and
+session-fencing tests cover refusal and invalidation.
 
 Cold owner lookups use bounded per-Cell gates shared by the routing table and
 HTTP adapter. After waiting, a caller checks the signed lease of the populated
@@ -220,6 +242,38 @@ fixture's owner renewals and signed membership heartbeats that occur during
 active measurement windows; burst sleep intervals are excluded from the
 counters and included in elapsed time. Use identical
 workloads and alternating baseline/candidate runs before attributing changes.
+
+The reference Compose workflow also runs a matched routing job on its own
+runner. It builds isolated baseline and candidate snapshots with identical
+test wiring and freezes the release binaries. Both leased and object-only modes
+use four pairs, evenly split between baseline-first and candidate-first order.
+The driver serializes adjacent measurement windows with pipe handshakes outside
+request timers. Paced bursts wait the full idle interval in both processes and
+alternate which version runs first. Identical-revision calibration reuses the
+same frozen binary. Artifacts retain the coordination trace, revisions,
+digests, every raw latency sample, per-command publication phases,
+object-read/hop counts, and exact recovery results. CI uses 1,024 commands per
+write lane, verifies 6,144 unique durable mutations per run, and checks every
+publication phase record. The gate requires median-run p95/p99 within 10% and completed-call
+throughput within 10%; paced throughput is excluded because it includes sleep.
+Historical unleased zero-read routing is reported but cannot qualify a fresh
+authority latency target.
+
+Warm queries use the fixture's observed description. CI uses 48 paced bursts
+per route to cross the old two-second resident-cache window; the sender is enrolled
+before each timed forwarded burst so its independent refresh does not obscure
+receiver latency. Cold and fresh-client lanes still include discovery and
+Describe. Manual workflow runs accept `routing_baseline` and `routing_only`
+to repeat a specific comparison without repeating Compose scaling.
+
+The larger CI sample sizes and adjacent pairs retain the original 10% limits.
+Serial full-profile comparisons still failed calibration after increasing the
+sample sizes, including paced local p99 at 1.13–1.15. Adjacent windows control
+time drift without removing lanes or excluding slow calls. An unchanged-source
+calibration with 128 commands and 12 bursts failed three gates, with paced tail
+ratios up to 1.22 and serial-write p95 at 1.20. Manual measurements default to
+128 commands and 12 bursts; use `CELLULE_PERF_COMMANDS` and
+`CELLULE_PERF_BURSTS` to reproduce the larger CI profile.
 
 ### Local RustFS results, 2026-09-30
 

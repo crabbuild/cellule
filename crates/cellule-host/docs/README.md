@@ -104,6 +104,7 @@ shutdown ----+           |
 | Snapshot reservation | 12 MiB per view; refresh can retain old and new views together. |
 | Dirty recruitment set | 64 Cells. |
 | Activation fanout | 16 concurrent hints across Cells. |
+| Retained publication refresh | One latest hint per running Cell/session pair; at most 16. |
 | Discovery and activation | One 30-second deadline per prepared Cell. |
 | Explicit operator pass | At most 64 Cells within 30 seconds. |
 | Periodic reconciliation | Five-second poll; not a freshness or replacement SLO. |
@@ -128,6 +129,8 @@ flowchart LR
   storage.
 - Polling repairs dropped hints and reconciles membership changes.
 - A stalled reader does not block healthy readers' updates.
+- A publication during activation retains one follow-up hint, sent after the
+  running hint completes within the retained hint's discovery deadline.
 
 Pending hints recheck the selected boot at its observed lease expiry. Renewal
 preserves the request; expiry or withdrawal releases it for replacement.

@@ -1,0 +1,16 @@
+{
+  "title": "Reference",
+  "pages": [
+    "[Reference overview](/docs/crates/runtime/docs)",
+    "overview",
+    "runtime",
+    "storage",
+    "primitives",
+    "failover-and-followers",
+    "rust-api",
+    "deployment",
+    "delivery",
+    "technical-reference",
+    "..."
+  ]
+}

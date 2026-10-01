@@ -21,7 +21,17 @@ on:
       - "crates/cellule-store/src/**"
       - "crates/cellule-app/tests/**"
       - "crates/cellule-app/qualification/**"
+      - "crates/cellule-peer-http/**"
   workflow_dispatch:
+    inputs:
+      routing_baseline:
+        description: "Routing comparison revision (default: origin/main)"
+        type: string
+        default: ""
+      routing_only:
+        description: "Run only the matched routing measurement"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,6 +42,7 @@ concurrency:
 
 jobs:
   smoke:
+    if: ${{ !inputs.routing_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -115,5 +126,58 @@ jobs:
         with:
           name: cell-reference-compose-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cell-reference/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  routing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      rustfs:
+        image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
+        env:
+          RUSTFS_ACCESS_KEY: cellule-ci
+          RUSTFS_SECRET_KEY: cellule-integration-fixture
+          RUSTFS_CONSOLE_ENABLE: "false"
+          RUSTFS_OBS_LOG_DIRECTORY: /data/logs
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl --fail --silent http://127.0.0.1:9000/health/ready"
+          --health-interval 3s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Prepare isolated provider
+        env:
+          AWS_ACCESS_KEY_ID: cellule-ci
+          AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket cellule-routing
+      - name: Compare frozen routing binaries
+        env:
+          ROUTING_BASELINE: ${{ inputs.routing_baseline || github.event.pull_request.base.sha || 'origin/main' }}
+          AWS_ACCESS_KEY_ID: cellule-ci
+          AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
+          AWS_REGION: us-east-1
+          CELLULE_TEST_ENDPOINT: http://127.0.0.1:9000
+          CELLULE_TEST_BUCKET: cellule-routing
+        run: |
+          python3 -B -m unittest discover -s crates/cellule-peer-http/qualification -p 'test_*.py'
+          python3 crates/cellule-peer-http/qualification/routing.py \
+            --baseline "$ROUTING_BASELINE" --state "$RUNNER_TEMP/cell-routing"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cell-routing-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cell-routing/evidence/
           if-no-files-found: error
           retention-days: 7

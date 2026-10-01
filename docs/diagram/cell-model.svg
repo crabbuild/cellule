@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 760" role="img" aria-labelledby="title description">
+  <title id="title">One Cell type, independent Cells</title>
+  <desc id="description">The Orders Cell type defines shared behavior and an entity partition rule. Order 42 and order 43 address two independent Cells. Each Cell has one fenced writer, its own SQLite state and recorded request outcomes, and durable publication or recoverable follower-log proof. A command commits within one Cell. Ownership can move while identity stays stable.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 9 4.5 0 9Z" fill="#a26524"/></marker>
+    <style>
+      text{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#142944}
+      .title{font-size:26px;font-weight:700;letter-spacing:-.6px}
+      .heading{font-size:20px;font-weight:650}
+      .label{font-size:16px;font-weight:650}
+      .copy{font-size:15px;fill:#586555}
+      .eyebrow{font-size:12px;font-weight:650;letter-spacing:1.4px;fill:#925b0d}
+      .identity{font-family:ui-monospace,'SFMono-Regular',monospace;font-size:13px;fill:#586555}
+      .connector{fill:none;stroke:#a26524;stroke-width:1.6;marker-end:url(#arrow)}
+      .boundary{fill:#fff;stroke:#dbcbb0;stroke-width:1.5;stroke-dasharray:6 5}
+      .writer{fill:#fbf3dc;stroke:#d5ac60}
+      .state{fill:#f0f6f4;stroke:#82a79f}
+      .proof{fill:#f7f5ed;stroke:#c8c5b5}
+    </style>
+  </defs>
+  <rect width="760" height="760" rx="16" fill="#fffdf7"/>
+  <text x="30" y="36" class="eyebrow">THE CELL MODEL</text>
+  <text x="30" y="74" class="title">One definition. Independent Cells.</text>
+
+  <rect x="30" y="100" width="700" height="94" rx="12" fill="#fbf3dc" stroke="#d5ac60"/>
+  <path d="M64 122 82 132v21l-18 11-18-11v-21Z" fill="#e7a525"/>
+  <text x="102" y="135" class="heading">Orders Cell type</text>
+  <text x="102" y="161" class="copy">Module + stable namespace + role + partition rule</text>
+  <text x="102" y="181" class="identity">Example rule: one partition per order</text>
+
+  <path d="M380 194v26H195v24M380 220H565v24" class="connector"/>
+  <text x="401" y="214" class="copy">Select a target</text>
+
+  <rect x="30" y="252" width="330" height="356" rx="14" class="boundary"/>
+  <rect x="400" y="252" width="330" height="356" rx="14" class="boundary"/>
+
+  <g>
+    <path d="M68 272 86 282v21l-18 11-18-11v-21Z" fill="#b87313"/>
+    <text x="102" y="285" class="heading">Cell A · Order 42</text>
+    <text x="50" y="326" class="identity">acme / shop / orders / 42</text>
+    <rect x="50" y="350" width="290" height="54" rx="8" class="writer"/>
+    <text x="70" y="373" class="label">One fenced writer</text>
+    <text x="70" y="393" class="copy">Commands are ordered for this Cell.</text>
+    <path d="M195 404v26" class="connector"/>
+    <rect x="50" y="440" width="290" height="54" rx="8" class="state"/>
+    <text x="70" y="463" class="label">Own SQLite database</text>
+    <text x="70" y="483" class="copy">State + recorded request outcomes</text>
+    <path d="M195 494v26" class="connector"/>
+    <rect x="50" y="530" width="290" height="58" rx="8" class="proof"/>
+    <text x="70" y="554" class="label">Durability before success</text>
+    <text x="70" y="576" class="copy">Publication or follower-log proof</text>
+  </g>
+  <g>
+    <path d="M438 272 456 282v21l-18 11-18-11v-21Z" fill="#d58b1a"/>
+    <text x="472" y="285" class="heading">Cell B · Order 43</text>
+    <text x="420" y="326" class="identity">acme / shop / orders / 43</text>
+    <rect x="420" y="350" width="290" height="54" rx="8" class="writer"/>
+    <text x="440" y="373" class="label">One fenced writer</text>
+    <text x="440" y="393" class="copy">Independent command ordering</text>
+    <path d="M565 404v26" class="connector"/>
+    <rect x="420" y="440" width="290" height="54" rx="8" class="state"/>
+    <text x="440" y="463" class="label">Own SQLite database</text>
+    <text x="440" y="483" class="copy">State + recorded request outcomes</text>
+    <path d="M565 494v26" class="connector"/>
+    <rect x="420" y="530" width="290" height="58" rx="8" class="proof"/>
+    <text x="440" y="554" class="label">Durability before success</text>
+    <text x="440" y="576" class="copy">Publication or follower-log proof</text>
+  </g>
+
+  <path d="M30 638H730" stroke="#e7e2d3"/>
+  <text x="30" y="665" class="label">Each dashed boundary is one transaction domain.</text>
+  <text x="30" y="691" class="copy">Identity stays stable when ownership moves between nodes.</text>
+  <text x="30" y="715" class="copy">Cross-Cell work uses durable Effects and idempotent delivery.</text>
+</svg>

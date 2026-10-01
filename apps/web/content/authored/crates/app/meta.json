@@ -1,0 +1,13 @@
+{
+  "title": "cellule-app",
+  "pages": [
+    "overview",
+    "modules",
+    "topology",
+    "commands",
+    "reads",
+    "integration",
+    "docs",
+    "[Crate reference](/docs/crates/app)"
+  ]
+}

@@ -1,0 +1,10 @@
+/.next/
+/.source/
+/content/docs/
+/public/repository/
+/lib/docs-manifest.json
+/*.tsbuildinfo
+/test-results/
+/playwright-report/
+.env*
+!.env.example

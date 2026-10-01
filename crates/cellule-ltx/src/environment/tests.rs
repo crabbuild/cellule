@@ -719,15 +719,35 @@ async fn rejected_cache_dispatch_releases_its_key_and_admission() {
 #[cfg(feature = "replica")]
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelled_waiters_do_not_release_running_job_or_recovery_admission() {
+    struct Admission(Arc<AtomicUsize>);
+    struct Charge(Arc<AtomicUsize>);
+    impl HostResourcePermit for Charge {}
+    impl Drop for Charge {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    impl HostResourceAdmission for Admission {
+        fn reserve(
+            &self,
+            _: HostResourceKind,
+            _: u32,
+        ) -> crate::Result<Box<dyn HostResourcePermit>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Charge(self.0.clone())))
+        }
+    }
+    let charges = Arc::new(AtomicUsize::new(0));
     let jobs = Arc::new(tokio::sync::Semaphore::new(1));
     let recovery = Arc::new(tokio::sync::Semaphore::new(1));
     let dirty = Arc::new(tokio::sync::Semaphore::new(1));
     let scratch = Arc::new(tokio::sync::Semaphore::new(1));
-    let host = Host::default()
+    let mut host = Host::default()
         .with_job_slots(jobs.clone())
         .with_recovery_slots(recovery.clone())
         .with_dirty_slots(dirty.clone())
         .with_scratch_slots(scratch.clone());
+    host.install_resource_admission(Arc::new(Admission(charges.clone())));
     let scope = host
         .for_recovery()
         .await
@@ -748,6 +768,11 @@ async fn cancelled_waiters_do_not_release_running_job_or_recovery_admission() {
     entered.await.unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        charges.load(Ordering::SeqCst),
+        4,
+        "dispatched work must retain all ledger charges after waiter cancellation"
+    );
     assert_eq!(jobs.available_permits(), 0);
     assert_eq!(recovery.available_permits(), 0);
     assert_eq!(dirty.available_permits(), 0);
@@ -769,6 +794,7 @@ async fn cancelled_waiters_do_not_release_running_job_or_recovery_admission() {
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(charges.load(Ordering::SeqCst), 0);
 }
 
 #[cfg(feature = "replica")]
@@ -826,4 +852,95 @@ async fn scratch_monitor_rechecks_total_reservation_and_releases_rejection() {
     ));
     assert_eq!(monitor.bytes.load(Ordering::Acquire), 1 << 20);
     assert_eq!(slots.available_permits(), 3);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
+async fn host_resource_charge_releases_before_its_slot_is_reused() {
+    struct Probe {
+        slots: Arc<tokio::sync::Semaphore>,
+        seen: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+    impl HostResourcePermit for Probe {}
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(self.slots.available_permits());
+        }
+    }
+    struct Admission {
+        kind: HostResourceKind,
+        slots: Arc<tokio::sync::Semaphore>,
+        seen: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+    impl HostResourceAdmission for Admission {
+        fn reserve(
+            &self,
+            kind: HostResourceKind,
+            _: u32,
+        ) -> crate::Result<Box<dyn HostResourcePermit>> {
+            Ok(Box::new(Probe {
+                slots: if kind == self.kind {
+                    self.slots.clone()
+                } else {
+                    Arc::new(tokio::sync::Semaphore::new(0))
+                },
+                seen: self.seen.clone(),
+            }))
+        }
+    }
+    for kind in [
+        HostResourceKind::Io,
+        HostResourceKind::Dirty,
+        HostResourceKind::Recovery,
+        HostResourceKind::Scratch,
+    ] {
+        for explicit_release in [false, true] {
+            let slots = Arc::new(tokio::sync::Semaphore::new(1));
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut host = match kind {
+                HostResourceKind::Io => Host::default().with_io_slots(slots.clone()),
+                HostResourceKind::Dirty => Host::default().with_dirty_slots(slots.clone()),
+                HostResourceKind::Recovery => Host::default().with_recovery_slots(slots.clone()),
+                HostResourceKind::Scratch => Host::default().with_scratch_slots(slots.clone()),
+                _ => unreachable!(),
+            };
+            host.install_resource_admission(Arc::new(Admission {
+                kind,
+                slots: slots.clone(),
+                seen: seen.clone(),
+            }));
+            match kind {
+                HostResourceKind::Io => drop(host.io_permit().await.unwrap()),
+                _ => {
+                    let scope = match kind {
+                        HostResourceKind::Dirty => host.for_dirty().await.unwrap(),
+                        HostResourceKind::Recovery => host.for_recovery().await.unwrap(),
+                        HostResourceKind::Scratch => host.for_scratch(1 << 20).await.unwrap(),
+                        _ => unreachable!(),
+                    };
+                    let clone = scope.clone();
+                    drop(scope);
+                    assert!(seen.lock().unwrap().is_empty());
+                    if explicit_release {
+                        drop(match kind {
+                            HostResourceKind::Dirty => clone.without_dirty(),
+                            HostResourceKind::Recovery => clone.without_recovery().without_dirty(),
+                            HostResourceKind::Scratch => clone.without_scratch(),
+                            _ => unreachable!(),
+                        });
+                    } else {
+                        drop(clone);
+                    }
+                }
+            }
+            assert!(
+                seen.lock().unwrap().iter().all(|available| *available == 0),
+                "{kind:?}: a slot became reusable before releasing its ledger charge"
+            );
+            assert_eq!(slots.available_permits(), 1);
+        }
+    }
 }
