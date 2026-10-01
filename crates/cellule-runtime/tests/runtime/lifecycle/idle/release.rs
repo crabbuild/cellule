@@ -175,6 +175,12 @@ async fn exact_idle_release_refuses_persisted_work() {
             .is_err()
     );
     assert_eq!(runtime.stats().active_cells(), 1);
+    let refreshed = runtime
+        .resident_handle(&fixture.target, CatalogRole::Application)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.owner_fence(), handle.owner_fence());
     assert!(matches!(
         handle.drain().await,
         Err(cellule_runtime::Error::CellDraining)

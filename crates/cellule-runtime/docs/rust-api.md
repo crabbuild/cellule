@@ -254,10 +254,21 @@ Add exact byte fixtures for every new input and output version.
 | --- | --- |
 | `cell_id()` | Read the verified target Cell ID |
 | `target()` | Derive deterministic effect targets |
+| `owner_fence()` | Compare a stored operation token with the admitted incarnation/epoch |
 | `sequence()` | Allocate stable transition-local identities |
 | `now_ms()` | Use the runtime-sampled logical timestamp |
 | `sql()` | Execute an authorized bounded SQL batch |
 | `emit_effect(&EffectCommandIntent)` | Append one typed cross-Cell intention to the command ledger |
+
+`OwnerFence` is available from `control` and `registry`. The runtime stamps it
+on the activation's admission capability and supplies it to typed commands and
+inbox effect handlers. Renewal, ordinary publication and schema migration keep
+the same incarnation/epoch; an ownership claim advances the epoch. A stale
+handle keeps its original value but cannot admit new work. The value alone is
+not authority and does not replace current application policy checks or the
+runtime's durable response gate. Exact stored-outcome replay skips the handler,
+so it preserves the original result rather than substituting the new owner's
+fence.
 
 **`QueryContext` exposes** the Cell ID, commit sequence, logical timestamp, and
 bounded read-only SQL.

@@ -12,6 +12,7 @@ mod runtime {
     pub mod fault_fs;
     pub mod lifecycle;
     pub mod migration;
+    pub mod owner_fence;
     pub mod publication;
     pub mod release_progress;
     pub mod scheduler;

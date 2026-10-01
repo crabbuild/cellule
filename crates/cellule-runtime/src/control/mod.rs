@@ -66,6 +66,19 @@ impl RootRef {
     }
 }
 
+/// Incarnation and ownership epoch bound to one admitted Cell activation.
+///
+/// Applications compare this value with their stored operation token. A value
+/// alone is not authority: runtime admission and durable publication still
+/// fence the command. Lease renewal and root publication preserve this fence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnerFence {
+    /// Incarnation whose storage and command outcomes this activation serves.
+    pub incarnation: IncarnationId,
+    /// Authority epoch that admitted the activation.
+    pub epoch: u64,
+}
+
 /// Enrolled process currently responsible for one Cell.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Owner {
@@ -187,6 +200,15 @@ pub enum Transition {
 }
 
 impl Control {
+    /// Returns this record's incarnation/epoch identity, without granting authority.
+    #[must_use]
+    pub const fn owner_fence(&self) -> OwnerFence {
+        OwnerFence {
+            incarnation: self.incarnation,
+            epoch: self.epoch,
+        }
+    }
+
     /// Creates and validates the only legal first control record.
     pub fn initial(
         cell: CellId,

@@ -104,6 +104,46 @@ async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() 
             .output,
         1
     );
+    // Inbox dispatch supplies the destination's admitted fence; request bytes
+    // cannot replace it. The exact stored result also survives effect replay.
+    let fence = fixture.handle().owner_fence();
+    let mut expected_fence = fence.incarnation.as_bytes().to_vec();
+    expected_fence.extend_from_slice(&fence.epoch.to_be_bytes());
+    let mut fence_request = request;
+    let mut fence_identity = identity;
+    fence_identity.source_sequence = 10;
+    fence_identity.ordinal = 4;
+    let fence_id =
+        cellule_runtime::primitives::effects::effect_id(source_cell, source_incarnation, 10, 4);
+    fence_identity.effect_id = fence_id.to_vec();
+    fence_request.identity = Some(fence_identity);
+    let mut fence_input = BoundedEncoder::new(64).unwrap();
+    vec![99; 24].encode(&mut fence_input).unwrap();
+    fence_request.operation = Some(wire::effect_request::Operation::CellCommand(
+        wire::CellCommand {
+            command_id: ObserveOwnerFence::ID,
+            codec_version: 1,
+            input: fence_input.finish(),
+        },
+    ));
+    let mut fence_claim = claim.clone();
+    fence_claim.effect_id = fence_id;
+    fence_claim.operation = prost::Message::encode_to_vec(&fence_request);
+    fence_claim.operation_digest =
+        effect_operation_digest(fixture.target.cell_id(), fence_id, &fence_claim.operation);
+    fence_claim.created_sequence = 10;
+    let observed = client.deliver(&fence_claim, now_ms + 3).await.unwrap();
+    let mut decoder = BoundedDecoder::new(observed.result(), 64).unwrap();
+    assert_eq!(Vec::<u8>::decode(&mut decoder).unwrap(), expected_fence);
+    decoder.finish().unwrap();
+    assert_eq!(
+        client.deliver(&fence_claim, now_ms + 4).await.unwrap(),
+        observed
+    );
+    assert_eq!(
+        client.resolve(&fence_claim, now_ms + 5).await.unwrap(),
+        Resolution::Committed(observed)
+    );
     fixture.handle().drain().await.unwrap();
 }
 #[tokio::test]
