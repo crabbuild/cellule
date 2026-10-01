@@ -1,4 +1,12 @@
 {
   "title": "Interactive concepts",
-  "pages": ["durability", "recovery", "layers"]
+  "pages": [
+    "cells",
+    "layers",
+    "durability",
+    "consistency",
+    "ownership",
+    "recovery",
+    "coordination"
+  ]
 }

@@ -19,13 +19,13 @@ The SQL example commits order 42, reads it at the returned receipt, checks its t
 
 | Your goal                  | Start here                                            | Continue with                                               |
 | -------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| Understand a Cell          | [At a glance](/docs/guides/at-a-glance)               | [Architecture](/docs/guides/architecture)                   |
+| Understand a Cell          | [Cells and boundaries](/docs/concepts/cells)          | [Architecture](/docs/guides/architecture)                   |
 | Write an application       | [Quickstart](/docs/guides/quickstart)                 | [Typed API](/docs/guides/api)                               |
 | Choose a primitive         | [Primitive overview](/docs/primitives)                | [Runtime contracts](/docs/crates/runtime/docs/primitives)   |
 | Operate a node             | [Framework integration](/docs/guides/framework)       | [Host lifecycle](/docs/crates/host/docs/lifecycle)          |
 | Understand durable replies | [Interactive command path](/docs/concepts/durability) | [Execution and receipts](/docs/crates/runtime/docs/runtime) |
 | Study exact restore        | [Interactive recovery](/docs/concepts/recovery)       | [LTX recovery](/docs/crates/ltx/docs/recovery)              |
-| Assess readiness           | [Performance and evidence](/performance)             | [Qualification](/docs/crates/runtime/docs/delivery)         |
+| Assess readiness           | [Performance and evidence](/performance)              | [Qualification](/docs/crates/runtime/docs/delivery)         |
 
 ## The contracts to keep
 
@@ -34,6 +34,18 @@ The SQL example commits order 42, reads it at the returned receipt, checks its t
 - Recovery verifies the authority-pinned root and every required chunk. State is reconstructed byte-identically or recovery fails.
 - A receipt binds a later read to a position in the same Cell.
 - Shutdown drains accepted work and releases resources on every exit path.
+
+## Explore the concepts in order
+
+The seven interactive chapters build from an application's state boundary to recovery and work delivery. Each combines a hands-on explorer, SVG diagrams, practical examples, and links to the canonical contracts.
+
+1. [Cells and boundaries](/docs/concepts/cells): stable targets, partition strategies, and atomic invariants.
+2. [Framework layers](/docs/concepts/layers): the seven crates and the policy your service supplies.
+3. [Durable commands](/docs/concepts/durability): publication proof, request identity, and uncertain replies.
+4. [Receipts and reads](/docs/concepts/consistency): owner ordering, replica minimums, and observation scope.
+5. [Ownership and fencing](/docs/concepts/ownership): placement, handoff, readiness, and drain.
+6. [Exact recovery](/docs/concepts/recovery): authority-selected roots, verified bytes, and the outcome ledger.
+7. [Durable work](/docs/concepts/coordination): Effects, workflows, activities, queues, schedules, and Blob retention.
 
 ## Browse the complete reference
 

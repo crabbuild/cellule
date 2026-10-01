@@ -343,6 +343,13 @@ const layers = [
       "Stable provider and bucket identities shared by the framework layers.",
     url: "/docs/crates/types",
   },
+  {
+    name: "cellule-peer-http",
+    label: "Connect runtime peers",
+    detail:
+      "Optional signed peer transport that depends only on runtime. The embedding application supplies endpoints and authorization.",
+    url: "/docs/crates/peer-http",
+  },
 ];
 export function LayerExplorer() {
   const [selected, setSelected] = useState(2);

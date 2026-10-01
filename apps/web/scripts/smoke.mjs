@@ -24,17 +24,33 @@ const marketing = [
 ];
 const errors = [];
 const repositoryOnlyGuides = ["reference", "roadmap", "verification"];
+const conceptGuides = [
+  "cells",
+  "layers",
+  "durability",
+  "consistency",
+  "ownership",
+  "recovery",
+  "coordination",
+].map((slug) => `/docs/concepts/${slug}`);
 for (const guide of repositoryOnlyGuides) {
   const url = `/docs/guides/${guide}`;
   assert(!manifest.pages.some((page) => page.url === url));
   for (const route of [url, `/markdown/guides/${guide}`])
-    assert.equal((await fetch(new URL(route, origin))).status, 404,
-      `${route} is a repository-only document`);
-  const searchResponse = await fetch(new URL(`/api/search?query=${guide}`, origin));
+    assert.equal(
+      (await fetch(new URL(route, origin))).status,
+      404,
+      `${route} is a repository-only document`,
+    );
+  const searchResponse = await fetch(
+    new URL(`/api/search?query=${guide}`, origin),
+  );
   assert.equal(searchResponse.status, 200);
   const results = await searchResponse.json();
-  assert(results.every((result) => result.url?.split("#")[0] !== url),
-    `${url} must not be a search result`);
+  assert(
+    results.every((result) => result.url?.split("#")[0] !== url),
+    `${url} must not be a search result`,
+  );
 }
 for (const endpoint of ["/sitemap.xml", "/llms.txt", "/llms-full.txt"]) {
   const text = await (await fetch(new URL(endpoint, origin))).text();
@@ -415,6 +431,162 @@ try {
     await page.evaluate(() => navigator.clipboard.readText()),
     "cargo run -p cellule-app --example sql --locked",
   );
+
+  // The guided chapters must expose real SVGs, not only diagram source text.
+  for (const route of conceptGuides) {
+    await page.goto(new URL(route, origin).href, { waitUntil: "networkidle" });
+    const figures = page.locator("article [data-diagram]");
+    assert.equal(
+      await figures.count(),
+      2,
+      `${route} needs both conceptual SVG diagrams`,
+    );
+    for (const figure of await figures.all()) {
+      await figure.scrollIntoViewIfNeeded();
+      await figure.locator(".mermaid-svg svg").waitFor();
+    }
+    assert(
+      (await page
+        .locator(
+          "article .lesson-lab, article .interactive-panel, article .layer-explorer",
+        )
+        .count()) > 0,
+      `${route} needs an interactive explorer`,
+    );
+  }
+
+  await page.goto(new URL("/docs/concepts/consistency", origin).href, {
+    waitUntil: "networkidle",
+  });
+  const readLab = page.locator('[data-concept-lab="reads"]');
+  assert.match(await readLab.getByRole("status").innerText(), /ReplicaBehind/);
+  await readLab
+    .getByRole("button", { name: "Caught up · 44", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  assert.match(
+    await readLab.getByRole("status").innerText(),
+    /Replica read satisfies the minimum/,
+  );
+  await readLab
+    .getByRole("button", { name: "Unavailable", exact: true })
+    .click();
+  assert.match(
+    await readLab.getByRole("status").innerText(),
+    /ReplicaUnavailable · no automatic fallback/,
+  );
+  await readLab
+    .getByRole("button", { name: "Current owner", exact: true })
+    .click();
+  assert.match(
+    await readLab.getByRole("status").innerText(),
+    /Owner read satisfies the minimum/,
+  );
+  await readLab
+    .getByRole("checkbox", { name: "Try a receipt from Order 43" })
+    .check();
+  assert.match(
+    await readLab.getByRole("status").innerText(),
+    /Receipt belongs to another Cell/,
+  );
+  assert.match(
+    (await readLab.locator("svg").textContent()) || "",
+    /Reject read/,
+  );
+  await readLab
+    .getByRole("checkbox", { name: "Try a receipt from Order 43" })
+    .uncheck();
+  await readLab
+    .getByRole("button", { name: "Explicit replica", exact: true })
+    .click();
+  await readLab
+    .getByRole("button", { name: "Caught up · 44", exact: true })
+    .click();
+  await readLab.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: path.join(root, "test-results/receipts-concept-desktop.png"),
+  });
+
+  await page.goto(new URL("/docs/concepts/coordination", origin).href, {
+    waitUntil: "networkidle",
+  });
+  const deliveryLab = page.locator('[data-concept-lab="delivery"]');
+  await deliveryLab
+    .getByRole("checkbox", { name: "Lose the destination acknowledgement" })
+    .check();
+  for (let step = 0; step < 3; step++) {
+    await deliveryLab
+      .getByRole("button", { name: "Next delivery step", exact: true })
+      .click();
+  }
+  assert.match(
+    await deliveryLab.getByRole("status").innerText(),
+    /Retry after a lost acknowledgement/,
+  );
+  assert.match(
+    (await deliveryLab.locator("svg").textContent()) || "",
+    /Deduplicated · count 1/,
+  );
+  assert(
+    await deliveryLab
+      .getByRole("button", { name: "Next delivery step", exact: true })
+      .isDisabled(),
+  );
+  await deliveryLab
+    .getByRole("button", { name: "Restart delivery", exact: true })
+    .click();
+  assert.match(
+    await deliveryLab.getByRole("status").innerText(),
+    /Record the intent/,
+  );
+  await deliveryLab
+    .getByRole("checkbox", { name: "Lose the destination acknowledgement" })
+    .uncheck();
+  for (let step = 0; step < 3; step++) {
+    await deliveryLab
+      .getByRole("button", { name: "Next delivery step", exact: true })
+      .click();
+  }
+  assert.match(
+    await deliveryLab.getByRole("status").innerText(),
+    /Acknowledge the source/,
+  );
+  assert.match(
+    (await deliveryLab.locator("svg").textContent()) || "",
+    /Reservation count · 1/,
+  );
+
+  for (const width of [320, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const route of conceptGuides) {
+      await page.goto(new URL(route, origin).href, {
+        waitUntil: "networkidle",
+      });
+      assert(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth + 1,
+        ),
+        `${route} must keep diagrams and controls inside the page at ${width}px`,
+      );
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(new URL("/docs/concepts/consistency", origin).href, {
+    waitUntil: "networkidle",
+  });
+  const readViewport = page.getByRole("region", {
+    name: "Scrollable receipt and read diagram",
+    exact: true,
+  });
+  await readViewport.focus();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(
+    () =>
+      document.querySelector(
+        '[aria-label="Scrollable receipt and read diagram"]',
+      ).scrollLeft > 0,
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(new URL("/docs/guides/architecture", origin).href, {
     waitUntil: "networkidle",
   });
@@ -434,7 +606,8 @@ try {
   assert(
     (await diagram
       .locator(".mermaid-svg svg")
-      .evaluate((svg) => svg.getBoundingClientRect().width)) > initialDiagramWidth,
+      .evaluate((svg) => svg.getBoundingClientRect().width)) >
+      initialDiagramWidth,
     "Zoom must increase the rendered diagram size",
   );
   const downloadPromise = page.waitForEvent("download");
@@ -467,7 +640,9 @@ try {
     "Overview and all eight guides must exist",
   );
   for (const guide of primitiveGuides) {
-    await page.goto(new URL(guide.url, origin).href, { waitUntil: "networkidle" });
+    await page.goto(new URL(guide.url, origin).href, {
+      waitUntil: "networkidle",
+    });
     const diagrams = page.locator("[data-diagram]");
     assert(
       (await diagrams.count()) >= 2,
@@ -478,9 +653,13 @@ try {
       await diagram.locator(".mermaid-svg svg").waitFor();
       assert.equal(await diagram.locator('[role="alert"]').count(), 0);
       assert(
-        await diagram.locator(".mermaid-svg svg").evaluate((svg) =>
-          svg.getBoundingClientRect().width <= Math.max(360, svg.viewBox.baseVal.width) + 1,
-        ),
+        await diagram
+          .locator(".mermaid-svg svg")
+          .evaluate(
+            (svg) =>
+              svg.getBoundingClientRect().width <=
+              Math.max(360, svg.viewBox.baseVal.width) + 1,
+          ),
         `${guide.url} must not stretch a narrow diagram beyond its natural width`,
       );
     }
@@ -492,7 +671,9 @@ try {
   await page.goto(new URL("/docs/primitives", origin).href, {
     waitUntil: "networkidle",
   });
-  await page.getByRole("button", { name: "Follower proof", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Follower proof", exact: true })
+    .click();
   for (let i = 0; i < 4; i++)
     await page.getByRole("button", { name: "Next step", exact: true }).click();
   assert.match(await page.locator(".gate").innerText(), /open/);
@@ -507,16 +688,22 @@ try {
   await page.goto(new URL("/docs/guides/at-a-glance", origin).href, {
     waitUntil: "networkidle",
   });
-  const cellModel = page.locator('[data-svg-diagram]').filter({
+  const cellModel = page.locator("[data-svg-diagram]").filter({
     has: page.locator('img[src$="/cell-model.svg"]'),
   });
   await cellModel.scrollIntoViewIfNeeded();
   const modelImage = cellModel.locator("img");
-  assert(await modelImage.evaluate((image) => image.complete && image.naturalWidth > 0));
+  assert(
+    await modelImage.evaluate(
+      (image) => image.complete && image.naturalWidth > 0,
+    ),
+  );
   const modelWidth = (await modelImage.boundingBox()).width;
   await cellModel.getByRole("button", { name: "Zoom in", exact: true }).click();
   assert((await modelImage.boundingBox()).width > modelWidth);
-  await cellModel.getByRole("button", { name: "Reset diagram zoom", exact: true }).click();
+  await cellModel
+    .getByRole("button", { name: "Reset diagram zoom", exact: true })
+    .click();
   assert(Math.abs((await modelImage.boundingBox()).width - modelWidth) < 1);
   const [modelDownload] = await Promise.all([
     page.waitForEvent("download"),
@@ -531,13 +718,17 @@ try {
   );
   await page.setViewportSize({ width: 390, height: 844 });
   assert(
-    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
     "Cell model illustration must scroll within its frame on mobile",
   );
   await cellModel.getByRole("region").focus();
   await page.keyboard.press("ArrowRight");
-  await page.waitForFunction(() =>
-    document.querySelector('[data-svg-diagram] [role="region"]').scrollLeft > 0,
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-svg-diagram] [role="region"]').scrollLeft >
+      0,
   );
 
   // Headers and row grids must fill the table border, even for short content.
@@ -548,12 +739,15 @@ try {
       "/docs/guides/quickstart",
       "/docs/primitives",
     ]) {
-      await page.goto(new URL(route, origin).href, { waitUntil: "networkidle" });
+      await page.goto(new URL(route, origin).href, {
+        waitUntil: "networkidle",
+      });
       const tables = await page.locator(".prose table").evaluateAll((tables) =>
         tables.map((table) => ({
           right: table.getBoundingClientRect().right,
-          rowEdges: Array.from(table.rows, (row) =>
-            row.getBoundingClientRect().right,
+          rowEdges: Array.from(
+            table.rows,
+            (row) => row.getBoundingClientRect().right,
           ),
         })),
       );
@@ -577,6 +771,7 @@ try {
     ...marketing,
     "/docs",
     "/docs/guides/architecture",
+    ...conceptGuides,
     ...primitiveGuides.map((guide) => guide.url),
   ]) {
     await page.goto(new URL(route, origin).href, { waitUntil: "networkidle" });
