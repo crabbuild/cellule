@@ -9,7 +9,7 @@ export const metadata = pageMetadata(
   "/performance",
 );
 export default function Performance() {
-  const reports = manifest.pages
+  const reports = manifest.repositoryReports
     .filter(
       (page) =>
         page.sourcePath.startsWith("crates/cellule-app/performance/") ||
@@ -30,14 +30,14 @@ export default function Performance() {
       </PageIntro>
       <div className="page-width evidence-page">
         <div className="evidence-guides">
-          <Link href="/docs/crates/app/performance">
+          <a href={`${site.github}/blob/main/crates/cellule-app/PERFORMANCE.md`}>
             <span className="eyebrow">MEASUREMENT</span>
             <h2>Performance guide</h2>
             <p>
               Workload definitions and measurement routes for application and
               host behavior.
             </p>
-          </Link>
+          </a>
           <Link href="/docs/crates/runtime/docs/delivery">
             <span className="eyebrow">QUALIFICATION</span>
             <h2>What each level proves</h2>
@@ -58,7 +58,7 @@ export default function Performance() {
         </div>
         <div className="report-list">
           {reports.map((report) => (
-            <Link href={report.url} key={report.url}>
+            <a href={report.url} key={report.url}>
               <div>
                 <span className="mono">
                   {report.sourcePath.match(/\d{4}-\d{2}(?:-\d{2})?/)?.[0]}
@@ -67,7 +67,7 @@ export default function Performance() {
                 <p>{report.description}</p>
               </div>
               <span className="report-action">Read report ↗</span>
-            </Link>
+            </a>
           ))}
         </div>
         <div className="callout">

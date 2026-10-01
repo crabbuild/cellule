@@ -24,11 +24,15 @@ const repositoryOnlyDocuments = new Set([
   "docs/roadmap.md",
   "docs/verification.md",
 ]);
+function isPerformanceDocument(file) {
+  return /(?:^|\/)(?:perf|performance)(?:\/|\.md$)|performance[^/]*\.md$/i.test(file);
+}
 export const documentationFiles = tracked.filter(
   (file) =>
     file.endsWith(".md") &&
     !file.startsWith("apps/") &&
     !repositoryOnlyDocuments.has(file) &&
+    !isPerformanceDocument(file) &&
     !["AGENTS.md", "CLAUDE.md"].includes(path.basename(file)),
 );
 export function docSlug(file) {
@@ -62,6 +66,8 @@ const assetSet = new Set(assetFiles);
 const manifest = [];
 const authoredPages = [];
 const diagrams = [];
+// Evidence is linked on GitHub, never added to the searchable docs collection.
+const repositoryReports = [];
 await mkdir(path.join(webRoot, "content/docs"), { recursive: true });
 await mkdir(path.join(webRoot, "lib"), { recursive: true });
 const outputs = new Set();
@@ -101,9 +107,7 @@ function resolveLink(raw, source) {
   return `https://github.com/crabbuild/cellule/${tracked.some((item) => item.startsWith(file + "/")) ? "tree" : "blob"}/main/${file}${suffix}`;
 }
 
-for (const file of documentationFiles) {
-  const original = await readFile(path.join(repoRoot, file), "utf8");
-  const tree = parser.parse(original);
+function documentSummary(tree, file) {
   const heading = tree.children.find(
     (node) => node.type === "heading" && node.depth === 1,
   );
@@ -125,7 +129,26 @@ for (const file of documentationFiles) {
     fullDescription.length > 200
       ? `${fullDescription.slice(0, 197).replace(/\s+\S*$/, "")}…`
       : fullDescription;
-  if (heading) tree.children.splice(tree.children.indexOf(heading), 1);
+  return { title, description, sourcePath: file };
+}
+for (const file of tracked.filter(
+  (file) => !file.startsWith("apps/") && file.endsWith(".md") && isPerformanceDocument(file),
+)) {
+  const original = await readFile(path.join(repoRoot, file), "utf8");
+  repositoryReports.push({
+    ...documentSummary(parser.parse(original), file),
+    url: `https://github.com/crabbuild/cellule/blob/main/${file}`,
+    formerDocUrl: `/docs/${docSlug(file)}`,
+  });
+}
+for (const file of documentationFiles) {
+  const original = await readFile(path.join(repoRoot, file), "utf8");
+  const tree = parser.parse(original);
+  const metadata = documentSummary(tree, file);
+  const headingIndex = tree.children.findIndex(
+    (node) => node.type === "heading" && node.depth === 1,
+  );
+  if (headingIndex !== -1) tree.children.splice(headingIndex, 1);
   visit(tree, (node) => {
     if (
       node.type === "link" ||
@@ -146,7 +169,6 @@ for (const file of documentationFiles) {
     (slug || "index") + ".md",
   );
   await mkdir(path.dirname(destination), { recursive: true });
-  const metadata = { title, description, sourcePath: file };
   await writeGenerated(
     destination,
     `---\n${Object.entries(metadata)
@@ -277,7 +299,7 @@ async function copyAuthored(directory, relative = "") {
 await copyAuthored(path.join(webRoot, "content/authored"));
 await writeGenerated(
   path.join(webRoot, "lib/docs-manifest.json"),
-  JSON.stringify({ pages: manifest, authoredPages, diagrams }, null, 2),
+  JSON.stringify({ pages: manifest, authoredPages, diagrams, repositoryReports }, null, 2),
 );
 await removeStale(path.join(webRoot, "content/docs"));
 await removeStale(path.join(webRoot, "public/repository"));

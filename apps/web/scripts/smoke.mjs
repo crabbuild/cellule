@@ -33,6 +33,48 @@ const conceptGuides = [
   "recovery",
   "coordination",
 ].map((slug) => `/docs/concepts/${slug}`);
+const crateGuides = manifest.authoredPages
+  .filter((page) => page.url.startsWith("/docs/crates/"))
+  .map((page) => page.url);
+const excludedReportUrls = manifest.repositoryReports.map(
+  (report) => report.formerDocUrl,
+);
+for (const expected of [
+  "/docs/crates/app/performance",
+  "/docs/crates/app/performance/2026-09-29-write-capacity",
+  "/docs/crates/ltx/perf",
+  "/docs/crates/ltx/perf/history/2026-09-benchmark-notes",
+  "/docs/crates/runtime/docs/ltx-performance-audit",
+])
+  assert(
+    excludedReportUrls.includes(expected),
+    `${expected} must be repository-only`,
+  );
+for (const report of manifest.repositoryReports) {
+  assert(report.url.startsWith("https://github.com/crabbuild/cellule/blob/main/"));
+  assert(!manifest.pages.some((page) => page.sourcePath === report.sourcePath));
+  for (const route of [
+    report.formerDocUrl,
+    report.formerDocUrl.replace("/docs/", "/markdown/"),
+  ])
+    assert.equal(
+      (await fetch(new URL(route, origin))).status,
+      404,
+      `${route} must exclude performance content`,
+    );
+}
+for (const query of ["performance", "write capacity", "LTX performance"]) {
+  const response = await fetch(
+    new URL(`/api/search?query=${encodeURIComponent(query)}`, origin),
+  );
+  assert.equal(response.status, 200);
+  const results = await response.json();
+  assert(
+    results.every(
+      (result) => !excludedReportUrls.includes(result.url?.split("#")[0]),
+    ),
+  );
+}
 for (const guide of repositoryOnlyGuides) {
   const url = `/docs/guides/${guide}`;
   assert(!manifest.pages.some((page) => page.url === url));
@@ -54,6 +96,10 @@ for (const guide of repositoryOnlyGuides) {
 }
 for (const endpoint of ["/sitemap.xml", "/llms.txt", "/llms-full.txt"]) {
   const text = await (await fetch(new URL(endpoint, origin))).text();
+  for (const url of excludedReportUrls) {
+    assert(!text.includes(url), `${endpoint} must exclude ${url}`);
+    assert(!text.includes(url.replace("/docs/", "/markdown/")));
+  }
   for (const guide of repositoryOnlyGuides) {
     assert(!text.includes(`/docs/guides/${guide}`));
     assert(!text.includes(`/markdown/guides/${guide}`));
@@ -161,6 +207,46 @@ try {
     "Every documentation diagram must render as SVG",
   );
   await chartPage.close();
+
+  for (const route of crateGuides) {
+    await page.goto(new URL(route, origin).href, { waitUntil: "networkidle" });
+    const figures = page.locator("article [data-diagram]");
+    assert((await figures.count()) > 0, `${route} needs a conceptual SVG diagram`);
+    for (const figure of await figures.all()) {
+      await figure.scrollIntoViewIfNeeded();
+      await figure.locator(".mermaid-svg svg").waitFor();
+    }
+    assert(
+      (await page.locator('article a[href^="https://github.com/crabbuild/cellule/"], article a[href*="/docs"]').count()) > 0,
+      `${route} needs source or contract references`,
+    );
+  }
+  await page.goto(new URL("/docs/crates/app/overview", origin).href, { waitUntil: "networkidle" });
+  const sidebar = page.locator("#nd-sidebar");
+  for (const title of [
+    "Modules and descriptors", "Cell topology", "Commands and outcomes",
+    "Reads and receipts", "Service integration",
+  ])
+    assert(
+      await sidebar.getByRole("link", { name: title, exact: true }).isVisible(),
+      `${title} must be visible in application navigation`,
+    );
+  assert.equal(await sidebar.getByRole("link", { name: /performance/i }).count(), 0);
+  assert.equal(await sidebar.getByRole("button", { name: /^Performance$/i }).count(), 0);
+  await page.screenshot({
+    path: path.join(root, "test-results/crate-guides-desktop.png"),
+    fullPage: true,
+  });
+  await page.goto(new URL("/performance", origin).href, { waitUntil: "networkidle" });
+  const reportLinks = await page.locator(".report-list a").evaluateAll(
+    (links) => links.map((link) => link.getAttribute("href")),
+  );
+  assert(reportLinks.length > 0, "The evidence page must retain repository links");
+  for (const href of reportLinks)
+    assert(
+      href.startsWith("https://github.com/crabbuild/cellule/blob/main/"),
+      "Evidence links must open repository reports",
+    );
 
   await page.goto(origin, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Explore Jobs", exact: true }).click();
@@ -863,6 +949,7 @@ try {
     "/docs",
     "/docs/guides/architecture",
     ...conceptGuides,
+    ...crateGuides,
     ...primitiveGuides.map((guide) => guide.url),
   ]) {
     await page.goto(new URL(route, origin).href, { waitUntil: "networkidle" });

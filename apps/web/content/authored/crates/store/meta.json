@@ -1,0 +1,11 @@
+{
+  "title": "cellule-store",
+  "pages": [
+    "overview",
+    "operations",
+    "providers",
+    "failures",
+    "docs",
+    "[Crate reference](/docs/crates/store)"
+  ]
+}
