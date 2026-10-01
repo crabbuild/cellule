@@ -199,8 +199,15 @@ impl PeerCellResolver for UncachedResident {
 }
 
 #[derive(Default)]
-struct PublicationSamples(Mutex<HashMap<u64, PublicationTiming>>);
+struct PublicationSamples(Mutex<HashMap<u64, PublicationTiming>>, AtomicU64);
 impl CellTelemetry for PublicationSamples {
+    fn ltx_phase(&self, phase: cellule_runtime::ltx::LtxPhase, elapsed: Duration, succeeded: bool) {
+        if phase == cellule_runtime::ltx::LtxPhase::Compaction && succeeded {
+            self.1
+                .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+        }
+    }
+
     fn publication_completed(&self, _: CellId, timing: PublicationTiming) {
         self.0
             .lock()
@@ -1062,7 +1069,7 @@ async fn serial_diagnostic(
         [0, 2, 1],
     ];
     let mut raw = String::from(
-        "kind\troute\titeration\torder\tsequence\trequest_ns\tsql_ns\tpublication_queue_ns\tpublication_prepare_ns\tpublication_authority_ns\tpublication_total_ns\n",
+        "kind\troute\titeration\torder\tsequence\trequest_ns\tsql_ns\tpublication_queue_ns\tpublication_prepare_ns\tpublication_authority_ns\tpublication_total_ns\tcompaction_ns\n",
     );
     transport.routes().route(target).await.unwrap();
     for client in &clients {
@@ -1081,7 +1088,7 @@ async fn serial_diagnostic(
             assert_eq!(observed.receipt.commit_sequence, 0);
             assert!(u128::from(sql_ns) <= elapsed.as_nanos());
             raw.push_str(&format!(
-                "query\t{}\t{iteration}\t{order}\t0\t{}\t{sql_ns}\t0\t0\t0\t0\n",
+                "query\t{}\t{iteration}\t{order}\t0\t{}\t{sql_ns}\t0\t0\t0\t0\t0\n",
                 names[lane],
                 elapsed.as_nanos()
             ));
@@ -1104,7 +1111,7 @@ async fn serial_diagnostic(
             .await;
             for elapsed in results {
                 raw.push_str(&format!(
-                    "paced\t{}\t{burst}\t{order}\t0\t{}\t0\t0\t0\t0\t0\n",
+                    "paced\t{}\t{burst}\t{order}\t0\t{}\t0\t0\t0\t0\t0\t0\n",
                     names[lane],
                     elapsed.as_nanos()
                 ));
@@ -1120,6 +1127,7 @@ async fn serial_diagnostic(
             id[8..].copy_from_slice(&(iteration as u64).to_be_bytes());
             let now = now_ms().unwrap();
             let started = Instant::now();
+            let compaction_before = publications.1.load(Ordering::Relaxed);
             let committed = clients[lane]
                 .command::<Increment>(
                     target,
@@ -1139,8 +1147,9 @@ async fn serial_diagnostic(
             let timing = publications.0.lock().unwrap()[&expected];
             assert!(timing.succeeded);
             assert!(timing.total <= elapsed);
+            let compaction_ns = publications.1.load(Ordering::Relaxed) - compaction_before;
             raw.push_str(&format!(
-                "command\t{}\t{iteration}\t{order}\t{expected}\t{}\t0\t{}\t{}\t{}\t{}\n",
+                "command\t{}\t{iteration}\t{order}\t{expected}\t{}\t0\t{}\t{}\t{}\t{}\t{compaction_ns}\n",
                 names[lane],
                 elapsed.as_nanos(),
                 timing.queue_wait.as_nanos(),
