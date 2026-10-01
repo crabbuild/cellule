@@ -404,6 +404,12 @@ async fn handshake(
     stream: tokio::net::TcpStream,
     address: SocketAddr,
 ) -> Option<(PeerTlsStream, SocketAddr)> {
+    // Small handshake records and HTTP replies must not wait for a delayed
+    // ACK behind Nagle buffering. Apply this to the TCP socket before TLS.
+    if let Err(error) = stream.set_nodelay(true) {
+        tracing::warn!(error = %error, "private peer TCP_NODELAY setup failed");
+        return None;
+    }
     let stream = match tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(error)) => {
@@ -587,6 +593,50 @@ fn install_crypto_provider() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::serve::Listener;
+
+    #[tokio::test]
+    async fn accepted_mutual_tls_peer_disables_nagle_for_both_protocols() {
+        for http2 in [false, true] {
+            let Some((directory, tls)) = crate::tests::generate_peer_identity("tcp-nodelay") else {
+                eprintln!("skipping: no OpenSSL 3 binary available for the peer identity fixture");
+                return;
+            };
+            let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = tcp.local_addr().unwrap();
+            let client = tls
+                .client_identity()
+                .client(
+                    tls.certificate(),
+                    tls.signing_key().verifying_key().to_bytes(),
+                )
+                .unwrap();
+            let tls = if http2 {
+                tls.with_http2().unwrap()
+            } else {
+                tls
+            };
+            let mut listener = tls.listener(tcp);
+            let request = tokio::spawn(async move {
+                client
+                    .get(format!("https://localhost:{}", address.port()))
+                    .send()
+                    .await
+            });
+            let (stream, _) = tokio::time::timeout(HANDSHAKE_TIMEOUT, listener.accept())
+                .await
+                .unwrap();
+            let nodelay = stream.stream.get_ref().0.nodelay().unwrap();
+            drop(stream);
+            request.abort();
+            let _ = request.await;
+            std::fs::remove_dir_all(directory).unwrap();
+            assert!(
+                nodelay,
+                "accepted peer must send small TLS writes promptly (h2={http2})"
+            );
+        }
+    }
 
     #[test]
     fn fleet_digest_is_independent_of_ca_order_and_duplicates() {

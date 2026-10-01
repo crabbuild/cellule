@@ -47,6 +47,13 @@ are never guessed to have failed before execution.
 
 ## Transport protocol
 
+The private mTLS listener enables `TCP_NODELAY` on accepted sockets before the
+handshake. Small TLS records and peer replies are sent promptly across both
+HTTP/1.1 and HTTP/2; they do not wait for Nagle buffering and delayed TCP
+acknowledgements. Socket setup failures reject the connection and retain the
+I/O error in the listener log. A real mTLS accept test verifies the socket
+option for both protocols.
+
 The client offers `h2` then `http/1.1` on the pinned mTLS connection, so a hot
 owner multiplexes concurrent peer requests over one connection instead of
 opening one connection per request. A peer that speaks only HTTP/1.1 selects

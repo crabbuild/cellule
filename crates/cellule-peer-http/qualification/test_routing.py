@@ -32,6 +32,14 @@ class GateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Incomplete repeats"):
             routing.compare(rows)
 
+    def test_cold_forwarded_discovery_regression_fails(self):
+        rows = measurements()
+        for row in rows:
+            row["lane"] = "forwarded_query_uncached_route"
+            if row["mode"] == "leased" and row["version"] == "candidate":
+                row["p99_ms"] = 4.0
+        self.assertEqual(routing.compare(rows)["failures"], ["leased/forwarded_query_uncached_route/c16"])
+
     def test_one_outlier_cannot_hide_two_regressed_runs(self):
         rows = measurements()
         for row in rows:

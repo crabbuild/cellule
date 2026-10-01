@@ -199,7 +199,7 @@ def compare(rows):
             gated = safe_baseline and lane in (
                 "local_query_fresh_client", "local_query", "forwarded_query",
                 "local_command", "forwarded_command", "local_query_expired_bursts",
-                "forwarded_query_expired_bursts",
+                "forwarded_query_expired_bursts", "forwarded_query_uncached_route",
             )
             if gated and (ratios["p95_ms"] > 1.10 or ratios["p99_ms"] > 1.10
                           or ("expired_bursts" not in lane and ratios["throughput"] < 0.90)):
