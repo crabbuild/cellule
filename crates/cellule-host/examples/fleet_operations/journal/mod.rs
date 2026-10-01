@@ -38,10 +38,21 @@ struct Inner {
     lose_commit_reply: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     boot_reply: Mutex<Option<BootReplyPause>>,
+    #[cfg(test)]
+    enrollment_reply: Mutex<Option<EnrollmentReplyPause>>,
 }
 
 #[cfg(test)]
 struct BootReplyPause {
+    captured: tokio::sync::oneshot::Sender<()>,
+    resume: tokio::sync::oneshot::Receiver<()>,
+}
+
+#[cfg(test)]
+struct EnrollmentReplyPause {
+    before_acceptance: bool,
+    publication: bool,
+    lose_reply: bool,
     captured: tokio::sync::oneshot::Sender<()>,
     resume: tokio::sync::oneshot::Receiver<()>,
 }
@@ -118,6 +129,8 @@ impl SqliteJournal {
                 lose_commit_reply: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 boot_reply: Mutex::new(None),
+                #[cfg(test)]
+                enrollment_reply: Mutex::new(None),
             }),
         })
     }
@@ -195,6 +208,76 @@ impl SqliteJournal {
             resume: paused,
         });
         (observed, resume)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_next_enrollment_reply(
+        &self,
+        publication: bool,
+        lose_reply: bool,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (captured, observed) = tokio::sync::oneshot::channel();
+        let (resume, paused) = tokio::sync::oneshot::channel();
+        let mut slot = self.inner.enrollment_reply.lock().unwrap();
+        assert!(slot.is_none());
+        *slot = Some(EnrollmentReplyPause {
+            before_acceptance: false,
+            publication,
+            lose_reply,
+            captured,
+            resume: paused,
+        });
+        (observed, resume)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_before_enrollment_acceptance(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let result = self.pause_next_enrollment_reply(false, false);
+        self.inner
+            .enrollment_reply
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .before_acceptance = true;
+        result
+    }
+
+    #[cfg(test)]
+    async fn enrollment_reply(
+        &self,
+        publication: bool,
+        before_acceptance: bool,
+    ) -> JournalResult<()> {
+        let pause = {
+            let mut slot = self.inner.enrollment_reply.lock().unwrap();
+            if slot.as_ref().is_some_and(|pause| {
+                pause.publication == publication && pause.before_acceptance == before_acceptance
+            }) {
+                slot.take()
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            let _ = pause.captured.send(());
+            let _ = pause.resume.await;
+            if pause.lose_reply {
+                return Err(std::io::Error::other(
+                    "injected lost enrollment reply after durable commit",
+                )
+                .into());
+            }
+        }
+        Ok(())
     }
 
     #[cfg(test)]

@@ -74,6 +74,44 @@ impl CellNode {
         startup.confirmed = true;
         Ok(())
     }
+    /// Binds every reader activation and canonical removal to the durable fleet
+    /// registry. Install after read replicas and before start. Applications own
+    /// journal storage and authorization; the manager owns accepted finite work.
+    pub fn install_fleet_reader_enrollment(
+        &self,
+        scope: FleetScope,
+        node: NodeId,
+        journal: Arc<dyn crate::fleet::FleetJournal>,
+    ) -> cellule_runtime::Result<()> {
+        if let Some(startup) = self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .as_ref()
+            && (startup.intent.scope() != scope || startup.intent.node() != node)
+        {
+            return Err(Error::Fenced);
+        }
+        let manager = self
+            .owned_component::<crate::read_replicas::ReadReplicaManager>("read-replicas")
+            .ok_or(Error::Control(
+                "read replicas must be installed before reader enrollment",
+            ))?;
+        let binding = Arc::new(crate::read_replicas::enrollment::ReaderEnrollment::new(
+            scope, node, journal,
+        )?);
+        self.install_owned_component_with_drain(
+            "fleet-reader-enrollment",
+            Arc::clone(&binding),
+            || async { Ok(()) },
+        )?;
+        if let Err(error) = manager.bind_enrollment(binding) {
+            self.remove_facility("fleet-reader-enrollment")?;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Captures read-only request-bound evidence through the owned fleet lane.
     /// Authenticate the caller first. The node checks current journal state and
     /// actual authority/actor readiness; cached effect replies are not consulted

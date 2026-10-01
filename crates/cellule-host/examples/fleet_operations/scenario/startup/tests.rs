@@ -727,3 +727,84 @@ async fn foreign_active_boot_and_unavailable_startup_journal_fail_closed() {
     );
     close(fixture).await;
 }
+
+#[tokio::test]
+async fn fleet_reader_manager_requires_its_journal_binding_before_start() {
+    let fixture = fixture().await;
+    let layout = CellStorageLayout::new(
+        Store::new(Arc::new(InMemory::new())),
+        ObjectPath::from("startup-readers"),
+        [3; 16],
+    );
+    let manager = fixture
+        .node
+        .install_read_replicas(
+            layout,
+            fixture.directory.clone(),
+            fixture.root.path().join("readers"),
+            Limits::default(),
+        )
+        .unwrap();
+    let boot_spec = spec(&fixture.intent).unwrap();
+    enroll(
+        &fixture.journal,
+        &fixture.directory,
+        &boot_spec,
+        fixture.ad.clone(),
+        clock().unwrap(),
+    )
+    .await
+    .unwrap();
+    fixture
+        .node
+        .confirm_fleet_startup(fixture.journal.as_ref(), boot_spec.key().unwrap())
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.node.start(),
+        Err(Error::Control("CellNode required component is missing"))
+    ));
+    assert_eq!(fixture.node.state(), NodeState::Starting);
+    assert!(matches!(
+        fixture.node.runtime().node_admission().check_new_role(),
+        Err(Error::CellDraining)
+    ));
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        scope().application,
+        super::super::application::NAMESPACE,
+        &[1],
+    )
+    .unwrap();
+    assert!(matches!(
+        manager.activate(target, session(1)).await,
+        Err(Error::Control("fleet reader enrollment is not installed"))
+    ));
+    fixture
+        .node
+        .install_fleet_reader_enrollment(scope(), node_id(0), fixture.journal.clone())
+        .unwrap();
+    fixture.node.start().unwrap();
+    assert!(fixture.node.is_ready());
+    close(fixture).await;
+}
+
+#[tokio::test]
+async fn missing_reader_enrollment_does_not_prevent_joined_startup_shutdown() {
+    let fixture = fixture().await;
+    let layout = CellStorageLayout::new(
+        Store::new(Arc::new(InMemory::new())),
+        ObjectPath::from("startup-readers"),
+        [3; 16],
+    );
+    fixture
+        .node
+        .install_read_replicas(
+            layout,
+            fixture.directory.clone(),
+            fixture.root.path().join("readers"),
+            Limits::default(),
+        )
+        .unwrap();
+    close(fixture).await;
+}

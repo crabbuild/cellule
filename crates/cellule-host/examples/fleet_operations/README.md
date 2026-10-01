@@ -166,3 +166,18 @@ observations, and supervise the public reconciliation driver. The reference
 adapter does not infer these facts from an empty directory or a bootstrap flag.
 See the [implementation evidence](../../../../docs/fleet-operations-progress.md)
 for exact source fingerprints and remaining work.
+
+## Managed reader producer evidence
+
+The example's test target also exercises `install_fleet_reader_enrollment` with
+real admitted SQLite readers and this journal. It checks Pending before native
+opening, caller cancellation, lost acceptance/publication replies, joined
+retirement, cancelled removal, a native VFS stall across a host deadline,
+independent journal reconstruction and startup binding requirements. A typed
+counter query checks the exact reader receipt. These local fixtures do not
+establish complete observer coverage or replacement redundancy for the movement
+commands.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked
+```

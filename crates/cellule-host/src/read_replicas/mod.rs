@@ -27,7 +27,10 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+pub(crate) mod enrollment;
 mod inventory;
+pub use enrollment::ReaderEnrollmentCompletion;
+use enrollment::{ActivationRequest, ReaderEnrollment};
 mod recruitment;
 pub use inventory::{ReaderInventoryCursor, ReaderInventoryPage};
 pub use recruitment::ReadReplicaRecruiter;
@@ -71,6 +74,9 @@ pub struct ReadReplicaManager {
     closed: CancellationToken,
     activation: Arc<Mutex<()>>,
     active: Arc<RwLock<ActiveReaders>>,
+    enrollment: Arc<std::sync::Mutex<Option<Arc<ReaderEnrollment>>>>,
+    enrollment_required: Arc<std::sync::atomic::AtomicBool>,
+    activation_started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ReadReplicaManager {
@@ -102,6 +108,85 @@ impl ReadReplicaManager {
             closed: CancellationToken::new(),
             activation: Arc::new(Mutex::new(())),
             active: Arc::new(RwLock::new(ActiveReaders::default())),
+            enrollment: Arc::new(std::sync::Mutex::new(None)),
+            enrollment_required: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            activation_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    pub(crate) fn require_enrollment(&self) {
+        self.enrollment_required
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn bind_enrollment(&self, binding: Arc<ReaderEnrollment>) -> Result<()> {
+        let mut current = self
+            .enrollment
+            .lock()
+            .map_err(|_| Error::Control("reader enrollment binding poisoned"))?;
+        if self
+            .activation_started
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(Error::Control(
+                "reader enrollment must precede the first activation",
+            ));
+        }
+        if current.is_some() {
+            return Err(Error::Control("reader enrollment already installed"));
+        }
+        *current = Some(binding);
+        Ok(())
+    }
+
+    fn bound_enrollment(&self) -> Result<Option<Arc<ReaderEnrollment>>> {
+        Ok(self
+            .enrollment
+            .lock()
+            .map_err(|_| Error::Control("reader enrollment binding poisoned"))?
+            .clone())
+    }
+
+    fn activation_enrollment(&self) -> Result<Option<Arc<ReaderEnrollment>>> {
+        let binding = self
+            .enrollment
+            .lock()
+            .map_err(|_| Error::Control("reader enrollment binding poisoned"))?;
+        // Serialize the first activation with binding. A pre-binding caller must
+        // never enter a cancellable path after durable enrollment is installed.
+        if binding.is_none()
+            && self
+                .enrollment_required
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(Error::Control("fleet reader enrollment is not installed"));
+        }
+        self.activation_started
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(binding.clone())
+    }
+
+    fn enrollment(&self) -> Result<Option<Arc<ReaderEnrollment>>> {
+        let binding = self.bound_enrollment()?;
+        if binding.is_none()
+            && self
+                .enrollment_required
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(Error::Control("fleet reader enrollment is not installed"));
+        }
+        Ok(binding)
+    }
+
+    /// Inspects retained original acceptance, evidence and errors for a local
+    /// reader obligation. This is diagnostic state, not current serving proof.
+    pub async fn enrollment_completion(
+        &self,
+        cell: CellId,
+    ) -> Result<Option<ReaderEnrollmentCompletion>> {
+        match self.bound_enrollment()? {
+            Some(enrollment) => Ok(enrollment.completion(cell).await),
+            None => Ok(None),
         }
     }
 
@@ -176,6 +261,11 @@ impl ReadReplicaManager {
 
     /// Admits or refreshes a selected snapshot after an authenticated owner hint.
     pub async fn activate(&self, target: CellTarget, origin: SessionId) -> Result<Receipt> {
+        if let Some(enrollment) = self.activation_enrollment()? {
+            return enrollment
+                .activate(self.clone(), ActivationRequest::Hint(target, origin))
+                .await;
+        }
         tokio::select! {
             () = self.closed.cancelled() => Err(Error::RuntimeClosed),
             result = self.activate_open(target, origin) => result,
@@ -224,12 +314,21 @@ impl ReadReplicaManager {
     }
 
     /// Initially opens an adapter's journaled exact source through canonical activation.
-    /// Newer publication cannot replace the supplied root. The adapter owns
-    /// Pending acceptance, result publication and retirement; this method does
-    /// not itself establish durable enrollment coverage. Retain this future
-    /// after acceptance. Manager closure cancels admission while waiting for the
-    /// lane; after entering it, closure joins opening rather than cancelling it.
+    /// Newer publication cannot replace the supplied root. An installed fleet
+    /// enrollment binding owns Pending, checked publication and joined retirement
+    /// across waiter cancellation. Without a binding, the adapter must retain
+    /// this future after acceptance. Once it enters the lane, manager closure
+    /// joins opening rather than cancelling it.
     pub async fn activate_source(&self, source: ReadReplicaSource) -> Result<Receipt> {
+        if let Some(enrollment) = self.activation_enrollment()? {
+            return enrollment
+                .activate(self.clone(), ActivationRequest::Source(Box::new(source)))
+                .await;
+        }
+        self.activate_initial(source).await
+    }
+
+    async fn activate_initial(&self, source: ReadReplicaSource) -> Result<Receipt> {
         let _activation = tokio::select! {
             () = self.closed.cancelled() => return Err(Error::RuntimeClosed),
             activation = self.activation.lock() => activation,
@@ -257,18 +356,35 @@ impl ReadReplicaManager {
         let path = self.destination(cell).await?;
         let existing = { self.active.read().await.views.get(&cell).cloned() };
         if let Some(existing) = existing {
+            if let Some(enrollment) = self.enrollment()? {
+                enrollment.established(cell).await?;
+            }
             match existing.refresh(&path).await {
                 Ok(receipt) if self.still_selected(cell).await? => return Ok(receipt),
                 Ok(_) => {
-                    self.remove_locked(cell).await;
+                    self.remove_locked(cell).await?;
                     return Err(Error::Fenced);
                 }
                 Err(Error::Fenced) => {
-                    self.remove_locked(cell).await;
+                    self.remove_locked(cell).await?;
                 }
                 Err(error) => return Err(error),
             }
         }
+        self.runtime.node_admission().check_new_role()?;
+        if let Some(enrollment) = self.enrollment()? {
+            return enrollment.open(self, source, path).await;
+        }
+        self.open_source_locked(source, path).await
+    }
+
+    async fn open_source_locked(
+        &self,
+        source: ReadReplicaSource,
+        path: PathBuf,
+    ) -> Result<Receipt> {
+        let expected = source.description();
+        let cell = expected.cell;
         if self.active.read().await.views.len() >= MAX_READ_VIEWS {
             return Err(Error::Capacity("node read-view inventory bound"));
         }
@@ -289,13 +405,15 @@ impl ReadReplicaManager {
         )
         .await?;
         let receipt = reader.receipt().await;
-        let selected = self.still_selected(cell).await?;
-        if self.closed.is_cancelled() || !selected {
+        let selection = self.still_selected(cell).await;
+        if self.closed.is_cancelled() || !matches!(selection, Ok(true)) {
+            // Once native opening succeeded, even a provider failure must join
+            // that view before publishing closure or returning its error.
             reader.close_and_join().await;
             return Err(if self.closed.is_cancelled() {
                 Error::RuntimeClosed
             } else {
-                Error::Fenced
+                selection.err().unwrap_or(Error::Fenced)
             });
         }
         let mut active = self.active.write().await;
@@ -359,9 +477,13 @@ impl ReadReplicaManager {
                 MAX_LIVE_NODES,
             )
             .await?;
-        Ok(candidates
-            .iter()
-            .any(|candidate| candidate.session() == self.session))
+        let enrollment = self.bound_enrollment()?;
+        Ok(candidates.iter().any(|candidate| {
+            candidate.session() == self.session
+                && enrollment
+                    .as_ref()
+                    .is_none_or(|binding| binding.matches_boot(candidate))
+        }))
     }
 
     async fn still_selected(&self, cell: CellId) -> Result<bool> {
@@ -442,7 +564,7 @@ impl ReadReplicaManager {
             return Ok(());
         };
         if !self.still_selected(cell).await? {
-            self.remove_locked(cell).await;
+            self.remove_locked(cell).await?;
             return Ok(());
         }
         let path = self.destination(cell).await?;
@@ -452,7 +574,7 @@ impl ReadReplicaManager {
                 // Keep verified warm bytes after owner death. Queries still
                 // require a live owner; changed authority evicts the view.
                 if reader.readiness().await.is_err() {
-                    self.remove_locked(cell).await;
+                    self.remove_locked(cell).await?;
                 }
                 Ok(())
             }
@@ -468,44 +590,94 @@ impl ReadReplicaManager {
     }
 
     /// Closes and removes one read view before eviction or writable activation.
-    pub async fn remove(&self, cell: CellId) {
+    pub async fn remove(&self, cell: CellId) -> Result<()> {
         let _activation = self.activation.lock().await;
-        self.remove_locked(cell).await;
+        self.remove_locked(cell).await
     }
 
-    async fn remove_locked(&self, cell: CellId) {
+    async fn remove_locked(&self, cell: CellId) -> Result<()> {
         let reader = self.active.read().await.views.get(&cell).cloned();
-        if let Some(reader) = reader {
-            // Retain the owner until joined closure. A cancelled removal must
-            // stay inventoried and be joinable by the next remove or shutdown.
-            reader.close_and_join().await;
+        let receipt = match &reader {
+            Some(reader) => Some(reader.close_and_join().await),
+            None => None,
+        };
+        if let Some(enrollment) = self.bound_enrollment()? {
+            enrollment.retire(cell, receipt).await?;
+        }
+        if reader.is_some() {
+            // Retain a fenced view and its enrollment until durable retirement.
+            // Cancellation or publication failure cannot erase this obligation.
             let mut active = self.active.write().await;
             active.views.remove(&cell);
             active.topology = Uuid::now_v7();
         }
+        Ok(())
     }
 
-    /// Permanently closes activation and every retained read view.
-    pub async fn shutdown(&self) {
-        // Cancel provider waits before joining activation's lane; retained peer
-        // adapters must neither strand drain nor reopen snapshots afterward.
+    /// Permanently closes activation, joins owned enrollment jobs and retires views.
+    /// A journal failure retains fenced inventory for a later shutdown attempt.
+    pub async fn shutdown(&self) -> Result<()> {
         self.closed.cancel();
+        let enrollment = self.bound_enrollment()?;
+        let mut failure = None;
+        if let Some(enrollment) = &enrollment {
+            enrollment.close_admission()?;
+            if let Err(error) = enrollment.join().await {
+                failure = Some(error);
+            }
+        }
         let _activation = self.activation.lock().await;
-        let mut active = self.active.write().await;
-        active.topology = Uuid::now_v7();
-        for reader in active.views.values() {
-            reader.close();
+        let views = {
+            let mut active = self.active.write().await;
+            active.topology = Uuid::now_v7();
+            for reader in active.views.values() {
+                reader.close();
+            }
+            active
+                .views
+                .iter()
+                .map(|(cell, reader)| (*cell, reader.clone()))
+                .collect::<Vec<_>>()
+        };
+        let closing = stream::iter(views)
+            .map(|(cell, reader)| async move { (cell, reader.close_and_join().await) })
+            .buffer_unordered(CLOSE_CONCURRENCY);
+        tokio::pin!(closing);
+        let mut joined = Vec::new();
+        while let Some(item) = closing.next().await {
+            joined.push(item);
         }
-        {
-            // Close healthy siblings while another reader is waiting on I/O.
-            // The collection remains intact across a cancelled drain waiter.
-            let closing = stream::iter(active.views.values().cloned())
-                .map(|reader| async move { reader.close_and_join().await })
-                .buffer_unordered(CLOSE_CONCURRENCY);
-            tokio::pin!(closing);
-            while closing.next().await.is_some() {}
+        // Preserve the complete ownership collection across cancellation while
+        // any native sibling is still joining, as the ordinary manager does.
+        for (cell, receipt) in joined {
+            let retirement = match &enrollment {
+                Some(enrollment) => enrollment.retire(cell, Some(receipt)).await,
+                None => Ok(()),
+            };
+            match retirement {
+                Ok(()) => {
+                    self.active.write().await.views.remove(&cell);
+                }
+                Err(error) => {
+                    if failure.is_none() {
+                        failure = Some(error);
+                    }
+                }
+            }
         }
-        active.views.clear();
+        if let Some(enrollment) = &enrollment {
+            for cell in enrollment.unresolved_cells().await {
+                if let Err(error) = enrollment.retire(cell, None).await
+                    && failure.is_none()
+                {
+                    failure = Some(error);
+                }
+            }
+        }
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 

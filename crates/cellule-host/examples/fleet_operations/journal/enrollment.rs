@@ -115,21 +115,31 @@ impl FleetEnrollmentJournal for SqliteJournal {
         now_ms: i64,
     ) -> FleetAdapterFuture<'a, FleetEnrollmentAcceptance> {
         let spec = spec.clone();
-        Box::pin(self.run(move |db| {
-            db.check_scope(spec.scope)?;
-            if let Some(original) = db.enrollment(spec.key()?)? {
-                original.validate_replay(&spec)?;
-                return Ok(FleetEnrollmentAcceptance::Existing(original));
-            }
-            let source = spec
-                .source
-                .map(|endpoint| db.required_intent(endpoint.node))
-                .transpose()?;
-            let target = db.required_intent(spec.target.node)?;
-            let pending = EnrollmentRecord::pending(spec, source.as_ref(), &target, now_ms)?;
-            db.write_enrollment(&pending)?;
-            Ok(FleetEnrollmentAcceptance::New(pending))
-        }))
+        Box::pin(async move {
+            #[cfg(test)]
+            self.enrollment_reply(false, true).await?;
+            let result = self
+                .run(move |db| {
+                    db.check_scope(spec.scope)?;
+                    if let Some(original) = db.enrollment(spec.key()?)? {
+                        original.validate_replay(&spec)?;
+                        return Ok(FleetEnrollmentAcceptance::Existing(original));
+                    }
+                    let source = spec
+                        .source
+                        .map(|endpoint| db.required_intent(endpoint.node))
+                        .transpose()?;
+                    let target = db.required_intent(spec.target.node)?;
+                    let pending =
+                        EnrollmentRecord::pending(spec, source.as_ref(), &target, now_ms)?;
+                    db.write_enrollment(&pending)?;
+                    Ok(FleetEnrollmentAcceptance::New(pending))
+                })
+                .await?;
+            #[cfg(test)]
+            self.enrollment_reply(false, false).await?;
+            Ok(result)
+        })
     }
     fn publish_enrollment_result<'a>(
         &'a self,
@@ -138,21 +148,28 @@ impl FleetEnrollmentJournal for SqliteJournal {
         now_ms: i64,
     ) -> FleetAdapterFuture<'a, EnrollmentRecord> {
         let original = original.clone();
-        Box::pin(self.run(move |db| {
-            db.check_scope(original.spec().scope)?;
-            let current = db
-                .enrollment(original.spec().key()?)?
-                .ok_or(OperationError::NotFound)?;
-            current.validate_replay(original.spec())?;
-            if current.accepted_at_ms() != original.accepted_at_ms() {
-                return Err(OperationError::Conflict.into());
-            }
-            let next = current.apply(event, now_ms)?;
-            if next != current {
-                db.write_enrollment(&next)?;
-            }
-            Ok(next)
-        }))
+        Box::pin(async move {
+            let result = self
+                .run(move |db| {
+                    db.check_scope(original.spec().scope)?;
+                    let current = db
+                        .enrollment(original.spec().key()?)?
+                        .ok_or(OperationError::NotFound)?;
+                    current.validate_replay(original.spec())?;
+                    if current.accepted_at_ms() != original.accepted_at_ms() {
+                        return Err(OperationError::Conflict.into());
+                    }
+                    let next = current.apply(event, now_ms)?;
+                    if next != current {
+                        db.write_enrollment(&next)?;
+                    }
+                    Ok(next)
+                })
+                .await?;
+            #[cfg(test)]
+            self.enrollment_reply(true, false).await?;
+            Ok(result)
+        })
     }
     fn load_enrollment(
         &self,

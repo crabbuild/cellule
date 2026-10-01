@@ -4,7 +4,7 @@ use cellule_runtime::{
     identity::{Digest, NamespaceId},
     registry::{
         BuildDescriptor, CellModule, MigrationDescriptor, ModuleDescriptor, NamespaceDescriptor,
-        RegistryBuilder,
+        OperationDescriptor, Query, QueryContext, RegistryBuilder,
     },
 };
 use std::sync::Arc;
@@ -30,7 +30,14 @@ impl CellModule for Module {
                 ]),
             }],
             commands: &[],
-            queries: &[],
+            queries: &[OperationDescriptor {
+                id: 1,
+                codec_version: 1,
+                schema_min: 1,
+                schema_max: 1,
+                input_limit: 8,
+                output_limit: 8,
+            }],
             workflow_definitions: &[],
             activity_types: &[],
             namespaces: &[NamespaceDescriptor {
@@ -44,8 +51,8 @@ impl CellModule for Module {
         };
         &DESCRIPTOR
     }
-    fn register(self, _: &mut RegistryBuilder) -> cellule_runtime::Result<()> {
-        Ok(())
+    fn register(self, registry: &mut RegistryBuilder) -> cellule_runtime::Result<()> {
+        registry.bind_query::<ReadValue>()
     }
 }
 pub(super) fn compile() -> cellule_runtime::Result<Arc<CompiledApplication>> {
@@ -65,4 +72,33 @@ pub(super) fn compile() -> cellule_runtime::Result<Arc<CompiledApplication>> {
         1,
     )?)?;
     Ok(Arc::new(builder.finish()?))
+}
+
+/// Receipt-bound counter read through the same typed reader path as applications.
+pub(super) struct ReadValue;
+impl Query for ReadValue {
+    const MODULE: &'static str = "fleet-example";
+    const ID: u32 = 1;
+    const CODEC_VERSION: u32 = 1;
+    type Input = u64;
+    type Output = i64;
+    fn execute(context: &mut QueryContext<'_>, _: u64) -> cellule_runtime::Result<i64> {
+        use cellule_runtime::primitives::sql::{SqlBatch, SqlStatement, SqlValue};
+        let sets = context.sql(&SqlBatch {
+            statements: vec![SqlStatement {
+                sql: "SELECT value FROM counter".into(),
+                parameters: vec![],
+            }],
+        })?;
+        match sets
+            .first()
+            .and_then(|set| set.rows.first())
+            .and_then(|row| row.first())
+        {
+            Some(SqlValue::Integer(value)) => Ok(*value),
+            _ => Err(cellule_runtime::Error::Command(
+                "fleet example counter is missing",
+            )),
+        }
+    }
 }

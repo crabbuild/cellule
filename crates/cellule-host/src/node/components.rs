@@ -153,12 +153,23 @@ impl CellNode {
             root,
             limits,
         );
+        if self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .is_some()
+        {
+            self.require_owned_components(["fleet-reader-enrollment"])?;
+            manager.require_enrollment();
+        }
         let drained = manager.clone();
         self.install_owned_component_with_drain(COMPONENT, Arc::new(manager.clone()), move || {
             let drained = drained.clone();
             async move {
-                drained.shutdown().await;
-                Ok(())
+                drained
+                    .shutdown()
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
             }
         })?;
         let supervised = manager.clone();

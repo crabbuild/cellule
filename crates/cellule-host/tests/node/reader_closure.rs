@@ -313,7 +313,7 @@ async fn prepared_opening_is_joined_on_manager_closure_after_native_work_starts(
         &[1],
     )
     .unwrap();
-    fixture.manager.remove(target.cell_id()).await;
+    fixture.manager.remove(target.cell_id()).await.unwrap();
     let now = super::inventory::clock();
     fixture.handles[0]
         .execute(
@@ -351,7 +351,7 @@ async fn prepared_opening_is_joined_on_manager_closure_after_native_work_starts(
     // Release every accepted job before checking any fixture assertion.
     let _ = release.send(());
     let result = opening.await.unwrap();
-    closing.await;
+    closing.await.unwrap();
     fixture.node.shutdown().await.unwrap();
     runtime_slot.lock().unwrap().take();
     for handle in fixture.handles {
@@ -377,7 +377,7 @@ async fn prepared_host_activation_pins_the_enrollment_root_and_never_refreshes_a
         &[1],
     )
     .unwrap();
-    fixture.manager.remove(target.cell_id()).await;
+    fixture.manager.remove(target.cell_id()).await.unwrap();
     let source = fixture
         .manager
         .prepare_source(target.clone(), SessionId::from_bytes([1; 16]))
@@ -445,7 +445,7 @@ async fn prepared_host_activation_pins_the_enrollment_root_and_never_refreshes_a
         Err(Error::Fenced)
     ));
     fixture.node.runtime().node_admission().cordon().unwrap();
-    fixture.manager.remove(target.cell_id()).await;
+    fixture.manager.remove(target.cell_id()).await.unwrap();
     assert!(matches!(
         fixture.manager.activate_source(source).await,
         Err(Error::CellDraining)
@@ -505,7 +505,7 @@ async fn cancelled_reader_removal_and_shutdown_keep_owned_views_until_native_que
         pause.release();
         assert!(matches!(query.await.unwrap(), Err(Error::Fenced)));
         if !shutdown {
-            fixture.manager.remove(cell).await;
+            fixture.manager.remove(cell).await.unwrap();
         }
         fixture.node.shutdown().await.unwrap();
         assert!(first_pending);

@@ -24,6 +24,52 @@ Commands do not wait for readers. Reconciliation repairs dropped hints and
 membership changes; it is not a freshness guarantee. See
 [application read policies](../../cellule-app/docs/invocation.md).
 
+## Bind the durable fleet producer
+
+Install read replicas, then `CellNode::install_fleet_reader_enrollment` before
+startup and the first activation. Hosts configured with a fleet startup intent
+require this owned binding before readiness can open. A rejected activation
+before binding creates no responsibility and does not prevent installation.
+
+```rust
+use std::sync::Arc;
+use cellule_host::{CellNode, fleet::FleetJournal};
+use cellule_runtime::{fleet::operations::FleetScope, identity::NodeId};
+
+fn bind_reader_registry(
+    node: &CellNode,
+    scope: FleetScope,
+    physical_node: NodeId,
+    journal: Arc<dyn FleetJournal>,
+) -> cellule_runtime::Result<()> {
+    node.install_fleet_reader_enrollment(scope, physical_node, journal)
+}
+```
+
+| Boundary | Bound manager behavior |
+| --- | --- |
+| Pending | Verify source and receiver signed physical boots, read bounded exact-version intent pages, and accept the pinned root and both intent revisions atomically. Only New starts native opening. |
+| Ownership | Retain up to 32 finite activation jobs using the runtime byte ledger. Dropping the hint/prepared-activation waiter cannot cancel accepted opening or publication. |
+| Established | Check the exact initial receipt and publish evidence binding the original request, source code/schema, owner endpoint and pinned root. A lost publication reply retains the same result for replay before refresh. |
+| Removal | Join canonical closure before Retired. Keep the fenced view, original request and event across cancellation or failed publication. `remove` and `shutdown` return errors and can be retried. |
+| Unknown acceptance | Preserve the original request. Removal reads its exact key; it never creates a fresh acceptance. Pending can retire after proving this owner never began opening; no row plus that local proof settles the local entry. Unobserved establishment remains blocked. |
+| Diagnostics | `enrollment_completion(cell)` returns the original source/request, acceptance, current event and independently retained native/publication errors. These are diagnostic facts, not current serving or replacement-policy proof. |
+
+Refresh, policy eviction, peer hints and shutdown share the existing manager
+lane. New local roles check the shared admission gate before acceptance and
+again at native opening. The manager bounds retained responsibilities at 10,000
+and charges three record envelopes per entry; ordinary native view admission
+still applies. A task failure cannot turn an unjoined native opening into
+retirement. Shutdown joins healthy siblings and preserves the original task
+failure.
+
+The journal retains failed-boot and Pending rows across restart. Reconstructing
+a manager does not erase or automatically settle them. Applications still own
+complete roster collection, evidence storage/validation, failed-process closure
+proof, replacement redundancy and maintenance finalization. The reference
+example tests this producer with real SQLite readers and its durable journal;
+its movement commands still report incomplete role observation.
+
 ## Prepare exact enrollment inputs
 
 | Method | Boundary |
@@ -51,7 +97,7 @@ fn reader_role(source: &ReadReplicaSource) -> EnrollmentRole {
 ```
 
 Bind `source.node()`, `source.owner().session` and `source.fleet()` to the
-source endpoint and fleet scope. The application must obtain current endpoint
+source endpoint and fleet scope. Without a managed binding, the application must obtain current endpoint
 intent revisions and journal Pending atomically before activation. Only New
 acceptance permits first execution; an ambiguous or Existing reply requires
 inspection. Later publication under the same owner does not change the root
@@ -60,8 +106,8 @@ After entering the activation lane, prepared opening joins its work on manager
 closure. The adapter must retain that future; dropping its waiter without an
 owner still leaves an unknown enrollment outcome.
 
-These methods supply exact inputs and opening, not a durable producer or result
-owner. The adapter must retain accepted activation across waiter cancellation,
+With the fleet binding, both activation methods use the owned producer above.
+Without it, the adapter must retain accepted activation across waiter cancellation,
 publish checked completion and retire only after joined closure. Source metadata
 and snapshot receipts cannot establish complete enrollment coverage.
 
@@ -74,7 +120,8 @@ includes older snapshots still used by queries and native jobs whose request
 waiters were cancelled. Retaining a peer clone cannot retain a detached view's
 memory, descriptor or disk charges after joined closure.
 
-The manager retains each reader until joined removal succeeds. Cancelling a
+The manager retains each reader until joined removal and, when bound, durable
+retirement succeed. Cancelling a
 removal or shutdown waiter leaves that obligation inventoried; a later call
 joins the same work. Shutdown fences all views before joining up to 16 at once.
 A host drain deadline can return while native work remains owned: the host

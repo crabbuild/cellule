@@ -209,7 +209,7 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
     drop(first);
     drop(next);
     assert_eq!(node.stats().retained_bytes(), before);
-    manager.remove(removed).await;
+    manager.remove(removed).await.unwrap();
     assert!(node.stats().resident_bytes() < resident_before);
     for peer in &retained_peer_views {
         if peer.receipt().await.cell == removed {
@@ -241,7 +241,7 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
             .await,
         Err(Error::CellDraining)
     ));
-    manager.shutdown().await;
+    manager.shutdown().await.unwrap();
     let closed = manager
         .fleet_readers_page(None, 128, clock())
         .await

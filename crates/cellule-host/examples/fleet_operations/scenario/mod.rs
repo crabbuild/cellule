@@ -4,6 +4,8 @@
 
 mod adapters;
 mod application;
+#[cfg(test)]
+mod reader_tests;
 mod startup;
 #[cfg(test)]
 mod tests;

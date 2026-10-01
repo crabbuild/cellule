@@ -225,8 +225,11 @@ The application supplies the durable backend, authorization, and canonical
 enrollment evidence. The [fleet journal example](../examples/fleet_operations/README.md)
 implements all three journal contracts in one local SQLite transaction domain.
 Its focused tests exercise independent clients, lost commit replies and
-reconstruction. Boot production uses the startup barrier above. Complete observer
-coverage, reader/follower producer wiring,
+reconstruction. Boot production uses the startup barrier above. The
+[managed reader producer](read-replicas.md#bind-the-durable-fleet-producer) binds
+ordinary activation and joined closure to this journal. Install it after read
+replicas and before start; configured fleet hosts require it for readiness.
+Complete observer coverage, follower production, replacement policy,
 maintenance finalization, and process/provider qualification remain required.
 
 

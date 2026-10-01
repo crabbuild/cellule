@@ -4,6 +4,85 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 managed reader producer checkpoint
+
+`CellNode::install_fleet_reader_enrollment` binds the existing manager to the
+shared fleet journal before start and the first activation. Configured fleet
+hosts require the owned binding before readiness. Ordinary peer hints and
+prepared activation use the same source selection, admission and native opening
+path. Both signed physical boots and fresh intent revisions participate in
+Pending acceptance; only New starts the first opening.
+
+The manager retains 32 bounded finite activation jobs and charges job/record
+storage to the existing runtime byte ledger. Waiter cancellation cannot cancel
+accepted opening or result publication. Exact original source, opening/closure
+evidence and independent native/publication errors remain inspectable through
+`enrollment_completion`. A lost Established reply replays original evidence
+before ordinary refresh. Policy eviction, refresh fencing, explicit removal and
+shutdown join canonical closure before Retired. Failed or cancelled retirement
+keeps the fenced view and original event for retry. Missing acceptance plus
+proof this owner never began opening settles only the local entry; removal does
+not create another Pending request. Unobserved establishment and unjoined task
+failure remain blocked.
+
+Nine new public cases use the durable SQLite journal with actual readers,
+signed advertisements and the host lifecycle. Seven cover Pending before native
+work, a cancelled activation, lost acceptance/Established/Retired replies,
+independent backend reconstruction, cancelled removal, a real native VFS stall
+across a host shutdown deadline, local cordon refusal with independent retained
+errors, and journal cordon winning between intent observation and acceptance.
+Two cover required startup binding and shutdown with a missing binding. A typed
+counter query checks receipt-bound readback. These are local role fixtures, not
+process/provider or complete fleet-observer qualification.
+
+Intermediate verification caught two relevant issues. An exact-version registry
+scan correctly conflicted while the owned producer advanced its version; the
+fixture now retries only that typed conflict with a bounded fresh scan. Bulk
+shutdown had removed healthy siblings before the last native join, contradicting
+the established cancelled-shutdown inventory contract. The final implementation
+retains the complete collection until all native joins finish. Closed reader
+queries return Fenced; the new fixture initially expected RuntimeClosed and was
+corrected to the existing contract. Profiles and production refusal semantics
+were not weakened.
+
+| Final source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `c67c4e5d291e0c908277556788b3237e52af3c4f` |
+| Rust/Cargo manifest | 593 tracked/nonignored `.rs`, `Cargo.toml` and `Cargo.lock` paths; sorted SHA256, two spaces, relative path lines. SHA256 `06a97bce23936f849659154cc923dfedc980ca3d0821cc8044734d44dd24b234`. This includes five existing nested Cargo locks omitted by the previous manifest, plus three new Rust modules. |
+| Complete public host node target | 72 passed; none filtered or ignored. |
+| Complete fleet operations example target | 60 passed; none filtered or ignored. |
+| Public runtime reader selection | 14 passed; 177 filtered; one isolated RustFS case ignored. |
+| Application reader integration selection | 5 passed; 40 filtered; none ignored. |
+| Distinct scoped cases | 151 passed; nine new example cases. |
+| Host all-target/all-feature Clippy | Passed with warnings denied. |
+| Host/runtime API documentation | All features, warnings denied; passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, 110 Rust snippets, 1150 Markdown links and 28 SQL/peer assertions with 566 links passed. |
+
+Commands use Rust/Cargo 1.97.0, the lockfile, `CARGO_INCREMENTAL=0` and the
+checkout's Workspace target directory. Raw final command logs and the source
+manifest are retained under `/tmp/cellule-fleet-reader-producer-*` on the execution
+host. The host remove/shutdown APIs now return Result so durable retirement
+failure reaches the canonical facility drain. Persisted production IDs, object
+paths and message formats are unchanged. The example adds an additive typed
+counter query and uses freshly compiled example releases.
+
+Baseline `c67c4e5` passed workspace/MSRV (36933281069 / 110607525964 and
+110607525809), object/follower capacity (36933281010 / 110607525081 and
+110607524697), contract (36933281080), website (36933281071), fuzz (36933281047),
+fast/negative model (36933281034) and Compose smoke (36933281024 / 110607805140).
+Broad model/simulator were skipped. Its routing job 110607804555 remained
+running when inspected. Earlier `e472441` routing 110587330915 is authoritatively
+Cancelled, with smoke passed. Historical failure evidence below remains retained;
+later green baselines do not establish the causes of those failures or qualify
+this new source.
+
+Next, wire follower production and complete revisioned role observation, then
+consume canonical replacement/failed-process evidence for evacuation and node
+finalization. The movement commands still declare incomplete role coverage.
+All remaining W6–W10 matrices, sustained convergence, four scenario deliverables,
+process/provider/mixed-binary qualification and operator rollout/runbooks remain
+part of the active goal.
+
 ## October 1 2026 exact reader enrollment source checkpoint
 
 `ReadReplicaSource` is opaque metadata prepared through canonical authority and
