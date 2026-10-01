@@ -149,8 +149,11 @@ are separate and describe transitions committed during this pass.
 
 `FleetObserver` owns authenticated membership and bounded page collection.
 `FleetTransport` owns endpoint authorization and exact boot routing to the public
-node action/inspection APIs. The current public driver tests combine the local
-SQLite adapter with simulated effects. Real leased-node observer integration,
+node action/inspection APIs. Driver models combine SQLite with simulated effects.
+The `fleet_operations overload` command and its shared test now execute two
+real moves across three leased nodes, reopen an independent controller client,
+and verify original receipts and readback. Its fixed ownership-only collector
+reports incomplete role coverage; production complete observations,
 source/receiver failure adoption, busy maintenance, and role finalization remain
 required by the [fleet plan](../../../docs/fleet-operations-plan.md).
 

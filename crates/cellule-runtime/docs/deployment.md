@@ -808,8 +808,11 @@ records and pure tests do not establish complete fleet observation. The host's
 implements these contracts in one local SQLite transaction domain, with focused
 lost-reply and reconstruction evidence. The host's caller-driven reconciler now
 uses the existing planner and reducer for settled movement; its initial tests
-use simulated effects against that journal. Enrollment producers, complete
-observation collection, leased-node driver integration and maintenance execution
+use simulated effects against that journal. The `overload` executable additionally
+moves two real Cells across three leased nodes, reconstructs its controller
+client and checks original receipts, restored state and joined resource ledgers.
+Its fixed collector reports incomplete role coverage. Enrollment producers, complete
+observation collection, leased-node failure integration and maintenance execution
 remain implementation work. Local SQLite evidence
 does not qualify a distributed journal provider or process-crash behavior.
 

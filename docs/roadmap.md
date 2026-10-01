@@ -56,8 +56,10 @@ for the delivery order and required integration adapters.
 
 The working tree now contains operation records, schema 3 readers,
 shared local admission reasons, host movement actions, a local durable journal,
-and a caller-driven reconciler with SQLite-backed sequencing tests. Complete
-enrollment/observation wiring, leased-node driver integration, the maintenance
+and a caller-driven reconciler with SQLite-backed sequencing tests. The overload
+executable moves two real Cells across three leased nodes, reopens its controller
+client and checks original outcomes and restored state. Complete
+enrollment/observation wiring, leased-node failure integration, the maintenance
 workflow, and measured fleet
 qualification remain in progress; these foundations do not establish fleet
 operation support by themselves.

@@ -4,6 +4,75 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 real three-node overload checkpoint
+
+The reference executable now supports `overload`, using the same scenario
+implementation as its focused test. Three independently leased CellNodes share
+strict in-memory object storage and initialize twelve real SQLite Cells. A held
+seven-GiB disk admission reservation drives the actor's actual ledger samples
+and normal hysteresis dwell to Shedding. The exported reconciler allocates two
+charged moves, prepares real receivers, and resumes through an independently
+reopened SQLite controller client. Both other nodes acquire successor authority,
+resolve the original acknowledged command outcomes, read the restored values,
+and reject the old source handles. Retirement follows fresh current inspections.
+
+The command checks all three runtimes reach Stopped with empty resource ledgers,
+then closes both journal clients after joining their accepted jobs. Setup and
+scenario errors still join every registered runtime before dropping private
+paths. The fixture preserves original scenario errors and reports additional
+cleanup errors. It uses the canonical local-owner lookup for restored actors;
+the fully resident fast path can legitimately be unavailable during hydration.
+
+Observed executable output:
+
+```text
+released=2 activated=2 retired=2 receipt_checks=2 max_inflight=2 max_restore_bytes=2550136832 joined_nodes=3 receiver_nodes=2 blocker_count=1
+blockers=[IncompleteObservation]
+```
+
+This is a finite **admission-pressure batch**, not physical disk utilization,
+sustained-overload convergence, or provider/process qualification. Its fixed
+ownership-only collector pins the three boot endpoints and signs actual local
+classifier/capacity values. It reports incomplete role coverage and disables
+count balancing. The actor retains its existing local idle eviction behavior;
+reported fleet movement counts cover only the destination-reserved batch.
+Pressure is released and new scheduling stopped after that batch is allocated.
+
+| Source and environment | Recorded value |
+| --- | --- |
+| Baseline revision | PR foundation `9138a51d3b1b9691c16d21bf81784677ca55445c` |
+| Source manifest | 564 Rust/Cargo files; SHA256 `0add021e98e10002f8aacf1dad914d097233ead7bd75f175dfe8e725633c3bed` |
+| Journal SQL | Unchanged SHA256 `6fd5c72f5e8f4bd245797dbc6f433baca0cece4d519aa954f7526b2ae61ad668` |
+| Toolchain/target | Rust 1.97.0; existing checkout target, `CARGO_INCREMENTAL=0`. Package artifacts were cleaned with Cargo after a failed compile exhausted the mounted volume. That failed compile establishes no test result. |
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 31 passed; no ignored/filtered cases. Includes the shared real-node scenario. |
+| `cargo run -p cellule-host --example fleet_operations --locked -- overload` | Exit zero with the output above and all three nodes joined. |
+| `cargo test -p cellule-app --test integration host::three_node_host_recovers_published_state_after_owner_loss --locked -- --exact` | 1 passed; 43 filtered. |
+| `cargo clippy -p cellule-host --example fleet_operations --tests --locked -- -D warnings` | Passed. |
+| `cargo clippy -p cellule-app --test integration --locked -- -D warnings` | Passed. |
+
+The owner-loss fixture now recognizes only the original terminal Fenced error
+inside the retained `cell-runtime-drain` source chain, and only when the node
+lease was actually fenced. It also checks zero Cell, memory, job, descriptor and
+disk charges. Unrelated facility errors still fail. This fixes the assertion
+regression found in the foundation PR's workspace and contract CI runs.
+
+The foundation commit's third object-capacity repeat remains a failed
+qualification result: run `36876658271`, artifact
+`cell-write-capacity-36876658271-1`, window `capacity-3-hot-2`, arrival 25 was
+`scheduler_late` (scheduled 4166666 us; started 4387343 us). Two earlier repeats
+passed. No threshold, profile or evidence requirement was weakened; that
+campaign must pass on the updated PR before qualification is claimed.
+
+Before this entry, module/layer gates, 85 Rust snippets, 1136 Markdown links,
+28 schema/protocol assertions and 562 protocol links passed. Format and diff
+whitespace checks are repeated after the checkpoint. Full W1–W10 completion is
+unproven: complete production observers/producers, failed-source/receiver
+adoption, busy maintenance, role evacuation/finalization, remaining scenarios,
+qualification and operator rollout remain in the full plan.
+
 ## October 1 2026 public reconciler checkpoint
 
 The host now exports a caller-driven `FleetReconciler` that claims the journal

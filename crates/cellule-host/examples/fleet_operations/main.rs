@@ -1,9 +1,9 @@
-//! Reference embedding. SQLite journal inspection is the first executable
-//! scenario; the fleet driver and leased three-node scenarios follow here.
+//! Reference embedding with a durable journal and real leased-node overload.
 
 mod journal;
 #[cfg(test)]
 mod reconciler_tests;
+mod scenario;
 
 use cellule_host::fleet::FleetJournal;
 use cellule_runtime::fleet::operations::{FleetProfile, FleetScope};
@@ -14,13 +14,30 @@ use journal::{JournalResult, SqliteJournal};
 async fn main() -> JournalResult<()> {
     let mut args = std::env::args_os().skip(1);
     let command = args.next();
+    if command.as_deref() == Some(std::ffi::OsStr::new("overload")) && args.next().is_none() {
+        let summary = scenario::overload().await?;
+        println!(
+            "released={} activated={} retired={} receipt_checks={} max_inflight={} max_restore_bytes={} joined_nodes={} receiver_nodes={} blocker_count={}",
+            summary.released,
+            summary.activated,
+            summary.retired,
+            summary.receipt_checks,
+            summary.max_inflight,
+            summary.max_restore_bytes,
+            summary.joined_nodes,
+            summary.receiver_nodes,
+            summary.blockers.len()
+        );
+        println!("blockers={:?}", summary.blockers);
+        return Ok(());
+    }
     let database = args.next();
     if command.as_deref() != Some(std::ffi::OsStr::new("inspect-journal"))
         || database.is_none()
         || args.next().is_some()
     {
         return Err(std::io::Error::other(
-            "usage: fleet_operations inspect-journal <database-path>",
+            "usage: fleet_operations overload | inspect-journal <database-path>",
         )
         .into());
     }

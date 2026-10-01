@@ -1,13 +1,40 @@
 # Fleet operations reference example
 
-Status: executable journal foundation and public-driver sequencing tests. The three-node overload, maintenance,
-controller-restart, and receiver-loss scenarios in the
-[fleet operations plan](../../../../docs/fleet-operations-plan.md) remain to be
-implemented with the public reconciler and real CellNode lifecycle.
+Status: durable journal and public-driver models, plus a finite real three-node
+admission-overload scenario with controller-client reconstruction and receipt
+readback. Complete maintenance, receiver-loss, production observations and
+qualification remain required by the [fleet plan](../../../../docs/fleet-operations-plan.md).
 
 ## Run
 
-Run from the workspace root. Supply a database path in an existing directory,
+Run the real-node scenario from the workspace root:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- overload
+```
+
+It creates three independently leased CellNodes over shared strict in-memory
+object storage, initializes twelve real SQLite Cells, and acknowledges a command
+on each. A held seven-GiB disk admission token causes the existing actor's
+measured ledger classifier to enter Shedding after its normal dwell. The public
+reconciler allocates its bounded two-move batch; the scenario releases that
+pressure token, stops new scheduling, prepares real receivers, and reopens an
+independent SQLite controller client before settling movement. Both receiver
+nodes restore state, resolve the original command outcomes and confirm the old
+source handles are fenced. Exit joins all three runtimes and the journal and
+checks their resource ledgers are empty. Output separates release, activation,
+retirement, receipt checks, shared budget maxima and advisory blockers.
+
+This measures **admission pressure**, not physical disk usage or throughput. The
+actor retains its existing local eviction budget; fleet counts cover only its
+journal-backed batch. The fixed three-boot transport pins identities in trusted
+composition. Its ownership-only collector explicitly reports incomplete role
+coverage, so count balancing is disabled and pressure relief is exercised.
+It stops new scheduling after the bounded batch; this does not demonstrate
+sustained-overload convergence. It is not a production complete observer, deployment authentication system,
+process-crash test, or distributed-provider qualification.
+
+To inspect a retained example journal, supply a database path in an existing directory,
 outside canonical Cell storage. The command creates the journal if absent or
 reopens it with the same scope and profile, prints its bounded head summary,
 and closes the connection after joining accepted work.
@@ -72,8 +99,10 @@ SQLite adapter and signed synthetic observations. Its simulated transport checks
 phase publication before dispatch, fresh activation/retirement, independent
 cleanup, retained permits after lost replies/timeouts, competing controllers,
 stop-new-moves behavior, and pressure relief using remaining shared budget.
-These tests do not create independently leased nodes or restore SQLite Cell
-state. The four CLI scenarios above still require that integration.
+The separate `scenario::tests` case invokes the same real-node implementation
+as the `overload` command. The model tests do not create Cell actors. Planned
+maintenance and receiver-loss scenarios still require their complete barriers;
+controller reconstruction here is during clean movement, with all nodes live.
 
 The journal's cooldown and post-batch queries compare the complete expected
 snapshot and walk only its committed progress chain, one bounded page at a time.
