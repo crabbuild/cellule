@@ -55,6 +55,41 @@ permits and exact later adoption. No production gate or qualification profile wa
 weakened. A private-method fixture assertion and unsupported Default initializer
 were also corrected before execution.
 
+| Source and evidence | Recorded value |
+| --- | --- |
+| Baseline | `5d98eb0e7fa961c5420022c1da07e8cad16e3433` |
+| Implementation and main sync | `df55295`; merged `origin/main` (`0dc04a6`) as `869f0e4`. Only the website checker conflicted; the upstream feature-group implementation was retained. The merge introduced no Rust-source delta. |
+| Source manifest | 579 Rust/Cargo files; SHA256 `0ffe6084e1f2bcc0f65b70695b42e37892cb7f2733b442ba9889db8167885ef2` |
+| Runtime library placement / actor inventory | 16 passed (477 filtered) / 7 passed (486 filtered). |
+| Runtime public placement / ownership inventory | 10 passed (16 filtered) / 5 passed (182 filtered). |
+| Runtime maintenance selection | 37 passed: 30 library (462 filtered), four Queue (43 filtered), three runtime (184 filtered). One isolated RustFS library case ignored; no provider evidence. Two selected cases overlap the placement/ownership commands. |
+| Host digest library | 3 passed; none ignored or filtered. |
+| Complete executable example test target | 44 passed; none ignored or filtered. |
+| Host fleet node selection | 31 passed; 38 filtered. The new public case exercises three waiter/publication modes. |
+| Application local reader selection | 5 passed; 40 filtered, including both cases that timed out in prior workspace CI. This scoped result does not resolve broad CI failure. |
+| Selected all-feature runtime/host library/tests/example Clippy | Passed with warnings denied. |
+| Host/runtime all-feature API documentation | Passed with warnings denied. |
+| Website Rust example checker after merge | All examples compiled across 12 authored guides using the upstream checker. |
+| Static gates | Format, diff whitespace, boundaries/layout, 108 Rust snippets, 1143 Markdown links and 28 SQL/peer assertions with 563 links passed. |
+
+These final checks ran on the merged Rust source. Cargo used Rust 1.97.0,
+`CARGO_INCREMENTAL=0` and the checkout target directory recorded in the prior
+checkpoint. The tables name focused command selections; broad workspace, process,
+provider and mixed-binary campaigns remain separate proof obligations.
+
+The prior `b8ec303` routing job (36899568202 / 110495509870) is now terminal:
+**failed** `object_only/forwarded_command/c16`. Across its four frozen runs,
+median candidate p99 was 343.037178 ms versus baseline 305.3395325 ms (ratio
+1.1234614), exceeding the unchanged 1.10 limit. Throughput ratio was 0.9706314
+and p95 ratio 1.0280569. The retained manifest identifies baseline `c51dd12` and
+synthetic candidate merge `970d874`; this is evidence for that CI source, not
+this later checkpoint. Logs and artifact remain at
+`/tmp/cellule-fleet-ci-36899568202-routing.log` and
+`/tmp/cellule-fleet-routing-36899568202` (remote artifact 11185357976).
+Correctness passing inside each benchmark does not erase this performance
+failure. No threshold or profile was changed. The updated PR must qualify its
+own source and the failure still requires investigation.
+
 Full W6 remains incomplete: every primitive's public acceptance/fault matrix,
 Blob external owners and continuous-load qualification still need coverage.
 Enrollment/startup barriers, complete role observations/evacuation, finalization,
