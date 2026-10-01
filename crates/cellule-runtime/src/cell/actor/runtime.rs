@@ -533,6 +533,41 @@ impl CellRuntime {
         response.await.map_err(|_| Error::RuntimeClosed)?
     }
 
+    /// Stops new foreground work for one exact maintenance source.
+    ///
+    /// Already actor-admitted work and native exact-lease completion/validation
+    /// continue through the normal transaction and durability gates. This
+    /// transition is sticky for this activation and returns once installed;
+    /// it does not prove primitive settlement, release, or fleet relocation.
+    /// Applications authorize maintenance and retain its durable node intent
+    /// before invoking this local boundary for a selected Cell.
+    pub async fn quiesce_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+    ) -> crate::Result<()> {
+        self.ensure_running()?;
+        if source != self.inner.session || generation == 0 || epoch == 0 {
+            return Err(Error::Fenced);
+        }
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::QuiesceCell {
+                cell,
+                generation,
+                incarnation,
+                epoch,
+                reply,
+            })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
     /// Releases an exact source identity and returns the canonical final position.
     ///
     /// The actor checks incarnation and ownership epoch before closing admission,

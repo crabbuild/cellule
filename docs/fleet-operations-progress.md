@@ -4,6 +4,68 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 foreground quiescence checkpoint
+
+`CellRuntime::quiesce_cell_at` installs a sticky exact-generation foreground
+gate without interrupting previously actor-admitted SQL. It checks runtime
+boot, generation, incarnation and ownership epoch before closing the shared
+admission capability. Unavailable publisher state refuses conservatively.
+This API is a local runtime boundary: applications must retain and authorize
+maintenance intent before calling it. It supplies no release proof.
+
+Native Queue/Effect lease commands and validation, and Activity completion,
+extension and validation have private registry admission classification. New
+claims and foreground work close; original outcome resolution stays available.
+All calls use the existing bounded mailbox, worker, fencing, transaction and
+durability gates. Duplicate binding errors now preserve the original handler,
+preventing an application replacement from inheriting native classification.
+Descriptor/release bytes and persisted IDs are unchanged. New background
+hydration and compaction stop, while required inventory can refresh.
+
+The serialized worker reports separate maintenance readiness alongside ordinary
+idle readiness. It retains simultaneous live lease classes, refuses malformed
+lease/schema/time observations, and leaves expired lease rows unchanged. Pending
+durable messages, Effects, timers and Workflow waits can be carried by an exact
+root after claims close. Blob stream/upload/pin coverage is explicitly blocked.
+The actor exposes optional readiness and its quiescence flag; the planner hashes
+these under input domain v2 without rewriting retained attempt digests.
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Baseline | `7be792bf5a71fc7d6ec9b82d615f512631ed4833` |
+| Source manifest | 573 Rust/Cargo files; SHA256 `67b06c0b29f8dc6e17d4ec3e008ea8f311f0eb3c594ea742d8eb82e518edd91c` |
+| `cargo test -p cellule-runtime --lib --test primitives --test runtime maintenance --all-features --locked` | 23 passed: 21 library (462 filtered), one Queue (43 filtered), one accepted SQL (184 filtered). One library RustFS case ignored because its isolated provider environment was not supplied; it establishes no provider evidence. |
+| `cargo test -p cellule-host --example fleet_operations --all-features --locked` | 41 passed; none ignored or filtered. |
+| `cargo test -p cellule-host --test node node::fleet --all-features --locked` | 30 passed; 38 filtered. |
+| `cargo clippy -p cellule-runtime -p cellule-host --lib --tests --example fleet_operations --all-features --locked -- -D warnings` | Passed. |
+| Static gates | Format, boundaries/layout, 108 Rust snippets, 1143 Markdown links, 28 SQL/peer assertions and 563 validator links passed. |
+
+The Queue case checks all source identity mismatches before closure, sticky
+replay, refusal of new sends/claims/info and raw callbacks, exact validation,
+acknowledgment, live-to-settled inventory refresh and joined shutdown with zero
+retained bytes. It also attempts duplicate application replacement bindings and
+verifies unchanged release bytes plus the original native handlers. The SQL
+case closes admission while an accepted handler is blocked, then joins its
+commit, resolves its original outcome and shuts down with zero retained bytes.
+
+The first public Queue run failed because the test's raw query requested a
+zero-byte reservation; the existing byte validator correctly refused it before
+admission. Correcting that fixture to a valid reservation produced the passing
+run above. No production bounds or expected evidence were weakened.
+
+Commands use Rust 1.97.0, the checkout target directory recorded below and
+`CARGO_INCREMENTAL=0`. These are local focused checks with real SQLite and
+in-memory authority. Effect/Activity maintenance public acceptance cases,
+Blob owner coverage, journal-bound busy release, enrollment/startup barriers,
+complete reader/follower evacuation and finalization, continuous-load
+maintenance and process/provider qualification remain open. The full plan is
+still incomplete; this checkpoint does not certify W6 or complete maintenance.
+
+On baseline `7be792b`, workspace, MSRV, contract, website, decoder fuzz, both
+capacity jobs and smoke passed. Routing remained pending at inspection. The
+older object-capacity failure remains recorded below; baseline successes do not
+qualify the new source, whose full gates must run in CI after push.
+
 ## October 1 2026 maintenance admission checkpoint
 
 Maintenance Cordon now runs through the public node-owned action executor.

@@ -103,6 +103,7 @@ pub(super) fn new_cell_admission() -> Arc<CellAdmission> {
         requests: Arc::new(Semaphore::new(CELL_REQUESTS)),
         bytes: Arc::new(Semaphore::new(CELL_BYTES)),
         draining: AtomicBool::new(false),
+        maintenance_quiescing: AtomicBool::new(false),
         fenced: AtomicBool::new(false),
     })
 }

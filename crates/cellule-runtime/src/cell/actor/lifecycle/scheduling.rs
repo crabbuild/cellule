@@ -52,8 +52,8 @@ pub(in crate::cell::actor) fn start_next(
     active.last_used_ms = unix_millis();
     active.last_work_at = std::time::Instant::now();
     let kind = match &work {
-        QueuedWork::Command(_) => AdmissionKind::Command,
-        QueuedWork::Query(_) => AdmissionKind::Query,
+        QueuedWork::Command(command) => command._work.kind,
+        QueuedWork::Query(query) => query._work.kind,
         QueuedWork::Resolve(_) => AdmissionKind::Resolve,
         QueuedWork::Migration(_) => AdmissionKind::Migration,
     };

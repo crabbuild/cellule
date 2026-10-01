@@ -37,6 +37,7 @@ mod tasks;
 use lifecycle::*;
 use requests::*;
 
+pub(crate) use handle::CommandWork;
 use handle::{CellAdmission, WorkAdmission};
 pub use handle::{CellHandle, DueResident};
 

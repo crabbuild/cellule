@@ -198,3 +198,16 @@ implements all three journal contracts in one local SQLite transaction domain.
 Its focused tests exercise independent clients, lost commit replies and
 reconstruction. Complete observer coverage, enrollment producer wiring,
 maintenance finalization, and process/provider qualification remain required.
+
+
+## Runtime maintenance quiescence checkpoint
+
+The canonical runtime now exposes exact-source foreground quiescence and
+separate primitive maintenance readiness. See
+[foreground quiescence](../../cellule-runtime/docs/deployment.md#foreground-quiescence-for-planned-maintenance)
+for admission and proof limits. Fleet observations hash the quiescence flag,
+readiness presence and all blocker classes under planner input domain
+`cellule.fleet-planner-inputs.v2`. Existing retained attempt digests remain
+opaque and unchanged; this is a new producer domain, not a journal rewrite.
+The driver still requires ordinary settled movement eligibility. Journal-bound
+busy release and full role evacuation are not implemented by this checkpoint.

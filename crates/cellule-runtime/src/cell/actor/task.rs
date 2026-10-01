@@ -436,7 +436,7 @@ pub(super) fn handle_message(
                 return;
             }
             match active.coordination.step(CoordinationInput::Admit {
-                kind: AdmissionKind::Command,
+                kind: command._work.kind,
                 admission_matches: Arc::ptr_eq(&active.admission, &command.admission),
             }) {
                 CoordinationDecision::Admit => {
@@ -459,7 +459,7 @@ pub(super) fn handle_message(
                 return;
             }
             match active.coordination.step(CoordinationInput::Admit {
-                kind: AdmissionKind::Query,
+                kind: query._work.kind,
                 admission_matches: Arc::ptr_eq(&active.admission, &query.admission),
             }) {
                 CoordinationDecision::Admit => {
@@ -724,6 +724,42 @@ pub(super) fn handle_message(
         Message::UnreleasedCellCount { reply } => {
             let _ = reply.send(Ok(cells.len().saturating_add(transitioning.len())));
         }
+        Message::QuiesceCell {
+            cell,
+            generation,
+            incarnation,
+            epoch,
+            reply,
+        } => {
+            let result = (|| {
+                let active = cells.get_mut(&cell).ok_or(Error::CellNotActive)?;
+                if active.generation != generation || active.incarnation != incarnation {
+                    return Err(Error::Fenced);
+                }
+                let publisher = active.publisher.as_ref().ok_or(Error::CellDraining)?;
+                if publisher.control().value().epoch != epoch {
+                    return Err(Error::Fenced);
+                }
+                match active
+                    .coordination
+                    .step(CoordinationInput::BeginMaintenanceQuiescence)
+                {
+                    CoordinationDecision::Started => {
+                        // Keep the same bounded request/byte permits and exact
+                        // completion capability. Ordinary work checks both this
+                        // shared flag and the actor's ordered kernel admission.
+                        active
+                            .admission
+                            .maintenance_quiescing
+                            .store(true, Ordering::Release);
+                        Ok(())
+                    }
+                    CoordinationDecision::Reject(reason) => Err(rejection_error(reason)),
+                    _ => Err(Error::CellDraining),
+                }
+            })();
+            let _ = reply.send(result);
+        }
         Message::ReleaseIdleCell {
             cell,
             generation,
@@ -892,6 +928,9 @@ pub(super) fn reject_fenced_message(message: Message) {
             let _ = reply.send(Err(Error::Fenced));
         }
         Message::UnreleasedCellCount { reply } => {
+            let _ = reply.send(Err(Error::Fenced));
+        }
+        Message::QuiesceCell { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));
         }
         Message::ReleaseIdleCell { reply, .. } => {

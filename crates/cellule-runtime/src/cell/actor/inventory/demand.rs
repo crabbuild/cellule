@@ -67,6 +67,7 @@ impl CellDemandState {
                 && old.database_bytes == sample.database_bytes
                 && old.persisted_work == sample.persisted_work
                 && old.transfer_work == sample.transfer_work
+                && old.maintenance_work == sample.maintenance_work
         });
         self.stable_observations = if unchanged {
             if self

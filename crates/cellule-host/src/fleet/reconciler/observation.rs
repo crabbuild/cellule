@@ -115,7 +115,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v1\0");
+        hash.update(b"cellule.fleet-planner-inputs.v2\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -162,6 +162,22 @@ impl FleetObservation {
             hash.update(&row.resident_since_ms.to_be_bytes());
             hash.update(&row.sampled_at_ms.unwrap_or(-1).to_be_bytes());
             hash.update(&[row.stable_observations]);
+            hash.update(&[
+                u8::from(row.quiescing),
+                u8::from(row.maintenance_work.is_some()),
+            ]);
+            if let Some(inventory) = row.maintenance_work {
+                use cellule_runtime::primitives::maintenance_readiness::MaintenanceWorkBlocker;
+                for blocker in [
+                    MaintenanceWorkBlocker::EffectLease,
+                    MaintenanceWorkBlocker::QueueLease,
+                    MaintenanceWorkBlocker::ActivityLease,
+                    MaintenanceWorkBlocker::BlobInventory,
+                ] {
+                    hash.update(&[u8::from(inventory.has_blocker(blocker))]);
+                }
+            }
+
             hash.update(&[u8::from(
                 row.blockers.is_empty() && row.work_blocker.is_none(),
             )]);

@@ -80,6 +80,13 @@ pub struct OwnedCellObservation {
     pub stable_observations: u8,
     /// First executable work class blocking ordinary idle movement, if known.
     pub work_blocker: Option<crate::primitives::maintenance::TransferWorkClass>,
+    /// Sticky foreground closure installed for this exact local activation.
+    /// Native lease completion and validation remain available until release.
+    pub quiescing: bool,
+    /// Fresh primitive readiness from the same serialized worker measurement.
+    /// Absence is unknown; a transferable value alone proves no actor barrier.
+    pub maintenance_work:
+        Option<crate::primitives::maintenance_readiness::MaintenanceWorkInventory>,
     /// Local advisory blockers; action acceptance rechecks them.
     pub blockers: Vec<DrainBlocker>,
 }
@@ -288,6 +295,8 @@ fn observe_owned(active: &ActiveCell) -> crate::Result<OwnedCellObservation> {
         sampled_at_ms: sample.map(|sample| sample.observed_at_ms),
         stable_observations: sample.map_or(0, |_| active.demand.stable_observations()),
         work_blocker,
+        quiescing: active.coordination.is_maintenance_quiescing(),
+        maintenance_work: sample.map(|sample| sample.maintenance_work),
         blockers,
     })
 }

@@ -21,6 +21,8 @@ fn sample(at_ms: i64) -> WorkerCellInventory {
     WorkerCellInventory {
         persisted_work: PersistedWorkInventory::default(),
         transfer_work: TransferWorkInventory::default(),
+        maintenance_work:
+            crate::primitives::maintenance_readiness::MaintenanceWorkInventory::default(),
         database_bytes: 4096,
         commit_sequence: 1,
         observed_at_ms: at_ms,

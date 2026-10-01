@@ -133,6 +133,13 @@ pub(super) enum Message {
     UnreleasedCellCount {
         reply: oneshot::Sender<crate::Result<usize>>,
     },
+    QuiesceCell {
+        cell: CellId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+        reply: oneshot::Sender<crate::Result<()>>,
+    },
     ReleaseIdleCell {
         cell: CellId,
         generation: u64,

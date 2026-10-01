@@ -929,3 +929,43 @@ Alert on stalled scheduler progress, repeated owner fencing, publication backlog
 | Peer mTLS transport and routing | [Peer security](../../cellule-peer-http/docs/security.md) |
 | Repository-wide doc index | [Technical reference](technical-reference.md) |
 | Embedding application contract | [Workspace framework integration guide](../../../docs/framework.md) |
+
+
+## Foreground quiescence for planned maintenance
+
+After retaining and authorizing a maintenance intent, an embedding application
+can call `CellRuntime::quiesce_cell_at` with the exact Cell ID, runtime boot,
+local generation, incarnation and ownership epoch. A mismatch fails before
+closing admission. The transition is sticky for that activation and returns
+when the actor installs the gate; it does not wait for accepted work to finish.
+An unavailable publisher conservatively refuses the request, requiring a retry.
+
+| Work | During Cell quiescence |
+| --- | --- |
+| Previously actor-admitted commands/queries | Finish through the existing serialized worker and publication gates. |
+| New foreground commands, queries, migrations and claims | Refused with CellDraining. |
+| Native Queue/Effect lease operations; Activity completion/extension | Continue with their existing exact-token, expiry and durability checks. |
+| Native lease validation and original outcome resolution | Continue on the current owner. |
+| New hydration and compaction | Suppressed; required inventory can refresh. |
+| Fencing, final drain and transfer preflight | Close completion admission as well. |
+
+Only private native registry bindings carry completion admission. Raw handlers,
+application bindings and peer requests cannot supply an exemption flag. These
+calls use the ordinary request, byte and worker bounds. Duplicate binding errors
+leave the original handler intact. Registry descriptors, release bytes, command
+IDs and peer formats are unchanged.
+
+`OwnedCellObservation` reports `quiescing` and optional `maintenance_work` from
+the serialized worker inventory. Absence means unknown. The latter reports all
+live Effect, Queue and Activity lease classes together; malformed leases block.
+Valid expired leases remain unchanged for canonical destination reclamation.
+Pending durable messages, Effects, timers and Workflow waits can be carried in
+an exact root after claims close. Blob stream/upload/pin coverage remains an
+explicit blocker.
+
+A transferable primitive snapshot grants no release authority and does not
+establish actor settlement or complete role coverage. Ordinary idle transfer
+keeps its conservative readiness checks. The fleet driver does not yet connect
+this local gate to journal-bound busy-Cell release; complete maintenance,
+startup intent barriers and role finalization remain required by the
+[fleet implementation plan](../../../docs/fleet-operations-plan.md).

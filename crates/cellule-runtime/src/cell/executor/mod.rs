@@ -741,6 +741,8 @@ impl CellExecutor {
                 crate::primitives::maintenance::inspect_persisted_work(connection, role)?;
             let transfer_work =
                 crate::primitives::maintenance::inspect_transfer_work(connection, role, now_ms)?;
+            let maintenance_work =
+                crate::primitives::maintenance_readiness::inspect(connection, role, now_ms)?;
             let pages: u64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
             let page_size: u64 = connection.query_row("PRAGMA page_size", [], |row| row.get(0))?;
             let commit_sequence: u64 = connection.query_row(
@@ -755,6 +757,7 @@ impl CellExecutor {
             Ok(crate::cell::worker::WorkerCellInventory {
                 persisted_work,
                 transfer_work,
+                maintenance_work,
                 database_bytes,
                 commit_sequence,
                 observed_at_ms: now_ms,

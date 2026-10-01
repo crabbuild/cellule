@@ -138,6 +138,8 @@ impl FleetObserver for Observer {
                         sampled_at_ms: Some(now_ms),
                         stable_observations: 2,
                         work_blocker: None,
+                        quiescing: false,
+                        maintenance_work: None,
                         blockers: Vec::new(),
                     },
                 })

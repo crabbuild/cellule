@@ -100,9 +100,9 @@ pub fn register_queue<M: QueueModule>(registry: &mut RegistryBuilder) -> crate::
     )?;
     registry.bind_command::<QueueSendCommand<M>>()?;
     registry.bind_command::<QueueClaimCommand<M>>()?;
-    registry.bind_command::<QueueLeaseCommand<M>>()?;
+    registry.bind_lease_command::<QueueLeaseCommand<M>>()?;
     registry.bind_command::<QueueControlCommand<M>>()?;
-    registry.bind_query::<QueueValidateClaimQuery<M>>()?;
+    registry.bind_lease_query::<QueueValidateClaimQuery<M>>()?;
     registry.bind_query::<QueueInfoQuery<M>>()?;
     register_maintenance::<M>(registry)
 }

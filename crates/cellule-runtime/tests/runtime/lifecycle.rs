@@ -53,6 +53,7 @@ pub mod durability;
 pub mod execution;
 pub mod idle;
 pub mod inventory;
+pub mod maintenance;
 pub mod ownership;
 pub mod read_replica;
 pub mod receiver;

@@ -52,13 +52,21 @@ impl CellTransport for LocalCellTransport {
             let schema = handle.schema();
             let input_bytes = command.input.len();
             let output_limit = command.output_limit as usize;
+            let lease_completion = registry.command_is_lease_completion(
+                command.module,
+                command.operation_id,
+                command.codec_version,
+            )?;
             handle
-                .execute(
-                    command.identity,
-                    command.operation_digest,
-                    command.now_ms,
-                    input_bytes,
-                    output_limit,
+                .execute_registered(
+                    lease_completion,
+                    crate::cell::actor::CommandWork {
+                        identity: command.identity,
+                        operation_digest: command.operation_digest,
+                        now_ms: command.now_ms,
+                        operation_bytes: input_bytes,
+                        max_result_bytes: output_limit,
+                    },
                     move |transaction| {
                         let (sequence, now_ms) = next_metadata(transaction, command.now_ms)?;
                         let started = Instant::now();
@@ -110,35 +118,45 @@ impl CellTransport for LocalCellTransport {
             let schema = handle.schema();
             let input_bytes = query.input.len();
             let output_limit = query.output_limit as usize;
+            let lease_validation = registry.query_is_lease_validation(
+                query.module,
+                query.operation_id,
+                query.codec_version,
+            )?;
             let output = handle
-                .query(input_bytes, output_limit, move |connection| {
-                    let (commit_sequence, now_ms) = current_metadata(connection, query.now_ms)?;
-                    observed_sequence.store(commit_sequence, Ordering::Release);
-                    let started = Instant::now();
-                    let result = registry.execute_query(
-                        connection,
-                        QueryInvocation {
-                            module: query.module,
-                            operation_id: query.operation_id,
-                            codec_version: query.codec_version,
-                            schema,
-                            cell,
-                            commit_sequence,
-                            now_ms,
-                            input: &query.input,
-                        },
-                    );
-                    telemetry.primitive_operation(
-                        query.module,
-                        PrimitiveOperationKind::Query,
-                        match &result {
-                            Ok(_) => PrimitiveOperationOutcome::Success,
-                            Err(_) => PrimitiveOperationOutcome::Failed,
-                        },
-                        started.elapsed(),
-                    );
-                    result
-                })
+                .query_registered(
+                    lease_validation,
+                    input_bytes,
+                    output_limit,
+                    move |connection| {
+                        let (commit_sequence, now_ms) = current_metadata(connection, query.now_ms)?;
+                        observed_sequence.store(commit_sequence, Ordering::Release);
+                        let started = Instant::now();
+                        let result = registry.execute_query(
+                            connection,
+                            QueryInvocation {
+                                module: query.module,
+                                operation_id: query.operation_id,
+                                codec_version: query.codec_version,
+                                schema,
+                                cell,
+                                commit_sequence,
+                                now_ms,
+                                input: &query.input,
+                            },
+                        );
+                        telemetry.primitive_operation(
+                            query.module,
+                            PrimitiveOperationKind::Query,
+                            match &result {
+                                Ok(_) => PrimitiveOperationOutcome::Success,
+                                Err(_) => PrimitiveOperationOutcome::Failed,
+                            },
+                            started.elapsed(),
+                        );
+                        result
+                    },
+                )
                 .await?;
             let commit_sequence = sequence.load(Ordering::Acquire);
             if query
