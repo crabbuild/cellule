@@ -218,15 +218,18 @@ def parse_measurement(version, mode, index, evidence):
     return rows
 
 
-def compare(rows):
+def compare(rows, modes=None):
     comparisons = []
     failures = []
-    if {row["mode"] for row in rows} != set(SELECTORS):
+    modes = tuple(SELECTORS) if modes is None else tuple(modes)
+    if not modes or not set(modes) <= set(SELECTORS):
+        raise RuntimeError("Invalid routing modes")
+    if {row["mode"] for row in rows} != set(modes):
         raise RuntimeError("Incomplete routing modes")
     safe_unleased_baseline = any(row["reads"] > 0 for row in rows
                                 if row["mode"] == "object_only" and row["version"] == "baseline"
                                 and row["lane"] == "local_query")
-    for mode in SELECTORS:
+    for mode in modes:
         keys = sorted({(row["lane"], row["concurrency"]) for row in rows if row["mode"] == mode})
         for lane, concurrency in keys:
             selected = {version: [row for row in rows if row["mode"] == mode
@@ -261,7 +264,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--mode", choices=SELECTORS,
+                        help="Measure one complete mode; CI requires both mode jobs")
     args = parser.parse_args()
+    modes = tuple(SELECTORS) if args.mode is None else (args.mode,)
     state = args.state.resolve()
     state.mkdir()
     evidence = state / "evidence"
@@ -270,7 +276,7 @@ def main():
     revisions = {"baseline": output("git", "rev-parse", "--verify", f"{args.baseline}^{{commit}}"),
                  "candidate": output("git", "rev-parse", "HEAD")}
     manifest = {"order": ORDER, "pairs": PAIRS, "queries": QUERIES, "commands_per_lane": COMMANDS,
-                "paced_bursts": PACED_BURSTS,
+                "paced_bursts": PACED_BURSTS, "modes": modes,
                 "selectors": SELECTORS, "host": platform.uname()._asdict(),
                 "test_only_transplant": [str(PEER / path) for path in (
                     "src/performance_tests.rs", "src/lib.rs", "src/tests.rs", "Cargo.toml")] + ["Cargo.lock (peer test dependencies only)"],
@@ -286,13 +292,13 @@ def main():
             write_json(evidence / "manifest.json", manifest)
     write_json(evidence / "manifest.json", manifest)
     rows = []
-    for mode in SELECTORS:
+    for mode in modes:
         for pair in range(len(PAIRS)):
             binaries = {version: Path(manifest[version]["binary"]) for version in revisions}
             if any(digest(binary) != manifest[version]["binary_sha256"] for version, binary in binaries.items()):
                 raise RuntimeError("Frozen binary changed")
             rows.extend(measure_pair(mode, pair, binaries, evidence))
-    summary = compare(rows)
+    summary = compare(rows, modes)
     write_json(evidence / "comparison.json", summary)
     if summary["failures"]:
         raise RuntimeError(f"Performance gate failed: {summary['failures']}")

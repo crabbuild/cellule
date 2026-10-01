@@ -266,6 +266,12 @@ receiver latency. Cold and fresh-client lanes still include discovery and
 Describe. Manual workflow runs accept `routing_baseline` and `routing_only`
 to repeat a specific comparison without repeating Compose scaling.
 
+CI measures leased and object-only routing in separate isolated-provider jobs.
+Each mode retains four adjacent baseline/candidate pairs, all lanes, raw samples,
+physical read and hop checks, and exact recovery. The final `routing` check
+requires both mode jobs to pass. `routing.py --mode leased` or
+`--mode object_only` runs one complete mode; omitting `--mode` runs both.
+
 The larger CI sample sizes and adjacent pairs retain the original 10% limits.
 Serial full-profile comparisons still failed calibration after increasing the
 sample sizes, including paced local p99 at 1.13–1.15. Adjacent windows control

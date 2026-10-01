@@ -32,6 +32,33 @@ class GateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Incomplete repeats"):
             routing.compare(rows)
 
+    def test_single_mode_requires_explicit_selection(self):
+        rows = [row for row in measurements() if row["mode"] == "leased"]
+        with self.assertRaisesRegex(RuntimeError, "Incomplete routing modes"):
+            routing.compare(rows)
+
+    def test_each_partition_retains_repeats_and_regression_gates(self):
+        for mode in routing.SELECTORS:
+            with self.subTest(mode=mode):
+                rows = [row for row in measurements() if row["mode"] == mode]
+                self.assertEqual(routing.compare(rows, (mode,))["failures"], [])
+                for metric, value in (("throughput", 899), ("p95_ms", 2.21), ("p99_ms", 3.31)):
+                    regressed = copy.deepcopy(rows)
+                    for row in regressed:
+                        if row["version"] == "candidate":
+                            row[metric] = value
+                    self.assertEqual(routing.compare(regressed, (mode,))["failures"],
+                                     [f"{mode}/local_query/c16"])
+                with self.assertRaisesRegex(RuntimeError, "Incomplete repeats"):
+                    routing.compare(rows[:-1], (mode,))
+
+    def test_partition_rejects_unexpected_or_invalid_modes(self):
+        with self.assertRaisesRegex(RuntimeError, "Incomplete routing modes"):
+            routing.compare(measurements(), ("leased",))
+        for modes in ((), ("unknown",)):
+            with self.assertRaisesRegex(RuntimeError, "Invalid routing modes"):
+                routing.compare(measurements(), modes)
+
     def test_cold_forwarded_discovery_regression_fails(self):
         rows = measurements()
         for row in rows:
