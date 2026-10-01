@@ -149,6 +149,7 @@ jobs:
         ports:
           - 9000:9000
         options: >-
+          --cpuset-cpus 2-3
           --health-cmd "curl --fail --silent http://127.0.0.1:9000/health/ready"
           --health-interval 3s --health-timeout 3s --health-retries 30
     steps:
@@ -177,10 +178,28 @@ jobs:
           CELLULE_TEST_ENDPOINT: http://127.0.0.1:9000
           CELLULE_TEST_BUCKET: cellule-routing
         run: |
+          set -euo pipefail
+          # Keep benchmark threads separate from provider work, without CPU quotas.
+          taskset -pc 0-1 $$
+          mkdir -p "$RUNNER_TEMP/routing-host"
+          nproc --all > "$RUNNER_TEMP/routing-host/cpu-count.txt"
+          taskset -pc $$ > "$RUNNER_TEMP/routing-host/benchmark-affinity.txt"
+          docker inspect ${{ job.services.rustfs.id }} > "$RUNNER_TEMP/routing-host/provider.json"
+          cat /proc/pressure/cpu /proc/pressure/io > "$RUNNER_TEMP/routing-host/pressure-before.txt"
+          cat /proc/diskstats > "$RUNNER_TEMP/routing-host/diskstats-before.txt"
+          cat /proc/stat > "$RUNNER_TEMP/routing-host/stat-before.txt"
           python3 -B -m unittest discover -s crates/cellule-peer-http/qualification -p 'test_*.py'
           python3 crates/cellule-peer-http/qualification/routing.py \
             --baseline "$ROUTING_BASELINE" --state "$RUNNER_TEMP/cell-routing" \
             --mode "${{ matrix.mode }}"
+      - name: Retain qualification host profile
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/cell-routing/evidence/host-profile"
+          cp "$RUNNER_TEMP/routing-host/"* "$RUNNER_TEMP/cell-routing/evidence/host-profile/"
+          cat /proc/pressure/cpu /proc/pressure/io > "$RUNNER_TEMP/cell-routing/evidence/host-profile/pressure-after.txt"
+          cat /proc/diskstats > "$RUNNER_TEMP/cell-routing/evidence/host-profile/diskstats-after.txt"
+          cat /proc/stat > "$RUNNER_TEMP/cell-routing/evidence/host-profile/stat-after.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
