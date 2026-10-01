@@ -1,137 +1,12 @@
-name: Cell reference Compose smoke
-
+name: Serial forwarding diagnostic
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/reference-compose.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".cargo/**"
-      - "crates/cellule-app/Cargo.toml"
-      - "crates/cellule-app/src/**"
-      - "crates/cellule-host/Cargo.toml"
-      - "crates/cellule-host/src/**"
-      - "crates/cellule-runtime/Cargo.toml"
-      - "crates/cellule-runtime/build.rs"
-      - "crates/cellule-runtime/docs/contracts/peer.proto"
-      - "crates/cellule-runtime/src/**"
-      - "crates/cellule-ltx/Cargo.toml"
-      - "crates/cellule-ltx/src/**"
-      - "crates/cellule-store/Cargo.toml"
-      - "crates/cellule-store/src/**"
-      - "crates/cellule-app/tests/**"
-      - "crates/cellule-app/qualification/**"
-      - "crates/cellule-peer-http/**"
   workflow_dispatch:
-    inputs:
-      routing_baseline:
-        description: "Routing comparison revision (default: origin/main)"
-        type: string
-        default: ""
-      routing_only:
-        description: "Run only the matched routing measurement"
-        type: boolean
-        default: false
-
 permissions:
   contents: read
-
-concurrency:
-  group: cell-reference-compose-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  smoke:
-    if: ${{ !inputs.routing_only }}
+  diagnostic:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    env:
-      CELLULE_REFERENCE_PROJECT: cell-reference
-      CELLULE_PERF_ITERATIONS: "30"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-        with:
-          persist-credentials: false
-      - name: Pin qualification source and host profile
-        run: |
-          set -euo pipefail
-          CELLULE_REFERENCE_STATE="$RUNNER_TEMP/cell-reference"
-          printf 'CELLULE_REFERENCE_STATE=%s\n' "$CELLULE_REFERENCE_STATE" >> "$GITHUB_ENV"
-          mkdir -p "$CELLULE_REFERENCE_STATE/source" "$CELLULE_REFERENCE_STATE/target-linux" "$CELLULE_REFERENCE_STATE/evidence"
-          # Capability-free container root needs write permission on this runner-owned mount.
-          chmod 1777 "$CELLULE_REFERENCE_STATE/evidence"
-          git archive HEAD | tar -x -C "$CELLULE_REFERENCE_STATE/source"
-          git rev-parse HEAD > "$CELLULE_REFERENCE_STATE/evidence/source-revision.txt"
-          uname -a > "$CELLULE_REFERENCE_STATE/evidence/host.txt"
-          docker info --format '{{json .}}' > "$CELLULE_REFERENCE_STATE/evidence/docker-info.json"
-      - name: Build release test binary
-        run: |
-          set -euo pipefail
-          python3 -B -m unittest discover \
-            -s crates/cellule-app/qualification -p 'test_*.py'
-          docker compose -p "$CELLULE_REFERENCE_PROJECT" \
-            -f "$CELLULE_REFERENCE_STATE/source/crates/cellule-app/qualification/compose.yaml" \
-            run --name cell-reference-build build \
-            2>&1 | tee "$CELLULE_REFERENCE_STATE/evidence/build.log"
-      - name: Exercise three constrained nodes and real object storage
-        run: |
-          set -euo pipefail
-          compose() {
-            docker compose -p "$CELLULE_REFERENCE_PROJECT" \
-              -f "$CELLULE_REFERENCE_STATE/source/crates/cellule-app/qualification/compose.yaml" "$@"
-          }
-          compose up -d node-0 node-1 node-2
-          compose run --name cell-reference-driver driver
-          for node in node-0 node-1 node-2; do
-            container=$(compose ps -aq "$node")
-            test -n "$container"
-            test "$(docker wait "$container")" = 0
-          done
-          # These correctness gates host their runtimes in one container;
-          # independent-process scaling remains the following qualification.
-          compose run --no-deps --name cell-reference-rollout \
-            -e CELLULE_PERF_PROCESS_ROOT=reference-compose-additive-rollout \
-            driver rollout
-          compose run --no-deps --name cell-reference-entities \
-            -e CELLULE_TEST_PREFIX=reference-compose-entities \
-            driver entities
-          compose stop
-      - name: Scale readers across 3, 5, 10 and 20 constrained nodes
-        run: |
-          python3 "$CELLULE_REFERENCE_STATE/source/crates/cellule-app/qualification/scale.py" \
-            --state "$CELLULE_REFERENCE_STATE" --project "$CELLULE_REFERENCE_PROJECT-scale"
-      - name: Measure writable entity traffic across 3, 5, 10 and 20 constrained nodes
-        run: |
-          python3 "$CELLULE_REFERENCE_STATE/source/crates/cellule-app/qualification/scale.py" \
-            --state "$CELLULE_REFERENCE_STATE" --project "$CELLULE_REFERENCE_PROJECT-entities" \
-            --workload entities
-      - name: Retain reports and container resource proof
-        if: always()
-        run: |
-          set -euo pipefail
-          compose() {
-            docker compose -p "$CELLULE_REFERENCE_PROJECT" \
-              -f "$CELLULE_REFERENCE_STATE/source/crates/cellule-app/qualification/compose.yaml" "$@"
-          }
-          compose logs --no-color > "$CELLULE_REFERENCE_STATE/evidence/compose.log"
-          containers=$(compose ps -aq)
-          if [ -n "$containers" ]; then
-            mapfile -t container_ids <<< "$containers"
-            docker inspect "${container_ids[@]}" > "$CELLULE_REFERENCE_STATE/evidence/containers.json"
-          fi
-          docker image ls -a --digests --no-trunc > "$CELLULE_REFERENCE_STATE/evidence/images.txt"
-          compose stop
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: cell-reference-compose-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cell-reference/evidence/
-          if-no-files-found: error
-          retention-days: 7
-
-  routing:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 30
     services:
       rustfs:
         image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
@@ -145,39 +20,64 @@ jobs:
         options: >-
           --health-cmd "curl --fail --silent http://127.0.0.1:9000/health/ready"
           --health-interval 3s --health-timeout 3s --health-retries 30
+    env:
+      AWS_ACCESS_KEY_ID: cellule-ci
+      AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+      CELLULE_TEST_ENDPOINT: http://127.0.0.1:9000
+      CELLULE_TEST_BUCKET: cellule-serial-diagnostic
+      CELLULE_SERIAL_DIAGNOSTIC: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Prepare isolated provider
-        env:
-          AWS_ACCESS_KEY_ID: cellule-ci
-          AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
-          AWS_DEFAULT_REGION: us-east-1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Pin source and prepare provider
         run: |
+          mkdir -p diagnostics
+          git rev-parse HEAD > diagnostics/source.txt
+          rustc -Vv > diagnostics/rustc.txt
+          uname -a > diagnostics/host.txt
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket cellule-routing
-      - name: Compare frozen routing binaries
-        env:
-          ROUTING_BASELINE: ${{ inputs.routing_baseline || github.event.pull_request.base.sha || 'origin/main' }}
-          AWS_ACCESS_KEY_ID: cellule-ci
-          AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
-          AWS_REGION: us-east-1
-          CELLULE_TEST_ENDPOINT: http://127.0.0.1:9000
-          CELLULE_TEST_BUCKET: cellule-routing
+          aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket cellule-serial-diagnostic
+      - name: Compile one release binary
         run: |
-          python3 -B -m unittest discover -s crates/cellule-peer-http/qualification -p 'test_*.py'
-          python3 crates/cellule-peer-http/qualification/routing.py \
-            --baseline "$ROUTING_BASELINE" --state "$RUNNER_TEMP/cell-routing"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          cargo test -p cellule-peer-http --lib --release --locked --no-run --message-format=json > diagnostics/build.jsonl
+          python3 - <<'PYBUILD'
+          import json, pathlib
+          rows=[json.loads(x) for x in pathlib.Path('diagnostics/build.jsonl').read_text().splitlines()]
+          bins={r['executable'] for r in rows if r.get('reason')=='compiler-artifact' and r.get('executable') and r['target']['name']=='cellule_peer_http'}
+          assert len(bins)==1
+          pathlib.Path('diagnostics/binary-path.txt').write_text(bins.pop())
+          PYBUILD
+          sha256sum "$(cat diagnostics/binary-path.txt)" > diagnostics/binary.sha256
+      - name: Retain all three diagnostic repeats
+        run: |
+          binary=$(cat diagnostics/binary-path.txt)
+          selector=performance_tests::rustfs_owner_routing_latency_throughput
+          "$binary" "$selector" --ignored --exact --list > diagnostics/test-list.log
+          grep -Fx "${selector}: test" diagnostics/test-list.log
+          failed=0
+          for repeat in 1 2 3; do
+            mkdir -p "diagnostics/repeat-$repeat"
+            export CELLULE_TEST_PREFIX="serial-diagnostic-${GITHUB_RUN_ID}-$repeat"
+            export CELLULE_PERF_EVIDENCE="$PWD/diagnostics/repeat-$repeat"
+            if "$binary" "$selector" --ignored --exact --nocapture > "diagnostics/repeat-$repeat/run.log" 2>&1; then
+              sha256sum "$binary" > "diagnostics/repeat-$repeat/binary.sha256"
+            else
+              failed=$((failed + 1))
+            fi
+          done
+          test "$failed" -eq 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: cell-routing-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cell-routing/evidence/
+          name: cell-serial-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics
           if-no-files-found: error
           retention-days: 7

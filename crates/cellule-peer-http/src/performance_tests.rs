@@ -32,7 +32,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         OnceLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -107,6 +107,7 @@ impl Command for Increment {
     }
 }
 struct Read;
+static DIAGNOSTIC_READ_NS: AtomicU64 = AtomicU64::new(0);
 impl Query for Read {
     const MODULE: &'static str = MODULE;
     const ID: u32 = 1;
@@ -114,13 +115,16 @@ impl Query for Read {
     type Input = ();
     type Output = u64;
     fn execute(context: &mut QueryContext<'_>, _: ()) -> cellule_runtime::Result<u64> {
+        let started = Instant::now();
         let results = context.sql(&SqlBatch {
             statements: vec![SqlStatement {
                 sql: "SELECT value FROM counter".into(),
                 parameters: vec![],
             }],
         })?;
-        Ok(value(&results[0].rows[0][0]))
+        let result = value(&results[0].rows[0][0]);
+        DIAGNOSTIC_READ_NS.store(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        Ok(result)
     }
 }
 fn value(value: &SqlValue) -> u64 {
@@ -589,181 +593,161 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
             && commands.is_multiple_of(16)
     );
     let mut expected = 0_u64;
-    for (route, client) in [("local", &local), ("forwarded", &peer)] {
-        let cold_stage = format!("{route}_query_cold-c1");
-        gate.start(&cold_stage).await;
-        counted.reset();
-        hops.store(0, Ordering::Relaxed);
-        let cold = Instant::now();
-        assert_eq!(
-            client
-                .query::<Read>(&target, None, ())
-                .await
-                .unwrap()
-                .output,
-            expected
-        );
-        let elapsed = cold.elapsed();
-        report(
-            &format!("{route}_query_cold"),
-            1,
-            &mut [elapsed],
-            elapsed,
-            counted.counts().body_requests(),
-            counted.put_requests(),
-            hops.load(Ordering::Relaxed),
-        );
-        gate.finish(&cold_stage).await;
-        // Keep warm-route samples separate from the 30-second Describe cache.
-        // The fixture's observed contract is fixed; every request still crosses
-        // the receiver's authority/lease and actor admission gates.
-        let query_client =
-            client
-                .clone()
-                .with_observed_description(cellule_runtime::client::CellDescription {
+    if std::env::var("CELLULE_SERIAL_DIAGNOSTIC").is_ok_and(|v| v == "1") {
+        expected = serial_diagnostic(
+            &registry,
+            &handle,
+            &local,
+            &peer,
+            &target,
+            &transport,
+            &publications,
+        )
+        .await;
+    } else {
+        for (route, client) in [("local", &local), ("forwarded", &peer)] {
+            let cold_stage = format!("{route}_query_cold-c1");
+            gate.start(&cold_stage).await;
+            counted.reset();
+            hops.store(0, Ordering::Relaxed);
+            let cold = Instant::now();
+            assert_eq!(
+                client
+                    .query::<Read>(&target, None, ())
+                    .await
+                    .unwrap()
+                    .output,
+                expected
+            );
+            let elapsed = cold.elapsed();
+            report(
+                &format!("{route}_query_cold"),
+                1,
+                &mut [elapsed],
+                elapsed,
+                counted.counts().body_requests(),
+                counted.put_requests(),
+                hops.load(Ordering::Relaxed),
+            );
+            gate.finish(&cold_stage).await;
+            // Keep warm-route samples separate from the 30-second Describe cache.
+            // The fixture's observed contract is fixed; every request still crosses
+            // the receiver's authority/lease and actor admission gates.
+            let query_client = client.clone().with_observed_description(
+                cellule_runtime::client::CellDescription {
                     cell: target.cell_id(),
                     incarnation: IncarnationId::from_bytes([77; 16]),
                     code: registry.module_code(MODULE).unwrap(),
                     schema: 1,
-                });
-        if route == "local" {
-            // Separate first-request throughput from warm reused-client throughput.
-            // Each fresh transport must establish its description and route.
+                },
+            );
+            if route == "local" {
+                // Separate first-request throughput from warm reused-client throughput.
+                // Each fresh transport must establish its description and route.
+                for concurrency in [1, 16] {
+                    let stage = format!("local_query_fresh_client-c{concurrency}");
+                    gate.start(&stage).await;
+                    counted.reset();
+                    let started = Instant::now();
+                    let mut samples = Vec::new();
+                    for _ in 0..queries / concurrency {
+                        let results = futures_util::future::join_all((0..concurrency).map(|_| {
+                            let registry = registry.clone();
+                            let runtime = runtime.clone();
+                            let layout = layout.clone();
+                            let target = &target;
+                            async move {
+                                let start = Instant::now();
+                                let fresh = CellClient::local_runtime(registry, runtime, layout);
+                                assert_eq!(
+                                    fresh.query::<Read>(target, None, ()).await.unwrap().output,
+                                    expected
+                                );
+                                start.elapsed()
+                            }
+                        }))
+                        .await;
+                        samples.extend(results);
+                    }
+                    report(
+                        "local_query_fresh_client",
+                        concurrency,
+                        &mut samples,
+                        started.elapsed(),
+                        counted.counts().body_requests(),
+                        counted.put_requests(),
+                        0,
+                    );
+                    gate.finish(&stage).await;
+                }
+                // Adjacent direct-handle reads control for workstation scheduling
+                // noise when evaluating the warm route's CPU overhead.
+                let direct = CellClient::local(registry.clone(), handle.clone());
+                gate.start("local_read_control").await;
+                let mut ratios = Vec::new();
+                for index in 0..queries {
+                    let mut durations = [Duration::ZERO; 2];
+                    for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
+                        let selected = if lane == 0 { &direct } else { &query_client };
+                        let started = Instant::now();
+                        assert_eq!(
+                            selected
+                                .query::<Read>(&target, None, ())
+                                .await
+                                .unwrap()
+                                .output,
+                            expected
+                        );
+                        durations[lane] = started.elapsed();
+                    }
+                    ratios.push(durations[1].as_secs_f64() / durations[0].as_secs_f64());
+                }
+                ratios.sort_by(f64::total_cmp);
+                println!(
+                    "RUSTFS warm_route_control calls={queries} median_runtime_to_direct_ratio={:.6}",
+                    ratios[queries / 2]
+                );
+                gate.finish("local_read_control").await;
+            }
             for concurrency in [1, 16] {
-                let stage = format!("local_query_fresh_client-c{concurrency}");
+                let stage = format!("{route}_query-c{concurrency}");
                 gate.start(&stage).await;
+                if route == "forwarded" {
+                    transport.routes().invalidate(&target, owner_session);
+                    transport.routes().route(&target).await.unwrap();
+                }
                 counted.reset();
+                hops.store(0, Ordering::Relaxed);
                 let started = Instant::now();
                 let mut samples = Vec::new();
                 for _ in 0..queries / concurrency {
-                    let results = futures_util::future::join_all((0..concurrency).map(|_| {
-                        let registry = registry.clone();
-                        let runtime = runtime.clone();
-                        let layout = layout.clone();
-                        let target = &target;
-                        async move {
-                            let start = Instant::now();
-                            let fresh = CellClient::local_runtime(registry, runtime, layout);
-                            assert_eq!(
-                                fresh.query::<Read>(target, None, ()).await.unwrap().output,
-                                expected
-                            );
-                            start.elapsed()
-                        }
+                    let results = futures_util::future::join_all((0..concurrency).map(|_| async {
+                        let start = Instant::now();
+                        let result = query_client.query::<Read>(&target, None, ()).await.unwrap();
+                        assert_eq!(result.output, expected);
+                        start.elapsed()
                     }))
                     .await;
                     samples.extend(results);
                 }
                 report(
-                    "local_query_fresh_client",
+                    &format!("{route}_query"),
                     concurrency,
                     &mut samples,
                     started.elapsed(),
                     counted.counts().body_requests(),
                     counted.put_requests(),
-                    0,
+                    hops.load(Ordering::Relaxed),
                 );
                 gate.finish(&stage).await;
             }
-            // Adjacent direct-handle reads control for workstation scheduling
-            // noise when evaluating the warm route's CPU overhead.
-            let direct = CellClient::local(registry.clone(), handle.clone());
-            gate.start("local_read_control").await;
-            let mut ratios = Vec::new();
-            for index in 0..queries {
-                let mut durations = [Duration::ZERO; 2];
-                for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
-                    let selected = if lane == 0 { &direct } else { &query_client };
-                    let started = Instant::now();
-                    assert_eq!(
-                        selected
-                            .query::<Read>(&target, None, ())
-                            .await
-                            .unwrap()
-                            .output,
-                        expected
-                    );
-                    durations[lane] = started.elapsed();
-                }
-                ratios.push(durations[1].as_secs_f64() / durations[0].as_secs_f64());
-            }
-            ratios.sort_by(f64::total_cmp);
-            println!(
-                "RUSTFS warm_route_control calls={queries} median_runtime_to_direct_ratio={:.6}",
-                ratios[queries / 2]
-            );
-            gate.finish("local_read_control").await;
-        }
-        for concurrency in [1, 16] {
-            let stage = format!("{route}_query-c{concurrency}");
-            gate.start(&stage).await;
             if route == "forwarded" {
-                transport.routes().invalidate(&target, owner_session);
-                transport.routes().route(&target).await.unwrap();
-            }
-            counted.reset();
-            hops.store(0, Ordering::Relaxed);
-            let started = Instant::now();
-            let mut samples = Vec::new();
-            for _ in 0..queries / concurrency {
-                let results = futures_util::future::join_all((0..concurrency).map(|_| async {
-                    let start = Instant::now();
-                    let result = query_client.query::<Read>(&target, None, ()).await.unwrap();
-                    assert_eq!(result.output, expected);
-                    start.elapsed()
-                }))
-                .await;
-                samples.extend(results);
-            }
-            report(
-                &format!("{route}_query"),
-                concurrency,
-                &mut samples,
-                started.elapsed(),
-                counted.counts().body_requests(),
-                counted.put_requests(),
-                hops.load(Ordering::Relaxed),
-            );
-            gate.finish(&stage).await;
-        }
-        if route == "forwarded" {
-            gate.start("forwarded_read_control").await;
-            let mut ratios = Vec::new();
-            for index in 0..queries {
-                let mut durations = [Duration::ZERO; 2];
-                for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
-                    uncached_receiver.store(lane == 0, Ordering::Release);
-                    let started = Instant::now();
-                    assert_eq!(
-                        query_client
-                            .query::<Read>(&target, None, ())
-                            .await
-                            .unwrap()
-                            .output,
-                        expected
-                    );
-                    durations[lane] = started.elapsed();
-                }
-                ratios.push(durations[1].as_secs_f64() / durations[0].as_secs_f64());
-            }
-            uncached_receiver.store(false, Ordering::Release);
-            ratios.sort_by(f64::total_cmp);
-            println!(
-                "RUSTFS forwarded_route_control calls={queries} median_cached_to_uncached_ratio={:.6}",
-                ratios[queries / 2]
-            );
-            gate.finish("forwarded_read_control").await;
-            // Force the same cold owner-hint burst in both revisions. The
-            // shared adapter must enroll once, even when all callers miss.
-            gate.start("forwarded_query_uncached_route-c16").await;
-            counted.reset();
-            hops.store(0, Ordering::Relaxed);
-            let started = Instant::now();
-            let mut samples = Vec::new();
-            for _ in 0..4 {
-                transport.routes().invalidate(&target, owner_session);
-                samples.extend(
-                    futures_util::future::join_all((0..16).map(|_| async {
+                gate.start("forwarded_read_control").await;
+                let mut ratios = Vec::new();
+                for index in 0..queries {
+                    let mut durations = [Duration::ZERO; 2];
+                    for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
+                        uncached_receiver.store(lane == 0, Ordering::Release);
                         let started = Instant::now();
                         assert_eq!(
                             query_client
@@ -773,174 +757,206 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
                                 .output,
                             expected
                         );
-                        started.elapsed()
-                    }))
-                    .await,
+                        durations[lane] = started.elapsed();
+                    }
+                    ratios.push(durations[1].as_secs_f64() / durations[0].as_secs_f64());
+                }
+                uncached_receiver.store(false, Ordering::Release);
+                ratios.sort_by(f64::total_cmp);
+                println!(
+                    "RUSTFS forwarded_route_control calls={queries} median_cached_to_uncached_ratio={:.6}",
+                    ratios[queries / 2]
                 );
+                gate.finish("forwarded_read_control").await;
+                // Force the same cold owner-hint burst in both revisions. The
+                // shared adapter must enroll once, even when all callers miss.
+                gate.start("forwarded_query_uncached_route-c16").await;
+                counted.reset();
+                hops.store(0, Ordering::Relaxed);
+                let started = Instant::now();
+                let mut samples = Vec::new();
+                for _ in 0..4 {
+                    transport.routes().invalidate(&target, owner_session);
+                    samples.extend(
+                        futures_util::future::join_all((0..16).map(|_| async {
+                            let started = Instant::now();
+                            assert_eq!(
+                                query_client
+                                    .query::<Read>(&target, None, ())
+                                    .await
+                                    .unwrap()
+                                    .output,
+                                expected
+                            );
+                            started.elapsed()
+                        }))
+                        .await,
+                    );
+                }
+                report(
+                    "forwarded_query_uncached_route",
+                    16,
+                    &mut samples,
+                    started.elapsed(),
+                    counted.counts().body_requests(),
+                    counted.put_requests(),
+                    hops.load(Ordering::Relaxed),
+                );
+                gate.finish("forwarded_query_uncached_route-c16").await;
             }
+            // Repeated bursts cross the former two-second route-cache lifetime.
+            let mut samples = Vec::new();
+            let mut reads = 0;
+            let mut puts = 0;
+            let mut peer_hops = 0;
+            let burst_window = Instant::now();
+            for burst in 0..paced_bursts {
+                tokio::time::sleep(Duration::from_millis(2100)).await;
+                // Both versions cross the idle boundary before either burst runs.
+                // The driver reverses burst order to balance the first wake-up.
+                let stage = format!("{route}_paced-{burst}");
+                gate.start(&stage).await;
+                if route == "forwarded" {
+                    // Isolate the receiver's expired admission-cache window from
+                    // the sender's independent 15-second background refresh.
+                    transport.routes().invalidate(&target, owner_session);
+                    transport.routes().route(&target).await.unwrap();
+                }
+                counted.reset();
+                hops.store(0, Ordering::Relaxed);
+                let results = futures_util::future::join_all((0..16).map(|_| async {
+                    let start = Instant::now();
+                    assert_eq!(
+                        query_client
+                            .query::<Read>(&target, None, ())
+                            .await
+                            .unwrap()
+                            .output,
+                        expected
+                    );
+                    start.elapsed()
+                }))
+                .await;
+                samples.extend(results);
+                reads += counted.counts().body_requests();
+                puts += counted.put_requests();
+                peer_hops += hops.load(Ordering::Relaxed);
+                gate.finish(&stage).await;
+            }
+            let elapsed = burst_window.elapsed();
             report(
-                "forwarded_query_uncached_route",
+                &format!("{route}_query_expired_bursts"),
                 16,
                 &mut samples,
-                started.elapsed(),
-                counted.counts().body_requests(),
-                counted.put_requests(),
-                hops.load(Ordering::Relaxed),
+                elapsed,
+                reads,
+                puts,
+                peer_hops,
             );
-            gate.finish("forwarded_query_uncached_route-c16").await;
-        }
-        // Repeated bursts cross the former two-second route-cache lifetime.
-        let mut samples = Vec::new();
-        let mut reads = 0;
-        let mut puts = 0;
-        let mut peer_hops = 0;
-        let burst_window = Instant::now();
-        for burst in 0..paced_bursts {
-            tokio::time::sleep(Duration::from_millis(2100)).await;
-            // Both versions cross the idle boundary before either burst runs.
-            // The driver reverses burst order to balance the first wake-up.
-            let stage = format!("{route}_paced-{burst}");
-            gate.start(&stage).await;
-            if route == "forwarded" {
-                // Isolate the receiver's expired admission-cache window from
-                // the sender's independent 15-second background refresh.
-                transport.routes().invalidate(&target, owner_session);
-                transport.routes().route(&target).await.unwrap();
-            }
-            counted.reset();
-            hops.store(0, Ordering::Relaxed);
-            let results = futures_util::future::join_all((0..16).map(|_| async {
-                let start = Instant::now();
+            let target = &target;
+            for concurrency in [1, 16] {
+                let stage = format!("{route}_command-c{concurrency}");
+                gate.start(&stage).await;
+                counted.reset();
+                hops.store(0, Ordering::Relaxed);
+                let started = Instant::now();
+                let mut samples = Vec::new();
+                let mut sequences = HashSet::new();
+                for batch in 0..commands / concurrency {
+                    let results =
+                        futures_util::future::join_all((0..concurrency).map(|slot| async move {
+                            let index = batch * concurrency + slot;
+                            let mut id = [0_u8; 16];
+                            id[0] = if route == "local" { 1 } else { 2 };
+                            id[1] = concurrency as u8;
+                            id[8..].copy_from_slice(&(index as u64).to_be_bytes());
+                            let now = now_ms().unwrap();
+                            let start = Instant::now();
+                            let committed = client
+                                .command::<Increment>(
+                                    target,
+                                    cellule_runtime::MutationIdentity {
+                                        request_id: RequestId::from_bytes(id),
+                                        issued_at_ms: now,
+                                        expires_at_ms: now + 300_000,
+                                    },
+                                    (),
+                                )
+                                .await
+                                .unwrap();
+                            assert_eq!(committed.output, committed.receipt.commit_sequence);
+                            (start.elapsed(), committed.receipt)
+                        }))
+                        .await;
+                    for (sample, receipt) in results {
+                        assert!(sequences.insert(receipt.commit_sequence));
+                        samples.push(sample);
+                    }
+                }
+                expected += commands as u64;
                 assert_eq!(
-                    query_client
-                        .query::<Read>(&target, None, ())
-                        .await
-                        .unwrap()
-                        .output,
+                    client.query::<Read>(target, None, ()).await.unwrap().output,
                     expected
                 );
-                start.elapsed()
-            }))
-            .await;
-            samples.extend(results);
-            reads += counted.counts().body_requests();
-            puts += counted.put_requests();
-            peer_hops += hops.load(Ordering::Relaxed);
-            gate.finish(&stage).await;
-        }
-        let elapsed = burst_window.elapsed();
-        report(
-            &format!("{route}_query_expired_bursts"),
-            16,
-            &mut samples,
-            elapsed,
-            reads,
-            puts,
-            peer_hops,
-        );
-        let target = &target;
-        for concurrency in [1, 16] {
-            let stage = format!("{route}_command-c{concurrency}");
-            gate.start(&stage).await;
-            counted.reset();
-            hops.store(0, Ordering::Relaxed);
-            let started = Instant::now();
-            let mut samples = Vec::new();
-            let mut sequences = HashSet::new();
-            for batch in 0..commands / concurrency {
-                let results =
-                    futures_util::future::join_all((0..concurrency).map(|slot| async move {
-                        let index = batch * concurrency + slot;
-                        let mut id = [0_u8; 16];
-                        id[0] = if route == "local" { 1 } else { 2 };
-                        id[1] = concurrency as u8;
-                        id[8..].copy_from_slice(&(index as u64).to_be_bytes());
-                        let now = now_ms().unwrap();
-                        let start = Instant::now();
-                        let committed = client
-                            .command::<Increment>(
-                                target,
-                                cellule_runtime::MutationIdentity {
-                                    request_id: RequestId::from_bytes(id),
-                                    issued_at_ms: now,
-                                    expires_at_ms: now + 300_000,
-                                },
-                                (),
-                            )
-                            .await
-                            .unwrap();
-                        assert_eq!(committed.output, committed.receipt.commit_sequence);
-                        (start.elapsed(), committed.receipt)
-                    }))
-                    .await;
-                for (sample, receipt) in results {
-                    assert!(sequences.insert(receipt.commit_sequence));
-                    samples.push(sample);
-                }
+                report(
+                    &format!("{route}_command"),
+                    concurrency,
+                    &mut samples,
+                    started.elapsed(),
+                    counted.counts().body_requests(),
+                    counted.put_requests(),
+                    hops.load(Ordering::Relaxed),
+                );
+                publications.report(
+                    &format!("{route}_command"),
+                    concurrency,
+                    expected - commands as u64 + 1,
+                    expected,
+                );
+                gate.finish(&stage).await;
             }
-            expected += commands as u64;
-            assert_eq!(
-                client.query::<Read>(target, None, ()).await.unwrap().output,
-                expected
-            );
-            report(
-                &format!("{route}_command"),
-                concurrency,
-                &mut samples,
-                started.elapsed(),
-                counted.counts().body_requests(),
-                counted.put_requests(),
-                hops.load(Ordering::Relaxed),
-            );
-            publications.report(
-                &format!("{route}_command"),
-                concurrency,
-                expected - commands as u64 + 1,
-                expected,
-            );
-            gate.finish(&stage).await;
         }
-    }
-    // Paired writes use the same actor, immutable publication and authority
-    // gate. Alternate order so provider pauses cannot always favor one route.
-    let direct = CellClient::local(registry.clone(), handle.clone());
-    gate.start("write_route_control").await;
-    let mut ratios = Vec::new();
-    for index in 0..commands {
-        let mut durations = [Duration::ZERO; 2];
-        for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
-            let mut id = [0_u8; 16];
-            id[0] = 3;
-            id[1] = lane;
-            id[8..].copy_from_slice(&(index as u64).to_be_bytes());
-            let now = now_ms().unwrap();
-            let selected = if lane == 0 { &direct } else { &local };
-            let started = Instant::now();
-            let committed = selected
-                .command::<Increment>(
-                    &target,
-                    cellule_runtime::MutationIdentity {
-                        request_id: RequestId::from_bytes(id),
-                        issued_at_ms: now,
-                        expires_at_ms: now + 300_000,
-                    },
-                    (),
-                )
-                .await
-                .unwrap();
-            expected += 1;
-            assert_eq!(committed.output, expected);
-            assert_eq!(committed.receipt.commit_sequence, expected);
-            durations[lane as usize] = started.elapsed();
+        // Paired writes use the same actor, immutable publication and authority
+        // gate. Alternate order so provider pauses cannot always favor one route.
+        let direct = CellClient::local(registry.clone(), handle.clone());
+        gate.start("write_route_control").await;
+        let mut ratios = Vec::new();
+        for index in 0..commands {
+            let mut durations = [Duration::ZERO; 2];
+            for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let mut id = [0_u8; 16];
+                id[0] = 3;
+                id[1] = lane;
+                id[8..].copy_from_slice(&(index as u64).to_be_bytes());
+                let now = now_ms().unwrap();
+                let selected = if lane == 0 { &direct } else { &local };
+                let started = Instant::now();
+                let committed = selected
+                    .command::<Increment>(
+                        &target,
+                        cellule_runtime::MutationIdentity {
+                            request_id: RequestId::from_bytes(id),
+                            issued_at_ms: now,
+                            expires_at_ms: now + 300_000,
+                        },
+                        (),
+                    )
+                    .await
+                    .unwrap();
+                expected += 1;
+                assert_eq!(committed.output, expected);
+                assert_eq!(committed.receipt.commit_sequence, expected);
+                durations[lane as usize] = started.elapsed();
+            }
+            ratios.push(durations[1].as_secs_f64() / durations[0].as_secs_f64());
         }
-        ratios.push(durations[1].as_secs_f64() / durations[0].as_secs_f64());
+        ratios.sort_by(f64::total_cmp);
+        println!(
+            "RUSTFS write_route_control calls={commands} median_runtime_to_direct_ratio={:.6}",
+            ratios[commands / 2]
+        );
+        gate.finish("write_route_control").await;
     }
-    ratios.sort_by(f64::total_cmp);
-    println!(
-        "RUSTFS write_route_control calls={commands} median_runtime_to_direct_ratio={:.6}",
-        ratios[commands / 2]
-    );
-    gate.finish("write_route_control").await;
     gate.start("recovery").await;
     handle.drain().await.unwrap();
     runtime.shutdown().await.unwrap();
@@ -1002,4 +1018,142 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
         "RUSTFS correctness=passed commands={expected} final_sequence={expected} peer=mTLS+signed+authorized"
     );
     gate.finish("recovery").await;
+}
+
+// Temporary diagnostic snapshot only: one actor and provider, order-balanced
+// direct/local/peer calls, with sequence-correlated publication durations.
+async fn serial_diagnostic(
+    registry: &Arc<Registry>,
+    handle: &cellule_runtime::cell::actor::CellHandle,
+    local: &CellClient,
+    peer: &CellClient,
+    target: &CellTarget,
+    transport: &PeerHttpRoundTrip,
+    publications: &PublicationSamples,
+) -> u64 {
+    let description = cellule_runtime::client::CellDescription {
+        cell: target.cell_id(),
+        incarnation: handle.incarnation(),
+        code: handle.code(),
+        schema: handle.schema(),
+    };
+    let clients = [
+        CellClient::local(registry.clone(), handle.clone()).with_observed_description(description),
+        local.clone().with_observed_description(description),
+        peer.clone().with_observed_description(description),
+    ];
+    let names = ["direct", "local", "forwarded"];
+    let orders = [
+        [0, 1, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+        [1, 0, 2],
+        [0, 2, 1],
+    ];
+    let mut raw = String::from(
+        "kind\troute\titeration\torder\tsequence\trequest_ns\tsql_ns\tpublication_queue_ns\tpublication_prepare_ns\tpublication_authority_ns\tpublication_total_ns\n",
+    );
+    transport.routes().route(target).await.unwrap();
+    for client in &clients {
+        assert_eq!(
+            client.query::<Read>(target, None, ()).await.unwrap().output,
+            0
+        );
+    }
+    for iteration in 0..4096 {
+        for (order, lane) in orders[iteration % orders.len()].into_iter().enumerate() {
+            let started = Instant::now();
+            let observed = clients[lane].query::<Read>(target, None, ()).await.unwrap();
+            let elapsed = started.elapsed();
+            let sql_ns = DIAGNOSTIC_READ_NS.load(Ordering::Relaxed);
+            assert_eq!(observed.output, 0);
+            assert_eq!(observed.receipt.commit_sequence, 0);
+            assert!(u128::from(sql_ns) <= elapsed.as_nanos());
+            raw.push_str(&format!(
+                "query\t{}\t{iteration}\t{order}\t0\t{}\t{sql_ns}\t0\t0\t0\t0\n",
+                names[lane],
+                elapsed.as_nanos()
+            ));
+        }
+    }
+    for burst in 0..48 {
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        // Discovery is outside the timed calls, just as in qualification.
+        transport
+            .routes()
+            .invalidate(target, SessionId::from_bytes([76; 16]));
+        transport.routes().route(target).await.unwrap();
+        for (order, lane) in orders[burst % orders.len()].into_iter().enumerate() {
+            let results = futures_util::future::join_all((0..16).map(|_| async {
+                let started = Instant::now();
+                let observed = clients[lane].query::<Read>(target, None, ()).await.unwrap();
+                assert_eq!(observed.output, 0);
+                started.elapsed()
+            }))
+            .await;
+            for elapsed in results {
+                raw.push_str(&format!(
+                    "paced\t{}\t{burst}\t{order}\t0\t{}\t0\t0\t0\t0\t0\n",
+                    names[lane],
+                    elapsed.as_nanos()
+                ));
+            }
+        }
+    }
+    let mut expected = 0;
+    for iteration in 0..256 {
+        for (order, lane) in orders[iteration % orders.len()].into_iter().enumerate() {
+            let mut id = [0; 16];
+            id[0] = 200;
+            id[1] = lane as u8;
+            id[8..].copy_from_slice(&(iteration as u64).to_be_bytes());
+            let now = now_ms().unwrap();
+            let started = Instant::now();
+            let committed = clients[lane]
+                .command::<Increment>(
+                    target,
+                    cellule_runtime::MutationIdentity {
+                        request_id: RequestId::from_bytes(id),
+                        issued_at_ms: now,
+                        expires_at_ms: now + 300_000,
+                    },
+                    (),
+                )
+                .await
+                .unwrap();
+            let elapsed = started.elapsed();
+            expected += 1;
+            assert_eq!(committed.output, expected);
+            assert_eq!(committed.receipt.commit_sequence, expected);
+            let timing = publications.0.lock().unwrap()[&expected];
+            assert!(timing.succeeded);
+            assert!(timing.total <= elapsed);
+            raw.push_str(&format!(
+                "command\t{}\t{iteration}\t{order}\t{expected}\t{}\t0\t{}\t{}\t{}\t{}\n",
+                names[lane],
+                elapsed.as_nanos(),
+                timing.queue_wait.as_nanos(),
+                timing.preparation.as_nanos(),
+                timing.authority.as_nanos(),
+                timing.total.as_nanos()
+            ));
+        }
+    }
+    for client in &clients {
+        assert_eq!(
+            client.query::<Read>(target, None, ()).await.unwrap().output,
+            expected
+        );
+    }
+    let directory = std::env::var("CELLULE_PERF_EVIDENCE").unwrap();
+    std::fs::write(
+        std::path::Path::new(&directory).join("serial-correlated.tsv"),
+        raw,
+    )
+    .unwrap();
+    println!(
+        "DIAGNOSTIC-SERIAL query_calls=12288 paced_calls=2304 commands=768 final_sequence={expected}"
+    );
+    expected
 }
