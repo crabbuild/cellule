@@ -1,0 +1,42 @@
+---
+title: Cellule documentation
+description: Build a Rust application around durable, SQLite-backed Cells.
+---
+
+Cellule is an embedded framework. Your application declares modules and Cell topology; the framework handles fenced ownership, durable request outcomes, and verified recovery. Your service owns HTTP ingress, authorization, credentials, and deployment.
+
+## Start with a working application
+
+Run the [local quickstart](/docs/guides/quickstart) to exercise all eight primitives with temporary SQLite files and in-memory storage. It requires Rust 1.97 or newer and no cloud credentials.
+
+```sh
+cargo run -p cellule-app --example sql --locked
+```
+
+The SQL example commits order 42, reads it at the returned receipt, checks its total, and drains the runtime. Open the [complete runnable source](https://github.com/crabbuild/cellule/blob/main/crates/cellule-app/examples/sql.rs) while following the guide.
+
+## Choose your reading path
+
+| Your goal                  | Start here                                            | Continue with                                               |
+| -------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
+| Understand a Cell          | [At a glance](/docs/guides/at-a-glance)               | [Architecture](/docs/guides/architecture)                   |
+| Write an application       | [Quickstart](/docs/guides/quickstart)                 | [Typed API](/docs/guides/api)                               |
+| Choose a primitive         | [Primitive overview](/docs/primitives)                | [Runtime contracts](/docs/crates/runtime/docs/primitives)   |
+| Operate a node             | [Framework integration](/docs/guides/framework)       | [Host lifecycle](/docs/crates/host/docs/lifecycle)          |
+| Understand durable replies | [Interactive command path](/docs/concepts/durability) | [Execution and receipts](/docs/crates/runtime/docs/runtime) |
+| Study exact restore        | [Interactive recovery](/docs/concepts/recovery)       | [LTX recovery](/docs/crates/ltx/docs/recovery)              |
+| Assess readiness           | [Roadmap](/docs/guides/roadmap)                       | [Qualification](/docs/crates/runtime/docs/delivery)         |
+
+## The contracts to keep
+
+- A Cell has one fenced writer. A successful command follows durable publication or recoverable follower-log proof.
+- A command changes one Cell. Cross-Cell work uses durable Effects and an idempotent destination inbox.
+- Recovery verifies the authority-pinned root and every required chunk. State is reconstructed byte-identically or recovery fails.
+- A receipt binds a later read to a position in the same Cell.
+- Shutdown drains accepted work and releases resources on every exit path.
+
+## Browse the complete reference
+
+The [workspace reference](/docs/guides/reference) maps the seven crates, examples, tests, and verification commands. All repository guides, benchmark reports, audits, model notes, qualification profiles, and upstream provenance are included in the crate sections. Dated reports describe their recorded revisions and environments; they are not universal production guarantees.
+
+Every page links to its source. Use [llms.txt](/llms.txt) for the documentation index or [llms-full.txt](/llms-full.txt) for the complete text.

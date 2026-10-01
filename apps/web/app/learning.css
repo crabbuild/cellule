@@ -1,0 +1,1020 @@
+/* Guided learning surfaces share the honey/ink identity with the product site. */
+.learning-nav {
+  display: flex;
+  gap: 2rem;
+  border-bottom: 1px solid var(--line);
+  padding-block: 1.1rem;
+}
+.learning-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding-block: 0.3rem;
+}
+.learning-nav a > span {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.learning-nav a[aria-current="page"],
+.learning-nav a[aria-current="page"] > span {
+  color: var(--accent);
+}
+.learning-nav a[aria-current="page"] {
+  text-decoration: underline;
+  text-underline-offset: 7px;
+  text-decoration-color: var(--honey);
+}
+.learning-links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.learning-links > a {
+  padding: 1.8rem;
+  transition: background 0.15s;
+}
+.learning-links > a + a {
+  border-left: 1px solid var(--line);
+}
+.learning-links > a:hover {
+  background: var(--wash);
+}
+.learning-links .eyebrow {
+  font-size: 0.65rem;
+  margin-bottom: 1.1rem;
+}
+.learning-links h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 500;
+  margin: 0 0 0.9rem;
+}
+.learning-links h3 svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.learning-links p {
+  font-size: 0.9rem;
+  margin: 0;
+}
+.home-learning {
+  padding-block: 0 85px;
+}
+.home-learning > .eyebrow {
+  margin-bottom: 1.3rem;
+}
+.lesson-page {
+  grid-template-columns: minmax(0, 1fr);
+  padding-block: 65px 90px;
+  display: grid;
+  gap: 85px;
+}
+.lesson-page h2 {
+  font-size: clamp(1.9rem, 3vw, 2.6rem);
+  line-height: 1.2;
+  margin: 0 0 1.3rem;
+}
+.lesson-page .section-heading h2 {
+  margin: 0;
+}
+.lesson-lab {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.lesson-lab-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.3rem;
+  border-bottom: 1px solid var(--line);
+}
+.lesson-lab-bar > .mono {
+  color: var(--accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+}
+.lesson-lab-bar label {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.lesson-lab-bar select {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--surface);
+  padding: 0.45rem 0.6rem;
+}
+.lesson-diagram {
+  min-width: 0;
+  overflow-x: auto;
+}
+.lesson-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.lesson-node {
+  fill: var(--panel);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.svg-overline {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  fill: var(--accent);
+}
+.svg-title {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.4px;
+  fill: var(--ink);
+}
+.svg-copy {
+  font-size: 14px;
+  fill: var(--muted);
+}
+.svg-small {
+  font-size: 11px;
+  fill: var(--muted);
+}
+.lesson-connector {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.lesson-hex-button {
+  cursor: pointer;
+  outline: none;
+}
+.lesson-hex-button > path {
+  fill: var(--wash);
+  stroke: var(--line);
+  stroke-width: 1.5;
+  transition:
+    fill 0.15s,
+    stroke 0.15s;
+}
+.lesson-hex-button:hover > path {
+  stroke: var(--honey-deep);
+}
+.lesson-hex-button.is-active > path {
+  fill: var(--honey);
+  stroke: var(--honey-deep);
+}
+.lesson-hex-button.is-active > text {
+  fill: #142944;
+}
+.lesson-hex-button:focus-visible > path {
+  stroke: var(--ink);
+  stroke-width: 3;
+}
+.lesson-hex-button > text {
+  pointer-events: none;
+}
+.lesson-hex-button.is-paused > path {
+  stroke-dasharray: 5 3;
+  fill: var(--surface);
+}
+.lesson-hex-button.is-paused > text {
+  fill: var(--muted);
+}
+.lesson-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.lesson-choices button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.81rem;
+}
+.lesson-choices button[aria-pressed="true"] {
+  background: var(--wash);
+  border-color: var(--honey-deep);
+  color: var(--accent);
+}
+.identity-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+}
+.identity-visual {
+  min-width: 0;
+  padding: 1.3rem 0.5rem;
+}
+.identity-inspector {
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  padding: 1.6rem;
+}
+.identity-inspector .eyebrow,
+.topology-inspector .eyebrow {
+  font-size: 0.64rem;
+}
+.identity-inspector h3 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 1.25rem;
+  line-height: 1.4;
+  margin: 0 0 1.5rem;
+}
+.identity-fields {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+}
+.identity-fields > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.55rem;
+  font-size: 0.79rem;
+}
+.identity-fields dt {
+  color: var(--muted);
+}
+.identity-fields dd {
+  margin: 0;
+  text-align: right;
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+.identity-inspector > p {
+  font-size: 0.8rem;
+  margin: 1.25rem 0 0;
+}
+.identity-order-picker {
+  padding: 0.2rem 1rem;
+}
+.lesson-scroll-hint {
+  display: none;
+  font-size: 0.74rem;
+  padding-inline: 1rem;
+}
+.boundary-lab {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  border-top: 1px solid var(--line);
+  padding: 1.5rem;
+  background: var(--surface);
+}
+.boundary-lab .eyebrow {
+  font-size: 0.66rem;
+  margin-bottom: 1rem;
+}
+.boundary-answer strong {
+  font-weight: 500;
+  font-size: 1rem;
+}
+.boundary-answer p {
+  font-size: 0.9rem;
+  margin: 0.6rem 0 0;
+}
+.lesson-caption {
+  border-top: 1px solid var(--line);
+  margin: 0;
+  padding: 0.9rem 1.3rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.lesson-three {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3rem;
+}
+.lesson-three article {
+  border-top: 1px solid var(--line);
+  padding-top: 1.6rem;
+}
+.lesson-three article > svg {
+  color: var(--accent);
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.5;
+}
+.lesson-three h3 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 1.2rem;
+  line-height: 1.4;
+  margin: 1rem 0;
+}
+.lesson-three p {
+  font-size: 0.96rem;
+  margin: 0 0 1.2rem;
+}
+.lesson-three a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.86rem;
+  color: var(--accent);
+}
+.lesson-kicker {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--accent);
+}
+.lesson-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5rem;
+  align-items: start;
+}
+.lesson-split > div > p {
+  font-size: 1rem;
+  margin: 1.3rem 0;
+}
+.lesson-comparison {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.lesson-comparison article {
+  padding: 1.7rem;
+}
+.lesson-comparison article + article {
+  border-top: 1px solid var(--line);
+  background: var(--wash);
+}
+.lesson-comparison .mono {
+  color: var(--accent);
+  font-size: 0.68rem;
+}
+.lesson-comparison h3 {
+  font-family: var(--display);
+  font-size: 1.13rem;
+  font-weight: 500;
+  margin: 0.9rem 0;
+}
+.lesson-comparison p {
+  font-size: 0.92rem;
+  margin: 0;
+}
+.lesson-dark {
+  padding: 3rem;
+  background: #142944;
+  border-radius: 16px;
+  color: #fffdf7;
+}
+.lesson-dark .eyebrow {
+  color: #ffd56a;
+}
+.lesson-dark > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2.5rem;
+  margin-top: 2.5rem;
+}
+.lesson-dark article {
+  border-top: 1px solid #4d5c6c;
+  padding-top: 1.2rem;
+}
+.lesson-dark h3 {
+  font-family: var(--display);
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin: 0 0 1rem;
+}
+.lesson-dark p {
+  color: #c2cad4;
+  font-size: 0.92rem;
+  margin: 0;
+}
+.lesson-dark .lesson-dark-lead {
+  max-width: 660px;
+  font-size: 1rem;
+}
+.lesson-glossary {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 5rem;
+}
+.lesson-glossary dl {
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+.lesson-glossary dl > div {
+  padding: 1.2rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.lesson-glossary dt {
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+.lesson-glossary dd {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin: 0;
+}
+.lesson-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 2.3rem;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.lesson-next .eyebrow {
+  font-size: 0.66rem;
+}
+.lesson-next h2 {
+  font-size: 1.9rem;
+  margin-bottom: 0.8rem;
+}
+.lesson-next p {
+  font-size: 0.95rem;
+  margin: 0;
+  max-width: 640px;
+}
+.lesson-next > .button {
+  flex-shrink: 0;
+}
+.lesson-resource-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2rem;
+}
+.lesson-resource-grid > a {
+  border-top: 1px solid var(--line);
+  padding-top: 1.4rem;
+}
+.lesson-resource-grid h3 {
+  font-family: var(--display);
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin: 0 0 1rem;
+  line-height: 1.4;
+}
+.lesson-resource-grid p {
+  font-size: 0.94rem;
+}
+.lesson-resource-grid span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.84rem;
+  color: var(--accent);
+}
+.topology-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+}
+.topology-workspace > div {
+  min-width: 0;
+}
+.topology-diagram {
+  padding: 1rem 0.6rem;
+}
+.topology-node-frame {
+  fill: var(--surface);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.topology-cell-name {
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 500;
+  fill: var(--ink);
+}
+.topology-cell-status {
+  font-size: 9px;
+  fill: var(--muted);
+}
+.provider-connector {
+  stroke: var(--muted);
+  stroke-dasharray: 5 4;
+}
+.topology-cell-picker {
+  padding: 0 1.2rem 1.4rem;
+}
+.topology-inspector {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.6rem;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+.topology-inspector h3 {
+  font-family: var(--display);
+  font-size: 1.3rem;
+  font-weight: 500;
+  line-height: 1.4;
+  margin: 0 0 1rem;
+}
+.topology-inspector p {
+  font-size: 0.88rem;
+  margin: 0 0 1.5rem;
+}
+.topology-inspector .button {
+  font-size: 0.78rem;
+  padding: 0.6rem 0.8rem;
+}
+.lesson-step-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.lesson-step-actions .primary {
+  flex: 1;
+  white-space: nowrap;
+}
+.serving-checklist {
+  list-style: none;
+  counter-reset: serve;
+  padding: 0;
+  margin: 0;
+}
+.serving-checklist li {
+  position: relative;
+  padding: 0 0 1.5rem 2.7rem;
+  counter-increment: serve;
+}
+.serving-checklist li::before {
+  content: counter(serve, decimal-leading-zero);
+  position: absolute;
+  top: 0.1rem;
+  left: 0;
+  font:
+    0.8rem "IBM Plex Mono",
+    monospace;
+  color: var(--accent);
+}
+.serving-checklist strong {
+  font-weight: 500;
+}
+.serving-checklist p {
+  font-size: 0.93rem;
+  margin: 0.55rem 0 0;
+}
+.walkthrough-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 2.7rem;
+}
+.walkthrough-tabs button {
+  text-align: left;
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 1rem;
+}
+.walkthrough-tabs .mono {
+  display: block;
+  font-size: 0.63rem;
+  color: var(--accent);
+  margin-bottom: 0.65rem;
+}
+.walkthrough-tabs button[aria-pressed="true"] {
+  border-color: var(--honey-deep);
+  background: var(--wash);
+  color: var(--ink);
+}
+.walkthrough-intro {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: end;
+  margin-bottom: 2rem;
+}
+.walkthrough-intro .eyebrow {
+  font-size: 0.67rem;
+}
+.walkthrough-intro h2 {
+  margin: 0;
+}
+.walkthrough-intro > p {
+  font-size: 1rem;
+  margin: 0;
+}
+.lesson-demo-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.walkthrough-diagram {
+  padding: 1.5rem 1.5rem 0;
+}
+.walkthrough-diagram .lesson-svg {
+  min-width: 600px;
+}
+.walkthrough-step-picker {
+  padding: 0 1.5rem 1.5rem;
+}
+.walkthrough-detail {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  border-top: 1px solid var(--line);
+}
+.walkthrough-explanation {
+  padding: 2rem;
+}
+.walkthrough-explanation .eyebrow {
+  font-size: 0.66rem;
+  margin-bottom: 1.1rem;
+}
+.walkthrough-explanation h3 {
+  font-family: var(--display);
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 0 0 1rem;
+}
+.walkthrough-explanation > p {
+  font-size: 0.96rem;
+  margin: 0;
+  min-height: 100px;
+}
+.walkthrough-observation {
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--line);
+  margin-top: 1.4rem;
+}
+.walkthrough-observation > .mono {
+  font-size: 0.65rem;
+  color: var(--accent);
+}
+.walkthrough-observation p {
+  font-size: 0.9rem;
+  margin: 0.7rem 0 0;
+}
+.walkthrough-state {
+  padding: 2rem;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+.walkthrough-state > .mono {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+.walkthrough-state-light {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  color: var(--accent);
+  font-size: 0.83rem;
+  margin-block: 1.2rem;
+}
+.walkthrough-state-light > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--honey-deep);
+  flex-shrink: 0;
+}
+.walkthrough-state > strong {
+  display: block;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.95rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.walkthrough-state > p {
+  font-size: 0.88rem;
+  margin: 1.3rem 0 0;
+}
+.walkthrough-edge {
+  margin-top: 1.3rem;
+}
+.walkthrough-edge .button {
+  font-size: 0.8rem;
+}
+.walkthrough-edge > p {
+  font-size: 0.87rem;
+  border-left: 2px solid var(--honey-deep);
+  padding-left: 1rem;
+  margin-bottom: 0;
+}
+.walkthrough-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.2rem 1.5rem;
+  border-top: 1px solid var(--line);
+}
+.walkthrough-bottom > span {
+  color: var(--muted);
+  font-size: 0.83rem;
+}
+.walkthrough-run {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4rem;
+  padding-top: 3rem;
+  align-items: center;
+}
+.walkthrough-run h3 {
+  font-family: var(--display);
+  font-size: 1.3rem;
+  font-weight: 500;
+  margin: 0 0 1rem;
+}
+.walkthrough-run p {
+  font-size: 0.95rem;
+  margin-bottom: 1.2rem;
+}
+.walkthrough-source-links {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.walkthrough-source-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--accent);
+  font-size: 0.84rem;
+}
+.walkthrough-run .terminal-result code {
+  font-size: 0.78rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1100px) {
+  .identity-workspace {
+    grid-template-columns: minmax(0, 1fr) 250px;
+  }
+  .identity-inspector {
+    padding: 1.3rem;
+  }
+  .topology-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .topology-inspector {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .topology-inspector > div:first-child {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.2rem 3rem;
+  }
+  .topology-inspector .eyebrow {
+    grid-column: 1 / -1;
+  }
+  .topology-inspector .identity-fields {
+    grid-column: 2;
+    grid-row: 2 / 4;
+  }
+  .topology-inspector .lesson-step-actions,
+  .topology-inspector > .button {
+    align-self: start;
+  }
+  .lesson-three,
+  .lesson-resource-grid {
+    gap: 1.8rem;
+  }
+  .lesson-split,
+  .lesson-glossary,
+  .walkthrough-run {
+    gap: 3rem;
+  }
+  .lesson-next {
+    align-items: start;
+    flex-direction: column;
+  }
+}
+@media (max-width: 800px) {
+  .lesson-page {
+    padding-block: 45px 60px;
+    gap: 60px;
+  }
+  .identity-workspace {
+    grid-template-columns: 1fr;
+  }
+  .identity-inspector {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .identity-fields {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.65rem 2rem;
+  }
+  .identity-inspector > p {
+    max-width: 600px;
+  }
+  .boundary-lab,
+  .lesson-split,
+  .lesson-glossary,
+  .walkthrough-intro,
+  .walkthrough-run {
+    grid-template-columns: 1fr;
+    gap: 1.8rem;
+  }
+  .learning-nav {
+    gap: 1.4rem;
+  }
+  .learning-links > a {
+    padding: 1.3rem;
+  }
+  .learning-links h3 {
+    font-size: 1rem;
+  }
+  .learning-links .eyebrow {
+    font-size: 0.59rem;
+  }
+  .home-learning {
+    padding-bottom: 60px;
+  }
+  .walkthrough-detail {
+    grid-template-columns: 1fr 1fr;
+  }
+  .walkthrough-explanation,
+  .walkthrough-state {
+    padding: 1.5rem;
+  }
+  .walkthrough-tabs {
+    gap: 0.4rem;
+  }
+  .walkthrough-tabs button {
+    padding: 0.9rem;
+    font-size: 0.87rem;
+  }
+  .walkthrough-tabs .mono {
+    font-size: 0.55rem;
+  }
+}
+@media (max-width: 580px) {
+  .learning-nav {
+    flex-wrap: wrap;
+    gap: 0.6rem 1.1rem;
+    padding-block: 1rem;
+  }
+  .learning-nav a {
+    font-size: 0.76rem;
+  }
+  .learning-nav a > span {
+    font-size: 0.63rem;
+  }
+  .learning-links,
+  .lesson-three,
+  .lesson-dark > div,
+  .lesson-resource-grid {
+    grid-template-columns: 1fr;
+  }
+  .learning-links > a + a {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .learning-links > a {
+    padding: 1.5rem;
+  }
+  .learning-links h3 {
+    font-size: 1.12rem;
+  }
+  .home-learning {
+    padding-bottom: 50px;
+  }
+  .lesson-lab-bar {
+    flex-wrap: wrap;
+    padding: 0.85rem 1rem;
+  }
+  .lesson-lab-bar > .mono {
+    font-size: 0.59rem;
+  }
+  .identity-svg {
+    min-width: 610px;
+  }
+  .lesson-scroll-hint {
+    display: block;
+  }
+  .identity-visual {
+    min-width: 0;
+    padding: 0.8rem 0;
+  }
+  .identity-inspector {
+    padding: 1.2rem;
+  }
+  .identity-fields {
+    grid-template-columns: 1fr;
+  }
+  .boundary-lab {
+    padding: 1.2rem;
+    gap: 1.3rem;
+  }
+  .lesson-caption {
+    padding: 0.9rem 1rem;
+    font-size: 0.7rem;
+  }
+  .lesson-choices button {
+    min-height: 39px;
+    font-size: 0.76rem;
+  }
+  .lesson-page h2 {
+    font-size: 1.85rem;
+  }
+  .lesson-three {
+    gap: 1.5rem;
+  }
+  .lesson-dark {
+    padding: 1.6rem;
+  }
+  .lesson-dark > div {
+    gap: 1.7rem;
+  }
+  .lesson-next {
+    padding: 1.5rem;
+  }
+  .lesson-next h2 {
+    font-size: 1.7rem;
+  }
+  .lesson-next .button {
+    font-size: 0.83rem;
+  }
+  .topology-diagram .lesson-svg {
+    min-width: 620px;
+  }
+  .topology-inspector {
+    padding: 1.3rem;
+  }
+  .topology-inspector > div:first-child {
+    display: block;
+  }
+  .topology-inspector .identity-fields {
+    display: grid;
+  }
+  .topology-inspector .lesson-step-actions {
+    width: 100%;
+  }
+  .walkthrough-tabs {
+    grid-template-columns: 1fr 1fr;
+    margin-bottom: 2rem;
+  }
+  .walkthrough-tabs button {
+    padding: 1rem;
+  }
+  .walkthrough-tabs .mono {
+    font-size: 0.6rem;
+  }
+  .walkthrough-detail {
+    grid-template-columns: 1fr;
+  }
+  .walkthrough-state {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .walkthrough-explanation > p {
+    min-height: 0;
+  }
+  .walkthrough-bottom {
+    flex-direction: column;
+    align-items: start;
+    padding: 1rem;
+  }
+  .walkthrough-bottom .lesson-step-actions {
+    width: 100%;
+  }
+  .walkthrough-diagram {
+    padding: 1.1rem 0.4rem 0;
+  }
+  .walkthrough-step-picker {
+    padding: 0 1rem 1rem;
+  }
+  .walkthrough-explanation h3 {
+    font-size: 1.3rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lesson-hex-button > path,
+  .learning-links > a {
+    transition: none;
+  }
+}
+
+.walkthrough-run > * {
+  min-width: 0;
+}

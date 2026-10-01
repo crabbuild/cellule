@@ -1,0 +1,37 @@
+---
+title: Queue
+description: At-least-once work through typed Cellule handles.
+---
+
+Validate a claim lease before external work. Make the work safe to repeat.
+
+<PrimitiveDiagram id="queue" />
+
+## Use the typed capability
+
+Obtain `queue::<M>()` from an `ApplicationHandle` bound to the tenant and application. Its entry points are **send, claim, ack**. The compiled module and Cell type determine the role and partition rules.
+
+| Contract          | Behavior                                                                 |
+| ----------------- | ------------------------------------------------------------------------ |
+| Ownership         | One fenced writer per Cell.                                              |
+| Mutation identity | Keep the same request ID when resolving or retrying one logical command. |
+| Response          | Success follows durable publication or recoverable follower proof.       |
+| Read consistency  | A receipt constrains a read in the same Cell.                            |
+| Recovery          | State and recorded outcomes restore together.                            |
+
+## Run the example
+
+```sh
+cargo run -p cellule-app --example basic --locked
+```
+
+The [complete runnable source](https://github.com/crabbuild/cellule/blob/main/crates/cellule-app/examples/basic.rs) includes module registration, provisioning, invocation, and shutdown. Examples use temporary SQLite and in-memory object storage.
+
+## Read the detailed contracts
+
+- [Runtime Queue contract](/docs/crates/runtime/docs/primitives#queue)
+- [Typed capability reference](/docs/guides/api#primitive-capabilities)
+- [Runnable example guide](/docs/crates/app/docs/examples)
+- [Topology and partitioning](/docs/crates/app/docs/topology)
+
+Cross-Cell coordination uses Effects and destination inboxes. It does not create a shared SQL transaction across Cells.

@@ -1,0 +1,14 @@
+---
+title: Explore the framework layers
+description: Find the crate that owns a contract and the policy your application supplies.
+---
+
+Select a layer to see its responsibility. Storage transport stays separate from authority and application policy.
+
+<LayerExplorer />
+
+## Embed the framework
+
+Declare typed modules through `cellule-app`. Add `cellule-host` for a serving node. Add the optional peer adapter when using its signed transport. Your application still supplies the public API, authorization, provider credentials, async executor, and deployment policy.
+
+Read [integration](/docs/guides/framework) for assembly, readiness, and drain, and [architecture](/docs/guides/architecture) for the complete ownership table.

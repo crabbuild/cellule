@@ -1,0 +1,23 @@
+---
+title: Eight primitives, one durability path
+description: Choose by the shape of your state and work.
+---
+
+Every primitive uses the same Cell actor, request ledger, SQLite transaction, LTX capture, publication gate, recovery, and receipt.
+
+| Primitive                                 | Use it for               | Typed entry point      |
+| ----------------------------------------- | ------------------------ | ---------------------- |
+| [SQL](/docs/primitives/sql)               | Relational state         | `sql::<M>(target)`     |
+| [KV](/docs/primitives/kv)                 | Scoped atomic metadata   | `kv::<M>(namespace)`   |
+| [Blob](/docs/primitives/blob)             | Immutable content        | `blob::<M>()`          |
+| [Queue](/docs/primitives/queue)           | At-least-once work       | `queue::<M>()`         |
+| [Cron](/docs/primitives/cron)             | Recurring triggers       | `cron::<M>()`          |
+| [Workflow](/docs/primitives/workflow)     | Durable decisions        | `workflow::<M>()`      |
+| [Activities](/docs/primitives/activities) | Supervised external work | `activities::<M>()`    |
+| [Effects](/docs/primitives/effects)       | Cross-Cell delivery      | `effects::<M>(target)` |
+
+## Keep the transaction boundary explicit
+
+A command changes one Cell. Use durable Effects and an idempotent destination inbox for work that crosses Cells. Validate Queue and Activity leases before performing external work, and make that work safe to repeat.
+
+The [quickstart](/docs/guides/quickstart) exercises all eight primitives. The [runtime primitive reference](/docs/crates/runtime/docs/primitives) includes limits, schemas, failure behavior, and the scheduler.

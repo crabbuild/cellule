@@ -1,0 +1,14 @@
+---
+title: Explore exact recovery
+description: Authority selects the root. Verified bytes determine whether recovery succeeds.
+---
+
+Ownership can move without changing Cell identity. A successor fences the previous owner, selects the authority-pinned root, and verifies every required chunk before activating the Cell.
+
+<RecoveryExplorer />
+
+## Recovery is a verification boundary
+
+An object listing cannot choose the root. A stale local database, a partial history, or a plausible snapshot cannot be promoted into authoritative state. The recovered request ledger must agree with the restored data.
+
+The [storage contract](/docs/crates/runtime/docs/storage) describes authority records and roots. The [LTX recovery guide](/docs/crates/ltx/docs/recovery) covers exact recovery and sparse activation. [Safety](/docs/crates/ltx/docs/safety) records ownership and filesystem invariants.

@@ -1,0 +1,53 @@
+{
+  "name": "@cellule/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "predev": "npm run generate:content",
+    "dev": "next dev",
+    "prebuild": "npm run generate:content",
+    "build": "next build",
+    "start": "next start",
+    "sync:docs": "node scripts/sync-docs.mjs",
+    "generate:content": "npm run sync:docs && fumadocs-mdx",
+    "typecheck": "npm run generate:content && tsc --noEmit",
+    "check": "npm run typecheck && node scripts/check-content.mjs",
+    "test": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/sora": "^5.2.8",
+    "fumadocs-core": "16.15.17",
+    "fumadocs-mdx": "15.4.5",
+    "fumadocs-ui": "16.15.17",
+    "lucide-react": "^0.544.0",
+    "mermaid": "^11.12.0",
+    "next": "16.3.8",
+    "next-themes": "^0.4.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.0.0",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@tailwindcss/postcss": "^4.1.14",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "esbuild": "^0.28.2",
+    "github-slugger": "^2.0.0",
+    "tailwindcss": "^4.1.14",
+    "typescript": "^5.9.3"
+  }
+}

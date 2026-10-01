@@ -1,0 +1,16 @@
+---
+title: Follow a durable command
+description: Explore when a command may return an output and receipt.
+---
+
+The mutation and request outcome commit together in SQLite. The response gate stays closed until the owner proves recoverable durability. Select either configured path and walk through its steps.
+
+<DurabilityExplorer />
+
+## Resolve a lost reply
+
+Keep the original request identity. Resolve its recorded outcome before retrying. If it committed, use its recorded output and receipt. If it is absent and still valid, retry the same prepared command. An unknown or expired outcome needs investigation.
+
+A fresh request ID describes a new logical mutation. It cannot resolve the uncertain original command.
+
+Read the [uncertain-command guide](/docs/guides/api#handle-an-uncertain-command), [runtime execution](/docs/crates/runtime/docs/runtime), and [follower durability contract](/docs/crates/runtime/docs/failover-and-followers) for the full protocol.
