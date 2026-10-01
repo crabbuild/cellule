@@ -23,6 +23,26 @@ const marketing = [
   "/changelog",
 ];
 const errors = [];
+const repositoryOnlyGuides = ["reference", "roadmap", "verification"];
+for (const guide of repositoryOnlyGuides) {
+  const url = `/docs/guides/${guide}`;
+  assert(!manifest.pages.some((page) => page.url === url));
+  for (const route of [url, `/markdown/guides/${guide}`])
+    assert.equal((await fetch(new URL(route, origin))).status, 404,
+      `${route} is a repository-only document`);
+  const searchResponse = await fetch(new URL(`/api/search?query=${guide}`, origin));
+  assert.equal(searchResponse.status, 200);
+  const results = await searchResponse.json();
+  assert(results.every((result) => result.url?.split("#")[0] !== url),
+    `${url} must not be a search result`);
+}
+for (const endpoint of ["/sitemap.xml", "/llms.txt", "/llms-full.txt"]) {
+  const text = await (await fetch(new URL(endpoint, origin))).text();
+  for (const guide of repositoryOnlyGuides) {
+    assert(!text.includes(`/docs/guides/${guide}`));
+    assert(!text.includes(`/markdown/guides/${guide}`));
+  }
+}
 for (const route of [
   ...marketing,
   "/docs",

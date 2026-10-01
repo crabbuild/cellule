@@ -19,10 +19,16 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
 })
   .split("\0")
   .filter(Boolean);
+const repositoryOnlyDocuments = new Set([
+  "docs/reference.md",
+  "docs/roadmap.md",
+  "docs/verification.md",
+]);
 export const documentationFiles = tracked.filter(
   (file) =>
     file.endsWith(".md") &&
     !file.startsWith("apps/") &&
+    !repositoryOnlyDocuments.has(file) &&
     !["AGENTS.md", "CLAUDE.md"].includes(path.basename(file)),
 );
 export function docSlug(file) {
@@ -182,9 +188,6 @@ const sections = {
       "api",
       "architecture",
       "framework",
-      "reference",
-      "roadmap",
-      "verification",
       "releasing",
     ],
   },

@@ -58,10 +58,14 @@ repository and authored Mermaid diagrams rendered as SVG. Screenshots are saved 
 | Shared visual tokens and responsive styles | `app/globals.css`, `app/learning.css` |
 
 `scripts/sync-docs.mjs` discovers tracked repository Markdown, excludes agent
-instructions, maps it into a deterministic documentation tree, rewrites links
+instructions and repository-only `docs/reference.md`, `docs/roadmap.md`, and
+`docs/verification.md`, maps it into a deterministic documentation tree, rewrites links
 to local docs or GitHub source, preserves explicit anchors, and copies local
 image assets. SVGs are preferred over their raster previews. Original Markdown
 and Rust examples remain authoritative; do not edit `content/docs/`.
+Excluded documents stay in the repository; references to them link to GitHub.
+They do not become website documentation, search results, sitemap entries, or
+Markdown export pages.
 
 Development startup, type checking, and production builds regenerate content.
 After editing a repository guide during an existing preview, run:

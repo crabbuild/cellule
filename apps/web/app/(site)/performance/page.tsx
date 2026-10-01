@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageIntro } from "@/components/page-intro";
-import { pageMetadata } from "@/lib/site";
+import { pageMetadata, site } from "@/lib/site";
 import manifest from "@/lib/docs-manifest.json";
 
 export const metadata = pageMetadata(
@@ -46,11 +46,11 @@ export default function Performance() {
               production runs.
             </p>
           </Link>
-          <Link href="/docs/guides/verification">
+          <a href={`${site.github}/blob/main/docs/verification.md`}>
             <span className="eyebrow">VERIFICATION</span>
             <h2>Recorded workspace checks</h2>
-            <p>The dated verification report and its source revision.</p>
-          </Link>
+            <p>The dated verification report and its source revision on GitHub.</p>
+          </a>
         </div>
         <div className="section-heading">
           <h2>Recorded reports</h2>
