@@ -152,6 +152,19 @@ jobs:
           --cpuset-cpus 2-3
           --health-cmd "curl --fail --silent http://127.0.0.1:9000/health/ready"
           --health-interval 3s --health-timeout 3s --health-retries 30
+      rustfs_pair:
+        image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
+        env:
+          RUSTFS_ACCESS_KEY: cellule-ci
+          RUSTFS_SECRET_KEY: cellule-integration-fixture
+          RUSTFS_CONSOLE_ENABLE: "false"
+          RUSTFS_OBS_LOG_DIRECTORY: /data/logs
+        ports:
+          - 9002:9000
+        options: >-
+          --cpuset-cpus 2-3
+          --health-cmd "curl --fail --silent http://127.0.0.1:9000/health/ready"
+          --health-interval 3s --health-timeout 3s --health-retries 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -169,6 +182,7 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
           aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket cellule-routing
+          aws --endpoint-url http://127.0.0.1:9002 s3api create-bucket --bucket cellule-routing
       - name: Compare frozen routing binaries
         env:
           ROUTING_BASELINE: ${{ inputs.routing_baseline || github.event.pull_request.base.sha || 'origin/main' }}
@@ -184,14 +198,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/routing-host"
           nproc --all > "$RUNNER_TEMP/routing-host/cpu-count.txt"
           taskset -pc $$ > "$RUNNER_TEMP/routing-host/benchmark-affinity.txt"
-          docker inspect ${{ job.services.rustfs.id }} > "$RUNNER_TEMP/routing-host/provider.json"
+          docker inspect ${{ job.services.rustfs.id }} ${{ job.services.rustfs_pair.id }} > "$RUNNER_TEMP/routing-host/provider.json"
           cat /proc/pressure/cpu /proc/pressure/io > "$RUNNER_TEMP/routing-host/pressure-before.txt"
           cat /proc/diskstats > "$RUNNER_TEMP/routing-host/diskstats-before.txt"
           cat /proc/stat > "$RUNNER_TEMP/routing-host/stat-before.txt"
           python3 -B -m unittest discover -s crates/cellule-peer-http/qualification -p 'test_*.py'
           python3 crates/cellule-peer-http/qualification/routing.py \
             --baseline "$ROUTING_BASELINE" --state "$RUNNER_TEMP/cell-routing" \
-            --mode "${{ matrix.mode }}"
+            --mode "${{ matrix.mode }}" \
+            --provider http://127.0.0.1:9000 --provider http://127.0.0.1:9002
       - name: Retain qualification host profile
         if: always()
         run: |

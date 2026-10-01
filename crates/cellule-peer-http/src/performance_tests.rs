@@ -362,6 +362,10 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
     else {
         panic!("OpenSSL 3 is required for this explicit mTLS qualification");
     };
+    println!(
+        "RUSTFS fixture_endpoint={}",
+        required("CELLULE_TEST_ENDPOINT")
+    );
     let provider = build_explicit_store(
         &required("CELLULE_TEST_BUCKET"),
         ObjectStoreCredentials::Aws {

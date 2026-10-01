@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from coordination import coordinate
 import routing
@@ -26,6 +27,40 @@ for stage in sys.argv[1:]:
 
 
 class CoordinationTests(unittest.TestCase):
+    def test_workers_use_distinct_providers_balanced_across_order(self):
+        providers = ('http://127.0.0.1:9000', 'http://127.0.0.1:9002')
+        assignments = routing.provider_assignments(providers)
+        seen = []
+
+        async def capture(workers, schedule, evidence):
+            endpoints = {v: worker[1]['CELLULE_TEST_ENDPOINT'] for v, worker in workers.items()}
+            self.assertEqual(set(endpoints.values()), set(providers))
+            first, second = schedule[0][1]
+            seen.extend((v, endpoints[v], v == first) for v in (first, second))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binaries = {v: root / v for v in ('baseline', 'candidate')}
+            # An inherited common endpoint must not override fixture isolation.
+            with mock.patch.dict(os.environ, CELLULE_TEST_ENDPOINT='http://shared'), \
+                    mock.patch.object(routing, 'coordinate', side_effect=capture), \
+                    mock.patch.object(routing, 'parse_measurement', return_value=[]) as parsed:
+                for pair, endpoints in enumerate(assignments):
+                    routing.measure_pair('leased', pair, binaries, root, endpoints)
+                self.assertEqual([call.args[-1] for call in parsed.call_args_list],
+                                 [assignments[pair][v] for pair, order in enumerate(routing.PAIRS) for v in order])
+        self.assertEqual(len(seen), 8)
+        for version in binaries:
+            for endpoint in providers:
+                self.assertEqual(sorted(first for v, p, first in seen if (v, p) == (version, endpoint)),
+                                 [False, True])
+
+    def test_incomplete_or_shared_provider_assignment_is_rejected(self):
+        for providers in ([], ['http://one'], ['http://one', 'http://one'],
+                          ['http://one/', 'http://one'], ['http://one', 'http://two', 'http://three']):
+            with self.subTest(providers=providers), self.assertRaisesRegex(RuntimeError, 'two distinct'):
+                routing.provider_assignments(providers)
+
     def test_windows_do_not_overlap_and_order_reverses(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

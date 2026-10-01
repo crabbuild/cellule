@@ -266,7 +266,13 @@ receiver latency. Cold and fresh-client lanes still include discovery and
 Describe. Manual workflow runs accept `routing_baseline` and `routing_only`
 to repeat a specific comparison without repeating Compose scaling.
 
-CI measures leased and object-only routing in separate isolated-provider jobs.
+CI measures leased and object-only routing in separate jobs. Each fixture uses
+its own RustFS process and durable data volume so the waiting fixture's quiet
+compaction and lease renewal do not share the measured fixture's provider.
+Provider assignments rotate across four pairs: each version uses each provider
+once before and once after its counterpart. The manifest retains assignments,
+and fixture logs verify the actual endpoint binding. Direct driver runs require
+two independent endpoints, passed as `--provider URL_A --provider URL_B`.
 Each mode retains four adjacent baseline/candidate pairs, all lanes, raw samples,
 physical read and hop checks, and exact recovery. The final `routing` check
 requires both mode jobs to pass. `routing.py --mode leased` or

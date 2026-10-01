@@ -128,7 +128,16 @@ def schedule(order):
     return stages
 
 
-def measure_pair(mode, pair, binaries, evidence):
+def provider_assignments(providers):
+    if len(providers) != 2 or providers[0].rstrip('/') == providers[1].rstrip('/'):
+        raise RuntimeError("Routing comparison requires two distinct provider endpoints")
+    # Cross provider assignment with AB/BA order: each version uses each
+    # provider once before and once after its counterpart.
+    return [{"baseline": providers[pair % 2], "candidate": providers[1 - pair % 2]}
+            for pair in range(len(PAIRS))]
+
+
+def measure_pair(mode, pair, binaries, evidence, providers):
     order = PAIRS[pair]
     workers = {}
     for offset, version in enumerate(order, 1):
@@ -138,19 +147,22 @@ def measure_pair(mode, pair, binaries, evidence):
         env = os.environ.copy()
         env.update(CELLULE_TEST_PREFIX=directory.name, CELLULE_PERF_EVIDENCE=str(directory),
                    CELLULE_PERF_QUERIES=str(QUERIES), CELLULE_PERF_COMMANDS=str(COMMANDS),
-                   CELLULE_PERF_BURSTS=str(PACED_BURSTS), CELLULE_PERF_COORDINATED="1")
+                   CELLULE_PERF_BURSTS=str(PACED_BURSTS), CELLULE_PERF_COORDINATED="1",
+                   CELLULE_TEST_ENDPOINT=providers[version])
         workers[version] = ([str(binaries[version]), SELECTORS[mode], "--exact", "--ignored", "--nocapture"],
                             env, directory / "run.log")
     print(f"START {mode} pair={pair + 1} order={','.join(order)}", flush=True)
     asyncio.run(coordinate(workers, schedule(order), evidence / f"{mode}-pair-{pair + 1}.json"))
     return [row for offset, version in enumerate(order, 1)
-            for row in parse_measurement(version, mode, pair * 2 + offset, evidence)]
+            for row in parse_measurement(version, mode, pair * 2 + offset, evidence, providers[version])]
 
 
-def parse_measurement(version, mode, index, evidence):
+def parse_measurement(version, mode, index, evidence, provider):
     directory = evidence / f"{mode}-{index}-{version}"
     text = (directory / "run.log").read_text()
     print(text, flush=True)
+    if re.findall(r"^RUSTFS fixture_endpoint=(\S+)$", text, re.M) != [provider]:
+        raise RuntimeError(f"Fixture provider binding mismatch: {directory.name}")
     if ("test result: ok. 1 passed; 0 failed;" not in text
             or f"correctness=passed commands={COMMANDS * 6} final_sequence={COMMANDS * 6}" not in text):
         raise RuntimeError(f"Benchmark or exact recovery failed: {directory.name}")
@@ -264,10 +276,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--provider", action="append", required=True,
+                        help="Independent provider endpoint; specify exactly twice")
     parser.add_argument("--mode", choices=SELECTORS,
                         help="Measure one complete mode; CI requires both mode jobs")
     args = parser.parse_args()
     modes = tuple(SELECTORS) if args.mode is None else (args.mode,)
+    assignments = provider_assignments(args.provider)
     state = args.state.resolve()
     state.mkdir()
     evidence = state / "evidence"
@@ -280,7 +295,7 @@ def main():
                 "selectors": SELECTORS, "host": platform.uname()._asdict(),
                 "test_only_transplant": [str(PEER / path) for path in (
                     "src/performance_tests.rs", "src/lib.rs", "src/tests.rs", "Cargo.toml")] + ["Cargo.lock (peer test dependencies only)"],
-                "fixture_endpoint": os.environ["CELLULE_TEST_ENDPOINT"]}
+                "providers": args.provider, "provider_assignments": assignments}
     if revisions["baseline"] == revisions["candidate"]:
         manifest["candidate"] = build(revisions["candidate"], "candidate", state, evidence, harness)
         shutil.copy2(evidence / "candidate", evidence / "baseline")
@@ -297,7 +312,7 @@ def main():
             binaries = {version: Path(manifest[version]["binary"]) for version in revisions}
             if any(digest(binary) != manifest[version]["binary_sha256"] for version, binary in binaries.items()):
                 raise RuntimeError("Frozen binary changed")
-            rows.extend(measure_pair(mode, pair, binaries, evidence))
+            rows.extend(measure_pair(mode, pair, binaries, evidence, assignments[pair]))
     summary = compare(rows, modes)
     write_json(evidence / "comparison.json", summary)
     if summary["failures"]:
