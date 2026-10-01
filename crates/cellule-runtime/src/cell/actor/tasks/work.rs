@@ -161,6 +161,9 @@ pub(super) fn handle_queried(
         result = Err(Error::Fenced);
         fenced = true;
     }
+    if fenced {
+        tracing::warn!(cell = ?cell, error = ?result.as_ref().err(), "DIAGNOSTIC query or resolve fence");
+    }
     finish_work(active, fenced);
     send_query_reply(&mut query, result);
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
@@ -202,6 +205,9 @@ pub(super) fn handle_resolved(
     if node_lease.check().is_err() {
         result = Ok(Resolution::Unknown);
         fenced = true;
+    }
+    if fenced {
+        tracing::warn!(cell = ?cell, error = ?result.as_ref().err(), "DIAGNOSTIC query or resolve fence");
     }
     finish_work(active, fenced);
     send_resolve_reply(&mut resolve, result);

@@ -55,10 +55,11 @@ jobs:
           test -n "$binary"
           test "$(printf '%s\n' "$binary" | wc -l)" -eq 1
           sha256sum "$binary" > "$build_state/evidence/binary.sha256"
-      - name: Run three fresh follower-proof capacity repeats
+      - name: Run twelve diagnostic follower-proof capacity repeats
         run: |
           set -euo pipefail
-          for repeat in 1 2 3; do
+          failure=0
+          for repeat in $(seq 1 12); do
             run_state="$RUNNER_TEMP/cell-follower-capacity-run-$repeat"
             mkdir -p "$run_state/evidence"
             ln -s "$CELLULE_FOLLOWER_BUILD_STATE/source" "$run_state/source"
@@ -67,10 +68,13 @@ jobs:
             cp "$CELLULE_FOLLOWER_BUILD_STATE/evidence/host.txt" "$run_state/evidence/"
             cp "$CELLULE_FOLLOWER_BUILD_STATE/evidence/docker-info.json" "$run_state/evidence/"
             chmod 1777 "$run_state/evidence"
-            python3 "$run_state/source/crates/cellule-app/qualification/scale.py" \
+            if ! python3 "$run_state/source/crates/cellule-app/qualification/scale.py" \
               --state "$run_state" --project "cell-follower-capacity-r$repeat" \
-              --workload capacity-follower
+              --workload capacity-follower; then
+              failure=1
+            fi
           done
+          exit "$failure"
       - name: Retain provider image identity
         if: always()
         run: |

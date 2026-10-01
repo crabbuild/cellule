@@ -54,7 +54,15 @@ pub(super) fn finish_migration(active: &mut ActiveCell, fenced: bool) -> Coordin
     decision
 }
 
+#[track_caller]
 pub(super) fn fence_active(active: &mut ActiveCell) {
+    tracing::warn!(
+        cell = ?active.catalog.entry().cell(),
+        location = %std::panic::Location::caller(),
+        publication_bytes = active.publication_bytes,
+        unpublished_node_logs = active.unpublished_node_logs,
+        "DIAGNOSTIC actor fence entry"
+    );
     active.coordination.step(CoordinationInput::Fence);
     fence_admission(&active.admission);
     if let Some(transfer) = active.transfer.take() {

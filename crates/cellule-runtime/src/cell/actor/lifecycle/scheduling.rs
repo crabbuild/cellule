@@ -256,6 +256,7 @@ impl RenewalScheduler {
     }
 }
 
+#[track_caller]
 pub(in crate::cell::actor) fn start_deactivate(
     cell: CellId,
     pool: &SqlWorkerPool,
@@ -266,6 +267,7 @@ pub(in crate::cell::actor) fn start_deactivate(
     let Some(active) = cells.remove(&cell) else {
         return;
     };
+    tracing::warn!(cell = ?cell, location = %std::panic::Location::caller(), publication_bytes = active.publication_bytes, unpublished_node_logs = active.unpublished_node_logs, "DIAGNOSTIC actor deactivation entry");
     transitioning.insert(cell);
     let generation = active.generation;
     let pool = pool.clone();
@@ -309,6 +311,7 @@ pub(in crate::cell::actor) fn start_deactivate(
     });
 }
 
+#[track_caller]
 pub(in crate::cell::actor) fn start_fenced_deactivate(
     cell: CellId,
     pool: &SqlWorkerPool,
@@ -320,6 +323,7 @@ pub(in crate::cell::actor) fn start_fenced_deactivate(
     let Some(active) = cells.remove(&cell) else {
         return;
     };
+    tracing::warn!(cell = ?cell, location = %std::panic::Location::caller(), publication_bytes = active.publication_bytes, unpublished_node_logs = active.unpublished_node_logs, "DIAGNOSTIC actor deactivation entry");
     transitioning.insert(cell);
     let generation = active.generation;
     let pool = pool.clone();
