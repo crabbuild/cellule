@@ -4,6 +4,34 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 atomic API lint repair
+
+Workspace CI `36885649739` failed the warnings-denied lint gate on deprecated
+`AtomicU64::fetch_update` calls. All eleven workspace calls now use its renamed
+`try_update` API, preserving orderings, update closures, return handling and
+counter behavior. A minimal compiler probe and the selected builds below
+confirm availability on the declared Rust 1.97 minimum. No lint allowance,
+toolchain pin, profile threshold or qualification requirement changed.
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Baseline | Controller checkpoint `ecec878` |
+| Source manifest | 565 Rust/Cargo files; SHA256 `5fff33c4ab3ab4da25f73c4280ee62049ee08f5d85d39a18da6d26bc2164939c` |
+| `cargo test -p cellule-store --lib --features test-support read_admission --locked` | 18 passed; 147 filtered. |
+| `cargo test -p cellule-ltx --lib --features replica environment::tests::prepared_disk_budget --locked` | 8 passed; 98 filtered. |
+| `cargo test -p cellule-runtime --lib fleet::operations --locked` | 60 passed; 419 filtered. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 35 passed; none ignored or filtered. Includes both real-node scenarios. |
+| `cargo clippy -p cellule-store -p cellule-ltx -p cellule-runtime -p cellule-host --lib --tests --example fleet_operations --all-features --locked -- -D warnings` | Passed on Rust 1.97.0. |
+
+Commands used the recorded checkout target with `CARGO_INCREMENTAL=0`.
+Format, boundary/layout, whitespace and 1140 Markdown links passed. This is
+selected local evidence; latest stable workspace lint remains a CI gate.
+On baseline PR head `734650d`, both object- and follower-capacity jobs in
+run `36885649670` passed with the existing qualification profiles. The earlier
+failed object-capacity run remains recorded below. Routing and smoke jobs
+were still pending at the last inspection; they establish no passing evidence
+for this checkpoint or the full goal.
+
 ## October 1 2026 controller replacement checkpoint
 
 `fleet_operations controller-restart` now runs real three-node movement with

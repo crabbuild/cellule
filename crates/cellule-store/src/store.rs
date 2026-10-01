@@ -3108,7 +3108,7 @@ mod tests {
             if !options.head
                 && let ReadFault::Transient(remaining_failures) = &self.fault
                 && remaining_failures
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                         remaining.checked_sub(1)
                     })
                     .is_ok()
@@ -3264,7 +3264,7 @@ mod tests {
             self.aborts.fetch_add(1, Ordering::Relaxed);
             if self
                 .abort_failures
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok()

@@ -166,7 +166,7 @@ impl DiskBudget {
         }
         self.inner
             .used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes)
                     .filter(|next| *next <= self.inner.capacity)
             })
@@ -239,7 +239,7 @@ impl DiskBudget {
         }
         self.inner
             .used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_sub(bytes)
             })
             .map(|_| ())
