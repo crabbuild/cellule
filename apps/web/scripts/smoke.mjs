@@ -484,6 +484,42 @@ try {
     path: path.join(root, "test-results/effects-guide.png"),
   });
 
+  await page.goto(new URL("/docs/guides/at-a-glance", origin).href, {
+    waitUntil: "networkidle",
+  });
+  const cellModel = page.locator('[data-svg-diagram]').filter({
+    has: page.locator('img[src$="/cell-model.svg"]'),
+  });
+  await cellModel.scrollIntoViewIfNeeded();
+  const modelImage = cellModel.locator("img");
+  assert(await modelImage.evaluate((image) => image.complete && image.naturalWidth > 0));
+  const modelWidth = (await modelImage.boundingBox()).width;
+  await cellModel.getByRole("button", { name: "Zoom in", exact: true }).click();
+  assert((await modelImage.boundingBox()).width > modelWidth);
+  await cellModel.getByRole("button", { name: "Reset diagram zoom", exact: true }).click();
+  assert(Math.abs((await modelImage.boundingBox()).width - modelWidth) < 1);
+  const [modelDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    cellModel.getByRole("link", { name: "Download SVG", exact: true }).click(),
+  ]);
+  const downloadedModel = await readFile(await modelDownload.path(), "utf8");
+  assert.match(downloadedModel, /One Cell type, independent Cells/);
+  assert.match(
+    await (await fetch(new URL("/markdown/guides/at-a-glance", origin))).text(),
+    /!\[.*\]\(\/repository\/docs\/diagram\/cell-model\.svg\)/,
+    "Markdown exports must preserve the standalone SVG illustration",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    "Cell model illustration must scroll within its frame on mobile",
+  );
+  await cellModel.getByRole("region").focus();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() =>
+    document.querySelector('[data-svg-diagram] [role="region"]').scrollLeft > 0,
+  );
+
   // Headers and row grids must fill the table border, even for short content.
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });

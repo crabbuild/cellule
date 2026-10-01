@@ -1218,7 +1218,8 @@ kbd {
   display: flex;
   gap: 0.3rem;
 }
-.diagram-toolbar button {
+.diagram-toolbar button,
+.diagram-toolbar a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1228,7 +1229,8 @@ kbd {
   border-radius: 4px;
   color: #925b0d;
 }
-.diagram-toolbar button:hover {
+.diagram-toolbar button:hover,
+.diagram-toolbar a:hover {
   background: #fbf3dc;
 }
 .mermaid-scroll {
@@ -1238,6 +1240,16 @@ kbd {
 }
 .mermaid-svg {
   margin-inline: auto;
+}
+.svg-file-canvas {
+  margin-inline: auto;
+}
+.prose .svg-file-canvas img {
+  display: block;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
 }
 .mermaid-svg svg {
   width: 100%;

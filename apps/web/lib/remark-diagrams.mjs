@@ -3,6 +3,23 @@ import { visit } from "unist-util-visit";
 export default function remarkDiagrams() {
   return (tree) => {
     visit(tree, (node, index, parent) => {
+      if (
+        node.type === "paragraph" &&
+        node.children.length === 1 &&
+        node.children[0].type === "image" &&
+        node.children[0].url.endsWith(".svg")
+      ) {
+        const image = node.children[0];
+        parent.children[index] = {
+          type: "mdxJsxFlowElement",
+          name: "SvgDiagram",
+          attributes: [
+            { type: "mdxJsxAttribute", name: "src", value: image.url },
+            { type: "mdxJsxAttribute", name: "alt", value: image.alt ?? "SVG diagram" },
+          ],
+          children: [],
+        };
+      }
       if (node.type === "code" && node.lang === "mermaid") {
         parent.children[index] = {
           type: "mdxJsxFlowElement",
