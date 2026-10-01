@@ -41,6 +41,28 @@ only app/runtime externs while newer main documentation also imported store,
 types, bytes and object_store. That checker failure needs repair; it does not
 establish a passing workspace qualification result.
 
+### Main sync and example compiler repair
+
+Main revision `c51dd12` merged without conflicts in `cddb5c9`. The updated
+565-file Rust/Cargo manifest is SHA256
+`b7028a45fefa23a2f780c74ef49c301c692ff1e6111d5bacb2d286825626952d`.
+After the merge, the runtime operation tests again passed 60 cases (419
+filtered), and the example passed all 34 cases. Clippy for runtime/host
+libraries, example and tests passed with warnings denied. Format, boundaries,
+module layout, 108 Rust snippets, 1139 Markdown links and the unchanged SQL/peer
+validators passed.
+
+The website compiler now includes all six documented libraries from Cargo's
+reported artifacts. An explicit host target separates target libraries from
+host build dependencies; both artifact directories remain available for
+procedural macros. Earlier intermediate checker runs exposed a wrong `bytes`
+crate identity and a missing procedural-macro search path. The final command
+`python3 scripts/check-web-rust-examples.py` exited zero and compiled all 12
+authored guides. Checker SHA256:
+`6d3d912944910fd784b1672cb8fcce38e92dd9ae42c1796afc64d1d667c34564`.
+It used the same checkout target and toolchain. Updated full CI remains
+required; the baseline workspace failure stays a recorded failed run.
+
 ## October 1 2026 real three-node overload checkpoint
 
 The reference executable now supports `overload`, using the same scenario

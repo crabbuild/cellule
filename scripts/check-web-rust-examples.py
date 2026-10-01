@@ -16,6 +16,10 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE_LIBRARIES = {
+    "cellule_app", "cellule_runtime", "cellule_store", "cellule_types",
+    "bytes", "object_store",
+}
 
 
 def main() -> int:
@@ -27,32 +31,47 @@ def main() -> int:
     if not documents:
         print("error: no authored Rust examples found", file=sys.stderr)
         return 1
+    version = subprocess.check_output(["rustc", "-vV"], text=True)
+    host = next(line.removeprefix("host: ") for line in version.splitlines() if line.startswith("host: "))
+    # An explicit target separates target libraries from host build-dependencies.
+    # Both can have the same package name but different Rust crate identities.
     build = subprocess.run(
-        ["cargo", "build", "-p", "cellule-app", "--lib", "--locked", "--message-format=json"],
+        ["cargo", "build", "-p", "cellule-app", "--lib", "--locked", "--target", host, "--message-format=json"],
         cwd=ROOT,
         stdout=subprocess.PIPE,
         text=True,
     )
     if build.returncode:
         return build.returncode
-    libraries: dict[str, Path] = {}
+    artifacts = []
+    dependency_directories = set()
     for line in build.stdout.splitlines():
         artifact = json.loads(line)
         if artifact.get("reason") != "compiler-artifact":
             continue
+        dependency_directories.update(Path(file).parent for file in artifact["filenames"])
         name = artifact["target"]["name"]
-        if name not in ("cellule_app", "cellule_runtime"):
+        if name not in EXAMPLE_LIBRARIES:
             continue
         for filename in artifact["filenames"]:
             if filename.endswith(".rlib"):
-                libraries[name] = Path(filename)
-    if set(libraries) != {"cellule_app", "cellule_runtime"}:
-        print("error: Cargo did not report both framework libraries", file=sys.stderr)
+                artifacts.append((name, Path(filename)))
+    app = next((file for name, file in artifacts if name == "cellule_app"), None)
+    if app is None:
+        print("error: Cargo did not report cellule_app", file=sys.stderr)
+        return 1
+    libraries = {
+        name: file for name, file in artifacts if file.is_relative_to(app.parent)
+    }
+    missing = EXAMPLE_LIBRARIES - libraries.keys()
+    if missing:
+        print(f"error: Cargo did not report example libraries: {', '.join(sorted(missing))}", file=sys.stderr)
         return 1
     arguments = []
     for name, file in libraries.items():
         arguments.extend(["--extern", f"{name}={file}"])
-    for directory in sorted({file.parent for file in libraries.values()}):
+    # Target crates also depend on host-built procedural macros.
+    for directory in sorted(dependency_directories):
         arguments.extend(["-L", f"dependency={directory}"])
     failures = []
     for document in documents:
@@ -63,7 +82,7 @@ def main() -> int:
             markdown = Path(temporary) / f"{document.stem}.md"
             markdown.write_text(document.read_text())
             result = subprocess.run(
-                ["rustdoc", "--test", "--edition=2024", str(markdown), *arguments],
+                ["rustdoc", "--test", "--edition=2024", "--target", host, str(markdown), *arguments],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
