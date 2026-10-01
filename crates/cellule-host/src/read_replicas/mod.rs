@@ -22,6 +22,7 @@ use cellule_runtime::{
     registry::Registry,
 };
 use futures_util::future::BoxFuture;
+use futures_util::{StreamExt, stream};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -36,6 +37,7 @@ const RECONCILE_BATCH: usize = 64;
 const RECONCILE_DEADLINE: Duration = Duration::from_secs(30);
 const MAX_LIVE_NODES: usize = 10_000;
 const MAX_READ_VIEWS: usize = 10_000;
+const CLOSE_CONCURRENCY: usize = 16;
 
 struct ActiveReaders {
     views: HashMap<CellId, CellReadReplica>,
@@ -391,10 +393,14 @@ impl ReadReplicaManager {
     }
 
     async fn remove_locked(&self, cell: CellId) {
-        let mut active = self.active.write().await;
-        if let Some(reader) = active.views.remove(&cell) {
+        let reader = self.active.read().await.views.get(&cell).cloned();
+        if let Some(reader) = reader {
+            // Retain the owner until joined closure. A cancelled removal must
+            // stay inventoried and be joinable by the next remove or shutdown.
+            reader.close_and_join().await;
+            let mut active = self.active.write().await;
+            active.views.remove(&cell);
             active.topology = Uuid::now_v7();
-            reader.close();
         }
     }
 
@@ -406,9 +412,19 @@ impl ReadReplicaManager {
         let _activation = self.activation.lock().await;
         let mut active = self.active.write().await;
         active.topology = Uuid::now_v7();
-        for (_, reader) in active.views.drain() {
+        for reader in active.views.values() {
             reader.close();
         }
+        {
+            // Close healthy siblings while another reader is waiting on I/O.
+            // The collection remains intact across a cancelled drain waiter.
+            let closing = stream::iter(active.views.values().cloned())
+                .map(|reader| async move { reader.close_and_join().await })
+                .buffer_unordered(CLOSE_CONCURRENCY);
+            tokio::pin!(closing);
+            while closing.next().await.is_some() {}
+        }
+        active.views.clear();
     }
 }
 

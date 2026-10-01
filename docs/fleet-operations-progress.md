@@ -4,6 +4,70 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 joined reader closure checkpoint
+
+`CellReadReplica::close_and_join` fences admission, detaches the current
+snapshot across every clone and joins accepted queries, authority reads,
+refreshes and native SQLite opens. Snapshot and accepted-operation lifetimes
+share one atomic closure gate. A native open returns the complete owned
+snapshot, so cancelling its refresh waiter cannot hide an uninstalled view.
+Resource fields drop before the lifetime signals completion. Historical
+`receipt()` metadata survives detachment without asserting current authority.
+
+The host reader manager retains each view until joined removal succeeds.
+Cancelled remove/shutdown waiters leave ownership inventoried and joinable.
+Shutdown fences all views first, then joins at most 16 concurrently through
+the existing activation and host drain lanes. A host deadline leaves the node
+Draining until accepted native work settles; retained peer clones cannot keep
+snapshot charges after successful closure.
+
+Four new public runtime cases cover retained clones, old queries across a
+refresh, cancelled query/close waiters, a cancelled refresh blocked inside an
+actual native-open VFS read, and a delayed authority/readiness reply. A public
+host case covers cancelled removal/shutdown and a host drain deadline; the
+existing reader inventory case also retains peer clones through shutdown.
+Fixtures check real SQLite paths and memory, retained-byte, descriptor, worker
+and private disk ledgers. Initial fixtures shared the process-wide default disk
+budget, so zero reader disk assertions included the source's charges. Separate
+node budgets corrected those fixtures; no production threshold was changed.
+
+| Final source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `135492e75cfb142e4b918ce63d3e5c97ba103453` |
+| Repository Rust/Cargo manifest | 585 tracked/nonignored paths; sorted SHA256, two spaces, relative path lines. Manifest SHA256 `23f6d06cc2a3788db971204ea2f2acecc325deecbd926c85d6fd5509247b4811`. |
+| `cargo test -p cellule-runtime --test runtime --all-features --locked read_replica::` | 13 passed; 177 filtered; one isolated RustFS case ignored. Four cases are new. |
+| `cargo test -p cellule-host --test node --all-features --locked` | 70 passed; none filtered or ignored. One case is new. |
+| `cargo test -p cellule-host --example fleet_operations --all-features --locked` | 51 passed; none filtered or ignored. |
+| `cargo test -p cellule-app --test integration --all-features --locked host::replicas::` | 5 passed; 40 filtered; none ignored. |
+| Distinct scoped cases | 139 passed; the RustFS case remains ignored. |
+| `cargo clippy -p cellule-runtime -p cellule-host --lib --test runtime --test node --example fleet_operations --all-features --locked -- -D warnings` | Passed after naming the test fixture's query-gate type. No lint was suppressed. |
+| `RUSTDOCFLAGS='-D warnings' cargo doc -p cellule-host -p cellule-runtime --all-features --no-deps --locked` | Passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, 108 Rust snippets, 1149 Markdown links and 28 SQL/peer assertions with 566 links passed. |
+
+Commands use Rust/Cargo 1.97.0, `CARGO_INCREMENTAL=0` and
+`$HOME/Workspace/crabbuild-target/cellule-f9383af7-fleet-operations`.
+These local fixtures use in-memory CAS and actual SQLite. The ignored RustFS
+case supplies no provider evidence. Broad workspace and process/provider
+qualification remains assigned to CI and controlled environments.
+
+This implements a reader closure prerequisite for W3/W7. Reader/follower
+enrollment producers, complete observations, replacement-policy evidence,
+durable retirement and finalization remain required. The last reader receipt
+alone cannot settle a fleet enrollment or establish safe node removal.
+
+Baseline `135492e` passed workspace/MSRV (36921861844), contracts (36921861824),
+website (36921861940), fuzz (36921861753), fast/negative TLC (36921861711),
+follower capacity (36921862099 / 110569602571) and Compose smoke
+(36921861765 / 110569778663). Broad TLC/simulator were skipped; routing remained
+running when inspected. Object capacity (36921862099 / 110569602323) failed
+repeat 2: hot rate 2 completed 59 of 60, with one `scheduler_late` arrival, and
+the driver reported `hot: no fully served capacity point`. Repeat 1 passed;
+repeat 3 did not run. The original log is retained at
+`/tmp/cellule-fleet-ci-36921862099-object.log` and the full original artifact at
+`/tmp/cellule-fleet-capacity-36921862099`. The qualification profile remains
+unchanged. A passing workspace on this baseline does not identify the cause
+of the earlier controller-restart failure or qualify this new reader source.
+
 ## October 1 2026 boot enrollment and startup barrier checkpoint
 
 Configured fleet hosts hold the runtime's existing writer, reader and follower

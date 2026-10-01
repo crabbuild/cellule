@@ -2,12 +2,15 @@
 
 use std::{
     path::Path,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use cellule_ltx::{CellReplica, ReadOnlyRoot};
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex, Notify, RwLock, Semaphore};
 
 use super::*;
 use crate::cell::actor::CellRuntime;
@@ -33,17 +36,86 @@ pub struct CellReadReplica {
     replica: CellReplica,
     target: CellTarget,
     expected: CellDescription,
-    snapshot: Arc<RwLock<ReplicaSnapshot>>,
+    snapshot: Arc<RwLock<ReplicaState>>,
+    lifetime: Arc<ReplicaLifetime>,
     refresh_gate: Arc<Mutex<()>>,
     query_gate: Arc<Semaphore>,
 }
 
-#[derive(Clone)]
+struct ReplicaState {
+    receipt: Receipt,
+    snapshot: Option<Arc<ReplicaSnapshot>>,
+}
+
 struct ReplicaSnapshot {
     owner: Owner,
     epoch: u64,
     view: Arc<ReadOnlyRoot>,
     _admission: Arc<ResourceReservation>,
+    // Fields drop in declaration order: the last root's resource charges must
+    // be released before its lifetime wakes a close waiter.
+    _lifetime: LifetimeGuard,
+}
+
+struct SnapshotInputs {
+    owner: Owner,
+    epoch: u64,
+    admission: Arc<ResourceReservation>,
+    operation: Arc<LifetimeGuard>,
+}
+
+const CLOSED: usize = 1 << (usize::BITS - 1);
+
+#[derive(Default)]
+struct ReplicaLifetime {
+    // Closure and admission share one CAS word: a close waiter cannot observe
+    // zero and then miss a newly accepted operation. Snapshots are retained by
+    // an already accepted open/refresh; their jobs own the same operation guard.
+    state: AtomicUsize,
+    changed: Notify,
+}
+
+struct LifetimeGuard(Arc<ReplicaLifetime>);
+
+impl ReplicaLifetime {
+    fn acquire(self: &Arc<Self>, new_operation: bool) -> Result<LifetimeGuard> {
+        self.state
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+                let count = state & !CLOSED;
+                if (state & CLOSED != 0 && (new_operation || count == 0)) || count == CLOSED - 1 {
+                    None
+                } else {
+                    Some(state + 1)
+                }
+            })
+            .map_err(|state| {
+                if state & CLOSED != 0 && (new_operation || state & !CLOSED == 0) {
+                    Error::Fenced
+                } else {
+                    Error::Capacity("read replica lifetime count")
+                }
+            })?;
+        Ok(LifetimeGuard(Arc::clone(self)))
+    }
+
+    async fn join(&self) {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.state.load(Ordering::Acquire) & !CLOSED == 0 {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
+
+impl Drop for LifetimeGuard {
+    fn drop(&mut self) {
+        self.0.state.fetch_sub(1, Ordering::AcqRel);
+        self.0.changed.notify_waiters();
+    }
 }
 
 impl CellReadReplica {
@@ -70,6 +142,8 @@ impl CellReadReplica {
         destination: &Path,
     ) -> Result<Self> {
         runtime.node_admission().check_new_role()?;
+        let lifetime = Arc::new(ReplicaLifetime::default());
+        let operation = Arc::new(lifetime.acquire(true)?);
         let admission = Arc::new(runtime.reserve_read_view()?);
         let replica = runtime.replica_for_read(replica);
         let cell = target.cell_id();
@@ -99,13 +173,19 @@ impl CellReadReplica {
             code: control.code,
             schema: control.schema,
         };
-        let view = open_view(&runtime, verified, destination, Arc::clone(&admission)).await?;
-        let snapshot = ReplicaSnapshot {
-            owner,
-            epoch: control.epoch,
-            view,
-            _admission: admission,
-        };
+        let snapshot = open_view(
+            &runtime,
+            verified,
+            destination,
+            SnapshotInputs {
+                owner,
+                epoch: control.epoch,
+                admission,
+                operation,
+            },
+        )
+        .await?;
+        let position = receipt(expected, snapshot.view.root().commit_sequence);
         let opened = Self {
             runtime,
             registry,
@@ -114,7 +194,11 @@ impl CellReadReplica {
             replica,
             target,
             expected,
-            snapshot: Arc::new(RwLock::new(snapshot.clone())),
+            snapshot: Arc::new(RwLock::new(ReplicaState {
+                receipt: position,
+                snapshot: Some(snapshot.clone()),
+            })),
+            lifetime,
             refresh_gate: Arc::new(Mutex::new(())),
             query_gate: Arc::new(Semaphore::new(1)),
         };
@@ -122,11 +206,10 @@ impl CellReadReplica {
         Ok(opened)
     }
 
-    /// Returns the exact snapshot position this reader serves.
+    /// Returns the last installed exact snapshot position, including after close.
     #[must_use]
     pub async fn receipt(&self) -> Receipt {
-        let snapshot = self.snapshot.read().await;
-        self.snapshot_receipt(&snapshot)
+        self.snapshot.read().await.receipt
     }
 
     /// Returns the verified position and whether the original owner is still live.
@@ -135,18 +218,49 @@ impl CellReadReplica {
     /// query or takeover. Changed authority or closed admission rejects it.
     pub async fn readiness(&self) -> Result<(Receipt, bool)> {
         self.runtime.ensure_running()?;
-        let snapshot = self.snapshot.read().await.clone();
+        let _operation = self.lifetime.acquire(true)?;
+        let snapshot = self.current_snapshot().await?;
         self.confirm_snapshot(&snapshot).await?;
         let live = self
             .directory
             .is_live(snapshot.owner.session, unix_time_ms()?)
             .await?;
+        if self.query_gate.is_closed() {
+            return Err(Error::Fenced);
+        }
         Ok((self.snapshot_receipt(&snapshot), live))
     }
 
     /// Closes reader admission across every clone before eviction or writable activation.
     pub fn close(&self) {
+        self.lifetime.state.fetch_or(CLOSED, Ordering::AcqRel);
         self.query_gate.close();
+    }
+
+    /// Closes admission, detaches snapshots from every retained peer clone,
+    /// and joins accepted queries, native SQL and refresh work. The returned
+    /// receipt is the last installed position, not current authority/readiness.
+    /// A cancelled waiter leaves closure installed; another waiter can join the
+    /// same retained work. Provider failures still belong to the original work.
+    pub async fn close_and_join(&self) -> Receipt {
+        self.close();
+        let receipt = {
+            let _refresh = self.refresh_gate.lock().await;
+            let mut state = self.snapshot.write().await;
+            state.snapshot.take();
+            state.receipt
+        };
+        self.lifetime.join().await;
+        receipt
+    }
+
+    async fn current_snapshot(&self) -> Result<Arc<ReplicaSnapshot>> {
+        self.snapshot
+            .read()
+            .await
+            .snapshot
+            .clone()
+            .ok_or(Error::Fenced)
     }
 
     /// Installs a newer exact root without disrupting queries using the old view.
@@ -155,8 +269,9 @@ impl CellReadReplica {
     /// serialized; a failed or stale refresh leaves the serving view intact.
     pub async fn refresh(&self, destination: &Path) -> Result<Receipt> {
         self.runtime.ensure_running()?;
+        let operation = Arc::new(self.lifetime.acquire(true)?);
         let _refresh = self.refresh_gate.lock().await;
-        let current = self.snapshot.read().await.clone();
+        let current = self.current_snapshot().await?;
         self.confirm_authority(&current).await?;
         let observed = self
             .authority
@@ -179,15 +294,28 @@ impl CellReadReplica {
         if verified.schema() != self.expected.schema {
             return Err(Error::Fenced);
         }
-        let replacement = ReplicaSnapshot {
-            owner: current.owner.clone(),
-            epoch: current.epoch,
-            view: open_view(&self.runtime, verified, destination, Arc::clone(&admission)).await?,
-            _admission: admission,
-        };
+        let replacement = open_view(
+            &self.runtime,
+            verified,
+            destination,
+            SnapshotInputs {
+                owner: current.owner.clone(),
+                epoch: current.epoch,
+                admission,
+                operation: Arc::clone(&operation),
+            },
+        )
+        .await?;
         self.confirm_authority(&replacement).await?;
         let receipt = self.snapshot_receipt(&replacement);
-        *self.snapshot.write().await = replacement;
+        let mut state = self.snapshot.write().await;
+        // Close may have raced the final provider read. A closed reader cannot
+        // install a replacement behind the detachment barrier.
+        if self.query_gate.is_closed() {
+            return Err(Error::Fenced);
+        }
+        state.receipt = receipt;
+        state.snapshot = Some(replacement);
         Ok(receipt)
     }
 
@@ -225,6 +353,7 @@ impl CellReadReplica {
 
     pub(crate) async fn query_encoded(&self, query: EncodedQuery) -> Result<EncodedObservation> {
         self.runtime.ensure_running()?;
+        let accepted_work = Arc::new(self.lifetime.acquire(true)?);
         if self.query_gate.is_closed() {
             return Err(Error::Fenced);
         }
@@ -244,7 +373,7 @@ impl CellReadReplica {
             return Err(Error::Registry("replica query contract changed"));
         }
         validate_description(&self.registry, module, self.expected, operation)?;
-        let snapshot = self.snapshot.read().await.clone();
+        let snapshot = self.current_snapshot().await?;
         let observed = self.snapshot_receipt(&snapshot);
         if let Some(minimum) = query
             .minimum
@@ -274,7 +403,11 @@ impl CellReadReplica {
         let schema = self.expected.schema;
         let sequence = observed.commit_sequence;
         let now_ms = unix_time_ms()?;
+        let native_operation = Arc::clone(&accepted_work);
         let mut task = tokio::task::spawn_blocking(move || {
+            // Declare this first so cancellation cannot wake close before SQL
+            // view, job and semaphore charges have all been released.
+            let _operation = native_operation;
             let _permit = permit;
             let _job = job;
             // Caller cancellation can drop the reader while SQL is running.
@@ -395,20 +528,30 @@ async fn open_view(
     runtime: &CellRuntime,
     verified: cellule_ltx::VerifiedRoot,
     destination: &Path,
-    admission: Arc<ResourceReservation>,
-) -> Result<Arc<ReadOnlyRoot>> {
+    inputs: SnapshotInputs,
+) -> Result<Arc<ReplicaSnapshot>> {
     let job = runtime.reserve_sql_job().await?;
     let destination = destination.to_owned();
     // VFS faults need LTX's blocking pool for directory-cache I/O. SQLite must
     // use separate SQL admission, retaining both charges if its waiter cancels.
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<Arc<ReplicaSnapshot>> {
+        let operation = inputs.operation;
         let _job = job;
-        let _admission = admission;
+        let admission = inputs.admission;
+        let owner = inputs.owner;
+        let checked_root = verified;
+        let destination_path = destination;
         cellule_ltx::with_paged_io_deadline(Instant::now() + QUERY_DEADLINE, || {
-            verified.open_read_only(&destination).map(Arc::new)
+            let view = Arc::new(checked_root.open_read_only(&destination_path)?);
+            Ok(Arc::new(ReplicaSnapshot {
+                owner,
+                epoch: inputs.epoch,
+                view,
+                _admission: admission,
+                _lifetime: operation.0.acquire(false)?,
+            }))
         })
     })
     .await
     .map_err(Error::WorkerJoin)?
-    .map_err(Error::from)
 }

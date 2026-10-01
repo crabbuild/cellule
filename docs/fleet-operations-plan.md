@@ -1012,7 +1012,11 @@ maintenance can claim the node is safe to stop.
    not admit an entirely new lane after cordon.
 2. Reconcile reader policy away from the node and verify the replacement count
    required by application policy. Release local read views through the host's
-   existing reader lifecycle.
+   existing reader lifecycle. The manager now uses `CellReadReplica::close_and_join`
+   to detach every peer clone's view and join accepted native/query/refresh work
+   before removing ownership. Cancelled waiters retain that obligation for the
+   next drain. Its historical receipt alone cannot retire a journal enrollment;
+   producer wiring and checked replacement evidence remain required.
 3. Enumerate local follower lanes and all authoritative node-log epochs that
    reference the physical node, including expired/recovering owner sessions.
    Missing or incomplete inventory blocks finalization. Live advertisements

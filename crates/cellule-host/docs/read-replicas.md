@@ -6,7 +6,9 @@ flowchart LR
     Hint --> Select[Validate selected reader boot]
     Select --> View[Authenticated immutable view]
     Poll[Periodic reconciliation] --> Select
-    Drain[Node drain] --> Cancel[Cancel activation and join work]
+    Drain[Node drain] --> Cancel[Cancel activation]
+    Cancel --> Close[Fence and detach views]
+    Close --> Join[Join accepted native and refresh work]
 ```
 
 | Boundary | Behavior |
@@ -16,11 +18,31 @@ flowchart LR
 | Recruitment | Locally owned Cells send scoped hints through an authorized peer client. |
 | Refresh | New view must prove its root and receipt before selection. |
 | Missing reader | Queries return a replica error; they do not trigger activation. |
-| Drain | Cancels activation before closing views. |
+| Drain | Cancels activation, closes admission, detaches views, and joins accepted work before removing ownership. |
 
 Commands do not wait for readers. Reconciliation repairs dropped hints and
 membership changes; it is not a freshness guarantee. See
 [application read policies](../../cellule-app/docs/invocation.md).
+
+## Join reader closure
+
+`CellReadReplica::close()` fences new work across every clone.
+`close_and_join().await` additionally detaches the shared snapshot and waits for
+accepted queries, authority reads, refreshes and native SQLite opens. This
+includes older snapshots still used by queries and native jobs whose request
+waiters were cancelled. Retaining a peer clone cannot retain a detached view's
+memory, descriptor or disk charges after joined closure.
+
+The manager retains each reader until joined removal succeeds. Cancelling a
+removal or shutdown waiter leaves that obligation inventoried; a later call
+joins the same work. Shutdown fences all views before joining up to 16 at once.
+A host drain deadline can return while native work remains owned: the host
+stays Draining until a later shutdown joins it.
+
+The returned receipt and `receipt()` describe the last installed snapshot,
+including after closure. They do not prove current authority, replacement
+redundancy, or durable fleet registry retirement. Publish retirement only after
+the canonical closure and the application's checked enrollment evidence.
 
 ## Observe managed reader obligations
 

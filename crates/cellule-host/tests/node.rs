@@ -110,5 +110,6 @@ mod node {
     pub mod lifecycle;
     pub mod movement;
     pub mod qualification;
+    pub mod reader_closure;
     pub mod tasks;
 }

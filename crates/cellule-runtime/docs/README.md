@@ -61,6 +61,12 @@ flowchart LR
 Cell view. Its view and replacement refresh are charged to the node runtime's
 memory, descriptor, and disk ledgers.
 
+`close()` fences new reader work. `close_and_join()` also detaches snapshots
+from every peer clone and joins accepted query/refresh work, including native
+jobs whose waiters were cancelled. Its receipt preserves the last installed
+position; it does not establish current authority or fleet retirement. See the
+[host reader lifecycle](../../cellule-host/docs/read-replicas.md).
+
 Those charges are provisional: product routing and measured capacity
 qualification remain open under
 [Plan 036](https://github.com/crabbuild/crab/blob/beb439039cb37e750afe6625a2358101c70d1191/advisor-plans/036-cell-read-replicas-and-fenced-promotion.md).

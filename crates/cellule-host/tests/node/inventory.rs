@@ -2,6 +2,7 @@
 
 use super::*;
 use cellule_host::read_replicas::ReaderInventoryCursor;
+use cellule_runtime::peer::PeerReplicaResolver;
 use cellule_runtime::{
     CellRuntime,
     cell::catalog::{CatalogEntry, CellCatalog},
@@ -14,7 +15,7 @@ use cellule_store::Store;
 use ed25519_dalek::SigningKey;
 use object_store::{memory::InMemory, path::Path};
 
-fn clock() -> i64 {
+pub(super) fn clock() -> i64 {
     i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -24,7 +25,7 @@ fn clock() -> i64 {
     .unwrap()
 }
 
-fn advertisement(id: u8, code: Digest, now: i64) -> NodeAdvertisement {
+pub(super) fn advertisement(id: u8, code: Digest, now: i64) -> NodeAdvertisement {
     NodeAdvertisement::sign(
         NodeId::from_bytes([id; 16]),
         SessionId::from_bytes([id; 16]),
@@ -184,6 +185,11 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
         assert_eq!(receipt.incarnation, incarnation);
         targets.push(target);
     }
+    let mut retained_peer_views = Vec::new();
+    for target in &targets {
+        retained_peer_views.push(manager.resolve(target.clone()).await.unwrap());
+    }
+    let resident_before = node.stats().resident_bytes();
     let before = node.stats().retained_bytes();
     let first = manager.fleet_readers_page(None, 1, clock()).await.unwrap();
     assert_eq!(first.session(), SessionId::from_bytes([2; 16]));
@@ -204,6 +210,12 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
     drop(next);
     assert_eq!(node.stats().retained_bytes(), before);
     manager.remove(removed).await;
+    assert!(node.stats().resident_bytes() < resident_before);
+    for peer in &retained_peer_views {
+        if peer.receipt().await.cell == removed {
+            assert!(matches!(peer.readiness().await, Err(Error::Fenced)));
+        }
+    }
     assert!(
         manager
             .fleet_readers_page(Some(cursor), 1, clock())
@@ -241,6 +253,10 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
     assert_eq!(node.state(), NodeState::Stopped);
     assert_eq!(node.stats().retained_bytes(), 0);
     assert_eq!(node.stats().resident_bytes(), 0);
+    for peer in &retained_peer_views {
+        assert!(peer.readiness().await.is_err());
+    }
+    drop(retained_peer_views);
     for handle in handles {
         handle.drain().await.unwrap();
     }
