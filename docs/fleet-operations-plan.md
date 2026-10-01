@@ -118,9 +118,12 @@ its source fingerprint, selected commands, and limits; it does not mark an
 entire work package complete.
 
 The [fleet journal example](../crates/cellule-host/examples/fleet_operations/README.md)
-currently supports `inspect-journal <database-path>`. It reopens the local
-durable reference journal and prints its head summary. The four three-node
-scenarios listed for W8 remain deliverables.
+currently supports `inspect-journal <database-path>`, `overload`, and
+`controller-restart`. The first reopens the local durable reference journal.
+The latter commands exercise real bounded movement, including a new controller
+epoch after lost source replies and actual lease expiry. Maintenance and
+receiver-loss scenarios, complete production observations, and the full W8
+exit requirements remain deliverables.
 
 | Start here | Contents |
 | --- | --- |
@@ -1548,8 +1551,10 @@ python3 scripts/check-module-layout.py
 node crates/cellule-runtime/docs/validate.mjs
 ```
 
-The following example commands are deliverables of W8, not commands supported
-by the baseline checkout:
+The following example commands are deliverables of W8. The current tree supports
+`overload` and `controller-restart` with the evidence limits recorded in
+[execution evidence](fleet-operations-progress.md); `maintenance` and
+`receiver-loss` remain unimplemented:
 
 ```sh
 cargo run -p cellule-host --example fleet_operations --locked -- overload

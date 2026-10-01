@@ -62,6 +62,17 @@ impl FleetReconciler {
                 Some(AttemptEvent::BeginCancel)
             }
             AttemptPhase::Reserved => Some(AttemptEvent::BeginRelease),
+            AttemptPhase::Released
+                if !attempt.receiver_resources_settled()
+                    && attempt
+                        .reservation()
+                        .is_some_and(|r| r.expires_at_ms <= now) =>
+            {
+                // Expired unused credit must join before first activation.
+                // The exact release and fleet permits remain charged.
+                effect = MovementAction::Cancel;
+                Some(AttemptEvent::BeginCancel)
+            }
             AttemptPhase::Released => Some(AttemptEvent::BeginActivate),
             _ => None,
         };

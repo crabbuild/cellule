@@ -87,6 +87,13 @@ struct Acknowledged {
     source: CellHandle,
 }
 
+struct SettlementContext<'a> {
+    records: &'a HashMap<CellId, Record>,
+    acknowledged: &'a HashMap<CellId, Acknowledged>,
+    profile: FleetProfile,
+    previous: Option<&'a FleetReconciler>,
+}
+
 #[derive(Debug)]
 pub(super) struct ScenarioSummary {
     pub released: usize,
@@ -97,18 +104,36 @@ pub(super) struct ScenarioSummary {
     pub max_restore_bytes: u64,
     pub joined_nodes: usize,
     pub receiver_nodes: usize,
+    pub lost_release_replies: usize,
+    pub controller_epoch: u64,
+    pub expired_receiver_cleanups: usize,
     pub blockers: Vec<cellule_runtime::fleet::operations::DrainBlocker>,
 }
 
 /// Owns the private directory until all runtime and journal jobs are joined.
 pub(super) async fn overload() -> JournalResult<ScenarioSummary> {
+    execute(false).await
+}
+
+pub(super) async fn controller_restart() -> JournalResult<ScenarioSummary> {
+    execute(true).await
+}
+
+async fn execute(restart: bool) -> JournalResult<ScenarioSummary> {
     let root = tempfile::tempdir()?;
     let path = root.path().join("fleet-journal.sqlite");
-    let journal = Arc::new(
-        SqliteJournal::open(path.clone(), scope(), FleetProfile::default(), clock()?).await?,
-    );
+    let profile = if restart {
+        FleetProfile {
+            controller_lease_ms: 3_000,
+            reconcile_interval_ms: 500,
+            ..FleetProfile::default()
+        }
+    } else {
+        FleetProfile::default()
+    };
+    let journal = Arc::new(SqliteJournal::open(path.clone(), scope(), profile, clock()?).await?);
     let mut nodes = Vec::new();
-    let result = run(&root, path, journal.clone(), &mut nodes).await;
+    let result = run(&root, path, journal.clone(), &mut nodes, profile, restart).await;
     let mut cleanup_error = None;
     for node in &nodes {
         if let Err(error) = node.shutdown().await
@@ -164,6 +189,8 @@ async fn run(
     path: PathBuf,
     journal: Arc<SqliteJournal>,
     nodes: &mut Vec<Arc<CellNode>>,
+    profile: FleetProfile,
+    restart: bool,
 ) -> JournalResult<ScenarioSummary> {
     let application = application::compile()?;
     let code = *application
@@ -312,11 +339,14 @@ async fn run(
     let fleet = Arc::new(adapters::LocalFleet {
         nodes: nodes.clone(),
         journal: journal.clone(),
+        lose_release_replies: restart,
+        lost_release_replies: std::sync::atomic::AtomicUsize::new(0),
+        expired_receiver_cleanups: std::sync::atomic::AtomicUsize::new(0),
     });
     let driver = FleetReconciler::new(
         scope(),
         SessionId::from_bytes([206; 16]),
-        FleetProfile::default(),
+        profile,
         journal.clone(),
         fleet.clone(),
         fleet.clone(),
@@ -365,10 +395,42 @@ async fn run(
     if prepared.dispatched != 2 || !prepared.failures.is_empty() {
         return Err(invalid("real receivers did not prepare"));
     }
+    if restart {
+        let lost = driver
+            .reconcile_once(clock, Instant::now() + Duration::from_secs(5))
+            .await?;
+        if lost.dispatched != 2
+            || lost.failures.len() != 2
+            || lost.released != 0
+            || fleet
+                .lost_release_replies
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 2
+            || lost.snapshot.head().attempts().len() != 2
+        {
+            return Err(invalid(
+                "reply loss did not retain both unconfirmed releases",
+            ));
+        }
+        let expires = lost
+            .snapshot
+            .head()
+            .controller()
+            .ok_or_else(|| invalid("controller lease absent"))?
+            .expires_at_ms;
+        // Wait on real time. Neither the node lease nor reservation evidence is
+        // restamped; the successor must settle expired prepared credit.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while clock()? < expires {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok::<_, JournalError>(())
+        })
+        .await??;
+    }
     // Reopen an independent controller client over the same durable file while
     // node effects retain their original journal client and accepted envelopes.
-    let reopened =
-        Arc::new(SqliteJournal::open(path, scope(), FleetProfile::default(), clock()?).await?);
+    let reopened = Arc::new(SqliteJournal::open(path, scope(), profile, clock()?).await?);
     let mut blockers = first.blockers;
     for blocker in prepared.blockers {
         if !blockers.contains(&blocker) {
@@ -379,9 +441,13 @@ async fn run(
         reopened.clone(),
         fleet,
         specs,
-        &records,
-        &acknowledged,
         blockers,
+        SettlementContext {
+            records: &records,
+            acknowledged: &acknowledged,
+            profile,
+            previous: restart.then_some(&driver),
+        },
     )
     .await;
     let closed = reopened.close().await;
@@ -394,14 +460,19 @@ async fn settle(
     journal: Arc<SqliteJournal>,
     fleet: Arc<adapters::LocalFleet>,
     specs: Vec<cellule_runtime::fleet::operations::MoveAttemptSpec>,
-    records: &HashMap<CellId, Record>,
-    acknowledged: &HashMap<CellId, Acknowledged>,
     blockers: Vec<cellule_runtime::fleet::operations::DrainBlocker>,
+    context: SettlementContext<'_>,
 ) -> JournalResult<ScenarioSummary> {
+    let SettlementContext {
+        records,
+        acknowledged,
+        profile,
+        previous,
+    } = context;
     let driver = FleetReconciler::new(
         scope(),
-        SessionId::from_bytes([206; 16]),
-        FleetProfile::default(),
+        SessionId::from_bytes([if previous.is_some() { 207 } else { 206 }; 16]),
+        profile,
         journal.clone(),
         fleet.clone(),
         fleet.clone(),
@@ -419,14 +490,40 @@ async fn settle(
             .map(|spec| spec.destination)
             .collect::<std::collections::HashSet<_>>()
             .len(),
+        lost_release_replies: 0,
+        controller_epoch: 0,
+        expired_receiver_cleanups: 0,
         blockers,
     };
-    for _ in 0..12 {
+    for pass in 0..12 {
         let report = driver
             .reconcile_once(clock, Instant::now() + Duration::from_secs(5))
             .await?;
         if !report.failures.is_empty() {
             return Err(invalid("real movement endpoint failed"));
+        }
+        summary.controller_epoch = report
+            .snapshot
+            .head()
+            .controller()
+            .ok_or_else(|| invalid("controller lease absent"))?
+            .epoch;
+        if pass == 0
+            && let Some(previous) = previous
+        {
+            let before = journal.load_snapshot(scope()).await?;
+            let error = previous
+                .reconcile_once(clock, Instant::now() + Duration::from_secs(1))
+                .await
+                .err()
+                .ok_or_else(|| invalid("old controller renewed successor lease"))?;
+            if !matches!(&error, cellule_runtime::Error::Facility { name: "fleet-journal", source } if matches!(source.downcast_ref::<cellule_runtime::fleet::operations::OperationError>(), Some(cellule_runtime::fleet::operations::OperationError::Fenced)))
+            {
+                return Err(error.into());
+            }
+            if summary.controller_epoch != 2 || journal.load_snapshot(scope()).await? != before {
+                return Err(invalid("old controller was not fenced after replacement"));
+            }
         }
         for blocker in report.blockers {
             if !summary.blockers.contains(&blocker) {
@@ -445,6 +542,19 @@ async fn settle(
         if report.snapshot.head().attempts().is_empty() {
             break;
         }
+    }
+    summary.lost_release_replies = fleet
+        .lost_release_replies
+        .load(std::sync::atomic::Ordering::SeqCst);
+    summary.expired_receiver_cleanups = fleet
+        .expired_receiver_cleanups
+        .load(std::sync::atomic::Ordering::SeqCst);
+    if previous.is_some()
+        && (summary.lost_release_replies != 2 || summary.expired_receiver_cleanups != 2)
+    {
+        return Err(invalid(
+            "controller restart did not settle both original reservations",
+        ));
     }
     if summary.receiver_nodes != 2
         || summary.released != 2

@@ -55,6 +55,9 @@ impl FleetCellProvider for Cells {
 pub(super) struct LocalFleet {
     pub nodes: Vec<Arc<CellNode>>,
     pub journal: Arc<SqliteJournal>,
+    pub lose_release_replies: bool,
+    pub lost_release_replies: std::sync::atomic::AtomicUsize,
+    pub expired_receiver_cleanups: std::sync::atomic::AtomicUsize,
 }
 impl LocalFleet {
     fn endpoint(&self, physical: NodeId, boot: SessionId) -> JournalResult<&Arc<CellNode>> {
@@ -86,10 +89,34 @@ impl FleetTransport for LocalFleet {
             } else {
                 (spec.destination_node, spec.destination)
             };
-            self.endpoint(node, boot)?
+            let completion = self
+                .endpoint(node, boot)?
                 .apply_fleet_action(action.clone(), clock()?)
                 .await
-                .map_err(|error| Box::new(error) as super::JournalError)
+                .map_err(|error| Box::new(error) as super::JournalError)?;
+            let now = clock()?;
+            if *effect == MovementAction::Cancel
+                && attempt.phase() == AttemptPhase::CleaningReceiver
+                && attempt
+                    .reservation()
+                    .is_some_and(|r| r.expires_at_ms <= now)
+                && completion.committed
+                && matches!(completion.outcome.outcome, FleetOutcome::ReceiverCleaned)
+            {
+                self.expired_receiver_cleanups
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            if self.lose_release_replies && *effect == MovementAction::Release {
+                if !completion.committed
+                    || !matches!(completion.outcome.outcome, FleetOutcome::Released(_))
+                {
+                    return Err(invalid("release failed before injected reply loss"));
+                }
+                self.lost_release_replies
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return Err(invalid("injected loss after committed source release"));
+            }
+            Ok(completion)
         })
     }
     fn inspect<'a>(

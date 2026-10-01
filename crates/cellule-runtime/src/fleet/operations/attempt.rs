@@ -281,6 +281,13 @@ impl MoveAttempt {
         self.reservation
     }
 
+    /// Returns committed receiver cleanup/consumption evidence. Expiry alone
+    /// never establishes that the receiver's resource owners have joined.
+    #[must_use]
+    pub const fn receiver_resources_settled(&self) -> bool {
+        self.receiver_cleaned
+    }
+
     /// Checks current actor-backed serving evidence against this exact release.
     /// This checks shape and required position, not authority or resource cleanup.
     pub fn validate_activation(&self, evidence: &ActivationEvidence) -> Result<()> {

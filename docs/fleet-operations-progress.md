@@ -4,6 +4,54 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 controller replacement checkpoint
+
+`fleet_operations controller-restart` now runs real three-node movement with
+two source replies lost after durable release. Both unconfirmed attempts retain
+their permits and exact inputs. A bounded real-time wait expires the original
+controller lease; an independently reopened journal and a different claimant
+acquire epoch 2. The old claimant receives the original journal Fenced error
+without changing the successor's snapshot. Fresh source inspection adopts the
+retained exact release proofs instead of repeating release.
+
+The driver now joins expired unused receiver credit before first activation
+after a proven release. Committed cleanup preserves the release and both fleet
+charges; canonical ordinary admission restores the same Cells afterward.
+`receiver_resources_settled` exposes this existing committed fact without
+changing codecs. Both other nodes verify original acknowledged outcomes and
+SQL readback, old source handles fail, and shutdown joins all three nodes and
+their resource owners.
+
+```text
+released=2 activated=2 retired=2 receipt_checks=2 max_inflight=2 max_restore_bytes=2550136832 joined_nodes=3 receiver_nodes=2 lost_release_replies=2 controller_epoch=2 expired_receiver_cleanups=2 blocker_count=1
+blockers=[IncompleteObservation]
+```
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Baseline | `734650d35a355506a76775cab2f75015789d8792` |
+| Source manifest | 565 Rust/Cargo files; SHA256 `a6795e35b4b07c6bf5113a12d526e51c530bd497b93c3a342fe0fb08670229a7` |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 35 passed; none ignored or filtered. |
+| `cargo test -p cellule-runtime --lib fleet::operations --locked` | 60 passed; 419 filtered. |
+| `cargo run -p cellule-host --example fleet_operations --locked -- controller-restart` | Exit zero with the output above. |
+| `cargo clippy -p cellule-runtime -p cellule-host --lib --example fleet_operations --tests --locked -- -D warnings` | Passed. |
+| Static gates | Format, boundaries, module layout, 108 Rust snippets, 1140 Markdown links, 28 SQL/peer assertions and 562 protocol links passed. |
+
+Commands used Rust 1.97.0 and the existing checkout target with
+`CARGO_INCREMENTAL=0`. The fixed profile has a three-second controller lease
+and 500-ms interval; node leases, prepared-credit expiry and all observations
+use actual time. This establishes in-process controller replacement and local
+durable reconstruction. It does not establish process crash, receiver-session
+loss, complete fleet observations, busy maintenance or provider qualification.
+All full-plan gaps remain required.
+
+Baseline CI `36885649739` passed through tests and website Rust compilation,
+then failed workspace Clippy because newer stable Rust deprecated
+`AtomicU64::fetch_update`. The contract, MSRV, website, decoder-fuzz and
+object-capacity jobs passed. Remaining jobs were still running when inspected.
+The renamed API compiled on Rust 1.97.0 in a separate minimal probe; workspace
+call sites still need updating before that lint failure is resolved.
+
 ## October 1 2026 atomic absence reconciliation checkpoint
 
 The public reconciler can now settle an unknown dispatch that never reached

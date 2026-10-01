@@ -1,8 +1,8 @@
 # Fleet operations reference example
 
 Status: durable journal and public-driver models, plus a finite real three-node
-admission-overload scenario with controller-client reconstruction and receipt
-readback. Complete maintenance, receiver-loss, production observations and
+admission-overload and controller-restart scenarios with receipt readback.
+Complete maintenance, receiver-loss, production observations and
 qualification remain required by the [fleet plan](../../../../docs/fleet-operations-plan.md).
 
 ## Run
@@ -34,6 +34,25 @@ It stops new scheduling after the bounded batch; this does not demonstrate
 sustained-overload convergence. It is not a production complete observer, deployment authentication system,
 process-crash test, or distributed-provider qualification.
 
+Run controller replacement after ambiguous source replies:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- controller-restart
+```
+
+This uses the same real nodes, journal, bounded driver and receipt checks.
+The transport loses both replies after source release commits. The scenario
+keeps both attempts charged, waits for the actual controller lease to expire,
+reopens an independent journal client and resumes with a different claimant.
+Epoch 2 adopts retained source proofs; the old claimant's renewal is fenced.
+Expired unused receiver credit is cancelled and joined before first activation
+through the canonical ordinary admission path. Output also reports lost replies,
+controller epoch and confirmed expired-credit cleanup. No release is repeated.
+The fixed test profile uses a three-second controller lease and 500-ms interval;
+node leases, reservation timestamps and observations use actual time. This is
+in-process controller replacement with durable local reconstruction; process
+crash, provider and receiver-session loss qualification remain outstanding.
+
 To inspect a retained example journal, supply a database path in an existing directory,
 outside canonical Cell storage. The command creates the journal if absent or
 reopens it with the same scope and profile, prints its bounded head summary,
@@ -44,7 +63,7 @@ cargo run -p cellule-host --example fleet_operations --locked -- inspect-journal
 ```
 
 The example uses fleet identity `[200; 32]`, application identity `[3; 16]`, and
-`FleetProfile::default()`. A new journal starts with bootstrap incomplete and
+`FleetProfile::default()` for overload and journal inspection. A new journal starts with bootstrap incomplete and
 scheduling stopped. Inspection does not bootstrap the registry or enable
 movement. Reopening with a different scope or profile fails.
 
@@ -100,10 +119,10 @@ SQLite adapter and signed synthetic observations. Its simulated transport checks
 phase publication before dispatch, fresh activation/retirement, independent
 cleanup, retained permits after lost replies/timeouts, competing controllers,
 stop-new-moves behavior, and pressure relief using remaining shared budget.
-The separate `scenario::tests` case invokes the same real-node implementation
-as the `overload` command. The model tests do not create Cell actors. Planned
+The separate `scenario::tests` cases invoke the same real-node implementations
+as the `overload` and `controller-restart` commands. The model tests do not create Cell actors. Planned
 maintenance and receiver-loss scenarios still require their complete barriers;
-controller reconstruction here is during clean movement, with all nodes live.
+controller replacement here retains all three live node sessions.
 
 The journal's cooldown and post-batch queries compare the complete expected
 snapshot and walk only its committed progress chain, one bounded page at a time.

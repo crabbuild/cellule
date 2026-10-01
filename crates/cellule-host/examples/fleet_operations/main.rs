@@ -14,10 +14,16 @@ use journal::{JournalResult, SqliteJournal};
 async fn main() -> JournalResult<()> {
     let mut args = std::env::args_os().skip(1);
     let command = args.next();
-    if command.as_deref() == Some(std::ffi::OsStr::new("overload")) && args.next().is_none() {
-        let summary = scenario::overload().await?;
+    if matches!(command.as_deref(), Some(value) if value == "overload" || value == "controller-restart")
+        && args.next().is_none()
+    {
+        let summary = if command.as_deref() == Some(std::ffi::OsStr::new("controller-restart")) {
+            scenario::controller_restart().await?
+        } else {
+            scenario::overload().await?
+        };
         println!(
-            "released={} activated={} retired={} receipt_checks={} max_inflight={} max_restore_bytes={} joined_nodes={} receiver_nodes={} blocker_count={}",
+            "released={} activated={} retired={} receipt_checks={} max_inflight={} max_restore_bytes={} joined_nodes={} receiver_nodes={} lost_release_replies={} controller_epoch={} expired_receiver_cleanups={} blocker_count={}",
             summary.released,
             summary.activated,
             summary.retired,
@@ -26,6 +32,9 @@ async fn main() -> JournalResult<()> {
             summary.max_restore_bytes,
             summary.joined_nodes,
             summary.receiver_nodes,
+            summary.lost_release_replies,
+            summary.controller_epoch,
+            summary.expired_receiver_cleanups,
             summary.blockers.len()
         );
         println!("blockers={:?}", summary.blockers);
@@ -37,7 +46,7 @@ async fn main() -> JournalResult<()> {
         || args.next().is_some()
     {
         return Err(std::io::Error::other(
-            "usage: fleet_operations overload | inspect-journal <database-path>",
+            "usage: fleet_operations overload | controller-restart | inspect-journal <database-path>",
         )
         .into());
     }
