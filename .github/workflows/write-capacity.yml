@@ -24,7 +24,7 @@ jobs:
           reader_test=host::replicas::pending_reader_activation_retains_a_new_publication_hint
           cargo test -p cellule-app --test integration --all-features --locked \
             "$reader_test" -- --exact --list > diagnostics/test-list.log
-          rg -Fx "${reader_test}: test" diagnostics/test-list.log
+          grep -Fx "${reader_test}: test" diagnostics/test-list.log
           failed=0
           for attempt in 1 2 3 4 5 6; do
             if cargo test -p cellule-app --test integration --all-features --locked \
