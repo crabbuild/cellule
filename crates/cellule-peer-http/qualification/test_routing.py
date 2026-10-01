@@ -10,7 +10,7 @@ def measurements(unleased_reads=4096):
     return [dict(mode=mode, version=version, run=run, lane="local_query", concurrency=16,
                  throughput=1000.0, p50_ms=1.0, p95_ms=2.0, p99_ms=3.0,
                  reads=0 if mode == "leased" else unleased_reads)
-            for mode in routing.SELECTORS for version in ("baseline", "candidate") for run in range(3)]
+            for mode in routing.SELECTORS for version in ("baseline", "candidate") for run in range(len(routing.PAIRS))]
 
 
 class GateTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class GateTests(unittest.TestCase):
                 row["p99_ms"] = 4.0
         self.assertEqual(routing.compare(rows)["failures"], ["leased/forwarded_query_uncached_route/c16"])
 
-    def test_one_outlier_cannot_hide_two_regressed_runs(self):
+    def test_one_outlier_cannot_hide_a_regressed_majority(self):
         rows = measurements()
         for row in rows:
             if row["mode"] == "leased" and row["version"] == "candidate":

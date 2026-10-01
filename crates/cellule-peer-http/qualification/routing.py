@@ -2,6 +2,7 @@
 """Matched RustFS routing runs; keep source, binary and raw-sample provenance."""
 
 import argparse
+import asyncio
 import csv
 import hashlib
 import io
@@ -16,10 +17,14 @@ import statistics
 import subprocess
 import tarfile
 
+from coordination import coordinate
+
 QUERIES = 4096
 COMMANDS = 1024
 PACED_BURSTS = 48
-ORDER = ("baseline", "candidate", "candidate", "baseline", "baseline", "candidate")
+PAIRS = (("baseline", "candidate"), ("candidate", "baseline"),
+         ("candidate", "baseline"), ("baseline", "candidate"))
+ORDER = tuple(version for pair in PAIRS for version in pair)
 SELECTORS = {
     "leased": "performance_tests::rustfs_owner_routing_latency_throughput",
     "object_only": "performance_tests::rustfs_object_only_routing_latency_throughput",
@@ -105,20 +110,49 @@ def build(revision, name, state, evidence, harness):
             "harness_sha256": hashlib.sha256(harness).hexdigest()}
 
 
-def measure(version, mode, index, binary, evidence):
+def schedule(order):
+    stages = []
+    for route in ("local", "forwarded"):
+        stages.append((f"{route}_query_cold-c1", order))
+        if route == "local":
+            stages.extend((f"local_query_fresh_client-c{c}", order) for c in (1, 16))
+            stages.append(("local_read_control", order))
+        stages.extend((f"{route}_query-c{c}", order) for c in (1, 16))
+        if route == "forwarded":
+            stages.extend((stage, order) for stage in
+                          ("forwarded_read_control", "forwarded_query_uncached_route-c16"))
+        stages.extend((f"{route}_paced-{burst}", order if burst % 2 == 0 else order[::-1])
+                      for burst in range(PACED_BURSTS))
+        stages.extend((f"{route}_command-c{c}", order) for c in (1, 16))
+    stages.extend((stage, order) for stage in ("write_route_control", "recovery"))
+    return stages
+
+
+def measure_pair(mode, pair, binaries, evidence):
+    order = PAIRS[pair]
+    workers = {}
+    for offset, version in enumerate(order, 1):
+        index = pair * 2 + offset
+        directory = evidence / f"{mode}-{index}-{version}"
+        directory.mkdir()
+        env = os.environ.copy()
+        env.update(CELLULE_TEST_PREFIX=directory.name, CELLULE_PERF_EVIDENCE=str(directory),
+                   CELLULE_PERF_QUERIES=str(QUERIES), CELLULE_PERF_COMMANDS=str(COMMANDS),
+                   CELLULE_PERF_BURSTS=str(PACED_BURSTS), CELLULE_PERF_COORDINATED="1")
+        workers[version] = ([str(binaries[version]), SELECTORS[mode], "--exact", "--ignored", "--nocapture"],
+                            env, directory / "run.log")
+    print(f"START {mode} pair={pair + 1} order={','.join(order)}", flush=True)
+    asyncio.run(coordinate(workers, schedule(order), evidence / f"{mode}-pair-{pair + 1}.json"))
+    return [row for offset, version in enumerate(order, 1)
+            for row in parse_measurement(version, mode, pair * 2 + offset, evidence)]
+
+
+def parse_measurement(version, mode, index, evidence):
     directory = evidence / f"{mode}-{index}-{version}"
-    directory.mkdir()
-    env = os.environ.copy()
-    env.update(CELLULE_TEST_PREFIX=directory.name, CELLULE_PERF_EVIDENCE=str(directory),
-               CELLULE_PERF_QUERIES=str(QUERIES), CELLULE_PERF_COMMANDS=str(COMMANDS),
-               CELLULE_PERF_BURSTS=str(PACED_BURSTS))
-    print(f"START {directory.name}", flush=True)
-    with (directory / "run.log").open("w") as log:
-        result = subprocess.run([binary, SELECTORS[mode], "--exact", "--ignored", "--nocapture"],
-                                env=env, stdout=log, stderr=subprocess.STDOUT)
     text = (directory / "run.log").read_text()
     print(text, flush=True)
-    if result.returncode or f"correctness=passed commands={COMMANDS * 6} final_sequence={COMMANDS * 6}" not in text:
+    if ("test result: ok. 1 passed; 0 failed;" not in text
+            or f"correctness=passed commands={COMMANDS * 6} final_sequence={COMMANDS * 6}" not in text):
         raise RuntimeError(f"Benchmark or exact recovery failed: {directory.name}")
     rows = []
     for line in text.splitlines():
@@ -198,7 +232,7 @@ def compare(rows):
             selected = {version: [row for row in rows if row["mode"] == mode
                                   and row["lane"] == lane and row["concurrency"] == concurrency
                                   and row["version"] == version] for version in ORDER[:2]}
-            if any(len(values) != 3 for values in selected.values()):
+            if any(len(values) != len(PAIRS) for values in selected.values()):
                 raise RuntimeError(f"Incomplete repeats: {mode} {lane}")
             medians = {version: {metric: statistics.median(row[metric] for row in values)
                                 for metric in ("throughput", "p50_ms", "p95_ms", "p99_ms", "reads")}
@@ -220,7 +254,7 @@ def compare(rows):
             comparisons.append(dict(mode=mode, lane=lane, concurrency=concurrency,
                                     medians=medians, ratios=ratios, latency_gate=gated))
     return {"comparisons": comparisons, "failures": failures,
-            "threshold": "median of all three runs: p95/p99 <= 110%, throughput >= 90%"}
+            "threshold": "median of all four runs: p95/p99 <= 110%, throughput >= 90%"}
 
 
 def main():
@@ -235,22 +269,29 @@ def main():
     harness = (PEER / "src/performance_tests.rs").read_bytes()
     revisions = {"baseline": output("git", "rev-parse", "--verify", f"{args.baseline}^{{commit}}"),
                  "candidate": output("git", "rev-parse", "HEAD")}
-    manifest = {"order": ORDER, "queries": QUERIES, "commands_per_lane": COMMANDS,
+    manifest = {"order": ORDER, "pairs": PAIRS, "queries": QUERIES, "commands_per_lane": COMMANDS,
                 "paced_bursts": PACED_BURSTS,
                 "selectors": SELECTORS, "host": platform.uname()._asdict(),
                 "test_only_transplant": [str(PEER / path) for path in (
                     "src/performance_tests.rs", "src/lib.rs", "src/tests.rs", "Cargo.toml")] + ["Cargo.lock (peer test dependencies only)"],
                 "fixture_endpoint": os.environ["CELLULE_TEST_ENDPOINT"]}
-    for name, revision in revisions.items():
-        manifest[name] = build(revision, name, state, evidence, harness)
-        write_json(evidence / "manifest.json", manifest)
+    if revisions["baseline"] == revisions["candidate"]:
+        manifest["candidate"] = build(revisions["candidate"], "candidate", state, evidence, harness)
+        shutil.copy2(evidence / "candidate", evidence / "baseline")
+        manifest["baseline"] = dict(manifest["candidate"], binary=str(evidence / "baseline"))
+        manifest["calibration"] = "identical frozen binary"
+    else:
+        for name, revision in revisions.items():
+            manifest[name] = build(revision, name, state, evidence, harness)
+            write_json(evidence / "manifest.json", manifest)
+    write_json(evidence / "manifest.json", manifest)
     rows = []
     for mode in SELECTORS:
-        for index, version in enumerate(ORDER, 1):
-            binary = Path(manifest[version]["binary"])
-            if digest(binary) != manifest[version]["binary_sha256"]:
+        for pair in range(len(PAIRS)):
+            binaries = {version: Path(manifest[version]["binary"]) for version in revisions}
+            if any(digest(binary) != manifest[version]["binary_sha256"] for version, binary in binaries.items()):
                 raise RuntimeError("Frozen binary changed")
-            rows.extend(measure(version, mode, index, str(binary), evidence))
+            rows.extend(measure_pair(mode, pair, binaries, evidence))
     summary = compare(rows)
     write_json(evidence / "comparison.json", summary)
     if summary["failures"]:

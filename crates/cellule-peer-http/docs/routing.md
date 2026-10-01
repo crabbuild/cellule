@@ -245,8 +245,12 @@ workloads and alternating baseline/candidate runs before attributing changes.
 
 The reference Compose workflow also runs a matched routing job on its own
 runner. It builds isolated baseline and candidate snapshots with identical
-test wiring, freezes the release binaries, and alternates three runs per
-version in both leased and object-only modes. Artifacts retain revisions,
+test wiring and freezes the release binaries. Both leased and object-only modes
+use four pairs, evenly split between baseline-first and candidate-first order.
+The driver serializes adjacent measurement windows with pipe handshakes outside
+request timers. Paced bursts wait the full idle interval in both processes and
+alternate which version runs first. Identical-revision calibration reuses the
+same frozen binary. Artifacts retain the coordination trace, revisions,
 digests, every raw latency sample, per-command publication phases,
 object-read/hop counts, and exact recovery results. CI uses 1,024 commands per
 write lane, verifies 6,144 unique durable mutations per run, and checks every
@@ -262,7 +266,10 @@ receiver latency. Cold and fresh-client lanes still include discovery and
 Describe. Manual workflow runs accept `routing_baseline` and `routing_only`
 to repeat a specific comparison without repeating Compose scaling.
 
-The larger CI sample sizes retain the original 10% limits. An unchanged-source
+The larger CI sample sizes and adjacent pairs retain the original 10% limits.
+Serial full-profile comparisons still failed calibration after increasing the
+sample sizes, including paced local p99 at 1.13–1.15. Adjacent windows control
+time drift without removing lanes or excluding slow calls. An unchanged-source
 calibration with 128 commands and 12 bursts failed three gates, with paced tail
 ratios up to 1.22 and serial-write p95 at 1.20. Manual measurements default to
 128 commands and 12 bursts; use `CELLULE_PERF_COMMANDS` and
