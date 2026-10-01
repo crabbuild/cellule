@@ -22,6 +22,7 @@ sequenceDiagram
 | `CellReplica::prepare` | Verifies cuts and writes immutable root dependencies. |
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
+| `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
 | Runtime CAS | Names the authoritative owner and exact root. |
 | `Db::prune_captured` | Removes only the successfully published batch. |
 
@@ -29,3 +30,10 @@ A failed CAS leaves unreachable content, never an acknowledged state. Provider
 retry pins and rechecks the selected capture bytes, so path replacement cannot
 change an in-flight proposal. The host owns request admission, deadlines, and
 reconciliation after ambiguous results.
+
+A representation-only compaction can remain private while its successor append
+uploads. `prepare_after_compaction` verifies that the compaction preserves the
+predecessor's position, commit sequence, Cell and incarnation, and that its schema
+matches the append. The runtime can then select the final root with one CAS
+against the original authority record. Every immutable dependency still finishes
+uploading before the successor proposal is returned.

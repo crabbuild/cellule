@@ -1,6 +1,88 @@
 //! Scheduled compaction, large-frame streaming, and corruption refusal.
 
 use super::*;
+use cellule_ltx::LtxError;
+
+#[tokio::test]
+async fn private_compaction_append_retains_original_predecessor_and_exact_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut writer = Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
+    let store = Store::new(Arc::new(InMemory::new()));
+    let cell = replica(store.clone(), [231; 32], [232; 16]);
+    writer
+        .transaction(|tx| {
+            tx.execute_batch("CREATE TABLE counter(value); INSERT INTO counter VALUES(0)")
+        })
+        .unwrap();
+    let initial_cuts = writer.capture().unwrap();
+    let initial = cell.prepare(None, &initial_cuts, 1, 1).await.unwrap();
+    writer
+        .transaction(|tx| {
+            tx.execute("UPDATE counter SET value=1", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let cuts = writer.capture().unwrap();
+    let base = cell
+        .prepare(Some(&initial.root()), &cuts, 2, 1)
+        .await
+        .unwrap();
+    let count = base.verified().segment_count();
+    let compacted = cell
+        .prepare_compaction(&base.root(), 0..count, 1, directory.path())
+        .await
+        .unwrap();
+    writer
+        .transaction(|tx| {
+            tx.execute("UPDATE counter SET value=2", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let cuts = writer.capture().unwrap();
+    for invalid in [&initial, &base] {
+        assert!(matches!(
+            cell.prepare_after_compaction(invalid, &cuts, 3, 1).await,
+            Err(LtxError::InvalidState(_))
+        ));
+    }
+    assert!(matches!(
+        cell.prepare_after_compaction(&compacted, &cuts, 3, 2).await,
+        Err(LtxError::InvalidState(_))
+    ));
+    let foreign = replica(store, [230; 32], [232; 16]);
+    assert!(matches!(
+        foreign
+            .prepare_after_compaction(&compacted, &cuts, 3, 1)
+            .await,
+        Err(LtxError::InvalidState(_))
+    ));
+
+    let standard = cell
+        .prepare(Some(&compacted.root()), &cuts, 3, 1)
+        .await
+        .unwrap();
+    let combined = cell
+        .prepare_after_compaction(&compacted, &cuts, 3, 1)
+        .await
+        .unwrap();
+    assert_eq!(combined.predecessor(), Some(base.root()));
+    assert_eq!(standard.predecessor(), Some(compacted.root()));
+    assert_eq!(
+        combined.root(),
+        standard.root(),
+        "publication composition must preserve the exact immutable format"
+    );
+    let restored = directory.path().join("restored.sqlite");
+    combined.verified().restore(&restored).await.unwrap();
+    let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    writer.close().unwrap();
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn range_compaction_reads_and_reserves_only_the_selected_data() {
