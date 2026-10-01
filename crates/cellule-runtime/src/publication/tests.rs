@@ -16,6 +16,15 @@ use crate::identity::{CellId, Digest, SessionId};
 
 #[tokio::test]
 async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
+    verify_compaction_append(1).await;
+}
+
+#[tokio::test]
+async fn schema_migration_combines_foreground_compaction_without_an_intermediate_cas() {
+    verify_compaction_append(2).await;
+}
+
+async fn verify_compaction_append(schema: u32) {
     let directory = tempfile::tempdir().unwrap();
     let mut database = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
     let cell = CellId::from_bytes([41; 32]);
@@ -141,7 +150,23 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
         .unwrap();
     let cuts = database.capture_deferred().unwrap();
     let before_revision = publisher.control().value().revision;
-    let prepared = publisher.prepare_append(&cuts, 38, 1).await.unwrap();
+    assert!(matches!(
+        publisher.prepare_append(&cuts, 37, schema).await,
+        Err(Error::Ltx(cellule_ltx::LtxError::InvalidState(_)))
+    ));
+    assert_eq!(publisher.control().value().revision, before_revision);
+    assert_eq!(
+        publisher
+            .authority
+            .load(cell)
+            .await
+            .unwrap()
+            .unwrap()
+            .value(),
+        publisher.control().value(),
+        "a rejected successor must leave its compaction private"
+    );
+    let prepared = publisher.prepare_append(&cuts, 38, schema).await.unwrap();
     assert_eq!(publisher.control().value().ltx_root(), Some(at_ceiling));
     assert_eq!(
         publisher
@@ -155,7 +180,15 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
         Some(at_ceiling)
     );
     assert_eq!(prepared.predecessor(), Some(at_ceiling));
-    publisher.publish_prepared(&prepared, None).await.unwrap();
+    if schema == 1 {
+        publisher.publish_prepared(&prepared, None).await.unwrap();
+    } else {
+        publisher
+            .publish_migration(&prepared, None, Digest::from_bytes([46; 32]), schema)
+            .await
+            .unwrap();
+    }
+    assert_eq!(publisher.control().value().schema, schema);
     assert_eq!(publisher.control().value().revision, before_revision + 1);
     let forced = publisher.control().value().ltx_root().unwrap();
     assert!(replica.open_root(&forced).await.unwrap().segment_count() < 32);

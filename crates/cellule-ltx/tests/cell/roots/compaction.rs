@@ -45,10 +45,12 @@ async fn private_compaction_append_retains_original_predecessor_and_exact_root()
             Err(LtxError::InvalidState(_))
         ));
     }
-    assert!(matches!(
-        cell.prepare_after_compaction(&compacted, &cuts, 3, 2).await,
-        Err(LtxError::InvalidState(_))
-    ));
+    let migrated = cell
+        .prepare_after_compaction(&compacted, &cuts, 3, 2)
+        .await
+        .unwrap();
+    assert_eq!(migrated.verified().schema(), 2);
+    assert_eq!(migrated.predecessor(), Some(base.root()));
     let foreign = replica(store, [230; 32], [232; 16]);
     assert!(matches!(
         foreign

@@ -29,7 +29,6 @@ impl CellReplica {
             || root.incarnation != predecessor.incarnation
             || root.position != predecessor.position
             || root.commit_sequence != predecessor.commit_sequence
-            || compacted.verified.schema() != schema
         {
             return Err(LtxError::InvalidState(
                 "append requires a representation-only compaction",
