@@ -390,13 +390,12 @@ mod tests {
         }
 
         async fn request(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
-            let updated =
-                self.remaining
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                        remaining.checked_sub(1)
-                    });
-            updated.map(|_| ()).map_err(|_| Box::new(Exhausted) as _)
+            self.remaining
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .map(|_| ())
+                .map_err(|_| Box::new(Exhausted) as _)
         }
 
         async fn bytes(&self, _bytes: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

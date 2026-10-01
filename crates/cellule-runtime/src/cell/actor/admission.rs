@@ -17,8 +17,7 @@ pub(super) fn finish_shutdown(shutdown: &mut ShutdownState) {
 }
 
 pub(super) fn subtract_unpublished_bytes(total: &AtomicU64, bytes: u64) {
-    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
-    let _ = total.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+    let _ = total.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
         Some(current.saturating_sub(bytes))
     });
 }

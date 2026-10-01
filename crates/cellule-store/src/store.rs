@@ -3105,11 +3105,10 @@ mod tests {
             location: &Path,
             options: GetOptions,
         ) -> object_store::Result<GetResult> {
-            #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
             if !options.head
                 && let ReadFault::Transient(remaining_failures) = &self.fault
                 && remaining_failures
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                         remaining.checked_sub(1)
                     })
                     .is_ok()
@@ -3263,10 +3262,9 @@ mod tests {
 
         async fn abort_multipart(&self, path: &Path, id: &MultipartId) -> object_store::Result<()> {
             self.aborts.fetch_add(1, Ordering::Relaxed);
-            #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
             if self
                 .abort_failures
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok()

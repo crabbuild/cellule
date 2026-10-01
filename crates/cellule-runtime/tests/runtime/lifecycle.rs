@@ -189,10 +189,9 @@ impl ObjectStore for PausingStore {
         payload: PutPayload,
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
-        #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
         if self
             .transient_put_failures
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()
@@ -266,11 +265,10 @@ impl ObjectStore for PausingStore {
         {
             self.catalog_head_barrier.wait().await;
         }
-        #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.88")]
         if options.range.is_some()
             && self
                 .transient_get_failures
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok()
