@@ -1323,8 +1323,9 @@ Checkpoint: exact-source foreground quiescence, native lease completion,
 separate maintenance inventory, and canonical `release_maintenance_cell_at` now
 exist. An explicit journal-bound maintenance release phase/action connects the
 host executor to that path without reinterpreting ordinary release records.
-Public SQL/Queue, host release and pure action contracts have focused coverage
-in the [execution evidence](fleet-operations-progress.md). The driver now accepts
+Public SQL/Queue/Effect/Activity, restored Workflow waits/timers, host release
+and pure action contracts have focused coverage in the
+[execution evidence](fleet-operations-progress.md). The driver now accepts
 busy maintenance demand with a separate configured peak envelope under exact
 Evacuating intent and fresh source/receiver evidence; ordinary pressure/count
 moves still require settled samples. Complete the remaining host fault cases,

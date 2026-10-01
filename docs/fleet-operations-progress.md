@@ -4,6 +4,66 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 public primitive maintenance checkpoint
+
+Five new public cases exercise `release_maintenance_cell_at` with actual typed
+Effect and Activity claims. They wait for actor quiescence, prove release stays
+pending while the exact live lease validates and authority remains Serving,
+and check new claims and ordinary reads are refused. Native acknowledgement,
+Activity validation/extension/completion and exact-root release use the existing
+registry, actor, worker and publication paths. No production API changed.
+
+Effect cases cover normal acknowledgement, a dropped maintenance waiter and
+normal lease expiry. An authenticated destination publication precedes source
+release. Ordinary receiver activation preserves the original command resolution
+and destination inbox receipt. A late acknowledgement loses its lease. Unclaimed
+work resumes through the registered native Effect driver. The expiry case keeps
+the existing retry backoff, verifies Ready state, reclaims with a new token and
+attempt 2, and delivers to the same inbox without applying the command twice.
+
+Activity cases cover extension/completion and normal expiry. A settled completion
+replays as Duplicate on the receiver; an expired token is rejected before and
+after normal reclamation. The retry preserves activity ID and definition digest,
+increments its attempt and replaces its token. The registered native Activity
+driver completes an unclaimed blocking activity. Running Workflow waits retain
+their run/state, accept a signal on the receiver and deduplicate its replay.
+Preserved due timers advance through the registered Tick after restoration.
+Every receiver and source joins with zero retained bytes.
+
+Initial fixture synchronization incorrectly awaited an advisory cached work
+sample during the separate maintenance preflight read; those runs timed out.
+The final cases synchronize on installed quiescence and directly validate the
+lease, bounded pending release and authority state. Initial expiry assertions
+also incorrectly expected reclaimed work ahead of an already-ready Activity and
+an immediately claimable Effect despite its existing backoff. Correcting those
+fixtures preserves canonical ordering/backoff and checks actual reclaim and
+deduplication. No runtime invariant, profile or threshold was changed.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `e7aa6923bce13d4cc97e069016040a5e1e356fae` |
+| Complete repository Rust/Cargo manifest | 586 paths, sorted from tracked and nonignored files; each line is SHA256, two spaces, relative path. Manifest SHA256 `c42597897d612a37a112bab937f6785c725ebf0aebf2bbeb1220d25584ddfff2`. |
+| Public maintenance selection, primitives + protocol | 9 passed: six primitives (43 filtered), three protocol (29 filtered); none ignored. Five cases are new. |
+| Complete public client target | 30 passed; two manual throttled-provider measurements ignored; none filtered. |
+| Public Workflow API selection | 7 passed; 42 filtered, none ignored. |
+| Distinct selected cases across these commands | 41 passed; maintenance/client/workflow selections overlap in the five new cases. |
+| Selected primitives/protocol Clippy | All features, warnings denied; passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, 108 Rust snippets, 1144 Markdown links and 28 SQL/peer assertions with 564 links passed. |
+
+Commands used Rust/Cargo 1.97.0, all features and the lockfile, with
+`CARGO_INCREMENTAL=0` and this checkout's Workspace target directory. Fixtures
+use in-memory authority and local runtimes. They do not qualify distributed
+providers, process interruption, continuous traffic, Cron dispatch or external
+Blob owners. The full W6–W10 and earlier enrollment/observation gaps remain open.
+
+CI for the baseline above now passed workspace/MSRV (36912160616), contract
+(36912160634), website (36912160311), fuzz (36912160309), TLC fast/negative
+(36912160379) and object capacity (36912160550 / 110537198649). Follower capacity,
+Compose smoke and routing remained running when recorded. Broad TLC/simulator
+jobs were skipped. These results belong to that pushed baseline; the prior
+routing failure remains recorded below and this new test source requires its
+own CI.
+
 ## October 1 2026 busy demand and host acceptance checkpoint
 
 The actor exposes a separate `maintenance_cost` from validated per-Cell LTX
