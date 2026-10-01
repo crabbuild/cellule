@@ -560,6 +560,16 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
         SessionId::from_bytes([80; 16]),
     )
     .unwrap();
+    let bare_peer = CellClient::peer(
+        registry.clone(),
+        signer.clone(),
+        PeerPrincipal {
+            issuer: "https://fixture.example".into(),
+            subject: "measurement".into(),
+            actions: vec!["counter".into()],
+        },
+        transport.clone(),
+    );
     let peer = CellClient::runtime_with_peer(
         registry.clone(),
         ingress.clone(),
@@ -597,7 +607,7 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
         expected = serial_diagnostic(
             &registry,
             &handle,
-            &local,
+            &bare_peer,
             &peer,
             &target,
             &transport,
@@ -1042,7 +1052,7 @@ async fn serial_diagnostic(
         local.clone().with_observed_description(description),
         peer.clone().with_observed_description(description),
     ];
-    let names = ["direct", "local", "forwarded"];
+    let names = ["direct", "peer_direct", "forwarded"];
     let orders = [
         [0, 1, 2],
         [1, 2, 0],
