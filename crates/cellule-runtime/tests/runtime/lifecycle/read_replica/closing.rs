@@ -71,6 +71,125 @@ async fn finish(fixture: ClosingFixture) {
 }
 
 #[tokio::test]
+async fn prepared_source_opens_the_journaled_root_after_newer_publication_and_still_obeys_fencing()
+{
+    let fixture = opened(fixture_for(b"reader-pinned-enrollment-source")).await;
+    let original = fixture.reader.close_and_join().await;
+    empty(&fixture.runtime);
+    let registry = compiled_reader_registry();
+    let authority = CellAuthority::new(fixture.fixture.layout.clone());
+    let directory = NodeDirectory::new(
+        fixture.fixture.layout.clone(),
+        Digest::from_bytes([9; 32]),
+        Digest::from_bytes([10; 32]),
+        registry.release_digest(),
+    );
+    let source = CellReadReplica::prepare_source(
+        &registry,
+        &authority,
+        &directory,
+        fixture.fixture.target.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(source.target(), &fixture.fixture.target);
+    assert_eq!(source.description().incarnation, original.incarnation);
+    assert_eq!(source.owner().session, SessionId::from_bytes([44; 16]));
+    assert_eq!(source.node(), NodeId::from_bytes([11; 16]));
+    assert_eq!(source.fleet(), Digest::from_bytes([9; 32]));
+    assert_eq!(source.root().commit_sequence, original.commit_sequence);
+    empty(&fixture.runtime);
+    fixture
+        .handle
+        .execute(
+            crate::support::fixtures::mutation_identity(49),
+            Digest::from_bytes([50; 32]),
+            now_ms(),
+            64,
+            64,
+            |tx| {
+                tx.execute("UPDATE counter SET value = 1", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .await
+        .unwrap();
+    let current = authority.load(original.cell).await.unwrap().unwrap();
+    assert_eq!(source.epoch(), current.value().epoch);
+    assert!(current.value().root.as_ref().unwrap().commit_sequence > source.root().commit_sequence);
+    let path = fixture
+        .fixture
+        ._directory
+        .path()
+        .join("pinned-source.sqlite");
+    let reader = CellReadReplica::open_source(
+        fixture.runtime.clone(),
+        registry.clone(),
+        authority.clone(),
+        directory.clone(),
+        fixture.fixture.replica.clone(),
+        source.clone(),
+        &path,
+    )
+    .await
+    .unwrap();
+    let observed = reader.query::<ReadCounter>(None, 0).await.unwrap();
+    assert_eq!(observed.receipt, original);
+    assert_eq!(observed.output, 0);
+    let next = fixture
+        .fixture
+        ._directory
+        .path()
+        .join("source-refreshed.sqlite");
+    assert!(reader.refresh(&next).await.unwrap().commit_sequence > original.commit_sequence);
+    assert_eq!(
+        reader.query::<ReadCounter>(None, 0).await.unwrap().output,
+        1
+    );
+    reader.close_and_join().await;
+    empty(&fixture.runtime);
+    fixture.handle.drain().await.unwrap();
+    let rejected = fixture
+        .fixture
+        ._directory
+        .path()
+        .join("stale-source.sqlite");
+    assert!(matches!(
+        CellReadReplica::open_source(
+            fixture.runtime.clone(),
+            registry.clone(),
+            authority.clone(),
+            directory.clone(),
+            fixture.fixture.replica.clone(),
+            source.clone(),
+            &rejected,
+        )
+        .await,
+        Err(cellule_runtime::Error::Fenced)
+    ));
+    assert!(!rejected.exists());
+    empty(&fixture.runtime);
+    fixture.runtime.node_admission().cordon().unwrap();
+    assert!(matches!(
+        CellReadReplica::open_source(
+            fixture.runtime.clone(),
+            registry,
+            authority,
+            directory,
+            fixture.fixture.replica.clone(),
+            source,
+            &rejected,
+        )
+        .await,
+        Err(cellule_runtime::Error::CellDraining)
+    ));
+    empty(&fixture.runtime);
+    fixture.runtime.shutdown().await.unwrap();
+    // This case already performed canonical source release to test fencing.
+    fixture.source.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn joined_close_detaches_native_snapshots_from_retained_peer_clones() {
     let fixture = opened(fixture_for(b"reader-close-retained-clones")).await;
     let peer = fixture.reader.clone();

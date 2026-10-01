@@ -4,6 +4,66 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 exact reader enrollment source checkpoint
+
+`ReadReplicaSource` is opaque metadata prepared through canonical authority and
+signed live-boot validation. It carries the exact target, incarnation, code,
+schema, owner, epoch, root, physical source node and fleet. Preparation opens no
+view and reserves no native resources. `CellReadReplica::open_source` opens the
+original pinned root through the same admitted native path as ordinary opening.
+Newer publication cannot replace it. Installation and query release still
+check authority and the original signed boot identity. Ordinary opening retains
+its admission-before-provider-I/O order.
+
+The host manager prepares selected sources and offers initial `activate_source`
+through its existing activation lane. An already installed view is refused
+without refreshing it; ordinary authenticated hints retain refresh behavior.
+After entering the lane, a retained prepared activation joins opening on manager
+closure, closes an uninstalled view and returns RuntimeClosed. The adapter must
+retain its accepted future across transport waiter cancellation. Source metadata
+cannot by itself authorize an enrollment or establish durable role coverage.
+
+Three new public cases verify old-root SQL readback after newer publication,
+normal refresh to the newer root, stale-source and cordon refusal, manager
+initial-only behavior and native-open closure. The last case pauses a real VFS
+range read only while the reader's SQL job ledger is charged, closes the manager,
+then verifies opening remains owned until release and all charges settle.
+The first runtime fixture initially invoked source drain twice after deliberately
+releasing it to test fencing; the repeated call returned CellDraining. The final
+fixture joins the already-released runtime directly. No production error,
+profile or assertion was weakened.
+
+| Final source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `e472441c99ac7e3c5da95809a874f5138cfe37d0` |
+| Rust/Cargo manifest | 585 tracked/nonignored paths; sorted SHA256, two spaces, relative path lines. SHA256 `5da2afb2fc2f7e2cb0c6f52f36f7e6d8d4941ca835702609d94299e61438b8cf`. |
+| `cargo test -p cellule-runtime --test runtime --all-features --locked read_replica::` | 14 passed; 177 filtered; one isolated RustFS case ignored. |
+| `cargo test -p cellule-host --test node --all-features --locked` | 72 passed; none filtered or ignored. |
+| `cargo test -p cellule-host --example fleet_operations --all-features --locked` | 51 passed; none filtered or ignored. |
+| `cargo test -p cellule-app --test integration --all-features --locked host::replicas::` | 5 passed; 40 filtered; none ignored. |
+| Distinct scoped cases | 142 passed. One runtime and two host cases are new. |
+| Selected host/runtime libraries, runtime/node targets and example Clippy | All features, warnings denied; passed. |
+| Host/runtime API documentation | All features, warnings denied; passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, 109 Rust snippets, 1149 Markdown links and 28 SQL/peer assertions with 566 links passed. |
+
+Commands use Rust/Cargo 1.97.0, `CARGO_INCREMENTAL=0` and this checkout's
+Workspace target directory. Local fixtures use in-memory CAS and actual SQLite;
+the ignored RustFS case supplies no provider evidence. The opaque type and API
+inventory are additive; persisted IDs, descriptors and peer formats are unchanged.
+
+Baseline CI passed workspace/MSRV (36927118058), object/follower capacity
+(36927117222), contract (36927117305), website (36927117280), fuzz (36927117240),
+fast/negative TLC (36927117235) and Compose smoke (36927117229 / 110587330500).
+Broad TLC/simulator were skipped. Routing (36927117229 / 110587330915) remained
+running when inspected. These results qualify the baseline only, do not identify
+the cause of earlier failures, and do not qualify this new source.
+
+Next, wire every reader producer to Pending acceptance before initial activation,
+retain finite completion/result ownership, reconcile ambiguous acceptance and
+publish checked retirement after joined closure. Wire follower producers and
+complete observer coverage before enabling maintenance finalization. The full
+plan, all W6–W10 gaps and their qualification requirements remain active.
+
 ## October 1 2026 joined reader closure checkpoint
 
 `CellReadReplica::close_and_join` fences admission, detaches the current

@@ -12,9 +12,9 @@ use std::{
 use cellule_runtime::{
     Error, Result,
     cell::actor::CellRuntime,
-    client::{CellReadReplica, Receipt},
-    control::{Control, ControlState, authority::CellAuthority},
-    identity::{CellId, CellTarget, IncarnationId, SessionId},
+    client::{CellReadReplica, ReadReplicaSource, Receipt},
+    control::{ControlState, authority::CellAuthority},
+    identity::{CellId, CellTarget, Digest, IncarnationId, SessionId},
     ltx::{CellReplica, CellStorageLayout, Limits},
     node::NodeDirectory,
     peer::{PeerReplicaControl, PeerReplicaResolver},
@@ -185,23 +185,75 @@ impl ReadReplicaManager {
     async fn activate_open(&self, target: CellTarget, origin: SessionId) -> Result<Receipt> {
         let _activation = self.activation.lock().await;
         self.ensure_open()?;
-        let cell = target.cell_id();
-        let control = self
-            .authority
-            .load(cell)
-            .await?
-            .ok_or(Error::CellNotActive)?;
-        let control = control.value();
-        let owner = control.owner.as_ref().ok_or(Error::Fenced)?;
-        if control.state != ControlState::Serving
-            || control.recovery.is_some()
-            || owner.session != origin
+        let source = CellReadReplica::prepare_source(
+            &self.registry,
+            &self.authority,
+            &self.directory,
+            target,
+        )
+        .await?;
+        if source.owner().session != origin {
+            return Err(Error::Fenced);
+        }
+        self.activate_source_locked(source).await
+    }
+
+    /// Observes a selected exact source without opening a local reader.
+    ///
+    /// A fleet adapter can journal Pending using this value's root, epoch and
+    /// owner before `activate_source`. Selection and admission are rechecked
+    /// at activation; preparation itself grants no enrollment permit.
+    pub async fn prepare_source(
+        &self,
+        target: CellTarget,
+        origin: SessionId,
+    ) -> Result<ReadReplicaSource> {
+        self.ensure_open()?;
+        self.runtime.node_admission().check_new_role()?;
+        let source = CellReadReplica::prepare_source(
+            &self.registry,
+            &self.authority,
+            &self.directory,
+            target,
+        )
+        .await?;
+        if source.owner().session != origin || !self.selected_source(&source).await? {
+            return Err(Error::Fenced);
+        }
+        Ok(source)
+    }
+
+    /// Initially opens an adapter's journaled exact source through canonical activation.
+    /// Newer publication cannot replace the supplied root. The adapter owns
+    /// Pending acceptance, result publication and retirement; this method does
+    /// not itself establish durable enrollment coverage. Retain this future
+    /// after acceptance. Manager closure cancels admission while waiting for the
+    /// lane; after entering it, closure joins opening rather than cancelling it.
+    pub async fn activate_source(&self, source: ReadReplicaSource) -> Result<Receipt> {
+        let _activation = tokio::select! {
+            () = self.closed.cancelled() => return Err(Error::RuntimeClosed),
+            activation = self.activation.lock() => activation,
+        };
+        self.ensure_open()?;
+        if self
+            .active
+            .read()
+            .await
+            .views
+            .contains_key(&source.description().cell)
         {
+            return Err(Error::Control("read view is already installed"));
+        }
+        self.activate_source_locked(source).await
+    }
+
+    async fn activate_source_locked(&self, source: ReadReplicaSource) -> Result<Receipt> {
+        self.ensure_open()?;
+        if !self.selected_source(&source).await? {
             return Err(Error::Fenced);
         }
-        if !self.selected(control, origin).await? {
-            return Err(Error::Fenced);
-        }
+        let expected = source.description();
+        let cell = expected.cell;
         let path = self.destination(cell).await?;
         let existing = { self.active.read().await.views.get(&cell).cloned() };
         if let Some(existing) = existing {
@@ -223,22 +275,28 @@ impl ReadReplicaManager {
         let replica = CellReplica::new(
             self.layout.clone(),
             *cell.as_bytes(),
-            *control.incarnation.as_bytes(),
+            *expected.incarnation.as_bytes(),
             self.limits,
         )?;
-        let reader = CellReadReplica::open(
+        let reader = CellReadReplica::open_source(
             self.runtime.clone(),
             Arc::clone(&self.registry),
             self.authority.clone(),
             self.directory.clone(),
             replica,
-            target,
+            source,
             &path,
         )
         .await?;
         let receipt = reader.receipt().await;
-        if !self.still_selected(cell).await? {
-            return Err(Error::Fenced);
+        let selected = self.still_selected(cell).await?;
+        if self.closed.is_cancelled() || !selected {
+            reader.close_and_join().await;
+            return Err(if self.closed.is_cancelled() {
+                Error::RuntimeClosed
+            } else {
+                Error::Fenced
+            });
         }
         let mut active = self.active.write().await;
         active.topology = Uuid::now_v7();
@@ -265,20 +323,37 @@ impl ReadReplicaManager {
         Ok(directory.join(format!("{}.sqlite", Uuid::now_v7())))
     }
 
-    async fn selected(&self, control: &Control, origin: SessionId) -> Result<bool> {
-        let Some(policy) = self.policy.load(control.cell).await? else {
+    async fn selected_source(&self, source: &ReadReplicaSource) -> Result<bool> {
+        let expected = source.description();
+        self.selected(
+            expected.cell,
+            expected.incarnation,
+            expected.code,
+            source.owner().session,
+        )
+        .await
+    }
+
+    async fn selected(
+        &self,
+        cell: CellId,
+        incarnation: IncarnationId,
+        code: Digest,
+        origin: SessionId,
+    ) -> Result<bool> {
+        let Some(policy) = self.policy.load(cell).await? else {
             return Ok(false);
         };
         let policy = policy.value();
-        if policy.incarnation() != control.incarnation || policy.desired_readers() == 0 {
+        if policy.incarnation() != incarnation || policy.desired_readers() == 0 {
             return Ok(false);
         }
         let candidates = self
             .directory
             .select_readers(
-                control.cell,
+                cell,
                 origin,
-                control.code,
+                code,
                 usize::from(policy.desired_readers()),
                 now_ms()?,
                 MAX_LIVE_NODES,
@@ -300,7 +375,13 @@ impl ReadReplicaManager {
         let Some(owner) = control.owner.as_ref() else {
             return Ok(false);
         };
-        self.selected(control, owner.session).await
+        self.selected(
+            control.cell,
+            control.incarnation,
+            control.code,
+            owner.session,
+        )
+        .await
     }
 
     /// Refreshes admitted snapshots and evicts readers removed from placement.

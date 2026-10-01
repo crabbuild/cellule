@@ -129,6 +129,10 @@ struct Fixture {
     handles: Vec<CellHandle>,
 }
 async fn fixture() -> Fixture {
+    fixture_with_store(Store::new(Arc::new(InMemory::new()))).await
+}
+
+async fn fixture_with_store(store: Store) -> Fixture {
     let mut app = cellule_app::ApplicationBuilder::new(
         "host-test",
         BuildDescriptor {
@@ -146,11 +150,7 @@ async fn fixture() -> Fixture {
     .unwrap();
     let app = Arc::new(app.finish().unwrap());
     let code = app.registry().module_digests()[0];
-    let layout = CellStorageLayout::new(
-        Store::new(Arc::new(InMemory::new())),
-        Path::from("reader-closure"),
-        [3; 16],
-    );
+    let layout = CellStorageLayout::new(store, Path::from("reader-closure"), [3; 16]);
     let directory = NodeDirectory::new(
         layout.clone(),
         Digest::from_bytes([2; 32]),
@@ -273,6 +273,194 @@ async fn fixture() -> Fixture {
         source,
         handles,
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prepared_opening_is_joined_on_manager_closure_after_native_work_starts() {
+    let runtime_slot = Arc::new(Mutex::new(None::<CellRuntime>));
+    let slot = runtime_slot.clone();
+    let entered = Arc::new(Notify::new());
+    let signal = entered.clone();
+    let (release, receive) = std::sync::mpsc::channel();
+    let gate = Mutex::new(Some(receive));
+    let armed = Arc::new(AtomicBool::new(false));
+    let once = armed.clone();
+    let fixture = fixture_with_store(
+        Store::new(Arc::new(InMemory::new())).with_read_request_observer(Arc::new(move |kind| {
+            // Pause the VFS page fault in an actual admitted native open. The
+            // source publisher and async preparation use different SQL ledgers.
+            if kind == cellule_store::StorageReadKind::Range
+                && slot
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.stats().worker_jobs() == 1)
+                && !once.swap(true, Ordering::AcqRel)
+            {
+                let receive = gate.lock().unwrap().take().unwrap();
+                signal.notify_one();
+                // Dropping the test's sender also releases a failed assertion.
+                let _ = receive.recv();
+            }
+        })),
+    )
+    .await;
+    *runtime_slot.lock().unwrap() = Some(fixture.node.runtime());
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        ApplicationId::from_bytes([3; 16]),
+        NamespaceId::from_bytes([2; 16]),
+        &[1],
+    )
+    .unwrap();
+    fixture.manager.remove(target.cell_id()).await;
+    let now = super::inventory::clock();
+    fixture.handles[0]
+        .execute(
+            cellule_runtime::MutationIdentity {
+                request_id: cellule_runtime::identity::RequestId::from_bytes([213; 16]),
+                issued_at_ms: now,
+                expires_at_ms: now + 60_000,
+            },
+            Digest::from_bytes([214; 32]),
+            now,
+            64,
+            64,
+            |tx| {
+                // A changed schema page cannot hit the old view's page cache.
+                tx.execute_batch("CREATE TABLE extra(value INTEGER)")?;
+                Ok(cellule_runtime::cell::executor::HandlerOutcome::Success(
+                    Vec::new(),
+                ))
+            },
+        )
+        .await
+        .unwrap();
+    let source = fixture
+        .manager
+        .prepare_source(target, SessionId::from_bytes([1; 16]))
+        .await
+        .unwrap();
+    let manager = fixture.manager.clone();
+    let opening = tokio::spawn(async move { manager.activate_source(source).await });
+    let entered = tokio::time::timeout(Duration::from_secs(3), entered.notified()).await;
+    let mut closing = Box::pin(fixture.manager.shutdown());
+    let pending = futures_util::poll!(closing.as_mut()).is_pending();
+    let before = fixture.node.stats();
+    let retained_open = !opening.is_finished();
+    // Release every accepted job before checking any fixture assertion.
+    let _ = release.send(());
+    let result = opening.await.unwrap();
+    closing.await;
+    fixture.node.shutdown().await.unwrap();
+    runtime_slot.lock().unwrap().take();
+    for handle in fixture.handles {
+        handle.drain().await.unwrap();
+    }
+    fixture.source.shutdown().await.unwrap();
+    assert!(entered.is_ok() && armed.load(Ordering::Acquire) && pending && retained_open);
+    assert_eq!(before.worker_jobs(), 1);
+    assert!(matches!(result, Err(Error::RuntimeClosed)));
+    assert_eq!(fixture.node.stats().resident_bytes(), 0);
+    assert_eq!(fixture.node.stats().worker_jobs(), 0);
+    assert_eq!(fixture.node.stats().file_descriptors(), 0);
+    assert_eq!(fixture.node.stats().local_disk_reserved_bytes(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prepared_host_activation_pins_the_enrollment_root_and_never_refreshes_an_existing_view() {
+    let fixture = fixture().await;
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        ApplicationId::from_bytes([3; 16]),
+        NamespaceId::from_bytes([2; 16]),
+        &[1],
+    )
+    .unwrap();
+    fixture.manager.remove(target.cell_id()).await;
+    let source = fixture
+        .manager
+        .prepare_source(target.clone(), SessionId::from_bytes([1; 16]))
+        .await
+        .unwrap();
+    assert_eq!(source.target(), &target);
+    let before = fixture.node.stats();
+    let page = fixture
+        .manager
+        .fleet_readers_page(None, 128, super::inventory::clock())
+        .await
+        .unwrap();
+    assert_eq!(page.total_views(), 1);
+    drop(page);
+    let now = super::inventory::clock();
+    fixture.handles[0]
+        .execute(
+            cellule_runtime::MutationIdentity {
+                request_id: cellule_runtime::identity::RequestId::from_bytes([211; 16]),
+                issued_at_ms: now,
+                expires_at_ms: now + 60_000,
+            },
+            Digest::from_bytes([212; 32]),
+            now,
+            64,
+            64,
+            |tx| {
+                tx.execute("UPDATE counter SET value=18", [])?;
+                Ok(cellule_runtime::cell::executor::HandlerOutcome::Success(
+                    Vec::new(),
+                ))
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.node.stats().resident_bytes(),
+        before.resident_bytes()
+    );
+    let receipt = fixture
+        .manager
+        .activate_source(source.clone())
+        .await
+        .unwrap();
+    assert_eq!(receipt.commit_sequence, source.root().commit_sequence);
+    let peer = fixture.manager.resolve(target.clone()).await.unwrap();
+    assert_eq!(peer.query::<ReadCounter>(None, 0).await.unwrap().output, 17);
+    assert!(matches!(
+        fixture.manager.activate_source(source.clone()).await,
+        Err(Error::Control("read view is already installed"))
+    ));
+    assert_eq!(peer.query::<ReadCounter>(None, 0).await.unwrap().output, 17);
+    let refreshed = fixture
+        .manager
+        .activate(target.clone(), SessionId::from_bytes([1; 16]))
+        .await
+        .unwrap();
+    assert!(refreshed.commit_sequence > receipt.commit_sequence);
+    assert_eq!(peer.query::<ReadCounter>(None, 0).await.unwrap().output, 18);
+    assert!(matches!(
+        fixture
+            .manager
+            .prepare_source(target.clone(), SessionId::from_bytes([3; 16]))
+            .await,
+        Err(Error::Fenced)
+    ));
+    fixture.node.runtime().node_admission().cordon().unwrap();
+    fixture.manager.remove(target.cell_id()).await;
+    assert!(matches!(
+        fixture.manager.activate_source(source).await,
+        Err(Error::CellDraining)
+    ));
+    fixture.node.shutdown().await.unwrap();
+    let stats = fixture.node.stats();
+    assert_eq!(stats.resident_bytes(), 0);
+    assert_eq!(stats.retained_bytes(), 0);
+    assert_eq!(stats.worker_jobs(), 0);
+    assert_eq!(stats.file_descriptors(), 0);
+    assert_eq!(stats.local_disk_reserved_bytes(), 0);
+    for handle in fixture.handles {
+        handle.drain().await.unwrap();
+    }
+    fixture.source.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

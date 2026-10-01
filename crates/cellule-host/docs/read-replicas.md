@@ -24,6 +24,47 @@ Commands do not wait for readers. Reconciliation repairs dropped hints and
 membership changes; it is not a freshness guarantee. See
 [application read policies](../../cellule-app/docs/invocation.md).
 
+## Prepare exact enrollment inputs
+
+| Method | Boundary |
+| --- | --- |
+| `prepare_source(target, origin)` | Observe canonical authority, verify the live signed owner boot and current reader selection, and return opaque `ReadReplicaSource` metadata. Reserve no view resources and create no reader. |
+| `activate_source(source)` | Initially open the original pinned root through ordinary admitted activation. Recheck selection, incarnation/code, owner/epoch and signed boot identity. Refuse an already installed view without refreshing it. |
+| `activate(target, origin)` | Ordinary authenticated hints retain their existing refresh behavior, using the same source preparation and native opening path. |
+
+An enrollment adapter can derive immutable role inputs before Pending acceptance:
+
+```rust
+use cellule_runtime::ReadReplicaSource;
+use cellule_runtime::fleet::operations::{EnrollmentRole, PublishedPosition};
+
+fn reader_role(source: &ReadReplicaSource) -> EnrollmentRole {
+    EnrollmentRole::Reader {
+        target: source.target().clone(),
+        position: PublishedPosition {
+            incarnation: source.description().incarnation,
+            epoch: source.epoch(),
+            root: source.root().clone(),
+        },
+    }
+}
+```
+
+Bind `source.node()`, `source.owner().session` and `source.fleet()` to the
+source endpoint and fleet scope. The application must obtain current endpoint
+intent revisions and journal Pending atomically before activation. Only New
+acceptance permits first execution; an ambiguous or Existing reply requires
+inspection. Later publication under the same owner does not change the root
+opened by `activate_source`. Ordinary subsequent refresh remains available.
+After entering the activation lane, prepared opening joins its work on manager
+closure. The adapter must retain that future; dropping its waiter without an
+owner still leaves an unknown enrollment outcome.
+
+These methods supply exact inputs and opening, not a durable producer or result
+owner. The adapter must retain accepted activation across waiter cancellation,
+publish checked completion and retire only after joined closure. Source metadata
+and snapshot receipts cannot establish complete enrollment coverage.
+
 ## Join reader closure
 
 `CellReadReplica::close()` fences new work across every clone.

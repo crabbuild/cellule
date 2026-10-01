@@ -54,7 +54,7 @@ mod replica;
 mod routing;
 mod runtime;
 
-pub use replica::CellReadReplica;
+pub use replica::{CellReadReplica, ReadReplicaSource};
 pub use routing::ReplicaReadRouter;
 
 pub use local::command_operation_digest;

@@ -67,6 +67,12 @@ jobs whose waiters were cancelled. Its receipt preserves the last installed
 position; it does not establish current authority or fleet retirement. See the
 [host reader lifecycle](../../cellule-host/docs/read-replicas.md).
 
+`prepare_source()` observes an opaque exact root, owner/epoch, code/schema and
+signed physical boot scope without reserving a view. `open_source()` opens that
+pinned root through the same admitted native path, even if the owner publishes
+a newer root meanwhile. Installation still checks current authority and the
+original signed boot identity. Source metadata grants no admission or readiness.
+
 Those charges are provisional: product routing and measured capacity
 qualification remain open under
 [Plan 036](https://github.com/crabbuild/crab/blob/beb439039cb37e750afe6625a2358101c70d1191/advisor-plans/036-cell-read-replicas-and-fenced-promotion.md).

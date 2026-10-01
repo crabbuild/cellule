@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, Notify, RwLock, Semaphore};
 use super::*;
 use crate::cell::actor::CellRuntime;
 use crate::control::authority::CellAuthority;
-use crate::control::{Control, ControlState, Owner};
+use crate::control::{Control, ControlState, Owner, RootRef};
 use crate::fleet::resource::ResourceReservation;
 use crate::identity::SessionId;
 use crate::node::NodeDirectory;
@@ -47,9 +47,66 @@ struct ReplicaState {
     snapshot: Option<Arc<ReplicaSnapshot>>,
 }
 
+/// Opaque exact reader source observed through canonical Cell authority.
+///
+/// Preparing this value creates no local reader or resource reservation. An
+/// application can journal its exact responsibility before opening the view.
+/// It does not grant admission or prove current serving; opening checks the
+/// owner again and verifies every dependency of this pinned root.
+#[derive(Clone)]
+pub struct ReadReplicaSource {
+    target: CellTarget,
+    description: CellDescription,
+    owner: Owner,
+    epoch: u64,
+    root: RootRef,
+    node: crate::identity::NodeId,
+    fleet: Digest,
+}
+
+impl ReadReplicaSource {
+    /// Returns the original Cell target.
+    #[must_use]
+    pub fn target(&self) -> &CellTarget {
+        &self.target
+    }
+    /// Returns the catalog scope, code and schema of the observed source.
+    #[must_use]
+    pub const fn description(&self) -> CellDescription {
+        self.description
+    }
+    /// Returns the original owner boot and endpoint.
+    #[must_use]
+    pub fn owner(&self) -> &Owner {
+        &self.owner
+    }
+    /// Returns the original authority epoch.
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    /// Returns the exact authority-pinned immutable root to open.
+    #[must_use]
+    pub fn root(&self) -> &RootRef {
+        &self.root
+    }
+    /// Returns the physical source node from its verified boot advertisement.
+    #[must_use]
+    pub const fn node(&self) -> crate::identity::NodeId {
+        self.node
+    }
+    /// Returns the source boot's signed fleet scope.
+    #[must_use]
+    pub const fn fleet(&self) -> Digest {
+        self.fleet
+    }
+}
+
 struct ReplicaSnapshot {
     owner: Owner,
     epoch: u64,
+    node: crate::identity::NodeId,
+    fleet: Digest,
     view: Arc<ReadOnlyRoot>,
     _admission: Arc<ResourceReservation>,
     // Fields drop in declaration order: the last root's resource charges must
@@ -60,8 +117,15 @@ struct ReplicaSnapshot {
 struct SnapshotInputs {
     owner: Owner,
     epoch: u64,
+    node: crate::identity::NodeId,
+    fleet: Digest,
     admission: Arc<ResourceReservation>,
     operation: Arc<LifetimeGuard>,
+}
+
+struct ReaderOpening {
+    source: ReadReplicaSource,
+    admission: Arc<ResourceReservation>,
 }
 
 const CLOSED: usize = 1 << (usize::BITS - 1);
@@ -142,10 +206,31 @@ impl CellReadReplica {
         destination: &Path,
     ) -> Result<Self> {
         runtime.node_admission().check_new_role()?;
-        let lifetime = Arc::new(ReplicaLifetime::default());
-        let operation = Arc::new(lifetime.acquire(true)?);
+        // Ordinary opening retains its existing admission-before-provider-I/O
+        // order. Explicit source preparation alone creates no local obligation.
         let admission = Arc::new(runtime.reserve_read_view()?);
-        let replica = runtime.replica_for_read(replica);
+        let source = Self::prepare_source(&registry, &authority, &directory, target).await?;
+        Self::open_admitted(
+            runtime,
+            registry,
+            authority,
+            directory,
+            replica,
+            ReaderOpening { source, admission },
+            destination,
+        )
+        .await
+    }
+
+    /// Observes an exact source without opening a view or reserving resources.
+    /// Journal enrollment before calling `open_source`; a later publication
+    /// cannot silently replace the root named by this value.
+    pub async fn prepare_source(
+        registry: &Registry,
+        authority: &CellAuthority,
+        directory: &NodeDirectory,
+        target: CellTarget,
+    ) -> Result<ReadReplicaSource> {
         let cell = target.cell_id();
         let observed = authority.load(cell).await?.ok_or(Error::CellNotActive)?;
         let control = observed.value();
@@ -159,27 +244,98 @@ impl CellReadReplica {
         if !registry.supports_module_code(module, control.code, control.schema) {
             return Err(Error::Registry("replica module or code is unsupported"));
         }
-        if !directory.is_live(owner.session, unix_time_ms()?).await? {
+        let boot = directory
+            .load_if_live(owner.session, unix_time_ms()?)
+            .await?
+            .ok_or(Error::Fenced)?;
+        Ok(ReadReplicaSource {
+            target,
+            description: CellDescription {
+                cell,
+                incarnation: control.incarnation,
+                code: control.code,
+                schema: control.schema,
+            },
+            owner,
+            epoch: control.epoch,
+            root: control.root.clone().ok_or(Error::Fenced)?,
+            node: boot.advertisement().node(),
+            fleet: boot.advertisement().fleet(),
+        })
+    }
+
+    /// Opens a previously checked exact source through the ordinary read path.
+    ///
+    /// The same owner/epoch must still be serving at installation. Newer roots
+    /// under that owner are allowed, but this view opens the original pinned
+    /// root. Cordon and closed runtime admission still reject a new view.
+    pub async fn open_source(
+        runtime: CellRuntime,
+        registry: Arc<Registry>,
+        authority: CellAuthority,
+        directory: NodeDirectory,
+        replica: CellReplica,
+        source: ReadReplicaSource,
+        destination: &Path,
+    ) -> Result<Self> {
+        runtime.node_admission().check_new_role()?;
+        let admission = Arc::new(runtime.reserve_read_view()?);
+        Self::open_admitted(
+            runtime,
+            registry,
+            authority,
+            directory,
+            replica,
+            ReaderOpening { source, admission },
+            destination,
+        )
+        .await
+    }
+
+    async fn open_admitted(
+        runtime: CellRuntime,
+        registry: Arc<Registry>,
+        authority: CellAuthority,
+        directory: NodeDirectory,
+        replica: CellReplica,
+        opening: ReaderOpening,
+        destination: &Path,
+    ) -> Result<Self> {
+        runtime.node_admission().check_new_role()?;
+        let ReaderOpening { source, admission } = opening;
+        let ReadReplicaSource {
+            target,
+            description: expected,
+            owner,
+            epoch,
+            root,
+            node,
+            fleet,
+        } = source;
+        let (module, _) = registry
+            .namespace_contract(target.namespace())
+            .ok_or(Error::Registry("replica namespace is not registered"))?;
+        if !registry.supports_module_code(module, expected.code, expected.schema) {
+            return Err(Error::Registry("replica module or code is unsupported"));
+        }
+        let lifetime = Arc::new(ReplicaLifetime::default());
+        let operation = Arc::new(lifetime.acquire(true)?);
+        let replica = runtime.replica_for_read(replica);
+        let verified = replica
+            .open_root(&root.to_ltx(expected.cell, expected.incarnation))
+            .await?;
+        if verified.schema() != expected.schema {
             return Err(Error::Fenced);
         }
-        let root = control.ltx_root().ok_or(Error::Fenced)?;
-        let verified = replica.open_root(&root).await?;
-        if verified.schema() != control.schema {
-            return Err(Error::Fenced);
-        }
-        let expected = CellDescription {
-            cell,
-            incarnation: control.incarnation,
-            code: control.code,
-            schema: control.schema,
-        };
         let snapshot = open_view(
             &runtime,
             verified,
             destination,
             SnapshotInputs {
                 owner,
-                epoch: control.epoch,
+                epoch,
+                node,
+                fleet,
                 admission,
                 operation,
             },
@@ -221,10 +377,17 @@ impl CellReadReplica {
         let _operation = self.lifetime.acquire(true)?;
         let snapshot = self.current_snapshot().await?;
         self.confirm_snapshot(&snapshot).await?;
-        let live = self
+        let boot = self
             .directory
-            .is_live(snapshot.owner.session, unix_time_ms()?)
+            .load_if_live(snapshot.owner.session, unix_time_ms()?)
             .await?;
+        if boot.as_ref().is_some_and(|boot| {
+            boot.advertisement().node() != snapshot.node
+                || boot.advertisement().fleet() != snapshot.fleet
+        }) {
+            return Err(Error::Fenced);
+        }
+        let live = boot.is_some();
         if self.query_gate.is_closed() {
             return Err(Error::Fenced);
         }
@@ -301,6 +464,8 @@ impl CellReadReplica {
             SnapshotInputs {
                 owner: current.owner.clone(),
                 epoch: current.epoch,
+                node: current.node,
+                fleet: current.fleet,
                 admission,
                 operation: Arc::clone(&operation),
             },
@@ -499,7 +664,11 @@ impl CellReadReplica {
         // Either provider read may stall beyond the observed lease. Admission
         // and expiry must still hold when the result is actually released.
         let release_ms = unix_time_ms()?;
-        let live = live.is_some_and(|node| node.advertisement().expires_at_ms() > release_ms);
+        let live = live.is_some_and(|node| {
+            node.advertisement().expires_at_ms() > release_ms
+                && node.advertisement().node() == snapshot.node
+                && node.advertisement().fleet() == snapshot.fleet
+        });
         if self.query_gate.is_closed()
             || !self.same_owner_and_code(current.value(), snapshot)
             || !live
@@ -546,6 +715,8 @@ async fn open_view(
             Ok(Arc::new(ReplicaSnapshot {
                 owner,
                 epoch: inputs.epoch,
+                node: inputs.node,
+                fleet: inputs.fleet,
                 view,
                 _admission: admission,
                 _lifetime: operation.0.acquire(false)?,
