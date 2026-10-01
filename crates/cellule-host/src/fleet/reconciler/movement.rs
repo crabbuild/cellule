@@ -61,6 +61,14 @@ impl FleetReconciler {
                 effect = MovementAction::Cancel;
                 Some(AttemptEvent::BeginCancel)
             }
+            AttemptPhase::Reserved
+                if report.snapshot.head().maintenance().is_some_and(|m| {
+                    m.id() == id.operation && m.node() == attempt.spec().source_node
+                }) =>
+            {
+                effect = MovementAction::ReleaseMaintenance;
+                Some(AttemptEvent::BeginMaintenanceRelease)
+            }
             AttemptPhase::Reserved => Some(AttemptEvent::BeginRelease),
             AttemptPhase::Released
                 if !attempt.receiver_resources_settled()
@@ -137,7 +145,7 @@ impl FleetReconciler {
                     return Ok(());
                 }
             }
-            if effect == MovementAction::Release && original.is_some() {
+            if effect.is_source_release() && original.is_some() {
                 // A source effect without retained release evidence cannot be
                 // repeated or declared refused. Canonical recovery is separate.
                 report.blocked(DrainBlocker::OutcomeUnknown);
@@ -247,8 +255,15 @@ impl FleetReconciler {
             .map_err(operation)?;
         let (node, session) = endpoint(
             attempt,
-            if attempt.phase() == AttemptPhase::Releasing {
-                MovementAction::Release
+            if matches!(
+                attempt.phase(),
+                AttemptPhase::Releasing | AttemptPhase::MaintenanceReleasing
+            ) {
+                if attempt.phase() == AttemptPhase::MaintenanceReleasing {
+                    MovementAction::ReleaseMaintenance
+                } else {
+                    MovementAction::Release
+                }
             } else {
                 MovementAction::Activate
             },
@@ -374,7 +389,12 @@ impl FleetReconciler {
                 }
                 AttemptEvent::Reserved(*r)
             }
-            FleetOutcome::Released(p) if attempt.phase() == AttemptPhase::Releasing => {
+            FleetOutcome::Released(p)
+                if matches!(
+                    attempt.phase(),
+                    AttemptPhase::Releasing | AttemptPhase::MaintenanceReleasing
+                ) =>
+            {
                 AttemptEvent::Released(p.clone())
             }
             FleetOutcome::Activated(e)
@@ -402,7 +422,12 @@ impl FleetReconciler {
             {
                 AttemptEvent::ReceiverCleaned
             }
-            FleetOutcome::Rejected(blocker) if attempt.phase() == AttemptPhase::Releasing => {
+            FleetOutcome::Rejected(blocker)
+                if matches!(
+                    attempt.phase(),
+                    AttemptPhase::Releasing | AttemptPhase::MaintenanceReleasing
+                ) =>
+            {
                 AttemptEvent::ReleaseRefused(*blocker)
             }
             FleetOutcome::Rejected(_) if attempt.phase() == AttemptPhase::Preparing => {
@@ -442,6 +467,7 @@ fn phase_effect(phase: AttemptPhase) -> Option<MovementAction> {
     match phase {
         AttemptPhase::Preparing => Some(MovementAction::Prepare),
         AttemptPhase::Releasing => Some(MovementAction::Release),
+        AttemptPhase::MaintenanceReleasing => Some(MovementAction::ReleaseMaintenance),
         AttemptPhase::Activating => Some(MovementAction::Activate),
         AttemptPhase::Recovering => Some(MovementAction::Recover),
         AttemptPhase::Cancelling
@@ -453,7 +479,7 @@ fn phase_effect(phase: AttemptPhase) -> Option<MovementAction> {
 }
 fn endpoint(attempt: &MoveAttempt, effect: MovementAction) -> (NodeId, SessionId) {
     let spec = attempt.spec();
-    if effect == MovementAction::Release {
+    if effect.is_source_release() {
         (spec.source_node, spec.source)
     } else {
         (spec.destination_node, spec.destination)

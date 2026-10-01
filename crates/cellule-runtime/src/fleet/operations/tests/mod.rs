@@ -10,6 +10,7 @@ mod acquisition;
 mod cleanup;
 mod contracts;
 mod inspection;
+mod maintenance_release;
 mod recovery;
 mod registry;
 

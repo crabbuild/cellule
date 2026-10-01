@@ -568,6 +568,43 @@ impl CellRuntime {
         response.await.map_err(|_| Error::RuntimeClosed)?
     }
 
+    /// Quiesces and releases a busy maintenance source through canonical publication.
+    ///
+    /// The deadline bounds preflight, not an already confirmed release. A refused
+    /// preflight proves this request started no canonical release. Foreground
+    /// closure remains sticky; native completion remains available after refusal.
+    /// The runtime owns accepted work independently of the caller's waiter.
+    pub async fn release_maintenance_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+        deadline: tokio::time::Instant,
+    ) -> crate::Result<MaintenanceCellRelease> {
+        self.ensure_running()?;
+        if source != self.inner.session || generation == 0 || epoch == 0 {
+            return Err(Error::Fenced);
+        }
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::ReleaseMaintenanceCell(
+                maintenance::ReleaseRequest {
+                    cell,
+                    generation,
+                    incarnation,
+                    epoch,
+                    deadline: deadline.into_std(),
+                    reply,
+                },
+            ))
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
     /// Releases an exact source identity and returns the canonical final position.
     ///
     /// The actor checks incarnation and ownership epoch before closing admission,

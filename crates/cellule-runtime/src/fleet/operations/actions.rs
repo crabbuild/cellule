@@ -137,12 +137,16 @@ impl FleetAction {
 
     pub(super) fn check_admission_deadline(&self, now_ms: i64) -> Result<()> {
         if let FleetActionKind::Movement { action, attempt } = &self.kind {
-            if matches!(action, MovementAction::Prepare | MovementAction::Release)
-                && now_ms >= attempt.spec.deadline_ms
+            if matches!(
+                action,
+                MovementAction::Prepare
+                    | MovementAction::Release
+                    | MovementAction::ReleaseMaintenance
+            ) && now_ms >= attempt.spec.deadline_ms
             {
                 return Err(OperationError::Deadline);
             }
-            if *action == MovementAction::Release
+            if action.is_source_release()
                 && attempt
                     .reservation
                     .is_none_or(|r| r.expires_at_ms <= now_ms)
@@ -212,6 +216,23 @@ impl FleetHead {
             .iter()
             .find(|attempt| attempt.spec.id == id)
             .ok_or(OperationError::NotFound)?;
+        if action == MovementAction::ReleaseMaintenance {
+            let operation = self.maintenance.as_ref().ok_or(OperationError::Invalid(
+                "busy release lacks maintenance intent",
+            ))?;
+            if attempt.spec.id.operation != operation.id
+                || attempt.spec.source_node != operation.node
+                || attempt.spec.source != operation.session
+                || operation.phase != MaintenancePhase::Evacuating
+            {
+                return Err(OperationError::Invalid(
+                    "busy release maintenance identity mismatch",
+                ));
+            }
+            if now_ms >= operation.deadline_ms {
+                return Err(OperationError::Deadline);
+            }
+        }
         self.make_action(
             FleetActionKind::Movement {
                 action,
@@ -263,6 +284,7 @@ fn movement_allowed(attempt: &MoveAttempt, action: MovementAction) -> bool {
     match action {
         MovementAction::Prepare => attempt.phase == AttemptPhase::Preparing,
         MovementAction::Release => attempt.phase == AttemptPhase::Releasing,
+        MovementAction::ReleaseMaintenance => attempt.phase == AttemptPhase::MaintenanceReleasing,
         MovementAction::Activate => attempt.phase == AttemptPhase::Activating,
         MovementAction::Recover => attempt.phase == AttemptPhase::Recovering,
         MovementAction::Cancel => {
@@ -418,7 +440,12 @@ impl FleetActionOutcome {
                     }
                     FleetOutcome::Released(p) => {
                         source
-                            && matches!(kind, MovementAction::Release | MovementAction::Inspect)
+                            && matches!(
+                                kind,
+                                MovementAction::Release
+                                    | MovementAction::ReleaseMaintenance
+                                    | MovementAction::Inspect
+                            )
                             && p.incarnation == attempt.spec.incarnation
                             && p.epoch == attempt.spec.source_epoch
                     }
@@ -441,7 +468,7 @@ impl FleetActionOutcome {
                     FleetOutcome::Rejected(_)
                     | FleetOutcome::Blocked(_)
                     | FleetOutcome::Unknown => match kind {
-                        MovementAction::Release => source,
+                        MovementAction::Release | MovementAction::ReleaseMaintenance => source,
                         MovementAction::Prepare
                         | MovementAction::Activate
                         | MovementAction::Cancel

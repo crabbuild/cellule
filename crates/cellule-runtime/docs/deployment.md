@@ -965,7 +965,27 @@ explicit blocker.
 
 A transferable primitive snapshot grants no release authority and does not
 establish actor settlement or complete role coverage. Ordinary idle transfer
-keeps its conservative readiness checks. The fleet driver does not yet connect
-this local gate to journal-bound busy-Cell release; complete maintenance,
-startup intent barriers and role finalization remain required by the
+keeps its conservative readiness checks.
+
+`CellRuntime::release_maintenance_cell_at` accepts the same exact source identity
+and a preflight deadline. The actor owns the request after acceptance, including
+when its caller drops the reply waiter. It closes foreground admission, gives a
+serialized readiness read a bounded worker slot behind accepted SQL, then closes
+native completion admission and joins accepted work/publication. A second fresh
+read must prove readiness before the existing canonical release starts. Lease
+renewal continues until that confirmation. A live lease found on the second read
+restores native completion only and retries within the deadline.
+
+| Result | Meaning |
+| --- | --- |
+| `MaintenanceCellRelease::Released(position)` | Canonical release completed with the exact final authority root and epoch. Ordinary exact-root receiver activation can consume it. |
+| `MaintenanceCellRelease::Refused { blocker, error }` | This request started no canonical release. Preserve any source error; foreground quiescence stays installed if already accepted, and native completion remains available. |
+| Other error or lost reply | Release may be unresolved. Retain fleet permits and inspect retained evidence or use canonical failed-session recovery. |
+
+The deadline bounds preflight; it does not cancel a confirmed release. A Blob
+Cell refuses before closing admission because external stream/upload/pin owners
+are not covered. The fleet executor supports explicit journal-bound busy release,
+but automatic demand collection still requires ordinary settled eligibility.
+Busy demand planning, complete maintenance, startup intent barriers and role
+finalization remain required by the
 [fleet implementation plan](../../../docs/fleet-operations-plan.md).

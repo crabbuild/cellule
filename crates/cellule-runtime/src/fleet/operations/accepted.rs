@@ -178,7 +178,7 @@ impl FleetAction {
                 let source = node == spec.source_node && session == spec.source;
                 let receiver = node == spec.destination_node && session == spec.destination;
                 match action {
-                    MovementAction::Release => source,
+                    MovementAction::Release | MovementAction::ReleaseMaintenance => source,
                     MovementAction::Prepare
                     | MovementAction::Activate
                     | MovementAction::Cancel

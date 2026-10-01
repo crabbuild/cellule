@@ -328,6 +328,28 @@ impl FleetHead {
                 next.attempts.push(MoveAttempt::new(spec)?);
             }
             JournalTransition::Attempt { id, event } => {
+                if matches!(event, AttemptEvent::BeginMaintenanceRelease) {
+                    let operation = self.maintenance.as_ref().ok_or(OperationError::Invalid(
+                        "busy release lacks maintenance intent",
+                    ))?;
+                    let attempt = self
+                        .attempts
+                        .iter()
+                        .find(|attempt| attempt.spec.id == id)
+                        .ok_or(OperationError::NotFound)?;
+                    if attempt.spec.id.operation != operation.id
+                        || attempt.spec.source_node != operation.node
+                        || attempt.spec.source != operation.session
+                        || operation.phase != MaintenancePhase::Evacuating
+                    {
+                        return Err(OperationError::Invalid(
+                            "busy release maintenance identity mismatch",
+                        ));
+                    }
+                    if now_ms >= operation.deadline_ms {
+                        return Err(OperationError::Deadline);
+                    }
+                }
                 let attempt = next
                     .attempts
                     .iter_mut()

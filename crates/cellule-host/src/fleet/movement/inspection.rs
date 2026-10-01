@@ -102,37 +102,45 @@ impl FleetActionExecutor {
     ) -> cellule_runtime::Result<ActionResult> {
         let spec = attempt.spec();
         if self.session == spec.source {
-            let original = self
-                .journal
-                .load_movement_action(
-                    self.scope,
-                    spec.id,
-                    MovementAction::Release,
-                    self.node,
-                    self.session,
-                )
-                .await
-                .map_err(journal_error)?;
-            if let Some(FleetActionAcceptance::Existing {
-                accepted,
-                result: Some(result),
-            }) = original
-            {
-                if accepted.action().scope() != self.scope
-                    || accepted.node() != self.node
-                    || accepted.session() != self.session
+            let release_kinds: &[MovementAction] = match attempt.phase() {
+                AttemptPhase::MaintenanceReleasing => &[MovementAction::ReleaseMaintenance],
+                AttemptPhase::Releasing => &[MovementAction::Release],
+                _ => &[MovementAction::ReleaseMaintenance, MovementAction::Release],
+            };
+            for &release_kind in release_kinds {
+                let original = self
+                    .journal
+                    .load_movement_action(
+                        self.scope,
+                        spec.id,
+                        release_kind,
+                        self.node,
+                        self.session,
+                    )
+                    .await
+                    .map_err(journal_error)?;
+                if let Some(FleetActionAcceptance::Existing {
+                    accepted,
+                    result: Some(result),
+                }) = original
                 {
-                    return Err(Error::Fenced);
-                }
-                accepted.validate_result(&result).map_err(operation)?;
-                if let FleetActionKind::Movement {
-                    action: MovementAction::Release,
-                    attempt: original,
-                } = accepted.action().kind()
-                    && original.spec() == spec
-                    && matches!(result.outcome, FleetOutcome::Released(_))
-                {
-                    return Ok(ActionResult::checked(result.outcome));
+                    if accepted.action().scope() != self.scope
+                        || accepted.node() != self.node
+                        || accepted.session() != self.session
+                    {
+                        return Err(Error::Fenced);
+                    }
+                    accepted.validate_result(&result).map_err(operation)?;
+                    if let FleetActionKind::Movement {
+                        action,
+                        attempt: original,
+                    } = accepted.action().kind()
+                        && *action == release_kind
+                        && original.spec() == spec
+                        && matches!(result.outcome, FleetOutcome::Released(_))
+                    {
+                        return Ok(ActionResult::checked(result.outcome));
+                    }
                 }
             }
             return Ok(ActionResult::checked(FleetOutcome::Unknown));

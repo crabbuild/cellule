@@ -1319,13 +1319,15 @@ shared permit cap. Missing journal/membership evidence stops new optional work.
 
 ### W6 Add controlled maintenance of busy Cells
 
-Checkpoint: exact-source `CellRuntime::quiesce_cell_at`, private native lease
-completion admission, and separate `maintenance_work` inventory now exist.
-Public SQL and Queue behavior have focused coverage in the
-[execution evidence](fleet-operations-progress.md). The driver still uses the
-ordinary settled path. Complete journal-bound busy release, every primitive's
-public acceptance cases, Blob owners and process/provider qualification before
-claiming this work package complete.
+Checkpoint: exact-source foreground quiescence, native lease completion,
+separate maintenance inventory, and canonical `release_maintenance_cell_at` now
+exist. An explicit journal-bound maintenance release phase/action connects the
+host executor to that path without reinterpreting ordinary release records.
+Public SQL/Queue and pure action contracts have focused coverage in the
+[execution evidence](fleet-operations-progress.md). New driver demands still
+require ordinary settled eligibility. Complete busy demand planning, public host
+acceptance/fault cases, every primitive's acceptance matrix, Blob owners and
+process/provider qualification before claiming this work package complete.
 
 Dependencies: W1, W3, W4.
 

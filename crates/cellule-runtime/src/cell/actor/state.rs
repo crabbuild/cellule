@@ -140,6 +140,7 @@ pub(super) enum Message {
         epoch: u64,
         reply: oneshot::Sender<crate::Result<()>>,
     },
+    ReleaseMaintenanceCell(maintenance::ReleaseRequest),
     ReleaseIdleCell {
         cell: CellId,
         generation: u64,
@@ -293,9 +294,11 @@ pub(super) struct ActiveCell {
 
 pub(super) struct TransferPreflight {
     pub(super) reply: DrainReply,
+    pub(super) maintenance: Option<maintenance::ReleaseState>,
 }
 
 pub(super) enum DrainReply {
+    Maintenance(oneshot::Sender<crate::Result<MaintenanceCellRelease>>),
     Unit(oneshot::Sender<crate::Result<()>>),
     Position(oneshot::Sender<crate::Result<crate::fleet::operations::PublishedPosition>>),
 }
@@ -311,6 +314,13 @@ impl DrainReply {
         released: Option<crate::fleet::operations::PublishedPosition>,
     ) -> Result<(), crate::Result<()>> {
         match self {
+            Self::Maintenance(reply) => reply
+                .send(
+                    result
+                        .and_then(|()| released.ok_or(Error::Fenced))
+                        .map(MaintenanceCellRelease::Released),
+                )
+                .map_err(|result| result.map(|_| ())),
             Self::Unit(reply) => reply.send(result),
             Self::Position(reply) => reply
                 .send(result.and_then(|()| released.ok_or(Error::Fenced)))
@@ -417,6 +427,12 @@ pub(super) enum TaskResult {
         generation: u64,
         effect_id: u64,
         result: crate::Result<crate::primitives::maintenance::TransferWorkInventory>,
+    },
+    MaintenancePreflight {
+        cell: CellId,
+        generation: u64,
+        effect_id: u64,
+        result: crate::Result<crate::primitives::maintenance_readiness::MaintenanceWorkInventory>,
     },
     Executed {
         cell: CellId,

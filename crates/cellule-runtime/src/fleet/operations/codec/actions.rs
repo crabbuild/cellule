@@ -8,6 +8,7 @@ fn movement(d: &mut BoundedDecoder<'_>) -> Result<MovementAction> {
         4 => Ok(MovementAction::Inspect),
         5 => Ok(MovementAction::Cancel),
         7 => Ok(MovementAction::Recover),
+        8 => Ok(MovementAction::ReleaseMaintenance),
         _ => Err(OperationError::Invalid("unknown remote movement action")),
     }
 }

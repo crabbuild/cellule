@@ -101,6 +101,7 @@ pub(super) fn read_attempt(d: &mut BoundedDecoder<'_>) -> Result<MoveAttempt> {
         10 => AttemptPhase::CleaningReceiver,
         11 => AttemptPhase::Recovering,
         12 => AttemptPhase::Recovered,
+        13 => AttemptPhase::MaintenanceReleasing,
         _ => return Err(OperationError::Invalid("unknown movement phase")),
     };
     let reservation = if d.read_bool()? {

@@ -84,7 +84,7 @@ impl FleetTransport for LocalFleet {
                 return Err(invalid("non-movement example action"));
             };
             let spec = attempt.spec();
-            let (node, boot) = if *effect == MovementAction::Release {
+            let (node, boot) = if effect.is_source_release() {
                 (spec.source_node, spec.source)
             } else {
                 (spec.destination_node, spec.destination)
@@ -106,7 +106,7 @@ impl FleetTransport for LocalFleet {
                 self.expired_receiver_cleanups
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            if self.lose_release_replies && *effect == MovementAction::Release {
+            if self.lose_release_replies && effect.is_source_release() {
                 if !completion.committed
                     || !matches!(completion.outcome.outcome, FleetOutcome::Released(_))
                 {

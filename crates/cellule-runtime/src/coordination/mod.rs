@@ -129,6 +129,13 @@ pub(crate) enum CoordinationInput {
         refreshing: bool,
         lease_live: bool,
     },
+    BeginMaintenanceInventory {
+        refreshing: bool,
+        finalizing: bool,
+        queue_empty: bool,
+        publisher_ready: bool,
+        lease_live: bool,
+    },
     BeginTransferPreflight {
         queue_empty: bool,
         publication_idle: bool,
@@ -511,7 +518,7 @@ impl CoordinationState {
                     CoordinationDecision::Fence
                 } else if self.is_fenced()
                     || self.is_draining()
-                    || self.transfer_preparing
+                    || (self.transfer_preparing && !self.maintenance_quiescing)
                     || self.renewing
                 {
                     CoordinationDecision::Reject(if self.is_fenced() {
@@ -616,6 +623,33 @@ impl CoordinationState {
                 } else if !queue_empty || !publication_idle || !inventory_unknown || refreshing {
                     CoordinationDecision::Ignored
                 } else {
+                    CoordinationDecision::Started
+                }
+            }
+            CoordinationInput::BeginMaintenanceInventory {
+                refreshing,
+                finalizing,
+                queue_empty,
+                publisher_ready,
+                lease_live,
+            } => {
+                if !lease_live {
+                    self.lifecycle = Lifecycle::Fenced;
+                    CoordinationDecision::Fence
+                } else if self.is_fenced() {
+                    CoordinationDecision::Reject(RejectReason::Fenced)
+                } else if self.is_draining() || !self.maintenance_quiescing {
+                    CoordinationDecision::Reject(RejectReason::Draining)
+                } else if refreshing
+                    || !publisher_ready
+                    || (finalizing
+                        && (!self.transfer_preparing || !queue_empty || !self.can_deactivate()))
+                {
+                    CoordinationDecision::Ignored
+                } else {
+                    // The worker serializes this read behind already executing SQL.
+                    // Its owned Inventory effect prevents the next queued work from
+                    // starving the first maintenance observation.
                     CoordinationDecision::Started
                 }
             }

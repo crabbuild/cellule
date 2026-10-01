@@ -25,6 +25,8 @@ mod acquisition_observer;
 pub use acquisition_observer::{AcquisitionObservation, AcquisitionObserver};
 mod admission;
 mod lifecycle;
+mod maintenance;
+pub use maintenance::MaintenanceCellRelease;
 mod receiver;
 mod requests;
 pub(crate) mod routes;

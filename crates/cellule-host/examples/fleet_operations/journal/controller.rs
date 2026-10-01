@@ -40,7 +40,7 @@ impl FleetJournal for SqliteJournal {
             if let JournalTransition::ResolveUnaccepted { id, effect } = &transition {
                 let attempt = current.head().attempts().iter().find(|attempt| attempt.spec().id == *id).ok_or(OperationError::NotFound)?;
                 let spec = attempt.spec();
-                let (node, session) = if *effect == MovementAction::Release { (spec.source_node, spec.source) } else { (spec.destination_node, spec.destination) };
+                let (node, session) = if effect.is_source_release() { (spec.source_node, spec.source) } else { (spec.destination_node, spec.destination) };
                 let accepted = db.tx.query_row("SELECT EXISTS(SELECT 1 FROM actions WHERE operation=?1 AND sequence=?2 AND effect=?3 AND node=?4 AND session=?5)",
                     params![id.operation.as_bytes().as_slice(), id.sequence.to_be_bytes().as_slice(), *effect as u8, node.as_bytes().as_slice(), session.as_bytes().as_slice()], |row| row.get::<_, bool>(0))?;
                 if accepted { return Err(OperationError::Busy.into()); }

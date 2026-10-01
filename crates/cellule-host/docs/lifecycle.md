@@ -209,5 +209,22 @@ for admission and proof limits. Fleet observations hash the quiescence flag,
 readiness presence and all blocker classes under planner input domain
 `cellule.fleet-planner-inputs.v2`. Existing retained attempt digests remain
 opaque and unchanged; this is a new producer domain, not a journal rewrite.
-The driver still requires ordinary settled movement eligibility. Journal-bound
-busy release and full role evacuation are not implemented by this checkpoint.
+The driver still requires ordinary settled movement eligibility for new demands.
+Busy demand collection and full role evacuation remain incomplete.
+
+## Explicit maintenance release checkpoint
+
+The committed `BeginMaintenanceRelease` transition requires the exact Evacuating
+maintenance operation, physical source node and boot. It retains
+`AttemptPhase::MaintenanceReleasing` (tag 13) and dispatches
+`MovementAction::ReleaseMaintenance` (tag 8). Existing ordinary Releasing/Release
+records retain their original policy. Deploy readers that understand these new
+tags before enabling their producers; older readers reject unknown tags.
+
+The node-owned executor calls the canonical runtime maintenance release with the
+minimum attempt/reservation deadline. A definite preflight refusal produces a
+checked Rejected result and preserves its source error. Unresolved release keeps
+both fleet permits and requires inspection or canonical recovery. Lost waiters
+cannot cancel accepted work; source inspection loads the exact retained release
+kind and never repeats an accepted release without evidence. These steps do not
+prove reader/follower evacuation, Stopped, withdrawal or complete maintenance.

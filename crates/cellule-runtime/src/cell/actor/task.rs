@@ -42,6 +42,17 @@ pub(super) async fn run(
     pressure_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pressure_tick.tick().await;
     loop {
+        if !shutdown.draining {
+            maintenance::drive(
+                &pool,
+                &mut cells,
+                &mut transitioning,
+                &mut tasks,
+                &node_lease,
+                &mut movement,
+                &mut movement_permits,
+            );
+        }
         if shutdown.draining {
             if tasks.is_empty() {
                 if !cells.is_empty() || !transitioning.is_empty() {
@@ -431,7 +442,11 @@ pub(super) fn handle_message(
                 send_command_reply(&mut command, Err(Error::CellNotActive));
                 return;
             };
-            if active.transfer.is_some() {
+            if active
+                .transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.maintenance.is_none())
+            {
                 send_command_reply(&mut command, Err(Error::CellDraining));
                 return;
             }
@@ -454,7 +469,11 @@ pub(super) fn handle_message(
                 send_query_reply(&mut query, Err(Error::CellNotActive));
                 return;
             };
-            if active.transfer.is_some() {
+            if active
+                .transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.maintenance.is_none())
+            {
                 send_query_reply(&mut query, Err(Error::CellDraining));
                 return;
             }
@@ -477,7 +496,11 @@ pub(super) fn handle_message(
                 send_resolve_reply(&mut resolve, Err(Error::CellNotActive));
                 return;
             };
-            if active.transfer.is_some() {
+            if active
+                .transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.maintenance.is_none())
+            {
                 send_resolve_reply(&mut resolve, Ok(Resolution::Unknown));
                 return;
             }
@@ -760,6 +783,11 @@ pub(super) fn handle_message(
             })();
             let _ = reply.send(result);
         }
+        Message::ReleaseMaintenanceCell(request) => {
+            if let Some(cell) = maintenance::begin(request, cells, movement, movement_permits) {
+                continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+            }
+        }
         Message::ReleaseIdleCell {
             cell,
             generation,
@@ -853,7 +881,10 @@ pub(super) fn handle_message(
                 active.admission.requests.close();
                 active.admission.bytes.close();
                 active.admission = new_cell_admission();
-                active.transfer = Some(TransferPreflight { reply });
+                active.transfer = Some(TransferPreflight {
+                    reply,
+                    maintenance: None,
+                });
             };
             movement_permits.insert(cell, permit);
             continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
@@ -932,6 +963,9 @@ pub(super) fn reject_fenced_message(message: Message) {
         }
         Message::QuiesceCell { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));
+        }
+        Message::ReleaseMaintenanceCell(request) => {
+            let _ = request.reply.send(Err(Error::Fenced));
         }
         Message::ReleaseIdleCell { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));

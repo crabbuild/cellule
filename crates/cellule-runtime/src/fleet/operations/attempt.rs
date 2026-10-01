@@ -161,6 +161,8 @@ pub enum AttemptPhase {
     Recovering = 11,
     /// Recovery and current serving are proved; receiver cleanup remains separate.
     Recovered = 12,
+    /// Explicit busy maintenance release dispatch; ordinary release remains separate.
+    MaintenanceReleasing = 13,
 }
 
 /// Advisory next action selected from durable state.
@@ -181,6 +183,16 @@ pub enum MovementAction {
     Retire = 6,
     /// Recover an unresolved release using canonical failed-session proof.
     Recover = 7,
+    /// Quiesce busy work under retained maintenance intent, then release canonically.
+    ReleaseMaintenance = 8,
+}
+
+impl MovementAction {
+    /// True for either exact source release policy; all other effects route to a receiver.
+    #[must_use]
+    pub const fn is_source_release(self) -> bool {
+        matches!(self, Self::Release | Self::ReleaseMaintenance)
+    }
 }
 
 /// Replayable result or dispatch intent; input identity is supplied by the journal.
@@ -192,6 +204,8 @@ pub enum AttemptEvent {
     Reserved(ReceiverReservation),
     /// Persist source release dispatch before a source side effect.
     BeginRelease,
+    /// Persist explicit busy maintenance release before closing foreground work.
+    BeginMaintenanceRelease,
     /// The source definitively refused without accepting a release.
     ReleaseRefused(DrainBlocker),
     /// Confirm exact source release and final authoritative root.
@@ -330,6 +344,7 @@ impl MoveAttempt {
             AttemptPhase::Released => MovementAction::Activate,
             AttemptPhase::Preparing
             | AttemptPhase::Releasing
+            | AttemptPhase::MaintenanceReleasing
             | AttemptPhase::Activating
             | AttemptPhase::Recovering => MovementAction::Inspect,
             AttemptPhase::Cancelling | AttemptPhase::CleaningReceiver => MovementAction::Cancel,
@@ -354,6 +369,7 @@ impl MoveAttempt {
         let expected = match self.phase {
             AttemptPhase::Preparing => MovementAction::Prepare,
             AttemptPhase::Releasing => MovementAction::Release,
+            AttemptPhase::MaintenanceReleasing => MovementAction::ReleaseMaintenance,
             AttemptPhase::Activating => MovementAction::Activate,
             AttemptPhase::Recovering => MovementAction::Recover,
             AttemptPhase::Cancelling | AttemptPhase::CleaningReceiver => MovementAction::Cancel,
@@ -376,7 +392,7 @@ impl MoveAttempt {
             AttemptPhase::Preparing if now_ms >= self.spec.deadline_ms => {
                 self.phase = AttemptPhase::Cancelling
             }
-            AttemptPhase::Releasing
+            AttemptPhase::Releasing | AttemptPhase::MaintenanceReleasing
                 if now_ms >= self.spec.deadline_ms
                     || self.reservation.is_none_or(|r| r.expires_at_ms <= now_ms) =>
             {
@@ -416,7 +432,7 @@ impl MoveAttempt {
                 self.phase = AttemptPhase::Reserved;
                 self.blocker = None;
             }
-            AttemptEvent::BeginRelease
+            event @ (AttemptEvent::BeginRelease | AttemptEvent::BeginMaintenanceRelease)
                 if self.phase == AttemptPhase::Reserved
                     && self.blocker != Some(DrainBlocker::OutcomeUnknown) =>
             {
@@ -424,18 +440,29 @@ impl MoveAttempt {
                 if self.reservation.is_none_or(|r| r.expires_at_ms <= now_ms) {
                     return Err(OperationError::Invalid("receiver reservation expired"));
                 }
-                self.phase = AttemptPhase::Releasing;
+                self.phase = if matches!(event, AttemptEvent::BeginMaintenanceRelease) {
+                    AttemptPhase::MaintenanceReleasing
+                } else {
+                    AttemptPhase::Releasing
+                };
                 self.blocker = None;
             }
             AttemptEvent::ReleaseRefused(blocker)
-                if self.phase == AttemptPhase::Releasing
-                    && blocker != DrainBlocker::OutcomeUnknown =>
+                if matches!(
+                    self.phase,
+                    AttemptPhase::Releasing | AttemptPhase::MaintenanceReleasing
+                ) && blocker != DrainBlocker::OutcomeUnknown =>
             {
                 self.phase = AttemptPhase::Reserved;
                 self.blocker = Some(blocker);
             }
             AttemptEvent::Released(position)
-                if matches!(self.phase, AttemptPhase::Releasing | AttemptPhase::Released) =>
+                if matches!(
+                    self.phase,
+                    AttemptPhase::Releasing
+                        | AttemptPhase::MaintenanceReleasing
+                        | AttemptPhase::Released
+                ) =>
             {
                 position.validate()?;
                 if position.incarnation != self.spec.incarnation
@@ -448,7 +475,12 @@ impl MoveAttempt {
                 self.phase = AttemptPhase::Released;
                 self.blocker = None;
             }
-            AttemptEvent::BeginRecover if self.phase == AttemptPhase::Releasing => {
+            AttemptEvent::BeginRecover
+                if matches!(
+                    self.phase,
+                    AttemptPhase::Releasing | AttemptPhase::MaintenanceReleasing
+                ) =>
+            {
                 self.phase = AttemptPhase::Recovering;
                 self.blocker = None;
             }
@@ -499,6 +531,7 @@ impl MoveAttempt {
                     self.phase,
                     AttemptPhase::Preparing
                         | AttemptPhase::Releasing
+                        | AttemptPhase::MaintenanceReleasing
                         | AttemptPhase::Recovering
                         | AttemptPhase::Activating
                         | AttemptPhase::Cancelling
@@ -589,6 +622,7 @@ impl MoveAttempt {
             self.phase,
             AttemptPhase::Reserved
                 | AttemptPhase::Releasing
+                | AttemptPhase::MaintenanceReleasing
                 | AttemptPhase::Released
                 | AttemptPhase::Activating
                 | AttemptPhase::Activated
@@ -679,6 +713,7 @@ impl MoveAttempt {
                 self.phase,
                 AttemptPhase::Preparing
                     | AttemptPhase::Releasing
+                    | AttemptPhase::MaintenanceReleasing
                     | AttemptPhase::Recovering
                     | AttemptPhase::Activating
                     | AttemptPhase::Cancelling

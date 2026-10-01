@@ -49,6 +49,43 @@ impl FleetActionExecutor {
                     .map(FleetOutcome::Released)
                     .map(ActionResult::checked)
             }
+            MovementAction::ReleaseMaintenance => {
+                let until = attempt
+                    .reservation()
+                    .map_or(spec.deadline_ms, |r| r.expires_at_ms.min(spec.deadline_ms));
+                if now >= until {
+                    return Ok(ActionResult::checked(FleetOutcome::Rejected(
+                        DrainBlocker::Deadline,
+                    )));
+                }
+                let remaining = u64::try_from(until - now).map_err(|_| Error::Deadline)?;
+                let deadline = tokio::time::Instant::now()
+                    .checked_add(std::time::Duration::from_millis(remaining))
+                    .ok_or(Error::Deadline)?;
+                match self
+                    .runtime
+                    .release_maintenance_cell_at(
+                        spec.target.cell_id(),
+                        spec.source,
+                        spec.generation,
+                        spec.incarnation,
+                        spec.source_epoch,
+                        deadline,
+                    )
+                    .await?
+                {
+                    cellule_runtime::cell::actor::MaintenanceCellRelease::Released(position) => {
+                        Ok(ActionResult::checked(FleetOutcome::Released(position)))
+                    }
+                    cellule_runtime::cell::actor::MaintenanceCellRelease::Refused {
+                        blocker,
+                        error,
+                    } => Ok(ActionResult {
+                        outcome: FleetOutcome::Rejected(blocker),
+                        error,
+                    }),
+                }
+            }
             MovementAction::Recover => self.recover(accepted, attempt).await,
             MovementAction::Prepare => self.prepare(attempt).await,
             MovementAction::Activate => self.activate(accepted, attempt).await,
@@ -128,7 +165,9 @@ impl FleetActionExecutor {
             MovementAction::Inspect => Err(Error::Control(
                 "fleet Inspect requires request-bound inspection",
             )),
-            MovementAction::Release | MovementAction::Retire => Err(Error::Peer(
+            MovementAction::Release
+            | MovementAction::ReleaseMaintenance
+            | MovementAction::Retire => Err(Error::Peer(
                 "accepted source effect has no provable retained result",
             )),
         }

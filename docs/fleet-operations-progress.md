@@ -4,6 +4,83 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 canonical busy release checkpoint
+
+`CellRuntime::release_maintenance_cell_at` now owns an exact-source maintenance
+request independently of its reply waiter. It uses the existing actor movement
+permit, shared admission capability, serialized worker, publication barrier and
+canonical deactivation/release path. Foreground work closes first. A readiness
+read is serialized behind accepted SQL without waiting for the ingress queue to
+become idle. Native completion then closes, accepted work/publication joins, and
+a second fresh readiness read must pass before canonical release is confirmed.
+Lease renewal remains active until confirmation. A newly extended live lease
+restores native completion only and waits within the preflight deadline.
+
+`MaintenanceCellRelease::Refused` proves that this request started no canonical
+release and retains any source error. Quiescence remains sticky if installed;
+native completion is restored on the same admission capability. The deadline
+bounds preflight, not confirmed release. A timed-out request's owned read is
+joined; its effect ID cannot classify a newer request. Blob owners remain
+unproven and are refused before foreground closure.
+
+The journal appends explicit phase 13 (`MaintenanceReleasing`) and action 8
+(`ReleaseMaintenance`). Exact Evacuating maintenance identity is required before
+dispatch. The host executes that policy through the new runtime method and
+preserves definite refusal versus unresolved release. Controller reconstruction,
+action replay, atomic absence and retained source inspection keep the exact
+release kind; ordinary phase/action values and policies remain unchanged.
+Readers must understand the new tags before producers are enabled. Mixed-binary
+qualification is still required.
+
+Public SQL and Queue cases cover accepted mutation settlement, exact final-root
+release and ordinary receiver restoration, original outcome resolution, surviving
+unclaimed Queue work, native validation/acknowledgment, dropped release waiters,
+and deadline refusal followed by native completion and a later release. The SQL
+case also exercises overlapping expired and newer maintenance requests. These
+in-process cases do not establish every late-read interleaving or provider fault.
+Pure action cases cover intent binding, codecs, distinct action keys/results,
+unknown/absence permit retention, controller replacement and preserved ordinary
+release policy. The executable driver model checks explicit action 8 dispatch.
+
+The first public run found that an actor guard refused native completions during
+all transfers. The guard now retains that refusal for ordinary idle transfers
+and routes maintenance completion through the canonical kernel admission check.
+The corrected run passes without weakening expected evidence. Earlier fixture
+compile errors (private re-export scope and an invalid test control-state variant)
+were corrected before the passing run; they are not qualification results.
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Baseline | `b8ec303942d112ce8ca36dc1a6761c5191574d49` |
+| Source manifest | 578 Rust/Cargo files; SHA256 `530c407930cbab52a16876136a1cf16ba8e20921e485be6beb02a8431e5865a0` |
+| `cargo test -p cellule-runtime --lib fleet::operations --all-features --locked` | 65 passed; 427 filtered. |
+| `cargo test -p cellule-runtime --lib --test primitives --test runtime maintenance --all-features --locked` | 35 passed: 29 library (462 filtered), four Queue (43 filtered), two SQL (184 filtered). One isolated RustFS library case ignored; no provider evidence. Eight operation tests overlap the 65-test command. |
+| `cargo test -p cellule-host --example fleet_operations --all-features --locked` | 41 passed; none ignored or filtered. |
+| `cargo test -p cellule-host --test node node::fleet --all-features --locked` | 30 passed; 38 filtered. These existing public host cases do not qualify the new busy maintenance action. |
+| `cargo clippy -p cellule-runtime -p cellule-host --lib --tests --example fleet_operations --all-features --locked -- -D warnings` | Passed after removing an unused lint expectation; no lint or qualification bound was weakened. |
+| Static gates | Format, diff whitespace, boundaries/layout, 108 Rust snippets, 1143 Markdown links, and 28 SQL/peer assertions with 563 validator links passed. |
+
+Cargo commands use Rust 1.97.0, `CARGO_INCREMENTAL=0` and
+`$HOME/Workspace/crabbuild-target/cellule-f9383af7-fleet-operations`. Proof is
+focused in-process behavior with real SQLite and in-memory authority, plus the
+existing local leased-node overload/restart examples. Broader suites belong to
+CI or isolated qualification snapshots.
+
+New demand collection still requires ordinary settled eligibility. Busy demand
+planning, public host acceptance/fault coverage, Effect/Activity and remaining
+primitive acceptance cases, Blob owners, enrollment/startup intent barriers,
+reader/follower evacuation, finalization, sustained convergence and process/provider
+qualification remain open. This checkpoint does not complete W6 or the full plan.
+
+Baseline `b8ec303` CI: MSRV, contract, website, decoder fuzz, TLC fast/negative,
+both capacity jobs and smoke passed. Routing remained pending. Workspace tests
+failed in `pending_reader_activation_retains_a_new_publication_hint` and
+`publication_hints_reach_readers_beyond_the_activation_concurrency`, both timing
+out at `crates/cellule-app/tests/host/replicas.rs:285`. The original failed log is
+retained at `/tmp/cellule-fleet-ci-36899568285-workspace.log`. Qualification
+thresholds are unchanged; the updated PR must qualify its own source in CI.
+Skipped broad simulator/TLC jobs supply no evidence.
+
 ## October 1 2026 foreground quiescence checkpoint
 
 `CellRuntime::quiesce_cell_at` installs a sticky exact-generation foreground

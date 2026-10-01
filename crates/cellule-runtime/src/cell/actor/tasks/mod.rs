@@ -13,6 +13,7 @@ use super::admission::{
 use super::*;
 
 mod activation;
+mod maintenance_transfer;
 mod movement;
 mod publication;
 mod residency;
@@ -161,6 +162,12 @@ pub(super) fn handle_task(
             effect_id,
             result,
         } => movement::handle_transfer_preflight(context, cell, generation, effect_id, result),
+        TaskResult::MaintenancePreflight {
+            cell,
+            generation,
+            effect_id,
+            result,
+        } => maintenance_transfer::handle(context, cell, generation, effect_id, result),
         TaskResult::Migrated {
             cell,
             generation,

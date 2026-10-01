@@ -170,6 +170,7 @@ struct Transport {
     inspected: AtomicUsize,
     dispatched: AtomicUsize,
     released: AtomicUsize,
+    maintenance_released: AtomicUsize,
     cordoned: AtomicUsize,
 }
 impl FleetTransport for Transport {
@@ -190,7 +191,7 @@ impl FleetTransport for Transport {
                 panic!();
             };
             let spec = attempt.spec();
-            let (origin, boot) = if *effect == MovementAction::Release {
+            let (origin, boot) = if effect.is_source_release() {
                 (spec.source_node, spec.source)
             } else {
                 (spec.destination_node, spec.destination)
@@ -235,7 +236,10 @@ impl FleetTransport for Transport {
                     session: boot,
                     expires_at_ms: spec.deadline_ms,
                 }),
-                MovementAction::Release => {
+                MovementAction::Release | MovementAction::ReleaseMaintenance => {
+                    if *effect == MovementAction::ReleaseMaintenance {
+                        self.maintenance_released.fetch_add(1, Ordering::SeqCst);
+                    }
                     self.released.fetch_add(1, Ordering::SeqCst);
                     FleetOutcome::Released(position(spec.source_epoch))
                 }
@@ -279,8 +283,7 @@ impl FleetTransport for Transport {
             self.journal
                 .publish_action_result(&accepted, &outcome)
                 .await?;
-            if *effect == MovementAction::Release && self.lose_release.swap(false, Ordering::SeqCst)
-            {
+            if effect.is_source_release() && self.lose_release.swap(false, Ordering::SeqCst) {
                 return Err(std::io::Error::other(
                     "injected lost release response after durable result",
                 )
@@ -311,6 +314,7 @@ impl FleetTransport for Transport {
             let effect = match attempt.phase() {
                 AttemptPhase::Preparing => MovementAction::Prepare,
                 AttemptPhase::Releasing => MovementAction::Release,
+                AttemptPhase::MaintenanceReleasing => MovementAction::ReleaseMaintenance,
                 AttemptPhase::Activating | AttemptPhase::Activated => MovementAction::Activate,
                 AttemptPhase::Cancelling | AttemptPhase::CleaningReceiver => MovementAction::Cancel,
                 _ => panic!("unsupported synthetic inspection"),
@@ -488,6 +492,7 @@ impl Fixture {
             inspected: AtomicUsize::new(0),
             dispatched: AtomicUsize::new(0),
             released: AtomicUsize::new(0),
+            maintenance_released: AtomicUsize::new(0),
             cordoned: AtomicUsize::new(0),
         });
         Self {
@@ -603,6 +608,13 @@ async fn maintenance_cordon_precedes_partial_normal_pressure_evacuation() {
             .contains(&DrainBlocker::IncompleteObservation)
     );
     assert_eq!(fixture.transport.cordoned.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .transport
+            .maintenance_released
+            .load(Ordering::SeqCst),
+        2
+    );
     fixture.journal.close().await.unwrap();
 }
 

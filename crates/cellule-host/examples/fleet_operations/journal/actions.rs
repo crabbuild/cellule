@@ -121,6 +121,7 @@ impl Db<'_> {
                     effect,
                     MovementAction::Prepare
                         | MovementAction::Release
+                        | MovementAction::ReleaseMaintenance
                         | MovementAction::Activate
                         | MovementAction::Recover
                 ) {
@@ -130,7 +131,12 @@ impl Db<'_> {
                         return Err(OperationError::Conflict.into());
                     }
                 }
-                if matches!(effect, MovementAction::Prepare | MovementAction::Release) {
+                if matches!(
+                    effect,
+                    MovementAction::Prepare
+                        | MovementAction::Release
+                        | MovementAction::ReleaseMaintenance
+                ) {
                     let source = self.required_intent(spec.source_node)?;
                     if source.session() != spec.source {
                         return Err(OperationError::Conflict.into());

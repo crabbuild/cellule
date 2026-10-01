@@ -121,6 +121,14 @@ pub(in crate::cell::actor) fn start_transfer_inspection(
     let Some(active) = cells.get_mut(&cell) else {
         return;
     };
+    if active
+        .transfer
+        .as_ref()
+        .is_some_and(|transfer| transfer.maintenance.is_some())
+    {
+        maintenance::inspect(cell, pool, cells, tasks, node_lease);
+        return;
+    }
     if active.transfer.is_none()
         || active.inventory_refreshing
         || !active.queue.is_empty()
