@@ -984,8 +984,12 @@ restores native completion only and retries within the deadline.
 
 The deadline bounds preflight; it does not cancel a confirmed release. A Blob
 Cell refuses before closing admission because external stream/upload/pin owners
-are not covered. The fleet executor supports explicit journal-bound busy release,
-but automatic demand collection still requires ordinary settled eligibility.
-Busy demand planning, complete maintenance, startup intent barriers and role
-finalization remain required by the
+are not covered. `OwnedCellObservation::maintenance_cost` is a separate peak
+receiver envelope derived from validated per-Cell LTX limits. It stays available
+while mutations invalidate measured worker samples; it establishes no readiness.
+The driver can plan with it only for the exact boot/node of a retained Evacuating
+maintenance operation and a fresh authenticated collection barrier. Receiver
+preparation precedes source quiescence and rechecks the actual cost. Ordinary
+pressure/count moves retain their settled-sample rules. Complete primitive
+acceptance, startup intent barriers and role finalization remain required by the
 [fleet implementation plan](../../../docs/fleet-operations-plan.md).

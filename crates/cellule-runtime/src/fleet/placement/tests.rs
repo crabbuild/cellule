@@ -120,7 +120,46 @@ fn demand(cell: u8, source: SessionId) -> CellTransferDemand {
         last_moved_at_ms: None,
         stable_observations: 2,
         settled: true,
+        maintenance: false,
     }
+}
+
+#[test]
+fn busy_maintenance_requires_explicit_demand_draining_source_and_receiver_capacity() {
+    let planner = PlacementPlanner::default();
+    let mut donor = observation(1);
+    let mut receiver = observation(2);
+    let mut candidate = demand(1, donor.session);
+    candidate.settled = false;
+    candidate.stable_observations = 0;
+    candidate.resident_since_ms = 100;
+    candidate.last_moved_at_ms = Some(100);
+    candidate.maintenance = true;
+    let plans = |source, destination, demand| {
+        planner
+            .plan_transfers(100, &[source, destination], &[demand], None)
+            .unwrap()
+    };
+    assert!(plans(donor, receiver, candidate).is_empty());
+    donor.draining = true;
+    candidate.maintenance = false;
+    assert!(plans(donor, receiver, candidate).is_empty());
+    candidate.maintenance = true;
+    assert_eq!(plans(donor, receiver, candidate).len(), 1);
+    receiver.free_disk_bytes = candidate.disk_bytes - 1;
+    assert!(plans(donor, receiver, candidate).is_empty());
+    receiver.free_disk_bytes = 700;
+    receiver.free_memory_bytes = candidate.memory_bytes - 1;
+    assert!(plans(donor, receiver, candidate).is_empty());
+    receiver.free_memory_bytes = 700;
+    receiver.draining = true;
+    assert!(plans(donor, receiver, candidate).is_empty());
+    receiver.draining = false;
+    donor.authenticated = false;
+    assert!(plans(donor, receiver, candidate).is_empty());
+    donor.authenticated = true;
+    donor.observed_at_ms = -1;
+    assert!(plans(donor, receiver, candidate).is_empty());
 }
 
 #[test]

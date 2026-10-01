@@ -70,8 +70,12 @@ pub struct OwnedCellObservation {
     pub last_used_ms: i64,
     /// Actor's last published authority position, if available locally.
     pub position: Option<PublishedPosition>,
-    /// Conservative receiver cost; absence must block proactive movement.
+    /// Conservative receiver cost from a fresh worker sample; required by idle movement.
     pub cost: Option<TransferCost>,
+    /// Configured peak receiver envelope for explicit busy maintenance. This is
+    /// independent of worker settlement and grants no release authority. Blob
+    /// owners remain unsupported until their external barriers are implemented.
+    pub maintenance_cost: Option<TransferCost>,
     /// Logical SQLite size measured by the serialized worker, distinct from restore cost.
     pub database_bytes: Option<u64>,
     /// Time of the worker measurement; reading this page does not refresh it.
@@ -268,6 +272,14 @@ fn observe_owned(active: &ActiveCell) -> crate::Result<OwnedCellObservation> {
     let cost = sample
         .map(|sample| demand::transfer_cost(active.resource_limits, sample.database_bytes))
         .transpose()?;
+    let maintenance_cost = (active.role != CatalogRole::Blob)
+        .then(|| {
+            demand::transfer_cost(
+                active.resource_limits,
+                active.resource_limits.max_database_bytes,
+            )
+        })
+        .transpose()?;
     let work_blocker = sample.and_then(|sample| sample.transfer_work.first_blocker());
     if work_blocker.is_some() && !blockers.contains(&DrainBlocker::BusyExecution) {
         blockers.push(DrainBlocker::BusyExecution);
@@ -291,6 +303,7 @@ fn observe_owned(active: &ActiveCell) -> crate::Result<OwnedCellObservation> {
         last_used_ms: active.last_used_ms,
         position,
         cost,
+        maintenance_cost,
         database_bytes: sample.map(|sample| sample.database_bytes),
         sampled_at_ms: sample.map(|sample| sample.observed_at_ms),
         stable_observations: sample.map_or(0, |_| active.demand.stable_observations()),

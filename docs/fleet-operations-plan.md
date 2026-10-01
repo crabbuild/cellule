@@ -1323,11 +1323,13 @@ Checkpoint: exact-source foreground quiescence, native lease completion,
 separate maintenance inventory, and canonical `release_maintenance_cell_at` now
 exist. An explicit journal-bound maintenance release phase/action connects the
 host executor to that path without reinterpreting ordinary release records.
-Public SQL/Queue and pure action contracts have focused coverage in the
-[execution evidence](fleet-operations-progress.md). New driver demands still
-require ordinary settled eligibility. Complete busy demand planning, public host
-acceptance/fault cases, every primitive's acceptance matrix, Blob owners and
-process/provider qualification before claiming this work package complete.
+Public SQL/Queue, host release and pure action contracts have focused coverage
+in the [execution evidence](fleet-operations-progress.md). The driver now accepts
+busy maintenance demand with a separate configured peak envelope under exact
+Evacuating intent and fresh source/receiver evidence; ordinary pressure/count
+moves still require settled samples. Complete the remaining host fault cases,
+every primitive's acceptance matrix, Blob owners and process/provider
+qualification before claiming this work package complete.
 
 Dependencies: W1, W3, W4.
 

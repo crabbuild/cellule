@@ -146,7 +146,7 @@ are separate and describe transitions committed during this pass.
 | Controller | Claim or renew by CAS, preserving every charged attempt across lease replacement. |
 | Existing work | Inspect uncertain phases first; commit each dependent transition against the complete head and registry version. |
 | Maintenance | Dispatch Cordon from Requested, commit Cordoned only after a durable bound result, then commit BeginEvacuation on a later pass. These steps continue when optional scheduling is stopped. |
-| Planning | Overlay retained intents before selecting donors or receivers. Verify signed inputs, require complete fresh membership for count moves, and project unresolved receive costs before relief uses any remaining shared budget. Partial fresh inputs can evacuate settled Cells from the maintenance donor even at normal pressure. |
+| Planning | Overlay retained intents before selecting donors or receivers. Verify signed inputs, require complete fresh membership for count moves, and project unresolved receive costs before relief uses any remaining shared budget. Partial fresh inputs can evacuate maintenance Cells at normal pressure using their configured peak cost; the exact runtime quiescence and release barrier remains required. |
 | Dispatch | Commit the phase before sending; check full retained acceptance and result binding. Transport timeout retains the phase and permit. |
 | Unaccepted action | Prove absence in the same journal CAS that advances the head revision, fencing delayed old requests before retry. Accepted work remains charged and is inspected. Expired preparation/release returns to cleanup. |
 | Expired unused receiver | After proven release, cancel and join expired prepared credit before first activation. Retain the release position and fleet permits, then use canonical ordinary admission after committed cleanup. |
@@ -207,10 +207,16 @@ separate primitive maintenance readiness. See
 [foreground quiescence](../../cellule-runtime/docs/deployment.md#foreground-quiescence-for-planned-maintenance)
 for admission and proof limits. Fleet observations hash the quiescence flag,
 readiness presence and all blocker classes under planner input domain
-`cellule.fleet-planner-inputs.v2`. Existing retained attempt digests remain
+`cellule.fleet-planner-inputs.v3`. Existing retained attempt digests remain
 opaque and unchanged; this is a new producer domain, not a journal rewrite.
-The driver still requires ordinary settled movement eligibility for new demands.
-Busy demand collection and full role evacuation remain incomplete.
+The v3 producer also binds the separate peak maintenance cost (presence and all
+admission dimensions), role, executable identity and individual blocker classes.
+The driver can plan busy demand only for an exact Evacuating maintenance node
+and boot, within its retained deadline. It tolerates local execution, publication,
+lease and unknown primitive readiness until canonical release rechecks them;
+Blob and foreign reader/follower/facility blockers remain blocked. A Draining
+advertisement alone cannot authorize this demand. Receiver projection and the
+shared count/byte limits still apply. Full role evacuation remains incomplete.
 
 ## Explicit maintenance release checkpoint
 

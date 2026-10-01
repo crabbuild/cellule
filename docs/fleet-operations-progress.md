@@ -4,6 +4,65 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 busy demand and host acceptance checkpoint
+
+The actor exposes a separate `maintenance_cost` from validated per-Cell LTX
+limits. It uses the same conservative native/cache/descriptor/job envelope and
+configured disk ceiling as receiver admission, independently of the measured
+worker sample. Mutations still invalidate ordinary cost, timestamps and stability;
+the configured envelope supplies no readiness or release proof. Blob owners have
+no busy envelope and refuse release before foreground closure.
+
+The driver selects this envelope only for the exact physical node and boot of a
+retained, unexpired Evacuating maintenance operation. The pure planner also
+requires an explicit maintenance demand and a draining donor. Fresh authenticated
+collection/source/receiver evidence, receiver projection and the shared two-move/
+8-GiB budget remain required. Local execution, publication, external lease and
+unknown primitive conditions are deferred to the canonical source barrier;
+foreign reader/follower/facility blockers are retained. Ordinary pressure/count
+movement still requires settled worker samples. A Draining advertisement or
+pressure alone cannot force busy work to move.
+
+Planner-input domain v3 hashes both costs (presence and every admission dimension),
+role, code/schema identity and individual blocker classes alongside the existing
+capture interval, generation, source boot and root. Retained older digests remain
+opaque. Focused digest cases check each new field and expired collection refusal.
+
+The public host case exercises actual accepted SQL work under Cordon and explicit
+action 8, closes new foreground admission, joins the original durable receipt,
+and restores it on a second public host through ordinary exact-root acquisition.
+It checks normal completion, a dropped action waiter and lost result publication.
+Release replay preserves the exact original proof after the receiver owns the
+Cell. Both hosts join with zero active Cells and retained bytes. These fixtures
+use in-memory authority and local lease guards; they do not qualify a distributed
+lease provider or complete role evacuation.
+
+The driver model uses real SQLite journal transactions with signed synthetic
+observations/effects. It plans busy rows with no measured cost/time/stability,
+charges the distinct peak cost, retains permits after a lost action-8 reply and
+adopts the exact stored result without issuing ordinary Release or repeating the
+effect. Negative cases cover draining/pressure without maintenance, Blob roles,
+foreign follower blockers, missing peak cost and missing published position.
+This model is distinct from the public host and leased-node example evidence.
+
+Initial digest fixtures used invalid empty module/schema inventories and zero
+placement totals; the existing validators refused them. Correcting the fixtures
+supplied valid signed inventories and capacities. The lost-response fixture first
+expected an OutcomeUnknown blocker after a transport error; the actual contract
+retains the unresolved dispatch phase and original transport failure. Its corrected
+assertion checks phase 13, absent release proof, refused retirement, retained
+permits and exact later adoption. No production gate or qualification profile was
+weakened. A private-method fixture assertion and unsupported Default initializer
+were also corrected before execution.
+
+Full W6 remains incomplete: every primitive's public acceptance/fault matrix,
+Blob external owners and continuous-load qualification still need coverage.
+Enrollment/startup barriers, complete role observations/evacuation, finalization,
+remaining failure adoption, sustained convergence, runnable maintenance/receiver-
+loss scenarios and process/provider/mixed-binary qualification remain required
+by the full plan. The previous canonical busy release checkpoint below retains
+its original source and proof limits.
+
 ## October 1 2026 canonical busy release checkpoint
 
 `CellRuntime::release_maintenance_cell_at` now owns an exact-source maintenance

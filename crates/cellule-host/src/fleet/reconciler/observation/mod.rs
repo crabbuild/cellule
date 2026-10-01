@@ -115,7 +115,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v2\0");
+        hash.update(b"cellule.fleet-planner-inputs.v3\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -158,6 +158,20 @@ impl FleetObservation {
             hash.update(owned.session.as_bytes());
             hash.update(row.target.cell_id().as_bytes());
             hash.update(row.incarnation.as_bytes());
+            hash.update(row.code.as_bytes());
+            hash.update(&row.schema.to_be_bytes());
+            // Role now controls busy-maintenance eligibility. Use explicit tags
+            // in this producer domain rather than enum declaration order.
+            use cellule_runtime::cell::catalog::CatalogRole;
+            hash.update(&[match row.role {
+                CatalogRole::Application => 1,
+                CatalogRole::Sql => 2,
+                CatalogRole::Kv => 3,
+                CatalogRole::Queue => 4,
+                CatalogRole::Workflow => 5,
+                CatalogRole::Blob => 6,
+                CatalogRole::Cron => 7,
+            }]);
             hash.update(&row.generation.to_be_bytes());
             hash.update(&row.resident_since_ms.to_be_bytes());
             hash.update(&row.sampled_at_ms.unwrap_or(-1).to_be_bytes());
@@ -181,12 +195,18 @@ impl FleetObservation {
             hash.update(&[u8::from(
                 row.blockers.is_empty() && row.work_blocker.is_none(),
             )]);
-            hash.update(&[u8::from(row.cost.is_some())]);
-            if let Some(cost) = row.cost {
-                hash.update(&cost.memory_bytes.to_be_bytes());
-                hash.update(&cost.disk_bytes.to_be_bytes());
-                hash.update(&cost.file_descriptors.to_be_bytes());
-                hash.update(&cost.job_credits.to_be_bytes());
+            hash.update(&(row.blockers.len() as u64).to_be_bytes());
+            for blocker in &row.blockers {
+                hash.update(&[*blocker as u8]);
+            }
+            for cost in [row.cost, row.maintenance_cost] {
+                hash.update(&[u8::from(cost.is_some())]);
+                if let Some(cost) = cost {
+                    hash.update(&cost.memory_bytes.to_be_bytes());
+                    hash.update(&cost.disk_bytes.to_be_bytes());
+                    hash.update(&cost.file_descriptors.to_be_bytes());
+                    hash.update(&cost.job_credits.to_be_bytes());
+                }
             }
             hash.update(&[u8::from(row.position.is_some())]);
             if let Some(position) = &row.position {
@@ -200,3 +220,6 @@ impl FleetObservation {
         Ok(Digest::from_bytes(*hash.finalize().as_bytes()))
     }
 }
+
+#[cfg(test)]
+mod tests;

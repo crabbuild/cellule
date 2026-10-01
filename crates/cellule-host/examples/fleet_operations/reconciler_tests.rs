@@ -54,6 +54,18 @@ struct Observer {
     complete: bool,
     calls: AtomicUsize,
     pressured: bool,
+    draining: AtomicBool,
+    cell_state: std::sync::Mutex<CellState>,
+}
+
+#[derive(Clone, Copy)]
+enum CellState {
+    Settled,
+    Busy,
+    Blob,
+    RoleBlocked,
+    NoCost,
+    NoPosition,
 }
 impl FleetObserver for Observer {
     fn observe<'a>(
@@ -64,6 +76,7 @@ impl FleetObserver for Observer {
     ) -> FleetAdapterFuture<'a, FleetObservation> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            let cell_state = *self.cell_state.lock().unwrap();
             let mut nodes = Vec::new();
             for n in 1..=3 {
                 let key = SigningKey::from_bytes(&[n; 32]);
@@ -101,7 +114,11 @@ impl FleetObserver for Observer {
                         ..NodePlacementCapacity::default()
                     },
                     NodeOperationalSample {
-                        mode: NodeMode::Active,
+                        mode: if n == 1 && self.draining.load(Ordering::SeqCst) {
+                            NodeMode::Draining
+                        } else {
+                            NodeMode::Active
+                        },
                         pressure: if n == 1 && self.pressured {
                             NodePressure::Shedding
                         } else {
@@ -115,33 +132,63 @@ impl FleetObserver for Observer {
                 nodes.push(ad);
             }
             let cells = (1..=6)
-                .map(|n| FleetOwnedCell {
-                    node: node(1),
-                    session: session(1),
-                    observation: OwnedCellObservation {
-                        target: target(n),
-                        generation: u64::from(n),
-                        incarnation: position(1).incarnation,
-                        code: Digest::from_bytes([9; 32]),
-                        schema: 1,
-                        role: CatalogRole::Sql,
-                        resident_since_ms: now_ms - 120_000,
-                        last_used_ms: now_ms - 120_000,
-                        position: Some(position(1)),
-                        cost: Some(TransferCost {
-                            memory_bytes: 65536,
-                            disk_bytes: 4096,
-                            file_descriptors: 8,
-                            job_credits: 1,
-                        }),
-                        database_bytes: Some(4096),
-                        sampled_at_ms: Some(now_ms),
-                        stable_observations: 2,
-                        work_blocker: None,
-                        quiescing: false,
-                        maintenance_work: None,
-                        blockers: Vec::new(),
-                    },
+                .map(|n| {
+                    let mut owned = FleetOwnedCell {
+                        node: node(1),
+                        session: session(1),
+                        observation: OwnedCellObservation {
+                            target: target(n),
+                            generation: u64::from(n),
+                            incarnation: position(1).incarnation,
+                            code: Digest::from_bytes([9; 32]),
+                            schema: 1,
+                            role: CatalogRole::Sql,
+                            resident_since_ms: now_ms - 120_000,
+                            last_used_ms: now_ms - 120_000,
+                            position: Some(position(1)),
+                            cost: Some(TransferCost {
+                                memory_bytes: 65536,
+                                disk_bytes: 4096,
+                                file_descriptors: 8,
+                                job_credits: 1,
+                            }),
+                            maintenance_cost: Some(TransferCost {
+                                memory_bytes: 65536,
+                                disk_bytes: 8192,
+                                file_descriptors: 8,
+                                job_credits: 1,
+                            }),
+                            database_bytes: Some(4096),
+                            sampled_at_ms: Some(now_ms),
+                            stable_observations: 2,
+                            work_blocker: None,
+                            quiescing: false,
+                            maintenance_work: None,
+                            blockers: Vec::new(),
+                        },
+                    };
+                    if !matches!(cell_state, CellState::Settled) {
+                        let row = &mut owned.observation;
+                        row.cost = None;
+                        row.sampled_at_ms = None;
+                        row.database_bytes = None;
+                        row.stable_observations = 0;
+                        row.blockers =
+                            vec![DrainBlocker::BusyExecution, DrainBlocker::UnknownInventory];
+                        row.work_blocker = Some(
+                            cellule_runtime::primitives::maintenance::TransferWorkClass::Queue,
+                        );
+                        match cell_state {
+                            CellState::Blob => row.role = CatalogRole::Blob,
+                            CellState::RoleBlocked => {
+                                row.blockers.push(DrainBlocker::FollowerObligation)
+                            }
+                            CellState::NoCost => row.maintenance_cost = None,
+                            CellState::NoPosition => row.position = None,
+                            CellState::Settled | CellState::Busy => {}
+                        }
+                    }
+                    owned
                 })
                 .collect();
             Ok(FleetObservation::new(
@@ -479,6 +526,8 @@ impl Fixture {
             complete,
             calls: AtomicUsize::new(0),
             pressured,
+            draining: AtomicBool::new(false),
+            cell_state: std::sync::Mutex::new(CellState::Settled),
         });
         let transport = Arc::new(Transport {
             journal: journal.clone(),
@@ -636,6 +685,130 @@ async fn stopped_optional_scheduling_still_cordons_and_retains_maintenance() {
     );
     assert_eq!(evacuation.allocated, 0);
     fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn busy_maintenance_plans_peak_cost_and_adopts_lost_explicit_release() {
+    let fixture = Fixture::new(false, false, false).await;
+    *fixture.observer.cell_state.lock().unwrap() = CellState::Busy;
+    fixture.request_maintenance(NOW + 20_000).await;
+    let driver = fixture.driver(206);
+    let cordoned = fixture.step(&driver, 1).await;
+    assert_eq!(cordoned.allocated, 0);
+    let planned = fixture.step(&driver, 2).await;
+    assert_eq!(planned.allocated, 2);
+    assert_eq!(planned.snapshot.head().reserved_restore_bytes(), 16_384);
+    let specs = planned
+        .snapshot
+        .head()
+        .attempts()
+        .iter()
+        .map(|attempt| attempt.spec().clone())
+        .collect::<Vec<_>>();
+    assert!(specs.iter().all(|spec| spec.cost.disk_bytes == 8192));
+    fixture.stop().await;
+    fixture.step(&driver, 3).await;
+    fixture.transport.lose_release.store(true, Ordering::SeqCst);
+    let unknown = fixture.step(&driver, 4).await;
+    assert_eq!(unknown.released, 1);
+    assert_eq!(unknown.failures.len(), 1);
+    assert!(unknown.snapshot.head().attempts().iter().any(|attempt| {
+        attempt.phase() == AttemptPhase::MaintenanceReleasing
+            && attempt.released().is_none()
+            && unknown
+                .snapshot
+                .head()
+                .retirement_page(&[attempt.spec().id])
+                .is_err()
+    }));
+    assert_eq!(unknown.snapshot.head().reserved_restore_bytes(), 16_384);
+    let reconstructed = fixture.driver(206);
+    for index in 5..=8 {
+        fixture.step(&reconstructed, index).await;
+    }
+    assert_eq!(
+        fixture
+            .transport
+            .maintenance_released
+            .load(Ordering::SeqCst),
+        2
+    );
+    assert_eq!(fixture.transport.released.load(Ordering::SeqCst), 2);
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    assert!(snapshot.head().attempts().is_empty());
+    assert_eq!(snapshot.head().reserved_restore_bytes(), 0);
+    assert_eq!(
+        snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Evacuating
+    );
+    for spec in specs {
+        let record = fixture
+            .journal
+            .load_movement_action(
+                scope(),
+                spec.id,
+                MovementAction::ReleaseMaintenance,
+                spec.source_node,
+                spec.source,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(record, FleetActionAcceptance::Existing { result: Some(ref result), .. }
+            if matches!(result.outcome, FleetOutcome::Released(_)))
+        );
+        assert!(
+            fixture
+                .journal
+                .load_movement_action(
+                    scope(),
+                    spec.id,
+                    MovementAction::Release,
+                    spec.source_node,
+                    spec.source
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn draining_advertisement_or_pressure_alone_cannot_plan_busy_work() {
+    for draining in [false, true] {
+        let fixture = Fixture::new(true, true, false).await;
+        *fixture.observer.cell_state.lock().unwrap() = CellState::Busy;
+        fixture.observer.draining.store(draining, Ordering::SeqCst);
+        let report = fixture.step(&fixture.driver(206), 1).await;
+        assert_eq!(report.allocated, 0);
+        assert!(report.snapshot.head().attempts().is_empty());
+        assert_eq!(fixture.transport.released.load(Ordering::SeqCst), 0);
+        fixture.journal.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn maintenance_planning_keeps_blob_role_and_missing_evidence_blocked() {
+    for state in [
+        CellState::Blob,
+        CellState::RoleBlocked,
+        CellState::NoCost,
+        CellState::NoPosition,
+    ] {
+        let fixture = Fixture::new(false, false, false).await;
+        *fixture.observer.cell_state.lock().unwrap() = state;
+        fixture.request_maintenance(NOW + 20_000).await;
+        let driver = fixture.driver(206);
+        fixture.step(&driver, 1).await;
+        let report = fixture.step(&driver, 2).await;
+        assert_eq!(report.allocated, 0);
+        assert!(report.snapshot.head().attempts().is_empty());
+        assert_eq!(fixture.transport.released.load(Ordering::SeqCst), 0);
+        fixture.journal.close().await.unwrap();
+    }
 }
 
 #[tokio::test]

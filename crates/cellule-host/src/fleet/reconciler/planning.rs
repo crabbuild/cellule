@@ -1,5 +1,7 @@
 use super::*;
-use cellule_runtime::fleet::operations::{AttemptId, MoveAttemptSpec, OperationId};
+use cellule_runtime::fleet::operations::{
+    AttemptId, FleetHead, MaintenanceOperation, MoveAttemptSpec, OperationId,
+};
 use cellule_runtime::fleet::placement::{CellTransferDemand, PlacementPlanner, PlacementPressure};
 
 impl FleetReconciler {
@@ -102,17 +104,44 @@ impl FleetReconciler {
             {
                 continue;
             }
-            let Some(cost) = row.cost else {
+            let maintenance = maintenance_for(report.snapshot.head(), owned, now).is_some();
+            if maintenance && row.role == cellule_runtime::cell::catalog::CatalogRole::Blob {
+                report.blocked(DrainBlocker::UnknownInventory);
+                continue;
+            }
+            let Some(cost) = (if maintenance {
+                row.maintenance_cost
+            } else {
+                row.cost
+            }) else {
                 continue;
             };
             cost.validate().map_err(operation)?;
+            let settled = row.blockers.is_empty()
+                && row.work_blocker.is_none()
+                && row
+                    .sampled_at_ms
+                    .is_some_and(|at| at >= 0 && at <= now && now - at <= 30_000);
+            // These local conditions are joined/rechecked by explicit busy
+            // release after receiver preparation. Other role/fleet blockers
+            // cannot be discharged by a Cell actor readiness read.
+            if maintenance
+                && let Some(blocker) = row.blockers.iter().find(|blocker| {
+                    !matches!(
+                        blocker,
+                        DrainBlocker::BusyExecution
+                            | DrainBlocker::ExternalLease
+                            | DrainBlocker::PendingPublication
+                            | DrainBlocker::UnknownInventory
+                    )
+                })
+            {
+                report.blocked(*blocker);
+                continue;
+            }
             if row.position.as_ref().is_none_or(|position| {
                 position.incarnation != row.incarnation || position.epoch == 0
-            }) || !row.blockers.is_empty()
-                || row.work_blocker.is_some()
-                || row
-                    .sampled_at_ms
-                    .is_none_or(|at| at < 0 || at > now || now - at > 30_000)
+            }) || (!maintenance && !settled)
             {
                 continue;
             }
@@ -140,7 +169,8 @@ impl FleetReconciler {
                 resident_since_ms: row.resident_since_ms,
                 last_moved_at_ms: moved,
                 stable_observations: row.stable_observations,
-                settled: true,
+                settled,
+                maintenance,
             });
         }
         // Unknown receives stay charged independently of lagging advertisements.
@@ -198,10 +228,13 @@ impl FleetReconciler {
                 .position
                 .as_ref()
                 .ok_or(Error::Node("fleet proposal position absent"))?;
-            let cost = row.cost.ok_or(Error::Node("fleet proposal cost absent"))?;
-            let maintenance = head
-                .maintenance()
-                .filter(|m| m.node() == owned.node && m.phase() == MaintenancePhase::Evacuating);
+            let maintenance = maintenance_for(head, owned, now);
+            let cost = if maintenance.is_some() {
+                row.maintenance_cost
+            } else {
+                row.cost
+            }
+            .ok_or(Error::Node("fleet proposal cost absent"))?;
             let id = AttemptId {
                 operation: maintenance.map_or(operation_id, |m| m.id()),
                 sequence: head.next_sequence(),
@@ -229,4 +262,17 @@ impl FleetReconciler {
         }
         Ok(())
     }
+}
+
+fn maintenance_for<'a>(
+    head: &'a FleetHead,
+    owned: &FleetOwnedCell,
+    now: i64,
+) -> Option<&'a MaintenanceOperation> {
+    head.maintenance().filter(|operation| {
+        operation.node() == owned.node
+            && operation.session() == owned.session
+            && operation.phase() == MaintenancePhase::Evacuating
+            && now < operation.deadline_ms()
+    })
 }

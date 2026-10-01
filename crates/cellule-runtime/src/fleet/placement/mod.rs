@@ -195,8 +195,9 @@ pub struct PlacementScore {
     pub eligibility: PlacementEligibility,
 }
 
-/// Actor-sampled demand for one locally owned Cell. A missing or unsettled
-/// sample cannot be used as a transfer hint; the actor must recheck on release.
+/// Advisory demand for one locally owned Cell. Ordinary movement requires a
+/// settled worker sample. Explicit maintenance can use the configured peak
+/// envelope on a draining donor; the actor must quiesce and recheck on release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellTransferDemand {
     /// Cell the sample describes.
@@ -219,6 +220,10 @@ pub struct CellTransferDemand {
     pub stable_observations: u8,
     /// Whether the sample is settled enough to act on.
     pub settled: bool,
+    /// Select busy maintenance eligibility under an exact retained intent. The
+    /// planner also requires a draining source. This flag is advisory; journal
+    /// authorization and canonical runtime release remain separate barriers.
+    pub maintenance: bool,
 }
 
 /// Advisory transfer proposal. It conveys neither release nor receiver admission.
@@ -401,9 +406,11 @@ impl PlacementPlanner {
         }))
     }
 
-    /// Plans at most two settled transfers and 8 GiB of projected restore
+    /// Plans at most two transfers and 8 GiB of projected restore
     /// bytes from one authenticated fleet snapshot. Receiver capacity is
     /// projected across selected intents, then rechecked during activation.
+    /// Ordinary movement requires settled samples; explicit maintenance uses
+    /// configured peak costs and requires a draining donor.
     ///
     /// `balance` is the ownership balance of the same snapshot. When it elects
     /// one of the demands' sources as the donor, its receivers may absorb that
@@ -484,7 +491,8 @@ impl PlacementPlanner {
             else {
                 continue;
             };
-            if !demand.settled
+            if (demand.maintenance && !source.draining)
+                || (!demand.settled && !demand.maintenance)
                 || demand.generation == 0
                 || demand.memory_bytes == 0
                 || demand.disk_bytes == 0

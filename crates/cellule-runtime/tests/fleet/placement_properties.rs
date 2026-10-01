@@ -110,6 +110,7 @@ fn a_dense_member_hands_over_to_an_empty_one() {
         last_moved_at_ms: None,
         stable_observations: 3,
         settled: true,
+        maintenance: false,
     };
     let intents = planner
         .plan_transfers(NOW_MS, &observations, &[demand], Some(&balance))
@@ -160,6 +161,7 @@ fn small_fleets_converge_after_owner_loss_with_fresh_settled_views() {
                     last_moved_at_ms: None,
                     stable_observations: 3,
                     settled: true,
+                    maintenance: false,
                 })
                 .collect::<Vec<_>>();
             let intents = planner
@@ -219,6 +221,7 @@ fn donations_do_not_overfill_a_preferred_receivers_weighted_share() {
             last_moved_at_ms: None,
             stable_observations: 3,
             settled: true,
+            maintenance: false,
         })
         .collect::<Vec<_>>();
     // Its whole-Cell margin is zero at target two; the existing Cell leaves
@@ -325,6 +328,7 @@ proptest! {
                     last_moved_at_ms: None,
                     stable_observations: 2,
                     settled: true,
+        maintenance: false,
                 }
             })
             .collect::<Vec<_>>();

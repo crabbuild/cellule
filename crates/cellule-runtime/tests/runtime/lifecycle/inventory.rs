@@ -85,6 +85,7 @@ async fn busy_owner_stays_visible_and_later_use_cannot_reset_residence_time() {
     assert_eq!(initial.target, fixture.target);
     assert!(initial.position.is_some());
     assert!(initial.cost.is_some());
+    assert_eq!(initial.maintenance_cost, initial.cost);
     assert!(initial.database_bytes.is_some_and(|bytes| bytes > 0));
     assert!(initial.sampled_at_ms.is_some());
     assert!(initial.stable_observations >= 1);
@@ -125,6 +126,7 @@ async fn busy_owner_stays_visible_and_later_use_cannot_reset_residence_time() {
     assert_eq!(owner.resident_since_ms, since);
     assert!(owner.last_used_ms > since);
     assert!(owner.blockers.contains(&DrainBlocker::BusyExecution));
+    assert!(owner.maintenance_cost.is_some());
     drop(page);
     handle.drain().await.unwrap();
     runtime.shutdown().await.unwrap();
@@ -163,6 +165,7 @@ async fn mutation_invalidates_demand_then_real_worker_samples_restore_stability(
         panic!("executing owner omitted")
     };
     assert!(during.cost.is_none());
+    assert_eq!(during.maintenance_cost, initial.cost);
     assert_eq!(during.stable_observations, 0);
     assert!(during.blockers.contains(&DrainBlocker::UnknownInventory));
     drop(page);
@@ -175,6 +178,7 @@ async fn mutation_invalidates_demand_then_real_worker_samples_restore_stability(
         committed.commit_sequence()
     );
     assert_eq!(settled.cost, initial.cost);
+    assert_eq!(settled.maintenance_cost, initial.maintenance_cost);
     assert!(settled.work_blocker.is_none());
     handle.drain().await.unwrap();
     runtime.shutdown().await.unwrap();
@@ -220,4 +224,71 @@ async fn unknown_schema_inventory_has_no_cost_and_cannot_release_its_owner() {
     assert_eq!(authority.value().owner.as_ref().unwrap().session, session);
     assert_eq!(runtime.unreleased_cell_count().await.unwrap(), 1);
     runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blob_owner_has_no_busy_maintenance_envelope_and_refusal_leaves_foreground_open() {
+    use cellule_runtime::cell::actor::MaintenanceCellRelease;
+    let fixture = fixture_for(b"inventory-unproven-blob-owner");
+    let session = SessionId::from_bytes([4; 16]);
+    let runtime = CellRuntime::new(SqlWorkerPool::new(1, 1).unwrap(), 64 << 20, session).unwrap();
+    let handle = bootstrap_role_on(
+        &runtime,
+        &fixture,
+        session,
+        CatalogRole::Blob,
+        |transaction| {
+            transaction.execute_batch(
+                "CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES(42)",
+            )?;
+            Ok(())
+        },
+    )
+    .await;
+    let page = runtime.fleet_cells_page(None, 128).await.unwrap();
+    let CellInventoryEntry::Owned(owner) = &page.entries()[0] else {
+        panic!("Blob owner omitted")
+    };
+    assert!(owner.maintenance_cost.is_none());
+    let generation = owner.generation;
+    let incarnation = owner.incarnation;
+    let epoch = owner.position.as_ref().unwrap().epoch;
+    drop(page);
+    let result = runtime
+        .release_maintenance_cell_at(
+            fixture.target.cell_id(),
+            session,
+            generation,
+            incarnation,
+            epoch,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        result,
+        MaintenanceCellRelease::Refused {
+            blocker: DrainBlocker::UnknownInventory,
+            error: None
+        }
+    ));
+    let page = runtime.fleet_cells_page(None, 128).await.unwrap();
+    let CellInventoryEntry::Owned(owner) = &page.entries()[0] else {
+        panic!("Blob owner omitted")
+    };
+    assert!(!owner.quiescing);
+    drop(page);
+    assert_eq!(
+        handle
+            .query(64, 64, |connection| {
+                let value = connection
+                    .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))?;
+                Ok(value.to_be_bytes().to_vec())
+            })
+            .await
+            .unwrap(),
+        42_i64.to_be_bytes()
+    );
+    runtime.shutdown().await.unwrap();
+    assert_eq!(runtime.stats().retained_bytes(), 0);
 }
