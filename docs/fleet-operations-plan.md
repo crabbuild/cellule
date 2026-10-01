@@ -709,6 +709,14 @@ attempt may finish; the successor adopts its outstanding permit and observes
 its result before allocating replacement work. A controller lease alone does
 not cancel a delayed RPC or an accepted actor operation.
 
+When no accepted action can be found, `ResolveUnaccepted` must prove absence
+for the exact attempt, effect, physical node and boot inside the same head CAS
+transaction. Advancing the head revision fences delayed old authorizations
+before retry. If acceptance wins first, resolution fails and the controller
+adopts that original work. A separate lookup cannot authorize retry. Keep both
+permits charged; expired preparation or release proceeds to independent
+receiver cleanup without fabricating source-release evidence.
+
 Durably record accepted action identity before invoking the runtime. On a lost
 reply, inspect the actual actor/session/Cell authority and reconstruct the
 result; do not assume the source still owns the Cell or repeat a release

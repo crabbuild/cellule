@@ -62,6 +62,10 @@ pub trait FleetJournal: FleetActionJournal + FleetEnrollmentJournal {
     /// For Retire, publish the exact progress page with permit retirement; a
     /// failed CAS cannot expose committed history or release either budget.
     /// Finalization must compare the observed registry version again here.
+    /// ResolveUnaccepted must prove no accepted record exists for its exact
+    /// effect/attempt/endpoint in this same transaction before changing the head.
+    /// Existing acceptance (even with no result) rejects resolution; delayed
+    /// old envelopes then fail the new head revision after successful absence CAS.
     fn compare_exchange<'a>(
         &'a self,
         expected: &'a FleetJournalSnapshot,

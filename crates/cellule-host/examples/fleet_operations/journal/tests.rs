@@ -133,6 +133,187 @@ struct Fixture {
     path: PathBuf,
     journal: SqliteJournal,
 }
+
+#[tokio::test]
+async fn atomic_absence_resolution_rejects_accepted_release_and_preserves_original() {
+    let fixture = Fixture::new().await;
+    let delayed = fixture.releasing().await;
+    let current = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let resolved = fixture
+        .journal
+        .compare_exchange(
+            &current,
+            1,
+            1,
+            &JournalTransition::ResolveUnaccepted {
+                id: spec(1).id,
+                effect: MovementAction::Release,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolved.head().revision(), current.head().revision() + 1);
+    assert_eq!(resolved.head().reserved_restore_bytes(), 4096);
+    assert!(
+        fixture
+            .journal
+            .accept_action(&delayed, spec(1).source_node, spec(1).source, 1)
+            .await
+            .is_err()
+    );
+    let action = resolved
+        .head()
+        .movement_action(spec(1).id, MovementAction::Release, 1)
+        .unwrap();
+    let accepted = fixture
+        .journal
+        .accept_action(&action, spec(1).source_node, spec(1).source, 1)
+        .await
+        .unwrap();
+    assert!(matches!(accepted, FleetActionAcceptance::New(_)));
+    let error = fixture
+        .journal
+        .compare_exchange(
+            &resolved,
+            1,
+            1,
+            &JournalTransition::ResolveUnaccepted {
+                id: spec(1).id,
+                effect: MovementAction::Release,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<OperationError>(),
+        Some(OperationError::Busy)
+    ));
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        resolved
+    );
+    assert!(matches!(
+        fixture
+            .journal
+            .load_movement_action(
+                scope(),
+                spec(1).id,
+                MovementAction::Release,
+                spec(1).source_node,
+                spec(1).source
+            )
+            .await
+            .unwrap(),
+        Some(FleetActionAcceptance::Existing { result: None, .. })
+    ));
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn independent_acceptance_and_absence_cas_have_one_linearized_winner() {
+    let fixture = Fixture::new().await;
+    let action = fixture.releasing().await;
+    let other = fixture.client().await;
+    let current = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let transition = JournalTransition::ResolveUnaccepted {
+        id: spec(1).id,
+        effect: MovementAction::Release,
+    };
+    let (accepted, resolved) = tokio::join!(
+        fixture
+            .journal
+            .accept_action(&action, spec(1).source_node, spec(1).source, 1),
+        other.compare_exchange(&current, 1, 1, &transition)
+    );
+    match (accepted, resolved) {
+        (Ok(FleetActionAcceptance::New(_)), Err(error)) => {
+            assert!(matches!(
+                error.downcast_ref::<OperationError>(),
+                Some(OperationError::Busy)
+            ));
+            assert_eq!(
+                fixture.journal.load_snapshot(scope()).await.unwrap(),
+                current
+            );
+        }
+        (Err(_), Ok(resolved)) => {
+            assert_eq!(resolved.head().revision(), current.head().revision() + 1);
+            assert!(
+                fixture
+                    .journal
+                    .load_movement_action(
+                        scope(),
+                        spec(1).id,
+                        MovementAction::Release,
+                        spec(1).source_node,
+                        spec(1).source
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        _ => panic!("acceptance/absence race did not linearize"),
+    }
+    assert_eq!(
+        other
+            .load_snapshot(scope())
+            .await
+            .unwrap()
+            .head()
+            .reserved_restore_bytes(),
+        4096
+    );
+    other.close().await.unwrap();
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn lost_absence_cas_reply_survives_reconstruction_and_fences_delayed_envelope() {
+    let fixture = Fixture::new().await;
+    let delayed = fixture.releasing().await;
+    let current = fixture.journal.load_snapshot(scope()).await.unwrap();
+    lose(&fixture.journal);
+    assert!(
+        fixture
+            .journal
+            .compare_exchange(
+                &current,
+                1,
+                1,
+                &JournalTransition::ResolveUnaccepted {
+                    id: spec(1).id,
+                    effect: MovementAction::Release
+                }
+            )
+            .await
+            .is_err()
+    );
+    fixture.journal.close().await.unwrap();
+    let reopened = fixture.client().await;
+    let resolved = reopened.load_snapshot(scope()).await.unwrap();
+    assert_eq!(resolved.head().revision(), current.head().revision() + 1);
+    assert_eq!(resolved.head().reserved_restore_bytes(), 4096);
+    assert!(
+        reopened
+            .accept_action(&delayed, spec(1).source_node, spec(1).source, 1)
+            .await
+            .is_err()
+    );
+    let fresh = resolved
+        .head()
+        .movement_action(spec(1).id, MovementAction::Release, 1)
+        .unwrap();
+    assert_eq!(fresh.key().unwrap(), delayed.key().unwrap());
+    assert!(matches!(
+        reopened
+            .accept_action(&fresh, spec(1).source_node, spec(1).source, 1)
+            .await
+            .unwrap(),
+        FleetActionAcceptance::New(_)
+    ));
+    reopened.close().await.unwrap();
+}
 impl Fixture {
     async fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();

@@ -811,7 +811,7 @@ async fn pressure_relief_uses_remaining_shared_permit_without_forgetting_existin
 }
 
 #[tokio::test]
-async fn unknown_without_original_acceptance_does_not_authorize_blind_new_effect() {
+async fn unknown_without_acceptance_requires_atomic_absence_cas_before_retry() {
     let fixture = Fixture::new(true, false, false).await;
     let driver = fixture.driver(206);
     let initial = fixture.step(&driver, 0).await;
@@ -832,9 +832,8 @@ async fn unknown_without_original_acceptance_does_not_authorize_blind_new_effect
     }
     let report = fixture.step(&driver, 1).await;
     assert_eq!(report.inspected, 1);
-    assert_eq!(report.dispatched, 1); // only the other Planned attempt
+    assert_eq!(report.dispatched, 2); // absence CAS rearms the first; the other is Planned
     assert_eq!(report.retired, 0);
-    assert!(report.blockers.contains(&DrainBlocker::OutcomeUnknown));
     let unknown = report
         .snapshot
         .head()
@@ -842,8 +841,8 @@ async fn unknown_without_original_acceptance_does_not_authorize_blind_new_effect
         .iter()
         .find(|attempt| attempt.spec().id == id)
         .unwrap();
-    assert_eq!(unknown.phase(), AttemptPhase::Preparing);
-    assert_eq!(unknown.blocker(), Some(DrainBlocker::OutcomeUnknown));
+    assert_eq!(unknown.phase(), AttemptPhase::Reserved);
+    assert_eq!(unknown.blocker(), None);
     assert_eq!(report.snapshot.head().reserved_restore_bytes(), 8192);
     assert!(
         fixture
@@ -857,7 +856,7 @@ async fn unknown_without_original_acceptance_does_not_authorize_blind_new_effect
             )
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
     fixture.journal.close().await.unwrap();
 }

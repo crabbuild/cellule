@@ -343,6 +343,46 @@ impl MoveAttempt {
             ) && self.receiver_cleaned)
     }
 
+    pub(super) fn resolve_unaccepted(&mut self, effect: MovementAction, now_ms: i64) -> Result<()> {
+        let expected = match self.phase {
+            AttemptPhase::Preparing => MovementAction::Prepare,
+            AttemptPhase::Releasing => MovementAction::Release,
+            AttemptPhase::Activating => MovementAction::Activate,
+            AttemptPhase::Recovering => MovementAction::Recover,
+            AttemptPhase::Cancelling | AttemptPhase::CleaningReceiver => MovementAction::Cancel,
+            AttemptPhase::Activated | AttemptPhase::Recovered if !self.receiver_cleaned => {
+                MovementAction::Cancel
+            }
+            _ => return Err(OperationError::Invalid("phase has no unresolved dispatch")),
+        };
+        if effect != expected
+            || self
+                .blocker
+                .is_some_and(|b| b != DrainBlocker::OutcomeUnknown)
+        {
+            return Err(OperationError::Invalid(
+                "unaccepted effect disagrees with phase",
+            ));
+        }
+        self.blocker = None;
+        match self.phase {
+            AttemptPhase::Preparing if now_ms >= self.spec.deadline_ms => {
+                self.phase = AttemptPhase::Cancelling
+            }
+            AttemptPhase::Releasing
+                if now_ms >= self.spec.deadline_ms
+                    || self.reservation.is_none_or(|r| r.expires_at_ms <= now_ms) =>
+            {
+                // Atomic absence proves no source effect was accepted. Keep
+                // the receiver charged until its independent cancellation joins.
+                self.phase = AttemptPhase::Reserved;
+                self.blocker = Some(DrainBlocker::Deadline);
+            }
+            _ => {}
+        }
+        self.validate()
+    }
+
     pub(super) fn apply(&mut self, event: AttemptEvent, now_ms: i64) -> Result<()> {
         let require_admission = || {
             if now_ms >= self.spec.deadline_ms {

@@ -142,6 +142,7 @@ are separate and describe transitions committed during this pass.
 | Existing work | Inspect uncertain phases first; commit each dependent transition against the complete head and registry version. |
 | Planning | Verify signed inputs, require complete fresh membership for count moves, and project unresolved receive costs before pressure relief uses any remaining shared budget. |
 | Dispatch | Commit the phase before sending; check full retained acceptance and result binding. Transport timeout retains the phase and permit. |
+| Unaccepted action | Prove absence in the same journal CAS that advances the head revision, fencing delayed old requests before retry. Accepted work remains charged and is inspected. Expired preparation/release returns to cleanup. |
 | Endpoint failure | Reserve a bounded deadline share for each charged attempt and planning. Retain each original endpoint error in `failures` and advance healthy siblings. After an ambiguous timeout, reread the journal and controller epoch before continuing. Journal errors stop the pass. |
 | Serving | Consume request-bound fresh actor/authority evidence before activation or retirement. A historical receipt cannot replace the current check. |
 | History | Atomically retire with progress; read incarnation-specific cooldown and the global post-batch time from committed history. |

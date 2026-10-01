@@ -3,7 +3,7 @@ use crate::identity::SessionId;
 use super::{
     AttemptEvent, AttemptId, FleetProfile, FleetScope, MAX_ACTIVE_ATTEMPTS, MAX_RESTORE_BYTES,
     MaintenanceEvent, MaintenanceOperation, MaintenancePhase, MoveAttempt, MoveAttemptSpec,
-    NodeIntent, OperationError, ProgressHead, ProgressPage, Result, nonzero,
+    MovementAction, NodeIntent, OperationError, ProgressHead, ProgressPage, Result, nonzero,
 };
 
 /// Journal controller lease; it never confers Cell ownership.
@@ -32,6 +32,17 @@ pub enum JournalTransition {
         id: AttemptId,
         /// Validated movement transition.
         event: AttemptEvent,
+    },
+    /// In the same CAS transaction, prove no acceptance exists for this exact
+    /// effect, endpoint and attempt. Fence delayed old envelopes by advancing
+    /// the head revision, then retry or cancel when admission has expired.
+    /// A separate lookup cannot satisfy this precondition. Never use this to
+    /// erase an accepted effect or reclaim its permit.
+    ResolveUnaccepted {
+        /// Still-charged exact movement attempt.
+        id: AttemptId,
+        /// Effect whose original acceptance is atomically proved absent.
+        effect: MovementAction,
     },
     /// Publish exact terminal history and free its permits in the same CAS.
     /// The adapter persists this immutable page before publishing the head.
@@ -215,6 +226,9 @@ impl FleetHead {
         if controller.epoch != controller_epoch || now_ms >= controller.expires_at_ms {
             return Err(OperationError::Fenced);
         }
+        // Absence resolution must fence delayed authorizations even when the
+        // attempt already has no Unknown marker and otherwise stays identical.
+        let fence_unaccepted = matches!(transition, JournalTransition::ResolveUnaccepted { .. });
         let mut next = self.clone();
         match transition {
             JournalTransition::BeginMaintenance(operation) => {
@@ -321,6 +335,14 @@ impl FleetHead {
                     .ok_or(OperationError::NotFound)?;
                 attempt.apply(event, now_ms)?;
             }
+            JournalTransition::ResolveUnaccepted { id, effect } => {
+                let attempt = next
+                    .attempts
+                    .iter_mut()
+                    .find(|a| a.spec.id == id)
+                    .ok_or(OperationError::NotFound)?;
+                attempt.resolve_unaccepted(effect, now_ms)?;
+            }
             JournalTransition::Retire { progress } => {
                 progress.validate()?;
                 if progress.scope != self.scope
@@ -356,7 +378,7 @@ impl FleetHead {
                 });
             }
         }
-        if next == *self {
+        if next == *self && !fence_unaccepted {
             return Ok(next);
         }
         next.finish_transition(now_ms)?;

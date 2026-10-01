@@ -4,6 +4,7 @@ use crate::identity::{
 
 use super::*;
 
+mod absence;
 mod accepted;
 mod acquisition;
 mod cleanup;

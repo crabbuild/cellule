@@ -84,12 +84,27 @@ impl FleetReconciler {
             ) {
                 return self.consume(id, &outcome, true, clock, report).await;
             }
-            // The exact committed acceptance decides whether replay can inspect
-            // owned work. Absence permits only a fresh journal-authorized dispatch
-            // in this same phase; delayed old envelopes fail its new revision.
+            // The exact acceptance decides whether replay can inspect owned
+            // work. A lookup alone cannot fence a concurrent delayed acceptance.
             effect = phase_effect(attempt.phase())
                 .ok_or(Error::Control("fleet inspection phase has no effect"))?;
             let original = self.retained_action(&attempt, effect, clock).await?;
+            if original.is_none() {
+                self.commit(
+                    clock,
+                    report,
+                    JournalTransition::ResolveUnaccepted { id, effect },
+                )
+                .await?;
+                let resolved = current(report, id)?;
+                if resolved.phase() == AttemptPhase::Reserved {
+                    report.blocked(DrainBlocker::Deadline);
+                    return Ok(());
+                }
+                effect = phase_effect(resolved.phase())
+                    .ok_or(Error::Control("resolved absence has no effect"))?;
+                return self.dispatch_effect(id, effect, clock, report).await;
+            }
             if let Some(super::super::FleetActionAcceptance::Existing {
                 result: Some(result),
                 ..

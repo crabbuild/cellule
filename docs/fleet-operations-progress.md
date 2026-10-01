@@ -4,6 +4,43 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 atomic absence reconciliation checkpoint
+
+The public reconciler can now settle an unknown dispatch that never reached
+acceptance. `ResolveUnaccepted` proves absence for the exact attempt, effect,
+physical node and boot in the same transaction as the head CAS. The revision
+advances even when the attempt state otherwise stays identical. This fences
+delayed old envelopes before a fresh retry. If acceptance wins the race,
+resolution fails and the original work remains available for adoption.
+
+Both permits and receiver charges remain retained. Expired preparation or
+release moves toward independent cleanup without inventing source release or
+serving evidence. Accepted source release without proof still cannot be
+repeated. This closes the unaccepted-dispatch recovery gap; failed-source and
+receiver-session adoption, complete observations, maintenance and the other
+full-plan work remain outstanding.
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Baseline | `801bc4f5cf1cbc56385f09f7a1e9442247aa92da` |
+| Source manifest | 565 Rust/Cargo files; SHA256 `9ea5990da8e182094387747d1bc80ca447e61a4fe38612a67ecd0f07fdac1fd3` |
+| `cargo test -p cellule-runtime --lib fleet::operations --locked` | 60 passed; 419 filtered. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 34 passed; none ignored or filtered. Includes independent acceptance/absence races, lost CAS replies, delayed envelope fencing, reconstructed driver retry and the existing real three-node scenario. |
+| `cargo clippy -p cellule-runtime -p cellule-host --lib --example fleet_operations --locked -- -D warnings` | Passed. |
+| Static gates | Format, boundaries, module layout, 85 Rust snippets, 1136 Markdown links, 28 SQL/peer assertions and 562 protocol links passed. |
+
+Commands used the existing checkout target with `CARGO_INCREMENTAL=0` and
+Rust 1.97.0. Initial new-test compilation failures and the failure that exposed
+the unchanged-state revision bug were fixed before these passing runs.
+No persisted format or journal SQL schema changed. These are focused local
+results; no additional process/provider qualification is established.
+
+CI for the baseline passed its contract, MSRV, website and decoder-fuzz jobs.
+The workspace job failed in the website Rust example compiler because it passed
+only app/runtime externs while newer main documentation also imported store,
+types, bytes and object_store. That checker failure needs repair; it does not
+establish a passing workspace qualification result.
+
 ## October 1 2026 real three-node overload checkpoint
 
 The reference executable now supports `overload`, using the same scenario
