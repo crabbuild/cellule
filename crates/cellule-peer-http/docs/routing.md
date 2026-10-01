@@ -247,18 +247,26 @@ The reference Compose workflow also runs a matched routing job on its own
 runner. It builds isolated baseline and candidate snapshots with identical
 test wiring, freezes the release binaries, and alternates three runs per
 version in both leased and object-only modes. Artifacts retain revisions,
-digests, every raw latency sample, object-read/hop counts, and exact recovery
-results. The gate requires median-run p95/p99 within 10% and completed-call
+digests, every raw latency sample, per-command publication phases,
+object-read/hop counts, and exact recovery results. CI uses 1,024 commands per
+write lane, verifies 6,144 unique durable mutations per run, and checks every
+publication phase record. The gate requires median-run p95/p99 within 10% and completed-call
 throughput within 10%; paced throughput is excluded because it includes sleep.
 Historical unleased zero-read routing is reported but cannot qualify a fresh
 authority latency target.
 
-Warm queries use the fixture's observed description. Twelve paced bursts per
-route cross the old two-second resident-cache window; the sender is enrolled
+Warm queries use the fixture's observed description. CI uses 48 paced bursts
+per route to cross the old two-second resident-cache window; the sender is enrolled
 before each timed forwarded burst so its independent refresh does not obscure
 receiver latency. Cold and fresh-client lanes still include discovery and
 Describe. Manual workflow runs accept `routing_baseline` and `routing_only`
 to repeat a specific comparison without repeating Compose scaling.
+
+The larger CI sample sizes retain the original 10% limits. An unchanged-source
+calibration with 128 commands and 12 bursts failed three gates, with paced tail
+ratios up to 1.22 and serial-write p95 at 1.20. Manual measurements default to
+128 commands and 12 bursts; use `CELLULE_PERF_COMMANDS` and
+`CELLULE_PERF_BURSTS` to reproduce the larger CI profile.
 
 ### Local RustFS results, 2026-09-30
 

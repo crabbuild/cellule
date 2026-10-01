@@ -2,6 +2,7 @@
 """Matched RustFS routing runs; keep source, binary and raw-sample provenance."""
 
 import argparse
+import csv
 import hashlib
 import io
 import json
@@ -16,7 +17,8 @@ import subprocess
 import tarfile
 
 QUERIES = 4096
-COMMANDS = 128
+COMMANDS = 1024
+PACED_BURSTS = 48
 ORDER = ("baseline", "candidate", "candidate", "baseline", "baseline", "candidate")
 SELECTORS = {
     "leased": "performance_tests::rustfs_owner_routing_latency_throughput",
@@ -108,7 +110,8 @@ def measure(version, mode, index, binary, evidence):
     directory.mkdir()
     env = os.environ.copy()
     env.update(CELLULE_TEST_PREFIX=directory.name, CELLULE_PERF_EVIDENCE=str(directory),
-               CELLULE_PERF_QUERIES=str(QUERIES), CELLULE_PERF_COMMANDS=str(COMMANDS))
+               CELLULE_PERF_QUERIES=str(QUERIES), CELLULE_PERF_COMMANDS=str(COMMANDS),
+               CELLULE_PERF_BURSTS=str(PACED_BURSTS))
     print(f"START {directory.name}", flush=True)
     with (directory / "run.log").open("w") as log:
         result = subprocess.run([binary, SELECTORS[mode], "--exact", "--ignored", "--nocapture"],
@@ -133,11 +136,21 @@ def measure(version, mode, index, binary, evidence):
         maximum_rate = row["calls"] / max(row["elapsed_s"] - 0.0000005, 1e-12) + 0.0005
         if not minimum_rate <= row["throughput"] <= maximum_rate:
             raise RuntimeError(f"Throughput mismatch: {lane}")
-        expected_calls = (1 if lane.endswith("_cold") else 192 if lane.endswith("_expired_bursts")
+        expected_calls = (1 if lane.endswith("_cold") else PACED_BURSTS * 16 if lane.endswith("_expired_bursts")
                           else 64 if lane.endswith("_uncached_route") else COMMANDS if lane.endswith("_command")
                           else QUERIES)
         if row["calls"] != expected_calls:
             raise RuntimeError(f"Workload changed: {lane}")
+        if lane.endswith("_command"):
+            path = directory / f"{lane}-c{int(row['concurrency'])}.publication.tsv"
+            with path.open(newline="") as source:
+                publications = [{key: int(value) for key, value in item.items()}
+                                for item in csv.DictReader(source, delimiter="\t")]
+            sequences = [item["sequence"] for item in publications]
+            if (len(publications) != COMMANDS or not sequences
+                    or sequences != list(range(sequences[0], sequences[0] + COMMANDS))
+                    or any(value < 0 for item in publications for value in item.values())):
+                raise RuntimeError(f"Incomplete publication evidence: {lane}")
         samples = [int(value) for value in (directory / f"{lane}-c{int(row['concurrency'])}.ns").read_text().splitlines()]
         if len(samples) != row["calls"] or samples != sorted(samples):
             raise RuntimeError(f"Raw sample mismatch: {lane}")
@@ -223,6 +236,7 @@ def main():
     revisions = {"baseline": output("git", "rev-parse", "--verify", f"{args.baseline}^{{commit}}"),
                  "candidate": output("git", "rev-parse", "HEAD")}
     manifest = {"order": ORDER, "queries": QUERIES, "commands_per_lane": COMMANDS,
+                "paced_bursts": PACED_BURSTS,
                 "selectors": SELECTORS, "host": platform.uname()._asdict(),
                 "test_only_transplant": [str(PEER / path) for path in (
                     "src/performance_tests.rs", "src/lib.rs", "src/tests.rs", "Cargo.toml")] + ["Cargo.lock (peer test dependencies only)"],

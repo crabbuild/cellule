@@ -192,6 +192,26 @@ impl PublicationSamples {
             mean(|t| t.authority),
             mean(|t| t.total)
         );
+        if let Ok(directory) = std::env::var("CELLULE_PERF_EVIDENCE") {
+            let mut output =
+                String::from("sequence\tqueue_wait_ns\tpreparation_ns\tauthority_ns\ttotal_ns\n");
+            for timing in &timings {
+                output.push_str(&format!(
+                    "{}\t{}\t{}\t{}\t{}\n",
+                    timing.commit_sequence,
+                    timing.queue_wait.as_nanos(),
+                    timing.preparation.as_nanos(),
+                    timing.authority.as_nanos(),
+                    timing.total.as_nanos(),
+                ));
+            }
+            std::fs::write(
+                std::path::Path::new(&directory)
+                    .join(format!("{lane}-c{concurrency}.publication.tsv")),
+                output,
+            )
+            .unwrap();
+        }
     }
 }
 impl PeerAuthorizer for Authorizer {
@@ -523,6 +543,11 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
         .ok()
         .map(|v| v.parse::<usize>().unwrap())
         .unwrap_or(128);
+    let paced_bursts = std::env::var("CELLULE_PERF_BURSTS")
+        .ok()
+        .map(|value| value.parse::<usize>().unwrap())
+        .unwrap_or(12);
+    assert!(paced_bursts > 0);
     assert!(
         queries >= 16
             && queries.is_multiple_of(16)
@@ -721,7 +746,7 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
         let mut puts = 0;
         let mut peer_hops = 0;
         let burst_window = Instant::now();
-        for _ in 0..12 {
+        for _ in 0..paced_bursts {
             tokio::time::sleep(Duration::from_millis(2100)).await;
             if route == "forwarded" {
                 // Isolate the receiver's expired admission-cache window from
