@@ -192,11 +192,12 @@ async fn exact_idle_release_blocks_new_work_while_inventory_is_pending() {
         .unwrap();
 
     let (started, started_signal) = tokio::sync::oneshot::channel();
+    let (release, held) = std::sync::mpsc::channel();
     let blocker_task = tokio::spawn(async move {
         blocker
             .query(1, 1, move |_| {
                 let _ = started.send(());
-                std::thread::sleep(std::time::Duration::from_millis(250));
+                let _ = held.recv_timeout(std::time::Duration::from_secs(10));
                 Ok(Vec::new())
             })
             .await
@@ -209,22 +210,31 @@ async fn exact_idle_release_blocks_new_work_while_inventory_is_pending() {
             .release_idle_cell(cell, session, generation)
             .await
     });
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    let observation = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let still_candidate = runtime
                 .idle_transfer_candidates()
-                .await
-                .unwrap()
+                .await?
                 .into_iter()
                 .any(|(candidate, _, _, _)| candidate == cell);
             if !still_candidate {
-                break;
+                let active = runtime
+                    .active_handle(&target_fixture.target, CatalogRole::Application)
+                    .await?;
+                let resident = runtime
+                    .resident_handle(&target_fixture.target, CatalogRole::Application)
+                    .await?;
+                return Ok::<_, cellule_runtime::Error>((
+                    runtime.stats().active_cells(),
+                    active.is_none(),
+                    resident.is_none(),
+                    release_task.is_finished(),
+                ));
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
 
     let result = target
         .execute(
@@ -239,12 +249,17 @@ async fn exact_idle_release_blocks_new_work_while_inventory_is_pending() {
             },
         )
         .await;
+    let _ = release.send(());
+    let blocker_result = blocker_task.await;
+    let release_result = release_task.await;
+    let remaining = runtime.stats().active_cells();
+    let shutdown = runtime.shutdown().await;
+    assert_eq!(observation.unwrap().unwrap(), (2, true, true, false));
     assert!(matches!(result, Err(cellule_runtime::Error::CellDraining)));
-
-    assert!(blocker_task.await.unwrap().is_ok());
-    release_task.await.unwrap().unwrap();
-    assert_eq!(runtime.stats().active_cells(), 1);
-    runtime.shutdown().await.unwrap();
+    blocker_result.unwrap().unwrap();
+    release_result.unwrap().unwrap();
+    assert_eq!(remaining, 1);
+    shutdown.unwrap();
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn exact_idle_release_drains_work_admitted_before_transfer() {

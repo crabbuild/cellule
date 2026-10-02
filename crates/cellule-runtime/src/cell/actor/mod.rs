@@ -385,13 +385,36 @@ impl CellRuntime {
         target: &CellTarget,
         role: CatalogRole,
     ) -> crate::Result<Option<CellHandle>> {
+        self.lookup_handle(target, role, true).await
+    }
+
+    /// Resolves a verified active local owner without reading Cell metadata.
+    ///
+    /// Unlike [`Self::resident_handle`], this includes sparse and hydrating
+    /// owners. A miss does not establish remote ownership or authorize an
+    /// acquisition. Fenced, draining and transferring owners remain excluded;
+    /// the returned handle rechecks admission when work is dispatched.
+    pub async fn active_handle(
+        &self,
+        target: &CellTarget,
+        role: CatalogRole,
+    ) -> crate::Result<Option<CellHandle>> {
+        self.lookup_handle(target, role, false).await
+    }
+
+    async fn lookup_handle(
+        &self,
+        target: &CellTarget,
+        role: CatalogRole,
+        require_resident: bool,
+    ) -> crate::Result<Option<CellHandle>> {
         self.ensure_running()?;
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
             .send(Message::Lookup {
                 cell: target.cell_id(),
-                require_resident: true,
+                require_resident,
                 reply,
             })
             .await
@@ -399,21 +422,27 @@ impl CellRuntime {
         let local = match response.await {
             Ok(local) => local,
             Err(_) => {
-                self.inner
-                    .telemetry
-                    .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Refused);
+                if require_resident {
+                    self.inner
+                        .telemetry
+                        .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Refused);
+                }
                 return Err(Error::RuntimeClosed);
             }
         };
         let Some(local) = local else {
-            self.inner
-                .telemetry
-                .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Miss);
+            if require_resident {
+                self.inner
+                    .telemetry
+                    .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Miss);
+            }
             return Ok(None);
         };
-        self.inner
-            .telemetry
-            .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Hit);
+        if require_resident {
+            self.inner
+                .telemetry
+                .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Hit);
+        }
         let entry = CatalogEntry::new(target, role, local.code, local.schema)?;
         Ok(Some(CellHandle {
             cell: target.cell_id(),

@@ -4,6 +4,29 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 merge qualification checkpoint
+
+Merged `main` at `18a1244a98c50a04c52da21325f95331055e9884` into the native
+aggregate traversal checkpoint. The qualification driver retains `main`'s
+canonical arrival collector and both new regression tests, with evidence writes
+after the original arrival and drain clocks. Qualification thresholds remain
+unchanged.
+
+The merged source passed 44 app integration tests, 144 runtime lifecycle tests,
+32 host unit tests, 106 public node tests and 138 fleet example tests in the
+isolated checkout: 464 passing cases and no failures. Twenty documented manual
+or environment-dependent tests were ignored. App/host Clippy and host/runtime
+API documentation passed with warnings denied, together with format, boundary,
+module layout, document and SQL/peer contract gates.
+
+The exact 662 Rust/Cargo paths match the isolated snapshot. Their sorted JSON
+manifest SHA256 is
+`38d8c01b33be4254f8f5feac653081f8f9dffa53bed2a80d17550a4bc6bdb1cf`.
+Merged-source logs and the manifest are retained in
+`/tmp/cellule-native-inventory-merge-evidence`; the preceding checkpoint's
+manifest and results are preserved there with `before-merge-` filenames.
+Provider/process CI qualification remains separate from these local checks.
+
 ## October 2 2026 native aggregate traversal checkpoint
 
 `FleetNodeInventoryScan` now traverses every native category under the exact

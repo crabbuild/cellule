@@ -39,6 +39,12 @@ selection move past a killed node while preserving the full reply budget for
 connected peers. Reader-loss evidence still requires every load lane to make
 progress before, during, and after replacement, with receipt minima enforced.
 
+Scheduled entity traffic retains samples in its bounded window buffer and
+flushes evidence after offered work drains, before reporting the measured
+window. File I/O cannot delay the next offered arrival; its cost still counts
+in the window duration. Lateness, concurrency, receipt, and drain-grace gates
+remain unchanged, and missed arrivals remain visible in the raw rows.
+
 ## Dated evidence
 
 | Question | Reports |

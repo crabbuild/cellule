@@ -71,6 +71,7 @@ pub(super) struct PausingStore {
     blocked: AtomicBool,
     released: AtomicBool,
     get_armed: AtomicBool,
+    get_calls: AtomicUsize,
     fail_next_get: AtomicBool,
     transient_get_failures: AtomicUsize,
     get_blocked: AtomicBool,
@@ -96,6 +97,7 @@ impl PausingStore {
             blocked: AtomicBool::new(false),
             released: AtomicBool::new(false),
             get_armed: AtomicBool::new(false),
+            get_calls: AtomicUsize::new(0),
             fail_next_get: AtomicBool::new(false),
             transient_get_failures: AtomicUsize::new(0),
             get_blocked: AtomicBool::new(false),
@@ -256,6 +258,7 @@ impl ObjectStore for PausingStore {
         location: &Path,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
+        self.get_calls.fetch_add(1, Ordering::AcqRel);
         if self.get_armed.load(Ordering::Acquire) && !self.get_blocked.swap(true, Ordering::AcqRel)
         {
             self.get_entered.notify_waiters();

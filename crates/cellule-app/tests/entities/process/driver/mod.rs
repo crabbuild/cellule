@@ -331,44 +331,15 @@ async fn run_window(
     let started_ms = now_ms();
     let started_boot_ms = boot_ms();
     let started = Instant::now();
-    let mut jobs = JoinSet::new();
-    let mut samples = Vec::with_capacity(planned);
-    for arrival in 0..planned {
-        let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
-        tokio::time::sleep_until((started + Duration::from_micros(scheduled_us)).into()).await;
-        while let Some(result) = jobs.try_join_next() {
-            samples.push(result.unwrap());
-        }
-        let started_us = started.elapsed().as_micros() as u64;
-        let (entity, write) = destination(window.shape, arrival, expected.len());
-        let mut sample = Sample {
-            arrival,
-            scheduled_us,
-            started_us,
-            elapsed_us: 0,
-            entity,
-            write,
-            outcome: "client_full",
-            sequence: 0,
-            read_sequence: 0,
-            count: 0,
-        };
-        if started_us >= (arrival as u64 + 1) * 1_000_000 / rate as u64 {
-            sample.outcome = "scheduler_late";
-        }
-        if sample.outcome == "scheduler_late" || jobs.len() >= window.concurrency {
-            samples.push(sample);
-            continue;
-        }
-        let client = client.clone();
-        let request = window.id * 1_000_000 + arrival;
-        let admitted = started + Duration::from_micros(sample.started_us);
-        jobs.spawn(async move { execute(client, sample, request, admitted).await });
-    }
+    let mut samples = collect_arrivals(
+        window,
+        planned,
+        started,
+        expected.len(),
+        |sample, request, admitted| execute(Arc::clone(&client), sample, request, admitted),
+    )
+    .await;
     tokio::time::sleep_until((started + Duration::from_secs(WINDOW_SECONDS as u64)).into()).await;
-    while let Some(result) = jobs.join_next().await {
-        samples.push(result.unwrap());
-    }
     let elapsed_us = started.elapsed().as_micros() as u64;
     let ended_ms = now_ms();
     let ended_boot_ms = boot_ms();
@@ -422,6 +393,57 @@ async fn run_window(
         "ENTITY_WINDOW label={label} planned={planned} complete={complete} elapsed_us={elapsed_us}"
     );
     fully_served(&samples, elapsed_us, window.prefix == "capacity")
+}
+
+async fn collect_arrivals<F, Fut>(
+    window: &Window,
+    planned: usize,
+    started: Instant,
+    cells: usize,
+    dispatch: F,
+) -> Vec<Sample>
+where
+    F: Fn(Sample, usize, Instant) -> Fut,
+    Fut: std::future::Future<Output = Sample> + Send + 'static,
+{
+    let mut jobs = JoinSet::new();
+    let mut samples = Vec::with_capacity(planned);
+    let rate = window.nodes * window.rate_per_node;
+    for arrival in 0..planned {
+        let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
+        tokio::time::sleep_until((started + Duration::from_micros(scheduled_us)).into()).await;
+        while let Some(result) = jobs.try_join_next() {
+            samples.push(result.unwrap());
+        }
+        let started_us = started.elapsed().as_micros() as u64;
+        let (entity, write) = destination(window.shape, arrival, cells);
+        let mut sample = Sample {
+            arrival,
+            scheduled_us,
+            started_us,
+            elapsed_us: 0,
+            entity,
+            write,
+            outcome: "client_full",
+            sequence: 0,
+            read_sequence: 0,
+            count: 0,
+        };
+        if started_us >= (arrival as u64 + 1) * 1_000_000 / rate as u64 {
+            sample.outcome = "scheduler_late";
+        }
+        if sample.outcome == "scheduler_late" || jobs.len() >= window.concurrency {
+            samples.push(sample);
+            continue;
+        }
+        let request = window.id * 1_000_000 + arrival;
+        let admitted = started + Duration::from_micros(sample.started_us);
+        jobs.spawn(dispatch(sample, request, admitted));
+    }
+    while let Some(result) = jobs.join_next().await {
+        samples.push(result.unwrap());
+    }
+    samples
 }
 
 fn fully_served(samples: &[Sample], elapsed_us: u64, capacity: bool) -> bool {

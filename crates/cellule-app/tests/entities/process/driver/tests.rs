@@ -71,3 +71,77 @@ fn capacity_still_rejects_missed_arrivals_and_slow_drain() {
         assert!(!fully_served(&[sample(0, outcome)], 1, true));
     }
 }
+
+#[tokio::test]
+async fn slow_evidence_flush_does_not_drop_scheduled_arrivals() {
+    struct SlowFlush(Vec<u8>);
+    impl Write for SlowFlush {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            std::thread::sleep(Duration::from_millis(750));
+            Ok(())
+        }
+    }
+    let window = Window {
+        id: 0,
+        prefix: "capacity",
+        nodes: 1,
+        shape: "uniform",
+        rate_per_node: 2,
+        concurrency: 8,
+    };
+    let mut output = SlowFlush(Vec::new());
+    let samples = collect_arrivals(
+        &window,
+        3,
+        Instant::now(),
+        12,
+        |mut sample, _, _| async move {
+            sample.outcome = "ok";
+            sample
+        },
+    )
+    .await;
+    write_samples(&mut output, &samples).unwrap();
+    assert_eq!(samples.len(), 3);
+    assert!(
+        samples.iter().all(|sample| sample.outcome == "ok"),
+        "evidence I/O under-offered the workload: {:?}",
+        samples
+            .iter()
+            .map(|s| (s.arrival, s.started_us, s.outcome))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(String::from_utf8(output.0).unwrap().lines().count(), 3);
+}
+
+#[tokio::test]
+async fn missed_arrivals_remain_visible_without_dispatch() {
+    let window = Window {
+        id: 0,
+        prefix: "capacity",
+        nodes: 1,
+        shape: "uniform",
+        rate_per_node: 2,
+        concurrency: 8,
+    };
+    let mut output = Vec::new();
+    let samples = collect_arrivals(
+        &window,
+        2,
+        Instant::now() - Duration::from_secs(2),
+        12,
+        |_, _, _| async { panic!("missed arrival was dispatched") },
+    )
+    .await;
+    write_samples(&mut output, &samples).unwrap();
+    assert!(
+        samples
+            .iter()
+            .all(|s| s.outcome == "scheduler_late" && s.elapsed_us == 0)
+    );
+    assert_eq!(String::from_utf8(output).unwrap().lines().count(), 2);
+}
