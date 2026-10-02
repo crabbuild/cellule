@@ -864,7 +864,10 @@ async fn shared_deadline_shards_finish_prior_event_callbacks_through_bounded_dra
     )
     .await
     .unwrap();
-    let deadline = now_ms().unwrap() + 1400;
+    // The first boot must drain with all timers still pending. Give setup a
+    // bounded window while this suite also fills history concurrently; callback
+    // observation retains its separate twenty-second limit after the deadline.
+    let deadline = now_ms().unwrap() + 20_000;
     let mut holds = Vec::new();
     for n in 1..=3 {
         holds.push(hold(&c, id(n), n as u32, deadline).await);
@@ -912,7 +915,17 @@ async fn shared_deadline_shards_finish_prior_event_callbacks_through_bounded_dra
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
+    for hold in &holds {
+        let view = c.deadline(&hold.ticket).await.unwrap().unwrap();
+        assert_eq!(view.status, "running");
+        assert!(view.state.timer_id.is_some());
+        assert!(view.state.fired_at_ms.is_none());
+    }
     first.shutdown().await.unwrap();
+    assert!(
+        now_ms().unwrap() < deadline,
+        "restart fixture must drain with all three native timers still in the future"
+    );
     let wait = (deadline - now_ms().unwrap()).max(0) as u64;
     tokio::time::sleep(Duration::from_millis(wait + 100)).await;
     let second = start(storage, b.path()).await;

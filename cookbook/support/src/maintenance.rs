@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use cellule_runtime::primitives::maintenance::{MaintenanceTickOutcome, MaintenanceTickRequest};
 use cellule_runtime::{CellClient, CellRuntime, Registry};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::{Result, new_identity, now_ms};
@@ -11,12 +12,19 @@ pub(crate) async fn run(
     client: CellClient,
     registry: Arc<Registry>,
     cancellation: CancellationToken,
+    acquisition: Arc<Mutex<()>>,
 ) -> Result<()> {
     loop {
         tokio::select! {
             () = cancellation.cancelled() => return Ok(()),
             () = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
+        // Migration replaces a live handle. Keep the due scan and dispatch in
+        // one activation boundary so maintenance cannot use a retired capability.
+        let _acquisition = tokio::select! {
+            () = cancellation.cancelled() => return Ok(()),
+            guard = acquisition.lock() => guard,
+        };
         let due = runtime.due_resident(now_ms()?, 32).await?;
         if due.is_empty() {
             continue;

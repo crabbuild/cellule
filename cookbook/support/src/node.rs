@@ -66,7 +66,7 @@ pub struct LocalNode {
     state: PathBuf,
     application_id: ApplicationId,
     session: SessionId,
-    acquisition: Mutex<()>,
+    acquisition: Arc<Mutex<()>>,
     sibling: SiblingNodeFactory,
 }
 
@@ -174,6 +174,7 @@ impl LocalNode {
         };
         let startup_observation = observed.clone();
         let shutdown = CancellationToken::new();
+        let acquisition = Arc::new(Mutex::new(()));
         let setup = async {
             node.install_node_lease_for_startup(lease.clone())?;
             let tasks = node.install_task_group(CancellationToken::new(), shutdown.clone())?;
@@ -224,6 +225,7 @@ impl LocalNode {
                 ),
                 node.application().registry(),
                 cancellation,
+                acquisition.clone(),
             ))?;
             Ok::<_, Error>(tasks)
         }
@@ -260,7 +262,7 @@ impl LocalNode {
             state,
             application_id: config.application_id,
             session,
-            acquisition: Mutex::new(()),
+            acquisition,
             sibling,
         })
     }
@@ -312,6 +314,51 @@ impl LocalNode {
         target: &CellTarget,
         module: &M,
     ) -> Result<cellule_runtime::cell::actor::CellHandle> {
+        self.open_cell_inner(target, module, None).await
+    }
+
+    /// Explicitly publishes a retained, schema-one predecessor's code upgrade.
+    ///
+    /// The predecessor application must compile to the release that served this
+    /// Cell. Drain its owner before upgrading; a crashed predecessor must first
+    /// be recovered and drained under its own release. This path verifies rolling
+    /// compatibility, restores the authority-pinned root, and uses the runtime's
+    /// compiled migration. It never rewrites the original catalog entry. Retain
+    /// all definitions and Activity handlers required by live predecessor runs.
+    /// Repeating an acknowledged upgrade returns its current handle rather than
+    /// migrating twice. On an uncertain error, drain and recover before retrying.
+    pub async fn open_cell_after_rollout<M: CellModule>(
+        &self,
+        target: &CellTarget,
+        module: &M,
+        predecessor: &CompiledApplication,
+    ) -> Result<cellule_runtime::cell::actor::CellHandle> {
+        let application = self.node.application();
+        if predecessor.name() != application.name() {
+            return Err(RuntimeError::Registry("rollout application names differ").into());
+        }
+        if predecessor
+            .cell_types()
+            .iter()
+            .any(|previous| !application.cell_types().contains(previous))
+        {
+            return Err(
+                RuntimeError::Registry("code-only rollout changes predecessor topology").into(),
+            );
+        }
+        let previous = predecessor.registry();
+        application
+            .registry()
+            .verify_rolling_from(previous.release_bytes())?;
+        self.open_cell_inner(target, module, Some(previous)).await
+    }
+
+    async fn open_cell_inner<M: CellModule>(
+        &self,
+        target: &CellTarget,
+        module: &M,
+        predecessor: Option<Arc<cellule_runtime::Registry>>,
+    ) -> Result<cellule_runtime::cell::actor::CellHandle> {
         let _acquisition = self.acquisition.lock().await;
         if !self.is_ready() {
             return Err(RuntimeError::CellDraining.into());
@@ -347,9 +394,29 @@ impl LocalNode {
         let code = registry
             .module_code(cell_type.module())
             .ok_or(RuntimeError::Registry("module is missing"))?;
-        let proof = CellCatalog::new(self.layout.clone(), target.tenant())
-            .provision(CatalogEntry::new(target, cell_type.role(), code, 1)?)
-            .await?;
+        if registry.current_cell_version(target.namespace(), role) != Some((code, 1)) {
+            return Err(RuntimeError::Registry(
+                "cookbook activation supports schema version one only",
+            )
+            .into());
+        }
+        // Catalog entries pin bootstrap identity forever. After a migration,
+        // current code belongs in authority, never in a replacement catalog.
+        let catalog = CellCatalog::new(self.layout.clone(), target.tenant());
+        let proof = match catalog.lookup(target.cell_id()).await? {
+            Some(proof) => proof,
+            None => {
+                catalog
+                    .provision(CatalogEntry::new(target, role, code, 1)?)
+                    .await?
+            }
+        };
+        if proof.entry().namespace() != target.namespace()
+            || proof.entry().partition() != target.partition()
+            || proof.entry().role() != role
+        {
+            return Err(RuntimeError::CatalogCollision.into());
+        }
         let authority = CellAuthority::new(self.layout.clone());
         let runtime = self.node.runtime();
         let owner = Owner {
@@ -368,14 +435,43 @@ impl LocalNode {
                     .await?
             }
         };
+        let migration = if observed.value().code == code && observed.value().schema == 1 {
+            None
+        } else {
+            let previous = predecessor.as_ref().ok_or(RuntimeError::Registry(
+                "stored application schema or code requires a migration",
+            ))?;
+            if observed.value().schema != 1
+                || !previous.supports_cell(
+                    target.namespace(),
+                    role,
+                    observed.value().code,
+                    observed.value().schema,
+                )
+            {
+                return Err(RuntimeError::Registry(
+                    "stored code/schema is not served by the selected predecessor",
+                )
+                .into());
+            }
+            if observed.value().state != ControlState::Idle {
+                return Err(RuntimeError::Registry(
+                    "predecessor owner must recover and drain before rollout",
+                )
+                .into());
+            }
+            let plan = registry
+                .next_migration(target.namespace(), observed.value().code, 1)?
+                .ok_or(RuntimeError::Registry("rollout migration is missing"))?;
+            if plan.to_schema() != 1 || plan.sql().is_some() {
+                return Err(
+                    RuntimeError::Registry("rollout requires a code-only migration").into(),
+                );
+            }
+            Some(plan)
+        };
         if let Some(handle) = runtime.local_handle(proof.clone(), &observed).await? {
             return Ok(handle);
-        }
-        if observed.value().code != code || observed.value().schema != 1 {
-            return Err(RuntimeError::Registry(
-                "stored application schema or code requires a migration",
-            )
-            .into());
         }
         let limits = Limits {
             max_database_bytes: cell_type.database_limit_bytes(),
@@ -469,7 +565,10 @@ impl LocalNode {
                     .await?
             }
         };
-        Ok(handle)
+        match migration {
+            Some(plan) => Ok(handle.migrate(plan, now_ms()?).await?.handle),
+            None => Ok(handle),
+        }
     }
 
     /// Drains accepted commands while renewal remains live, then withdraws the session.

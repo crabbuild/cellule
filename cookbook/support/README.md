@@ -18,7 +18,7 @@ renewed lease, and installs explicit worker, memory, and disk budgets.
 | Callback nodes | `sibling_factory` keeps installation identity and provider, enrolls an independent boot, and requires application-bounded concurrency and explicit receiver drain. Reservations exercises one serialized receiver for prior-event callbacks. |
 | Shutdown | Drains accepted work while renewal remains live; withdraws after runtime drain, then removes its session's working files. |
 | Drop without drain | Fences local admission; callers must explicitly await shutdown to complete release. |
-| Compatibility | Current assembly supports schema version one and rejects changed stored code/schema; migrations require the planned evolution application. |
+| Compatibility | Ordinary opens require the current schema-one code and preserve the original immutable catalog proof. `open_cell_after_rollout` explicitly verifies a compiled predecessor release, requires its owner to have drained, restores the pinned root, and publishes a retained code-only migration. Schema changes remain reserved for the evolution application. |
 
 The local CLI's authorization boundary is the operating-system user and a fixed
 application-selected tenant. A network service must supply its own authenticated
@@ -32,6 +32,27 @@ readiness closes, the source error survives drain, and a successor can acquire
 the released ownership and restore acknowledged state. Future apps
 should reuse it where the lifecycle contract fits, rather than copy the
 framework's test fixtures or introduce another publication path.
+
+The public [rollout suite](tests/rollout.rs) exercises a genuine predecessor
+and successor module code. Old Workflow runs retain their definition through
+signals and autonomous timer maintenance; new runs select the new definition.
+It also checks unchanged bootstrap catalog entries, repeatable acknowledged
+upgrades, cold restoration, rejection of unrelated predecessors, refusal to
+upgrade a live owner, and refusal of an older binary after migration. These
+are node integration checks; the release-pipeline application still needs its
+artifact, deployment, compensation, and independent-process journey.
+
+Rollout is an application-selected operation before ingress and application
+workers start. Existing Cell type declarations must remain identical, including
+partition rules, schema range, and storage limits. Recover and drain a crashed predecessor with its own release
+before selecting its successor. A signed node advertisement remains scoped to
+that node's compiled release; the upgrade path does not bypass expired-owner
+proof or accept an advertisement from a different release. Native maintenance
+shares the activation lock so a migration cannot retire a handle between its
+due scan and tick dispatch. Keep every predecessor definition and Activity
+handler needed by live work in both the successor's registry and maintenance
+inventory. If migration returns an uncertain error, drain and recover before
+deciding whether authoritative code still needs the compiled migration.
 
 Interrupted sessions can leave local evidence behind. A new session uses fresh
 files and does not delete another session's directory. After all processes

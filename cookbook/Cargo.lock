@@ -527,6 +527,7 @@ dependencies = [
  "ed25519-dalek",
  "object_store",
  "rand 0.9.5",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
