@@ -4,12 +4,12 @@ use cellule_host::read_replicas::ReadReplicaManager;
 use cellule_runtime::{
     CellRuntime, Error,
     fleet::operations::{EnrollmentRecord, EnrollmentStatus},
-    node::{NodeAdvertisement, NodeCapacity, NodeDirectory, NodeFailureDomain},
+    node::NodeDirectory,
     peer::PeerReplicaResolver,
 };
-use ed25519_dalek::SigningKey;
 
 mod inventory;
+mod leases;
 
 struct ReaderFixture {
     root: tempfile::TempDir,
@@ -21,15 +21,16 @@ struct ReaderFixture {
     journal: Arc<SqliteJournal>,
     layout: CellStorageLayout,
     limits: Limits,
+    leases: leases::ReaderLeases,
 }
 impl ReaderFixture {
     async fn new() -> Self {
         Self::with_store(Store::new(Arc::new(InMemory::new()))).await
     }
     async fn with_store(store: Store) -> Self {
-        Self::with_capacity(store, 8).await
+        Self::with_capacity(store, 8, 128 << 20).await
     }
-    async fn with_capacity(store: Store, active_cells: usize) -> Self {
+    async fn with_capacity(store: Store, active_cells: usize, native_memory_bytes: usize) -> Self {
         let root = tempfile::tempdir().unwrap();
         let app = application::compile().unwrap();
         let code = app.registry().module_digests()[0];
@@ -41,33 +42,13 @@ impl ReaderFixture {
             app.registry().release_digest(),
         );
         let now = clock().unwrap();
-        for index in [0, 1] {
-            let ad = NodeAdvertisement::sign(
-                node_id(index),
-                session(index),
-                owner(index).endpoint,
-                scope().fleet,
-                Digest::from_bytes([30; 32]),
-                Digest::from_bytes([31; 32]),
-                app.registry().release_digest(),
-                &SigningKey::from_bytes(&[index as u8 + 1; 32]),
-                1,
-                now,
-                now + 30_000,
-                vec![code],
-                vec![1],
-                NodeFailureDomain::default(),
-                NodeCapacity {
-                    free_memory_bytes: 1 << 30,
-                    free_disk_bytes: 1 << 30,
-                    job_credits: 4,
-                    log_protocol: 1,
-                    ..NodeCapacity::default()
-                },
-            )
-            .unwrap();
-            directory.create(ad, now).await.unwrap();
-        }
+        let leases = leases::ReaderLeases::create(
+            directory.clone(),
+            code,
+            app.registry().release_digest(),
+            30_000,
+        )
+        .await;
         let journal = Arc::new(
             SqliteJournal::open(
                 root.path().join("journal.sqlite"),
@@ -96,7 +77,7 @@ impl ReaderFixture {
                 .with_runtime(
                     SqlWorkerPool::new(2, active_cells)
                         .unwrap()
-                        .with_native_memory_limit(active_cells << 24)
+                        .with_native_memory_limit(native_memory_bytes)
                         .unwrap(),
                     active_cells << 21,
                 )
@@ -121,14 +102,14 @@ impl ReaderFixture {
             node.install_fleet_reader_enrollment(scope(), node_id(1), journal.clone())
                 .is_err()
         );
-        node.install_node_lease(NodeLeaseGuard::new(now, now + 60_000).unwrap())
+        node.install_node_lease(leases.receiver_guard().clone())
             .unwrap();
         let source_workers = SqlWorkerPool::new(2, active_cells).unwrap();
         let source_workers = if active_cells == 8 {
             source_workers
         } else {
             source_workers
-                .with_native_memory_limit(active_cells << 24)
+                .with_native_memory_limit(native_memory_bytes)
                 .unwrap()
         };
         let source = CellRuntime::new_with_replica_host(
@@ -190,6 +171,7 @@ impl ReaderFixture {
             journal,
             layout,
             limits,
+            leases,
         }
     }
     async fn additional_cell(&self, partition: u8) -> (CellTarget, CellHandle) {
@@ -293,6 +275,7 @@ impl ReaderFixture {
         assert_eq!(self.node.stats().local_disk_reserved_bytes(), 0);
         self.handle.drain().await.unwrap();
         self.source.shutdown().await.unwrap();
+        self.leases.fence();
         assert_eq!(self.source.stats().resident_bytes(), 0);
         assert_eq!(self.source.stats().retained_bytes(), 0);
         assert_eq!(self.source.stats().worker_jobs(), 0);

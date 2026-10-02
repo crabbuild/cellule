@@ -166,6 +166,16 @@ original backend errors, and canonical boot withdrawal/retirement replay. They
 use real local runtimes/directory/SQLite with explicit reply faults. They do not
 cover process crashes, a distributed journal or a complete role registry.
 
+The large reader pagination case opens 128 native views and checks all restored
+values and joined ledgers. Its explicit fixture budgets are 128 slots, 256 MiB
+of retained credit and four GiB of native memory credit. It holds 127 views
+through at least 1,500 ms of real pressure samples and requires Normal admission
+before the final Pending request. This avoids depending on a fast opening loop
+to beat the classifier's 1,000-ms dwell. It renews both original signed boot
+advertisements through directory CAS while opening and reading; its receiver
+guard advances only after confirmation. Ordinary memory budgets and production
+pressure thresholds and qualification profiles are unchanged.
+
 The public managed follower scenarios use two native `FollowerStore` instances,
 signed directory authorization/CAS, and this same SQLite journal. They check all
 members Pending before enrollment; partial acceptance and receiver cordon; lost

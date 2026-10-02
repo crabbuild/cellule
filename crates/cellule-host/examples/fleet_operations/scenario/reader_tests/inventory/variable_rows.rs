@@ -4,10 +4,11 @@ use super::*;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn byte_budget_yields_a_continuation_over_128_native_long_partition_readers() {
     // This fixture explicitly admits 128 native views, with 256 MiB of retained
-    // byte credit and a two-GiB native ceiling. Each original responsibility still
+    // byte credit and a four-GiB native ceiling. Each original responsibility still
     // reserves 192 KiB. Ordinary cases retain eight slots, 16 MiB of retained
     // credit and their existing 128-MiB receiver ceiling.
-    let fixture = ReaderFixture::with_capacity(Store::new(Arc::new(InMemory::new())), 128).await;
+    let fixture =
+        ReaderFixture::with_capacity(Store::new(Arc::new(InMemory::new())), 128, 4 << 30).await;
     fixture
         .manager
         .activate(fixture.target.clone(), session(0))
@@ -15,10 +16,39 @@ async fn byte_budget_yields_a_continuation_over_128_native_long_partition_reader
         .unwrap();
     let mut handles = Vec::new();
     for key in 2..128 {
+        fixture.leases.renew().await;
         let (target, handle) = fixture.additional_partition(key, 1024).await;
         fixture.manager.activate(target, session(0)).await.unwrap();
         handles.push(handle);
     }
+    // A byte-pagination qualification must have admission headroom after the
+    // real classifier dwell, rather than depending on 128 opens finishing before
+    // pressure sampling. The two-GiB fixture crossed the 600-permille recovery
+    // threshold and refused later views on slower machines.
+    let initial = fixture
+        .node
+        .runtime()
+        .operational_sample()
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            fixture.leases.renew().await;
+            let sample = fixture
+                .node
+                .runtime()
+                .operational_sample()
+                .unwrap()
+                .unwrap();
+            assert_eq!(sample.pressure, NodePressure::Normal, "{sample:?}");
+            if sample.observed_at_ms - initial.observed_at_ms >= 1_500 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
     let (target, handle) = fixture.additional_partition(128, 1024).await;
     handles.push(handle);
     // Pause the final original acceptance, so page accounting has a stable owner
@@ -107,6 +137,7 @@ async fn byte_budget_yields_a_continuation_over_128_native_long_partition_reader
     assert_eq!(native.entries().len(), 128);
     drop(native);
     for row in &rows {
+        fixture.leases.renew().await;
         let cellule_runtime::fleet::operations::EnrollmentRole::Reader { target, .. } =
             &row.spec().role
         else {

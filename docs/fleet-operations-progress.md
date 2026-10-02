@@ -4,6 +4,84 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 reader fixture admission and lease checkpoint
+
+The 128-view pagination case now has explicit native admission headroom and
+caller-driven canonical directory renewal. It still requires 128 original
+requests, two byte-bounded pages, all 128 installed native views, restored value
+readback and joined zero ledgers. The receiver's local guard starts from its
+actual published advertisement and advances only after directory refresh confirms.
+Expired or withdrawn boot evidence fails; renewal cannot recreate that boot.
+No additional background scheduler is introduced.
+
+The original two-GiB native ceiling plus 256 MiB of retained credit caused the
+fixture to depend on opening speed. A real 127-view capture measured
+1,598,029,824 native bytes and 24,969,216 retained bytes, zero jobs and zero disk
+reservations. Their combined utilization exceeds the classifier's 600-permille
+recovery threshold. Holding that workload through the real dwell produced
+`Constrained` and the original `Capacity("node pressure")` refusal. The clean
+regression also reproduced this refusal during the opening loop. The large
+fixture now reserves four GiB of native credit on each runtime; its 128 slots,
+256-MiB retained ceiling and 192-KiB enrollment charges are unchanged. Ordinary
+memory budgets and production profiles/classifier thresholds are unchanged.
+
+Before the last Pending request, the case requires Normal pressure across at
+least 1,500 ms of actual sample timestamps. The first corrected full run exposed
+another original fixture limit: at 31.98 seconds its unrenewed 30-second
+advertisement expired and opening returned `Fenced`. The large case now renews
+both original signed boots during opening, the dwell and readback. A new
+canonical test keeps those boot identities and their guard live beyond the
+original two-second advertisement expiry, then explicitly fences the guard.
+No expiry assertion or timing bound is relaxed.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Parent | `353904eed67a7e673fc3bc18dcc390e8527473a4`, including the separately authored control-plane plan/audit. Both were preserved identically when advancing the checkout. |
+| Rust/Cargo manifest | 619 sources/manifests/all lockfiles; SHA256 `fbc5eb815cfc35d883bc56f84451e8fa52f196ad4934f9070fe2b3090538d835`. |
+| Complete host library / public node / fleet example | 20 / 81 / 90 passed; none filtered or ignored. |
+| Isolated complete application integration | 29 passed; none filtered; 16 documented manual cases ignored. |
+| Distinct scoped cases | 220 passed, including the new canonical renewal case. Repetitions are not added. |
+| Clippy / API documentation | Host/application all-target Clippy and host API docs passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1,172 local Markdown links, 28 SQL/peer assertions and 567 validator links passed; the Rust/Markdown gates were rerun after adding this evidence. |
+
+Both drivers recheck every source and the complete path set after each command.
+Logs, drivers and manifest are `/tmp/cellule-reader-pressure-final-*`.
+Original diagnostic/refusal logs are `/tmp/cellule-reader-pressure-*`; the
+intermediate complete example failure is retained under `pre-heartbeat`.
+An intermediate renewal-helper compilation error and its corrected selected
+case are retained under `/tmp/cellule-reader-heartbeat-*`. Diagnostic logging
+was confined to the isolated reproducer and is absent from this change.
+
+Five full Linux ARM64 baseline runs used two CPUs, four GiB and zero swap with
+the pinned Rust image described below. All failed, including original operating
+system file descriptor exhaustion; additional controller/timing failures remain
+unexplained. They do not isolate the x86 CI causes. The operating system descriptor
+limit was not recorded for that original campaign. Every build/run source check
+matches the original 618-file manifest
+`9eb1e0bef426cfd02bc3212e12d058fe7d123f7a0bafaa731a2f554d60d96fbf`; original binary SHA256 is
+`0c281c09e65e562a774ecc409a207f750c3e49514d060d9e8b49a588611c69ad`.
+Source hashes, all five logs, build output, original binary and terminal container
+configuration/state are retained in `/tmp/cellule-host-linux-evidence-489c5a9/`.
+The corrected source runs separately with an explicit 8,192-descriptor limit;
+its terminal result must be recorded before claiming that campaign passes.
+
+### Current CI limitations
+
+Parent `353904e` workspace
+[job 110723513586](https://github.com/crabbuild/cellule/actions/runs/36970580571/job/110723513586)
+passes 88 example cases and fails the same large reader admission refusal.
+Original log is `/tmp/cellule-fleet-36970580571-workspace.log`.
+Previous `489c5a9` workspace
+[job 110716061446](https://github.com/crabbuild/cellule/actions/runs/36968076991/job/110716061446)
+fails the reader refusal and the controller-restart expectation of two retained
+lost release replies. Its contract
+[job 110716061458](https://github.com/crabbuild/cellule/actions/runs/36968076984/job/110716061458)
+times out on publication 3 with 10 of 19 healthy hints, nine missing peers and
+one intentionally stalled transport. Original logs are
+`/tmp/cellule-fleet-489c5a9-{workspace,contract}.log`. The latter two causes remain
+unestablished. Local passes cannot qualify those failures or complete W1–W10.
+The new commit requires its own CI; the implementation PR remains draft.
+
 ## October 1 2026 follower producer inventory checkpoint
 
 `CellNode::fleet_follower_enrollments_page` captures every retained original
