@@ -1,0 +1,28 @@
+name: PR38 reader diagnostic
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  repeated-readers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Repeat reader publication regressions
+        run: |
+          set -euo pipefail
+          for iteration in $(seq 1 30); do
+            echo "Reader publication iteration $iteration"
+            cargo test -p cellule-app --all-features --test integration \
+              host::replicas --locked -- --nocapture
+          done
