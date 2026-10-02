@@ -199,7 +199,12 @@ async fn rows(handle: &CellHandle) -> Vec<Vec<u8>> {
         })
         .await
         .unwrap();
-    bytes.chunks_exact(24).map(<[u8]>::to_vec).collect()
+    bytes
+        .as_chunks::<24>()
+        .0
+        .iter()
+        .map(|row| row.to_vec())
+        .collect()
 }
 
 #[tokio::test]
