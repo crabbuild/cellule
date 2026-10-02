@@ -174,6 +174,7 @@ impl BootOwner {
     pub(super) async fn refresh_capacity(
         &self,
         index: usize,
+        journal: &dyn FleetEnrollmentJournal,
         deadline: Instant,
     ) -> JournalResult<NodeAdvertisement> {
         if !self.node.is_management_ready() {
@@ -184,6 +185,11 @@ impl BootOwner {
             .as_ref()
             .ok_or_else(|| invalid("example boot lease guard is unbound"))?;
         guard.check()?;
+        // A live boot must consume retained maintenance intent before another
+        // membership/lease renewal. Lost Cordon RPCs cannot keep its gate open.
+        self.node
+            .refresh_fleet_intent(journal, deadline.into_std())
+            .await?;
         let now = clock()?;
         let observed = self
             .directory

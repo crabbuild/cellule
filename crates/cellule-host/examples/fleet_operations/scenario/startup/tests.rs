@@ -808,3 +808,361 @@ async fn missing_reader_enrollment_does_not_prevent_joined_startup_shutdown() {
         .unwrap();
     close(fixture).await;
 }
+
+async fn start_enrolled_boot(fixture: &Fixture) -> EnrollmentRecord {
+    let original = enroll(
+        &fixture.journal,
+        &fixture.directory,
+        &spec(&fixture.intent).unwrap(),
+        fixture.ad.clone(),
+        clock().unwrap(),
+    )
+    .await
+    .unwrap();
+    fixture
+        .node
+        .confirm_fleet_startup(fixture.journal.as_ref(), original.spec().key().unwrap())
+        .await
+        .unwrap();
+    fixture.node.start().unwrap();
+    original
+}
+
+#[tokio::test]
+async fn live_intent_refresh_closes_new_roles_without_cordon_rpc_or_boot_restamping() {
+    let fixture = fixture().await;
+    let original = start_enrolled_boot(&fixture).await;
+    assert!(
+        fixture
+            .node
+            .runtime()
+            .node_admission()
+            .check_new_role()
+            .is_ok()
+    );
+    let snapshot = maintenance(&fixture).await;
+    let current = fixture
+        .node
+        .refresh_fleet_intent(
+            fixture.journal.as_ref(),
+            (Instant::now() + Duration::from_secs(3)).into_std(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(current, snapshot.head().node_intent().unwrap().unwrap());
+    assert_eq!(current.mode(), NodeMode::Draining);
+    assert!(
+        fixture
+            .node
+            .runtime()
+            .node_admission()
+            .check_new_role()
+            .is_err()
+    );
+    // Cordon preserves routing to existing owners and management. Terminal
+    // shutdown has not begun and no role settlement is claimed by this read.
+    assert_eq!(fixture.node.state(), NodeState::Ready);
+    assert!(fixture.node.is_ready() && fixture.node.is_management_ready());
+    let observed = fixture
+        .journal
+        .load_boot(scope(), node_id(0), original.spec().key().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed.enrollment(), &original);
+    let before = fixture.journal.load_snapshot(scope()).await.unwrap();
+    assert_eq!(
+        fixture
+            .node
+            .refresh_fleet_intent(
+                fixture.journal.as_ref(),
+                (Instant::now() + Duration::from_secs(3)).into_std(),
+            )
+            .await
+            .unwrap(),
+        current
+    );
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    close(fixture).await;
+}
+
+#[tokio::test]
+async fn delayed_live_intent_reply_cannot_regress_a_newer_checked_intent() {
+    let fixture = fixture().await;
+    start_enrolled_boot(&fixture).await;
+    let (captured, resume) = fixture.journal.pause_next_boot_reply();
+    let node = fixture.node.clone();
+    let journal = fixture.journal.clone();
+    let old = tokio::spawn(async move {
+        node.refresh_fleet_intent(
+            journal.as_ref(),
+            (Instant::now() + Duration::from_secs(3)).into_std(),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), captured)
+        .await
+        .unwrap()
+        .unwrap();
+    maintenance(&fixture).await;
+    let current = fixture
+        .node
+        .refresh_fleet_intent(
+            fixture.journal.as_ref(),
+            (Instant::now() + Duration::from_secs(3)).into_std(),
+        )
+        .await
+        .unwrap();
+    resume.send(()).unwrap();
+    assert!(matches!(old.await.unwrap(), Err(Error::Fenced)));
+    assert_eq!(
+        fixture.node.runtime().node_admission().mode().unwrap(),
+        NodeMode::Draining
+    );
+    assert_eq!(
+        fixture
+            .node
+            .refresh_fleet_intent(
+                fixture.journal.as_ref(),
+                (Instant::now() + Duration::from_secs(3)).into_std(),
+            )
+            .await
+            .unwrap(),
+        current
+    );
+    close(fixture).await;
+}
+
+#[tokio::test]
+async fn delayed_live_intent_reply_cannot_reopen_joined_shutdown() {
+    let fixture = fixture().await;
+    start_enrolled_boot(&fixture).await;
+    let (captured, resume) = fixture.journal.pause_next_boot_reply();
+    let node = fixture.node.clone();
+    let journal = fixture.journal.clone();
+    let old = tokio::spawn(async move {
+        node.refresh_fleet_intent(
+            journal.as_ref(),
+            (Instant::now() + Duration::from_secs(3)).into_std(),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), captured)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.node.shutdown().await.unwrap();
+    resume.send(()).unwrap();
+    assert!(matches!(old.await.unwrap(), Err(Error::CellDraining)));
+    assert_eq!(fixture.node.state(), NodeState::Stopped);
+    assert!(!fixture.node.is_ready() && !fixture.node.is_management_ready());
+    assert!(
+        fixture
+            .node
+            .runtime()
+            .node_admission()
+            .check_new_role()
+            .is_err()
+    );
+    close(fixture).await;
+}
+
+#[tokio::test]
+async fn live_intent_deadline_and_journal_error_preserve_original_state_and_source() {
+    let fixture = fixture().await;
+    let original = start_enrolled_boot(&fixture).await;
+    let before = fixture.journal.load_snapshot(scope()).await.unwrap();
+    assert!(matches!(
+        fixture
+            .node
+            .refresh_fleet_intent(fixture.journal.as_ref(), Instant::now().into_std(),)
+            .await,
+        Err(Error::Deadline)
+    ));
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    let (captured, resume) = fixture.journal.pause_next_boot_reply();
+    let node = fixture.node.clone();
+    let journal = fixture.journal.clone();
+    let expired = tokio::spawn(async move {
+        node.refresh_fleet_intent(
+            journal.as_ref(),
+            (Instant::now() + Duration::from_secs(1)).into_std(),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), captured)
+        .await
+        .unwrap()
+        .unwrap();
+    maintenance(&fixture).await;
+    assert!(matches!(expired.await.unwrap(), Err(Error::Deadline)));
+    assert!(resume.send(()).is_err());
+    assert_eq!(
+        fixture.node.runtime().node_admission().mode().unwrap(),
+        NodeMode::Active
+    );
+    assert_eq!(
+        fixture
+            .node
+            .refresh_fleet_intent(
+                fixture.journal.as_ref(),
+                (Instant::now() + Duration::from_secs(3)).into_std(),
+            )
+            .await
+            .unwrap()
+            .mode(),
+        NodeMode::Draining
+    );
+    assert_eq!(
+        fixture
+            .journal
+            .load_enrollment(scope(), original.spec().key().unwrap())
+            .await
+            .unwrap(),
+        Some(original)
+    );
+    fixture.journal.close().await.unwrap();
+    let error = fixture
+        .node
+        .refresh_fleet_intent(
+            fixture.journal.as_ref(),
+            (Instant::now() + Duration::from_secs(3)).into_std(),
+        )
+        .await
+        .unwrap_err();
+    let Error::Facility { name, source } = error else {
+        panic!("live intent backend source lost")
+    };
+    assert_eq!(name, "fleet-enrollment-journal");
+    assert!(matches!(
+        source.downcast_ref::<Error>(),
+        Some(Error::RuntimeClosed)
+    ));
+    assert_eq!(
+        fixture.node.runtime().node_admission().mode().unwrap(),
+        NodeMode::Draining
+    );
+    close(fixture).await;
+}
+
+#[tokio::test]
+async fn cancelled_live_intent_read_and_active_reply_cannot_clear_local_cordon() {
+    let fixture = fixture().await;
+    start_enrolled_boot(&fixture).await;
+    let (captured, resume) = fixture.journal.pause_next_boot_reply();
+    let node = fixture.node.clone();
+    let journal = fixture.journal.clone();
+    let cancelled = tokio::spawn(async move {
+        node.refresh_fleet_intent(
+            journal.as_ref(),
+            (Instant::now() + Duration::from_secs(3)).into_std(),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), captured)
+        .await
+        .unwrap()
+        .unwrap();
+    cancelled.abort();
+    assert!(cancelled.await.unwrap_err().is_cancelled());
+    assert!(resume.send(()).is_err());
+    fixture.node.runtime().node_admission().cordon().unwrap();
+    let observed = fixture
+        .node
+        .refresh_fleet_intent(
+            fixture.journal.as_ref(),
+            (Instant::now() + Duration::from_secs(3)).into_std(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(observed.mode(), NodeMode::Active);
+    assert_eq!(
+        fixture.node.runtime().node_admission().mode().unwrap(),
+        NodeMode::Cordoned
+    );
+    assert!(
+        fixture
+            .node
+            .runtime()
+            .node_admission()
+            .check_new_role()
+            .is_err()
+    );
+    close(fixture).await;
+}
+
+#[tokio::test]
+async fn confirmed_boot_cannot_be_replaced_by_another_established_request() {
+    let fixture = fixture().await;
+    let original_spec = spec(&fixture.intent).unwrap();
+    let original = enroll(
+        &fixture.journal,
+        &fixture.directory,
+        &original_spec,
+        fixture.ad.clone(),
+        clock().unwrap(),
+    )
+    .await
+    .unwrap();
+    fixture
+        .node
+        .confirm_fleet_startup(fixture.journal.as_ref(), original_spec.key().unwrap())
+        .await
+        .unwrap();
+    let other_spec = EnrollmentSpec {
+        request: Digest::from_bytes([89; 32]),
+        ..original_spec.clone()
+    };
+    let other = enroll(
+        &fixture.journal,
+        &fixture.directory,
+        &other_spec,
+        fixture.ad.clone(),
+        clock().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_ne!(other, original);
+    assert!(matches!(
+        fixture
+            .node
+            .confirm_fleet_startup(fixture.journal.as_ref(), other_spec.key().unwrap(),)
+            .await,
+        Err(Error::Fenced)
+    ));
+    assert!(
+        fixture
+            .node
+            .runtime()
+            .node_admission()
+            .check_new_role()
+            .is_err()
+    );
+    fixture.node.start().unwrap();
+    assert_eq!(
+        fixture
+            .node
+            .refresh_fleet_intent(
+                fixture.journal.as_ref(),
+                (Instant::now() + Duration::from_secs(3)).into_std(),
+            )
+            .await
+            .unwrap(),
+        fixture.intent
+    );
+    assert_eq!(
+        fixture
+            .journal
+            .load_enrollment(scope(), original_spec.key().unwrap())
+            .await
+            .unwrap(),
+        Some(original)
+    );
+    close(fixture).await;
+}

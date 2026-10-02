@@ -109,14 +109,21 @@ The offline unleased maintenance builder rejects this configuration.
 | Confirm | Call `confirm_fleet_startup(journal, enrollment_key)` after Established publication and lease installation. `FleetEnrollmentJournal::load_boot` reads the exact established boot and current intent in one transaction. Missing, pending, retired or foreign evidence cannot open admission. |
 | Start | Install required facilities/task supervision and finish probes, then call `start()`. Confirmation alone keeps the hold. Start checks the owned components and opens Active admission, or enters `NodeState::Maintenance` under retained cordon/drain. |
 | Route requests | Serving probes use `is_ready()`. Authorized management uses `is_management_ready()`, which includes Maintenance. Fleet action/inspection endpoints remain available there; new roles stay closed. |
+| Refresh intent | Call `refresh_fleet_intent(journal, deadline)` from the supervised membership/lease loop before renewal. It rechecks the original Established boot and current physical intent atomically, then applies sticky cordon/drain to the shared gate. A failed or expired read grants no renewal authority. |
 | Close | Join accepted work and runtime shutdown before fencing/withdrawing the boot and retiring its registry obligation. A canonical permanent session tombstone can settle a lost withdrawal reply; absence or expiry cannot. |
 
 Confirmation is a cancellable read. Concurrent confirmations cannot overwrite a
 newer checked intent with an older reply; a read that finishes after shutdown
 cannot reopen the node. Local startup checks do not replace an application's
-atomic enrollment policy, authentication, complete registry import or ongoing
-intent supervision. A journal transition after confirmation must still reach
-the shared local gate through the authorized maintenance action path.
+atomic enrollment policy, authentication or complete registry import. Startup
+retains the original enrollment record, including its acceptance time and evidence;
+another Established request cannot replace it. Intent refresh rejects older or
+contradictory replies and rechecks lifecycle after the read. A delayed reply cannot
+reopen shutdown, and an Active reply cannot clear a local cordon. Cancellation
+drops only the read waiter; retry against the original boot. Existing owners keep
+serving while live intent closes new roles. The application owns supervision,
+polling cadence, error handling and the lease renewal policy; this API starts no task.
+Authorized Cordon actions use the same gate and remain replayable after refresh.
 
 The [reference example](../examples/fleet_operations/README.md) wires this order
 to actual signed directory enrollment and one durable SQLite transaction domain.

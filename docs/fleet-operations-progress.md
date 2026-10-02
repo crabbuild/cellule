@@ -4,6 +4,99 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 live intent refresh checkpoint
+
+`CellNode::refresh_fleet_intent` reads current physical intent and the original
+Established boot through the existing atomic enrollment journal contract. Startup
+now retains that exact enrollment record instead of a confirmation flag. Acceptance
+time, immutable spec and establishment evidence cannot be replaced by another
+Established request. Startup confirmation and live refresh share one application
+path for the monotonic role gate, with lifecycle-before-startup lock ordering.
+
+The application drives refresh before membership/lease renewal. Cordon/drain
+preserve existing owners and close new writer/reader/follower admission. Older or
+contradictory replies fail, Active replies cannot clear a local cordon, and replies
+after shutdown cannot reopen the node. Deadlines and cancellation drop only the
+read waiter; journal errors retain their original source. These failures grant
+no renewal authority. The framework starts no additional supervision task.
+
+The reference heartbeat calls this path before canonical directory CAS and guard
+renewal. Its actual operational sample advertises Draining even without a Cordon
+RPC. The real twelve-writer regression checks canonical advertisement equality,
+unchanged original boot evidence, closed new-role admission, successful queries
+to every existing actor, and joined shutdown with empty native resource ledgers.
+Six further tests cover live intent, competing/delayed replies, shutdown,
+deadline/backend errors, cancellation/sticky cordon and alternate boot requests.
+The capture nonce uses the existing workspace `try_update` API; this removes the
+Rust 1.99 deprecation without changing overflow behavior or the 1.97 minimum.
+
+### Scoped qualification
+
+The unchanged manifest contains 632 Rust/Cargo/lock paths with SHA256
+`5a6e98c4c10dd1ad9b6d8842d814db55be7f78819344d4d7989a0f66bce05deb`.
+The driver compares both the complete path set and every byte in the active and
+isolated checkouts before and after each command.
+
+| Evidence | Result |
+| --- | --- |
+| Complete host library target | 29 passed; none filtered/ignored. |
+| Complete public host node target | 88 passed; none filtered/ignored. |
+| Complete fleet example target | 105 passed; none filtered/ignored; 69.28 seconds. |
+| Isolated complete application integration target | 29 passed; none filtered; 16 documented manual cases ignored. |
+| Distinct scoped cases | 251 passed, including seven new cases. Diagnostic repetitions are not added. |
+| Isolated standalone `balance` command | Exit zero; eight releases/activations/retirements and original receipt checks, shared in-flight maximum two, restore maximum 2,550,136,832 bytes, three joined/retired boots, two receivers, controller epoch one, final counts 4/4/4. |
+| Host all-target/all-feature Clippy | Passed with warnings denied. |
+| Host/runtime API docs | Passed with warnings denied. |
+| Static gates | Boundaries/layout, 110 Rust snippets, 1172 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+
+Logs and the comparison driver are `/tmp/cellule-live-intent-final-*`,
+`/tmp/cellule-live-intent-source.sha256` and `/tmp/cellule-live-intent-verify.py`.
+The earlier selected startup/scenario runs are diagnostics, not added coverage.
+The isolated CLI binary, source manifest, output and metadata are retained at
+`/tmp/cellule-live-intent-cli-evidence/`; binary SHA256 is
+`60a3225495cf482b823fd531f369b1ac4e459813ffeaa166da07358273159925`.
+Its three intermediate blockers (IncompleteObservation, StaleObservation and
+MovementBudget) do not replace the complete final counts or two equilibrium
+passes with scheduling enabled. This is a native in-process reference profile,
+not process/provider qualification. Verification used Rust/Cargo 1.97.0 with
+all features, locked dependencies, `CARGO_INCREMENTAL=0` and separate Workspace
+targets. Intermediate failed documentation edits remain in the task record.
+Production intent supervision, complete role observation, replacement policy,
+maintenance finalization and the full W1–W10 qualification remain unfinished.
+
+### Exact parent CI failures retained
+
+Parent `c40761eb323e480a3b08cac57ebd97d7f8a715ec` workspace
+[job 110784161845](https://github.com/crabbuild/cellule/actions/runs/36990132970/job/110784161845)
+failed two publication-hint cases at their original two-second bound. Publication
+three received 9/19 and 10/19 healthy hints, respectively. Selected native tests
+and a full isolated application run pass; they do not establish the x86 Linux
+failure's cause. The existing deadlines, healthy-peer sets and assertions remain.
+Original logs are `/tmp/cellule-fleet-c407-workspace*.log` and reproduction logs
+are `/tmp/cellule-fleet-c407-*-repro.log`.
+
+The follower-capacity
+[job 110784162740](https://github.com/crabbuild/cellule/actions/runs/36990133107/job/110784162740)
+failed its published-root coverage assertion after seventeen rate windows. The
+artifact identifies entities 9, 10 and 11: captured root sequence 330 versus
+last acknowledged sequence 331. Its publication telemetry also records successful
+sequence-331 publications for these Cells. The driver source captures roots before
+requesting node stop. A premature root probe is therefore an inference to
+investigate, not an established diagnosis or permission to weaken the gate.
+The original ZIP (artifact 11218763624, SHA256
+`34cfc1610501fa3fd545cd0497b93d467fae1722a965ae79a1ea3576695f9fe7`)
+and all 143 files are retained under
+`/tmp/cellule-fleet-c407-follower-capacity*`; the exact mismatch report is
+`/tmp/cellule-fleet-c407-root-mismatch.json`. Its process binary SHA256 is
+`5716668c0c0e136b0250bfe7cffac4445dc5855bb91ffe3170ff55a5d5f090cf`.
+
+At the recorded capture the same head passes MSRV, contracts, object capacity,
+Compose smoke, website, fuzz and fast/negative TLC. Leased/object routing jobs
+110784163035 and 110784163093 in
+[run 36990133064](https://github.com/crabbuild/cellule/actions/runs/36990133064)
+remain confirmed in progress. Broad TLC and simulator are skipped. These parent
+checks do not qualify this new source; the full goal remains active.
+
 ## October 2 2026 writer profile observation and count convergence checkpoint
 
 The reference observer now captures native pages through `CellNode::fleet_snapshot`

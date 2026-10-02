@@ -78,7 +78,7 @@ async fn page(
         .min(lease.expires_at_ms);
     let sequence = fleet
         .capture_sequence
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old| old.checked_add(1))
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |old| old.checked_add(1))
         .map_err(|_| invalid("example capture nonce exhausted"))?;
     let mut hash = blake3::Hasher::new();
     hash.update(b"cellule.example-native-capture.v1\0");
@@ -190,7 +190,11 @@ async fn collect(
             .follower_logs_page(node_id(index), None, 128, clock()?)
             .await?;
         complete &= logs.total_logs() == 0 && logs.next().is_none();
-        nodes.push(fleet.boots[index].refresh_capacity(index, deadline).await?);
+        nodes.push(
+            fleet.boots[index]
+                .refresh_capacity(index, fleet.journal.as_ref(), deadline)
+                .await?,
+        );
     }
     let mut authority = HashMap::new();
     for (cell, record) in fleet.records.iter() {

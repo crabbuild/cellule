@@ -322,7 +322,11 @@ async fn fenced_guard_cannot_publish_capacity_or_recreate_a_retired_boot() {
     let before = fixture.fleet.journal.load_snapshot(scope()).await.unwrap();
     boot.guard.as_ref().unwrap().fence();
     let error = boot
-        .refresh_capacity(1, Instant::now() + Duration::from_secs(3))
+        .refresh_capacity(
+            1,
+            fixture.fleet.journal.as_ref(),
+            Instant::now() + Duration::from_secs(3),
+        )
         .await
         .unwrap_err();
     assert!(matches!(
@@ -344,11 +348,116 @@ async fn fenced_guard_cannot_publish_capacity_or_recreate_a_retired_boot() {
     boot.withdraw(&fixture.fleet.journal).await.unwrap();
     assert!(boot.directory.is_retired(session(1)).await.unwrap());
     assert!(
-        boot.refresh_capacity(1, Instant::now() + Duration::from_secs(3))
-            .await
-            .is_err()
+        boot.refresh_capacity(
+            1,
+            fixture.fleet.journal.as_ref(),
+            Instant::now() + Duration::from_secs(3)
+        )
+        .await
+        .is_err()
     );
     assert!(boot.directory.is_retired(session(1)).await.unwrap());
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn canonical_heartbeat_consumes_live_maintenance_intent_and_preserves_existing_writers() {
+    use cellule_runtime::fleet::operations::{
+        JournalTransition, MaintenanceOperation, OperationId,
+    };
+    use cellule_runtime::node::NodeMode;
+
+    let fixture = Fixture::new().await;
+    let boot = &fixture.fleet.boots[0];
+    let key = boot.spec.key().unwrap();
+    let original = fixture
+        .fleet
+        .journal
+        .load_enrollment(scope(), key)
+        .await
+        .unwrap()
+        .unwrap();
+    let snapshot = fixture.fleet.journal.load_snapshot(scope()).await.unwrap();
+    let now = clock().unwrap();
+    let operation = MaintenanceOperation::new(
+        OperationId::from_bytes([80; 16]).unwrap(),
+        Digest::from_bytes([81; 32]),
+        node_id(0),
+        session(0),
+        2,
+        now,
+        now + 60_000,
+    )
+    .unwrap();
+    fixture
+        .fleet
+        .journal
+        .compare_exchange(
+            &snapshot,
+            snapshot.head().controller().unwrap().epoch,
+            now,
+            &JournalTransition::BeginMaintenance(operation),
+        )
+        .await
+        .unwrap();
+    // No Cordon action is dispatched. The ordinary caller-driven heartbeat
+    // consumes the retained intent before its canonical CAS and guard renewal.
+    let refreshed = boot
+        .refresh_capacity(
+            0,
+            fixture.fleet.journal.as_ref(),
+            Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        refreshed.operational_sample().unwrap().mode,
+        NodeMode::Draining
+    );
+    assert!(!refreshed.accepts_new_roles(clock().unwrap()));
+    assert!(
+        boot.node
+            .runtime()
+            .node_admission()
+            .check_new_role()
+            .is_err()
+    );
+    assert_eq!(boot.node.state(), NodeState::Ready);
+    assert!(boot.node.is_ready() && boot.node.is_management_ready());
+    assert_eq!(
+        fixture
+            .fleet
+            .journal
+            .load_enrollment(scope(), key)
+            .await
+            .unwrap(),
+        Some(original)
+    );
+    let canonical = boot
+        .directory
+        .load(session(0), clock().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(canonical.advertisement(), &refreshed);
+    boot.guard.as_ref().unwrap().check().unwrap();
+    for record in fixture.fleet.records.values() {
+        let current = record
+            .authority
+            .load(record.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let handle = boot
+            .node
+            .runtime()
+            .local_handle(record.catalog.clone(), &current)
+            .await
+            .unwrap()
+            .unwrap();
+        handle.query(64, 64, |_| Ok(Vec::new())).await.unwrap();
+    }
+    assert_eq!(boot.node.stats().active_cells(), CELL_COUNT);
     fixture.close().await;
 }
 

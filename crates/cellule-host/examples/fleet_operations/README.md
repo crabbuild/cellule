@@ -37,6 +37,11 @@ canonical directory CAS. The finite example derives its local lease guard from
 the canonical advertisement's expiry and advances it only after confirmed CAS.
 The caller drives these heartbeats while observing; there is no new background
 scheduler or production heartbeat/provider implementation.
+Before each renewal it calls `refresh_fleet_intent` against the original Established
+boot. A retained maintenance intent closes the shared role gate and is reflected
+in the actual signed operational sample even if the Cordon RPC was lost. Failed
+intent reads prevent that heartbeat and guard renewal. Existing writer routing
+remains available until its own quiescence or terminal drain.
 
 The application owns each original boot advertisement until all runtimes join.
 Cleanup fences its guard, withdraws through the canonical directory, checks the

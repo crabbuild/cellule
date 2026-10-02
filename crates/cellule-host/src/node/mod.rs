@@ -6,7 +6,7 @@ use crate::durability::DurabilitySupervisor;
 
 pub(crate) struct FleetStartup {
     pub(crate) intent: cellule_runtime::fleet::operations::NodeIntent,
-    pub(crate) confirmed: bool,
+    pub(crate) boot: Option<cellule_runtime::fleet::operations::EnrollmentRecord>,
 }
 
 /// One started application host with an ordered drain/shutdown boundary.

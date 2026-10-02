@@ -65,7 +65,7 @@ impl CellNode {
                         "configured fleet durability requires managed follower enrollment",
                     ));
                 }
-                if !startup.confirmed {
+                if startup.boot.is_none() {
                     return Err(Error::Control(
                         "CellNode fleet boot enrollment is unconfirmed",
                     ));

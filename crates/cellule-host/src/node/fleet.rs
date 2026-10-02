@@ -25,7 +25,7 @@ impl CellNode {
                 .lock()
                 .map_err(|_| Arc::new(Error::Control("CellNode fleet startup lock poisoned")))?;
             startup.as_ref().is_some_and(|s| {
-                s.confirmed
+                s.boot.is_some()
                     && s.intent.scope() == request.expected().head().scope()
                     && s.intent.node() == request.node()
                     && s.intent.session() == request.session()
@@ -165,6 +165,74 @@ impl CellNode {
                 source,
             })?
             .ok_or(Error::Control("CellNode fleet boot enrollment is absent"))?;
+        self.apply_fleet_boot(&original, enrollment_key, &observed, true, None)
+    }
+
+    /// Refreshes this running boot's retained intent through one atomic journal read.
+    /// Call from the application's supervised membership/lease loop before renewal.
+    /// The original Established boot, acceptance time and evidence must still match.
+    /// Cordon/drain close the shared role gate without stopping existing Cell work,
+    /// reopening admission, or starting another scheduler. A read error or deadline
+    /// preserves the local state and must be retried or handled by the application;
+    /// it grants no authority to renew the boot's lease. Cancellation drops only
+    /// this read waiter, and a delayed reply cannot regress intent or reopen shutdown.
+    pub async fn refresh_fleet_intent(
+        &self,
+        journal: &dyn FleetEnrollmentJournal,
+        deadline: Instant,
+    ) -> cellule_runtime::Result<cellule_runtime::fleet::operations::NodeIntent> {
+        if Instant::now() >= deadline {
+            return Err(Error::Deadline);
+        }
+        let (original, key) = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
+            if !matches!(
+                *state,
+                NodeState::Ready | NodeState::ScalingDown | NodeState::Maintenance
+            ) {
+                return Err(Error::CellDraining);
+            }
+            let startup = self
+                .fleet_startup
+                .lock()
+                .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?;
+            let startup = startup
+                .as_ref()
+                .ok_or(Error::Control("CellNode fleet startup is not configured"))?;
+            let boot = startup.boot.as_ref().ok_or(Error::Control(
+                "CellNode fleet boot enrollment is unconfirmed",
+            ))?;
+            (
+                startup.intent.clone(),
+                boot.spec().key().map_err(crate::fleet::operation)?,
+            )
+        };
+        let observed = tokio::time::timeout_at(
+            deadline.into(),
+            journal.load_boot(original.scope(), original.node(), key),
+        )
+        .await
+        .map_err(|_| Error::Deadline)?
+        .map_err(|source| Error::Facility {
+            name: "fleet-enrollment-journal",
+            source,
+        })?
+        .ok_or(Error::Control("CellNode fleet boot enrollment is absent"))?;
+        self.apply_fleet_boot(&original, key, &observed, false, Some(deadline))?;
+        Ok(observed.intent().clone())
+    }
+
+    fn apply_fleet_boot(
+        &self,
+        original: &cellule_runtime::fleet::operations::NodeIntent,
+        enrollment_key: cellule_runtime::Digest,
+        observed: &crate::fleet::FleetBootObservation,
+        startup_only: bool,
+        deadline: Option<Instant>,
+    ) -> cellule_runtime::Result<()> {
         let intent = observed.intent();
         let enrollment = observed.enrollment();
         if intent.scope() != original.scope()
@@ -175,13 +243,19 @@ impl CellNode {
         {
             return Err(Error::Fenced);
         }
-        // Lifecycle-before-startup matches start(). Shutdown cannot race an
+        // Lifecycle-before-startup matches start() and refresh admission. Shutdown cannot race an
         // asynchronous read into reopening the already-draining host.
         let state = self
             .state
             .lock()
             .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
-        if *state != NodeState::Starting {
+        if (startup_only && *state != NodeState::Starting)
+            || (!startup_only
+                && !matches!(
+                    *state,
+                    NodeState::Ready | NodeState::ScalingDown | NodeState::Maintenance
+                ))
+        {
             return Err(Error::CellDraining);
         }
         let mut startup = self
@@ -193,8 +267,12 @@ impl CellNode {
             .ok_or(Error::Control("CellNode fleet startup is not configured"))?;
         if intent.revision() < startup.intent.revision()
             || (intent.revision() == startup.intent.revision() && intent != &startup.intent)
+            || startup.boot.as_ref().is_some_and(|boot| boot != enrollment)
         {
             return Err(Error::Fenced);
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(Error::Deadline);
         }
         match intent.mode() {
             cellule_runtime::node::NodeMode::Active => {}
@@ -204,7 +282,7 @@ impl CellNode {
             }
         }
         startup.intent = intent.clone();
-        startup.confirmed = true;
+        startup.boot = Some(enrollment.clone());
         Ok(())
     }
     /// Binds every reader activation and canonical removal to the durable fleet

@@ -136,10 +136,9 @@ impl CellNodeBuilder {
             facilities: Arc::new(Mutex::new(Vec::new())),
             required_components: Arc::new(Mutex::new(required_components)),
             task_group: Arc::new(Mutex::new(None)),
-            fleet_startup: Mutex::new(fleet_startup.map(|intent| crate::node::FleetStartup {
-                intent,
-                confirmed: false,
-            })),
+            fleet_startup: Mutex::new(
+                fleet_startup.map(|intent| crate::node::FleetStartup { intent, boot: None }),
+            ),
         };
         node.install_follower_store(follower_store)?;
         Ok(node)
