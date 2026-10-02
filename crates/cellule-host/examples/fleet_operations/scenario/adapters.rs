@@ -138,15 +138,13 @@ impl FleetTransport for LocalFleet {
 impl FleetObserver for LocalFleet {
     fn observe<'a>(
         &'a self,
-        expected: &'a FleetJournalSnapshot,
+        roster: &'a FleetRoster,
         _: i64,
-        _: Instant,
+        deadline: Instant,
     ) -> FleetAdapterFuture<'a, FleetObservation> {
         Box::pin(async move {
-            if self.journal.load_snapshot(scope()).await? != *expected {
-                return Err(OperationError::Conflict.into());
-            }
             let started = clock()?;
+            let expected = roster.snapshot();
             let mut nodes = Vec::new();
             let mut cells = Vec::new();
             for (index, node) in self.nodes.iter().enumerate() {
@@ -218,16 +216,14 @@ impl FleetObserver for LocalFleet {
                 )?;
                 nodes.push(ad);
             }
-            if self.journal.load_snapshot(scope()).await? != *expected {
-                return Err(OperationError::Conflict.into());
-            }
+            roster.confirm(self.journal.as_ref(), deadline).await?;
             // This finite fixture authenticates all three boots, but does not
             // implement production role/enrollment coverage. Count balancing
             // remains disabled; measured pressure can authorize relief.
             Ok(FleetObservation::new(
                 scope(),
                 expected.registry(),
-                1,
+                roster.snapshot().registry().revision(),
                 started,
                 clock()?,
                 false,

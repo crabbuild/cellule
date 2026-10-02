@@ -4,6 +4,75 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 durable roster observation checkpoint
+
+The reconciler now fully traverses retained physical intents and enrollment
+records before invoking `FleetObserver::observe`. That adapter receives the
+original `FleetRoster`, including Pending work, failed boots, both original
+role endpoints and terminal records. Every page uses the canonical codec's
+128-row/one-MiB bounds, exact version and strict continuation; each aggregate
+is capped at 10,000 rows. The full journal head and registry are rechecked
+before/after traversal and after native capture. A lost read or changed version
+returns no partial roster. Expired deadlines reject another request before its
+adapter future is constructed; dispatched native journal jobs keep their
+ordinary retained ownership and join.
+
+Count balancing now also requires exact established boot advertisements,
+current physical intents, no Pending enrollment and ownership rows matching
+signed counts. An adapter's completeness flag cannot override these checks.
+Missing failed boots, unknown live boots, duplicate boot rows, replaced sessions
+and omitted writers disable count balancing. Partial pressure relief keeps the
+existing source/receiver gates. Every retained row's original status, evidence,
+inputs and timestamps enters the roster digest and the planner's v4 input
+producer domain. Persisted record codecs and signed peer formats are unchanged.
+
+The reference collector consumes this same roster and continues to report
+incomplete native-role coverage. Driver fixtures now explicitly establish their
+synthetic boot rows before testing counts; native boot qualification remains
+in the separate public startup scenarios. No original assertion or profile was
+weakened. New cases qualify multiple pages with 132 intents/130 enrollments and
+all statuses, reconstruction, independent commits/lost acceptance replies,
+controller-head changes, cursor/version errors, aggregate bounds, source error
+preservation, deadlines, failed boot preservation, signed coverage, omitted
+writers, enrollment during capture and Pending enrollment with pressure relief.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `73751090f289f4d302852605f311039adf83d393` |
+| Rust/Cargo manifest | 610 tracked/nonignored Rust sources, Cargo manifests and all lockfiles; sorted SHA256, two spaces, relative path lines. SHA256 `4892861ee8518547b233e6bbc5d454131112ab85729cdd6ebd48ba9062cfdefc`. |
+| Toolchain/environment | Rust/Cargo 1.97.0; all features, locked dependencies, `CARGO_INCREMENTAL=0`, this checkout's Workspace target directory. |
+| Complete host library target | 11 passed; none filtered or ignored. |
+| Complete public host node target | 81 passed; none filtered or ignored. |
+| Complete fleet example target | 80 passed; none filtered or ignored. |
+| Distinct scoped cases | 172 passed, including 17 new cases. Intermediate runs are not added to this total. |
+| Host lints/API docs | All targets Clippy and host API documentation passed with warnings denied. |
+| Static gates | Format, diff, crate boundaries/module layout, 110 Rust snippets, 1151 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+
+The final pipeline checked the unchanged manifest after every command. Logs,
+manifest and reproduction driver are `/tmp/cellule-fleet-roster-*`. An initial
+compile attempted a private advertisement method and used an obsolete journal
+method name; both now use the canonical public APIs. An intermediate pipeline
+omitted five nested lockfiles from its manifest selection; the final pipeline
+includes all lockfiles and reran every selected gate. No broad/process/provider
+suite executed locally, and these scoped checks do not prove fleet qualification.
+
+CI for baseline `7375109` passes workspace/MSRV, both capacity campaigns,
+contracts, website, fuzz smoke, fast/negative TLC and Compose smoke. Broad TLC
+and deterministic simulator were skipped. Its two routing jobs were still live
+when inspected; leased job 110671204057 was in its frozen-binary comparison
+step. New source requires its own CI evidence. The earlier `cc7aa30` comparison
+failure, raw artifact and unchanged thresholds are recorded below.
+
+The complete W1–W10 goal remains active. Next, match bounded native actor,
+managed/pending reader, cold follower and leader-enrollment observations against
+this roster, using authenticated request-bound envelopes and fresh exact
+ordinary authority for every obligation, including failed sessions. Replacement
+policy, role evacuation/finalization, remaining primitives/fault matrices,
+sustained convergence, complete reference scenarios, process/provider and
+mixed-binary qualification, rollout and operator runbooks remain required.
+Roster traversal, boot coverage and matching writer counts do not establish
+SettleRoles, Finalize, or completion of the plan.
+
 ## October 1 2026 managed follower producer checkpoint
 
 The host now binds follower production to the shared journal through
@@ -83,7 +152,17 @@ Baseline `cc7aa30` passes workspace/MSRV (36947731399), both capacity campaigns
 [job 110653610813](https://github.com/crabbuild/cellule/actions/runs/36947731323/job/110653610813).
 Broad TLC and the deterministic simulator were skipped. Routing
 [job 110653610627](https://github.com/crabbuild/cellule/actions/runs/36947731323/job/110653610627)
-was authoritatively in progress at the frozen-binary comparison step when inspected.
+completed with a failed frozen-binary comparison. All 16 functional executions
+passed. `leased/local_command/c16` failed the unchanged median gate:
+throughput ratio 0.88824 (required at least 0.90), p95 ratio 1.12470 (required
+at most 1.10), and p99 ratio 1.06528 (passed). Reads were 2192 for both.
+The cause is unestablished. Artifact `cell-routing-36947731323-1`, ID
+11204931295, retains raw rows, windows, logs and frozen binaries. ZIP SHA256:
+`140559620e498df8bd134f9902e422cf95c5ba4658846ed15f463af716e32ed2`.
+Candidate synthetic merge `51a7ee50ed76d2a37311317d5df6291888714859`
+combines PR `cc7aa30` with base `0dc04a658bd99668936f7ec58032d054f6fbc141`.
+The newer routing workflow measures its head independently; passing measurements
+would not prove this earlier comparison regression resolved.
 The new source requires its own CI qualification. The original `6092203` reader
 scaling failure and artifact below remain evidence; later green smoke does not
 establish that failure's cause.

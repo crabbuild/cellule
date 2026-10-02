@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::fleet::FleetRoster;
 use cellule_runtime::cell::actor::OwnedCellObservation;
 use cellule_runtime::fleet::operations::{FleetScope, RegistryVersion};
 use cellule_runtime::fleet::placement::PlacementObservation;
@@ -23,7 +24,8 @@ pub struct FleetOwnedCell {
 /// This is an in-process adapter value, not a wire or persisted format. Each
 /// transport page remains bounded to 128 rows and one MiB. Aggregation is capped
 /// at the planner's 10,000 nodes/Cells; applications account collector buffers.
-/// The adapter proves roster coverage and signing-key enrollment independently
+/// The reconciler traverses the durable roster. The adapter proves native-role
+/// coverage, unexpected-live discovery and signing-key enrollment independently
 /// of self-signature verification. A digest identifies inputs, not atomicity.
 pub struct FleetObservation {
     pub(super) scope: FleetScope,
@@ -34,12 +36,14 @@ pub struct FleetObservation {
     pub(super) complete: bool,
     pub(super) nodes: Vec<NodeAdvertisement>,
     pub(super) cells: Vec<FleetOwnedCell>,
+    roster: Option<FleetRoster>,
 }
 
 impl FleetObservation {
     /// Retains the original collection interval. `complete` asserts a stable,
-    /// fully scanned roster and ownership pages, including busy/transitional
-    /// entries in the signed counts. It is an adapter proof obligation.
+    /// fully scanned native-role and ownership inventory, including busy/transitional
+    /// entries in the signed counts. The reconciler separately validates durable
+    /// boot coverage, Pending enrollment and matching signed writer counts.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         scope: FleetScope,
@@ -60,9 +64,41 @@ impl FleetObservation {
             complete,
             nodes,
             cells,
+            roster: None,
         };
         observation.placements(capture_finished_at_ms)?;
         Ok(observation)
+    }
+
+    /// Retains a fully traversed durable roster in these planner inputs. The
+    /// adapter must recheck it after native capture. Attaching rows alone cannot
+    /// establish native-role coverage or upgrade an incomplete observation.
+    pub(super) fn with_roster(mut self, roster: FleetRoster) -> Result<Self> {
+        if roster.snapshot().registry() != self.registry
+            || roster.snapshot().head().scope() != self.scope
+        {
+            return Err(Error::Node("fleet observation roster barrier differs"));
+        }
+        self.roster = Some(roster);
+        Ok(self)
+    }
+
+    /// Returns the original roster retained by the reconciler after capture.
+    #[must_use]
+    pub fn roster(&self) -> Option<&FleetRoster> {
+        self.roster.as_ref()
+    }
+
+    pub(super) fn counts_match(&self, placements: &[PlacementObservation]) -> bool {
+        let mut counts = HashMap::new();
+        for owned in &self.cells {
+            *counts.entry(owned.session).or_insert(0_u32) += 1;
+        }
+        // A transitioning actor remains in the signed count. Omitting its row
+        // cannot turn a partial inventory into a complete count barrier.
+        placements
+            .iter()
+            .all(|node| counts.get(&node.session).copied().unwrap_or(0) == node.active_cells)
     }
 
     pub(super) fn placements(&self, now_ms: i64) -> Result<Vec<PlacementObservation>> {
@@ -115,7 +151,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v3\0");
+        hash.update(b"cellule.fleet-planner-inputs.v4\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -127,6 +163,10 @@ impl FleetObservation {
             hash.update(&time.to_be_bytes());
         }
         hash.update(&[u8::from(self.complete)]);
+        hash.update(&[u8::from(self.roster.is_some())]);
+        if let Some(roster) = &self.roster {
+            hash.update(roster.digest()?.as_bytes());
+        }
         hash.update(&(nodes.len() as u64).to_be_bytes());
         for node in nodes {
             hash.update(node.node.as_bytes());

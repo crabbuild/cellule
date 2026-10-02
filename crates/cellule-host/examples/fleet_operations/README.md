@@ -44,7 +44,11 @@ lease expiry or unresolved Pending record alone cannot prove closure.
 This measures **admission pressure**, not physical disk usage or throughput. The
 actor retains its existing local eviction budget; fleet counts cover only its
 journal-backed batch. The fixed three-boot transport pins identities in trusted
-composition. Its ownership-only collector explicitly reports incomplete role
+composition. The reconciler supplies its fully traversed durable `FleetRoster`
+to the collector, including Pending work, failed boots and terminal records,
+and rechecks the original full snapshot after collection. Count balancing also
+requires exact established boot advertisements, settled enrollment and writer
+rows matching signed counts. Its ownership-only collector still reports incomplete role
 coverage, so count balancing is disabled and pressure relief is exercised.
 It stops new scheduling after the bounded batch; this does not demonstrate
 sustained-overload convergence. It is not a production complete observer, deployment authentication system,

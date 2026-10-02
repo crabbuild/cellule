@@ -263,7 +263,20 @@ are separate and describe transitions committed during this pass.
 | Operator stop | Disable new allocations while accepted work continues through inspection and cleanup. |
 | Maintenance deadline | Keep the cordon; stop new maintenance allocations and bound their deadlines by the operation deadline. Already accepted effects remain retained. Empty movement permits cannot prove completed role evacuation or shutdown. |
 
-`FleetObserver` owns authenticated membership and bounded page collection.
+The reconciler collects `FleetRoster` from every intent and enrollment page,
+then passes it to `FleetObserver::observe`. The observer owns authenticated
+native page collection, including every original failed boot named by the
+roster. The reconciler rechecks the entire head and registry after capture.
+Count balancing requires bootstrapped coverage, exact established boot rows,
+fresh signed advertisements for every required boot, no Pending enrollment,
+and ownership rows matching signed counts. Unknown live boots, failed missing
+boots, replaced sessions and omitted actors disable count balancing. Pressure
+relief still uses its existing source/receiver gates. The roster and all retained
+row evidence enter the planner digest; a digest supplies no authority.
+
+`FleetObserver` additionally proves signing-key enrollment, discovery of
+unexpected live records and complete native reader/follower role coverage.
+Roster traversal and matching writer counts alone cannot finalize maintenance.
 `FleetTransport` owns endpoint authorization and exact boot routing to the public
 node action/inspection APIs. Driver models combine SQLite with simulated effects.
 The `fleet_operations overload` command and its shared test now execute two

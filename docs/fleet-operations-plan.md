@@ -469,6 +469,16 @@ as an incomplete view. The reference adapter must exercise this protocol.
 Fresh per-source/per-receiver observations can still support pressure or drain
 planning under their own gates, without claiming complete fleet counts.
 
+The current host reconciler implements durable roster traversal through
+`fleet/roster/`: canonical bounded pages, strict continuations, full head/registry
+rechecks, both original endpoints of unresolved responsibilities, and retained
+terminal rows. It supplies `FleetRoster` to `FleetObserver::observe` and binds all
+rows into the planner digest. Count balancing additionally requires established
+boot coverage, no Pending enrollment and writer rows matching signed counts.
+The reference observer still reports incomplete role coverage. Complete native
+role/authority envelopes and the finalization transaction described below remain
+required; roster traversal does not discharge those work packages.
+
 ### Enrollment barrier for finalization
 
 The observer needs more than a stable list of live nodes. Implement a durable

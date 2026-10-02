@@ -12,7 +12,9 @@ use cellule_runtime::{Error, Result};
 use tokio::time::{Instant, timeout_at};
 
 use super::actions::operation;
-use super::{FleetActionCompletion, FleetAdapterFuture, FleetJournal, FleetJournalSnapshot};
+use super::{
+    FleetActionCompletion, FleetAdapterFuture, FleetJournal, FleetJournalSnapshot, FleetRoster,
+};
 
 mod maintenance;
 mod movement;
@@ -28,12 +30,13 @@ pub use observation::{FleetObservation, FleetOwnedCell};
 /// directory. Bounded pages retain their original sample times. HTTP and product
 /// authorization remain in the application.
 pub trait FleetObserver: Send + Sync + 'static {
-    /// Captures advisory inputs at the exact journal/registry barrier. Complete
+    /// Captures advisory inputs for the complete retained roster supplied by
+    /// the reconciler, which rechecks the roster after capture. Complete
     /// coverage is required for count balancing; partial pressure observations
     /// still require authenticated source and receiver evidence.
     fn observe<'a>(
         &'a self,
-        expected: &'a FleetJournalSnapshot,
+        roster: &'a FleetRoster,
         now_ms: i64,
         deadline: Instant,
     ) -> FleetAdapterFuture<'a, FleetObservation>;

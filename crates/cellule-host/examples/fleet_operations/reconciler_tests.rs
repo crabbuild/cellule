@@ -52,6 +52,8 @@ fn position(epoch: u64) -> PublishedPosition {
 
 struct Observer {
     complete: bool,
+    omit_last_cell: AtomicBool,
+    capture_mutation: std::sync::Mutex<Option<Arc<SqliteJournal>>>,
     calls: AtomicUsize,
     pressured: bool,
     draining: AtomicBool,
@@ -70,11 +72,35 @@ enum CellState {
 impl FleetObserver for Observer {
     fn observe<'a>(
         &'a self,
-        expected: &'a FleetJournalSnapshot,
+        roster: &'a FleetRoster,
         now_ms: i64,
         _: Instant,
     ) -> FleetAdapterFuture<'a, FleetObservation> {
         Box::pin(async move {
+            let expected = roster.snapshot();
+            let mutation = self.capture_mutation.lock().unwrap().take();
+            if let Some(journal) = mutation {
+                journal
+                    .accept_enrollment(
+                        &EnrollmentSpec {
+                            scope: scope(),
+                            request: Digest::from_bytes([229; 32]),
+                            role: EnrollmentRole::Follower { log_epoch: 99 },
+                            source: Some(EnrollmentEndpoint {
+                                node: node(3),
+                                session: session(3),
+                                intent_revision: 1,
+                            }),
+                            target: EnrollmentEndpoint {
+                                node: node(2),
+                                session: session(2),
+                                intent_revision: 1,
+                            },
+                        },
+                        now_ms,
+                    )
+                    .await?;
+            }
             self.calls.fetch_add(1, Ordering::SeqCst);
             let cell_state = *self.cell_state.lock().unwrap();
             let mut nodes = Vec::new();
@@ -131,7 +157,7 @@ impl FleetObserver for Observer {
                 )?;
                 nodes.push(ad);
             }
-            let cells = (1..=6)
+            let mut cells = (1..=6)
                 .map(|n| {
                     let mut owned = FleetOwnedCell {
                         node: node(1),
@@ -190,7 +216,10 @@ impl FleetObserver for Observer {
                     }
                     owned
                 })
-                .collect();
+                .collect::<Vec<_>>();
+            if self.omit_last_cell.load(Ordering::SeqCst) {
+                cells.pop();
+            }
             Ok(FleetObservation::new(
                 scope(),
                 expected.registry(),
@@ -518,12 +547,42 @@ impl Fixture {
                 )
                 .await
                 .unwrap();
+            // Synthetic driver evidence: these tests exercise orchestration,
+            // not the native boot authority qualified by scenario/startup.
+            let boot = EnrollmentSpec {
+                scope: scope(),
+                request: Digest::from_bytes([n + 128; 32]),
+                role: EnrollmentRole::Node {
+                    mode: NodeMode::Active,
+                },
+                source: None,
+                target: EnrollmentEndpoint {
+                    node: node(n),
+                    session: session(n),
+                    intent_revision: 1,
+                },
+            };
+            let FleetEnrollmentAcceptance::New(record) =
+                journal.accept_enrollment(&boot, 0).await.unwrap()
+            else {
+                panic!("boot already accepted")
+            };
+            journal
+                .publish_enrollment_result(
+                    &record,
+                    EnrollmentEvent::Established(Digest::from_bytes([n + 160; 32])),
+                    0,
+                )
+                .await
+                .unwrap();
         }
         let version = journal.load_snapshot(scope()).await.unwrap().registry();
         let version = journal.bootstrap_registry(version).await.unwrap();
         journal.set_scheduling(version, true).await.unwrap();
         let observer = Arc::new(Observer {
             complete,
+            omit_last_cell: AtomicBool::new(false),
+            capture_mutation: std::sync::Mutex::new(None),
             calls: AtomicUsize::new(0),
             pressured,
             draining: AtomicBool::new(false),
@@ -1396,4 +1455,197 @@ async fn unknown_without_acceptance_requires_atomic_absence_cas_before_retry() {
             .is_some()
     );
     fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn count_balancing_rejects_unknown_live_boot_despite_adapter_completeness() {
+    let fixture = Fixture::new(true, false, false).await;
+    let key = EnrollmentSpec {
+        scope: scope(),
+        request: Digest::from_bytes([131; 32]),
+        role: EnrollmentRole::Node {
+            mode: NodeMode::Active,
+        },
+        source: None,
+        target: EnrollmentEndpoint {
+            node: node(3),
+            session: session(3),
+            intent_revision: 1,
+        },
+    }
+    .key()
+    .unwrap();
+    let record = fixture
+        .journal
+        .load_enrollment(scope(), key)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture
+        .journal
+        .publish_enrollment_result(
+            &record,
+            EnrollmentEvent::Retired(Digest::from_bytes([230; 32])),
+            1,
+        )
+        .await
+        .unwrap();
+    let report = fixture.step(&fixture.driver(206), 0).await;
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(report.allocated, 0);
+    assert!(
+        report
+            .blockers
+            .contains(&DrainBlocker::IncompleteObservation)
+    );
+    assert!(report.snapshot.head().attempts().is_empty());
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn missing_failed_boot_blocks_count_balancing_without_expiring_its_obligation() {
+    let fixture = Fixture::new(true, false, false).await;
+    fixture
+        .journal
+        .register_initial_intent(&NodeIntent::initial(scope(), node(4), session(4)).unwrap())
+        .await
+        .unwrap();
+    let request = EnrollmentSpec {
+        scope: scope(),
+        request: Digest::from_bytes([232; 32]),
+        role: EnrollmentRole::Node {
+            mode: NodeMode::Active,
+        },
+        source: None,
+        target: EnrollmentEndpoint {
+            node: node(4),
+            session: session(4),
+            intent_revision: 1,
+        },
+    };
+    let FleetEnrollmentAcceptance::New(record) = fixture
+        .journal
+        .accept_enrollment(&request, 0)
+        .await
+        .unwrap()
+    else {
+        panic!("not a new boot")
+    };
+    fixture
+        .journal
+        .publish_enrollment_result(
+            &record,
+            EnrollmentEvent::Established(Digest::from_bytes([231; 32])),
+            0,
+        )
+        .await
+        .unwrap();
+    let report = fixture.step(&fixture.driver(206), 0).await;
+    assert_eq!(report.allocated, 0);
+    assert!(
+        report
+            .blockers
+            .contains(&DrainBlocker::IncompleteObservation)
+    );
+    let retained = fixture
+        .journal
+        .load_enrollment(scope(), request.key().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.status(), EnrollmentStatus::Established);
+    assert_eq!(retained.updated_at_ms(), 0);
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn enrollment_during_capture_invalidates_planning_before_allocation() {
+    let fixture = Fixture::new(true, false, false).await;
+    *fixture.observer.capture_mutation.lock().unwrap() = Some(fixture.journal.clone());
+    let result = fixture
+        .driver(206)
+        .reconcile_once(|| Ok(NOW), Instant::now() + Duration::from_secs(3))
+        .await;
+    assert!(
+        matches!(result, Err(cellule_runtime::Error::FleetOperation(error)) if matches!(*error, OperationError::Conflict))
+    );
+    let current = fixture.journal.load_snapshot(scope()).await.unwrap();
+    assert!(current.head().attempts().is_empty());
+    assert_eq!(fixture.transport.dispatched.load(Ordering::SeqCst), 0);
+    let roster = FleetRoster::collect(
+        fixture.journal.as_ref(),
+        &current,
+        Instant::now() + Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    let enrolled = roster
+        .enrollments()
+        .iter()
+        .find(|record| record.spec().request == Digest::from_bytes([229; 32]))
+        .unwrap();
+    assert_eq!(enrolled.status(), EnrollmentStatus::Pending);
+    assert!(enrolled.unresolved());
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn complete_flag_cannot_hide_an_owned_or_transitioning_cell_from_signed_counts() {
+    let fixture = Fixture::new(true, false, false).await;
+    fixture
+        .observer
+        .omit_last_cell
+        .store(true, Ordering::SeqCst);
+    let report = fixture.step(&fixture.driver(206), 0).await;
+    assert_eq!(report.allocated, 0);
+    assert!(
+        report
+            .blockers
+            .contains(&DrainBlocker::IncompleteObservation)
+    );
+    assert!(report.snapshot.head().attempts().is_empty());
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn unknown_enrollment_disables_counts_and_keeps_pressure_relief_available() {
+    for pressured in [false, true] {
+        let fixture = Fixture::new(true, pressured, false).await;
+        let request = EnrollmentSpec {
+            scope: scope(),
+            request: Digest::from_bytes([235; 32]),
+            role: EnrollmentRole::Follower { log_epoch: 99 },
+            source: Some(EnrollmentEndpoint {
+                node: node(3),
+                session: session(3),
+                intent_revision: 1,
+            }),
+            target: EnrollmentEndpoint {
+                node: node(2),
+                session: session(2),
+                intent_revision: 1,
+            },
+        };
+        fixture
+            .journal
+            .accept_enrollment(&request, 0)
+            .await
+            .unwrap();
+        let report = fixture.step(&fixture.driver(206), 0).await;
+        assert_eq!(report.allocated, if pressured { 2 } else { 0 });
+        assert!(
+            report
+                .blockers
+                .contains(&DrainBlocker::IncompleteObservation)
+        );
+        let record = fixture
+            .journal
+            .load_enrollment(scope(), request.key().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status(), EnrollmentStatus::Pending);
+        assert_eq!(record.updated_at_ms(), 0);
+        fixture.journal.close().await.unwrap();
+    }
 }

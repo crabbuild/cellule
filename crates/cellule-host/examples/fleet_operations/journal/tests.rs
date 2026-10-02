@@ -1877,3 +1877,182 @@ async fn fresh_inspection_authorization_checks_current_head_and_boot_without_wri
     );
     fixture.journal.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn complete_roster_traverses_multiple_pages_and_retains_every_status() {
+    let fixture = Fixture::new().await;
+    for n in 4..=132 {
+        fixture
+            .journal
+            .register_initial_intent(&intent(n))
+            .await
+            .unwrap();
+    }
+    let mut records = Vec::new();
+    for n in 1..=130 {
+        let FleetEnrollmentAcceptance::New(mut record) = fixture
+            .journal
+            .accept_enrollment(&enrollment(n, 1), 1)
+            .await
+            .unwrap()
+        else {
+            panic!("duplicate fixture enrollment")
+        };
+        match n % 4 {
+            0 => {
+                record = fixture
+                    .journal
+                    .publish_enrollment_result(
+                        &record,
+                        EnrollmentEvent::Refused(Digest::from_bytes([210; 32])),
+                        2,
+                    )
+                    .await
+                    .unwrap()
+            }
+            1 => {}
+            _ => {
+                record = fixture
+                    .journal
+                    .publish_enrollment_result(
+                        &record,
+                        EnrollmentEvent::Established(Digest::from_bytes([211; 32])),
+                        2,
+                    )
+                    .await
+                    .unwrap();
+                if n % 4 == 3 {
+                    record = fixture
+                        .journal
+                        .publish_enrollment_result(
+                            &record,
+                            EnrollmentEvent::Retired(Digest::from_bytes([212; 32])),
+                            3,
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+        records.push(record);
+    }
+    records.sort_by_key(|record| *record.spec().key().unwrap().as_bytes());
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    let roster = FleetRoster::collect(&fixture.journal, &snapshot, deadline)
+        .await
+        .unwrap();
+    assert_eq!(roster.snapshot(), &snapshot);
+    assert_eq!(roster.intents().len(), 132);
+    assert_eq!(roster.enrollments(), records);
+    assert_eq!(
+        roster.required_boots(),
+        vec![
+            FleetRosterBoot {
+                node: endpoint(1).node,
+                session: endpoint(1).session
+            },
+            FleetRosterBoot {
+                node: endpoint(3).node,
+                session: endpoint(3).session
+            }
+        ]
+    );
+    roster.confirm(&fixture.journal, deadline).await.unwrap();
+    let digest = roster.digest().unwrap();
+    fixture.journal.close().await.unwrap();
+    let reopened = fixture.client().await;
+    let again = FleetRoster::collect(&reopened, &snapshot, deadline)
+        .await
+        .unwrap();
+    assert_eq!(again.enrollments(), records);
+    assert_eq!(again.digest().unwrap(), digest);
+    reopened.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn roster_barrier_rejects_independent_enrollment_commit_and_original_reply_loss() {
+    let fixture = Fixture::new().await;
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    let roster = FleetRoster::collect(&fixture.journal, &snapshot, deadline)
+        .await
+        .unwrap();
+    let client = fixture.client().await;
+    lose(&client);
+    let request = enrollment(233, 1);
+    assert!(client.accept_enrollment(&request, 1).await.is_err());
+    let current = fixture.journal.load_snapshot(scope()).await.unwrap();
+    assert_eq!(current.head(), snapshot.head());
+    assert_ne!(current.registry(), snapshot.registry());
+    assert!(roster.confirm(&fixture.journal, deadline).await.is_err());
+    assert!(
+        FleetRoster::collect(&fixture.journal, &snapshot, deadline)
+            .await
+            .is_err()
+    );
+    let fresh = FleetRoster::collect(&fixture.journal, &current, deadline)
+        .await
+        .unwrap();
+    assert_eq!(fresh.enrollments().len(), 1);
+    assert_eq!(fresh.enrollments()[0].spec(), &request);
+    assert_eq!(fresh.enrollments()[0].status(), EnrollmentStatus::Pending);
+    assert_eq!(fresh.required_boots().len(), 2);
+    client.close().await.unwrap();
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn roster_barrier_rechecks_controller_head_even_with_unchanged_registry() {
+    let fixture = Fixture::new().await;
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    let roster = FleetRoster::collect(&fixture.journal, &snapshot, deadline)
+        .await
+        .unwrap();
+    let renewed = fixture
+        .journal
+        .claim_controller(
+            scope(),
+            snapshot.head().revision(),
+            snapshot.head().controller().unwrap().claimant,
+            1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(renewed.registry(), snapshot.registry());
+    assert_ne!(renewed.head(), snapshot.head());
+    assert!(roster.confirm(&fixture.journal, deadline).await.is_err());
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn unbootstrapped_roster_and_expired_collection_cannot_claim_coverage() {
+    let directory = tempfile::tempdir().unwrap();
+    let journal = SqliteJournal::open(
+        directory.path().join("fleet.sqlite"),
+        scope(),
+        FleetProfile::default(),
+        0,
+    )
+    .await
+    .unwrap();
+    let snapshot = journal.load_snapshot(scope()).await.unwrap();
+    let roster = FleetRoster::collect(
+        &journal,
+        &snapshot,
+        tokio::time::Instant::now() + std::time::Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    assert!(roster.enrollments().is_empty());
+    assert!(roster.snapshot().registry().bootstrap_revision().is_none());
+    assert!(!roster.covers_advertisements(&[], 0).unwrap());
+    journal.close().await.unwrap();
+    assert!(matches!(
+        FleetRoster::collect(&journal, &snapshot, tokio::time::Instant::now()).await,
+        Err(cellule_runtime::Error::Node(
+            "fleet roster collection deadline elapsed"
+        ))
+    ));
+}

@@ -14,6 +14,7 @@ mod journal;
 mod maintenance;
 mod movement;
 mod reconciler;
+mod roster;
 
 pub use actions::FleetActionCompletion;
 pub use cells::{FleetCellInputs, FleetCellProvider, FleetRecoveryInputs};
@@ -24,6 +25,7 @@ pub use reconciler::{
     FleetAttemptFailure, FleetObservation, FleetObserver, FleetOwnedCell, FleetReconcileReport,
     FleetReconciler, FleetTransport,
 };
+pub use roster::{FleetRoster, FleetRosterBoot};
 
 pub(crate) use actions::FleetActionExecutor;
 pub(crate) use actions::operation;

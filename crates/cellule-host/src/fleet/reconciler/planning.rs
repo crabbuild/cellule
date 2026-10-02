@@ -18,18 +18,35 @@ impl FleetReconciler {
             report.blocked(DrainBlocker::IncompleteObservation);
             return Ok(());
         }
+        let roster = crate::fleet::FleetRoster::collect(
+            self.journal.as_ref(),
+            &report.snapshot,
+            clock.deadline,
+        )
+        .await?;
         let observation = call(
             clock.deadline,
             "fleet-observer",
-            self.observer
-                .observe(&report.snapshot, clock.now()?, clock.deadline),
+            self.observer.observe(&roster, clock.now()?, clock.deadline),
         )
         .await?;
         if observation.scope != self.scope || observation.registry != report.snapshot.registry() {
             return Err(operation(OperationError::Conflict));
         }
+        roster
+            .confirm(self.journal.as_ref(), clock.deadline)
+            .await?;
         let now = clock.now()?;
+        let boot_complete = roster.covers_advertisements(&observation.nodes, now)?;
+        let enrollment_settled = roster.enrollments().iter().all(|record| {
+            record.status() != cellule_runtime::fleet::operations::EnrollmentStatus::Pending
+        });
+        let observation = observation.with_roster(roster)?;
         let mut placements = observation.placements(now)?;
+        let inventory_complete = observation.complete
+            && boot_complete
+            && enrollment_settled
+            && observation.counts_match(&placements);
         // The most recently retired page is a post-batch sample barrier. Query
         // all earlier movement times as well: late retirement must not make
         // the count rule forget a more recent completion in an earlier page.
@@ -41,46 +58,28 @@ impl FleetReconciler {
         .await?
         .unwrap_or(-1);
         let planner = PlacementPlanner::default();
-        let count_fresh = observation.complete
+        let count_fresh = inventory_complete
             && report.snapshot.head().attempts().is_empty()
             && placements.iter().all(|node| node.observed_at_ms > since);
-        if !observation.complete {
+        if !inventory_complete {
             report.blocked(DrainBlocker::IncompleteObservation);
         } else if !count_fresh {
             report.blocked(DrainBlocker::StaleObservation);
         }
         // Retained intents take precedence over cached signed advertisements.
-        let mut cursor = None;
-        loop {
-            let page = call(
-                clock.deadline,
-                "fleet-journal",
-                self.journal
-                    .intents_page(report.snapshot.registry(), cursor, 128),
-            )
-            .await?;
-            if page.version() != report.snapshot.registry() || page.after() != cursor {
-                return Err(operation(OperationError::Conflict));
-            }
-            for intent in page.entries() {
-                if let Some(node) = placements
-                    .iter_mut()
-                    .find(|node| node.node == intent.node())
-                {
-                    if node.session != intent.session() {
-                        return Err(operation(OperationError::Conflict));
-                    }
-                    node.draining |= intent.mode() != cellule_runtime::node::NodeMode::Active;
+        for intent in observation
+            .roster()
+            .ok_or(Error::Control("fleet roster was not retained"))?
+            .intents()
+        {
+            if let Some(node) = placements
+                .iter_mut()
+                .find(|node| node.node == intent.node())
+            {
+                if node.session != intent.session() {
+                    return Err(operation(OperationError::Conflict));
                 }
-            }
-            match page.next() {
-                Some(next)
-                    if cursor.is_none_or(|previous| next.as_bytes() > previous.as_bytes()) =>
-                {
-                    cursor = Some(next)
-                }
-                Some(_) => return Err(Error::Node("fleet intent cursor did not advance")),
-                None => break,
+                node.draining |= intent.mode() != cellule_runtime::node::NodeMode::Active;
             }
         }
         let mut demands = Vec::new();
