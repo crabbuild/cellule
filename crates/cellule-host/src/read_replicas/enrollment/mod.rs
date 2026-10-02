@@ -253,8 +253,8 @@ impl ReaderEnrollment {
         // pins the other count through charge and copy. Allocate exact observed
         // capacity, so a small node need not admit a maximum-size empty scan.
         let count = views.len() + records.len();
-        let memory =
-            runtime.try_reserve_node_bytes(count * std::mem::size_of::<CellId>() + 4096)?;
+        let memory = runtime
+            .try_reserve_node_metadata_bytes(count * std::mem::size_of::<CellId>() + 4096)?;
         let mut cells = Vec::with_capacity(count);
         cells.extend(views);
         cells.extend(records.keys().copied());

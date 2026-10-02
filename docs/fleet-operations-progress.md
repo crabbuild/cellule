@@ -4,6 +4,136 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 reader reconciliation lease-boundary repair checkpoint
+
+The parent `8698183` qualification contract failed during reader fixture startup,
+before its native-opening scenario: `install_node_lease` returned
+`Control("CellNode task group is unhealthy")`. Its workspace/MSRV campaign
+passed, so that success did not supersede the separate contract failure.
+The [failed contract job](https://github.com/crabbuild/cellule/actions/runs/37009635155/job/110846004625)
+and original log are retained; the log SHA256 is
+`1e6a9dfda287a5ecba829b02e0763ddfb4c8036ae363d86f7adb6cd74ea838df`.
+
+The new periodic temporary inventory used `try_reserve_node_bytes`, whose
+live-lease check returns Fenced before lease installation. The immediate first
+tick could therefore end the installed reader task before host startup. Thirty
+unchanged native repetitions of the original closure case passed; those negative
+reproductions did not disprove the ordering race. A controlled public loop
+before lease installation then failed with the original Fenced source.
+A second real producer case fenced the local lease after a lost acceptance
+reply; the old reservation prevented periodic exclusion for two real ticks.
+Both failures are archived, with their source manifests and executables.
+
+Both temporary inventory paths now use the existing metadata reservation API,
+including the bound producer's retained-record index. This charges the same
+bounded byte ledger without granting native admission or lease authority.
+Native opening, activation jobs and public native inventory retain their live
+lease checks. The activation lane, five-second interval, 64-attempt batch,
+30-second attempt deadline and all resource bounds remain unchanged.
+
+The new public host case confirms healthy startup after the pre-lease loop and
+joined shutdown. The new bound-producer case observes the original Refused
+exclusion after fencing, preserving its spec and acceptance time; it also checks
+fenced inventory, refused activation, no native opening and zero final resources.
+Neither local result supplies failed-process closure or replacement policy.
+
+### Snapshot retry test synchronization
+
+The first Linux application/host run reached the previously failing reader
+closure scenario successfully, then failed a separate snapshot case: it counted
+four authorizations instead of two. The fixture spawned a retry and used
+`yield_now` before releasing the original blocked job. A yield did not guarantee
+that the retry had reached the retained job. If the original completed and was
+joined first, the later retry could correctly begin another fresh capture.
+
+A diagnostic copy delayed only that retry by ten milliseconds and reproduced
+the same four-versus-two failure. The fixture now explicitly polls the same retry
+to Pending while the original job is blocked, before releasing it. The focused
+case passes. Its exact two-call assertion, original request/page, authority
+comparison, retained-byte checks and shutdown checks are unchanged. No snapshot
+production code, deadline or qualification profile was changed. Diagnostic delay
+code lives only in the evidence archive.
+
+### Deadline model fault boundaries
+
+The next Linux application/host command passed, including all 93 public host
+cases and the reader-closure/snapshot-retry cases. Its complete example run
+passed 110 cases and failed the existing accepted-endpoint timeout case: the
+first Prepare acceptance row was absent. Its 150 ms real-time pass could expire
+before acceptance under load. A diagnostic copy delayed only acceptance by
+160 ms and reproduced that same missing-row assertion. Those failures remain
+archived and rejected.
+
+The timeout is a model fault injection, not a measured SLO. That current-thread
+model now pauses the test clock after setup, drives each of the two sequential
+endpoints to confirmed acceptance, then expires its original deadline share.
+The pass deadline remains 150 ms; the first endpoint uses one third and the
+second uses half of the remaining budget, as the public driver does. One timer
+resolution tick permits delivery of the Elapsed event. Both original deadline
+sources, two retained attempts, 8 KiB restore permits, Preparing phase and
+accepted-without-result assertion remain required.
+
+A separate public driver case pauses each endpoint before acceptance and proves
+both Preparing permits remain charged, both acceptance rows remain absent, no
+effect was dispatched, and no release occurred. It preserves the original
+Elapsed sources. Host dev dependencies explicitly enable Tokio test-clock
+utilities; product configuration, runtime deadline behavior, qualification
+profiles and native/process SLO clocks are unchanged. A first helper assumed
+concurrent endpoint waits and correctly failed its gate; it was corrected to
+the driver's actual sequential partitions. A relative-copy diagnostic invocation
+also failed to overlay the intended test source; it is archived and excluded.
+
+### Qualification scope
+
+Final source manifest: all 637 Rust/Cargo/lock paths, SHA256
+`8df5a9f2a4929493142ac67e0b860965580308fddcdf93141de1c962c5c4ef4e`.
+The isolated driver checks complete active/isolated path sets and every byte
+before and after each final command. Final results and original failures are
+archived under `/tmp/cellule-reader-prelease-evidence`.
+
+| Final isolated native scope | Passed | Exceptions |
+| --- | ---: | --- |
+| Complete host library | 29 | None |
+| Complete public host node suite | 93 | None |
+| Complete fleet example | 112 | None |
+| Complete application integration | 37 | 16 documented manual cases ignored |
+| Runtime reader integration scope | 14 | 186 filtered; one documented RustFS case ignored |
+
+285 distinct native cases pass; focused diagnostic repetitions are excluded
+from that count. Native commands use all features and locked dependencies with
+Rust/Cargo 1.97.0. Host/runtime all-target/all-feature Clippy and API docs pass
+with warnings denied. Format/diff, boundaries/layout, 110 Rust snippets, 1173
+Markdown links, 28 SQL/peer assertions and 567 validator links pass.
+
+The final Linux ARM run passes the exact application/host CI command with
+default features and locked dependencies: application library 10, contracts 3,
+integration 37 (the same 16 manual ignores), host library 29, public node 93,
+and five application doctests. The complete default-feature example passes all
+112 cases in 88.83 seconds. No case in the host/example suites is ignored or
+filtered. Complete Linux source sets and bytes are checked before/after both
+commands. The container terminates zero with no OOM. Its environment is Debian
+12/aarch64, Rust/Cargo 1.97.1, the pinned Rust image, two CPUs, four GiB and 256
+PIDs. The inherited descriptor soft/hard limits are 1,024/524,288; only the soft
+limit is raised to that existing hard limit, as documented by the earlier
+frozen-binary descriptor diagnosis. No source/profile/Cell-count or resource
+assertion is changed for this environment.
+
+The earlier source manifests
+`4391e7ed6b8a5696e82134d320a06078db6d228a6da0cd968eca740437b06eff` and
+`a042f610b8ccce4922781eb8bafe084cacadf51ba09f60a25f21d6cf80370fb7`
+passed their native scopes but retained the respective snapshot/timer fixture
+races. Their logs, source versions and frozen executables are preserved
+separately and do not qualify the final manifest. Both failed Linux runs remain
+rejected. The corrective run uses the same pinned Rust image, two CPUs, four
+GiB, 256 PIDs and documented descriptor headroom.
+
+Full W1–W10 remains active. Complete role/current-authority observation,
+replacement and failed-owner evidence, evacuation/finalization without
+self-join, cross-session recovery, Cron/Blob owners, runnable maintenance and
+receiver-loss scenarios, fault/mixed-binary qualification and rollout remain
+required. SettleRoles and Finalize remain refused. The historical publication
+hint failure has a separate, unestablished cause and is not claimed fixed here.
+
 ## October 2 2026 periodic reader producer repair checkpoint
 
 The canonical reader manager's existing five-second loop previously scanned

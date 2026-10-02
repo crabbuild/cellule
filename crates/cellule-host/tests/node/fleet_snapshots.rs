@@ -38,15 +38,18 @@ async fn lost_snapshot_waiter_retains_original_job_and_native_page_until_join() 
     let retained = test.node.stats().retained_bytes();
     let node = test.node.clone();
     let replay = request.clone();
-    let retry = tokio::spawn(async move { node.fleet_snapshot(replay).await });
-    tokio::task::yield_now().await;
+    let mut retry = Box::pin(node.fleet_snapshot(replay));
+    // Register this waiter on the still-blocked original job before releasing
+    // it. A yield does not guarantee that a spawned retry has reached submit;
+    // a late retry can correctly recapture after the original job was joined.
+    assert!(futures_util::poll!(retry.as_mut()).is_pending());
     assert_eq!(test.node.stats().retained_bytes(), retained);
     assert_eq!(test.journal.snapshot_calls.load(Ordering::SeqCst), 1);
     test.journal
         .block_inspections
         .store(false, Ordering::SeqCst);
     test.journal.inspection_resume.add_permits(1);
-    let result = retry.await.unwrap().unwrap();
+    let result = retry.await.unwrap();
     result.validate(&request, clock()).unwrap();
     assert_eq!(result.request(), &request);
     assert_eq!(test.journal.snapshot_calls.load(Ordering::SeqCst), 2);

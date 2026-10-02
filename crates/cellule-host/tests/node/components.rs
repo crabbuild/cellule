@@ -67,6 +67,68 @@ async fn configured_fleet_rejects_an_unmanaged_follower_provider_before_starting
 }
 
 #[tokio::test]
+async fn reader_reconciliation_before_lease_installation_keeps_its_owner_healthy() {
+    use cellule_runtime::ltx::CellStorageLayout;
+    use cellule_runtime::node::NodeDirectory;
+    use cellule_store::Store;
+    use object_store::{memory::InMemory, path::Path};
+
+    let node = CellNodeBuilder::new(application())
+        .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 << 20)
+        .with_replica_host(ReplicaHost::default())
+        .with_session(SessionId::from_bytes([246; 16]))
+        .build()
+        .unwrap();
+    node.install_task_group(CancellationToken::new(), CancellationToken::new())
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let layout = CellStorageLayout::new(
+        Store::new(Arc::new(InMemory::new())),
+        Path::from("reader-prelease"),
+        [3; 16],
+    );
+    let directory = NodeDirectory::new(
+        layout.clone(),
+        Digest::from_bytes([2; 32]),
+        Digest::from_bytes([4; 32]),
+        Digest::from_bytes([5; 32]),
+    );
+    let manager = node
+        .install_read_replicas(
+            layout,
+            directory,
+            root.path().into(),
+            ReplicaLimits::default(),
+        )
+        .unwrap();
+    // Drive the same public loop through its first immediate tick before the
+    // lease exists. This fixes the ordering that raced host startup in CI.
+    let cancellation = CancellationToken::new();
+    let mut running = Box::pin(manager.run(cancellation.clone()));
+    let early = tokio::select! {
+        result = &mut running => Some(result),
+        () = tokio::time::sleep(Duration::from_millis(20)) => None,
+    };
+    cancellation.cancel();
+    let outcome = match early {
+        Some(result) => result,
+        None => running.await,
+    };
+    let start = node.install_node_lease(NodeLeaseGuard::new(0, 60_000).unwrap());
+    let shutdown = node.shutdown().await;
+    assert!(
+        outcome.is_ok(),
+        "pre-lease reconciliation returned {outcome:?}"
+    );
+    start.unwrap();
+    shutdown.unwrap();
+    assert_eq!(node.state(), NodeState::Stopped);
+    assert_eq!(node.stats().retained_bytes(), 0);
+    assert_eq!(node.stats().worker_jobs(), 0);
+    assert_eq!(node.stats().file_descriptors(), 0);
+}
+
+#[tokio::test]
 async fn node_retains_typed_components_without_duplicate_names() {
     let node = CellNodeBuilder::new(application())
         .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)

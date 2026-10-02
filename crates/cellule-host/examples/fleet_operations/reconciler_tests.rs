@@ -241,6 +241,8 @@ struct Transport {
     unknown_cordon: AtomicBool,
     unconfirmed_cordon: AtomicBool,
     block_after_acceptance: AtomicBool,
+    block_before_acceptance: AtomicBool,
+    blocked_before_acceptance: AtomicUsize,
     block_first_acceptance: AtomicBool,
     reject_prepare: bool,
     inspected: AtomicUsize,
@@ -274,6 +276,11 @@ impl FleetTransport for Transport {
             };
             // The real journal rejects dispatch before its phase CAS. Repeated
             // dispatch returns the same committed synthetic effect record.
+            if self.block_before_acceptance.load(Ordering::SeqCst) {
+                self.blocked_before_acceptance
+                    .fetch_add(1, Ordering::SeqCst);
+                std::future::pending::<()>().await;
+            }
             let accepted = match self
                 .journal
                 .accept_action(action, origin, boot, action.issued_at_ms())
@@ -595,6 +602,8 @@ impl Fixture {
             unknown_cordon: AtomicBool::new(false),
             unconfirmed_cordon: AtomicBool::new(false),
             block_after_acceptance: AtomicBool::new(false),
+            block_before_acceptance: AtomicBool::new(false),
+            blocked_before_acceptance: AtomicUsize::new(0),
             block_first_acceptance: AtomicBool::new(false),
             reject_prepare,
             inspected: AtomicUsize::new(0),
@@ -1243,6 +1252,42 @@ async fn expired_never_dispatched_plan_cancels_and_retires_without_remote_effect
     fixture.journal.close().await.unwrap();
 }
 
+// Fault timing is relative to an observed protocol boundary. Freeze only this
+// current-thread model clock after setup; native/process SLO clocks are unchanged.
+async fn transport_deadline_at(
+    driver: &FleetReconciler,
+    reached: &AtomicUsize,
+) -> FleetReconcileReport {
+    tokio::time::pause();
+    assert_eq!(reached.load(Ordering::SeqCst), 0);
+    let deadline = Instant::now() + Duration::from_millis(150);
+    let mut pass = Box::pin(driver.reconcile_once(|| Ok(NOW + 100), deadline));
+    // The driver visits two endpoints sequentially, keeping one share for
+    // planning. Freeze I/O time and expire each original partition only after
+    // its selected fault boundary; one millisecond covers timer quantization.
+    for (boundary, shares) in [(1, 3), (2, 2)] {
+        let budget = deadline.saturating_duration_since(Instant::now()) / shares;
+        let wall_deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            assert!(futures_util::poll!(pass.as_mut()).is_pending());
+            if reached.load(Ordering::SeqCst) == boundary {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < wall_deadline,
+                "transport fault boundary not reached"
+            );
+            // Keep the model runnable while SQLite's original worker completes;
+            // the paused deadline cannot auto-advance ahead of the selected fault.
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(budget + Duration::from_millis(1)).await;
+    }
+    let report = pass.await.unwrap();
+    tokio::time::resume();
+    report
+}
+
 #[tokio::test]
 async fn transport_deadline_preserves_accepted_phase_permits_and_original_timeout() {
     let fixture = Fixture::new(true, false, false).await;
@@ -1253,14 +1298,7 @@ async fn transport_deadline_preserves_accepted_phase_permits_and_original_timeou
         .transport
         .block_after_acceptance
         .store(true, Ordering::SeqCst);
-    // This timeout controls a paused model endpoint, not a measured SLO.
-    let report = driver
-        .reconcile_once(
-            || Ok(NOW + 100),
-            Instant::now() + Duration::from_millis(150),
-        )
-        .await
-        .unwrap();
+    let report = transport_deadline_at(&driver, &fixture.transport.dispatched).await;
     assert_eq!(report.failures.len(), 2);
     for failure in &report.failures {
         let cellule_runtime::Error::Facility { name, source } = failure.error.as_ref() else {
@@ -1295,6 +1333,50 @@ async fn transport_deadline_preserves_accepted_phase_permits_and_original_timeou
             .unwrap(),
         Some(FleetActionAcceptance::Existing { result: None, .. })
     ));
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn transport_deadline_before_acceptance_retains_permits_without_fabricating_an_action() {
+    let fixture = Fixture::new(true, false, false).await;
+    let driver = fixture.driver(206);
+    fixture.step(&driver, 0).await;
+    fixture.stop().await;
+    fixture
+        .transport
+        .block_before_acceptance
+        .store(true, Ordering::SeqCst);
+    let report = transport_deadline_at(&driver, &fixture.transport.blocked_before_acceptance).await;
+    assert_eq!(report.failures.len(), 2);
+    for failure in &report.failures {
+        let cellule_runtime::Error::Facility { name, source } = failure.error.as_ref() else {
+            panic!("timeout source lost");
+        };
+        assert_eq!(*name, "fleet-controller-deadline");
+        assert!(source.is::<tokio::time::error::Elapsed>());
+    }
+    let retained = fixture.journal.load_snapshot(scope()).await.unwrap();
+    assert_eq!(retained.head().attempts().len(), 2);
+    assert_eq!(retained.head().reserved_restore_bytes(), 8192);
+    for attempt in retained.head().attempts() {
+        assert_eq!(attempt.phase(), AttemptPhase::Preparing);
+        assert!(
+            fixture
+                .journal
+                .load_movement_action(
+                    scope(),
+                    attempt.spec().id,
+                    MovementAction::Prepare,
+                    attempt.spec().destination_node,
+                    attempt.spec().destination,
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(fixture.transport.dispatched.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.transport.released.load(Ordering::SeqCst), 0);
     fixture.journal.close().await.unwrap();
 }
 

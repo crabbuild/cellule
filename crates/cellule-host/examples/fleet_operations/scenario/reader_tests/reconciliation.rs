@@ -63,6 +63,70 @@ async fn periodic_reconciliation_fences_lost_acceptance_without_reopening_or_shu
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn periodic_reconciliation_fences_lost_acceptance_after_local_lease_fencing() {
+    let fixture = ReaderFixture::new().await;
+    let (captured, resume) = fixture.journal.pause_next_enrollment_reply(false, true);
+    let manager = fixture.manager.clone();
+    let target = fixture.target.clone();
+    let opening = tokio::spawn(async move { manager.activate(target, session(0)).await });
+    captured.await.unwrap();
+    let original = fixture.rows().await[0].clone();
+    resume.send(()).unwrap();
+    assert!(opening.await.unwrap().is_err());
+    fixture.leases.fence();
+    assert!(matches!(
+        fixture.leases.receiver_guard().check(),
+        Err(Error::Fenced)
+    ));
+    // Observe original local progress directly: native inventory/read admission
+    // must remain fenced. No new hint, lease renewal, removal or shutdown may
+    // supply the periodic producer's nonexecution proof.
+    let repaired = tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            if fixture
+                .manager
+                .enrollment_completion(fixture.target.cell_id())
+                .await
+                .unwrap()
+                .is_none()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let exclusion = fixture.rows().await[0].clone();
+    let inventory = fixture
+        .manager
+        .fleet_reader_enrollments_page(None, 128, clock().unwrap());
+    let activation = fixture
+        .manager
+        .activate(fixture.target.clone(), session(0))
+        .await;
+    let before = fixture.node.stats();
+    let shutdown = fixture.node.shutdown().await;
+    fixture.handle.drain().await.unwrap();
+    fixture.source.shutdown().await.unwrap();
+    fixture.journal.close().await.unwrap();
+    assert!(
+        repaired.is_ok(),
+        "fenced producer did not reconcile its original request"
+    );
+    shutdown.unwrap();
+    assert_eq!(exclusion.spec(), original.spec());
+    assert_eq!(exclusion.accepted_at_ms(), original.accepted_at_ms());
+    assert_eq!(exclusion.status(), EnrollmentStatus::Refused);
+    assert!(exclusion.established_evidence().is_none());
+    assert!(matches!(inventory, Err(Error::Fenced)));
+    assert!(activation.is_err());
+    assert_eq!(before.worker_jobs(), 0);
+    assert_eq!(before.local_disk_reserved_bytes(), 0);
+    assert_eq!(fixture.node.stats().retained_bytes(), 0);
+    assert_eq!(fixture.source.stats().retained_bytes(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn periodic_reconciliation_republishes_original_opening_and_preserves_its_error() {
     let fixture = ReaderFixture::new().await;
     let (captured, resume) = fixture.journal.pause_next_enrollment_reply(true, true);

@@ -74,7 +74,9 @@ impl ReadReplicaManager {
                 enrollment.reconciliation_cells(&self.runtime, active.views.keys().copied())?
             }
             None => {
-                let memory = self.runtime.try_reserve_node_bytes(
+                // This index is metadata, including startup and fenced cleanup.
+                // It grants no native admission or authority to renew a lease.
+                let memory = self.runtime.try_reserve_node_metadata_bytes(
                     active.views.len() * std::mem::size_of::<CellId>() + 4096,
                 )?;
                 (active.views.keys().copied().collect::<Vec<_>>(), memory)

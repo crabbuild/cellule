@@ -263,6 +263,13 @@ adapter does not infer these facts from an empty directory or a bootstrap flag.
 See the [implementation evidence](../../../../docs/fleet-operations-progress.md)
 for exact source fingerprints and remaining work.
 
+The synthetic controller deadline cases use Tokio's test clock after fixture
+setup to inject timeout at an observed endpoint boundary. They separately prove
+retained permits before acceptance and after durable acceptance without a
+result. The 150 ms pass budget and original Elapsed sources remain required.
+These cases measure protocol behavior; native/process latency qualification
+uses its real clocks and committed profiles.
+
 ## Managed reader producer evidence
 
 The example's test target also exercises `install_fleet_reader_enrollment` with
@@ -273,7 +280,10 @@ independent journal reconstruction and startup binding requirements. A typed
 counter query checks the exact reader receipt. The installed periodic loop
 also repairs original lost replies and cancelled removals without another hint
 or shutdown, retains a still-owned opening, and retries temporary inventory
-credit refusal. These local fixtures do not
+credit refusal. A fenced-node case confirms that the original never-started
+request can receive its nonexecution exclusion while new activation and native
+inventory remain fenced. A public host case drives reconciliation before lease
+installation and confirms healthy startup and joined shutdown. These fixtures do not
 establish complete observer coverage or replacement redundancy for the movement
 commands.
 

@@ -66,7 +66,10 @@ failure.
 
 The existing five-second reconciliation loop scans the sorted union of installed
 views and retained enrollment requests, with at most 64 attempts per batch. It
-charges the bounded temporary index to the runtime ledger. A missing view is
+charges the bounded temporary index to the runtime metadata ledger. The loop
+may scan before lease installation and after local fencing; this charge grants
+no native admission or lease authority. New openings and native inventory reads
+retain their live-lease checks. A missing view is
 reconciled only after acquiring the original activation lane; a still-owned
 opening cannot be mistaken for nonexecution. Selected open views replay their
 original Established evidence before refresh. Fenced views left by cancelled

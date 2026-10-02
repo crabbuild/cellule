@@ -24,7 +24,7 @@ ed25519-dalek.workspace = true
 object_store.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 
 [[example]]
 name = "fleet_operations"
