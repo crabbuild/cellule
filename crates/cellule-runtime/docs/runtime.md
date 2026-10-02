@@ -325,6 +325,7 @@ The actor never reruns a handler after SQLite may have started it. `Resolve` rea
 **Bounded upload concurrency**
 
 - Root preparation also overlaps independent content-addressed uploads. The LTX body and index, changed and initial directory nodes, and root metadata use bounded concurrency under the runtime's shared I/O permits.
+- When foreground compaction clears the segment-debt bound, its successor append retains the original authority predecessor. One fenced CAS selects the final root after all dependencies upload; the unchanged intermediate root stays private. Compaction cascades and quiet-period publication keep their existing bounds.
 - Initial directory construction retains at most eight encoded nodes awaiting upload.
 - The proposal remains private until every dependency upload completes, so authority cannot observe a partial root.
 
