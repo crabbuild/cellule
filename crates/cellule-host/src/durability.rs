@@ -12,7 +12,7 @@ pub enum NodeDurabilityRotation {
     Started,
     /// Shutdown is waiting for pending publications to settle.
     Pending,
-    /// A rotation step failed and this rotation is being abandoned.
+    /// A rotation preflight or step failed.
     Failed,
     /// The replacement generation is installed and serving.
     Completed,
@@ -34,6 +34,15 @@ pub trait NodeDurabilityProvider: Send + Sync + 'static {
         required_follower_bytes: u64,
         live_node_limit: usize,
     ) -> Pin<Box<dyn Future<Output = FacilityResult<Option<NodeDurabilityConfig>>> + Send>>;
+
+    /// Reports whether provider-owned enrollment state requires epoch rotation.
+    ///
+    /// An error defers the decision to a later supervisor tick; it does not
+    /// stop the current object-durable publication path.
+    fn rotation_required(
+        self: Arc<Self>,
+        live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>>;
 
     /// Reports one rotation event to the provider; the default ignores it.
     fn rotation_event(&self, _event: NodeDurabilityRotation) {}
@@ -155,7 +164,18 @@ where
         )));
     }
     if !durability.needs_rotation(configuration.max_issued_frames) {
-        return Ok(());
+        match provider
+            .clone()
+            .rotation_required(configuration.live_node_limit)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(_) => {
+                provider.rotation_event(NodeDurabilityRotation::Failed);
+                return Ok(());
+            }
+        }
     }
     provider.rotation_event(NodeDurabilityRotation::Started);
     loop {
