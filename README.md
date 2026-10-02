@@ -308,6 +308,7 @@ and durability mechanics; provider and process qualification have separate
 | Embed Cellule in a serving service | [Framework integration](docs/framework.md) |
 | Understand Cells and integration options visually | [Cellule at a glance](docs/at-a-glance.md) |
 | Find the right crate or test | [Workspace reference](docs/reference.md) |
+| Run reference applications and explore the cookbook plan | [Runnable cookbook](cookbook/README.md) and [application catalog](docs/cookbook.md) |
 | Evaluate current support and gaps | [Roadmap](docs/roadmap.md) |
 | Qualify and publish a matched crate set | [Release guide](docs/releasing.md) |
 

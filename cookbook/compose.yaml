@@ -1,0 +1,39 @@
+name: cellule-cookbook
+
+services:
+  rustfs:
+    image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
+    environment:
+      RUSTFS_ACCESS_KEY: cellule-cookbook
+      RUSTFS_SECRET_KEY: cellule-cookbook-local-only
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOG_DIRECTORY: /data/logs
+    ports: ["127.0.0.1:${CELLULE_COOKBOOK_STORAGE_PORT:-19000}:9000"]
+    volumes: [objects:/data]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:9000/health/ready]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: "no"
+
+  bucket-init:
+    image: amazon/aws-cli:2.27.41@sha256:bc6b7bba44ce38f9604ede49c584824af919047ea03fbcc7c7610671fdef95d8
+    environment:
+      AWS_ACCESS_KEY_ID: cellule-cookbook
+      AWS_SECRET_ACCESS_KEY: cellule-cookbook-local-only
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket cellule-cookbook 2>/dev/null ||
+        aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket cellule-cookbook
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  objects:

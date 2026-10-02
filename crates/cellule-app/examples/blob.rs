@@ -159,8 +159,10 @@ async fn upload_and_read_attachment(blob: &BlobNamespace<Attachments>) -> Exampl
         return Err(Error::Control("attachment upload did not begin").into());
     }
 
-    let part = blob
-        .mutate(
+    // Staging and preparation retain exact evidence before the Cell command
+    // is dispatched. Part bytes alone do not publish the attachment.
+    let prepared_part = blob
+        .prepare_mutation(
             identity(68, now_ms),
             BlobMutation::PutPart {
                 key: key.clone(),
@@ -170,6 +172,8 @@ async fn upload_and_read_attachment(blob: &BlobNamespace<Attachments>) -> Exampl
             },
         )
         .await?;
+    let _part_evidence = prepared_part.evidence().clone();
+    let part = prepared_part.execute().await?;
     if !matches!(part.output, BlobMutationOutcome::PartStored { .. }) {
         return Err(Error::Control("attachment part was not stored").into());
     }
