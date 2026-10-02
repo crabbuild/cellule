@@ -279,6 +279,7 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `NodeDirectory::prepare_log_enrollment` / `prepare_log_enrollment_attempt` / `commit_log_enrollment` | Present opaque follower selection and CAS bridge. | Revalidate exact boots before acceptance; journal all selected members Pending before dispatch, retain the original attempt, and reconcile that same scope. `fence_log_enrollment` proves only its original-token refusal; absence cannot settle unknown work. Managed host producer and journal retirement remain required. |
 | `CellNode::apply_fleet_action(action, now_ms)` | Present; returns a retained `FleetActionCompletion`. | Movement actions use this path. Check `committed`, retain unknown outcomes, and obtain fresh serving evidence. Maintenance integration remains required. |
 | `CellNode::inspect_fleet_action(request)` | Present; returns `FleetInspectionObservation`. | Use a fresh nonce, exact head/registry and endpoint, and exclusive capture deadline. Authenticate and validate the full request plus original capture interval; recheck head/registry when committing dependent decisions. Inspection starts no acquisition or cleanup effect; the shared lane can settle prior completed work. |
+| `CellNode::fleet_snapshot(request)` | Present request-bound native page capture; aggregate observation remains incomplete. | Pin the full head/registry, physical boot, nonce, category, original continuation, limit and deadline. Authorize before and after capture through the same finite action bank. Retain original page charges and errors; authenticate and combine every required producer/native page with fresh authority and replacement-policy evidence. Unbound is never empty coverage. |
 | `FleetActionJournal` | Present in host `fleet/journal.rs`. | Implement acceptance, result publication, original-action lookup, and acquisition/recovery basis and evidence recording/lookup with the specified atomic and durable semantics. |
 | `FleetCellProvider::cell_inputs(spec)` | Present in host `fleet/cells.rs`. | Resolve metadata and canonical local inputs without performing an effect. |
 | `FleetCellProvider::recovery_inputs(spec)` | Present in host `fleet/cells.rs`. | Supply existing canonical failed-session proof and manifest access. Ordinary recovery establishes fencing and tail sealing independently. |
@@ -287,7 +288,7 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `FleetJournal` and `FleetEnrollmentJournal` | Present transaction contracts in host `fleet/controller.rs` and `fleet/enrollment.rs`. | Implement both with the action journal in one durable transaction domain. Persist retained rows and operations, exact registry versions, scheduling policy, and history. |
 | Example `SqliteJournal` | Present in host `examples/fleet_operations/journal/`; implements all three journal contracts. | Reuse for local reference execution. Independent SQLite clients and reconstruction have focused evidence; complete observer coverage and process/provider qualification remain required. |
 | `FleetReconciler`, `FleetObserver`, and `FleetTransport` | Present settled-movement driver and adapter contracts under host `fleet/reconciler/`. | Wire real observation and management adapters. Existing evidence uses SQLite and simulated transport effects; it does not establish complete W5 or three-node restoration. |
-| `CellNode::fleet_snapshot` and node finalization actions | Proposed aggregate/maintenance surfaces. | Compose complete role inventory and implement W6–W7 barriers through the existing drain lane. |
+| Complete aggregate observation and node finalization actions | Remaining aggregate/maintenance surfaces. | Compose complete role inventory and implement W6–W7 barriers through the existing drain lane. |
 
 The current local action API receives supplied time. Its action envelope holds
 the deadline, and the transport owns its waiter timeout. A proposed facade's
@@ -300,7 +301,7 @@ FleetReconciler::reconcile_once(clock, deadline) -> FleetReconcileReport
   // clock: application callback returning Result<i64> in the node clock domain.
   // Read directly at each boundary; reject regression. Deadline is monotonic.
 
-CellNode::fleet_snapshot(cursor, limit) -> NodeFleetPage
+CellNode::fleet_snapshot(FleetSnapshotRequest) -> retained FleetNodeSnapshot
 CellNode::apply_fleet_action(action, now_ms) -> retained FleetActionCompletion
 
 FleetJournal:

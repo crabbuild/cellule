@@ -7,6 +7,57 @@ use cellule_runtime::fleet::operations::{FleetAction, FleetScope};
 use cellule_runtime::identity::NodeId;
 
 impl CellNode {
+    /// Captures one original native page through the shared finite fleet lane.
+    /// Authenticate the caller first. Both journal checks use the exact original
+    /// head/registry and endpoint intent. A lost/canceled waiter retains the
+    /// original native read and join; no acquisition or cleanup effect starts.
+    /// Missing owners are explicit Unbound coverage, never proof of empty roles.
+    pub async fn fleet_snapshot(
+        &self,
+        request: crate::fleet::FleetSnapshotRequest,
+    ) -> Result<Arc<crate::fleet::FleetNodeSnapshot>, Arc<Error>> {
+        if !self.is_management_ready() {
+            return Err(Arc::new(Error::CellDraining));
+        }
+        let managed_startup = {
+            let startup = self
+                .fleet_startup
+                .lock()
+                .map_err(|_| Arc::new(Error::Control("CellNode fleet startup lock poisoned")))?;
+            startup.as_ref().is_some_and(|s| {
+                s.confirmed
+                    && s.intent.scope() == request.expected().head().scope()
+                    && s.intent.node() == request.node()
+                    && s.intent.session() == request.session()
+            })
+        };
+        let owners = crate::fleet::snapshot::SnapshotOwners {
+            state: Arc::clone(&self.state),
+            managed_startup,
+            readers: self
+                .try_owned_component::<crate::read_replicas::ReadReplicaManager>("read-replicas")
+                .map_err(Arc::new)?,
+            followers: self
+                .try_owned_component::<cellule_runtime::follower::FollowerStore>(
+                    FOLLOWER_STORE_COMPONENT,
+                )
+                .map_err(Arc::new)?,
+            supervisor: self
+                .try_owned_component::<DurabilitySupervisor>(NODE_DURABILITY_SUPERVISOR_COMPONENT)
+                .map_err(Arc::new)?,
+            producer: self
+                .try_owned_component::<crate::durability::enrollment::FleetFollowerEnrollment>(
+                    NODE_DURABILITY_PROVIDER_COMPONENT,
+                )
+                .map_err(Arc::new)?,
+        };
+        let executor = self
+            .try_owned_component::<FleetActionExecutor>(FLEET_ACTION_COMPONENT)
+            .map_err(Arc::new)?
+            .ok_or_else(|| Arc::new(Error::Control("fleet action executor is not installed")))?;
+        executor.snapshot(request, owners).await
+    }
+
     /// Installs journal-bound follower production in the existing durability
     /// supervisor. Applications supply read-only signed preparation, authenticated
     /// transports/authority and one shared atomic fleet journal. Install before

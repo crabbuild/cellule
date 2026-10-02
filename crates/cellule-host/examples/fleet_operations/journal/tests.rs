@@ -1879,6 +1879,75 @@ async fn fresh_inspection_authorization_checks_current_head_and_boot_without_wri
 }
 
 #[tokio::test]
+async fn native_snapshot_authorization_rechecks_full_barrier_and_exact_boot_without_writes() {
+    let fixture = Fixture::new().await;
+    let client = fixture.client().await;
+    let before = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let request = FleetSnapshotRequest::new(
+        before.clone(),
+        Digest::from_bytes([63; 32]),
+        endpoint(2).node,
+        endpoint(2).session,
+        FleetSnapshotSubject::Cells(None),
+        128,
+        0,
+        5_000,
+    )
+    .unwrap();
+    client.authorize_snapshot(&request, 1).await.unwrap();
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    assert!(client.authorize_snapshot(&request, 5_000).await.is_err());
+    fixture
+        .journal
+        .rebind_active_intent(&intent(2), SessionId::from_bytes([64; 16]), 2)
+        .await
+        .unwrap();
+    assert!(client.authorize_snapshot(&request, 2).await.is_err());
+    let changed = client.load_snapshot(scope()).await.unwrap();
+    assert_eq!(changed.head(), before.head());
+    let old_boot = FleetSnapshotRequest::new(
+        changed.clone(),
+        Digest::from_bytes([65; 32]),
+        request.node(),
+        request.session(),
+        FleetSnapshotSubject::Host,
+        1,
+        0,
+        5_000,
+    )
+    .unwrap();
+    assert!(client.authorize_snapshot(&old_boot, 2).await.is_err());
+    let fresh = FleetSnapshotRequest::new(
+        changed,
+        Digest::from_bytes([66; 32]),
+        endpoint(2).node,
+        SessionId::from_bytes([64; 16]),
+        FleetSnapshotSubject::Host,
+        1,
+        0,
+        5_000,
+    )
+    .unwrap();
+    client.authorize_snapshot(&fresh, 2).await.unwrap();
+    fixture
+        .journal
+        .claim_controller(
+            scope(),
+            before.head().revision(),
+            before.head().controller().unwrap().claimant,
+            2,
+        )
+        .await
+        .unwrap();
+    assert!(client.authorize_snapshot(&fresh, 2).await.is_err());
+    client.close().await.unwrap();
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn complete_roster_traverses_multiple_pages_and_retains_every_status() {
     let fixture = Fixture::new().await;
     for n in 4..=132 {

@@ -96,6 +96,8 @@ impl ReaderEnrollmentJobs {
 /// The page retains one MiB from the shared node byte ledger. It is advisory:
 /// current authority, replacement policy and durable settlement remain required.
 pub struct ReaderEnrollmentInventoryPage {
+    scope: FleetScope,
+    node: NodeId,
     session: SessionId,
     mode: NodeMode,
     observed_at_ms: i64,
@@ -107,6 +109,16 @@ pub struct ReaderEnrollmentInventoryPage {
     _memory: NodeByteReservation,
 }
 impl ReaderEnrollmentInventoryPage {
+    /// Returns the producer's original installed journal scope.
+    #[must_use]
+    pub const fn scope(&self) -> FleetScope {
+        self.scope
+    }
+    /// Returns the producer's original receiving physical node.
+    #[must_use]
+    pub const fn node(&self) -> NodeId {
+        self.node
+    }
     /// Returns the exact manager boot session.
     #[must_use]
     pub const fn session(&self) -> SessionId {
@@ -321,6 +333,8 @@ impl ReaderEnrollment {
                 })
         });
         Ok(ReaderEnrollmentInventoryPage {
+            scope: self.scope,
+            node: self.node,
             session: manager.session,
             mode,
             observed_at_ms: now_ms,

@@ -107,6 +107,7 @@ mod node {
     pub mod fleet_actions;
     pub mod fleet_maintenance;
     pub mod fleet_receivers;
+    pub mod fleet_snapshots;
     pub mod inventory;
     pub mod lifecycle;
     pub mod movement;

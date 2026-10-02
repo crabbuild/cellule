@@ -4,6 +4,70 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 request bound native page checkpoint
+
+`CellNode::fleet_snapshot` captures one original native category through the
+existing two-job fleet action bank. Requests pin the full head/registry,
+physical boot, nonce, subject, original native continuation, limit and exclusive
+deadline. The journal checks current full versions and endpoint intent in one
+transaction before and after capture. Retries preserve the original request and
+interval; changed revisions fail instead of restamping a page. Applications
+still own authenticated transport and its encoding.
+
+Actor, managed reader, reader producer, inbound follower, managed follower
+producer and supervisor pages retain their original native owners, allocation
+tokens and error references. Missing owners return explicit Unbound coverage.
+The envelope reports actual lifecycle before/after capture, shared mode and
+local log identity. A strict runtime binding read preserves poisoned-lock
+failure. Reader producer pages now expose their original journal scope and
+physical node; persisted formats remain unchanged.
+
+Dropped waiters leave accepted native reads and blocking jobs retained until
+join. Effects, inspections and page requests share the original two-job and
+retained-byte bounds; shutdown joins their original tasks. Tests hold actual
+pre/post authorization calls, cancel waiters, race a registry update after
+native capture, reject a foreign boot, inspect the real actor and unchanged
+Cell authority, and require all retained credit to return after shutdown.
+The independent SQLite client case checks read authorization, deadline,
+registry/boot changes and controller-head revision without publishing effects.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Parent | `bb08c902e574b8ec40e4580a2a783806abca10e2`. |
+| Rust/Cargo manifest | 628 sources/manifests/all lockfiles; SHA256 `9c41f0ee52ae80ddb5929e6158ed6e625377d236d1e7c768c6ec14554554fea6`. |
+| Environment | Rust/Cargo 1.97.0; all features, locked dependencies, `CARGO_INCREMENTAL=0`; target `$HOME/Workspace/crabbuild-target/cellule-f9383af7-fleet-operations`. |
+| Complete host library / public node | 29 / 88 passed; none filtered or ignored. |
+| Selected independent SQLite snapshot authorization | One passed; 90 filtered; none ignored. The complete example suite was not rerun for this checkpoint. |
+| Distinct scoped cases | 118 passed, including eight new cases; preliminary repetitions are not added. |
+| Clippy | Host all-target Clippy passed with warnings denied. |
+| API documentation | Host/runtime all-feature API documentation passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1,172 Markdown links, 28 SQL/peer assertions and 567 validator links passed; document gates were repeated after adding this record. |
+
+Original logs and source manifest are `/tmp/cellule-native-snapshot-*`.
+Intermediate compilation caught test comparisons against a non-PartialEq
+error, the endpoint test expected the wrong error wrapper, and Clippy caught
+an oversized shared job enum. Final tests preserve exact wrapped fencing;
+boxing the immutable request fixes the enum without suppressing the lint.
+
+Complete authenticated aggregate observation, current remote authority,
+replacement policy, stable traversal and W6–W7 finalization remain unfinished.
+The reference observer still reports incomplete coverage; this native page
+path cannot enable complete balancing or maintenance on its own.
+
+### Previous checkpoint terminal CI
+
+CI on parent `bb08c90` is terminal: workspace, MSRV, contracts, smoke, both
+capacity campaigns, website, fuzz, fast/negative TLC and object-only routing
+passed. Broad TLC and simulator were skipped. The leased routing
+[job 110747490689](https://github.com/crabbuild/cellule/actions/runs/36978501812/job/110747490689)
+failed the unchanged performance gate for `leased/local_command/c1`, after
+all eight functional executions passed. Cause remains unestablished. Original
+run metadata and logs are `/tmp/cellule-fleet-bb08c90-compose-run.json` and
+`/tmp/cellule-fleet-bb08c90-leased-routing.log`. Uploaded artifact
+`cell-routing-leased-36978501812-1` has ID 11215841243 and SHA256
+`8a542e5db183e14399216e00b41222daa66efdc192cd99c307d4661c68a09821`.
+These prior results do not qualify the new checkpoint or complete the plan.
+
 ## October 2 2026 retained supervisor observation checkpoint
 
 `CellNode::fleet_durability_supervisor` captures the existing supervisor owner

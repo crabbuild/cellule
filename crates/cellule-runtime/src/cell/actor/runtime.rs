@@ -318,11 +318,19 @@ impl CellRuntime {
     /// Returns the currently installed node-log durability binding.
     #[must_use]
     pub fn node_durability(&self) -> Option<(ApplicationId, Arc<NodeDurability>)> {
+        self.try_node_durability().ok().flatten()
+    }
+
+    /// Reads the original local binding, preserving a failed lock as an error.
+    /// Absence supplies no directory authority or supervisor-completion proof.
+    pub fn try_node_durability(
+        &self,
+    ) -> crate::Result<Option<(ApplicationId, Arc<NodeDurability>)>> {
         self.inner
             .node_durability
             .read()
-            .ok()
-            .and_then(|slot| slot.clone())
+            .map(|slot| slot.clone())
+            .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))
     }
 
     /// Replaces the expected node-log binding after an epoch close. The identity

@@ -272,6 +272,38 @@ The observation codecs use new record kinds 17 and 18. Existing effect and
 result encodings remain unchanged. Deploy readers before these producers;
 decoding a record does not authenticate its origin or prove a complete roster.
 
+## Request bound native fleet pages
+
+`CellNode::fleet_snapshot` captures one native category through the same two-job
+bank as effects and inspection. `FleetSnapshotRequest` pins the complete journal
+head/registry, physical node and boot, nonce, category, native continuation,
+limit, issue time and exclusive deadline. The interval is at most 30 seconds
+and ends within the original controller lease. Applications authenticate callers.
+
+`FleetActionJournal::authorize_snapshot` must compare the full current barrier
+and endpoint intent in one transaction, before and after the native read. The
+reference SQLite journal implements that transaction. Changed revisions or
+boots fail; retries cannot restamp the original request or interval. Waiter
+cancellation leaves accepted capture owned until its original join, including
+blocking follower inventory reads. Shutdown joins that work.
+
+| Subject | Original native source |
+| --- | --- |
+| Host | Lifecycle, installed owner bindings, mode and local node-log identity. |
+| Cells | Generation-bound live and transitioning actor inventory. |
+| Readers / ReaderEnrollments | Managed native views and original producer requests/jobs. |
+| FollowerLanes / FollowerEnrollments | Persisted inbound lanes and original managed leader enrollment progress. |
+| DurabilitySupervisor | Retained task lifecycle, original failures and bounded rotation bank. |
+
+The response retains each native page's allocation token and original errors.
+Drop it to release its page charge. `FleetNodeSnapshot::validate` checks the
+full request, capture interval and available native scope/boot identities.
+Missing owners return `Unbound`; missing or failed capture supplies no role
+coverage. Local bindings, counts and log identity remain advisory. Complete
+observation still requires stable traversal, durable roster confirmation,
+current remote authority and replacement policy. This in-process API defines
+no persisted or wire format; applications own authenticated transport encoding.
+
 ## Caller driven fleet reconciliation
 
 ### Reader producer inventory

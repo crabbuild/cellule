@@ -3,7 +3,7 @@
 use super::*;
 use cellule_host::fleet::{
     FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture, FleetCellInputs,
-    FleetCellProvider, FleetRecoveryInputs,
+    FleetCellProvider, FleetJournalSnapshot, FleetRecoveryInputs, FleetSnapshotRequest,
 };
 use cellule_runtime::cell::actor::{CellHandle, CellInventoryEntry};
 use cellule_runtime::cell::catalog::{CatalogEntry, CellCatalog};
@@ -40,6 +40,7 @@ struct JournalState {
     bases: HashMap<Digest, AcquisitionBasis>,
     recovery_bases: HashMap<Digest, RecoveryBasis>,
     recovery_evidence: HashMap<Digest, RecoveryEvidence>,
+    intent: NodeIntent,
 }
 
 pub(super) struct Journal {
@@ -60,9 +61,39 @@ pub(super) struct Journal {
     pub(super) block_inspections: AtomicBool,
     pub(super) inspection_entered: tokio::sync::Notify,
     pub(super) inspection_resume: tokio::sync::Semaphore,
+    pub(super) snapshot_calls: AtomicUsize,
+    pub(super) pause_snapshot_post: AtomicBool,
+    pub(super) snapshot_post_entered: tokio::sync::Notify,
+    pub(super) snapshot_post_resume: tokio::sync::Semaphore,
 }
 
 impl Journal {
+    pub(super) fn snapshot_request(
+        &self,
+        subject: cellule_host::fleet::FleetSnapshotSubject,
+        nonce: u8,
+    ) -> FleetSnapshotRequest {
+        let state = self.state.lock().unwrap();
+        let expected = FleetJournalSnapshot::new(state.head.clone(), state.registry).unwrap();
+        let now = clock();
+        let deadline = (now + 3_000).min(state.head.controller().unwrap().expires_at_ms);
+        FleetSnapshotRequest::new(
+            expected,
+            Digest::from_bytes([nonce; 32]),
+            state.intent.node(),
+            state.intent.session(),
+            subject,
+            128,
+            now,
+            deadline,
+        )
+        .unwrap()
+    }
+    pub(super) fn advance_snapshot_registry(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.registry = state.registry.advance(state.registry.revision()).unwrap();
+    }
+
     fn new() -> Self {
         Self {
             state: Mutex::new(JournalState {
@@ -72,6 +103,12 @@ impl Journal {
                 bases: HashMap::new(),
                 recovery_bases: HashMap::new(),
                 recovery_evidence: HashMap::new(),
+                intent: NodeIntent::initial(
+                    scope(),
+                    NodeId::from_bytes([201; 16]),
+                    SessionId::from_bytes([201; 16]),
+                )
+                .unwrap(),
             }),
             accepts: AtomicUsize::new(0),
             publications: AtomicUsize::new(0),
@@ -89,6 +126,10 @@ impl Journal {
             block_inspections: AtomicBool::new(false),
             inspection_entered: tokio::sync::Notify::new(),
             inspection_resume: tokio::sync::Semaphore::new(0),
+            snapshot_calls: AtomicUsize::new(0),
+            pause_snapshot_post: AtomicBool::new(false),
+            snapshot_post_entered: tokio::sync::Notify::new(),
+            snapshot_post_resume: tokio::sync::Semaphore::new(0),
         }
     }
 
@@ -219,6 +260,28 @@ impl Journal {
 }
 
 impl FleetActionJournal for Journal {
+    fn authorize_snapshot<'a>(
+        &'a self,
+        request: &'a FleetSnapshotRequest,
+        now_ms: i64,
+    ) -> FleetAdapterFuture<'a, ()> {
+        Box::pin(async move {
+            let call = self.snapshot_calls.fetch_add(1, Ordering::SeqCst);
+            if self.block_inspections.load(Ordering::SeqCst) {
+                self.inspection_entered.notify_one();
+                self.inspection_resume.acquire().await.unwrap().forget();
+            }
+            if call == 1 && self.pause_snapshot_post.load(Ordering::SeqCst) {
+                self.snapshot_post_entered.notify_one();
+                self.snapshot_post_resume.acquire().await.unwrap().forget();
+            }
+            let state = self.state.lock().unwrap();
+            let snapshot = FleetJournalSnapshot::new(state.head.clone(), state.registry)?;
+            request.authorize_against(&snapshot, &state.intent, now_ms)?;
+            Ok(())
+        })
+    }
+
     fn authorize_inspection<'a>(
         &'a self,
         request: &'a FleetInspectionRequest,

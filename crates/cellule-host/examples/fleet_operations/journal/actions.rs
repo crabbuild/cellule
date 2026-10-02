@@ -164,6 +164,21 @@ impl Db<'_> {
 }
 
 impl FleetActionJournal for SqliteJournal {
+    fn authorize_snapshot<'a>(
+        &'a self,
+        request: &'a FleetSnapshotRequest,
+        now_ms: i64,
+    ) -> FleetAdapterFuture<'a, ()> {
+        let request = request.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(request.expected().head().scope())?;
+            let snapshot = db.snapshot()?;
+            let intent = db.required_intent(request.node())?;
+            request.authorize_against(&snapshot, &intent, now_ms)?;
+            Ok(())
+        }))
+    }
+
     fn authorize_inspection<'a>(
         &'a self,
         request: &'a FleetInspectionRequest,

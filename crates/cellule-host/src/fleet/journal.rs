@@ -34,6 +34,15 @@ pub enum FleetActionAcceptance {
 /// execution inputs with `validate_replay`, not only the stable action key.
 /// Applications authenticate the caller before invoking the node.
 pub trait FleetActionJournal: Send + Sync + 'static {
+    /// Checks a native page request against its full current head/registry and
+    /// endpoint intent in one transaction using `request.authorize_against`.
+    /// Applications authenticate the transport. This read can publish no effect.
+    fn authorize_snapshot<'a>(
+        &'a self,
+        request: &'a super::FleetSnapshotRequest,
+        now_ms: i64,
+    ) -> FleetAdapterFuture<'a, ()>;
+
     /// Checks a read-only inspection against the current head, registry version
     /// and endpoint intent in one transaction. Use `request.authorize_against`; never satisfy this
     /// with a cached acceptance or effect result. No effect or result is published.

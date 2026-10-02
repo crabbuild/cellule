@@ -10,6 +10,7 @@ use cellule_runtime::fleet::operations::{
 use cellule_runtime::identity::{Digest, NodeId, SessionId};
 use tokio::{sync::watch, task::JoinHandle};
 
+use super::snapshot::{FleetNodeSnapshot, FleetSnapshotRequest, SnapshotOwners};
 use super::{FleetActionAcceptance, FleetActionJournal, FleetCellProvider};
 
 /// Retained completion of one accepted canonical effect and journal write.
@@ -54,25 +55,47 @@ type Completion = Result<Arc<JobCompletion>, Arc<Error>>;
 enum JobCompletion {
     Effect(Arc<FleetActionCompletion>),
     Inspection(Arc<FleetInspectionObservation>),
+    Snapshot(Arc<FleetNodeSnapshot>),
 }
 
 #[derive(Clone)]
 enum JobRequest {
-    Effect { action: FleetAction, now_ms: i64 },
+    Effect {
+        action: FleetAction,
+        now_ms: i64,
+    },
     Inspection(FleetInspectionRequest),
+    Snapshot {
+        request: Box<FleetSnapshotRequest>,
+        owners: Arc<SnapshotOwners>,
+    },
 }
 
 impl JobRequest {
-    fn action(&self) -> &FleetAction {
+    fn scope(&self) -> FleetScope {
         match self {
-            Self::Effect { action, .. } => action,
-            Self::Inspection(request) => request.action(),
+            Self::Effect { action, .. } => action.scope(),
+            Self::Inspection(request) => request.action().scope(),
+            Self::Snapshot { request, .. } => request.expected().head().scope(),
+        }
+    }
+    fn validate_endpoint(&self, node: NodeId, session: SessionId) -> Result<(), OperationError> {
+        match self {
+            Self::Effect { action, .. } => action.validate_endpoint(node, session),
+            Self::Inspection(request) => request.action().validate_endpoint(node, session),
+            Self::Snapshot { request, .. }
+                if request.node() == node && request.session() == session =>
+            {
+                Ok(())
+            }
+            Self::Snapshot { .. } => Err(OperationError::Fenced),
         }
     }
     fn key(&self) -> Result<Digest, OperationError> {
         match self {
             Self::Effect { action, .. } => action.key(),
             Self::Inspection(request) => request.key(),
+            Self::Snapshot { request, .. } => request.key(),
         }
     }
     fn validate_replay(&self, other: &Self) -> Result<(), OperationError> {
@@ -81,6 +104,14 @@ impl JobRequest {
                 action.validate_replay(replay)
             }
             (Self::Inspection(original), Self::Inspection(replay)) if original == replay => Ok(()),
+            (
+                Self::Snapshot {
+                    request: original, ..
+                },
+                Self::Snapshot {
+                    request: replay, ..
+                },
+            ) if original == replay => Ok(()),
             _ => Err(OperationError::Conflict),
         }
     }
@@ -254,14 +285,32 @@ impl FleetActionExecutor {
         }
     }
 
+    pub(crate) async fn snapshot(
+        self: &Arc<Self>,
+        request: FleetSnapshotRequest,
+        owners: SnapshotOwners,
+    ) -> Result<Arc<FleetNodeSnapshot>, Arc<Error>> {
+        let completion = self
+            .submit(JobRequest::Snapshot {
+                request: Box::new(request),
+                owners: Arc::new(owners),
+            })
+            .await?;
+        match completion.as_ref() {
+            JobCompletion::Snapshot(snapshot) => Ok(Arc::clone(snapshot)),
+            _ => Err(Arc::new(Error::Control(
+                "fleet native snapshot completion kind mismatch",
+            ))),
+        }
+    }
+
     async fn submit(self: &Arc<Self>, request: JobRequest) -> Completion {
-        let action = request.action();
-        if action.scope() != self.scope {
+        if request.scope() != self.scope {
             return Err(Arc::new(Error::PeerAuthorization(
                 "fleet action scope mismatch",
             )));
         }
-        action
+        request
             .validate_endpoint(self.node, self.session)
             .map_err(operation)
             .map_err(Arc::new)?;
@@ -304,6 +353,10 @@ impl FleetActionExecutor {
                             .execute_inspection(request)
                             .await
                             .map(JobCompletion::Inspection),
+                        JobRequest::Snapshot { request, owners } => executor
+                            .execute_snapshot(*request, owners)
+                            .await
+                            .map(JobCompletion::Snapshot),
                     }
                     .map(Arc::new);
                     let _ = sender.send(Some(result));

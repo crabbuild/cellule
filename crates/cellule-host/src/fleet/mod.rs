@@ -15,6 +15,7 @@ mod maintenance;
 mod movement;
 mod reconciler;
 mod roster;
+pub(crate) mod snapshot;
 
 pub use actions::FleetActionCompletion;
 pub use cells::{FleetCellInputs, FleetCellProvider, FleetRecoveryInputs};
@@ -26,6 +27,10 @@ pub use reconciler::{
     FleetReconciler, FleetTransport,
 };
 pub use roster::{FleetRoster, FleetRosterBoot};
+pub use snapshot::{
+    FleetNodeSnapshot, FleetSnapshotBindings, FleetSnapshotNativePage, FleetSnapshotRequest,
+    FleetSnapshotSubject,
+};
 
 pub(crate) use actions::FleetActionExecutor;
 pub(crate) use actions::operation;
