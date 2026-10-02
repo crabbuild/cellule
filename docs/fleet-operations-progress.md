@@ -4,6 +4,75 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 reader continuation coherence checkpoint
+
+Managed reader continuation now fingerprints all native reader observations,
+including entries outside the returned page. The fingerprint binds the exact
+manager/session, sorted receipt positions and incarnations, canonical lifetime
+counts, reader admission closure, snapshot attachment, manager closure and node
+admission. Each reader is captured once and that same observation is copied if
+selected for the page. A changed node admission during capture rejects the page.
+The original activation lane, 10,000-view bound, 128-row page limit and one-MiB
+native reservation remain in use; there is no new task, provider call or cache.
+
+Previously the continuation depended only on the manager's topology UUID and
+session. A retained peer can close, detach or refresh shared native state outside
+that manager lane. The new public regression first failed on the old code:
+continuation still succeeded after both peer closure and detachment outside the
+first page. It now rejects those mixed scans. Two further cases observe native
+query start/completion and an exact-root refresh beyond the returned page. They
+check successful fresh traversal, SQL value and position, retained peer handles
+and empty native resource ledgers after shutdown. The existing inventory case
+also requires restart after cordon.
+
+Fingerprints describe intervals, not an atomic whole-node state. The native query
+case deliberately verifies that an open lifetime count can return to its old
+value after completion, restoring the fingerprint. Matching hashes cannot turn
+an open reader into joined. The irreversible closed/detached/zero predicate,
+current authority, durable enrollment, replacement policy and complete host
+facility joins remain separate requirements.
+
+### Scoped verification
+
+| Evidence | Result |
+| --- | --- |
+| Lifetime CAS unit / runtime reader scope | 1 / 14 passed; 509 / 186 filtered; one documented RustFS case ignored. |
+| Complete host library / public node / fleet example | 29 / 92 / 105 passed; none filtered or ignored. |
+| Complete application integration | 37 passed; none filtered; 16 documented manual cases ignored. |
+| Distinct scoped cases | 278 passed; three new continuation cases. Selected diagnostics are excluded. |
+| Host/runtime all-target/all-feature Clippy and API docs | Passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1173 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+
+All final native commands ran in the isolated snapshot with all features and
+locked dependencies. The active and isolated complete 635-path Rust/Cargo/lock
+sets and every byte were checked before and after each command. Manifest SHA256:
+`3e46afe3bca79ffc8b45a4d00ef04e691a21f25f4bc11d00f1ed1f1552b58300`.
+The original failing regression is `/tmp/cellule-reader-pagination-before.log`;
+it was a scoped workstation run. Final logs, source comparisons and evidence are
+`/tmp/cellule-reader-pagination-final-*`,
+`/tmp/cellule-reader-pagination-source.sha256`,
+`/tmp/cellule-reader-pagination-verify.py` and
+`/tmp/cellule-reader-pagination-evidence/`.
+
+### Previous-head CI failure retained
+
+Head `9f7d3c6ee86850d6df79de476293a3a1198d92a0` passed workspace/MSRV,
+website, decoder fuzz and fast/negative TLC. Its capacity and Compose campaigns
+were still in progress at inspection. The
+[qualification contract job](https://github.com/crabbuild/cellule/actions/runs/36999783770/job/110814598431)
+failed: 36 application cases passed, one failed and 16 documented manual cases
+were ignored. `publication_hints_reach_readers_beyond_the_activation_concurrency`
+timed out at publication 3 after 2.000884718 seconds, receiving 14 of 19 healthy
+hints with five missing sessions, no held peer and one intentionally pending
+transport. The workspace pass and isolated passes do not establish its cause.
+
+The original failed-job log is
+`/tmp/cellule-fleet-9f7d3c6-contract-failed.log`; SHA256:
+`38a9f7767a428bd6bd780ce320196822abe6cf9f9c31ff081861c146b7c61670`.
+The failure remains open. No bound, profile or expected evidence was weakened.
+Fresh CI for the continuation change and complete W1–W10 work, including role
+settlement/finalization and publication-hint diagnosis, remain required.
+
 ## October 2 2026 native reader lifetime checkpoint
 
 `CellReadReplica::lifecycle_observation()` reads the original admission CAS word

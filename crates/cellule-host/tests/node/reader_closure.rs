@@ -606,3 +606,260 @@ async fn reader_lifetime_observation_keeps_cancelled_native_queries_visible_afte
     assert_eq!(resources.file_descriptors(), 0);
     assert_eq!(resources.local_disk_reserved_bytes(), 0);
 }
+
+#[tokio::test]
+async fn reader_inventory_continuation_rejects_peer_closure_outside_the_returned_page() {
+    let fixture = fixture().await;
+    let mut peers = Vec::new();
+    for peer in &fixture.peers {
+        peers.push((peer.receipt().await.cell, peer));
+    }
+    peers.sort_by_key(|(cell, _)| *cell.as_bytes());
+    let (cell, peer) = peers.last().unwrap();
+    let page = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let cursor = page.next().unwrap();
+    let original_topology = page.topology();
+    assert_ne!(page.entries()[0].receipt().cell, *cell);
+    drop(page);
+    peer.close();
+    let closed_rejected = fixture
+        .manager
+        .fleet_readers_page(Some(cursor), 1, super::inventory::clock())
+        .await
+        .is_err();
+    let closed = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let closed_topology = closed.topology();
+    let cursor = closed.next().unwrap();
+    drop(closed);
+    let attached = peer.lifecycle_observation().await;
+    peer.close_and_join().await;
+    let detached_rejected = fixture
+        .manager
+        .fleet_readers_page(Some(cursor), 1, super::inventory::clock())
+        .await
+        .is_err();
+    let joined = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let joined_topology = joined.topology();
+    let cursor = joined.next().unwrap();
+    drop(joined);
+    let tail = fixture
+        .manager
+        .fleet_readers_page(Some(cursor), 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let total = tail.total_views();
+    let observation = tail.entries()[0];
+    let terminal = tail.next().is_none();
+    drop(tail);
+    fixture.node.shutdown().await.unwrap();
+    for handle in fixture.handles {
+        handle.drain().await.unwrap();
+    }
+    fixture.source.shutdown().await.unwrap();
+    assert!(closed_rejected && detached_rejected);
+    assert_ne!(original_topology, closed_topology);
+    assert_ne!(closed_topology, joined_topology);
+    assert!(attached.admission_closed() && attached.snapshot_attached());
+    assert!(!attached.locally_joined());
+    assert!(observation.locally_joined() && terminal);
+    assert_eq!(total, 2);
+    let stats = fixture.node.stats();
+    assert_eq!(stats.retained_bytes(), 0);
+    assert_eq!(stats.resident_bytes(), 0);
+    assert_eq!(stats.worker_jobs(), 0);
+    assert_eq!(stats.file_descriptors(), 0);
+    assert_eq!(stats.local_disk_reserved_bytes(), 0);
+}
+
+#[tokio::test]
+async fn reader_inventory_continuation_tracks_native_work_outside_the_returned_page() {
+    let fixture = fixture().await;
+    let mut peers = Vec::new();
+    for peer in &fixture.peers {
+        peers.push((peer.receipt().await.cell, peer.clone()));
+    }
+    peers.sort_by_key(|(cell, _)| *cell.as_bytes());
+    let (_, peer) = peers.last().unwrap();
+    let page = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let original = page.topology();
+    let original_cursor = page.next().unwrap();
+    drop(page);
+    let pause = Pause::new();
+    let token = pause.id;
+    let querying = peer.clone();
+    let query = tokio::spawn(async move { querying.query::<ReadCounter>(None, token).await });
+    pause.entered().await;
+    let start_rejected = fixture
+        .manager
+        .fleet_readers_page(Some(original_cursor), 1, super::inventory::clock())
+        .await
+        .is_err();
+    let busy = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let busy_topology = busy.topology();
+    let busy_cursor = busy.next().unwrap();
+    drop(busy);
+    let tail = fixture
+        .manager
+        .fleet_readers_page(Some(busy_cursor), 1, super::inventory::clock())
+        .await;
+    let busy_observation = tail.as_ref().ok().map(|page| page.entries()[0]);
+    drop(tail);
+    // Release the original native callback before assertions or query joining.
+    pause.release();
+    let result = query.await.unwrap();
+    let quiesced = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let observation = peer.lifecycle_observation().await;
+            if observation.retained_lifetimes() == 1 {
+                break observation;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let end_rejected = fixture
+        .manager
+        .fleet_readers_page(Some(busy_cursor), 1, super::inventory::clock())
+        .await
+        .is_err();
+    let idle = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let idle_topology = idle.topology();
+    drop(idle);
+    fixture.node.shutdown().await.unwrap();
+    for handle in fixture.handles {
+        handle.drain().await.unwrap();
+    }
+    fixture.source.shutdown().await.unwrap();
+    assert!(start_rejected && end_rejected);
+    assert_ne!(original, busy_topology);
+    assert_eq!(original, idle_topology); // Matching intervals do not prove atomicity.
+    assert_eq!(result.unwrap().output, 17);
+    let busy_observation = busy_observation.unwrap();
+    assert!(busy_observation.retained_lifetimes() > 1);
+    let idle_observation = quiesced.unwrap();
+    assert!(!idle_observation.admission_closed() && idle_observation.snapshot_attached());
+    assert_eq!(busy_observation.receipt(), idle_observation.receipt());
+    let stats = fixture.node.stats();
+    assert_eq!(stats.retained_bytes(), 0);
+    assert_eq!(stats.resident_bytes(), 0);
+    assert_eq!(stats.worker_jobs(), 0);
+    assert_eq!(stats.file_descriptors(), 0);
+    assert_eq!(stats.local_disk_reserved_bytes(), 0);
+}
+
+#[tokio::test]
+async fn reader_inventory_continuation_rejects_peer_refresh_outside_the_returned_page() {
+    let fixture = fixture().await;
+    let mut peers = Vec::new();
+    for (index, peer) in fixture.peers.iter().enumerate() {
+        peers.push((peer.receipt().await.cell, index));
+    }
+    peers.sort_by_key(|(cell, _)| *cell.as_bytes());
+    let (_, index) = *peers.last().unwrap();
+    let peer = &fixture.peers[index];
+    let page = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let original = page.topology();
+    let cursor = page.next().unwrap();
+    drop(page);
+    let before = peer.receipt().await;
+    let now = super::inventory::clock();
+    fixture.handles[index]
+        .execute(
+            cellule_runtime::MutationIdentity {
+                request_id: cellule_runtime::identity::RequestId::from_bytes([213; 16]),
+                issued_at_ms: now,
+                expires_at_ms: now + 60_000,
+            },
+            Digest::from_bytes([214; 32]),
+            now,
+            64,
+            64,
+            |tx| {
+                tx.execute("UPDATE counter SET value=19", [])?;
+                Ok(cellule_runtime::cell::executor::HandlerOutcome::Success(
+                    Vec::new(),
+                ))
+            },
+        )
+        .await
+        .unwrap();
+    let unpublished_here = fixture
+        .manager
+        .fleet_readers_page(Some(cursor), 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let still_original = unpublished_here.topology();
+    drop(unpublished_here);
+    let after = peer
+        .refresh(&fixture._root.path().join("external-refresh.sqlite"))
+        .await
+        .unwrap();
+    let refused = fixture
+        .manager
+        .fleet_readers_page(Some(cursor), 1, super::inventory::clock())
+        .await
+        .is_err();
+    let fresh = fixture
+        .manager
+        .fleet_readers_page(None, 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let fresh_topology = fresh.topology();
+    let fresh_cursor = fresh.next().unwrap();
+    drop(fresh);
+    let tail = fixture
+        .manager
+        .fleet_readers_page(Some(fresh_cursor), 1, super::inventory::clock())
+        .await
+        .unwrap();
+    let position = tail.entries()[0].receipt();
+    drop(tail);
+    let value = peer.query::<ReadCounter>(None, 0).await.unwrap().output;
+    fixture.node.shutdown().await.unwrap();
+    for handle in fixture.handles {
+        handle.drain().await.unwrap();
+    }
+    fixture.source.shutdown().await.unwrap();
+    assert!(refused);
+    assert_eq!(original, still_original);
+    assert_ne!(original, fresh_topology);
+    assert_eq!(before.cell, after.cell);
+    assert_eq!(before.incarnation, after.incarnation);
+    assert!(after.commit_sequence > before.commit_sequence);
+    assert_eq!(position, after);
+    assert_eq!(value, 19);
+    let stats = fixture.node.stats();
+    assert_eq!(stats.retained_bytes(), 0);
+    assert_eq!(stats.resident_bytes(), 0);
+    assert_eq!(stats.worker_jobs(), 0);
+    assert_eq!(stats.file_descriptors(), 0);
+    assert_eq!(stats.local_disk_reserved_bytes(), 0);
+}

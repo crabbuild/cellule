@@ -9,7 +9,7 @@ use cellule_runtime::node::NodeMode;
 const PAGE_BYTES: usize = 1 << 20;
 const MAX_PAGE_ENTRIES: usize = 128;
 
-/// Opaque continuation for one manager session and active-view topology.
+/// Opaque continuation for one manager session and captured native reader state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReaderInventoryCursor {
     topology: Digest,
@@ -60,7 +60,7 @@ impl ReaderInventoryPage {
     pub const fn session(&self) -> SessionId {
         self.session
     }
-    /// Returns the opaque manager and active-view topology identity.
+    /// Returns the fingerprint of all captured native reader states and admission.
     #[must_use]
     pub const fn topology(&self) -> Digest {
         self.topology
@@ -90,7 +90,7 @@ impl ReaderInventoryPage {
     pub fn entries(&self) -> &[ReadReplicaLifecycleObservation] {
         &self.entries
     }
-    /// Continues until activation, removal, replacement, or shutdown changes topology.
+    /// Continues only while the captured manager, admission and native states match.
     #[must_use]
     pub const fn next(&self) -> Option<ReaderInventoryCursor> {
         self.next
@@ -101,8 +101,12 @@ impl ReadReplicaManager {
     /// Observes managed reader obligations after the current activation completes.
     ///
     /// Each page retains one MiB from the existing runtime byte ledger. No remote
-    /// I/O is performed and no new scheduling task is created. A changed topology
-    /// requires restarting pagination. Receipts are advisory local positions:
+    /// I/O is performed and no new scheduling task is created. Every bounded manager
+    /// entry is hashed in place, including rows outside the returned page. A
+    /// changed position, lifetime, closure or admission requires restarting.
+    /// Matching fingerprints are interval evidence, not an atomic full scan;
+    /// open lifetime counts can change and return between captures. Receipts
+    /// remain advisory local positions:
     /// canonical lifetime guards retain accepted query/refresh work, including
     /// cancelled native jobs. Local joining fences every retained clone; remote
     /// authority, producer retirement, replacement policy and host facilities
@@ -124,33 +128,58 @@ impl ReadReplicaManager {
         if active.views.len() > MAX_READ_VIEWS {
             return Err(Error::Capacity("node read-view inventory bound"));
         }
-        let mut identity = [0; 32];
-        identity[..16].copy_from_slice(active.topology.as_bytes());
-        identity[16..].copy_from_slice(self.session.as_bytes());
-        let topology = Digest::from_bytes(identity);
+        let mode = self.runtime.node_admission().mode()?;
+        let closed = self.closed.is_cancelled();
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"cellule.reader-native-inventory.v1\0");
+        hash.update(self.session.as_bytes());
+        hash.update(active.topology.as_bytes());
+        hash.update(&[mode as u8, u8::from(closed)]);
+        hash.update(&(active.views.len() as u64).to_be_bytes());
         let mut cells = active.views.keys().copied().collect::<Vec<_>>();
         cells.sort_unstable_by_key(|cell| *cell.as_bytes());
         let start = match cursor {
             None => 0,
-            Some(cursor) if cursor.topology == topology => {
+            Some(cursor) => {
                 cells
                     .binary_search_by_key(cursor.after.as_bytes(), |cell| *cell.as_bytes())
                     .map_err(|_| Error::Node("reader inventory cursor key is absent"))?
                     + 1
             }
-            Some(_) => {
-                return Err(Error::Node(
-                    "reader inventory topology changed; restart scan",
-                ));
-            }
         };
         let end = start.saturating_add(limit).min(cells.len());
         let mut entries = Vec::with_capacity(end - start);
-        for cell in &cells[start..end] {
+        // Peer clones can close or refresh outside the manager activation lane.
+        // Hash their canonical state once per row, copying that same observation
+        // into the page. Never certify unreturned rows from manager UUID alone.
+        for (index, cell) in cells.iter().enumerate() {
             let reader = active.views.get(cell).ok_or(Error::Control(
                 "reader inventory view disappeared under activation lane",
             ))?;
-            entries.push(reader.lifecycle_observation().await);
+            let observation = reader.lifecycle_observation().await;
+            let receipt = observation.receipt();
+            hash.update(receipt.cell.as_bytes());
+            hash.update(receipt.incarnation.as_bytes());
+            hash.update(&receipt.commit_sequence.to_be_bytes());
+            hash.update(&[
+                u8::from(observation.admission_closed()),
+                u8::from(observation.snapshot_attached()),
+            ]);
+            hash.update(&(observation.retained_lifetimes() as u64).to_be_bytes());
+            if (start..end).contains(&index) {
+                entries.push(observation);
+            }
+        }
+        let topology = Digest::from_bytes(*hash.finalize().as_bytes());
+        if self.runtime.node_admission().mode()? != mode || self.closed.is_cancelled() != closed {
+            return Err(Error::Node(
+                "reader inventory admission changed; restart scan",
+            ));
+        }
+        if cursor.is_some_and(|cursor| cursor.topology != topology) {
+            return Err(Error::Node(
+                "reader inventory topology changed; restart scan",
+            ));
         }
         let next = if end < cells.len() {
             entries.last().map(|last| ReaderInventoryCursor {
@@ -163,9 +192,9 @@ impl ReadReplicaManager {
         Ok(ReaderInventoryPage {
             session: self.session,
             topology,
-            mode: self.runtime.node_admission().mode()?,
+            mode,
             observed_at_ms: now_ms,
-            closed: self.closed.is_cancelled(),
+            closed,
             total_views: cells.len(),
             entries,
             next,

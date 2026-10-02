@@ -143,8 +143,8 @@ the canonical closure and the application's checked enrollment evidence.
 ## Observe managed reader obligations
 
 `ReadReplicaManager::fleet_readers_page(cursor, limit, now_ms)` returns sorted
-snapshot positions, canonical lifetime observations and the total managed-view count. Choose 1 through 128
-entries. Each page retains one MiB from the node's existing native-byte ledger
+snapshot positions, canonical lifetime observations and the total managed-view
+count. Choose 1 through 128 entries. Each page retains one MiB from the node's existing native-byte ledger
 until dropped. The manager limits its collection to 10,000 views; ordinary
 memory and descriptor admission can refuse a view sooner.
 
@@ -166,6 +166,19 @@ async fn managed_reader_count(
     Ok(page.total_views())
 }
 ```
+
+The continuation fingerprint covers the exact manager/session, node admission,
+manager closure and every managed reader's receipt, lifetime count, admission
+closure and snapshot attachment. Each page hashes the complete bounded set in
+place, including rows outside that page; it copies at most the requested rows.
+Refresh or closure through a retained peer handle can invalidate continuation
+without changing the manager's view set. A changed scan must restart. Admission
+is checked again after capture; its change rejects the page.
+
+Matching fingerprints describe capture intervals. An open query can start and
+finish between captures, returning to the same count. They do not establish an
+atomic view or upgrade an open reader to joined. Closed, detached zero remains
+the canonical stable local-join condition.
 
 Each entry is a `cellule_runtime::client::ReadReplicaLifecycleObservation`.
 `receipt()` returns its last installed position. `admission_closed()` and

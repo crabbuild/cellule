@@ -239,12 +239,23 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
             .is_err()
     );
     assert_eq!(node.stats().retained_bytes(), before);
+    let before_cordon = manager.fleet_readers_page(None, 1, clock()).await.unwrap();
+    let cursor = before_cordon.next().unwrap();
+    let topology = before_cordon.topology();
+    drop(before_cordon);
     node.runtime().stop_acquiring().unwrap();
+    assert!(
+        manager
+            .fleet_readers_page(Some(cursor), 1, clock())
+            .await
+            .is_err()
+    );
     let cordoned = manager
         .fleet_readers_page(None, 128, clock())
         .await
         .unwrap();
     assert_eq!(cordoned.mode(), NodeMode::Cordoned);
+    assert_ne!(cordoned.topology(), topology);
     assert_eq!(cordoned.total_views(), 2);
     drop(cordoned);
     let removed_target = targets
