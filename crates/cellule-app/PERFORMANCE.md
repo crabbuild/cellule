@@ -32,6 +32,13 @@ Set `CELLULE_TEST_ENDPOINT`, `CELLULE_TEST_BUCKET`, and a unique
 correctness from provider, fleet, and production evidence. Local and Compose
 runs do not establish production capacity.
 
+The reference fleet's TCP transport bounds connection setup to 250 ms within
+its overall request deadline. A setup timeout is a known pre-dispatch failure;
+a deadline after connection remains an unknown outcome. This lets reader
+selection move past a killed node while preserving the full reply budget for
+connected peers. Reader-loss evidence still requires every load lane to make
+progress before, during, and after replacement, with receipt minima enforced.
+
 ## Dated evidence
 
 | Question | Reports |

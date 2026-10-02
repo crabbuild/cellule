@@ -34,7 +34,9 @@ pub(super) fn handle_activated(
     } = context;
     match result {
         Ok((interrupt, hydration)) => {
-            if node_lease.check().is_err() {
+            if node_lease.check().is_err()
+                || publisher.control().value().owner_fence() != admission.owner_fence
+            {
                 fence_admission(&admission);
                 let _ = reply.send(Err(Error::Fenced));
                 start_orphan_deactivate(
