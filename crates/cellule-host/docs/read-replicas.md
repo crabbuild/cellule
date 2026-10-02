@@ -17,6 +17,7 @@ flowchart LR
 | Installation | Manager starts after the node task group; dispatcher uses the same resolver. |
 | Recruitment | Locally owned Cells send scoped hints through an authorized peer client. |
 | Refresh | New view must prove its root and receipt before selection. |
+| Periodic repair | Scan installed views and retained producer requests; replay original results and joined nonexecution exclusions without another hint. |
 | Missing reader | Queries return a replica error; they do not trigger activation. |
 | Drain | Cancels activation, closes admission, detaches views, and joins accepted work before removing ownership. |
 
@@ -49,10 +50,10 @@ fn bind_reader_registry(
 | Boundary | Bound manager behavior |
 | --- | --- |
 | Pending | Verify source and receiver signed physical boots, read bounded exact-version intent pages, and accept the pinned root and both intent revisions atomically. Only New starts native opening. |
-| Ownership | Retain up to 32 finite activation jobs using the runtime byte ledger. Dropping the hint/prepared-activation waiter cannot cancel accepted opening or publication. |
+| Ownership | Retain up to 32 finite activation jobs using the runtime byte ledger. A returned activation joins its exact task and byte-token release. Dropping the hint/prepared-activation or join waiter cannot cancel accepted opening or publication. |
 | Established | Check the exact initial receipt and publish evidence binding the original request, source code/schema, owner endpoint and pinned root. A lost publication reply retains the same result for replay before refresh. |
 | Removal | Join canonical closure before Retired. Keep the fenced view, original request and event across cancellation or failed publication. `remove` and `shutdown` return errors and can be retried. |
-| Unknown acceptance | Preserve the original request. Removal reads its exact key; it never creates a fresh acceptance. Pending can retire after proving this owner never began opening; no row plus that local proof settles the local entry. Unobserved establishment remains blocked. |
+| Unknown acceptance | Preserve the original request. After its original activation releases the lane, periodic repair or removal atomically publishes the exact Refused exclusion for a never-started opening. Missing/Pending acceptance cannot authorize another opening. Unjoined native work remains blocked. |
 | Diagnostics | `enrollment_completion(cell)` returns the original source/request, acceptance, current event and independently retained native/publication errors. These are diagnostic facts, not current serving or replacement-policy proof. |
 
 Refresh, policy eviction, peer hints and shutdown share the existing manager
@@ -62,6 +63,16 @@ and charges three record envelopes per entry; ordinary native view admission
 still applies. A task failure cannot turn an unjoined native opening into
 retirement. Shutdown joins healthy siblings and preserves the original task
 failure.
+
+The existing five-second reconciliation loop scans the sorted union of installed
+views and retained enrollment requests, with at most 64 attempts per batch. It
+charges the bounded temporary index to the runtime ledger. A missing view is
+reconciled only after acquiring the original activation lane; a still-owned
+opening cannot be mistaken for nonexecution. Selected open views replay their
+original Established evidence before refresh. Fenced views left by cancelled
+removal resume canonical joining and the same Retired event before remote I/O.
+A failed result does not erase its original error or prevent other rows from
+progressing. Capacity refusal retains all responsibilities for a later tick.
 
 The journal retains failed-boot and Pending rows across restart. Reconstructing
 a manager does not erase or automatically settle them. Applications still own

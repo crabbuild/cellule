@@ -10,6 +10,7 @@ use cellule_runtime::{
 
 mod inventory;
 mod leases;
+mod reconciliation;
 
 struct ReaderFixture {
     root: tempfile::TempDir,

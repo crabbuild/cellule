@@ -34,6 +34,7 @@ pub use enrollment::{
     ReaderEnrollmentCompletion, ReaderEnrollmentInventoryCursor, ReaderEnrollmentInventoryPage,
     ReaderEnrollmentJobs,
 };
+mod reconciliation;
 mod recruitment;
 pub use inventory::{ReaderInventoryCursor, ReaderInventoryPage};
 pub use recruitment::ReadReplicaRecruiter;
@@ -507,82 +508,6 @@ impl ReadReplicaManager {
             owner.session,
         )
         .await
-    }
-
-    /// Refreshes admitted snapshots and evicts readers removed from placement.
-    ///
-    /// This loop does not discover new Cells; authenticated owner hints call
-    /// `activate`. Cancellation interrupts provider waits and bounded batches.
-    pub async fn run(&self, cancellation: CancellationToken) -> Result<()> {
-        let mut tick = tokio::time::interval(RECONCILE_INTERVAL);
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut cursor = 0_usize;
-        loop {
-            tokio::select! {
-                () = cancellation.cancelled() => return Ok(()),
-                () = self.closed.cancelled() => return Ok(()),
-                _ = tick.tick() => {}
-            }
-            if self.closed.is_cancelled() {
-                return Ok(());
-            }
-            let mut readers = self
-                .active
-                .read()
-                .await
-                .views
-                .keys()
-                .copied()
-                .collect::<Vec<_>>();
-            readers.sort_by_key(|cell| cell.as_bytes().to_owned());
-            let count = readers.len().min(RECONCILE_BATCH);
-            for _ in 0..count {
-                let index = cursor % readers.len();
-                let cell = readers[index];
-                // Advance before I/O so an unavailable Cell cannot starve the
-                // rest of the bounded batch after cancellation or timeout.
-                cursor = (index + 1) % readers.len();
-                tokio::select! {
-                    () = cancellation.cancelled() => return Ok(()),
-                    () = self.closed.cancelled() => return Ok(()),
-                    result = tokio::time::timeout(RECONCILE_DEADLINE, self.refresh_selected(cell)) => {
-                        match result {
-                            Ok(Ok(())) => {},
-                            Ok(Err(error)) => tracing::warn!(?cell, error = %error, "read replica refresh failed"),
-                            Err(_) => tracing::warn!(?cell, "read replica refresh deadline exceeded"),
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    async fn refresh_selected(&self, cell: CellId) -> Result<()> {
-        // Share activation's lane so an old view cannot evict a replacement
-        // installed concurrently for the same Cell after an epoch change.
-        let _activation = self.activation.lock().await;
-        self.ensure_open()?;
-        let current = self.active.read().await.views.get(&cell).cloned();
-        let Some(reader) = current else {
-            return Ok(());
-        };
-        if !self.still_selected(cell).await? {
-            self.remove_locked(cell).await?;
-            return Ok(());
-        }
-        let path = self.destination(cell).await?;
-        match reader.refresh(&path).await {
-            Ok(_) => Ok(()),
-            Err(Error::Fenced) => {
-                // Keep verified warm bytes after owner death. Queries still
-                // require a live owner; changed authority evicts the view.
-                if reader.readiness().await.is_err() {
-                    self.remove_locked(cell).await?;
-                }
-                Ok(())
-            }
-            Err(error) => Err(error),
-        }
     }
 
     fn ensure_open(&self) -> Result<()> {

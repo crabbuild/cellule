@@ -31,7 +31,7 @@ impl ReaderEnrollment {
         request: ActivationRequest,
     ) -> Result<Receipt> {
         self.reap().await?;
-        let mut response = {
+        let (mut response, retained_job) = {
             let mut jobs = self
                 .jobs
                 .lock()
@@ -57,25 +57,36 @@ impl ReaderEnrollment {
                 .map_err(Arc::new);
                 let _ = sender.send(Some(result));
             });
-            jobs.jobs.push(Arc::new(Mutex::new(ReaderJob {
+            let job = Arc::new(Mutex::new(ReaderJob {
                 task: Some(task),
                 failure: None,
                 response: response.clone(),
-            })));
-            response
+            }));
+            jobs.jobs.push(Arc::clone(&job));
+            (response, job)
         };
         loop {
-            if let Some(result) = response.borrow().clone() {
+            let completed = response.borrow().clone();
+            if let Some(result) = completed {
+                // Completion precedes the task's epilogue and byte-token drop.
+                // Join the exact retained task before returning usable credit;
+                // cancellation leaves its handle in the same producer bank.
+                retained_job.lock().await.join().await?;
                 return result.map_err(retained);
             }
-            response.changed().await.map_err(|source| Error::Facility {
-                name: "fleet-reader-completion",
-                source: Box::new(source),
-            })?;
+            if let Err(source) = response.changed().await {
+                // Prefer the original task failure to its downstream channel
+                // closure, even if a concurrent reaper removed the bank entry.
+                retained_job.lock().await.join().await?;
+                return Err(Error::Facility {
+                    name: "fleet-reader-completion",
+                    source: Box::new(source),
+                });
+            }
         }
     }
 
-    async fn reap(&self) -> Result<()> {
+    pub(in crate::read_replicas) async fn reap(&self) -> Result<()> {
         let jobs = self
             .jobs
             .lock()

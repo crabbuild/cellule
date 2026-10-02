@@ -4,6 +4,100 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 periodic reader producer repair checkpoint
+
+The canonical reader manager's existing five-second loop previously scanned
+only installed views. A lost acceptance before opening had no view and therefore
+received no periodic repair. Selected views also retained an unconfirmed opening
+result until another hint, and a cancelled removal could leave a fenced view
+whose refresh could never succeed.
+
+The same loop now scans the sorted union of managed views and retained producer
+requests. Its original 64-attempt batch and 30-second per-attempt deadline remain.
+The two original indices are bounded independently; their captured sizes are
+charged before copying, with the charge retained through the batch. Capacity
+refusal preserves responsibilities for a later tick. No additional scheduler,
+activation path, journal, configuration or wire format was introduced.
+
+Repair takes the original activation lane. A still-owned opening cannot be
+classified from a missing view. After that owner releases the lane, canonical
+retirement atomically excludes a never-started request or publishes the joined
+native refusal. An unjoined native failure remains blocked. Selected open views
+replay the original Established event before refresh. Already-fenced views resume
+the same closure and Retired publication before remote reads. Finished finite
+jobs are reaped from their existing bank; original failures remain observable.
+Activation also joins its exact task before returning, so its completion implies
+release of the finite-job byte token. A dropped join waiter leaves the same job
+owned; a failed task returns its original join error before the derived channel
+closure error.
+
+### Scoped verification
+
+The old loop fails the new lost-acceptance case after two real periodic ticks;
+its original Pending request never settles. The initial build selected zero
+cases with a short exact filter; that is excluded from evidence. The corrected
+fully qualified case ran and failed. Before/after source bytes and the complete
+636-path baseline set are retained with the original failing executable.
+
+Five focused cases now pass: lost acceptance, lost opening result, cancelled
+removal, a still-owned cancelled-waiter opening, and temporary inventory-credit
+refusal. The latter retains the request through a refused tick and repairs it
+when credit returns. Checked replay keeps the original spec, acceptance time,
+settlement event and error Arc. Readback and joined cleanup remain required.
+
+| Final isolated scope | Result |
+| --- | --- |
+| Complete host library / public node / fleet example | 29 / 92 / 110 passed; none filtered or ignored. |
+| Complete application integration | 37 passed; none filtered; 16 documented manual cases ignored. |
+| Runtime reader integration scope | 14 passed; 186 filtered; one documented RustFS case ignored. |
+| Distinct native cases | 282 passed; five new periodic repair cases. Focused repetitions are excluded. |
+| Host/runtime all-target/all-feature Clippy and API docs | Passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1173 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+| Linux ARM complete fleet example | 110 passed; none filtered or ignored; 82.35 seconds, with the documented descriptor headroom. |
+
+All final native commands used all features and locked dependencies. An earlier
+complete pass before tightening the activation task join is archived separately;
+its results cannot qualify the final source.
+
+The first two-CPU/four-GiB Linux run inherited a 1,024-descriptor soft limit and
+failed while creating a source Cell in the existing 128-reader long-partition
+case: 109 passed, one failed with OS error 24. A parent-production control also
+failed at that same source-bootstrap boundary, with SQLite CannotOpen. The
+unchanged parent executable passes its selected case when only the soft limit
+is raised to the existing 524,288 hard limit. The unchanged final executable
+then passes all 110 cases under that same headroom. Original failures are
+retained; the low-limit run remains rejected. No source, Cell count, memory
+ceiling, deadline, qualification profile or expected assertion changed.
+
+Both controlled runs check their entire source sets and executable hashes
+before/after. Linux used the pinned repository Rust image, Rust/Cargo 1.97.1,
+Debian 12 aarch64, default features, locked dependencies, two CPUs, four GiB and
+256 PIDs. Its final executable SHA256 is
+`46aadad9901d79c0e4476751da92b7d4085b30ce87ae64690b9d8d1aec3e751f`.
+The 636-path parent-production control uses its own manifest and frozen binary.
+Both containers were removed only after terminal results and evidence retention.
+
+All final native commands compare the active/isolated complete 637-path
+Rust/Cargo/lock set and every byte before and after execution. Source manifest:
+`14669eae88f753561e4873eaa40798fc5625f5eccaaaad0786f82303c23cf274`.
+Before/final logs, sources, comparison driver and executable hashes are retained
+under `/tmp/cellule-reader-reconciliation-evidence/` and the matching
+`/tmp/cellule-reader-reconciliation-final-*` files.
+
+### Remaining scope
+
+Parent `d5eebffe05b6d9514861d85f54d0d1f7c404e083` passed workspace/MSRV,
+qualification contracts and both capacity campaigns at inspection. Compose
+qualification and fresh CI for this change remain required. The historical x86
+publication-hint failure still has no established cause; this repair is not
+claimed to fix it.
+
+Local producer repair does not reconcile failed processes, certify replacement
+redundancy or supply current remote authority. Complete role observation,
+reader/follower evacuation, finalization without executor self-join and every
+remaining W1–W10 exit assertion remain required. SettleRoles and Finalize remain
+refused by the host executor.
+
 ## October 2 2026 canonical advertisement verification checkpoint
 
 Canonical advertisement decoding previously verified signatures and called the

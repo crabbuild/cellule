@@ -239,6 +239,27 @@ impl ReaderEnrollment {
     pub(super) fn unresolved_cells(&self) -> Result<Vec<CellId>> {
         Ok(self.records()?.keys().copied().collect())
     }
+
+    pub(in crate::read_replicas) fn reconciliation_cells(
+        &self,
+        runtime: &CellRuntime,
+        views: impl ExactSizeIterator<Item = CellId>,
+    ) -> Result<(Vec<CellId>, NodeByteReservation)> {
+        let records = self.records()?;
+        if views.len() > MAX_READ_VIEWS || records.len() > MAX_READ_VIEWS {
+            return Err(Error::Capacity("read reconciliation responsibility bound"));
+        }
+        // The caller holds its view-index read guard; this short record guard
+        // pins the other count through charge and copy. Allocate exact observed
+        // capacity, so a small node need not admit a maximum-size empty scan.
+        let count = views.len() + records.len();
+        let memory =
+            runtime.try_reserve_node_bytes(count * std::mem::size_of::<CellId>() + 4096)?;
+        let mut cells = Vec::with_capacity(count);
+        cells.extend(views);
+        cells.extend(records.keys().copied());
+        Ok((cells, memory))
+    }
 }
 
 fn data(record: &Record) -> Result<std::sync::MutexGuard<'_, Responsibility>> {

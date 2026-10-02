@@ -270,10 +270,28 @@ real admitted SQLite readers and this journal. It checks Pending before native
 opening, caller cancellation, lost acceptance/publication replies, joined
 retirement, cancelled removal, a native VFS stall across a host deadline,
 independent journal reconstruction and startup binding requirements. A typed
-counter query checks the exact reader receipt. These local fixtures do not
+counter query checks the exact reader receipt. The installed periodic loop
+also repairs original lost replies and cancelled removals without another hint
+or shutdown, retains a still-owned opening, and retries temporary inventory
+credit refusal. These local fixtures do not
 establish complete observer coverage or replacement redundancy for the movement
 commands.
 
 ```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked
+```
+
+The long-partition pagination case retains 128 source Cells and 128 native reader
+views in one process. Provision OS descriptor headroom for both collections.
+Colima's default 1,024 soft limit fails during source bootstrap in both the
+parent and current code. The controlled Linux run passed with the existing
+524,288 hard limit exposed as the soft limit, preserving two CPUs, four GiB,
+all 110 cases and their original assertions. In a dedicated verification
+container, inspect and raise the soft limit before invoking the target:
+
+```sh
+ulimit -Sn
+ulimit -Hn
+ulimit -Sn "$(ulimit -Hn)"
 cargo test -p cellule-host --example fleet_operations --all-features --locked
 ```
