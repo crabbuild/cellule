@@ -108,9 +108,9 @@ pub(super) async fn run(
                         &cellule_runtime::fleet::operations::DrainBlocker::IncompleteObservation,
                     )
                 {
-                    return Err(invalid(
-                        "count equilibrium did not remain settled with scheduling enabled",
-                    ));
+                    return Err(std::io::Error::other(format!(
+                        "count equilibrium did not remain settled with scheduling enabled: {stable:?}"
+                    )).into());
                 }
             }
             let settled = journal.load_snapshot(scope()).await?;

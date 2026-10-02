@@ -16,6 +16,7 @@ mod movement;
 mod reconciler;
 mod roster;
 pub(crate) mod snapshot;
+pub(crate) mod withdrawal;
 
 pub use actions::FleetActionCompletion;
 pub use cells::{FleetCellInputs, FleetCellProvider, FleetRecoveryInputs};

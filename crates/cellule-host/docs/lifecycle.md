@@ -46,6 +46,20 @@ host continues toward Stopped. The task keeps the shared lane guard, so queued
 shutdown or scale-down callers cannot overlap it or repeat an accepted callback.
 An idempotent stop still joins the original task epilogue before returning.
 
+For managed fleet boots, install `CellNode::install_fleet_boot_withdrawal`
+after boot confirmation and before `start()`. Supply the original authenticated
+directory version, Established boot record, and its enrollment journal. The
+same retained drain task withdraws that exact boot after facilities, runtime,
+and lease maintenance join. It checks the permanent canonical tombstone and
+confirms durable retirement before exposing Stopped. A missing advertisement,
+recovery-claim tombstone, failed facility, or ambiguous journal reply leaves the
+node Draining. Retry retains the original binding and retirement evidence;
+a late heartbeat can be reconciled only for the same signed boot identity.
+The directory's `is_withdrawn` query requires no retained log or recovery claim;
+the broader `is_retired` query only confirms a permanent fence.
+This binding proves boot closure. Fleet relocation and complete reader/follower
+settlement remain separate required barriers.
+
 A deadline keeps its existing phase timeout and ordinary task-abort policies.
 After a returned incomplete attempt, the next caller first joins that original
 attempt, then resumes the canonical sequence with its new deadline. The runtime
@@ -163,10 +177,11 @@ The offline unleased maintenance builder rejects this configuration.
 | Build | Validate the retained intent, hold new roles, and install its sticky Cordoned/Draining mode. Missing or ambiguous rows fail before build. |
 | Enroll boot | Journal Pending before canonical directory creation. Only New permits first execution; an Existing request requires canonical inspection and its exact original evidence. |
 | Confirm | Call `confirm_fleet_startup(journal, enrollment_key)` after Established publication and lease installation. `FleetEnrollmentJournal::load_boot` reads the exact established boot and current intent in one transaction. Missing, pending, retired or foreign evidence cannot open admission. |
+| Bind closure | Before readiness, call `install_fleet_boot_withdrawal(directory, original_version, established_record, journal)`. The binding is immutable and requires the exact confirmed boot. The native closing owner checks withdrawal and durable retirement before Stopped. |
 | Start | Install required facilities/task supervision and finish probes, then call `start()`. Confirmation alone keeps the hold. Start checks the owned components and opens Active admission, or enters `NodeState::Maintenance` under retained cordon/drain. |
 | Route requests | Serving probes use `is_ready()`. Authorized management uses `is_management_ready()`, which includes Maintenance. Fleet action/inspection endpoints remain available there; new roles stay closed. |
 | Refresh intent | Call `refresh_fleet_intent(journal, deadline)` from the supervised membership/lease loop before renewal. It rechecks the original Established boot and current physical intent atomically, then applies sticky cordon/drain to the shared gate. A failed or expired read grants no renewal authority. |
-| Close | Join accepted work and runtime shutdown before fencing/withdrawing the boot and retiring its registry obligation. A canonical permanent session tombstone can settle a lost withdrawal reply; absence or expiry cannot. |
+| Close | The bound native drain joins accepted work, runtime and lease maintenance before withdrawing the boot and retiring its registry obligation. Only checked ordinary withdrawal and its permanent session tombstone settle a lost reply; absence, expiry or a recovery claimant cannot. |
 
 Confirmation is a cancellable read. Concurrent confirmations cannot overwrite a
 newer checked intent with an older reply; a read that finishes after shutdown

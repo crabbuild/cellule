@@ -43,9 +43,13 @@ in the actual signed operational sample even if the Cordon RPC was lost. Failed
 intent reads prevent that heartbeat and guard renewal. Existing writer routing
 remains available until its own quiescence or terminal drain.
 
-The application owns each original boot advertisement until all runtimes join.
-Cleanup fences its guard, withdraws through the canonical directory, checks the
-permanent session tombstone, and retires the exact registry obligation. Replay
+The application retains each original boot advertisement and binds confirmed
+boots to native closing before readiness. That owner joins runtime and lease
+maintenance, withdraws through the canonical directory, checks the permanent
+session tombstone, and retires the exact registry obligation. The retained
+application cleanup also handles partial startup and fences its lease guard. Both
+paths require `is_withdrawn`: a tombstone retaining a log or recovery claimant
+cannot settle boot retirement. Replay
 can adopt an already committed withdrawal or retirement. A missing advertisement,
 lease expiry or unresolved Pending record alone cannot prove closure.
 
@@ -210,15 +214,23 @@ The host now owns each whole closing attempt after a shutdown waiter disappears.
 It retains the same lane through facility/runtime/lease cleanup and exposes local
 `drain_observation()` results with original failure history. Successful stop
 joins the original task; retrying an incomplete deadline resumes the same native
-resource owners. These local observations supply no relocation, redundancy or
-withdrawal authority and do not enable the still-refused fleet Finalize action.
+resource owners. Each confirmed example boot now installs its original directory
+version and SQLite enrollment row into that owner before readiness. Native
+shutdown checks canonical withdrawal and committed boot retirement before
+Stopped; a lost retirement reply retains Draining until an exact replay confirms
+the original evidence. Partial startup still uses the retained application's
+boot cleanup. These local observations supply no relocation or redundancy proof
+and do not enable the still-refused fleet Finalize action.
 Publish native rotation/reader proofs before starting terminal shutdown: weak
 native handles can disappear when an autonomous successful stop clears owners.
 
 Public startup cases cover missing/Pending/foreign records, lost acceptance and
 Established replies, a cordon racing accepted enrollment, a drained-mode reboot
 with management available, delayed stale confirmation, shutdown racing a read,
-original backend errors, and canonical boot withdrawal/retirement replay. They
+original backend errors, and canonical boot withdrawal/retirement replay. Native
+closing cases cover sole-waiter cancellation, an ambiguous committed retirement,
+a retirement deadline, a late signed heartbeat, missing canonical storage and
+failed role closure without invented retirement or Stopped. They
 use real local runtimes/directory/SQLite with explicit reply faults. They do not
 cover process crashes, a distributed journal or a complete role registry.
 

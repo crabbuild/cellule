@@ -4,6 +4,63 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 native boot withdrawal checkpoint
+
+Managed boots can now bind their original authenticated directory version,
+Established enrollment row and journal to the retained host drain before
+readiness. The reference example installs that binding after atomic startup
+confirmation. The original closing task joins facilities, runtime and lease
+maintenance, withdraws the exact boot, checks its canonical terminal state,
+and confirms durable retirement before exposing Stopped. Cancellation of the
+sole caller leaves the original closing task owned. A deadline or ambiguous
+committed retirement retains Draining and the same evidence for replay.
+
+Eight native example cases cover success/replay, caller cancellation, lost
+retirement replies, a retirement deadline, an actual later signed heartbeat,
+immutable boot binding, missing canonical storage and failed role closure.
+They use the exported host API and the real directory/SQLite journal. No
+runtime shutdown is repeated and no storage absence invents retirement.
+
+Review also found that canonical withdrawal could accept a stale-collected
+tombstone that still carried node-log authority when the caller's original
+token preceded recruitment. A new runtime regression reproduced that success
+before the fix and passed afterward. Withdrawal now refuses that retained log.
+`NodeDirectory::is_withdrawn` confirms a tombstone without log authority or a
+recovery claimant; `is_retired` continues to mean a permanent fence. Native
+closing and the reference application's partial-startup cleanup use the
+stronger check. Persisted and signed record formats are unchanged.
+
+The previous count-equilibrium failure remains unresolved; the scenario now
+retains its failed pass report. A passing replay is not a fix. Parent `238b816`
+CI completed successfully for workspace/MSRV, decoder fuzz and follower proof,
+but object-capacity repeat three failed: its skewed two-client window completed
+59 of 60 planned requests and found no fully served capacity point. That raw
+driver log and the provider artifact are retained with this checkpoint. These
+results concern the parent binary and do not qualify this new source.
+
+Evidence is retained under `/tmp/cellule-boot-withdrawal-238b816-evidence`.
+The final isolated run byte-checks all 648 Rust/Cargo/lock paths and complete
+path sets before and after each command. Manifest SHA256:
+`ced2be60817e744d551e84045adeebe9dca394579542d99b70f78e99c135d359`.
+
+| Final native scope | Result |
+| --- | --- |
+| Runtime library / public fleet, all features | 521 / 26 passed; three / one existing ignores. |
+| Host library / public node, all features | 29 / 106 passed. |
+| Fleet reference example, all features | 121 passed, including all eight new closing cases, overload, controller restart and count equilibrium. |
+| Workspace all targets/features, locked | Check and Clippy passed with lint warnings denied. |
+| Runtime/host API documentation and static gates | Passed with documentation warnings denied; format/diff, boundaries/layout, Rust fences, links and SQL/peer contracts passed. |
+
+These are 803 distinct passed cases and four existing ignores. Focused repeats
+are excluded. The count pass does not erase its earlier failure or establish
+its cause. No new process/provider, sustained-traffic or mixed-binary evidence
+is claimed for this source.
+
+Complete role/replacement and affected-writer relocation evidence, the terminal
+action's join and handoff, committed maintenance completion, the remaining
+examples and W9–W10 qualification are still required. `SettleRoles` and
+`Finalize` remain refused; boot closure alone cannot authorize them.
+
 ## October 2 2026 pressure selection checkpoint
 
 The unchanged overload scenario reproduced a competing local eviction. The

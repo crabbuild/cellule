@@ -9,6 +9,7 @@ struct Fixture {
     journal: Arc<SqliteJournal>,
     node: Arc<CellNode>,
     directory: NodeDirectory,
+    layout: CellStorageLayout,
     intent: NodeIntent,
     ad: NodeAdvertisement,
 }
@@ -37,7 +38,7 @@ async fn fixture() -> Fixture {
         [3; 16],
     );
     let directory = NodeDirectory::new(
-        layout,
+        layout.clone(),
         scope().fleet,
         Digest::from_bytes([31; 32]),
         node.application().registry().release_digest(),
@@ -48,6 +49,7 @@ async fn fixture() -> Fixture {
         journal,
         node,
         directory,
+        layout,
         intent,
         ad,
     }
@@ -1166,3 +1168,5 @@ async fn confirmed_boot_cannot_be_replaced_by_another_established_request() {
     );
     close(fixture).await;
 }
+
+mod withdrawal;

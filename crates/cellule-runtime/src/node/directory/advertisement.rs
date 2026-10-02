@@ -518,7 +518,18 @@ impl NodeDirectory {
             Ok(_) => Ok(()),
             Err(update_error) => match self.load_record_at(&path).await? {
                 None => Ok(()),
-                Some((NodeRecord::Tombstone(current), _)) if current.claimant.is_none() => Ok(()),
+                Some((NodeRecord::Tombstone(current), _)) if current.claimant.is_none() => {
+                    // Stale collection fences the boot but retains its log.
+                    // A token captured before recruitment must not turn that
+                    // unresolved authority into successful planned withdrawal.
+                    if current.log.is_some() {
+                        Err(Error::Node(
+                            "node log must be sealed before session withdrawal",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
                 Some((NodeRecord::Tombstone(_), _)) => Err(Error::Fenced),
                 Some((NodeRecord::Advertisement(current), _))
                     if *current == observed.advertisement =>

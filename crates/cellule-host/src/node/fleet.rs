@@ -7,6 +7,48 @@ use cellule_runtime::fleet::operations::{FleetAction, FleetScope};
 use cellule_runtime::identity::NodeId;
 
 impl CellNode {
+    /// Binds canonical directory withdrawal and durable boot retirement to the
+    /// existing host drain. Install after managed boot confirmation and before
+    /// readiness, using the original canonical version and journal record.
+    /// Facilities, runtime and lease maintenance join first. Stopped is exposed
+    /// only after checked withdrawal and confirmed journal retirement. A timeout
+    /// or missing reply retains the exact binding for the next drain attempt.
+    /// This proves boot closure, not relocation or reader/follower settlement.
+    pub fn install_fleet_boot_withdrawal(
+        &self,
+        directory: cellule_runtime::node::NodeDirectory,
+        observed: cellule_runtime::node::VersionedNodeAdvertisement,
+        original: cellule_runtime::fleet::operations::EnrollmentRecord,
+        journal: Arc<dyn FleetEnrollmentJournal>,
+    ) -> cellule_runtime::Result<()> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
+        if *state != NodeState::Starting {
+            return Err(Error::CellDraining);
+        }
+        let startup = self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?;
+        let startup = startup.as_ref().ok_or(Error::Control(
+            "CellNode boot withdrawal requires managed startup",
+        ))?;
+        if startup.boot.as_ref() != Some(&original)
+            || original.spec().scope != startup.intent.scope()
+            || original.spec().target.node != startup.intent.node()
+            || original.spec().target.session != self.session
+            || observed.advertisement().release() != self.application.registry().release_digest()
+        {
+            return Err(Error::Fenced);
+        }
+        let withdrawal = crate::fleet::withdrawal::FleetBootWithdrawal::new(
+            directory, observed, original, journal,
+        )?;
+        self.drain_owner.bind_boot_withdrawal(withdrawal)
+    }
+
     /// Captures one original native page through the shared finite fleet lane.
     /// Authenticate the caller first. Both journal checks use the exact original
     /// head/registry and endpoint intent. A lost/canceled waiter retains the

@@ -9,6 +9,7 @@ pub(super) struct DrainResources {
     facilities: Arc<Mutex<Vec<CellNodeFacility>>>,
     task_group: Arc<Mutex<Option<Arc<CellNodeTaskGroup>>>>,
     runtime_drain: tokio::sync::Mutex<RuntimeDrain>,
+    boot_withdrawal: Mutex<Option<Arc<crate::fleet::withdrawal::FleetBootWithdrawal>>>,
 }
 
 #[derive(Default)]
@@ -136,7 +137,7 @@ impl DrainResources {
         }
         let result = match first_error {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => self.withdraw_boot(deadline).await,
         };
         let result = if result.is_ok() {
             match self.facilities.lock() {
@@ -155,6 +156,26 @@ impl DrainResources {
             *state = NodeState::Stopped;
         }
         result
+    }
+
+    async fn withdraw_boot(&self, deadline: Option<Instant>) -> cellule_runtime::Result<()> {
+        let withdrawal = self
+            .boot_withdrawal
+            .lock()
+            .map_err(|_| Error::Control("CellNode boot withdrawal lock poisoned"))?
+            .clone();
+        let Some(withdrawal) = withdrawal else {
+            return Ok(());
+        };
+        match deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline.into(), withdrawal.withdraw())
+                .await
+                .map_err(|source| Error::Facility {
+                    name: "fleet-boot-withdrawal-deadline",
+                    source: Box::new(source),
+                })?,
+            None => withdrawal.withdraw().await,
+        }
     }
 
     async fn join_runtime_drain(&self) -> cellule_runtime::Result<()> {

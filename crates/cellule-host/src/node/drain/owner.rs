@@ -58,10 +58,27 @@ impl DrainOwner {
                 facilities,
                 task_group,
                 runtime_drain: tokio::sync::Mutex::new(RuntimeDrain::Idle),
+                boot_withdrawal: Mutex::new(None),
             }),
             bank: Mutex::new(DrainBank::default()),
             history: Arc::new(Mutex::new(DrainHistory::default())),
         }
+    }
+
+    pub(crate) fn bind_boot_withdrawal(
+        &self,
+        withdrawal: crate::fleet::withdrawal::FleetBootWithdrawal,
+    ) -> cellule_runtime::Result<()> {
+        let mut binding = self
+            .resources
+            .boot_withdrawal
+            .lock()
+            .map_err(|_| Error::Control("CellNode boot withdrawal lock poisoned"))?;
+        if binding.is_some() {
+            return Err(Error::Control("CellNode boot withdrawal already installed"));
+        }
+        *binding = Some(Arc::new(withdrawal));
+        Ok(())
     }
 
     pub(crate) async fn drain(

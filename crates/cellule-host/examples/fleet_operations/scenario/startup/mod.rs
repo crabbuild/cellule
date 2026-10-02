@@ -320,7 +320,11 @@ impl BootOwner {
         // A previous withdrawal can commit before its reply or journal result
         // is observed. The permanent exact-session tombstone closes that boot;
         // an absent live advertisement by itself never supplies closure.
-        if !self.directory.is_retired(self.spec.target.session).await? {
+        if !self
+            .directory
+            .is_withdrawn(self.spec.target.session)
+            .await?
+        {
             let now = clock()?;
             let observed = self
                 .directory
@@ -330,7 +334,11 @@ impl BootOwner {
             self.validate_successor(observed.advertisement())?;
             self.directory.withdraw_after_drain(&observed, now).await?;
         }
-        if !self.directory.is_retired(self.spec.target.session).await? {
+        if !self
+            .directory
+            .is_withdrawn(self.spec.target.session)
+            .await?
+        {
             return Err(invalid("example boot withdrawal lacks its tombstone"));
         }
         let mut hash = blake3::Hasher::new();

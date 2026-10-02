@@ -3,6 +3,47 @@
 use super::*;
 
 #[tokio::test]
+async fn stale_collection_with_an_unclosed_log_cannot_settle_drained_withdrawal() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let leader = SessionId::from_bytes([1; 16]);
+    let member = SessionId::from_bytes([2; 16]);
+    let original = directory
+        .create(advertisement_for(leader, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    directory
+        .create(advertisement_for(member, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    let enrolled = directory
+        .recruit_log(&original, 4, 1, 2, NOW_MS + 1)
+        .await
+        .unwrap();
+    directory.activate_log(&enrolled, NOW_MS + 2).await.unwrap();
+    let now = original.advertisement().expires_at_ms() + STALE_ADVERTISEMENT_RETENTION_MS;
+    assert_eq!(directory.collect_stale(now, 2).await.unwrap(), 2);
+    assert!(directory.is_retired(leader).await.unwrap());
+    assert!(!directory.is_withdrawn(leader).await.unwrap());
+    assert!(directory.log_epoch_referenced(leader, 4).await.unwrap());
+    // The original token precedes recruitment. Collection preserves the log
+    // in a permanent tombstone, but supplies no planned-close or coverage proof.
+    assert!(matches!(
+        directory.withdraw(&original, now).await,
+        Err(Error::Node(
+            "node log must be sealed before session withdrawal"
+        ))
+    ));
+    assert!(matches!(
+        directory.withdraw_after_drain(&original, now).await,
+        Err(Error::Node(
+            "node log must be sealed before session withdrawal"
+        ))
+    ));
+    assert!(directory.log_epoch_referenced(leader, 4).await.unwrap());
+}
+
+#[tokio::test]
 async fn node_log_enrollment_activation_and_coverage_are_authoritative() {
     let key = SigningKey::from_bytes(&[7; 32]);
     let directory = directory();
@@ -168,6 +209,7 @@ async fn clean_node_log_close_clears_authority_before_session_withdrawal() {
             .is_err()
     );
     directory.withdraw(&closed, NOW_MS + 5).await.unwrap();
+    assert!(directory.is_withdrawn(leader).await.unwrap());
     assert!(directory.load(leader, NOW_MS + 6).await.unwrap().is_none());
     assert!(!directory.log_epoch_referenced(leader, 4).await.unwrap());
 }

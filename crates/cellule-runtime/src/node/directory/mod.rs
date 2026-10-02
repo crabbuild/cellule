@@ -211,7 +211,9 @@ impl NodeDirectory {
     /// Reports whether an exact session has a permanent canonical tombstone.
     ///
     /// Missing or advertised sessions return false. This does not grant ownership
-    /// or permit reuse of the retired identity.
+    /// or permit reuse of the retired identity. A tombstone can retain a recovery
+    /// claim or unresolved node-log authority; this alone is not clean withdrawal
+    /// or fleet role-settlement evidence.
     pub async fn is_retired(&self, session: SessionId) -> Result<bool> {
         let path = self.layout.node_path(session.as_bytes());
         let Some((record, _)) = self.load_record_at(&path).await? else {
@@ -219,6 +221,20 @@ impl NodeDirectory {
         };
         validate_record_path(&self.layout, record.session(), &path)?;
         Ok(matches!(record, NodeRecord::Tombstone(_)))
+    }
+
+    /// Confirms an exact session's permanent withdrawal without retained log
+    /// authority or a recovery claimant. Missing or advertised sessions return
+    /// false. Callers still prove local shutdown and complete foreign roles;
+    /// this query cannot establish fleet maintenance completion by itself.
+    pub async fn is_withdrawn(&self, session: SessionId) -> Result<bool> {
+        let path = self.layout.node_path(session.as_bytes());
+        let Some((record, _)) = self.load_record_at(&path).await? else {
+            return Ok(false);
+        };
+        validate_record_path(&self.layout, record.session(), &path)?;
+        Ok(matches!(record, NodeRecord::Tombstone(current)
+            if current.claimant.is_none() && current.log.is_none()))
     }
 
     pub(super) fn validate(&self, advertisement: &NodeAdvertisement, now_ms: i64) -> Result<()> {

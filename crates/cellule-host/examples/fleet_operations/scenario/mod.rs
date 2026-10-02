@@ -356,6 +356,11 @@ async fn initialize(
         boots[boot_index].guard = Some(guard);
         node.confirm_fleet_startup(journal.as_ref(), boot.spec().key()?)
             .await?;
+        let observed = directory
+            .load(session(index), clock()?)
+            .await?
+            .ok_or_else(|| invalid("example original boot is absent"))?;
+        node.install_fleet_boot_withdrawal(directory.clone(), observed, boot, journal.clone())?;
         node.start()?;
     }
     let mut acknowledged = HashMap::new();

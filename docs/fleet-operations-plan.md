@@ -1450,8 +1450,12 @@ that task. Lost callers cannot drop an accepted callback or release the lane
 while closing work still runs. Local Running/Returned/Joined observations keep
 original results and first/latest failure diagnostics; phase deadlines resume
 through the same resource owners. This supplies the native closing owner needed
-for terminal action handoff. Complete role settlement, the original action's
-join before handoff, checked withdrawal and committed completion remain required.
+for terminal action handoff. Managed boots can bind their original authenticated
+directory version and Established registry row before readiness. The native
+closing task checks canonical withdrawal and committed boot retirement before
+Stopped, retaining its original evidence across a deadline or ambiguous reply.
+This is wired into the reference example. Complete role settlement, the original
+action's join before handoff, and committed operation completion remain required.
 
 Exit: maintenance with zero local writers but uncovered foreign follower
 tails remains blocked; live-owner rotation and dead-owner recovery both clear
