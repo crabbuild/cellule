@@ -27,7 +27,9 @@ use crate::node::log::NodeLogRotationBarrier;
 use crate::node::log_state::{NodeLogPhase, NodeLogStatus, NodeRecoveryClaim};
 use crate::{Error, Result};
 
-const MAX_NODE_BYTES: u64 = 64 * 1024;
+/// Canonical byte bound shared by signed advertisements and session tombstones.
+/// Collectors can use it to admit their bounded retained node observations.
+pub const MAX_NODE_BYTES: u64 = 64 * 1024;
 const MAX_ENDPOINT_BYTES: usize = 512;
 const MAX_FAILURE_DOMAIN_BYTES: usize = 253;
 const MAX_MODULES: usize = 128;

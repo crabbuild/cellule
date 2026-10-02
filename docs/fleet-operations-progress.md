@@ -4,6 +4,66 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 managed reader evacuation checkpoint
+
+`ReadReplicaManager::evacuate` checks one original Established reader against
+the current Evacuating operation. It traverses the durable roster, requires
+current managed boots and canonical policy selection outside the donor, and
+uses authenticated native status before closure and after original retirement.
+The final probe covers a refresh completed through a retained peer clone after
+the first probe. Capacity refusal preserves the open donor; changed policy,
+authority, boot or registry refuses completion evidence.
+
+Managed Draining reconciliation now preserves open views until explicit
+evacuation or terminal native shutdown. Canonical closure and retirement keep
+their original owners across cancelled waiters and lost replies. Roster pages,
+retained records, candidate observations and returned evidence use the existing
+runtime metadata ledger. Deadline clamping uses the actual operation clock;
+timeout sources remain available.
+
+Ten new cases use three real leased/enrolled nodes, signed peer dispatch, native
+SQLite readers and the durable reference journal. They cover no spare, nonzero
+replacement, cancellation, deadline, lost retirement reply, policy change,
+metadata refusal, replacement withdrawal before/after closure, and peer refresh
+racing the first probe. Each case joins shutdown, checks empty native resource
+ledgers, and confirms original boot withdrawal/retirement. Three roster unit
+cases cover retained credit, capacity refusal and ambiguous/obsolete boots.
+
+A repeat of the existing movement suite exposed a valid BusyExecution refusal
+after command acknowledgement. That fixture assumed acknowledgement implied
+idle transfer readiness. It now waits for two stable, unblocked native samples
+at the acknowledged prefix before dispatch. The production refusal contract and
+qualification thresholds are unchanged. The first evacuation run also caught
+reply-pause assertions that expected a receiver to survive waiter cancellation;
+the corrected cases verify its disappearance, retained unpublished retirement
+and exact replay. Both failure logs are retained.
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `7541774e8cc4b66d9b8dac2ef13abb6dbcce2aca` |
+| Frozen source | 655 Rust, Cargo manifest and Cargo lock paths, including nested qualification locks. |
+| Manifest SHA256 | `a67ee362cde52a8ab4eba3b7086b4f39ae572d505d1db7e51d0550ba62170c34` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Logs and source archive | `/tmp/cellule-reader-evacuation-evidence` |
+
+The manifest hashes sorted `SHA256  relative-path` lines with a final newline.
+The isolated source and current working tree are byte-compared against the
+complete manifest and path set. Documentation changes after freezing do not
+change those Rust/Cargo bytes.
+
+| Final-source command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --lib --test node --example fleet_operations --locked` | 32 library, 106 public node and 131 example tests passed; zero failures/ignores. The example includes overload, controller restart and real-time count equilibrium. |
+| `cargo clippy -p cellule-host --lib --test node --example fleet_operations --all-features --locked -- -D warnings` | Passed with warnings denied. |
+| `RUSTDOCFLAGS='-D warnings' cargo doc -p cellule-host -p cellule-runtime --all-features --no-deps --locked` | Passed with documentation warnings denied. |
+| `cargo test -p cellule-runtime --lib node:: --all-features --locked` | 106 passed; zero failures/ignores and 418 filtered out. |
+
+These are 375 distinct passing cases; focused repeats are excluded. This
+checkpoint proves a per-reader path, not complete fleet settlement. Affected
+writer relocation, foreign follower/replacement and failed-process evidence,
+complete observation barriers, terminal action handoff, `SettleRoles`/`Finalize`,
+maintenance/receiver-loss examples and W9–W10 qualification remain required.
+
 ## October 2 2026 native boot withdrawal checkpoint
 
 Managed boots can now bind their original authenticated directory version,

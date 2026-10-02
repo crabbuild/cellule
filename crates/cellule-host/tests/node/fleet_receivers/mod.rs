@@ -6,7 +6,7 @@ use cellule_host::fleet::{
     FleetActionCompletion, FleetActionJournal, FleetAdapterFuture, FleetCellInputs,
     FleetCellProvider, FleetRecoveryInputs,
 };
-use cellule_runtime::cell::actor::ReceiverState;
+use cellule_runtime::cell::actor::{CellInventoryEntry, ReceiverState};
 use cellule_runtime::cell::executor::{HandlerOutcome, MutationIdentity, Resolution};
 use cellule_runtime::control::{ControlState, Owner};
 use cellule_runtime::fleet::operations::*;
@@ -777,6 +777,38 @@ async fn admitted_movement_preserves_receipt_and_inspection_after_local_receipt_
         })
         .await
         .unwrap();
+    // Durable acknowledgement can precede the actor joining publication and
+    // refreshing demand. Idle movement requires settled native observations;
+    // otherwise BusyExecution is a valid, permanently retained action refusal.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let page = movement
+                .source
+                .node
+                .runtime()
+                .fleet_cells_page(None, 128)
+                .await
+                .unwrap();
+            if let Some(CellInventoryEntry::Owned(owner)) = page.entries().first()
+                && owner.target == movement.spec.target
+                && owner.generation == movement.spec.generation
+                && owner.incarnation == movement.spec.incarnation
+                && owner.stable_observations == 2
+                && owner.cost.is_some()
+                && owner.blockers.is_empty()
+                && owner.position.as_ref().is_some_and(|position| {
+                    position.epoch == movement.spec.source_epoch
+                        && position.root.commit_sequence >= acknowledged.commit_sequence()
+                })
+            {
+                break;
+            }
+            drop(page);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
     let released = movement.release().await;
     assert!(released.root.commit_sequence >= acknowledged.commit_sequence());
     assert_eq!(movement.source.node.stats().active_cells(), 0);

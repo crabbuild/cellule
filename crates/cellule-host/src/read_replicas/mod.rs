@@ -29,11 +29,13 @@ use uuid::Uuid;
 
 pub(crate) mod enrollment;
 mod inventory;
+mod maintenance;
 use enrollment::{ActivationRequest, ReaderEnrollment};
 pub use enrollment::{
     ReaderEnrollmentCompletion, ReaderEnrollmentInventoryCursor, ReaderEnrollmentInventoryPage,
     ReaderEnrollmentJobs,
 };
+pub use maintenance::{ReaderEvacuation, ReaderReplacement};
 mod reconciliation;
 mod recruitment;
 pub use inventory::{ReaderInventoryCursor, ReaderInventoryPage};

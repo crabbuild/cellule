@@ -110,6 +110,18 @@ impl ReadReplicaManager {
             // same join and journal event before attempting any remote refresh.
             return self.remove_locked(cell).await;
         }
+        if self.bound_enrollment()?.is_some()
+            && self.runtime.node_admission().mode()? == cellule_runtime::node::NodeMode::Draining
+        {
+            // Removing a managed view merely because cordon changed selection
+            // would bypass maintenance replacement policy. Preserve the original
+            // owner until explicit evacuation or terminal native shutdown. Repair
+            // its existing establishment reply without refreshing or opening it.
+            if let Some(enrollment) = self.bound_enrollment()? {
+                enrollment.established(cell).await?;
+            }
+            return Ok(());
+        }
         if !self.still_selected(cell).await? {
             return self.remove_locked(cell).await;
         }

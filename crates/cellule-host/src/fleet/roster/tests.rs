@@ -157,6 +157,7 @@ fn original_failed_boot_remains_required_after_intent_replacement() {
             .unwrap(),
         intents: vec![replaced, intent(2)],
         enrollments: vec![old.clone()],
+        _memory: Vec::new(),
     };
     assert_eq!(
         roster.required_boots(),
@@ -304,6 +305,7 @@ fn boot_coverage_requires_exact_established_roster_and_fresh_signed_samples() {
         .unwrap(),
         intents: vec![intent(1), intent(2)],
         enrollments: vec![record.clone()],
+        _memory: Vec::new(),
     };
     assert!(roster.covers_advertisements(&[signed(1)], 100).unwrap());
     assert!(!roster.covers_advertisements(&[], 100).unwrap());
@@ -340,6 +342,7 @@ fn unresolved_role_requires_both_original_boots_even_without_a_boot_row() {
             boot(1).establish(Digest::from_bytes([22; 32]), 2).unwrap(),
             record(3),
         ],
+        _memory: Vec::new(),
     };
     assert!(!roster.covers_advertisements(&[signed(1)], 100).unwrap());
     roster
@@ -359,4 +362,104 @@ fn unresolved_role_requires_both_original_boots_even_without_a_boot_row() {
             .unwrap()
     );
     assert_eq!(roster.required_boots()[0].session, endpoint(1).session);
+}
+
+#[test]
+fn selected_boot_requires_one_current_established_original_session() {
+    let established = boot(1).establish(Digest::from_bytes([22; 32]), 2).unwrap();
+    let mut roster = FleetRoster {
+        snapshot: FleetJournalSnapshot::new(FleetHead::new(scope(), 0).unwrap(), version())
+            .unwrap(),
+        intents: vec![intent(1)],
+        enrollments: vec![established.clone()],
+        _memory: Vec::new(),
+    };
+    let node = endpoint(1).node;
+    let session = endpoint(1).session;
+    assert_eq!(
+        roster.boot(node, session).unwrap().enrollment(),
+        &established
+    );
+    assert!(roster.boot(node, SessionId::from_bytes([9; 16])).is_err());
+    roster.enrollments.push(established.clone());
+    assert!(roster.boot(node, session).is_err());
+    roster.enrollments = vec![boot(1)];
+    assert!(roster.boot(node, session).is_err());
+    roster.enrollments = vec![established.retire(Digest::from_bytes([23; 32]), 3).unwrap()];
+    assert!(roster.boot(node, session).is_err());
+    roster.enrollments = vec![established];
+    roster.intents[0] = intent(1)
+        .rebind_active(SessionId::from_bytes([9; 16]), 2)
+        .unwrap();
+    assert!(roster.boot(node, session).is_err());
+}
+
+#[tokio::test]
+async fn native_roster_rows_hold_shared_credit_until_the_original_scan_drops() {
+    let runtime = CellRuntime::new(
+        cellule_runtime::cell::worker::SqlWorkerPool::new(1, 2).unwrap(),
+        8 << 20,
+        SessionId::from_bytes([90; 16]),
+    )
+    .unwrap();
+    let baseline = runtime.stats().retained_bytes();
+    let mut scan = Scan::new(version());
+    scan.runtime = Some(&runtime);
+    scan.intents(
+        IntentPage::new(version(), None, vec![intent(1)], None).unwrap(),
+        None,
+    )
+    .unwrap();
+    let after_intent = runtime.stats().retained_bytes();
+    assert!(after_intent > baseline);
+    scan.enrollments(
+        EnrollmentPage::new(version(), None, vec![record(3)], None).unwrap(),
+        None,
+    )
+    .unwrap();
+    assert!(runtime.stats().retained_bytes() > after_intent);
+    let page = reserve_page(Some(&runtime)).unwrap();
+    assert!(runtime.stats().retained_bytes() >= baseline + 4 * MAX_PAGE_BYTES as usize);
+    drop(page);
+    drop(scan);
+    assert_eq!(runtime.stats().retained_bytes(), baseline);
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn native_roster_capacity_refusal_does_not_append_or_leak_retained_rows() {
+    let runtime = CellRuntime::new(
+        cellule_runtime::cell::worker::SqlWorkerPool::new(1, 2).unwrap(),
+        1 << 20,
+        SessionId::from_bytes([91; 16]),
+    )
+    .unwrap();
+    assert!(matches!(
+        reserve_page(Some(&runtime)),
+        Err(Error::Capacity(_))
+    ));
+    let baseline = runtime.stats().retained_bytes();
+    let held = runtime
+        .try_reserve_node_metadata_bytes(runtime.stats().retained_capacity_bytes() - baseline)
+        .unwrap();
+    let mut scan = Scan::new(version());
+    scan.runtime = Some(&runtime);
+    assert!(matches!(
+        scan.intents(
+            IntentPage::new(version(), None, vec![intent(1)], None).unwrap(),
+            None
+        ),
+        Err(Error::Capacity(_))
+    ));
+    assert!(scan.intents.is_empty() && scan.memory.is_empty());
+    drop(held);
+    assert_eq!(runtime.stats().retained_bytes(), baseline);
+    scan.intents(
+        IntentPage::new(version(), None, vec![intent(1)], None).unwrap(),
+        None,
+    )
+    .unwrap();
+    drop(scan);
+    assert_eq!(runtime.stats().retained_bytes(), baseline);
+    runtime.shutdown().await.unwrap();
 }

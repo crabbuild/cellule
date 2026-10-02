@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 
 mod inventory;
 mod jobs;
+mod maintenance;
 mod protocol;
 pub use inventory::{
     ReaderEnrollmentInventoryCursor, ReaderEnrollmentInventoryPage, ReaderEnrollmentJobs,

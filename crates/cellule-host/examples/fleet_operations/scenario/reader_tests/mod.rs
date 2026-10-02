@@ -8,6 +8,7 @@ use cellule_runtime::{
     peer::PeerReplicaResolver,
 };
 
+mod evacuation;
 mod inventory;
 mod leases;
 mod reconciliation;

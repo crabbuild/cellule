@@ -5,8 +5,10 @@ use std::{
     future::Future,
 };
 
+use cellule_runtime::cell::actor::{CellRuntime, NodeByteReservation};
 use cellule_runtime::fleet::operations::{
-    EnrollmentRecord, EnrollmentRole, EnrollmentStatus, NodeIntent,
+    EnrollmentRecord, EnrollmentRole, EnrollmentStatus, MAX_PAGE_BYTES, MAX_RECORD_BYTES,
+    NodeIntent,
 };
 use cellule_runtime::identity::{Digest, NodeId, SessionId};
 use cellule_runtime::node::NodeAdvertisement;
@@ -43,6 +45,9 @@ pub struct FleetRoster {
     snapshot: FleetJournalSnapshot,
     intents: Vec<NodeIntent>,
     enrollments: Vec<EnrollmentRecord>,
+    // Data drops before its retained-byte permits. Application-owned public
+    // collection keeps this empty; native collection uses the shared ledger.
+    _memory: Vec<NodeByteReservation>,
 }
 
 impl FleetRoster {
@@ -54,11 +59,37 @@ impl FleetRoster {
         expected: &FleetJournalSnapshot,
         deadline: Instant,
     ) -> Result<Self> {
+        Self::collect_inner(journal, expected, deadline, None).await
+    }
+
+    pub(crate) async fn collect_admitted(
+        journal: &dyn FleetJournal,
+        expected: &FleetJournalSnapshot,
+        deadline: Instant,
+        runtime: &CellRuntime,
+    ) -> Result<Self> {
+        Self::collect_inner(journal, expected, deadline, Some(runtime)).await
+    }
+
+    async fn collect_inner(
+        journal: &dyn FleetJournal,
+        expected: &FleetJournalSnapshot,
+        deadline: Instant,
+        runtime: Option<&CellRuntime>,
+    ) -> Result<Self> {
+        let header = runtime
+            .map(|runtime| {
+                runtime.try_reserve_node_metadata_bytes(2 * MAX_RECORD_BYTES as usize + 4096)
+            })
+            .transpose()?;
         confirm(journal, expected, deadline).await?;
         let version = expected.registry();
         let mut scan = Scan::new(version);
+        scan.runtime = runtime;
+        scan.memory.extend(header);
         let mut after = None;
         loop {
+            let _page = reserve_page(runtime)?;
             let page = call(deadline, || {
                 journal.intents_page(version, after, PAGE_ENTRIES)
             })
@@ -70,6 +101,7 @@ impl FleetRoster {
         }
         let mut after = None;
         loop {
+            let _page = reserve_page(runtime)?;
             let page = call(deadline, || {
                 journal.enrollments_page(version, after, PAGE_ENTRIES)
             })
@@ -84,6 +116,7 @@ impl FleetRoster {
             snapshot: expected.clone(),
             intents: scan.intents,
             enrollments: scan.enrollments,
+            _memory: scan.memory,
         })
     }
 
@@ -110,6 +143,29 @@ impl FleetRoster {
     #[must_use]
     pub fn enrollments(&self) -> &[EnrollmentRecord] {
         &self.enrollments
+    }
+
+    pub(crate) fn boot(
+        &self,
+        node: NodeId,
+        session: SessionId,
+    ) -> Result<super::FleetBootObservation> {
+        let intent = self
+            .intents
+            .iter()
+            .find(|intent| intent.node() == node)
+            .ok_or(Error::Fenced)?;
+        let mut boots = self.enrollments.iter().filter(|row| {
+            row.unresolved()
+                && matches!(row.spec().role, EnrollmentRole::Node { .. })
+                && row.spec().target.node == node
+                && row.spec().target.session == session
+        });
+        let boot = boots.next().ok_or(Error::Fenced)?;
+        if boots.next().is_some() {
+            return Err(Error::Fenced);
+        }
+        super::FleetBootObservation::new(intent.clone(), boot.clone()).map_err(operation)
     }
 
     /// Returns both endpoints of every unresolved responsibility, without a
@@ -213,6 +269,14 @@ impl FleetRoster {
         }
         Ok(Digest::from_bytes(*hash.finalize().as_bytes()))
     }
+}
+
+fn reserve_page(runtime: Option<&CellRuntime>) -> Result<Option<NodeByteReservation>> {
+    // Before journal I/O, cover the bounded source page, canonical encoding,
+    // validation temporaries and overlap while cloning admitted retained rows.
+    runtime
+        .map(|runtime| runtime.try_reserve_node_metadata_bytes(4 * MAX_PAGE_BYTES as usize))
+        .transpose()
 }
 
 async fn confirm(

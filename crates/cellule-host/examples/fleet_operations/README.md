@@ -139,6 +139,20 @@ admission/release, stable pagination and cursor invalidation. Native reader view
 remain a separate inventory; the collector still requires complete role and
 authority evidence before maintenance can finalize.
 
+The managed reader evacuation fixture starts three real leased, enrolled boots
+and activates native readers through signed peer dispatch. It checks nonzero
+replacement readiness before closure and again after original retirement;
+missing spares preserve the Draining donor's view. Cases cover lost retirement
+replies, cancellation, deadline source errors, policy changes, metadata refusal,
+replacement withdrawal, and refresh through a retained peer clone. Every case
+joins native shutdown and checks empty resource ledgers and original boot
+withdrawal/retirement. This supplies per-reader evidence; the public driver still
+needs complete role settlement and finalization.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --locked reader_tests::evacuation
+```
+
 Follower producer cases capture `fleet_follower_enrollments_page` while provider
 preparation and member acceptance are paused. They preserve all original requests
 and proof identities, check the shared page charge and memory refusal, reject

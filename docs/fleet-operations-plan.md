@@ -1074,8 +1074,15 @@ maintenance can claim the node is safe to stop.
    existing reader lifecycle. The manager now uses `CellReadReplica::close_and_join`
    to detach every peer clone's view and join accepted native/query/refresh work
    before removing ownership. Cancelled waiters retain that obligation for the
-   next drain. Its historical receipt alone cannot retire a journal enrollment;
-   producer wiring and checked replacement evidence remain required.
+   next drain. Managed producers now expose `ReadReplicaManager::evacuate` for
+   one exact Established reader under the current Evacuating operation. It
+   traverses the complete durable roster, checks selected Active managed boots,
+   probes actual readiness before and after closure, and confirms the original
+   retirement through the existing producer. No adequate spare preserves the
+   local reader. Periodic repair on a Draining node cannot bypass this check by
+   pruning changed placement. The returned per-reader interval is not complete
+   role settlement; persist/revalidate its replacements and finish failed-owner
+   and fleet-wide barriers. See the [reader lifecycle contract](../crates/cellule-host/docs/read-replicas.md#evacuate-a-managed-reader).
 3. Enumerate local follower lanes and all authoritative node-log epochs that
    reference the physical node, including expired/recovering owner sessions.
    Missing or incomplete inventory blocks finalization. Live advertisements

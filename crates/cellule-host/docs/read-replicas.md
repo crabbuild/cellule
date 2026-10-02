@@ -77,6 +77,11 @@ removal resume canonical joining and the same Retired event before remote I/O.
 A failed result does not erase its original error or prevent other rows from
 progressing. Capacity refusal retains all responsibilities for a later tick.
 
+On a managed Draining node, periodic reconciliation preserves an open reader
+even when cordon removes it from placement. It repairs original establishment
+without opening or refreshing a view. Explicit maintenance checks below govern
+evacuation; fenced views still resume their original closure and retirement.
+
 The journal retains failed-boot and Pending rows across restart. Reconstructing
 a manager does not erase or automatically settle them. Applications still own
 complete roster collection, evidence storage/validation, failed-process closure
@@ -153,6 +158,66 @@ The returned receipt and `receipt()` describe the last installed snapshot,
 including after closure. They do not prove current authority, replacement
 redundancy, or durable fleet registry retirement. Publish retirement only after
 the canonical closure and the application's checked enrollment evidence.
+
+## Evacuate a managed reader
+
+Use `ReadReplicaManager::evacuate` with the original Established enrollment and
+the current journal operation in Evacuating. The owner-side recruiter supplies
+replacement activation through the existing authenticated peer path.
+
+| Check | Required observation |
+| --- | --- |
+| Donor | Exact physical node/session, current Draining intent, Draining signed boot, and Established boot enrollment. |
+| Journal | Complete bounded intent/enrollment traversal and unchanged head/registry before closure and after retirement. |
+| Replacements | Current canonical policy selection on other physical nodes; exact Active managed boots and Established reader enrollments. |
+| Native readiness | Authenticated status replies cover the original and current published prefixes. A second probe after closure also covers any refresh completed through a retained peer clone. |
+| Closure | Canonical local joining followed by confirmed retirement of the exact original request. |
+| Freshness | Same authority lifetime, nonregressing publication, unchanged policy, and fresh selected boot identity/liveness checks. |
+
+```rust
+use cellule_host::read_replicas::{ReadReplicaManager, ReaderEvacuation};
+use cellule_runtime::{
+    fleet::operations::{EnrollmentRecord, MaintenanceOperation},
+    peer::ReplicaPeerClient,
+};
+
+async fn evacuate_reader(
+    manager: &ReadReplicaManager,
+    original: &EnrollmentRecord,
+    operation: &MaintenanceOperation,
+    peer: &ReplicaPeerClient,
+    deadline: tokio::time::Instant,
+) -> cellule_runtime::Result<ReaderEvacuation> {
+    manager.evacuate(original, operation, peer, deadline).await
+}
+```
+
+No adequate spare means no new local close. Zero desired readers permits checked
+closure without replacement. An owner, policy, boot or registry change refuses
+evidence; a change after closure can leave the original retired while the
+operation remains incomplete. Cancellation, deadlines and lost retirement
+replies preserve the original closure and producer event. Retry that same
+Established request; absence from the local view map alone proves nothing.
+The effective deadline is the earlier of the caller's monotonic deadline and
+the operation's remaining wall-clock deadline. Timeout errors retain their
+original source.
+
+Roster pages, retained records, temporary boot observations and returned
+evidence use the runtime's shared metadata ledger. Drop `ReaderEvacuation` when
+finished consuming it to release its retained charge. Its capture interval
+belongs to that attempt; replayed retirement keeps its original journal times.
+
+This result settles one local reader. It does not settle foreign followers,
+failed processes, writers, complete fleet membership, or terminal shutdown.
+The controller must persist and revalidate the observed replacements and all
+remaining obligations before finalization. A receiver can fail after capture.
+
+The reference fixture exercises real managed boots, signed peer dispatch,
+native readers, cancellation, lost replies and the post-probe refresh race:
+
+```sh
+cargo test -p cellule-host --example fleet_operations --locked reader_tests::evacuation
+```
 
 ## Observe managed reader obligations
 
