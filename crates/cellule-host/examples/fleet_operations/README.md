@@ -206,6 +206,15 @@ as the `overload` and `controller-restart` commands. The model tests do not crea
 maintenance and receiver-loss scenarios still require their complete barriers;
 controller replacement here retains all three live node sessions.
 
+The host now owns each whole closing attempt after a shutdown waiter disappears.
+It retains the same lane through facility/runtime/lease cleanup and exposes local
+`drain_observation()` results with original failure history. Successful stop
+joins the original task; retrying an incomplete deadline resumes the same native
+resource owners. These local observations supply no relocation, redundancy or
+withdrawal authority and do not enable the still-refused fleet Finalize action.
+Publish native rotation/reader proofs before starting terminal shutdown: weak
+native handles can disappear when an autonomous successful stop clears owners.
+
 Public startup cases cover missing/Pending/foreign records, lost acceptance and
 Established replies, a cordon racing accepted enrollment, a drained-mode reboot
 with management available, delayed stale confirmation, shutdown racing a read,
@@ -266,7 +275,11 @@ for exact source fingerprints and remaining work.
 The synthetic controller deadline cases use Tokio's test clock after fixture
 setup to inject timeout at an observed endpoint boundary. They separately prove
 retained permits before acceptance and after durable acceptance without a
-result. The 150 ms pass budget and original Elapsed sources remain required.
+result. The two-endpoint fault cases keep their 150 ms pass budget. The
+single-cordon and unavailable-first-endpoint cases keep their 100 ms and 300 ms
+budgets, advancing only after the original first acceptance. Journal rereads and
+the healthy sibling finish on the paused clock without a fabricated second
+fault. Original Elapsed sources and all phase/permit assertions remain required.
 These cases measure protocol behavior; native/process latency qualification
 uses its real clocks and committed profiles.
 

@@ -4,6 +4,82 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 retained whole-host drain checkpoint
+
+The host now retains the complete canonical closing attempt in one fixed slot.
+Shutdown transfers the existing drain-lane guard to that task before awaiting
+its result. Cancelling the only caller cannot abandon an accepted facility
+callback, release the lane early or prevent autonomous completion. The terminal
+scale-down step uses this same owner and joins the original epilogue even when
+it already observes Stopped. Native runtime shutdown is still invoked once.
+
+The existing reverse facility order, work cancellation, runtime close and lease
+withdrawal phases remain canonical. A phase deadline leaves Draining; a later
+attempt resumes the same underlying resource owners. Original task failures
+remain fatal. Local drain observations retain original return/join results and
+first/latest source errors; they do not establish role coverage or authorize
+fleet completion. SettleRoles and Finalize remain refused.
+
+Three public regressions cover sole-waiter cancellation, scale-down queued past
+its deadline on the original lane, and original failure history after retry.
+The earlier pre-fix cancellation regression failed because the accepted
+facility callback was abandoned. Its source manifest SHA256 is
+`f1657e7eb530c26ac45d99401f20c69cd86f3a4e8af48b58475c70a13aaeee19`.
+Original test source, log and executable are archived.
+
+The native-retirement fixture now pauses after the original supervisor joins,
+before automatic host completion clears weak rotation receipts. All original
+retirement, interruption, single-close, withdrawal and exact-readback assertions
+remain. It additionally verifies joining the same host attempt and invalidation
+of the weak request after Stopped. An earlier fixture version failed the public
+suite, with 100 cases passing and one failing; its source and logs are preserved.
+
+Two synthetic controller tests retain their original 100 ms and 300 ms budgets,
+starting the injected timeout at the observed first acceptance. A paused model
+clock keeps unrelated SQLite setup and journal rereads from injecting an extra
+fault. Original Elapsed, phase, permit and healthy-sibling assertions remain.
+The frozen original Linux example replay reproduced the first-endpoint failure;
+its full scope passed 109 cases and failed that case, count convergence and
+controller restart. This replay is separate from final-source verification.
+
+### Verification scope and outstanding overload failure
+
+Complete source-set and byte checks cover all 641 active/snapshot/staged
+Rust/Cargo/lock paths before and after each final command. Manifest SHA256:
+`4377077c0762a8422f73642fdbdced6b6d105c0ce70d50656ff53c9dcedb33a6`.
+
+| Complete isolated native scope | Result |
+| --- | --- |
+| Host library | 29 passed. |
+| Public host node suite | 102 passed; none ignored or filtered. |
+| Fleet example | 111 passed; overload failed; 69.10 seconds. |
+| Application integration | 39 passed; the same 16 manual ignores. |
+| Host all-target/all-feature Clippy and API docs | Passed with warnings denied. |
+
+These scopes contain 281 passed cases and one failure; focused repeats are
+excluded. Format/diff, boundaries/layout, 110 Rust snippets and 1173 Markdown
+links pass. This is a closing-owner checkpoint, not successful fleet qualification.
+
+The pinned Rust 1.97.1 Debian 12/aarch64 runner uses two CPUs, four GiB, 256 PIDs,
+and the existing descriptor hard limit of 524288. Only its inherited descriptor
+soft limit is raised from 1024. Its application/host default-feature command
+passes: application 10 library, three contracts, 39 integration with the same 16
+manual ignores, host 29 library, 102 public cases and five application doctests.
+The full example passes 111 cases and fails overload, in 138.79 seconds; both
+corrected controller models pass. Complete source checks pass at every boundary.
+The runner exits 101 without OOM. A launcher source-copy attempt failed the
+preflight before Cargo; its log is retained separately.
+
+The parent merge `4cc8ed3` also fails the full example in
+[the Rust workflow](https://github.com/crabbuild/cellule/actions/runs/37030073904/job/110914390958):
+111 passed and overload failed, in 79.70 seconds. It settled one movement while
+retiring two attempts. The current native failure has the same counts; the Linux
+failure leaves one original Releasing attempt unknown after 12 passes. No
+required movement count, qualification profile or deadline has been weakened.
+The local pressure/observed-generation race remains under investigation; these
+results do not prove its cause or repair. Complete role observation, terminal
+action handoff, cross-session recovery and all remaining W1–W10 work stay open.
+
 ## October 2 2026 PR 37 merge conflict resolution
 
 The branch integrates main `0f4ca09` while preserving its retained maintenance

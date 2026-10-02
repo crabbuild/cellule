@@ -125,21 +125,13 @@ impl CellNodeBuilder {
                 cellule_runtime::node::NodeMode::Draining => admission.begin_drain()?,
             }
         }
-        let node = CellNode {
+        let node = CellNode::from_runtime(
             application,
             runtime,
             session,
-            state: Arc::new(Mutex::new(NodeState::Starting)),
-            lease_installed: AtomicBool::new(false),
-            shutdown_lock: Arc::new(tokio::sync::Mutex::new(())),
-            runtime_drain: tokio::sync::Mutex::new(Default::default()),
-            facilities: Arc::new(Mutex::new(Vec::new())),
-            required_components: Arc::new(Mutex::new(required_components)),
-            task_group: Arc::new(Mutex::new(None)),
-            fleet_startup: Mutex::new(
-                fleet_startup.map(|intent| crate::node::FleetStartup { intent, boot: None }),
-            ),
-        };
+            required_components,
+            fleet_startup,
+        );
         node.install_follower_store(follower_store)?;
         Ok(node)
     }
@@ -165,19 +157,7 @@ impl CellNodeBuilder {
         let runtime =
             CellRuntime::new_with_replica_host(pool, node_retained_bytes, session, replica_host)?;
         install_application_limits(&runtime, &application)?;
-        let node = CellNode {
-            application,
-            runtime,
-            session,
-            state: Arc::new(Mutex::new(NodeState::Starting)),
-            lease_installed: AtomicBool::new(false),
-            shutdown_lock: Arc::new(tokio::sync::Mutex::new(())),
-            runtime_drain: tokio::sync::Mutex::new(Default::default()),
-            facilities: Arc::new(Mutex::new(Vec::new())),
-            required_components: Arc::new(Mutex::new(required_components)),
-            task_group: Arc::new(Mutex::new(None)),
-            fleet_startup: Mutex::new(None),
-        };
+        let node = CellNode::from_runtime(application, runtime, session, required_components, None);
         node.install_follower_store(follower_store)?;
         Ok(node)
     }

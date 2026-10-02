@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod retained;
+
 #[tokio::test]
 async fn operational_pressure_recovers_acquisition_without_clearing_a_cordon() {
     use cellule_runtime::fleet::pressure::{PressureSample, PressureState};

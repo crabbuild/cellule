@@ -13,13 +13,17 @@
 sequenceDiagram
     participant Service
     participant Node as CellNode
+    participant Drain as Owned host drain
     participant Runtime
     Service->>Node: Build with required components
     Node->>Runtime: Start and acquire lease
     Runtime-->>Node: Ready
     Service->>Node: Shutdown with deadline
-    Node->>Runtime: Stop admission and drain
-    Runtime-->>Node: Log closed, session withdrawn
+    Node->>Drain: Transfer the shared lane and deadline
+    Drain->>Runtime: Drain facilities, then close runtime
+    Runtime-->>Drain: Log closed
+    Drain->>Drain: Join lease maintenance and withdrawal
+    Drain-->>Node: Original result and task join
 ```
 
 A deadline bounds releases started after acquiring the drain lane; it does not
@@ -34,6 +38,36 @@ that task instead of calling runtime shutdown twice. Facility failures remain
 inspectable, and the host reaches Stopped only after every required phase
 succeeds. A retained runtime failure preserves its original error as a source
 on every subsequent observation.
+
+The whole host drain also has one retained task slot. It runs the same reverse
+facility order, runtime barrier and lease-maintenance phase. Cancelling a
+shutdown caller leaves that task and its original callback future owned; the
+host continues toward Stopped. The task keeps the shared lane guard, so queued
+shutdown or scale-down callers cannot overlap it or repeat an accepted callback.
+An idempotent stop still joins the original task epilogue before returning.
+
+A deadline keeps its existing phase timeout and ordinary task-abort policies.
+After a returned incomplete attempt, the next caller first joins that original
+attempt, then resumes the canonical sequence with its new deadline. The runtime
+shutdown task is still invoked once. Genuine task-group failures remain errors;
+a host task panic retains its original join failure and blocks a new attempt.
+
+`CellNode::drain_observation()` captures fixed-size local attempt diagnostics.
+It retains the original first/latest failure objects after a successful retry.
+The embedding application authenticates any route exposing this observation.
+
+| Local drain phase | Meaning |
+| --- | --- |
+| No observation | No retained local attempt was started; this proves no fleet absence. |
+| Running | No original return or joined failure has been captured. This does not certify task health or progress. |
+| Returned | The original sequence result is available; its task epilogue has not been joined. |
+| Joined | The original task was joined; inspect its actual result and NodeState. |
+
+These diagnostics do not authorize maintenance completion. Relocation,
+reader/follower policy, current authority and confirmed withdrawal still need
+the fleet operation's complete proof. Native rotation handles stay weak; a
+successful autonomous shutdown may clear them before a later observer arrives.
+Capture and publish their canonical evidence before terminal shutdown.
 
 The task group retains each join and its original result within its existing
 256-task bound. Concurrent drains share those joins; cancelling a caller leaves

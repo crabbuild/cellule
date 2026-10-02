@@ -1406,6 +1406,16 @@ batch: it can release additional candidates without that batch's permits.
 Preserve its documented local behavior or document an intentional matched
 release change; do not silently equate its aggregate count with fleet success.
 
+The host now retains the entire canonical drain attempt in one fixed task slot,
+including its reverse facility order and the existing runtime/withdrawal phases.
+Shutdown and the terminal scale-down step transfer their shared lane guard to
+that task. Lost callers cannot drop an accepted callback or release the lane
+while closing work still runs. Local Running/Returned/Joined observations keep
+original results and first/latest failure diagnostics; phase deadlines resume
+through the same resource owners. This supplies the native closing owner needed
+for terminal action handoff. Complete role settlement, the original action's
+join before handoff, checked withdrawal and committed completion remain required.
+
 Exit: maintenance with zero local writers but uncovered foreign follower
 tails remains blocked; live-owner rotation and dead-owner recovery both clear
 it safely; incomplete deadlines remain inspectable; successful operations

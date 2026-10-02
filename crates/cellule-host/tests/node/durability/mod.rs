@@ -251,11 +251,18 @@ struct Fixture {
     handle: cellule_runtime::cell::actor::CellHandle,
     withdrawn: Arc<AtomicBool>,
 }
+struct DrainBarrier {
+    entered: tokio::sync::Semaphore,
+    resume: tokio::sync::Semaphore,
+}
 impl Fixture {
     async fn new() -> Self {
         Self::with_threshold(u64::MAX).await
     }
     async fn with_threshold(max_frames: u64) -> Self {
+        Self::with_drain_barrier(max_frames, None).await
+    }
+    async fn with_drain_barrier(max_frames: u64, barrier: Option<Arc<DrainBarrier>>) -> Self {
         let session = SessionId::from_bytes([239; 16]);
         let node = Arc::new(
             CellNodeBuilder::new(application())
@@ -349,6 +356,22 @@ impl Fixture {
             max_capture_bytes: 16 << 20,
             ..ReplicaLimits::default()
         };
+        if let Some(barrier) = barrier {
+            // Reverse facility order puts this gate after the original native
+            // supervisor join, before runtime closure clears weak receipts.
+            node.install_facility(
+                CellNodeFacility::new("test-native-join-barrier", move || {
+                    let barrier = Arc::clone(&barrier);
+                    async move {
+                        barrier.entered.add_permits(1);
+                        barrier.resume.acquire().await.unwrap().forget();
+                        Ok(())
+                    }
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        }
         node.install_node_durability_provider(
             provider.clone(),
             NodeDurabilitySupervisorConfig::new(
@@ -692,7 +715,11 @@ async fn host_deadline_retains_accepted_recruitment_until_native_cleanup_joins()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_host_drain_waiter_retains_native_retirement_and_original_request() {
-    let test = Fixture::new().await;
+    let barrier = Arc::new(DrainBarrier {
+        entered: tokio::sync::Semaphore::new(0),
+        resume: tokio::sync::Semaphore::new(0),
+    });
+    let test = Fixture::with_drain_barrier(u64::MAX, Some(Arc::clone(&barrier))).await;
     test.command(245, 17).await;
     test.handle.drain().await.unwrap();
     test.provider
@@ -713,7 +740,11 @@ async fn cancelled_host_drain_waiter_retains_native_retirement_and_original_requ
     assert!(!test.withdrawn.load(Ordering::Acquire));
     assert!(request.observe().unwrap().completion().is_none());
     test.provider.transport.resume.add_permits(1);
-    until(|| request.observe().unwrap().phase() == NodeLogRotationPhase::Interrupted).await;
+    entered(&barrier.entered).await;
+    assert_eq!(
+        request.observe().unwrap().phase(),
+        NodeLogRotationPhase::Interrupted
+    );
     let interrupted = test
         .node
         .node_log_rotation_request(1)
@@ -724,7 +755,19 @@ async fn cancelled_host_drain_waiter_retains_native_retirement_and_original_requ
     assert!(interrupted.retirement().is_some());
     assert!(interrupted.completion().is_none());
     assert_eq!(test.provider.recruited.lock().unwrap().len(), 1);
+    assert!(!test.withdrawn.load(Ordering::Acquire));
+    let closing = test.node.drain_observation().unwrap().unwrap();
+    assert_eq!(closing.serial, 1);
+    assert_eq!(closing.phase, NodeDrainPhase::Running);
+    assert!(closing.result.is_none());
+    barrier.resume.add_permits(1);
     test.node.shutdown().await.unwrap();
+    let joined = test.node.drain_observation().unwrap().unwrap();
+    assert_eq!(joined.serial, 1);
+    assert_eq!(joined.phase, NodeDrainPhase::Joined);
+    assert!(joined.result.unwrap().is_ok());
+    assert!(request.observe().is_err());
+    assert_eq!(test.node.state(), NodeState::Stopped);
     assert_eq!(*test.provider.authority.closes.lock().unwrap(), vec![1]);
     assert!(test.withdrawn.load(Ordering::Acquire));
     assert_eq!(test.node.stats().retained_bytes(), 0);

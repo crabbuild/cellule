@@ -69,8 +69,11 @@ impl CellNode {
         &self,
         deadline: Instant,
     ) -> cellule_runtime::Result<ScaleDownStatus> {
-        let _shutdown = self.shutdown_lock.lock().await;
+        let shutdown = Arc::clone(&self.shutdown_lock).lock_owned().await;
         if self.state() == NodeState::Stopped {
+            // A cancelled shutdown waiter may leave a returned host task whose
+            // epilogue still needs its original join before scale-down returns.
+            self.drain_until_locked(shutdown, Some(deadline)).await?;
             return Ok(ScaleDownStatus {
                 remaining_cells: 0,
                 settled_candidates: 0,
@@ -124,7 +127,7 @@ impl CellNode {
                 if Instant::now() >= deadline {
                     return Ok(status);
                 }
-                self.drain_until_locked(Some(deadline)).await?;
+                self.drain_until_locked(shutdown, Some(deadline)).await?;
                 return Ok(status);
             }
             if Instant::now() >= deadline {

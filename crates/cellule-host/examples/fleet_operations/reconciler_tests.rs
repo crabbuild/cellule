@@ -921,14 +921,14 @@ async fn timed_out_cordon_retains_acceptance_and_retries_without_false_evacuatio
         .transport
         .block_first_acceptance
         .store(true, Ordering::SeqCst);
-    let report = fixture
-        .driver(206)
-        .reconcile_once(
-            || Ok(NOW + 100),
-            Instant::now() + Duration::from_millis(100),
-        )
-        .await
-        .unwrap();
+    let driver = fixture.driver(206);
+    let report = first_acceptance_deadline_at(
+        &driver,
+        &fixture.transport.dispatched,
+        Duration::from_millis(100),
+        2,
+    )
+    .await;
     assert!(report.maintenance_failure.is_some());
     let cellule_runtime::Error::Facility { name, source } =
         report.maintenance_failure.as_ref().unwrap().as_ref()
@@ -1252,6 +1252,49 @@ async fn expired_never_dispatched_plan_cancels_and_retires_without_remote_effect
     fixture.journal.close().await.unwrap();
 }
 
+// These adapter models test a retained accepted endpoint, rather than SQLite
+// setup latency. Advance the original timer only after that endpoint accepted.
+async fn first_acceptance_deadline_at(
+    driver: &FleetReconciler,
+    accepted: &AtomicUsize,
+    duration: Duration,
+    shares: u32,
+) -> FleetReconcileReport {
+    tokio::time::pause();
+    assert_eq!(accepted.load(Ordering::SeqCst), 0);
+    let deadline = Instant::now() + duration;
+    let mut pass = Box::pin(driver.reconcile_once(|| Ok(NOW + 100), deadline));
+    let wall_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        assert!(futures_util::poll!(pass.as_mut()).is_pending());
+        if accepted.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < wall_deadline,
+            "first endpoint acceptance not reached"
+        );
+        tokio::task::yield_now().await;
+    }
+    let budget = deadline.saturating_duration_since(Instant::now()) / shares;
+    tokio::time::advance(budget + Duration::from_millis(1)).await;
+    // Keep the executor runnable while the retained journal worker and healthy
+    // sibling return. Idle-clock advancement must not create a second fault.
+    let wall_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let result = loop {
+        if let std::task::Poll::Ready(result) = futures_util::poll!(pass.as_mut()) {
+            break result;
+        }
+        assert!(
+            std::time::Instant::now() < wall_deadline,
+            "first-endpoint deadline did not settle its report"
+        );
+        tokio::task::yield_now().await;
+    };
+    tokio::time::resume();
+    result.unwrap()
+}
+
 // Fault timing is relative to an observed protocol boundary. Freeze only this
 // current-thread model clock after setup; native/process SLO clocks are unchanged.
 async fn transport_deadline_at(
@@ -1390,13 +1433,13 @@ async fn unavailable_first_endpoint_leaves_deadline_for_healthy_sibling() {
         .transport
         .block_first_acceptance
         .store(true, Ordering::SeqCst);
-    let report = driver
-        .reconcile_once(
-            || Ok(NOW + 100),
-            Instant::now() + Duration::from_millis(300),
-        )
-        .await
-        .unwrap();
+    let report = first_acceptance_deadline_at(
+        &driver,
+        &fixture.transport.dispatched,
+        Duration::from_millis(300),
+        3,
+    )
+    .await;
     assert_eq!(report.failures.len(), 1);
     assert_eq!(report.dispatched, 2);
     assert_eq!(report.snapshot.head().reserved_restore_bytes(), 8192);

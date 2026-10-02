@@ -30,7 +30,7 @@ pub use durability::{
 };
 pub use facility::CellNodeFacility;
 pub use node::CellNode;
-pub use status::{NodeState, NodeStatus, ScaleDownStatus};
+pub use status::{NodeDrainObservation, NodeDrainPhase, NodeState, NodeStatus, ScaleDownStatus};
 use std::{
     any::Any,
     collections::HashSet,
