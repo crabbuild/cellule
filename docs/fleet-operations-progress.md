@@ -4,6 +4,77 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 canonical advertisement verification checkpoint
+
+Canonical advertisement decoding previously verified signatures and called the
+storage encoder for exact-byte comparison. That encoder verified the same
+immutable signatures again. Decode now checks shape and signatures, then uses
+one private canonical serializer for byte equality. The storage encoder verifies
+before calling that same serializer. Directory scope, liveness and signature
+checks remain independent; there is no cached authorization or changed wire
+format, signing domain, lease budget or recruitment scheduling path.
+
+A deterministic thread-local test counter measures verification passes without
+wall-clock thresholds or parallel-test interference. The regression first failed
+on the old decoder with two passes instead of one. After the fix, legacy,
+schema-2 and schema-3 decode each take one signature-set pass and reproduce the
+original bytes. Additional cases retain exact signature errors for corrupted
+identity and understood placement signatures, reject noncanonical whitespace
+and reject oversized input before verification. The first broad run rejected a
+new fixture that inserted an unknown root field; it now corrupts the actual
+`identity.signature`. The typed error assertion was retained.
+
+### Scoped verification
+
+| Evidence | Result |
+| --- | --- |
+| Complete isolated runtime library | 510 passed; none filtered; three documented provider cases ignored; 89.40 seconds. |
+| Complete runtime fleet integration | 25 passed; none filtered; one documented provider case ignored. |
+| Runtime reader integration scope | 14 passed; 186 filtered; one documented RustFS case ignored. |
+| Complete host library / public node / fleet example | 29 / 92 / 105 passed; none filtered or ignored. |
+| Complete application integration | 37 passed; none filtered; 16 documented manual cases ignored. |
+| Distinct native cases | 812 passed; three new canonical codec cases. Diagnostics and second-platform repetitions are excluded. |
+| Host/runtime all-target/all-feature Clippy and API docs | Passed with warnings denied. |
+| Linux ARM application integration | 37 passed; none filtered; 16 documented manual cases ignored; 22.28 seconds. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1173 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+
+All final native commands used the isolated snapshot, all features and locked
+dependencies. Before and after each command, the comparison driver checked the
+complete active/isolated 635-path Rust/Cargo/lock set and every source byte.
+Manifest SHA256:
+`234d7c78aee2c5ce3aa257d242e7415200a63b01956fa470172f37c8fd768741`.
+Logs, before/after source manifests, the original failing unit executable and
+Linux executable are archived in `/tmp/cellule-signature-evidence/`. Final logs
+and the source comparison driver are `/tmp/cellule-signature-final-*` and
+`/tmp/cellule-signature-verify.py`.
+
+Linux verification used the pinned repository Rust image
+`sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97`,
+Rust/Cargo 1.97.1, default features, locked dependencies, two CPU credits and
+four GiB. All manifest hashes were checked before and after its complete target.
+The Linux integration executable SHA256 is recorded with the original logs;
+its container was removed after retaining the evidence.
+
+### Publication-hint diagnosis and remaining work
+
+The original x86 contract failure remains open. Twenty byte-checked isolated
+macOS repetitions and one two-CPU Linux ARM repetition of the original failing
+case passed before this change. Those are negative reproductions, not proof of
+a cause. The Linux ARM full-target pass after the change likewise cannot
+establish the x86 failure's cause. Ranked hypotheses remain hint coalescing,
+synchronous verification cost, membership/lease rejection and delayed bounded
+queue progress. The confirmed duplicate verification is removed; no assertion,
+profile or expected evidence was weakened.
+
+Previous head `4dc71df0df4117ca48c1c6aa313f6fbdf8e3f0c2` passed workspace/MSRV,
+contract, both capacity campaigns, website, decoder fuzz and fast/negative TLC.
+Its Compose smoke and routing comparisons were in progress at inspection.
+Root-capture head `284dd8c` subsequently completed both routing comparisons and
+the aggregate routing job successfully. Broad TLC/simulator remain skipped.
+Earlier failures stay in their own execution records. Fresh CI for this source,
+full role/current-authority observation, replacement/failed-owner evidence,
+maintenance settlement/finalization and the remaining W1–W10 work are required.
+
 ## October 2 2026 reader continuation coherence checkpoint
 
 Managed reader continuation now fingerprints all native reader observations,

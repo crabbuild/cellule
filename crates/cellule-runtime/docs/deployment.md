@@ -236,6 +236,13 @@ The service chooses each signed advertisement lifetime, up to 30 seconds. An exp
 
 Local admission remains authoritative. An advertisement cannot force a node to accept work after its measured budget is exhausted.
 
+Canonical advertisement decoding checks shape, the identity and any understood
+placement signature, and exact JSON bytes. Canonical byte comparison serializes that same verified,
+immutable value without repeating signature verification. Storage encoding
+still verifies before emission, and directory reads independently enforce
+scope and current lease validity. Legacy, schema-2 and schema-3 record bytes
+remain unchanged.
+
 ### Operational observations and the reader rollout
 
 `NodeAdvertisement::with_placement_capacity` continues to emit schema 2.

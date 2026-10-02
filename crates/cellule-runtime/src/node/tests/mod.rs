@@ -28,6 +28,20 @@ mod placement;
 mod records;
 mod sessions;
 
+// Thread-local operation counts let canonical codec tests assert a verification
+// budget without timing thresholds or interference from parallel tests.
+std::thread_local! {
+    static SIGNATURE_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn record_signature_pass() {
+    SIGNATURE_PASSES.with(|count| count.set(count.get() + 1));
+}
+
+fn signature_passes() -> usize {
+    SIGNATURE_PASSES.with(std::cell::Cell::get)
+}
+
 const NOW_MS: i64 = 1_000_000;
 
 fn node(session: SessionId) -> NodeId {

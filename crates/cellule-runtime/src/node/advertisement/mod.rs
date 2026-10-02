@@ -288,6 +288,13 @@ impl NodeAdvertisement {
     pub(super) fn encode(&self) -> Result<Vec<u8>> {
         self.validate_shape()?;
         self.verify_signature()?;
+        self.canonical_bytes()
+    }
+
+    // Both callers first verify this immutable value. Re-encoding for canonical
+    // byte equality needs the same serializer, without a second signature pass.
+    // Storage producers still enter through encode and verify before emission.
+    fn canonical_bytes(&self) -> Result<Vec<u8>> {
         let encoded = serde_json::to_vec(&RawAdvertisement::from(self))?;
         if encoded.len() as u64 > MAX_NODE_BYTES {
             return Err(Error::Node("advertisement exceeds 64 KiB"));
@@ -303,7 +310,7 @@ impl NodeAdvertisement {
         let advertisement = Self::try_from(raw)?;
         advertisement.validate_shape()?;
         advertisement.verify_signature()?;
-        if advertisement.encode()?.as_slice() != bytes {
+        if advertisement.canonical_bytes()?.as_slice() != bytes {
             return Err(Error::Node("advertisement JSON is not canonical"));
         }
         Ok(advertisement)
@@ -392,6 +399,8 @@ impl NodeAdvertisement {
     }
 
     pub(super) fn verify_signature(&self) -> Result<()> {
+        #[cfg(test)]
+        crate::node::tests::record_signature_pass();
         self.verifying_key()?
             .verify(
                 &self.signing_bytes()?,
