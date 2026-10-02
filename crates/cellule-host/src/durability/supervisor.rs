@@ -91,6 +91,10 @@ async fn rotate<P: NodeDurabilityProvider>(
                     if !retry(cancellation, configuration.recruit_interval).await {
                         return Ok(());
                     }
+                } else if work.durability.requires_confirmed_retirement() {
+                    if !retry(cancellation, configuration.recruit_interval).await {
+                        return Ok(());
+                    }
                 } else {
                     return Err(Box::new(error));
                 }

@@ -11,7 +11,6 @@ use cellule_runtime::identity::{
 };
 use cellule_runtime::ltx::{CellReplica, CellStorageLayout};
 use cellule_runtime::node::durability::NodeLogAuthority;
-use cellule_runtime::node::log::NodeLogRotationBarrier;
 use cellule_runtime::node::log_transport::{
     AppendRequest, LocalFollowerTransport, NodeLogTransport, RetireRequest, SealRequest,
     TailRequest,
@@ -44,8 +43,9 @@ impl NodeLogAuthority for Authority {
     }
     fn close<'a>(
         &'a self,
-        barrier: &'a NodeLogRotationBarrier,
+        retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
     ) -> BoxFuture<'a, cellule_runtime::Result<()>> {
+        let barrier = retirement.barrier();
         Box::pin(async move {
             let epoch = barrier.log_epoch();
             self.close_attempts.lock().unwrap().push(epoch);

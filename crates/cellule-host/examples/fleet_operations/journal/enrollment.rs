@@ -1,6 +1,30 @@
 use super::*;
 
 impl FleetEnrollmentJournal for SqliteJournal {
+    fn refuse_unexecuted_enrollment<'a>(
+        &'a self,
+        spec: &'a EnrollmentSpec,
+        evidence: Digest,
+        now_ms: i64,
+    ) -> FleetAdapterFuture<'a, EnrollmentRecord> {
+        let spec = spec.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(spec.scope)?;
+            let original = db.enrollment(spec.key()?)?;
+            let next = match &original {
+                Some(original) => {
+                    original.validate_replay(&spec)?;
+                    original.refuse(evidence, now_ms)?
+                }
+                None => EnrollmentRecord::unexecuted_refusal(spec, evidence, now_ms)?,
+            };
+            if original.as_ref() != Some(&next) {
+                db.write_enrollment(&next)?;
+            }
+            Ok(next)
+        }))
+    }
+
     fn load_boot(
         &self,
         scope: FleetScope,

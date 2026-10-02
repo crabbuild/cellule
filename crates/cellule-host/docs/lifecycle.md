@@ -106,7 +106,43 @@ the shared local gate through the authorized maintenance action path.
 
 The [reference example](../examples/fleet_operations/README.md) wires this order
 to actual signed directory enrollment and one durable SQLite transaction domain.
-Reader/follower producers and complete fleet observation remain integration work.
+Managed reader and follower bindings provide the local producer barriers below.
+Complete fleet observation remains integration work.
+
+### Managed follower enrollment
+
+Install `install_fleet_node_durability_provider` before readiness, using the
+shared `FleetJournal` and an application-owned `FleetNodeDurabilityProvider`.
+Preparation returns `FleetNodeLogRecruitment`: an opaque exact directory attempt,
+authenticated transport, authority, lease and telemetry. It performs no enrollment
+CAS or append. Configured fleet startup rejects an ordinary unmanaged durability
+provider and a manually installed runtime epoch without this typed binding.
+Recruitment waits for the startup hold to clear; confirmed maintenance mode can
+still replace outbound follower obligations while new inbound roles stay closed.
+
+| Boundary | Managed behavior |
+| --- | --- |
+| Prepare | Validate canonical shipper limits; capture exact source/follower boots and fresh endpoint intent revisions. Reserve one MiB from the shared node ledger before accepting any request. |
+| Accept | Retain every original request before awaits. Every selected member must return a validated New Pending acceptance before the single original-token directory CAS. |
+| Unknown enrollment | Inspect only the retained attempt. An original-token conditional refusal may exclude its delayed CAS. Missing, expired or newer empty records remain unknown; no reselection or CAS rebasing is allowed. |
+| No native dispatch | Atomically refuse every original member, including members whose acceptance reply was lost or acceptance never started. An absent key becomes an exclusion tombstone. Delayed acceptance returns Existing with that original terminal row. |
+| Establish | Replay the original checked enrollment events and acceptance times until all publications confirm. No shipper/configuration is delivered before that barrier. |
+| Retire | Join object coverage and every exact native member fence, retain the complete observation, reconcile canonical authority close, then durably retire every original member. Lost publication never repeats a confirmed native close. |
+| Drain | Join the existing supervisor before settling its undelivered attempt, then let runtime drain close delivered epochs. Deadlines cancel waiters; owned cleanup and byte charges remain until journal settlement. |
+
+There is one pending preparation and at most 32 inventoried epochs. Retirement
+removes local inventory and releases its reservation only after durable settlement.
+`follower_enrollment_completion(epoch)` exposes immutable inputs, native proofs,
+all member responses, publication state, and separate original native/journal
+errors without waiting on RPCs. Missing local history supplies no fleet proof.
+
+The provider allocates a never-reused advancing epoch for each leader boot. Its
+transport must address the originally selected signed follower boots. Its authority
+serializes heartbeat/activation/coverage/closure, fresh-loads the exact source
+epoch after enrollment, and reconciles ambiguous close from the original checked
+close receipt. Arbitrary absence cannot prove closure. Applications retain durable
+backend, authentication, replacement policy and failed-process reconciliation.
+Complete role observation and these remaining proofs precede fleet finalization.
 
 Install `CellNode::install_fleet_actions` during startup with a fleet/application
 scope, stable physical NodeId, an application-owned `FleetActionJournal`, and
@@ -271,7 +307,7 @@ reconstruction. Boot production uses the startup barrier above. The
 [managed reader producer](read-replicas.md#bind-the-durable-fleet-producer) binds
 ordinary activation and joined closure to this journal. Install it after read
 replicas and before start; configured fleet hosts require it for readiness.
-Complete observer coverage, follower production, replacement policy,
+Complete observer coverage, failed-owner follower reconciliation, replacement policy,
 maintenance finalization, and process/provider qualification remain required.
 
 

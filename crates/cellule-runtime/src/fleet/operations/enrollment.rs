@@ -160,6 +160,24 @@ pub struct EnrollmentRecord {
 }
 
 impl EnrollmentRecord {
+    /// Creates an exclusion tombstone for joined work whose native enrollment
+    /// never started. Publish only in an atomic absent-or-Pending transaction
+    /// after checking the exact original request and nonexecution evidence.
+    /// This does not admit a role or require current receiver intent; delayed
+    /// acceptance must replay this terminal row before checking intent.
+    pub fn unexecuted_refusal(spec: EnrollmentSpec, evidence: Digest, now_ms: i64) -> Result<Self> {
+        let record = Self {
+            spec,
+            accepted_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            status: EnrollmentStatus::Refused,
+            established: None,
+            settlement: Some(evidence),
+        };
+        record.validate()?;
+        Ok(record)
+    }
+
     /// Applies one checked protocol event without changing immutable inputs.
     pub fn apply(&self, event: EnrollmentEvent, now_ms: i64) -> Result<Self> {
         match event {
@@ -286,7 +304,7 @@ impl EnrollmentRecord {
     pub const fn status(&self) -> EnrollmentStatus {
         self.status
     }
-    /// Returns the first acceptance time.
+    /// Returns first acceptance time, or creation time for an exclusion tombstone.
     #[must_use]
     pub const fn accepted_at_ms(&self) -> i64 {
         self.accepted_at_ms

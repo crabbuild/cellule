@@ -144,8 +144,9 @@ impl NodeLogAuthority for SignedRetirementAuthority {
     }
     fn close<'a>(
         &'a self,
-        barrier: &'a NodeLogRotationBarrier,
+        retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
     ) -> BoxFuture<'a, cellule_runtime::Result<()>> {
+        let barrier = retirement.barrier();
         Box::pin(async move {
             self.attempts.fetch_add(1, Ordering::AcqRel);
             let mut observed = self.observed.lock().await;

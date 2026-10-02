@@ -214,13 +214,11 @@ impl ReaderFixture {
         assert_eq!(observed.output, 17);
     }
     async fn finish(self) {
+        self.finish_status(EnrollmentStatus::Retired).await;
+    }
+    async fn finish_status(self, expected: EnrollmentStatus) {
         self.node.shutdown().await.unwrap();
-        assert!(
-            self.rows()
-                .await
-                .iter()
-                .all(|row| row.status() == EnrollmentStatus::Retired)
-        );
+        assert!(self.rows().await.iter().all(|row| row.status() == expected));
         assert_eq!(self.node.stats().retained_bytes(), 0);
         assert_eq!(self.node.stats().local_disk_reserved_bytes(), 0);
         self.handle.drain().await.unwrap();
@@ -277,7 +275,7 @@ async fn reader_producer_journals_before_open_and_owns_a_cancelled_activation() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn reader_producer_lost_acceptance_cannot_repeat_open_and_is_retired_by_joined_removal() {
+async fn reader_producer_lost_acceptance_cannot_repeat_open_and_is_refused_by_joined_removal() {
     let fixture = ReaderFixture::new().await;
     let (captured, resume) = fixture.journal.pause_next_enrollment_reply(false, true);
     let manager = fixture.manager.clone();
@@ -318,7 +316,7 @@ async fn reader_producer_lost_acceptance_cannot_repeat_open_and_is_retired_by_jo
         .remove(fixture.target.cell_id())
         .await
         .unwrap();
-    assert_eq!(fixture.rows().await[0].status(), EnrollmentStatus::Retired);
+    assert_eq!(fixture.rows().await[0].status(), EnrollmentStatus::Refused);
     assert!(
         fixture
             .manager
@@ -327,7 +325,7 @@ async fn reader_producer_lost_acceptance_cannot_repeat_open_and_is_retired_by_jo
             .unwrap()
             .is_none()
     );
-    fixture.finish().await;
+    fixture.finish_status(EnrollmentStatus::Refused).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -651,7 +649,18 @@ async fn reader_producer_atomic_cordon_refusal_closes_without_creating_a_retirem
         .remove(fixture.target.cell_id())
         .await
         .unwrap();
-    assert!(fixture.rows().await.is_empty());
+    let exclusion = fixture.rows().await;
+    assert_eq!(exclusion.len(), 1);
+    assert_eq!(exclusion[0].status(), EnrollmentStatus::Refused);
+    let delayed = fixture
+        .journal
+        .accept_enrollment(exclusion[0].spec(), clock().unwrap())
+        .await
+        .unwrap();
+    assert!(
+        matches!(delayed, cellule_host::fleet::FleetEnrollmentAcceptance::Existing(row)
+        if row == exclusion[0])
+    );
     assert!(
         fixture
             .manager
@@ -660,5 +669,5 @@ async fn reader_producer_atomic_cordon_refusal_closes_without_creating_a_retirem
             .unwrap()
             .is_none()
     );
-    fixture.finish().await;
+    fixture.finish_status(EnrollmentStatus::Refused).await;
 }

@@ -54,6 +54,17 @@ impl CellNode {
                 .lock()
                 .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?;
             if let Some(startup) = startup.as_ref() {
+                if self.runtime.node_durability().is_some()
+                    && self
+                        .owned_component::<crate::durability::enrollment::FleetFollowerEnrollment>(
+                            NODE_DURABILITY_PROVIDER_COMPONENT,
+                        )
+                        .is_none()
+                {
+                    return Err(Error::Control(
+                        "configured fleet durability requires managed follower enrollment",
+                    ));
+                }
                 if !startup.confirmed {
                     return Err(Error::Control(
                         "CellNode fleet boot enrollment is unconfirmed",

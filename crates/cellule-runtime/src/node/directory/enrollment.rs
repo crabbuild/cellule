@@ -45,6 +45,15 @@ pub struct NodeLogEnrollmentAttempt {
 }
 
 impl NodeLogEnrollmentAttempt {
+    /// Digests the original signed source version, selected boot snapshots and
+    /// epoch for a durable producer's request-bound evidence. Grants no admission.
+    pub fn evidence_digest(&self) -> Result<Digest> {
+        enrollment_digest(
+            &self.prepared,
+            &self.observed,
+            b"cellule.node-log.attempt.v1\0",
+        )
+    }
     /// Returns the complete original selection retained by this attempt.
     #[must_use]
     pub const fn prepared(&self) -> &PreparedNodeLogEnrollment {
@@ -69,6 +78,14 @@ pub struct NodeLogEnrollmentProof {
 }
 
 impl NodeLogEnrollmentProof {
+    /// Digests the original selected scope and its checked canonical observation.
+    pub fn evidence_digest(&self) -> Result<Digest> {
+        enrollment_digest(
+            &self.prepared,
+            &self.enrollment,
+            b"cellule.node-log.enrolled.v1\0",
+        )
+    }
     /// Returns the original scope and every selected follower boot.
     #[must_use]
     pub const fn prepared(&self) -> &PreparedNodeLogEnrollment {
@@ -93,6 +110,14 @@ pub struct NodeLogEnrollmentRefusalProof {
 }
 
 impl NodeLogEnrollmentRefusalProof {
+    /// Digests the selected scope and original-token conditional refusal receipt.
+    pub fn evidence_digest(&self) -> Result<Digest> {
+        enrollment_digest(
+            &self.prepared,
+            &self.refusal,
+            b"cellule.node-log.refused.v1\0",
+        )
+    }
     /// Returns the original selected scope whose one attempt is now fenced.
     #[must_use]
     pub const fn prepared(&self) -> &PreparedNodeLogEnrollment {
@@ -104,6 +129,36 @@ impl NodeLogEnrollmentRefusalProof {
     pub const fn refusal(&self) -> &VersionedNodeAdvertisement {
         &self.refusal
     }
+}
+
+fn enrollment_digest(
+    prepared: &PreparedNodeLogEnrollment,
+    source: &VersionedNodeAdvertisement,
+    domain: &[u8],
+) -> Result<Digest> {
+    let mut digest = blake3::Hasher::new();
+    digest.update(domain);
+    digest.update(&prepared.source.encode()?);
+    digest.update(&source.advertisement.encode()?);
+    // Preserve the immutable conditional-write token as well as signed bytes.
+    // Lengths and option markers keep arbitrary provider tokens unambiguous.
+    for token in [&source.token.e_tag, &source.token.version] {
+        match token {
+            Some(token) => {
+                digest.update(&[1]);
+                digest.update(&(token.len() as u64).to_le_bytes());
+                digest.update(token.as_bytes());
+            }
+            None => {
+                digest.update(&[0]);
+            }
+        }
+    }
+    digest.update(&prepared.log.epoch().to_le_bytes());
+    for follower in &prepared.followers {
+        digest.update(&follower.encode()?);
+    }
+    Ok(Digest::from_bytes(*digest.finalize().as_bytes()))
 }
 
 impl NodeDirectory {

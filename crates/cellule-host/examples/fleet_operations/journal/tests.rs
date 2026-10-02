@@ -1521,6 +1521,101 @@ async fn lost_enrollment_replies_preserve_pending_and_immutable_settlement_after
 }
 
 #[tokio::test]
+async fn unexecuted_refusal_fences_delayed_acceptance_and_survives_client_restart() {
+    let fixture = Fixture::new().await;
+    let spec = enrollment(88, 1);
+    let proof = Digest::from_bytes([89; 32]);
+    let before = fixture
+        .journal
+        .load_snapshot(scope())
+        .await
+        .unwrap()
+        .registry();
+    lose(&fixture.journal);
+    assert!(
+        fixture
+            .journal
+            .refuse_unexecuted_enrollment(&spec, proof, 10)
+            .await
+            .is_err()
+    );
+    fixture.journal.close().await.unwrap();
+    let restarted = fixture.client().await;
+    let original = restarted
+        .refuse_unexecuted_enrollment(&spec, proof, 20)
+        .await
+        .unwrap();
+    assert_eq!(original.status(), EnrollmentStatus::Refused);
+    assert_eq!(original.accepted_at_ms(), 10);
+    let after = restarted.load_snapshot(scope()).await.unwrap().registry();
+    assert_eq!(after.revision(), before.revision() + 1);
+    match restarted.accept_enrollment(&spec, 30).await.unwrap() {
+        FleetEnrollmentAcceptance::Existing(observed) => assert_eq!(observed, original),
+        FleetEnrollmentAcceptance::New(_) => panic!("delayed acceptance must replay exclusion"),
+    }
+    let mut changed = spec.clone();
+    changed.role = EnrollmentRole::Follower { log_epoch: 8 };
+    assert!(
+        restarted
+            .refuse_unexecuted_enrollment(&changed, proof, 40)
+            .await
+            .is_err()
+    );
+    assert!(
+        restarted
+            .refuse_unexecuted_enrollment(&spec, Digest::from_bytes([90; 32]), 40)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        restarted.load_snapshot(scope()).await.unwrap().registry(),
+        after
+    );
+    restarted.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_acceptance_and_unexecuted_refusal_share_one_transaction_domain() {
+    let fixture = Fixture::new().await;
+    let other = fixture.client().await;
+    let spec = enrollment(91, 1);
+    let proof = Digest::from_bytes([92; 32]);
+    let (accepted, refused) = tokio::join!(
+        fixture.journal.accept_enrollment(&spec, 10),
+        other.refuse_unexecuted_enrollment(&spec, proof, 11)
+    );
+    accepted.unwrap();
+    let refused = refused.unwrap();
+    assert_eq!(refused.status(), EnrollmentStatus::Refused);
+    assert_eq!(
+        fixture
+            .journal
+            .load_enrollment(scope(), spec.key().unwrap())
+            .await
+            .unwrap(),
+        Some(refused)
+    );
+    let live = enrollment(93, 2);
+    let original = match fixture.journal.accept_enrollment(&live, 20).await.unwrap() {
+        FleetEnrollmentAcceptance::New(record) => record,
+        _ => panic!("new request"),
+    };
+    fixture
+        .journal
+        .publish_enrollment_result(&original, EnrollmentEvent::Established(proof), 21)
+        .await
+        .unwrap();
+    assert!(
+        other
+            .refuse_unexecuted_enrollment(&live, proof, 22)
+            .await
+            .is_err()
+    );
+    other.close().await.unwrap();
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn failed_transaction_rolls_back_head_intent_and_registry_together() {
     let fixture = Fixture::new().await;
     let before = fixture.journal.load_snapshot(scope()).await.unwrap();

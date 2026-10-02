@@ -2,6 +2,70 @@
 
 use super::*;
 
+struct UnmanagedDurability;
+impl NodeDurabilityProvider for UnmanagedDurability {
+    fn recruit(
+        self: Arc<Self>,
+        _limits: ReplicaLimits,
+        _bytes: u64,
+        _live: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<Option<NodeDurabilityConfig>>> + Send>> {
+        Box::pin(async { panic!("rejected fleet provider started recruitment") })
+    }
+}
+
+#[tokio::test]
+async fn configured_fleet_rejects_an_unmanaged_follower_provider_before_starting_it() {
+    use cellule_runtime::fleet::operations::{FleetScope, NodeIntent};
+    use cellule_runtime::identity::NodeId;
+    let session = SessionId::from_bytes([248; 16]);
+    let scope = FleetScope {
+        fleet: Digest::from_bytes([249; 32]),
+        application: ApplicationId::from_bytes([3; 16]),
+    };
+    let node = CellNodeBuilder::new(application())
+        .with_session(session)
+        .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 << 20)
+        .with_replica_host(ReplicaHost::default())
+        .with_fleet_startup_intent(
+            NodeIntent::initial(scope, NodeId::from_bytes([248; 16]), session).unwrap(),
+        )
+        .build()
+        .unwrap();
+    node.install_task_group(CancellationToken::new(), CancellationToken::new())
+        .unwrap();
+    node.install_node_lease_for_startup(NodeLeaseGuard::new(0, 60_000).unwrap())
+        .unwrap();
+    let error = node
+        .install_node_durability_provider(
+            Arc::new(UnmanagedDurability),
+            NodeDurabilitySupervisorConfig::new(
+                scope.application,
+                ReplicaLimits::default(),
+                1,
+                3,
+                Duration::from_millis(10),
+                Duration::from_secs(60),
+                100,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Control("configured fleet durability requires managed follower enrollment")
+    ));
+    assert!(
+        node.owned_component::<UnmanagedDurability>(NODE_DURABILITY_PROVIDER_COMPONENT)
+            .is_none()
+    );
+    assert!(node.runtime().node_durability().is_none());
+    assert_eq!(node.state(), NodeState::Starting);
+    assert!(node.runtime().node_admission().startup_held().unwrap());
+    node.shutdown().await.unwrap();
+    assert_eq!(node.stats().retained_bytes(), 0);
+}
+
 #[tokio::test]
 async fn node_retains_typed_components_without_duplicate_names() {
     let node = CellNodeBuilder::new(application())

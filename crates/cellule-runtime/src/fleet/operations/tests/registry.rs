@@ -10,6 +10,28 @@ fn endpoint(byte: u8) -> EnrollmentEndpoint {
     }
 }
 
+#[test]
+fn unexecuted_refusal_is_a_terminal_exclusion_row_without_role_admission() {
+    let spec = enrollment(EnrollmentRole::Follower { log_epoch: 7 });
+    let proof = Digest::from_bytes([42; 32]);
+    let record = EnrollmentRecord::unexecuted_refusal(spec.clone(), proof, 10).unwrap();
+    assert_eq!(record.status(), EnrollmentStatus::Refused);
+    assert!(!record.unresolved());
+    record.validate_replay(&spec).unwrap();
+    assert_eq!(
+        EnrollmentRecord::from_bytes(&record.to_bytes().unwrap()).unwrap(),
+        record
+    );
+    assert_eq!(record.refuse(proof, 20).unwrap(), record);
+    assert!(record.establish(proof, 20).is_err());
+    assert!(record.retire(proof, 20).is_err());
+    assert!(
+        EnrollmentRecord::unexecuted_refusal(spec.clone(), Digest::from_bytes([0; 32]), 10)
+            .is_err()
+    );
+    assert!(EnrollmentRecord::unexecuted_refusal(spec, proof, -1).is_err());
+}
+
 fn intent(byte: u8) -> NodeIntent {
     NodeIntent::initial(head().scope(), endpoint(byte).node, endpoint(byte).session).unwrap()
 }

@@ -92,3 +92,19 @@ fn startup_confirmation_cannot_clear_a_racing_cordon_drain_or_pressure() {
         Err(Error::Capacity("node pressure"))
     ));
 }
+
+#[test]
+fn startup_hold_is_distinct_from_confirmed_maintenance_mode() {
+    for mode in [NodeMode::Active, NodeMode::Cordoned, NodeMode::Draining] {
+        let gate = NodeAdmission::default();
+        assert!(!gate.startup_held().unwrap());
+        gate.hold_startup().unwrap();
+        assert!(gate.startup_held().unwrap());
+        gate.confirm_startup(mode).unwrap();
+        assert!(!gate.startup_held().unwrap());
+        assert_eq!(gate.mode().unwrap(), mode);
+        if mode != NodeMode::Active {
+            assert!(gate.check_new_role().is_err());
+        }
+    }
+}

@@ -148,6 +148,26 @@ original backend errors, and canonical boot withdrawal/retirement replay. They
 use real local runtimes/directory/SQLite with explicit reply faults. They do not
 cover process crashes, a distributed journal or a complete role registry.
 
+The public managed follower scenarios use two native `FollowerStore` instances,
+signed directory authorization/CAS, and this same SQLite journal. They check all
+members Pending before enrollment; partial acceptance and receiver cordon; lost
+acceptance, establishment, close and retirement replies; shutdown deadlines and
+cancelled waiters; cold retirement and actual acknowledged SQL command/root
+readback; and invalid shipper limits before acceptance. They exercise
+`CellNode::install_fleet_node_durability_provider` through the existing supervisor.
+The fixture provider prepares signed immutable inputs only; its authority
+fresh-loads exact scope and retains its checked close receipt across lost replies.
+These in-process scenarios do not establish complete role coverage or sustained
+replacement/convergence policy for the executable's ownership-only collector.
+
+`FleetEnrollmentJournal::refuse_unexecuted_enrollment` is one SQLite transaction:
+validate complete inputs, refuse an exact Pending row or create an exact terminal
+exclusion when absent, and advance RegistryVersion only on a real change. The
+retained finite owner must prove native work never started (or retain the checked
+original-token exclusion proof). Reader removal and follower refusal use it to
+fence delayed acceptance; neither treats an absence read as settlement. Independent
+clients exercise lost commit replies, reconstruction, and acceptance/refusal races.
+
 The journal's cooldown and post-batch queries compare the complete expected
 snapshot and walk only its committed progress chain, one bounded page at a time.
 Cancellation history and orphan pages cannot establish movement time. This

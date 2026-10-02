@@ -103,6 +103,18 @@ impl CellNode {
     where
         P: NodeDurabilityProvider,
     {
+        if self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .is_some()
+            && std::any::TypeId::of::<P>()
+                != std::any::TypeId::of::<crate::durability::enrollment::FleetFollowerEnrollment>()
+        {
+            return Err(Error::Control(
+                "configured fleet durability requires managed follower enrollment",
+            ));
+        }
         let task_group = self
             .task_group
             .lock()
@@ -120,9 +132,10 @@ impl CellNode {
             task_group.cancellation.clone(),
         ));
         let drained = Arc::clone(&supervisor);
+        let drained_provider = Arc::clone(&provider);
         self.install_facilities([
-            CellNodeFacility::owned(NODE_DURABILITY_PROVIDER_COMPONENT, provider, || async {
-                Ok(())
+            CellNodeFacility::owned(NODE_DURABILITY_PROVIDER_COMPONENT, provider, move || {
+                Arc::clone(&drained_provider).drain()
             })?,
             CellNodeFacility::owned(
                 NODE_DURABILITY_SUPERVISOR_COMPONENT,

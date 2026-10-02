@@ -24,6 +24,12 @@ pub enum NodeDurabilityRotation {
 /// host consumes the resulting provider-neutral configuration and is the only
 /// owner that constructs and installs [`cellule_runtime::node::durability::NodeDurability`].
 pub trait NodeDurabilityProvider: Send + Sync + 'static {
+    /// Joins and settles producer-owned enrollment that was not delivered to the
+    /// runtime. Called after the retained supervisor joins, before runtime drain.
+    /// Ordinary providers without producer-owned work retain a no-op drain.
+    fn drain(self: Arc<Self>) -> Pin<Box<dyn Future<Output = FacilityResult> + Send>> {
+        Box::pin(async { Ok(()) })
+    }
     /// Recruits one enrollment round for the replacement generation.
     ///
     /// `Ok(None)` means the provider is not ready and the supervisor should
@@ -88,7 +94,12 @@ impl NodeDurabilitySupervisorConfig {
     }
 }
 
+pub(crate) mod enrollment;
 mod owner;
+pub use enrollment::{
+    FleetNodeDurabilityProvider, FleetNodeLogRecruitment, FollowerEnrollmentCompletion,
+    FollowerEnrollmentMember,
+};
 mod requests;
 mod supervisor;
 pub(crate) use owner::DurabilitySupervisor;

@@ -295,7 +295,9 @@ impl ReaderEnrollment {
             Ok(acceptance) => acceptance,
             Err(source) => {
                 let error = Arc::new(journal(source));
-                record.journal_error = Some(Arc::clone(&error));
+                if record.journal_error.is_none() {
+                    record.journal_error = Some(Arc::clone(&error));
+                }
                 return Err(retained(error));
             }
         };
@@ -342,7 +344,9 @@ impl ReaderEnrollment {
             Ok(result) => result,
             Err(source) => {
                 let error = Arc::new(journal(source));
-                record.journal_error = Some(Arc::clone(&error));
+                if record.journal_error.is_none() {
+                    record.journal_error = Some(Arc::clone(&error));
+                }
                 return Err(retained(error));
             }
         };
@@ -368,7 +372,6 @@ impl ReaderEnrollment {
             return Err(Error::Fenced);
         }
         record.published = true;
-        record.journal_error = None;
         Ok(())
     }
 
@@ -407,35 +410,50 @@ impl ReaderEnrollment {
                     "reader native opening remains unproven after task failure",
                 ));
             }
-            if record.original.is_none() {
-                // No first-acceptance reply means this owner never began an
-                // opening. Read this exact key; removal must not create a fresh
-                // Pending request against an intent that may now be cordoned.
-                let observed = self
+            if !record.opening_started {
+                if receipt.is_some() {
+                    return Err(Error::Fenced);
+                }
+                // The retained opening owner has joined and never dispatched
+                // native work. Atomically fence acceptance, including a delayed
+                // transaction whose committed reply was never observed.
+                let digest = match record.event {
+                    Some(EnrollmentEvent::Refused(digest)) => digest,
+                    None => {
+                        let mut hash = blake3::Hasher::new();
+                        hash.update(b"cellule.fleet-reader-unexecuted.v1\0");
+                        hash.update(&record.spec.to_bytes().map_err(operation)?);
+                        Digest::from_bytes(*hash.finalize().as_bytes())
+                    }
+                    _ => return Err(Error::Fenced),
+                };
+                record.event = Some(EnrollmentEvent::Refused(digest));
+                let original = match self
                     .journal
-                    .load_enrollment(self.scope, record.spec.key().map_err(operation)?)
+                    .refuse_unexecuted_enrollment(&record.spec, digest, now_ms()?)
                     .await
-                    .map_err(journal)?;
-                let Some(original) = observed else {
-                    records.remove(&cell);
-                    return Ok(());
+                {
+                    Ok(original) => original,
+                    Err(source) => {
+                        let error = Arc::new(journal(source));
+                        if record.journal_error.is_none() {
+                            record.journal_error = Some(error.clone());
+                        }
+                        return Err(retained(error));
+                    }
                 };
                 original.validate_replay(&record.spec).map_err(operation)?;
                 original.to_bytes().map_err(operation)?;
-                match original.status() {
-                    EnrollmentStatus::Pending => {
-                        record.original = Some(original);
-                    }
-                    EnrollmentStatus::Refused | EnrollmentStatus::Retired => {
-                        records.remove(&cell);
-                        return Ok(());
-                    }
-                    EnrollmentStatus::Established => {
-                        return Err(Error::Control(
-                            "unobserved reader establishment cannot be retired without closure",
-                        ));
-                    }
+                if original.status() != EnrollmentStatus::Refused
+                    || original.settlement_evidence() != Some(digest)
+                    || record.original.as_ref().is_some_and(|accepted| {
+                        accepted.accepted_at_ms() != original.accepted_at_ms()
+                    })
+                {
+                    return Err(Error::Fenced);
                 }
+                records.remove(&cell);
+                return Ok(());
             }
             if !matches!(record.event, Some(EnrollmentEvent::Retired(_))) {
                 record.event = Some(EnrollmentEvent::Retired(evidence(

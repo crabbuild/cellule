@@ -20,9 +20,10 @@
 
 pub use builder::CellNodeBuilder;
 pub use durability::{
-    FacilityResult, NodeDurabilityProvider, NodeDurabilityRotation, NodeDurabilitySupervisorConfig,
-    NodeLogRotationCompletion, NodeLogRotationObservation, NodeLogRotationPhase,
-    NodeLogRotationRequest,
+    FacilityResult, FleetNodeDurabilityProvider, FleetNodeLogRecruitment,
+    FollowerEnrollmentCompletion, FollowerEnrollmentMember, NodeDurabilityProvider,
+    NodeDurabilityRotation, NodeDurabilitySupervisorConfig, NodeLogRotationCompletion,
+    NodeLogRotationObservation, NodeLogRotationPhase, NodeLogRotationRequest,
 };
 pub use facility::CellNodeFacility;
 pub use node::CellNode;

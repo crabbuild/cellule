@@ -4,6 +4,99 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 managed follower producer checkpoint
+
+The host now binds follower production to the shared journal through
+`install_fleet_node_durability_provider`. An application-owned read-only provider
+supplies one opaque signed attempt and exact boot-bound transport/authority.
+The existing retained supervisor owns preparation, every member's Pending
+acceptance, its single original-token enrollment CAS, and original establishment
+publication. It neither constructs a second scheduler nor reselects on unknown
+results. Ship configuration is delivered only after all publication replies
+confirm. Before acceptance, canonical gate/shipper validation and the shared
+one-MiB reservation fail closed; at most 32 epochs remain inventoried.
+
+Unknown CAS outcomes reconcile only the original signed source/epoch/member set
+or its original-token conditional refusal. Joined nonexecution uses a new atomic
+journal exclusion: exact Pending becomes Refused, or an absent key becomes a
+terminal refusal tombstone. A late acceptance returns that original row without
+opening a native role. This also replaces the managed reader's absence-based
+cleanup. Existing opened-reader cases still require Retired; the two explicit
+nonexecution cases now require Refused and terminal replay. Independent SQLite
+clients qualify the shared transaction domain, immutable timestamps, lost replies
+and reconstruction. No persisted format or native qualification profile changed.
+
+The managed authority receives complete native retirement observations and
+requires every original member fence before canonical closure and durable
+retirement. Native closure is recorded before fallible evidence construction;
+lost publication retries the original events without repeating confirmed close.
+Shutdown preserves its original errors and retries instead of caching a terminal
+transient failure. Undelivered enrollment cleanup joins after the supervisor,
+using the original limits and retained durability object; runtime drain closes
+delivered epochs. Caller cancellation/deadlines leave inventory and byte charges
+owned until settlement. Local completion captures original native and journal
+errors independently; removed history proves no fleet fact.
+
+Nine new public example scenarios use signed directory authority and two actual
+native follower stores. They cover every Pending-before-CAS boundary, partial
+acceptance and receiver cordon, lost acceptance/establishment/close/retirement
+replies, cancelled/deadline drain waiters, failed member fences, invalid shipper
+limits, and an acknowledged SQL mutation. The latter confirms nonzero contiguous
+object coverage, every original member watermark, byte-identical root restore,
+counter state and the original stored `sys_requests` response. One public host
+case rejects an unmanaged provider before it can start on a configured fleet
+boot. Three new runtime cases check refusal codecs, startup-held versus confirmed
+maintenance state, and token-bound/domain-separated evidence replay.
+
+The final scoped pipeline passed with Rust/Cargo 1.97.0, all features, the lockfile,
+`CARGO_INCREMENTAL=0`, and this checkout's Workspace target directory. Its
+Rust/Cargo manifest stayed identical after every command.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `cc7aa3063556b03f8c165f1dc74def0aae60a88e` |
+| Rust/Cargo manifest | 607 tracked/nonignored Rust/Cargo paths; sorted SHA256, two spaces, relative path lines. SHA256 `ce6f869aec2f6705a260aea141b3837c0db37e0d77cf07c7db9b956c02bb95c9`. |
+| Complete public host node target | 81 passed; none filtered or ignored. |
+| Complete fleet example target | 71 passed; none filtered or ignored. Includes nine new public native follower scenarios and two new shared-journal cases. |
+| Public runtime durability selection | 24 passed; 176 filtered; none ignored. |
+| Runtime node library selection | 101 passed; 408 filtered; none ignored. |
+| Runtime fleet operations selection | 66 passed; 443 filtered; none ignored. |
+| Runtime admission selection | 5 passed; 504 filtered; none ignored. |
+| Distinct scoped cases | 348 passed. Earlier/intermediate executions are not added to this total. |
+| Lints | Host/app all targets, runtime library/public runtime target, all features, warnings denied; passed. App process drivers compiled under Clippy; they were not executed locally. |
+| Host/runtime API documentation | All features, warnings denied; passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, Rust snippet and Markdown link checks, and SQL/peer validators passed. |
+
+Intermediate attempts exposed obsolete reader settlement assertions, premature
+fixture readiness, missing advertised follower capacity, a Cell replica limits
+mismatch, one missed test-only authority signature, and two lint issues. Fixtures
+now follow startup order and existing capacity/application contracts; opened
+readers still require Retired, while proven nonexecution requires Refused and
+terminal replay. Production limits, profiles and required evidence are unchanged.
+Logs and the exact manifest use `/tmp/cellule-managed-follower-*`; the intermediate
+pipeline failures remain in the `intermediate-verification` and
+`pre-lint-verification` logs. No process/provider suite ran locally.
+
+Baseline `cc7aa30` passes workspace/MSRV (36947731399), both capacity campaigns
+(36947731308), contracts (36947731662), website (36947731302), decoder fuzz smoke
+(36947731443), fast/negative TLC (36947731392), and Compose smoke
+[job 110653610813](https://github.com/crabbuild/cellule/actions/runs/36947731323/job/110653610813).
+Broad TLC and the deterministic simulator were skipped. Routing
+[job 110653610627](https://github.com/crabbuild/cellule/actions/runs/36947731323/job/110653610627)
+was authoritatively in progress at the frozen-binary comparison step when inspected.
+The new source requires its own CI qualification. The original `6092203` reader
+scaling failure and artifact below remain evidence; later green smoke does not
+establish that failure's cause.
+
+The full W1–W10 objective remains active. Complete authenticated revisioned role
+observations, failed-process/boot evidence, replacement-policy proof, maintenance
+role actions/finalization, remaining primitive/fault matrices (including Cron and
+Blob external owners), sustained convergence, full maintenance/receiver-loss
+examples, process/provider/mixed-binary qualification and operator rollout/runbooks
+remain required. The existing ownership-only collector still reports incomplete
+role coverage. This producer checkpoint alone cannot complete SettleRoles,
+Finalize, or the full plan.
+
 ## October 1 2026 prepared follower enrollment checkpoint
 
 Runtime recruitment now shares one canonical selector and conditional write
@@ -91,7 +184,8 @@ The artifact pins synthetic PR merge source
 The scaling driver binary SHA256 is
 `d8796fd2b9a195c62fe7c4020aadab033a27a1f013b2ad56ee2bc56ef239ded6`.
 Local copies are `/tmp/cellule-fleet-6092203-compose-smoke*`. Routing job
-`110643075291` remains running when inspected; re-poll its original handle.
+`110643075291` is authoritatively Cancelled (completed at 2026-10-02 00:47:34 UTC)
+after the subsequent push.
 Reader availability and process/provider qualification remain open. No profile,
 required evidence or assertion was weakened.
 

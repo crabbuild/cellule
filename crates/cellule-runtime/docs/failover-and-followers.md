@@ -921,7 +921,7 @@ healthy siblings are joined before a member failure is returned.
 
 | API | Evidence and limit |
 | --- | --- |
-| `shutdown()` | Ordinary best-effort closure. Unreachable member responses remain unconfirmed. |
+| `shutdown()` | Ordinary authorities use best-effort closure. Managed fleet authorities require all member confirmations and retain retry ownership. |
 | `retirement_observation()` | Latest joined responses for the original leader, epoch, complete member set and watermark; each original transport error is retained. Contradictory receipts return a protocol error. |
 | `NodeLogRetirementObservation::confirmed()` | Opaque confirmation of every member's append fence. This alone does not establish authority closure or lane deletion. |
 | `shutdown_for_maintenance()` | Returns the member proof after canonical authority closure succeeds, and retains it for idempotent calls. Earlier best-effort closure with missing responses cannot be upgraded into proof. |
@@ -939,8 +939,8 @@ member reply still requires reconciliation even when the lane is already retired
 Complete fleet-role observation, journal settlement,
 replacement-policy evidence and failed-process closure still belong to the
 embedding application's maintenance controller. This API alone does not certify
-that a physical node is safe to stop. The host's automatic rotation continues
-to use ordinary best-effort closure.
+that a physical node is safe to stop. Unmanaged host rotation retains ordinary
+best-effort closure; the managed fleet binding requires complete member fences.
 
 **Prepared follower enrollment.** A durable fleet producer can separate the
 existing directory selection from its conditional authority write:
@@ -962,6 +962,17 @@ observes canonical enrollment. Selected follower boot metadata does not prove
 current receiver authority, fsync, registry publication or retirement. Transport
 construction and fleet producer ownership remain application/host integration
 responsibilities; these APIs alone do not install a journal-bound producer.
+
+The host's [managed follower binding](../../cellule-host/docs/lifecycle.md#managed-follower-enrollment)
+owns this Pending-before-CAS protocol in the existing supervisor. Its authority
+requires confirmed member retirement during automatic rotation and runtime drain.
+`NodeLogAuthority::close` receives the complete joined
+`NodeLogRetirementObservation`; ordinary implementations can use its `barrier()`.
+`observe_retirement` captures responses before confirmation and close, and
+`observe_shutdown_failure` retains failures before observation during managed
+shutdown retries. These diagnostics grant no authority. Managed runtime shutdown
+keeps retrying its original barrier, including across a cancelled drain waiter;
+ordinary authorities retain their best-effort closure behavior.
 
 **Epoch rotation controller.** The long-lived HTTP runtime applies the same
 barrier when shipping stops or the current epoch reaches `1_000_000` issued

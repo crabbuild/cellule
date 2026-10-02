@@ -65,6 +65,20 @@ pub enum FleetEnrollmentAcceptance {
 /// Advance the shared RegistryVersion atomically with every actual row change;
 /// exact duplicates return original records without refreshing evidence time.
 pub trait FleetEnrollmentJournal: Send + Sync + 'static {
+    /// Atomically settles joined work whose native enrollment never started.
+    /// Validate complete immutable inputs and trusted nonexecution evidence.
+    /// If absent, retain `unexecuted_refusal`; if Pending, apply that same refusal.
+    /// An existing identical refusal replays its original time. Established or
+    /// differently settled rows conflict. Advance RegistryVersion in the same
+    /// transaction. A delayed acceptance must return this terminal row, never New.
+    /// This is not an absence read or authority to cancel an unobserved native CAS.
+    fn refuse_unexecuted_enrollment<'a>(
+        &'a self,
+        spec: &'a EnrollmentSpec,
+        evidence: Digest,
+        now_ms: i64,
+    ) -> FleetAdapterFuture<'a, EnrollmentRecord>;
+
     /// Loads current intent and the exact established boot in one transaction.
     /// Missing rows return None. Pending/refused/retired, foreign-role/session
     /// or contradictory rows fail closed. Never return a cached older intent.

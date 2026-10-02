@@ -7,6 +7,65 @@ use cellule_runtime::fleet::operations::{FleetAction, FleetScope};
 use cellule_runtime::identity::NodeId;
 
 impl CellNode {
+    /// Installs journal-bound follower production in the existing durability
+    /// supervisor. Applications supply read-only signed preparation, authenticated
+    /// transports/authority and one shared atomic fleet journal. Install before
+    /// startup; every selected member is Pending before its leader CAS.
+    pub fn install_fleet_node_durability_provider<P: crate::FleetNodeDurabilityProvider>(
+        &self,
+        scope: FleetScope,
+        node: NodeId,
+        journal: Arc<dyn crate::fleet::FleetJournal>,
+        provider: Arc<P>,
+        configuration: NodeDurabilitySupervisorConfig,
+    ) -> cellule_runtime::Result<()> {
+        if configuration.application != scope.application {
+            return Err(Error::Fenced);
+        }
+        if let Some(startup) = self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .as_ref()
+            && (startup.intent.scope() != scope || startup.intent.node() != node)
+        {
+            return Err(Error::Fenced);
+        }
+        let tasks = self
+            .task_group
+            .lock()
+            .map_err(|_| Error::Control("CellNode task group lock poisoned"))?
+            .clone()
+            .ok_or(Error::Control(
+                "fleet follower enrollment requires an installed task group",
+            ))?;
+        let producer = Arc::new(crate::durability::enrollment::FleetFollowerEnrollment::new(
+            scope,
+            node,
+            self.session,
+            provider,
+            journal,
+            self.runtime.clone(),
+            configuration.recruit_interval,
+            tasks.cancellation_token(),
+        )?);
+        self.install_node_durability_provider(producer, configuration)
+    }
+
+    /// Captures current local follower enrollment, including unknown and paused
+    /// steps. Durable retirement removes local progress; None proves no absence,
+    /// completion, withdrawal or fleet finalization.
+    pub fn follower_enrollment_completion(
+        &self,
+        log_epoch: u64,
+    ) -> cellule_runtime::Result<Option<crate::FollowerEnrollmentCompletion>> {
+        match self.owned_component::<crate::durability::enrollment::FleetFollowerEnrollment>(
+            NODE_DURABILITY_PROVIDER_COMPONENT,
+        ) {
+            Some(producer) => producer.completion(log_epoch),
+            None => Ok(None),
+        }
+    }
     /// Confirms startup against an atomic current-intent/established-boot read.
     /// The application first journals Pending, performs canonical directory
     /// enrollment and publishes checked evidence. Missing, pending or ambiguous

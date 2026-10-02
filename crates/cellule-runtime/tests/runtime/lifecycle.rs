@@ -355,8 +355,9 @@ impl NodeLogAuthority for TestNodeAuthority {
 
     fn close<'a>(
         &'a self,
-        barrier: &'a NodeLogRotationBarrier,
+        retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
     ) -> futures_util::future::BoxFuture<'a, cellule_runtime::Result<()>> {
+        let barrier = retirement.barrier();
         Box::pin(async move {
             self.closes.lock().unwrap().push(barrier.log_epoch());
             Ok(())

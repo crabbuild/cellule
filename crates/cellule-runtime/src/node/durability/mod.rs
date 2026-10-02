@@ -9,7 +9,7 @@ use crate::identity::SessionId;
 use crate::node::lease::NodeLeaseGuard;
 use crate::node::log::{
     CommitTicket, DurabilityGate, DurabilityProof, DurabilitySource, NodeLogRetirementObservation,
-    NodeLogRetirementProof, NodeLogRotationBarrier,
+    NodeLogRetirementProof,
 };
 use crate::node::log_shipper::{NodeLogShipper, NodeLogSubmission};
 use crate::node::log_transport::NodeLogTransport;
@@ -20,6 +20,23 @@ use crate::{Error, Result};
 /// Implementations must serialize these mutations with heartbeat refreshes and
 /// reconcile an ambiguous CAS only when the exact session and log epoch match.
 pub trait NodeLogAuthority: Send + Sync {
+    /// Requires complete native member fences for every closure when fleet
+    /// enrollment retirement depends on them. Ordinary authorities retain
+    /// their best-effort rotation contract.
+    fn requires_confirmed_retirement(&self) -> bool {
+        false
+    }
+    /// Observes joined member responses before confirmation and closure.
+    /// This callback may retain diagnostics; it grants no retirement authority.
+    fn observe_retirement(&self, _observation: Arc<NodeLogRetirementObservation>) -> Result<()> {
+        Ok(())
+    }
+    /// Retains an original shutdown failure while a managed drain keeps retrying.
+    /// The error includes failures before member observation, such as pending
+    /// object coverage. This callback grants no closure authority.
+    fn observe_shutdown_failure(&self, _error: Arc<Error>) -> Result<()> {
+        Ok(())
+    }
     /// Activates one log epoch for this session.
     fn activate<'a>(&'a self, log_epoch: u64) -> BoxFuture<'a, Result<()>>;
 
@@ -31,7 +48,10 @@ pub trait NodeLogAuthority: Send + Sync {
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Closes one log epoch at its rotation barrier.
-    fn close<'a>(&'a self, barrier: &'a NodeLogRotationBarrier) -> BoxFuture<'a, Result<()>>;
+    fn close<'a>(
+        &'a self,
+        retirement: &'a NodeLogRetirementObservation,
+    ) -> BoxFuture<'a, Result<()>>;
 }
 
 /// Provider-neutral inputs for constructing one node-log durability epoch.
@@ -111,6 +131,19 @@ impl NodeDurabilityConfig {
             self.transport,
             self.node_lease,
         )))
+    }
+
+    /// Checks construction bounds without spawning a shipper or enrolling any
+    /// follower. Managed producers call this before accepting journal obligations.
+    pub fn validate(&self) -> Result<()> {
+        DurabilityGate::new(
+            self.session,
+            self.node,
+            self.log_epoch,
+            self.members.iter().copied(),
+        )?;
+        NodeLogShipper::validate_limits(self.limits)?;
+        Ok(())
     }
 }
 
@@ -284,10 +317,29 @@ impl NodeDurability {
             .clone())
     }
 
-    /// Drains accepted frames and closes this epoch using ordinary best-effort
-    /// member retirement. Inspect retained results before fleet finalization.
+    /// Drains accepted frames and closes this epoch. Ordinary authorities use
+    /// best-effort member retirement; managed fleet authorities retain strict
+    /// retries through caller deadlines. Inspect evidence before finalization.
     pub async fn shutdown(&self) -> Result<()> {
-        self.shutdown_epoch(false).await.map(|_| ())
+        if !self.requires_confirmed_retirement() {
+            return self.shutdown_epoch(false).await.map(|_| ());
+        }
+        // Runtime drain is a retained task. Returning a transient member error
+        // here would cache a terminal shutdown failure and strand this epoch.
+        // Keep its canonical barrier and observations through caller deadlines.
+        loop {
+            match self.shutdown_epoch(true).await {
+                Ok(_) => return Ok(()),
+                Err(error) => self.authority.observe_shutdown_failure(Arc::new(error))?,
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Returns the authority's closure policy for retained supervisor retries.
+    #[must_use]
+    pub fn requires_confirmed_retirement(&self) -> bool {
+        self.authority.requires_confirmed_retirement()
     }
 
     /// Closes this epoch only after every member confirms its exact append fence.
@@ -340,13 +392,15 @@ impl NodeDurability {
                 observation
             }
         };
+        self.authority
+            .observe_retirement(Arc::clone(&observation))?;
         let confirmation = observation.confirmed();
         let proof = if require_confirmation {
             Some(Arc::new(confirmation?))
         } else {
             confirmation.ok().map(Arc::new)
         };
-        self.authority.close(&barrier).await?;
+        self.authority.close(&observation).await?;
         if let Some(proof) = &proof {
             self.retirement_proof
                 .set(Arc::clone(proof))

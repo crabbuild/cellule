@@ -58,6 +58,17 @@ impl Default for NodeAdmission {
 }
 
 impl NodeAdmission {
+    /// Reports whether boot confirmation still holds this runtime's startup.
+    /// Cordon and pressure remain separate; outbound replacement of existing
+    /// responsibilities may proceed after a maintenance boot is confirmed.
+    pub fn startup_held(&self) -> Result<bool> {
+        Ok(self
+            .state
+            .read()
+            .map_err(|_| Error::Node("node admission lock poisoned"))?
+            .startup
+            == Startup::Held)
+    }
     /// Returns the lifecycle reason independent of pressure.
     pub fn mode(&self) -> Result<NodeMode> {
         Ok(self

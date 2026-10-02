@@ -111,6 +111,14 @@ Without it, the adapter must retain accepted activation across waiter cancellati
 publish checked completion and retire only after joined closure. Source metadata
 and snapshot receipts cannot establish complete enrollment coverage.
 
+If the retained owner joins without ever starting native opening, removal uses
+`refuse_unexecuted_enrollment` in the shared journal transaction domain. It retains
+an exact Refused exclusion row whether acceptance is absent, Pending, or its reply
+was lost. A delayed acceptance must replay that terminal row. Reading absence
+alone cannot close this obligation. Established or differently settled rows
+conflict; they require their original native closure evidence. Once native opening
+started, joined opening/closure continues to publish the original Retired event.
+
 ## Join reader closure
 
 `CellReadReplica::close()` fences new work across every clone.

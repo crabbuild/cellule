@@ -617,3 +617,61 @@ async fn racing_refusal_and_enrollment_have_exactly_one_conditional_winner() {
         .unwrap();
     assert_eq!(current.advertisement().generation(), 2);
 }
+
+#[tokio::test]
+async fn enrollment_evidence_is_replay_stable_and_separates_native_outcomes() {
+    let (directory, source, _) = ensemble().await;
+    let prepared = directory
+        .prepare_log_enrollment(&source, 7, 1, 3, NOW_MS + 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let attempt = directory
+        .prepare_log_enrollment_attempt(&prepared, NOW_MS + 2)
+        .await
+        .unwrap();
+    let original = attempt.evidence_digest().unwrap();
+    assert_eq!(original, attempt.clone().evidence_digest().unwrap());
+    let enrolled = directory
+        .commit_log_enrollment(&attempt, NOW_MS + 3)
+        .await
+        .unwrap();
+    assert_ne!(original, enrolled.evidence_digest().unwrap());
+    assert_eq!(
+        enrolled.evidence_digest().unwrap(),
+        directory
+            .inspect_log_enrollment(&attempt, NOW_MS + 4)
+            .await
+            .unwrap()
+            .unwrap()
+            .evidence_digest()
+            .unwrap()
+    );
+    let (other, source, _) = ensemble().await;
+    let prepared = other
+        .prepare_log_enrollment(&source, 8, 1, 3, NOW_MS + 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let refused_attempt = other
+        .prepare_log_enrollment_attempt(&prepared, NOW_MS + 2)
+        .await
+        .unwrap();
+    assert_ne!(original, refused_attempt.evidence_digest().unwrap());
+    let refused = other
+        .fence_log_enrollment(&refused_attempt, NOW_MS + 3)
+        .await
+        .unwrap();
+    assert_ne!(
+        refused_attempt.evidence_digest().unwrap(),
+        refused.evidence_digest().unwrap()
+    );
+    assert_ne!(
+        enrolled.evidence_digest().unwrap(),
+        refused.evidence_digest().unwrap()
+    );
+    assert_eq!(
+        refused.evidence_digest().unwrap(),
+        refused.clone().evidence_digest().unwrap()
+    );
+}

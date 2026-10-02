@@ -254,7 +254,7 @@ impl crate::node::durability::NodeLogAuthority for RefusingAuthority {
 
     fn close<'a>(
         &'a self,
-        _barrier: &'a crate::node::log::NodeLogRotationBarrier,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
     ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
         Box::pin(async { Err(Error::Node("test authority refuses closing")) })
     }
