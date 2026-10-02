@@ -4,6 +4,102 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 writer profile observation and count convergence checkpoint
+
+The reference observer now captures native pages through `CellNode::fleet_snapshot`
+using the original full journal barrier, physical endpoint, fresh nonce and
+exclusive deadline. It captures all seven categories and repeats actor topology.
+Fresh Cell authority is checked for every catalog-provisioned Cell and reread
+before completion; stale actor rows are removed from both count and pressure
+inputs. Both canonical advertised-session scans include expired records and
+unexpected boots. Directory follower-log discovery includes expired/fenced
+leader obligations. The complete journal roster is confirmed after collection.
+
+Complete counts are supported only for the private constructor's closed profile:
+three managed boots, twelve catalog-backed SQL writers, and no reader/follower
+installation or enrollment. Unbound pages alone supply no absence proof.
+Missing or changed authority, Pending/role enrollment, native role installation,
+unknown boots or unresolved logs prevent complete counts. Role-enabled production
+observation, replacement policy and maintenance finalization remain unfinished.
+
+Capacity samples now renew the original signed boot through canonical directory
+CAS. The original signing key and executable identity remain pinned; the local
+guard advances only after CAS confirmation. Real classifier sequences and sample
+times advance naturally. Fenced, missing or expired boots cannot be recreated.
+Withdrawal permits validated same-boot heartbeat successors while preserving
+original establishment evidence and requiring joined shutdown plus its exact
+permanent directory tombstone.
+
+The new `balance` command drives actual residence and post-batch sample barriers.
+Starting at 12/0/0, bounded batches move eight distinct Cells to 4/4/4.
+Two further complete passes retain scheduling enabled and allocate no new work.
+All eight original command outcomes and SQL values survive, successor authority
+is checked, and old handles are fenced. New five-minute receipts cover this
+longer scenario; overload/restart retain their one-minute receipts, profiles,
+shared bounds and all required two-move assertions. Exit joins all three runtimes,
+checks every resource ledger and retires all three exact boot obligations.
+
+### Focused qualification
+
+| Source and evidence | Recorded value |
+| --- | --- |
+| Parent | `ac739bcdad0232296d3b03a7bd34492873aab224`. |
+| Qualified Rust/Cargo manifest | 632 sources/manifests/all lockfiles; SHA256 `6bb973f54342c10a296154111273f77396a385601be2816220bcee6b8633c49f`. Active and isolated source sets both match it after execution. |
+| Environment | Rust/Cargo 1.97.0; all features, locked dependencies, `CARGO_INCREMENTAL=0`; separate Workspace targets for active and isolated checkouts. |
+| Complete fleet example | 98 passed, none filtered or ignored, in 76.80 seconds; seven cases are new. Selected repetitions are not added. |
+| New regression cases | Complete writer coverage and canonical renewal; unknown advertised boot; Pending role/revision change; stale current owner; fenced guard and retirement; a real canonical release preserving eleven unchanged pressure candidates; real-time count convergence/equilibrium. |
+| Host all-target Clippy / API docs | Clippy and host/runtime API documentation passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1,172 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+| Isolated public CLI | `cargo run -p cellule-host --example fleet_operations --all-features --locked -- balance` exited zero. Eight releases, activations, retirements and receipt checks; max inflight two; max restore credit 2,550,136,832 bytes; final counts 4/4/4; three joined nodes and boot retirements. |
+| Original CLI executable | SHA256 `b8a813dc120d67c98b080345f6b521a9b2dadba06fef6c1f09369fe60cff8dcd`; executable, raw log, source manifest and metadata archived at `/tmp/cellule-reference-observation-final-cli-evidence/`. |
+
+Logs and manifests are `/tmp/cellule-reference-observation-*`. This is a
+real-time in-process reference qualification, without process crash, distributed
+provider, sustained workload or mixed-binary evidence. The full W1–W10 objective
+remains active and the PR remains draft.
+
+### Intermediate failures and corrections
+
+The first full run passed 94 cases and failed three. Two new fault tests wrongly
+expected successful shutdown after deliberately fencing a live writer; the native
+owner retained `SharedDrainError(Fenced)`. Cleanup now preserves that original
+source across repeated joins, requires non-Stopped status and an unresolved boot
+record after failed drain, and still checks zero native resources. The separate
+fenced-guard/withdrawal case uses an empty receiver and confirms no advertisement
+CAS or boot recreation after fencing. These tests do not manufacture completion.
+
+An intermediate observer discarded all source rows after any topology change,
+losing independent pressure candidates. It now disables complete counts and keeps
+only unchanged generation/position/cost/blocker rows from both native captures.
+A deterministic regression releases one real Cell and requires the other eleven
+to remain candidates. Subsequent full runs pass the original overload and
+controller-restart assertions. Earlier generic overload/retirement failures lack
+sufficient diagnostics to establish their individual causes; detailed pass and
+retained-attempt context is now preserved on failure.
+
+A new blanket test assertion prohibited IncompleteObservation even during an
+accepted movement batch. That misrepresented the coverage contract: transition
+passes can be incomplete and must block count planning. The final test instead
+requires complete final counts and two complete equilibrium passes with scheduling
+still enabled. An obsolete diagnostic executable retained the earlier assertion;
+its terminal 96-pass/one-fail result is recorded separately and is not qualification.
+The final rebuilt executable passes all 98 cases. A last review preserves the
+original movement error Arc in the count command instead of formatting it away;
+the complete suite and isolated CLI were rebuilt and rerun after that change. Intermediate API/test constructor
+errors and a needless borrowed journal remain in the logs; failed edit scripts
+remain in the task record. Production pressure/residence/deadline bounds and
+original assertions are unchanged.
+
+### Parent CI at the recorded capture
+
+Exact parent `ac739bc` workspace/MSRV, contracts, smoke, both capacity campaigns,
+website, fuzz and fast/negative TLC pass. Broad TLC and simulator are skipped.
+Workspace [run 36983372396](https://github.com/crabbuild/cellule/actions/runs/36983372396)
+is terminal success. Compose [run 36983372019](https://github.com/crabbuild/cellule/actions/runs/36983372019)
+was still running its leased/object routing comparisons at the captured read;
+that timeout/status is not a terminal result. These parent checks do not qualify
+the new source. New-head CI and the full plan's remaining gates are required.
+
 ## October 2 2026 request bound native page checkpoint
 
 `CellNode::fleet_snapshot` captures one original native category through the

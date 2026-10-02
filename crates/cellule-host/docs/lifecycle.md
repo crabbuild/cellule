@@ -385,8 +385,12 @@ real moves across three leased nodes, reopen an independent controller client,
 and verify original receipts and readback. `controller-restart` also loses both
 source replies, waits for actual controller expiry, changes claimant/epoch,
 adopts retained releases and joins expired receiver credit before activation.
-Both scenarios verify empty resource ledgers after shutdown. Their fixed ownership-only collector
-reports incomplete role coverage; production complete observations,
+Both scenarios verify empty resource ledgers after shutdown. `balance` also
+honors real residence and post-batch samples, renews canonical boots, and
+drives repeated bounded batches toward even counts with original receipt checks.
+The request-bound collector supports the example's closed writer profile;
+native reader/follower installations and unresolved role enrollment keep that
+profile incomplete. Production complete observations,
 source/receiver failure adoption, busy maintenance, and role finalization remain
 required by the [fleet plan](../../../docs/fleet-operations-plan.md).
 

@@ -4,8 +4,10 @@
 
 mod adapters;
 mod application;
+mod balance;
 #[cfg(test)]
 mod follower_tests;
+mod observation;
 #[cfg(test)]
 mod reader_tests;
 mod startup;
@@ -114,18 +116,23 @@ pub(super) struct ScenarioSummary {
     pub controller_epoch: u64,
     pub expired_receiver_cleanups: usize,
     pub blockers: Vec<cellule_runtime::fleet::operations::DrainBlocker>,
+    pub final_counts: [usize; 3],
 }
 
 /// Owns the private directory until all runtime and journal jobs are joined.
 pub(super) async fn overload() -> JournalResult<ScenarioSummary> {
-    execute(false).await
+    execute(false, false).await
 }
 
 pub(super) async fn controller_restart() -> JournalResult<ScenarioSummary> {
-    execute(true).await
+    execute(true, false).await
 }
 
-async fn execute(restart: bool) -> JournalResult<ScenarioSummary> {
+pub(super) async fn count_balance() -> JournalResult<ScenarioSummary> {
+    execute(false, true).await
+}
+
+async fn execute(restart: bool, count_balance: bool) -> JournalResult<ScenarioSummary> {
     let root = tempfile::tempdir()?;
     let path = root.path().join("fleet-journal.sqlite");
     let profile = if restart {
@@ -140,16 +147,20 @@ async fn execute(restart: bool) -> JournalResult<ScenarioSummary> {
     let journal = Arc::new(SqliteJournal::open(path.clone(), scope(), profile, clock()?).await?);
     let mut nodes = Vec::new();
     let mut boots = Vec::new();
-    let result = run(
-        &root,
-        path,
-        journal.clone(),
-        &mut nodes,
-        &mut boots,
-        profile,
-        restart,
-    )
-    .await;
+    let result = if count_balance {
+        balance::run(&root, journal.clone(), &mut nodes, &mut boots, profile).await
+    } else {
+        run(
+            &root,
+            path,
+            journal.clone(),
+            &mut nodes,
+            &mut boots,
+            profile,
+            restart,
+        )
+        .await
+    };
     let mut cleanup_error = None;
     for node in &nodes {
         if let Err(error) = node.shutdown().await
@@ -228,15 +239,15 @@ async fn execute(restart: bool) -> JournalResult<ScenarioSummary> {
     Ok(summary)
 }
 
-async fn run(
+/// The private reference profile provisions only catalog-backed SQL writers.
+/// Register every boot before readiness; retain partial owners for exit cleanup.
+async fn initialize(
     root: &tempfile::TempDir,
-    path: PathBuf,
-    journal: Arc<SqliteJournal>,
+    journal: &Arc<SqliteJournal>,
     nodes: &mut Vec<Arc<CellNode>>,
     boots: &mut Vec<startup::BootOwner>,
-    profile: FleetProfile,
-    restart: bool,
-) -> JournalResult<ScenarioSummary> {
+    receipt_lifetime_ms: i64,
+) -> JournalResult<(Arc<HashMap<CellId, Record>>, HashMap<CellId, Acknowledged>)> {
     let application = application::compile()?;
     let code = *application
         .registry()
@@ -337,7 +348,7 @@ async fn run(
             advertisement: ad.clone(),
             guard: None,
         });
-        let boot = startup::enroll(&journal, &directory, &spec, ad, clock()?).await?;
+        let boot = startup::enroll(journal, &directory, &spec, ad, clock()?).await?;
         let guard = NodeLeaseGuard::new(clock()?, expires)?;
         node.install_node_lease_for_startup(guard.clone())?;
         boots[boot_index].guard = Some(guard);
@@ -372,7 +383,9 @@ async fn run(
         let identity = MutationIdentity {
             request_id: RequestId::from_bytes(*record.incarnation.as_bytes()),
             issued_at_ms: now,
-            expires_at_ms: now + 60_000,
+            expires_at_ms: now
+                .checked_add(receipt_lifetime_ms)
+                .ok_or_else(|| invalid("example receipt lifetime overflow"))?,
         };
         let digest = Digest::from_bytes([record.incarnation.as_bytes()[0]; 32]);
         let value = i64::from(record.incarnation.as_bytes()[0]);
@@ -403,9 +416,25 @@ async fn run(
     let version = journal.load_snapshot(scope()).await?.registry();
     let version = journal.bootstrap_registry(version).await?;
     journal.set_scheduling(version, true).await?;
+    Ok((records, acknowledged))
+}
+
+async fn run(
+    root: &tempfile::TempDir,
+    path: PathBuf,
+    journal: Arc<SqliteJournal>,
+    nodes: &mut Vec<Arc<CellNode>>,
+    boots: &mut Vec<startup::BootOwner>,
+    profile: FleetProfile,
+    restart: bool,
+) -> JournalResult<ScenarioSummary> {
+    let (records, acknowledged) = initialize(root, &journal, nodes, boots, 60_000).await?;
     let fleet = Arc::new(adapters::LocalFleet {
         nodes: nodes.clone(),
         journal: journal.clone(),
+        boots: boots.clone(),
+        records: records.clone(),
+        capture_sequence: std::sync::atomic::AtomicU64::new(0),
         lose_release_replies: restart,
         lost_release_replies: std::sync::atomic::AtomicUsize::new(0),
         expired_receiver_cleanups: std::sync::atomic::AtomicUsize::new(0),
@@ -442,9 +471,10 @@ async fn run(
         .await?;
     drop(pressure);
     if first.allocated != 2 {
-        return Err(invalid(
-            "measured overload did not allocate the bounded two-move batch",
-        ));
+        return Err(std::io::Error::other(format!(
+            "measured overload did not allocate the bounded two-move batch: report={first:?} current_source_sample={:?}",
+            nodes[0].runtime().operational_sample()?
+        )).into());
     }
     let specs = first
         .snapshot
@@ -566,7 +596,9 @@ async fn settle(
         controller_epoch: 0,
         expired_receiver_cleanups: 0,
         blockers,
+        final_counts: [0; 3],
     };
+    let mut passes = Vec::new();
     for pass in 0..12 {
         let report = driver
             .reconcile_once(clock, Instant::now() + Duration::from_secs(5))
@@ -597,6 +629,7 @@ async fn settle(
                 return Err(invalid("old controller was not fenced after replacement"));
             }
         }
+        passes.push(format!("pass={pass} dispatched={} inspected={} released={} activated={} retired={} cancelled={} attempts={:?}", report.dispatched, report.inspected, report.released, report.activated, report.retired, report.cancelled, report.snapshot.head().attempts()));
         for blocker in report.blockers {
             if !summary.blockers.contains(&blocker) {
                 summary.blockers.push(blocker);
@@ -639,75 +672,86 @@ async fn settle(
             .attempts()
             .is_empty()
     {
-        return Err(invalid("real movement did not settle both attempts"));
+        let retained = journal.load_snapshot(scope()).await?;
+        return Err(std::io::Error::other(format!("real movement did not settle both attempts: summary={summary:?} retained={:?} passes={passes:?}", retained.head().attempts())).into());
     }
     for spec in &specs {
-        let record = records
-            .get(&spec.target.cell_id())
-            .ok_or_else(|| invalid("missing readback record"))?;
-        let receipt = acknowledged
-            .get(&spec.target.cell_id())
-            .ok_or_else(|| invalid("missing original acknowledgment"))?;
-        let node = fleet
-            .nodes
-            .iter()
-            .enumerate()
-            .find(|(index, _)| session(*index) == spec.destination)
-            .map(|(_, node)| node)
-            .ok_or_else(|| invalid("missing receiver"))?;
-        let current = record
-            .authority
-            .load(spec.target.cell_id())
-            .await?
-            .ok_or_else(|| invalid("receiver authority absent"))?;
-        // Restored serving actors may still be hydrating. This lookup reads the
-        // existing actor against authority; it cannot create another writer.
-        let handle = node
-            .runtime()
-            .local_handle(record.catalog.clone(), &current)
-            .await?
-            .ok_or_else(|| invalid("receiver has no serving actor"))?;
-        if handle
-            .resolve(receipt.identity, receipt.digest, clock()?, 64)
-            .await?
-            != Resolution::Committed(receipt.outcome.clone())
-        {
-            return Err(invalid("original command receipt did not survive movement"));
-        }
-        let value = handle
-            .query(64, 64, |db| {
-                Ok(db
-                    .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))?
-                    .to_be_bytes()
-                    .to_vec())
-            })
-            .await?;
-        if value != receipt.value.to_be_bytes() {
-            return Err(invalid("restored Cell readback differs"));
-        }
-        let current = record
-            .authority
-            .load(spec.target.cell_id())
-            .await?
-            .ok_or_else(|| invalid("receiver authority absent"))?;
-        if current
-            .value()
-            .owner
-            .as_ref()
-            .is_none_or(|owner| owner.session != spec.destination)
-            || current.value().epoch <= spec.source_epoch
-        {
-            return Err(invalid("receiver lacks successor authority"));
-        }
-        if !matches!(
-            receipt.source.query(64, 64, |_| Ok(Vec::new())).await,
-            Err(cellule_runtime::Error::Fenced
-                | cellule_runtime::Error::CellDraining
-                | cellule_runtime::Error::CellNotActive)
-        ) {
-            return Err(invalid("old source handle still served after movement"));
-        }
+        verify_movement(&fleet, records, acknowledged, spec).await?;
         summary.receipt_checks += 1;
     }
     Ok(summary)
+}
+
+async fn verify_movement(
+    fleet: &adapters::LocalFleet,
+    records: &HashMap<CellId, Record>,
+    acknowledged: &HashMap<CellId, Acknowledged>,
+    spec: &cellule_runtime::fleet::operations::MoveAttemptSpec,
+) -> JournalResult<()> {
+    let record = records
+        .get(&spec.target.cell_id())
+        .ok_or_else(|| invalid("missing readback record"))?;
+    let receipt = acknowledged
+        .get(&spec.target.cell_id())
+        .ok_or_else(|| invalid("missing original acknowledgment"))?;
+    let node = fleet
+        .nodes
+        .iter()
+        .enumerate()
+        .find(|(index, _)| session(*index) == spec.destination)
+        .map(|(_, node)| node)
+        .ok_or_else(|| invalid("missing receiver"))?;
+    let current = record
+        .authority
+        .load(spec.target.cell_id())
+        .await?
+        .ok_or_else(|| invalid("receiver authority absent"))?;
+    // Restored serving actors may still be hydrating. This lookup reads the
+    // existing actor against authority; it cannot create another writer.
+    let handle = node
+        .runtime()
+        .local_handle(record.catalog.clone(), &current)
+        .await?
+        .ok_or_else(|| invalid("receiver has no serving actor"))?;
+    if handle
+        .resolve(receipt.identity, receipt.digest, clock()?, 64)
+        .await?
+        != Resolution::Committed(receipt.outcome.clone())
+    {
+        return Err(invalid("original command receipt did not survive movement"));
+    }
+    let value = handle
+        .query(64, 64, |db| {
+            Ok(db
+                .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))?
+                .to_be_bytes()
+                .to_vec())
+        })
+        .await?;
+    if value != receipt.value.to_be_bytes() {
+        return Err(invalid("restored Cell readback differs"));
+    }
+    let current = record
+        .authority
+        .load(spec.target.cell_id())
+        .await?
+        .ok_or_else(|| invalid("receiver authority absent"))?;
+    if current
+        .value()
+        .owner
+        .as_ref()
+        .is_none_or(|owner| owner.session != spec.destination)
+        || current.value().epoch <= spec.source_epoch
+    {
+        return Err(invalid("receiver lacks successor authority"));
+    }
+    if !matches!(
+        receipt.source.query(64, 64, |_| Ok(Vec::new())).await,
+        Err(cellule_runtime::Error::Fenced
+            | cellule_runtime::Error::CellDraining
+            | cellule_runtime::Error::CellNotActive)
+    ) {
+        return Err(invalid("old source handle still served after movement"));
+    }
+    Ok(())
 }

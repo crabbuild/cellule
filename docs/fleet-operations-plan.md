@@ -479,9 +479,14 @@ rechecks, both original endpoints of unresolved responsibilities, and retained
 terminal rows. It supplies `FleetRoster` to `FleetObserver::observe` and binds all
 rows into the planner digest. Count balancing additionally requires established
 boot coverage, no Pending enrollment and writer rows matching signed counts.
-The reference observer still reports incomplete role coverage. Complete native
-role/authority envelopes and the finalization transaction described below remain
-required; roster traversal does not discharge those work packages.
+The reference observer now uses request-bound native pages, canonical signed
+heartbeats, fresh Cell authority and repeated topology/registry checks. It can
+establish complete counts for its closed writer-only construction profile;
+unexpected boots, role installation/enrollment or missing obligations invalidate
+that coverage. The `balance` command exercises actual residence and repeated
+batches. Complete reader/follower role/authority envelopes and the finalization
+transaction described below remain required; writer-profile coverage does not
+discharge those work packages.
 
 ### Enrollment barrier for finalization
 

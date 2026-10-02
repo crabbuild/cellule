@@ -1,11 +1,6 @@
 use super::*;
 use cellule_host::fleet::*;
-use cellule_runtime::cell::actor::CellInventoryEntry;
 use cellule_runtime::fleet::operations::*;
-use cellule_runtime::node::{
-    NodeAdvertisement, NodeCapacity, NodeFailureDomain, NodePlacementCapacity,
-};
-use ed25519_dalek::SigningKey;
 
 pub(super) struct Cells {
     pub records: Arc<HashMap<CellId, Record>>,
@@ -55,6 +50,9 @@ impl FleetCellProvider for Cells {
 pub(super) struct LocalFleet {
     pub nodes: Vec<Arc<CellNode>>,
     pub journal: Arc<SqliteJournal>,
+    pub boots: Vec<startup::BootOwner>,
+    pub records: Arc<HashMap<CellId, Record>>,
+    pub capture_sequence: std::sync::atomic::AtomicU64,
     pub lose_release_replies: bool,
     pub lost_release_replies: std::sync::atomic::AtomicUsize,
     pub expired_receiver_cleanups: std::sync::atomic::AtomicUsize,
@@ -142,94 +140,6 @@ impl FleetObserver for LocalFleet {
         _: i64,
         deadline: Instant,
     ) -> FleetAdapterFuture<'a, FleetObservation> {
-        Box::pin(async move {
-            let started = clock()?;
-            let expected = roster.snapshot();
-            let mut nodes = Vec::new();
-            let mut cells = Vec::new();
-            for (index, node) in self.nodes.iter().enumerate() {
-                let page = node.runtime().fleet_cells_page(None, 128).await?;
-                if page.session() != session(index) || page.next().is_some() {
-                    return Err(invalid(
-                        "example inventory exceeded its fixed fixture bound",
-                    ));
-                }
-                for entry in page.entries() {
-                    if let CellInventoryEntry::Owned(row) = entry {
-                        cells.push(FleetOwnedCell {
-                            node: node_id(index),
-                            session: session(index),
-                            observation: (**row).clone(),
-                        });
-                    }
-                }
-                let stats = node.stats();
-                let memory = u64::try_from(
-                    stats.resident_capacity_bytes() + stats.retained_capacity_bytes(),
-                )?;
-                let used = u64::try_from(stats.resident_bytes() + stats.retained_bytes())?;
-                let sample = node
-                    .runtime()
-                    .operational_sample()?
-                    .ok_or_else(|| invalid("local classifier has not sampled yet"))?;
-                let key = SigningKey::from_bytes(&[index as u8 + 1; 32]);
-                let now = clock()?;
-                let ad = NodeAdvertisement::sign(
-                    node_id(index),
-                    session(index),
-                    owner(index).endpoint,
-                    scope().fleet,
-                    Digest::from_bytes([30; 32]),
-                    Digest::from_bytes([31; 32]),
-                    Digest::from_bytes([32; 32]),
-                    &key,
-                    1,
-                    now,
-                    now + 30_000,
-                    node.application().registry().module_digests(),
-                    vec![1],
-                    NodeFailureDomain::default(),
-                    NodeCapacity {
-                        free_memory_bytes: memory.saturating_sub(used),
-                        free_disk_bytes: stats
-                            .local_disk_capacity_bytes()
-                            .saturating_sub(stats.local_disk_reserved_bytes()),
-                        job_credits: stats
-                            .placement_job_capacity()
-                            .saturating_sub(stats.placement_running_jobs()),
-                        log_protocol: 1,
-                        ..NodeCapacity::default()
-                    },
-                )?
-                .with_operational_placement(
-                    NodePlacementCapacity {
-                        memory_capacity_bytes: memory,
-                        disk_capacity_bytes: stats.local_disk_capacity_bytes(),
-                        active_cells: stats.placement_active_cells(),
-                        max_active_cells: stats.placement_active_cell_capacity(),
-                        running_jobs: stats.placement_running_jobs(),
-                        job_capacity: stats.placement_job_capacity(),
-                        ..NodePlacementCapacity::default()
-                    },
-                    sample,
-                    &key,
-                )?;
-                nodes.push(ad);
-            }
-            roster.confirm(self.journal.as_ref(), deadline).await?;
-            // This finite fixture authenticates all three boots, but does not
-            // implement production role/enrollment coverage. Count balancing
-            // remains disabled; measured pressure can authorize relief.
-            Ok(FleetObservation::new(
-                scope(),
-                expected.registry(),
-                roster.snapshot().registry().revision(),
-                started,
-                clock()?,
-                false,
-                nodes,
-                cells,
-            )?)
-        })
+        Box::pin(super::observation::observe(self, roster, deadline))
     }
 }

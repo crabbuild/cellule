@@ -159,6 +159,7 @@ mod tests;
 /// Application retains the boot scope through joined runtime shutdown and
 /// canonical withdrawal. Pending or failed boots stay in the journal unless
 /// that exact directory obligation can be closed.
+#[derive(Clone)]
 pub(super) struct BootOwner {
     pub(super) node: Arc<CellNode>,
     pub(super) directory: NodeDirectory,
@@ -168,6 +169,121 @@ pub(super) struct BootOwner {
 }
 
 impl BootOwner {
+    /// Refresh only the retained canonical boot. No missing/expired record can
+    /// authorize recreation, and local lease credit advances only after CAS.
+    pub(super) async fn refresh_capacity(
+        &self,
+        index: usize,
+        deadline: Instant,
+    ) -> JournalResult<NodeAdvertisement> {
+        if !self.node.is_management_ready() {
+            return Err(invalid("example capacity node is not management ready"));
+        }
+        let guard = self
+            .guard
+            .as_ref()
+            .ok_or_else(|| invalid("example boot lease guard is unbound"))?;
+        guard.check()?;
+        let now = clock()?;
+        let observed = self
+            .directory
+            .load(self.spec.target.session, now)
+            .await?
+            .ok_or_else(|| invalid("example capacity boot is missing or expired"))?;
+        self.validate_successor(observed.advertisement())?;
+        let previous = observed.advertisement().operational_sample();
+        // A new capacity block cannot reuse an earlier classifier sequence.
+        // Wait for its real sample; neither sequence nor time is fabricated.
+        let sample = tokio::time::timeout_at(deadline, async {
+            loop {
+                if let Some(sample) = self.node.runtime().operational_sample()?
+                    && previous.is_none_or(|old| sample.sequence > old.sequence)
+                {
+                    return Ok::<_, cellule_runtime::Error>(sample);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await??;
+        let stats = self.node.stats();
+        let memory =
+            u64::try_from(stats.resident_capacity_bytes() + stats.retained_capacity_bytes())?;
+        let used = u64::try_from(stats.resident_bytes() + stats.retained_bytes())?;
+        let original = &self.advertisement;
+        let key = SigningKey::from_bytes(&[index as u8 + 1; 32]);
+        let now = clock()?;
+        let next = NodeAdvertisement::sign(
+            original.node(),
+            original.session(),
+            original.endpoint().to_owned(),
+            original.fleet(),
+            original.certificate(),
+            original.image(),
+            original.release(),
+            &key,
+            1,
+            now,
+            now.checked_add(30_000)
+                .ok_or_else(|| invalid("example heartbeat deadline overflow"))?,
+            original.module_digests().to_vec(),
+            original.peer_versions().to_vec(),
+            original.failure_domain().clone(),
+            NodeCapacity {
+                free_memory_bytes: memory.saturating_sub(used),
+                free_disk_bytes: stats
+                    .local_disk_capacity_bytes()
+                    .saturating_sub(stats.local_disk_reserved_bytes()),
+                job_credits: stats
+                    .placement_job_capacity()
+                    .saturating_sub(stats.placement_running_jobs()),
+                log_protocol: 1,
+                ..NodeCapacity::default()
+            },
+        )?
+        .with_operational_placement(
+            cellule_runtime::node::NodePlacementCapacity {
+                memory_capacity_bytes: memory,
+                disk_capacity_bytes: stats.local_disk_capacity_bytes(),
+                active_cells: stats.placement_active_cells(),
+                max_active_cells: stats.placement_active_cell_capacity(),
+                running_jobs: stats.placement_running_jobs(),
+                job_capacity: stats.placement_job_capacity(),
+                ..Default::default()
+            },
+            sample,
+            &key,
+        )?;
+        guard.check()?;
+        let refreshed = self.directory.refresh(&observed, next, now).await?;
+        self.validate_successor(refreshed.advertisement())?;
+        guard.renew(clock()?, refreshed.advertisement().expires_at_ms())?;
+        Ok(refreshed.advertisement().clone())
+    }
+
+    fn validate_successor(&self, ad: &NodeAdvertisement) -> JournalResult<()> {
+        let original = &self.advertisement;
+        // Pin the original enrolled signing key and executable identity; a
+        // self-valid signature on an unrelated advertisement is insufficient.
+        if ad.node() != original.node()
+            || ad.session() != original.session()
+            || ad.endpoint() != original.endpoint()
+            || ad.fleet() != original.fleet()
+            || ad.certificate() != original.certificate()
+            || ad.image() != original.image()
+            || ad.release() != original.release()
+            || ad.verifying_key()? != original.verifying_key()?
+            || ad.module_digests() != original.module_digests()
+            || ad.peer_versions() != original.peer_versions()
+            || ad.failure_domain() != original.failure_domain()
+            || ad.generation() < original.generation()
+            || ad.issued_at_ms() < original.issued_at_ms()
+            || ad.expires_at_ms() < original.expires_at_ms()
+        {
+            return Err(invalid("example retained boot identity differs"));
+        }
+        Ok(())
+    }
+
     pub(super) async fn withdraw(&self, journal: &SqliteJournal) -> JournalResult<()> {
         if self.node.state() != NodeState::Stopped {
             return Err(invalid("example boot runtime has not joined shutdown"));
@@ -205,9 +321,7 @@ impl BootOwner {
                 .load(self.spec.target.session, now)
                 .await?
                 .ok_or_else(|| invalid("example boot withdrawal remains unresolved"))?;
-            if observed.advertisement() != &self.advertisement {
-                return Err(invalid("example boot withdrawal identity differs"));
-            }
+            self.validate_successor(observed.advertisement())?;
             self.directory.withdraw_after_drain(&observed, now).await?;
         }
         if !self.directory.is_retired(self.spec.target.session).await? {

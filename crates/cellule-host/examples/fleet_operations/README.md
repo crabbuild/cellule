@@ -2,7 +2,8 @@
 
 Status: durable journal and public-driver models, plus a finite real three-node
 admission-overload and controller-restart scenarios with receipt readback.
-Complete maintenance, receiver-loss, production observations and
+The `balance` command exercises real count convergence. Complete maintenance,
+receiver-loss, production observations and
 qualification remain required by the [fleet plan](../../../../docs/fleet-operations-plan.md).
 
 ## Run
@@ -31,9 +32,11 @@ startup hold, journals Pending, and creates its actual signed advertisement in
 the canonical `NodeDirectory`. Established publication and an atomic boot/intent
 read precede `start()`. Confirmation preserves the role hold until the ordinary
 required-component checks pass. Boot advertisements expose zero receive capacity
-before readiness; later observations use actual runtime samples. The finite
-example derives its local lease guard from the canonical advertisement's expiry;
-it uses no production heartbeat/provider implementation.
+before readiness; later observations publish actual runtime samples through
+canonical directory CAS. The finite example derives its local lease guard from
+the canonical advertisement's expiry and advances it only after confirmed CAS.
+The caller drives these heartbeats while observing; there is no new background
+scheduler or production heartbeat/provider implementation.
 
 The application owns each original boot advertisement until all runtimes join.
 Cleanup fences its guard, withdraws through the canonical directory, checks the
@@ -48,11 +51,39 @@ composition. The reconciler supplies its fully traversed durable `FleetRoster`
 to the collector, including Pending work, failed boots and terminal records,
 and rechecks the original full snapshot after collection. Count balancing also
 requires exact established boot advertisements, settled enrollment and writer
-rows matching signed counts. Its ownership-only collector still reports incomplete role
-coverage, so count balancing is disabled and pressure relief is exercised.
+rows matching signed counts. Its collector uses request-bound native snapshots,
+the original enrolled signing keys, both directory session scans and fresh Cell
+authority. It rereads authority and actor topology and confirms the full journal
+barrier. Complete coverage is supported for this private constructor's bounded
+writer-only profile: twelve catalog-backed SQL Cells and three managed boots.
+Unexpected advertised boots, Pending/role enrollment, native role installations,
+expired/fenced log obligations, changed topology or stale ownership prevent
+complete counts. Unbound pages alone supply no absence proof; the closed
+constructor profile and durable/current-authority checks are also required.
 It stops new scheduling after the bounded batch; this does not demonstrate
 sustained-overload convergence. It is not a production complete observer, deployment authentication system,
-process-crash test, or distributed-provider qualification.
+process-crash test, or distributed-provider qualification. Reader/follower
+deployment collectors still need complete native-role and replacement-policy
+evidence before enabling maintenance finalization.
+
+Run ordinary count balancing with real residence and repeated batches:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- balance
+```
+
+The scenario starts at 12/0/0 and honors the planner's actual 60-second residence
+rule and post-batch sample barrier. Each pass renews canonical boot leases and
+drives the same shared two-move budget. Eight distinct Cells converge to 4/4/4,
+with durable cooldowns preventing repeat movement. The scenario resolves all
+eight original acknowledged outcomes, reads their SQLite values, verifies
+successor authority and fences the old handles. It issues five-minute command
+receipts for this longer scenario; overload and controller-restart retain their
+original one-minute receipts and profiles. A 120-second convergence deadline
+fails with retained attempt diagnostics, then exit joins all nodes and retires
+their exact boot obligations. This is real-time in-process count convergence;
+sustained workload, process/provider and complete role qualification remain
+required.
 
 Run controller replacement after ambiguous source replies:
 
@@ -197,7 +228,8 @@ readback; and invalid shipper limits before acceptance. They exercise
 The fixture provider prepares signed immutable inputs only; its authority
 fresh-loads exact scope and retains its checked close receipt across lost replies.
 These in-process scenarios do not establish complete role coverage or sustained
-replacement/convergence policy for the executable's ownership-only collector.
+replacement policy for role-enabled deployments. The executable's count
+collector supports only its declared writer profile.
 
 `FleetEnrollmentJournal::refuse_unexecuted_enrollment` is one SQLite transaction:
 validate complete inputs, refuse an exact Pending row or create an exact terminal

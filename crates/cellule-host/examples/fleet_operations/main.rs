@@ -14,16 +14,18 @@ use journal::{JournalResult, SqliteJournal};
 async fn main() -> JournalResult<()> {
     let mut args = std::env::args_os().skip(1);
     let command = args.next();
-    if matches!(command.as_deref(), Some(value) if value == "overload" || value == "controller-restart")
+    if matches!(command.as_deref(), Some(value) if value == "overload" || value == "controller-restart" || value == "balance")
         && args.next().is_none()
     {
         let summary = if command.as_deref() == Some(std::ffi::OsStr::new("controller-restart")) {
             scenario::controller_restart().await?
+        } else if command.as_deref() == Some(std::ffi::OsStr::new("balance")) {
+            scenario::count_balance().await?
         } else {
             scenario::overload().await?
         };
         println!(
-            "released={} activated={} retired={} receipt_checks={} max_inflight={} max_restore_bytes={} joined_nodes={} boot_retirements={} receiver_nodes={} lost_release_replies={} controller_epoch={} expired_receiver_cleanups={} blocker_count={}",
+            "released={} activated={} retired={} receipt_checks={} max_inflight={} max_restore_bytes={} joined_nodes={} boot_retirements={} receiver_nodes={} lost_release_replies={} controller_epoch={} expired_receiver_cleanups={} blocker_count={} final_counts={:?}",
             summary.released,
             summary.activated,
             summary.retired,
@@ -36,7 +38,8 @@ async fn main() -> JournalResult<()> {
             summary.lost_release_replies,
             summary.controller_epoch,
             summary.expired_receiver_cleanups,
-            summary.blockers.len()
+            summary.blockers.len(),
+            summary.final_counts
         );
         println!("blockers={:?}", summary.blockers);
         return Ok(());
@@ -47,7 +50,7 @@ async fn main() -> JournalResult<()> {
         || args.next().is_some()
     {
         return Err(std::io::Error::other(
-            "usage: fleet_operations overload | controller-restart | inspect-journal <database-path>",
+            "usage: fleet_operations overload | controller-restart | balance | inspect-journal <database-path>",
         )
         .into());
     }
