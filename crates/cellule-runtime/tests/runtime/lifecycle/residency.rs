@@ -1918,6 +1918,7 @@ async fn slow_control_renewal_keeps_a_live_owner() {
         Store::new(store.clone()),
     );
     let (runtime, handle, _) = activate_runtime(&fixture, 16 * 1024 * 1024).await;
+    let owner_fence = handle.owner_fence();
     let authority = CellAuthority::new(fixture.layout.clone());
     let initial = authority
         .load(fixture.target.cell_id())
@@ -1955,6 +1956,8 @@ async fn slow_control_renewal_keeps_a_live_owner() {
         renewed.value().owner.as_ref().unwrap().session,
         SessionId::from_bytes([4; 16])
     );
+    assert_eq!(renewed.value().owner_fence(), owner_fence);
+    assert_eq!(handle.owner_fence(), owner_fence);
     handle.drain().await.unwrap();
     runtime.shutdown().await.unwrap();
 }

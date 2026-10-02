@@ -57,7 +57,7 @@ pub mod read_replica;
 pub mod residency;
 
 #[derive(Debug)]
-struct PausingStore {
+pub(super) struct PausingStore {
     inner: Arc<InMemory>,
     armed: AtomicBool,
     update_armed: AtomicBool,
@@ -81,7 +81,7 @@ struct PausingStore {
 }
 
 impl PausingStore {
-    fn new(inner: Arc<InMemory>) -> Self {
+    pub(super) fn new(inner: Arc<InMemory>) -> Self {
         Self {
             inner,
             armed: AtomicBool::new(false),
@@ -114,7 +114,7 @@ impl PausingStore {
         self.armed.store(true, Ordering::Release);
     }
 
-    fn arm_next_update(&self) {
+    pub(super) fn arm_next_update(&self) {
         self.update_armed.store(true, Ordering::Release);
     }
 
@@ -144,13 +144,13 @@ impl PausingStore {
         }
     }
 
-    async fn wait_until_blocked(&self) {
+    pub(super) async fn wait_until_blocked(&self) {
         while !self.blocked.load(Ordering::Acquire) {
             self.entered.notified().await;
         }
     }
 
-    fn release(&self) {
+    pub(super) fn release(&self) {
         self.released.store(true, Ordering::Release);
         self.release.notify_waiters();
     }
@@ -319,7 +319,7 @@ impl ObjectStore for PausingStore {
 }
 
 #[derive(Default)]
-struct TestNodeAuthority {
+pub(super) struct TestNodeAuthority {
     activations: Mutex<Vec<u64>>,
     coverage: Mutex<Vec<(u64, u64)>>,
     closes: Mutex<Vec<u64>>,
@@ -481,7 +481,7 @@ impl NodeLogTransport for LostAckFollowerTransport {
     }
 }
 
-async fn fence_log_session(
+pub(super) async fn fence_log_session(
     layout: &CellStorageLayout,
     session: SessionId,
     claimant: SessionId,

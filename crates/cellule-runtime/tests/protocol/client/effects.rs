@@ -2,9 +2,10 @@
 
 use super::*;
 
-#[tokio::test]
-async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() {
-    let fixture = fixture().await;
+fn effect_client(
+    fixture: &Fixture,
+    handle: cellule_runtime::cell::actor::CellHandle,
+) -> EffectPeerClient {
     let signer = PeerSigner::new(
         SessionId::from_bytes([12; 16]),
         fixture.registry.release_digest(),
@@ -19,7 +20,7 @@ async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() 
         Arc::clone(&fixture.registry),
         Arc::new(LocalResolver {
             target: fixture.target.clone(),
-            handle: fixture.handle().clone(),
+            handle,
         }),
         Arc::new(RepositoryAuthorizer),
     ));
@@ -32,6 +33,13 @@ async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() 
         subject: "source-session".into(),
         actions: vec!["repository.issue.create".into()],
     };
+    EffectPeerClient::new(Arc::new(signer), principal, round_trip)
+}
+
+#[tokio::test]
+async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() {
+    let mut fixture = fixture().await;
+    let client = effect_client(&fixture, fixture.handle().clone());
     let now_ms = i64::try_from(
         std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -87,7 +95,6 @@ async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() 
         expires_at_ms: identity.expires_at_ms,
         created_sequence: source_sequence,
     };
-    let client = EffectPeerClient::new(Arc::new(signer), principal, round_trip);
     let delivered = client.deliver(&claim, now_ms).await.unwrap();
     assert_eq!(delivered.commit_sequence(), 1);
     assert_eq!(client.deliver(&claim, now_ms + 1).await.unwrap(), delivered);
@@ -142,9 +149,68 @@ async fn authenticated_effect_delivery_publishes_once_and_resolves_from_inbox() 
     );
     assert_eq!(
         client.resolve(&fence_claim, now_ms + 5).await.unwrap(),
+        Resolution::Committed(observed.clone())
+    );
+    let old_handle = fixture.take_handle();
+    old_handle.drain().await.unwrap();
+    fixture.runtime.take().unwrap().shutdown().await.unwrap();
+    let session = SessionId::from_bytes([19; 16]);
+    let runtime = CellRuntime::new(SqlWorkerPool::new(1, 4).unwrap(), 4 << 20, session).unwrap();
+    let idle = fixture
+        .authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let successor = runtime
+        .acquire_idle_restored(
+            fixture.proof.clone(),
+            fixture.replica.clone(),
+            fixture.authority.clone(),
+            idle,
+            fixture
+                ._directory
+                .path()
+                .join("inbox-fence-successor.sqlite"),
+            Owner {
+                session,
+                endpoint: "https://inbox-fence-successor.invalid".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let new_fence = successor.owner_fence();
+    assert_eq!(new_fence.incarnation, fence.incarnation);
+    assert!(new_fence.epoch > fence.epoch);
+    let client = effect_client(&fixture, successor);
+    // A new destination owner must replay the original inbox output, while a
+    // new effect invokes the same handler with the successor's admission fence.
+    assert_eq!(
+        client.deliver(&fence_claim, now_ms + 6).await.unwrap(),
+        observed
+    );
+    assert_eq!(
+        client.resolve(&fence_claim, now_ms + 7).await.unwrap(),
         Resolution::Committed(observed)
     );
-    fixture.handle().drain().await.unwrap();
+    let fresh_id =
+        cellule_runtime::primitives::effects::effect_id(source_cell, source_incarnation, 11, 5);
+    let fresh_identity = fence_request.identity.as_mut().unwrap();
+    fresh_identity.effect_id = fresh_id.to_vec();
+    fresh_identity.source_sequence = 11;
+    fresh_identity.ordinal = 5;
+    fence_claim.effect_id = fresh_id;
+    fence_claim.created_sequence = 11;
+    fence_claim.operation = prost::Message::encode_to_vec(&fence_request);
+    fence_claim.operation_digest =
+        effect_operation_digest(fixture.target.cell_id(), fresh_id, &fence_claim.operation);
+    let fresh = client.deliver(&fence_claim, now_ms + 8).await.unwrap();
+    let mut expected = new_fence.incarnation.as_bytes().to_vec();
+    expected.extend_from_slice(&new_fence.epoch.to_be_bytes());
+    let mut decoder = BoundedDecoder::new(fresh.result(), 64).unwrap();
+    assert_eq!(Vec::<u8>::decode(&mut decoder).unwrap(), expected);
+    decoder.finish().unwrap();
+    runtime.shutdown().await.unwrap();
 }
 #[tokio::test]
 async fn typed_effect_source_publishes_claim_validation_ack_and_lost_lease() {

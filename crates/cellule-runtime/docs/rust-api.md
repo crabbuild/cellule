@@ -270,6 +270,11 @@ runtime's durable response gate. Exact stored-outcome replay skips the handler,
 so it preserves the original result rather than substituting the new owner's
 fence.
 
+Bind operation tokens to their Cell ID or target as well as `OwnerFence`.
+Embedders that invoke `Registry::execute_command` directly must supply the
+admitting handle's fence in `CommandInvocation`; the registry does not verify
+ownership independently.
+
 **`QueryContext` exposes** the Cell ID, commit sequence, logical timestamp, and
 bounded read-only SQL.
 

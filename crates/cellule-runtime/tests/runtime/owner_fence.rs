@@ -105,6 +105,13 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        let session = SessionId::from_bytes([18; 16]);
+        let runtime =
+            CellRuntime::new(SqlWorkerPool::new(1, 4).unwrap(), 64 << 20, session).unwrap();
+        Self::with_runtime(session, Store::new(Arc::new(InMemory::new())), runtime).await
+    }
+
+    async fn with_runtime(session: SessionId, store: Store, runtime: CellRuntime) -> Self {
         let mut builder = RegistryBuilder::new(BuildDescriptor {
             source_revision: "owner-fence-test".into(),
             cargo_lock_digest: Digest::from_bytes([14; 32]),
@@ -118,11 +125,7 @@ impl Fixture {
             b"operation",
         )
         .unwrap();
-        let layout = CellStorageLayout::new(
-            Store::new(Arc::new(InMemory::new())),
-            Path::from("owner-fence"),
-            [16; 16],
-        );
+        let layout = CellStorageLayout::new(store, Path::from("owner-fence"), [16; 16]);
         let incarnation = IncarnationId::from_bytes([17; 16]);
         let replica = CellReplica::new(
             layout.clone(),
@@ -132,9 +135,6 @@ impl Fixture {
         )
         .unwrap();
         let root = tempfile::TempDir::new().unwrap();
-        let session = SessionId::from_bytes([18; 16]);
-        let runtime =
-            CellRuntime::new(SqlWorkerPool::new(1, 4).unwrap(), 64 << 20, session).unwrap();
         let proof = CellCatalog::new(layout.clone(), target.tenant())
             .provision(
                 CatalogEntry::new(
@@ -329,5 +329,182 @@ async fn successor_owner_rejects_the_old_token_but_replays_its_recorded_outcome(
             .await
             .is_err()
     );
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn follower_recovered_typed_outcome_keeps_its_fence_after_owner_loss() {
+    use super::lifecycle::{PausingStore, TestNodeAuthority, fence_log_session};
+    use cellule_runtime::identity::NodeId;
+    use cellule_runtime::ltx::{DiskBudget, Host as ReplicaHost};
+    use cellule_runtime::node::durability::NodeDurability;
+    use cellule_runtime::node::lease::NodeLeaseGuard;
+    use cellule_runtime::node::log::DurabilityGate;
+    use cellule_runtime::node::log_recovery::{
+        NodeLogRecovery, RecoveryCoordinator, recoverable_cells,
+    };
+    use cellule_runtime::node::log_shipper::NodeLogShipper;
+    use cellule_runtime::node::log_transport::{LocalFollowerTransport, NodeLogTransport};
+    use cellule_runtime::recovery::manifest::RecoveryManifestStore;
+    use std::time::Duration;
+
+    let session = SessionId::from_bytes([18; 16]);
+    let follower_session = SessionId::from_bytes([30; 16]);
+    let follower = NodeId::from_bytes(*follower_session.as_bytes());
+    let successor_session = SessionId::from_bytes([31; 16]);
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 4).unwrap(),
+        64 << 20,
+        session,
+        ReplicaHost::default(),
+    )
+    .unwrap();
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let follower_directory = tempfile::TempDir::new().unwrap();
+    let follower_store = cellule_runtime::FollowerStore::open(
+        follower_directory.path().to_owned(),
+        Limits::default(),
+        DiskBudget::new(1 << 30),
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(LocalFollowerTransport::new(
+        follower,
+        follower_store.clone(),
+    ));
+    let gate = DurabilityGate::new(
+        session,
+        NodeId::from_bytes(*session.as_bytes()),
+        1,
+        [follower],
+    )
+    .unwrap();
+    let shipper = NodeLogShipper::new(gate.clone(), transport.clone(), Limits::default()).unwrap();
+    runtime
+        .install_node_durability(
+            ApplicationId::from_bytes([16; 16]),
+            Arc::new(NodeDurability::new(
+                gate,
+                shipper,
+                Arc::new(TestNodeAuthority::default()),
+                transport.clone(),
+                lease.clone(),
+            )),
+        )
+        .unwrap();
+    let store = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+    let fixture = Fixture::with_runtime(session, Store::new(store.clone()), runtime).await;
+    let old = fixture.handle.owner_fence();
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let catalog = CellCatalog::new(fixture.layout.clone(), fixture.target.tenant());
+    let identity = mutation_identity(28);
+    store.arm_next_update();
+    let committed = tokio::time::timeout(
+        Duration::from_secs(5),
+        fixture
+            .client()
+            .command::<FencedCommand>(&fixture.target, identity, Vec::new()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), store.wait_until_blocked())
+        .await
+        .unwrap();
+    let pending = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.value().root.as_ref().unwrap().commit_sequence, 0);
+    assert_eq!(committed.receipt.commit_sequence, 1);
+    assert_eq!(committed.output, encoded(old));
+    assert!(follower_store.retained_bytes() > 0);
+
+    // Fence the owner with its object CAS still paused. Recovery must obtain
+    // the command and its original output from the actual fsynced follower log.
+    lease.fence();
+    let fenced = fence_log_session(
+        &fixture.layout,
+        session,
+        successor_session,
+        follower_session,
+        0,
+    )
+    .await;
+    let recovery = NodeLogRecovery::from_fenced(transport, &fenced, Limits::default()).unwrap();
+    let manifests = RecoveryManifestStore::new(fixture.layout.clone(), Limits::default());
+    let coordinator = RecoveryCoordinator::new(recovery, manifests.clone());
+    let inventory = recoverable_cells(&catalog, &authority, session, 10)
+        .await
+        .unwrap();
+    let directory = cellule_runtime::node::NodeDirectory::new(
+        fixture.layout.clone(),
+        Digest::from_bytes([90; 32]),
+        Digest::from_bytes([91; 32]),
+        Digest::from_bytes([92; 32]),
+    );
+    let completed = coordinator
+        .recover_and_seal(&directory, fenced, inventory, 10_002)
+        .await
+        .unwrap();
+    // The recovery attachment supersedes the paused CAS before it resumes.
+    store.release();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), fixture.runtime.shutdown())
+            .await
+            .unwrap()
+            .is_err()
+    );
+    let runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 4).unwrap(),
+        64 << 20,
+        successor_session,
+    )
+    .unwrap();
+    let successor = runtime
+        .takeover_restored(
+            catalog
+                .lookup(fixture.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap(),
+            fixture.replica.clone(),
+            authority,
+            completed.controls.into_iter().next().unwrap(),
+            completed.takeover,
+            manifests,
+            fixture.root.path().join("follower-successor.sqlite"),
+            Owner {
+                session: successor_session,
+                endpoint: "https://follower-successor.invalid".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let new = successor.owner_fence();
+    assert_eq!(new.incarnation, old.incarnation);
+    assert!(new.epoch > old.epoch);
+    let client = CellClient::local(fixture.registry.clone(), successor.clone());
+    let replay = client
+        .command::<FencedCommand>(&fixture.target, identity, Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(replay.output, committed.output);
+    assert_eq!(replay.receipt, committed.receipt);
+    assert_eq!(rows(&successor).await, vec![encoded(old)]);
+    let stale = client
+        .command::<FencedCommand>(&fixture.target, mutation_identity(29), encoded(old))
+        .await;
+    assert!(
+        matches!(stale, Err(InvocationError::Rejected(ref outcome)) if outcome.output == encoded(new))
+    );
+    assert_eq!(rows(&successor).await, vec![encoded(old)]);
+    let current = client
+        .command::<FencedCommand>(&fixture.target, mutation_identity(32), encoded(new))
+        .await
+        .unwrap();
+    assert_eq!(current.output, encoded(new));
+    assert_eq!(rows(&successor).await, vec![encoded(old), encoded(new)]);
     runtime.shutdown().await.unwrap();
 }

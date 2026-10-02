@@ -71,6 +71,8 @@ impl RootRef {
 /// Applications compare this value with their stored operation token. A value
 /// alone is not authority: runtime admission and durable publication still
 /// fence the command. Lease renewal and root publication preserve this fence.
+/// This identity is scoped to one Cell; application tokens must also bind their
+/// Cell ID or target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OwnerFence {
     /// Incarnation whose storage and command outcomes this activation serves.
