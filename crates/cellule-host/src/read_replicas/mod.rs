@@ -29,8 +29,11 @@ use uuid::Uuid;
 
 pub(crate) mod enrollment;
 mod inventory;
-pub use enrollment::ReaderEnrollmentCompletion;
 use enrollment::{ActivationRequest, ReaderEnrollment};
+pub use enrollment::{
+    ReaderEnrollmentCompletion, ReaderEnrollmentInventoryCursor, ReaderEnrollmentInventoryPage,
+    ReaderEnrollmentJobs,
+};
 mod recruitment;
 pub use inventory::{ReaderInventoryCursor, ReaderInventoryPage};
 pub use recruitment::ReadReplicaRecruiter;
@@ -185,7 +188,7 @@ impl ReadReplicaManager {
         cell: CellId,
     ) -> Result<Option<ReaderEnrollmentCompletion>> {
         match self.bound_enrollment()? {
-            Some(enrollment) => Ok(enrollment.completion(cell).await),
+            Some(enrollment) => enrollment.completion(cell),
             None => Ok(None),
         }
     }
@@ -666,7 +669,7 @@ impl ReadReplicaManager {
             }
         }
         if let Some(enrollment) = &enrollment {
-            for cell in enrollment.unresolved_cells().await {
+            for cell in enrollment.unresolved_cells()? {
                 if let Err(error) = enrollment.retire(cell, None).await
                     && failure.is_none()
                 {

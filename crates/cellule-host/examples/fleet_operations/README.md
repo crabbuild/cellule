@@ -92,6 +92,13 @@ a directory for this checkout beneath `$HOME/Workspace/crabbuild-target`.
 
 ## Transaction and lifecycle contract
 
+The reader producer cases use `fleet_reader_enrollments_page` while original
+acceptance, establishment and native open replies are paused. They check original
+requests, separate errors, accepted preparation before a row exists, page memory
+admission/release, stable pagination and cursor invalidation. Native reader views
+remain a separate inventory; the collector still requires complete role and
+authority evidence before maintenance can finalize.
+
 [`SqliteJournal`](journal/mod.rs) implements all three host journal interfaces
 in one local SQLite transaction domain. It lives in the embedding example;
 the host library remains provider neutral.

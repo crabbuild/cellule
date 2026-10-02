@@ -9,6 +9,8 @@ use cellule_runtime::{
 };
 use ed25519_dalek::SigningKey;
 
+mod inventory;
+
 struct ReaderFixture {
     root: tempfile::TempDir,
     node: Arc<CellNode>,
@@ -17,12 +19,17 @@ struct ReaderFixture {
     handle: CellHandle,
     target: CellTarget,
     journal: Arc<SqliteJournal>,
+    layout: CellStorageLayout,
+    limits: Limits,
 }
 impl ReaderFixture {
     async fn new() -> Self {
         Self::with_store(Store::new(Arc::new(InMemory::new()))).await
     }
     async fn with_store(store: Store) -> Self {
+        Self::with_capacity(store, 8).await
+    }
+    async fn with_capacity(store: Store, active_cells: usize) -> Self {
         let root = tempfile::tempdir().unwrap();
         let app = application::compile().unwrap();
         let code = app.registry().module_digests()[0];
@@ -87,11 +94,11 @@ impl ReaderFixture {
         let node = Arc::new(
             CellNodeBuilder::new(app)
                 .with_runtime(
-                    SqlWorkerPool::new(2, 8)
+                    SqlWorkerPool::new(2, active_cells)
                         .unwrap()
-                        .with_native_memory_limit(128 << 20)
+                        .with_native_memory_limit(active_cells << 24)
                         .unwrap(),
-                    16 << 20,
+                    active_cells << 21,
                 )
                 .with_replica_host(Host::default().with_local_disk_budget(DiskBudget::new(8 << 30)))
                 .with_session(session(1))
@@ -116,8 +123,16 @@ impl ReaderFixture {
         );
         node.install_node_lease(NodeLeaseGuard::new(now, now + 60_000).unwrap())
             .unwrap();
+        let source_workers = SqlWorkerPool::new(2, active_cells).unwrap();
+        let source_workers = if active_cells == 8 {
+            source_workers
+        } else {
+            source_workers
+                .with_native_memory_limit(active_cells << 24)
+                .unwrap()
+        };
         let source = CellRuntime::new_with_replica_host(
-            SqlWorkerPool::new(2, 8).unwrap(),
+            source_workers,
             16 << 20,
             session(0),
             Host::default().with_local_disk_budget(DiskBudget::new(8 << 30)),
@@ -142,7 +157,7 @@ impl ReaderFixture {
             .await
             .unwrap();
         let replica = CellReplica::new(
-            layout,
+            layout.clone(),
             *target.cell_id().as_bytes(),
             *incarnation.as_bytes(),
             limits,
@@ -173,7 +188,62 @@ impl ReaderFixture {
             handle,
             target,
             journal,
+            layout,
+            limits,
         }
+    }
+    async fn additional_cell(&self, partition: u8) -> (CellTarget, CellHandle) {
+        self.additional_partition(partition, 1).await
+    }
+    async fn additional_partition(&self, partition: u8, width: usize) -> (CellTarget, CellHandle) {
+        let target = CellTarget::new(
+            self.target.tenant(),
+            scope().application,
+            application::NAMESPACE,
+            &vec![partition; width],
+        )
+        .unwrap();
+        let code = application::compile().unwrap().registry().module_digests()[0];
+        let proof = CellCatalog::new(self.layout.clone(), target.tenant())
+            .provision(CatalogEntry::new(&target, CatalogRole::Sql, code, 1).unwrap())
+            .await
+            .unwrap();
+        let incarnation = IncarnationId::from_bytes([partition; 16]);
+        let authority = CellAuthority::new(self.layout.clone());
+        let observed = authority
+            .create_initial(&proof, incarnation, owner(0))
+            .await
+            .unwrap();
+        let replica = CellReplica::new(
+            self.layout.clone(),
+            *target.cell_id().as_bytes(),
+            *incarnation.as_bytes(),
+            self.limits,
+        )
+        .unwrap();
+        let handle = self
+            .source
+            .bootstrap(
+                proof,
+                replica,
+                authority,
+                observed,
+                self.root.path().join(format!("source-{partition}.sqlite")),
+                |tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES (17)",
+                    )?;
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+        self.manager
+            .set_target(&target, 0, 1)
+            .await
+            .unwrap()
+            .unwrap();
+        (target, handle)
     }
     async fn rows(&self) -> Vec<EnrollmentRecord> {
         tokio::time::timeout(Duration::from_secs(3), async {
@@ -223,6 +293,10 @@ impl ReaderFixture {
         assert_eq!(self.node.stats().local_disk_reserved_bytes(), 0);
         self.handle.drain().await.unwrap();
         self.source.shutdown().await.unwrap();
+        assert_eq!(self.source.stats().resident_bytes(), 0);
+        assert_eq!(self.source.stats().retained_bytes(), 0);
+        assert_eq!(self.source.stats().worker_jobs(), 0);
+        assert_eq!(self.source.stats().local_disk_reserved_bytes(), 0);
         self.journal.close().await.unwrap();
     }
 }
@@ -457,6 +531,18 @@ async fn reader_producer_owns_native_open_through_cancelled_waiter_and_shutdown_
     let pending = fixture.rows().await;
     assert_eq!(pending[0].status(), EnrollmentStatus::Pending);
     assert_eq!(fixture.node.stats().worker_jobs(), 1);
+    let page = fixture
+        .manager
+        .fleet_reader_enrollments_page(None, 128, clock().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.entries()[0].spec, *pending[0].spec());
+    assert_eq!(page.entries()[0].accepted.as_ref().unwrap(), &pending[0]);
+    assert!(page.entries()[0].opening_started);
+    assert!(!page.entries()[0].opening_joined);
+    assert!(page.entries()[0].event.is_none());
+    assert_eq!(page.jobs().running(), 1);
+    drop(page);
     activation.abort();
     assert!(activation.await.unwrap_err().is_cancelled());
     let drained = fixture
@@ -556,6 +642,23 @@ async fn reader_producer_cordon_refusal_preserves_native_and_lost_retirement_err
     resume_acceptance.send(()).unwrap();
     published.await.unwrap();
     assert_eq!(fixture.rows().await[0].status(), EnrollmentStatus::Retired);
+    let page = fixture
+        .manager
+        .fleet_reader_enrollments_page(None, 128, clock().unwrap())
+        .unwrap()
+        .unwrap();
+    assert!(page.entries()[0].opening_started && page.entries()[0].opening_joined);
+    assert!(matches!(
+        page.entries()[0].execution_error.as_deref(),
+        Some(Error::CellDraining)
+    ));
+    assert!(matches!(
+        page.entries()[0].event,
+        Some(cellule_runtime::fleet::operations::EnrollmentEvent::Retired(_))
+    ));
+    assert!(!page.entries()[0].published);
+    assert_eq!(page.jobs().running(), 1);
+    drop(page);
     resume_publication.send(()).unwrap();
     assert!(activation.await.unwrap().is_err());
     let completion = fixture
@@ -597,6 +700,17 @@ async fn reader_producer_atomic_cordon_refusal_closes_without_creating_a_retirem
     let target = fixture.target.clone();
     let activation = tokio::spawn(async move { manager.activate(target, session(0)).await });
     captured.await.unwrap();
+    let page = fixture
+        .manager
+        .fleet_reader_enrollments_page(None, 128, clock().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.total_enrollments(), 1);
+    assert!(page.entries()[0].accepted.is_none());
+    assert!(!page.entries()[0].opening_started);
+    assert_eq!(page.jobs().running(), 1);
+    assert!(fixture.rows().await.is_empty());
+    drop(page);
     let old = fixture.journal.load_snapshot(scope()).await.unwrap();
     let now = clock().unwrap();
     let controller = fixture

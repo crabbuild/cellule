@@ -4,6 +4,139 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 reader producer inventory checkpoint
+
+`ReadReplicaManager::fleet_reader_enrollments_page` supplies bounded original
+reader requests and progress while acceptance, native opening or result
+publication awaits its original reply. The canonical activation lane still owns
+all mutations; brief index and progress locks replace the record lock previously
+held over I/O. Native execution errors are retained before publication awaits,
+independently of journal errors. No alternate opening or retirement path is added.
+
+Every page reserves one MiB before copying, allows 1–128 rows, scans at most
+10,000 obligations, and preserves original specifications, acceptance, source,
+events and errors. Its fixed-width continuation binds boot/scope, mode, job
+counts and all retained row progress. Changes require a fresh scan. Accepted
+preparation before a request exists remains visible as running work. Finished
+jobs without their original response and handles held by another join owner
+remain explicitly unknown. Returned responses do not discard retained epilogue
+joins. Unbound managers provide no coverage; closed or exhausted runtime ledgers
+fail without synthesizing an empty inventory.
+
+Six new public example cases use the shared SQLite journal and actual native
+readers. They cover paused/lost acceptance, paused establishment, preparation
+before any journal row, stable multiple pages, progress/retirement/mode changes,
+invalid cursors/bounds, ledger admission refusal, and exact page charge/release.
+Existing native VFS pause and cordon/refusal cases now inspect progress before
+releasing their original owner. The public host inventory case additionally
+checks unbound/invalid enrollment capture. Six new unit cases cover cursor
+encoding, live/joining jobs, a real panicked owner without its response, returned
+protocols, variable byte admission and distinct original error Arcs.
+
+Variable payloads stop copying before the byte boundary and return a continuation,
+while every remaining original row still enters the topology hash. An oversized
+first row fails rather than being skipped. The large native fixture preserves
+128 original requests across pages while the final acceptance is paused (127
+installed views plus one Pending request). After that owner resumes, it confirms
+all 128 native views and reads their restored value through receipt-bound queries.
+Joined shutdown leaves native/retained bytes, SQL jobs and disk reservations at
+zero. The fixture explicitly admits 128 slots, 256 MiB of retained credit and a
+two-GiB native ceiling; ordinary cases retain their original eight slots,
+16 MiB of retained credit and 128-MiB receiver ceiling. Production profiles are
+unchanged.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `58721227e56dac3ebcda6b74b4ed2a514f8cc42b` |
+| Rust/Cargo manifest | 615 Rust sources, Cargo manifests and all lockfiles; sorted SHA256/path lines. SHA256 `bee6e0b5bdbe8c136830f152462bc7ad006840462ea906374c76bb03c25e9112`. |
+| Environment | Rust/Cargo 1.97.0, all features, locked dependencies, `CARGO_INCREMENTAL=0`, this checkout's Workspace target directory. |
+| Complete host library target | 17 passed; none filtered/ignored. |
+| Complete public host node target | 81 passed; none filtered/ignored. |
+| Complete fleet example target | 86 passed; none filtered/ignored. |
+| Distinct scoped cases | 184 passed, including twelve new cases; intermediate runs are not added. |
+| Host all-target Clippy/API docs | Passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, documentation links and 28 SQL/peer assertions plus 567 validator links passed. |
+
+The verification driver checked the unchanged source manifest after every
+command. Reproduction, manifest and logs are `/tmp/cellule-reader-inventory-*`.
+Initial test compilation used nonexistent role accessors, ordered Digest instead
+of its bytes, and reached a too-narrow private join helper; those now use the
+canonical source identity, byte ordering and the enrollment family's join helper.
+An intermediate example run passed 84 cases and failed an assumption that a
+Stopped runtime could admit an inventory page. The final case observes joined
+empty manager inventory before runtime closure, then requires `RuntimeClosed`.
+The active checkout's intermediate link gate encountered a concurrently edited
+control plane document's unfinished audit link. An isolated intermediate snapshot
+passed all static gates, and the final active-checkout pipeline passed after that
+independent document appeared. Its link count includes those separate edits;
+an isolated final snapshot qualifies this checkpoint's committed documentation.
+The first large fixture reached the unchanged 16-MiB retained credit limit,
+which cannot hold 128 obligations at 192 KiB each; its explicit large-scenario
+credit now matches that intended workload. A subsequent publication capture timed
+out without native phase diagnostics; a diagnostic rerun passed. The final
+scenario pauses acceptance, so capture timing is independent of the last native
+open, and still requires all 128 views and readbacks after resume. These
+intermediate failures remain archived; their runs are not added to the final
+count. Moving example module entries beside their child tests exposed an initial
+manifest driver assumption about deleted paths. The corrected driver enumerates
+all current tracked/nonignored sources, excludes explicitly deleted entries,
+and rediscovers the complete path set after each command. No broad, process or
+provider suite ran locally.
+
+### Baseline CI and unresolved qualification
+
+The original `5872122` workspace job
+[110679369745](https://github.com/crabbuild/cellule/actions/runs/36956132510/job/110679369745)
+failed after 79 example cases passed: the follower failure case observed no
+execution error immediately after its 80 ms drain waiter deadline. That deadline
+bounds the waiter, not completion of retained native retirement. The test now
+awaits the original failure and retirement observation within the fixture's
+three-second capture bound, keeping the 80 ms deadline and every original
+closure/error/authority/registry/resource assertion. The original CI log does
+not establish which native phase was pending. Its terminal failure remains
+archived at `/tmp/cellule-fleet-5872122-workspace.log`; the new source needs CI.
+
+Baseline MSRV, both capacity campaigns, contracts, website, fuzz smoke,
+fast/negative TLC and Compose smoke passed. Broad TLC/simulator were skipped.
+Both routing jobs finished failure after all eight functional executions in each
+mode passed. The unchanged median-of-four gate requires p95/p99 at most 110%
+and throughput at least 90%. Original failing comparison rows:
+
+| Case | Throughput ratio | p95 ratio | p99 ratio |
+| --- | ---: | ---: | ---: |
+| `leased/local_query/c1` | 0.98936 | 1.07740 | **1.18368** |
+| `object_only/local_query_expired_bursts/c16` | 1.00000 | 1.00871 | **1.15413** |
+
+Leased [job 110680072679](https://github.com/crabbuild/cellule/actions/runs/36956132515/job/110680072679)
+completed at 2026-10-02 03:11:43 UTC; object-only
+[job 110680072513](https://github.com/crabbuild/cellule/actions/runs/36956132515/job/110680072513)
+completed at 03:12:18 UTC. The comparison artifacts preserve raw rows/windows,
+logs, manifests and frozen binaries:
+
+| Artifact | ID | ZIP SHA256 |
+| --- | --- | --- |
+| `cell-routing-leased-36956132515-1` | 11207545900 | `0d86d9cb16c83846e0432468b80425bcdd01f6fc02d9bb2e45bb3cb8b291f7f7` |
+| `cell-routing-object_only-36956132515-1` | 11206579342 | `accb887edde0b11f11f9e02338a7e685847216a78be20a1608a6ca71f0fc7dcb` |
+
+Both manifests pin candidate `4b6b091679636b3eeeba985e26f4c9a5164cc44c`,
+whose GitHub commit parents are `fbfd84f9c4dfcb6de497072efd9aafa5a6f409cc`
+and PR head `58721227e56dac3ebcda6b74b4ed2a514f8cc42b`. The frozen baseline
+is `0dc04a658bd99668936f7ec58032d054f6fbc141`. Candidate binary SHA256 is
+`5f2914db0810cce008b272fb2e27fb0dbfcd733c1d6bbbed65e1ace77a50f136`,
+baseline binary is `08108609e742a3f8091616675152cab3de21f0e021f41588465d60b49a25a83c`,
+and both use harness `425b55c168f55ef4b7395c69948027dd77b2bd72836e962daa399120d74149d7`.
+The candidate binary matches the prior checkpoint's routing candidate exactly;
+this fact alone does not establish the comparison failures' cause. Original ZIPs,
+logs and extracted evidence are `/tmp/cellule-fleet-5872122-routing-*`.
+No production profile or required evidence was weakened.
+
+The W1–W10 goal remains active. These advisory producer pages are an input to
+complete role observation, not authenticated atomic envelopes, current authority,
+replacement policy or finalization proof. Complete failed-session and leader
+producer observation, receiver-loss recovery, role actions/settlement, primitive
+fault matrices, sustained convergence, complete reference scenarios and
+process/provider/mixed-binary qualification and rollout remain required.
+
 ## October 1 2026 durable roster observation checkpoint
 
 The reconciler now fully traverses retained physical intents and enrollment
@@ -58,10 +191,21 @@ suite executed locally, and these scoped checks do not prove fleet qualification
 
 CI for baseline `7375109` passes workspace/MSRV, both capacity campaigns,
 contracts, website, fuzz smoke, fast/negative TLC and Compose smoke. Broad TLC
-and deterministic simulator were skipped. Its two routing jobs were still live
-when inspected; leased job 110671204057 was in its frozen-binary comparison
-step. New source requires its own CI evidence. The earlier `cc7aa30` comparison
-failure, raw artifact and unchanged thresholds are recorded below.
+and deterministic simulator were skipped. Leased job 110671204057 is now
+terminal failure (2026-10-02 02:31:11 UTC), after all eight functional runs passed.
+The unchanged median-of-four gate requires p95/p99 at most 110% and throughput
+at least 90%. `forwarded_command/c1` p99 ratio was 1.25613;
+`forwarded_command/c16` p95/p99 ratios were 1.15368/1.11897;
+`local_query_expired_bursts/c16` p99 ratio was 1.34762. Throughput passed for
+these rows. Object-only job 110671203955 completed success at 02:35:43 UTC.
+Artifact `cell-routing-leased-36953458504-1`, ID 11205313244, ZIP SHA256
+`dd328ccd12d670f1bcb2f05d3af441ab85abb26dd8a4577d1b524e24b880e724`
+preserves the original evidence under `/tmp/cellule-fleet-7375109-routing-*`.
+Its candidate source `55ae5c21290319e996b6c4b7506abf6ffdf1d00a` is the
+synthetic merge of `7375109` into `fbfd84f9c4dfcb6de497072efd9aafa5a6f409cc`,
+compared with frozen baseline `0dc04a658bd99668936f7ec58032d054f6fbc141`.
+The cause is unestablished. New source requires independent CI evidence;
+earlier comparison failures remain recorded below.
 
 The complete W1–W10 goal remains active. Next, match bounded native actor,
 managed/pending reader, cold follower and leader-enrollment observations against

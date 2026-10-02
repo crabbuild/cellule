@@ -4,7 +4,7 @@ use super::*;
 use tokio::sync::watch;
 
 impl ReaderJob {
-    async fn join(&mut self) -> Result<()> {
+    pub(super) async fn join(&mut self) -> Result<()> {
         if let Some(task) = self.task.as_mut() {
             let result = task.await;
             self.task = None;
@@ -60,6 +60,7 @@ impl ReaderEnrollment {
             jobs.jobs.push(Arc::new(Mutex::new(ReaderJob {
                 task: Some(task),
                 failure: None,
+                response: response.clone(),
             })));
             response
         };

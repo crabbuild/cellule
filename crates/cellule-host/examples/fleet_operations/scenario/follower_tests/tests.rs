@@ -294,11 +294,24 @@ async fn failed_member_keeps_established_rows_until_a_later_native_fence() {
             .is_err()
     );
     assert_eq!(fixture.node.state(), NodeState::Draining);
-    let completion = fixture
-        .node
-        .follower_enrollment_completion(1)
-        .unwrap()
-        .unwrap();
+    // The deadline cancels the drain waiter, not the retained native owner.
+    // A busy runner may still be awaiting the original member reply at 80 ms.
+    // Await that actual failure before asserting its retained evidence.
+    let completion = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let completion = fixture
+                .node
+                .follower_enrollment_completion(1)
+                .unwrap()
+                .unwrap();
+            if completion.execution_error.is_some() && completion.retirement.is_some() {
+                return completion;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
     assert!(!completion.native_closed);
     assert!(completion.execution_error.is_some());
     assert!(completion.retirement.unwrap().confirmed().is_err());

@@ -236,6 +236,37 @@ decoding a record does not authenticate its origin or prove a complete roster.
 
 ## Caller driven fleet reconciliation
 
+### Reader producer inventory
+
+`ReadReplicaManager::fleet_reader_enrollments_page(cursor, limit, now_ms)`
+captures retained original reader requests and progress without awaiting journal
+or native opening/closure calls. The canonical activation lane still serializes
+all mutations; short index/progress locks make Pending and unknown work visible
+during paused replies. Each page admits one MiB from the shared node byte ledger
+before copying rows, permits 1–128 entries, and scans at most 10,000 obligations.
+Drop the page to release its reservation. A closed runtime or exhausted ledger
+returns an error; an unbound manager returns `None`, supplying no coverage.
+Variable payloads may fill the byte budget before the requested row limit;
+continue from the returned cursor. An oversized first row fails explicitly.
+
+| Observed state | Meaning |
+| --- | --- |
+| Original request, no acceptance reply | Acceptance is unknown; even an absent journal row cannot authorize another opening. |
+| `opening_started`, no `opening_joined` | Native opening may still run or its task failed without a joined result. |
+| Original event, `published == false` | Native progress is retained while durable publication remains unconfirmed. Execution and journal errors preserve separate original sources. |
+| Running job, no request row | Accepted preparation is still work; zero local enrollment rows cannot prove absence of an obligation. |
+| Unobserved or joining job | The original protocol result is unknown. A vanished/completed task handle does not prove closure. |
+| Returned protocol, retained handle | The original response is available, but the retained drain owner still joins the task epilogue. |
+
+Cursors bind manager scope/boot, mode, job counts and every original row's
+progress. Changed progress, retirement or mode requires restarting pagination.
+This is an advisory interval scan, not an atomic or authenticated fleet proof.
+Also traverse `fleet_readers_page` for installed native views and recheck the
+durable roster and ordinary authority. These pages neither settle responsibility
+nor certify replacement policy, shutdown or maintenance finalization.
+
+### Reconciler integration
+
 Construct `FleetReconciler::new(scope, claimant, profile, journal, observer,
 transport)` with the same validated profile as the journal. Supervise one
 application loop calling `reconcile_once(clock, deadline)`. The facade starts

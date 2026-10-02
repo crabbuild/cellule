@@ -106,9 +106,23 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
         .unwrap();
     node.install_node_lease(NodeLeaseGuard::new(now, now + 60_000).unwrap())
         .unwrap();
+    let retained = node.stats().retained_bytes();
+    assert!(
+        manager
+            .fleet_reader_enrollments_page(None, 128, now)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(node.stats().retained_bytes(), retained);
     for limit in [0, 129, usize::MAX] {
         assert!(manager.fleet_readers_page(None, limit, now).await.is_err());
+        assert!(
+            manager
+                .fleet_reader_enrollments_page(None, limit, now)
+                .is_err()
+        );
     }
+    assert!(manager.fleet_reader_enrollments_page(None, 1, -1).is_err());
     assert!(manager.fleet_readers_page(None, 1, -1).await.is_err());
     assert!(ReaderInventoryCursor::from_bytes(&[0; 63]).is_err());
     let empty = manager.fleet_readers_page(None, 128, now).await.unwrap();
