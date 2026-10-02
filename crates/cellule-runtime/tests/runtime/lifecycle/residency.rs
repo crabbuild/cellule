@@ -854,7 +854,6 @@ async fn runtime_stats_follow_active_cell_lifecycle() {
 async fn resident_lookup_is_invalidated_before_drain_releases_the_cell() {
     let fixture = fixture_for(b"resident-drain-race");
     let (runtime, handle, _pool) = activate_runtime(&fixture, 2 * 1024 * 1024).await;
-
     assert_eq!(
         runtime
             .active_handle(&fixture.target, CatalogRole::Application)
@@ -864,7 +863,6 @@ async fn resident_lookup_is_invalidated_before_drain_releases_the_cell() {
             .owner_fence(),
         handle.owner_fence()
     );
-
     assert!(
         runtime
             .resident_handle(&fixture.target, CatalogRole::Application)
@@ -873,24 +871,59 @@ async fn resident_lookup_is_invalidated_before_drain_releases_the_cell() {
             .is_some()
     );
 
-    handle.drain().await.unwrap();
-
-    assert!(
-        runtime
-            .active_handle(&fixture.target, CatalogRole::Application)
+    let (entered, started) = tokio::sync::oneshot::channel();
+    let (release, held) = std::sync::mpsc::channel();
+    let querying = handle.clone();
+    let query = tokio::spawn(async move {
+        querying
+            .query(1, 1, move |_| {
+                let _ = entered.send(());
+                let _ = held.recv_timeout(std::time::Duration::from_secs(10));
+                Ok(Vec::new())
+            })
             .await
-            .unwrap()
-            .is_none()
-    );
-
-    assert!(
-        runtime
-            .resident_handle(&fixture.target, CatalogRole::Application)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    runtime.shutdown().await.unwrap();
+    });
+    started.await.unwrap();
+    let draining = handle.clone();
+    let drain = tokio::spawn(async move { draining.drain().await });
+    let observation = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if runtime
+                .active_handle(&fixture.target, CatalogRole::Application)
+                .await?
+                .is_none()
+            {
+                let resident = runtime
+                    .resident_handle(&fixture.target, CatalogRole::Application)
+                    .await?;
+                return Ok::<_, cellule_runtime::Error>((
+                    runtime.stats().active_cells(),
+                    resident.is_none(),
+                    drain.is_finished(),
+                ));
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let refused = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        handle.query(1, 1, |_| Ok(Vec::new())),
+    )
+    .await;
+    // Release accepted SQL and join lifecycle work before checking the result.
+    let _ = release.send(());
+    let query_result = query.await;
+    let drain_result = drain.await;
+    let shutdown = runtime.shutdown().await;
+    assert_eq!(observation.unwrap().unwrap(), (1, true, false));
+    assert!(matches!(
+        refused,
+        Ok(Err(cellule_runtime::Error::CellDraining))
+    ));
+    query_result.unwrap().unwrap();
+    drain_result.unwrap().unwrap();
+    shutdown.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

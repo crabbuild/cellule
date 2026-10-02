@@ -297,44 +297,18 @@ async fn run_window(
     let started_ms = now_ms();
     let started_boot_ms = boot_ms();
     let started = Instant::now();
-    let mut jobs = JoinSet::new();
-    let mut samples = Vec::with_capacity(planned);
-    for arrival in 0..planned {
-        let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
-        tokio::time::sleep_until((started + Duration::from_micros(scheduled_us)).into()).await;
-        while let Some(result) = jobs.try_join_next() {
-            retain_sample(&mut output, &mut samples, result.unwrap());
-        }
-        let started_us = started.elapsed().as_micros() as u64;
-        let (entity, write) = destination(window.shape, arrival, expected.len());
-        let mut sample = Sample {
-            arrival,
-            scheduled_us,
-            started_us,
-            elapsed_us: 0,
-            entity,
-            write,
-            outcome: "client_full",
-            sequence: 0,
-            read_sequence: 0,
-            count: 0,
-        };
-        if started_us >= (arrival as u64 + 1) * 1_000_000 / rate as u64 {
-            sample.outcome = "scheduler_late";
-        }
-        if sample.outcome == "scheduler_late" || jobs.len() >= window.concurrency {
-            retain_sample(&mut output, &mut samples, sample);
-            continue;
-        }
-        let client = client.clone();
-        let request = window.id * 1_000_000 + arrival;
-        let admitted = started + Duration::from_micros(sample.started_us);
-        jobs.spawn(async move { execute(client, sample, request, admitted).await });
-    }
+    let mut samples = collect_arrivals(
+        window,
+        planned,
+        started,
+        expected.len(),
+        |sample, request, admitted| execute(Arc::clone(&client), sample, request, admitted),
+    )
+    .await;
+    // Evidence I/O must not block scheduled arrivals. Keep its cost in the
+    // measured window, but flush only after the offered work has drained.
+    write_samples(&mut output, &samples);
     tokio::time::sleep_until((started + Duration::from_secs(WINDOW_SECONDS as u64)).into()).await;
-    while let Some(result) = jobs.join_next().await {
-        retain_sample(&mut output, &mut samples, result.unwrap());
-    }
     let elapsed_us = started.elapsed().as_micros() as u64;
     let ended_ms = now_ms();
     let ended_boot_ms = boot_ms();
@@ -386,24 +360,76 @@ async fn run_window(
             || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + CAPACITY_DRAIN_GRACE_US)
 }
 
-fn retain_sample(output: &mut BufWriter<File>, samples: &mut Vec<Sample>, sample: Sample) {
-    writeln!(
-        output,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        sample.arrival,
-        sample.scheduled_us,
-        sample.started_us,
-        sample.elapsed_us,
-        sample.entity,
-        if sample.write { "write" } else { "read" },
-        sample.outcome,
-        sample.sequence,
-        sample.read_sequence,
-        sample.count
-    )
-    .unwrap();
+async fn collect_arrivals<F, Fut>(
+    window: &Window,
+    planned: usize,
+    started: Instant,
+    cells: usize,
+    dispatch: F,
+) -> Vec<Sample>
+where
+    F: Fn(Sample, usize, Instant) -> Fut,
+    Fut: std::future::Future<Output = Sample> + Send + 'static,
+{
+    let mut jobs = JoinSet::new();
+    let mut samples = Vec::with_capacity(planned);
+    let rate = window.nodes * window.rate_per_node;
+    for arrival in 0..planned {
+        let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
+        tokio::time::sleep_until((started + Duration::from_micros(scheduled_us)).into()).await;
+        while let Some(result) = jobs.try_join_next() {
+            samples.push(result.unwrap());
+        }
+        let started_us = started.elapsed().as_micros() as u64;
+        let (entity, write) = destination(window.shape, arrival, cells);
+        let mut sample = Sample {
+            arrival,
+            scheduled_us,
+            started_us,
+            elapsed_us: 0,
+            entity,
+            write,
+            outcome: "client_full",
+            sequence: 0,
+            read_sequence: 0,
+            count: 0,
+        };
+        if started_us >= (arrival as u64 + 1) * 1_000_000 / rate as u64 {
+            sample.outcome = "scheduler_late";
+        }
+        if sample.outcome == "scheduler_late" || jobs.len() >= window.concurrency {
+            samples.push(sample);
+            continue;
+        }
+        let request = window.id * 1_000_000 + arrival;
+        let admitted = started + Duration::from_micros(sample.started_us);
+        jobs.spawn(dispatch(sample, request, admitted));
+    }
+    while let Some(result) = jobs.join_next().await {
+        samples.push(result.unwrap());
+    }
+    samples
+}
+
+fn write_samples(output: &mut impl Write, samples: &[Sample]) {
+    for sample in samples {
+        writeln!(
+            output,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            sample.arrival,
+            sample.scheduled_us,
+            sample.started_us,
+            sample.elapsed_us,
+            sample.entity,
+            if sample.write { "write" } else { "read" },
+            sample.outcome,
+            sample.sequence,
+            sample.read_sequence,
+            sample.count
+        )
+        .unwrap();
+    }
     output.flush().unwrap();
-    samples.push(sample);
 }
 
 async fn execute(
@@ -492,4 +518,78 @@ async fn execute(
     }
     sample.elapsed_us = started.elapsed().as_micros() as u64;
     sample
+}
+
+#[tokio::test]
+async fn slow_evidence_flush_does_not_drop_scheduled_arrivals() {
+    struct SlowFlush(Vec<u8>);
+    impl Write for SlowFlush {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            std::thread::sleep(Duration::from_millis(750));
+            Ok(())
+        }
+    }
+    let window = Window {
+        id: 0,
+        prefix: "capacity",
+        nodes: 1,
+        shape: "uniform",
+        rate_per_node: 2,
+        concurrency: 8,
+    };
+    let mut output = SlowFlush(Vec::new());
+    let samples = collect_arrivals(
+        &window,
+        3,
+        Instant::now(),
+        12,
+        |mut sample, _, _| async move {
+            sample.outcome = "ok";
+            sample
+        },
+    )
+    .await;
+    write_samples(&mut output, &samples);
+    assert_eq!(samples.len(), 3);
+    assert!(
+        samples.iter().all(|sample| sample.outcome == "ok"),
+        "evidence I/O under-offered the workload: {:?}",
+        samples
+            .iter()
+            .map(|s| (s.arrival, s.started_us, s.outcome))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(String::from_utf8(output.0).unwrap().lines().count(), 3);
+}
+
+#[tokio::test]
+async fn missed_arrivals_remain_visible_without_dispatch() {
+    let window = Window {
+        id: 0,
+        prefix: "capacity",
+        nodes: 1,
+        shape: "uniform",
+        rate_per_node: 2,
+        concurrency: 8,
+    };
+    let mut output = Vec::new();
+    let samples = collect_arrivals(
+        &window,
+        2,
+        Instant::now() - Duration::from_secs(2),
+        12,
+        |_, _, _| async { panic!("missed arrival was dispatched") },
+    )
+    .await;
+    write_samples(&mut output, &samples);
+    assert!(
+        samples
+            .iter()
+            .all(|s| s.outcome == "scheduler_late" && s.elapsed_us == 0)
+    );
+    assert_eq!(String::from_utf8(output).unwrap().lines().count(), 2);
 }
