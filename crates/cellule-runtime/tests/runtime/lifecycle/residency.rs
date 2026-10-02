@@ -855,6 +855,16 @@ async fn resident_lookup_is_invalidated_before_drain_releases_the_cell() {
     let fixture = fixture_for(b"resident-drain-race");
     let (runtime, handle, _pool) = activate_runtime(&fixture, 2 * 1024 * 1024).await;
 
+    assert_eq!(
+        runtime
+            .active_handle(&fixture.target, CatalogRole::Application)
+            .await
+            .unwrap()
+            .unwrap()
+            .owner_fence(),
+        handle.owner_fence()
+    );
+
     assert!(
         runtime
             .resident_handle(&fixture.target, CatalogRole::Application)
@@ -864,6 +874,14 @@ async fn resident_lookup_is_invalidated_before_drain_releases_the_cell() {
     );
 
     handle.drain().await.unwrap();
+
+    assert!(
+        runtime
+            .active_handle(&fixture.target, CatalogRole::Application)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     assert!(
         runtime
@@ -1059,6 +1077,114 @@ async fn released_large_cell_with_store(
     handle.drain().await.unwrap();
     first_runtime.shutdown().await.unwrap();
     (pausing, fixture)
+}
+
+#[tokio::test]
+async fn active_lookup_includes_hydrating_owner_without_origin_reads() {
+    let (pausing, fixture) = released_large_cell_with_store(
+        b"active-hydrating-lookup",
+        SessionId::from_bytes([191; 16]),
+    )
+    .await;
+    let catalog = cellule_runtime::cell::catalog::CellCatalog::new(
+        fixture.layout.clone(),
+        fixture.target.tenant(),
+    );
+    let proof = catalog
+        .lookup(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let observed = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let root = observed.value().ltx_root().unwrap();
+    let session = SessionId::from_bytes([192; 16]);
+    let runtime = CellRuntime::new(SqlWorkerPool::new(1, 1).unwrap(), 64 << 20, session).unwrap();
+    let restored = runtime
+        .acquire_idle_restored(
+            proof,
+            fixture.replica.clone(),
+            authority.clone(),
+            observed,
+            cold_node_directory(&fixture).join("active-lookup.sqlite"),
+            Owner {
+                session,
+                endpoint: "https://active-lookup.internal:8081".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let expected_fence = restored.owner_fence();
+    pausing.arm_gets();
+    let reached_origin = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        pausing.wait_until_get_blocked(),
+    )
+    .await;
+    let outcome = if reached_origin.is_ok() {
+        let before = pausing.get_calls.load(Ordering::Acquire);
+        let lookup = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            let jobs = runtime.stats().hydration_jobs();
+            let resident = runtime
+                .resident_handle(&fixture.target, CatalogRole::Application)
+                .await?;
+            let mut owners = Vec::new();
+            for _ in 0..64 {
+                let active = runtime
+                    .active_handle(&fixture.target, CatalogRole::Application)
+                    .await?;
+                owners.push(active.map(|handle| (handle.cell_id(), handle.owner_fence())));
+            }
+            Ok::<_, cellule_runtime::Error>((jobs, resident.is_some(), owners))
+        })
+        .await;
+        Some((lookup, before, pausing.get_calls.load(Ordering::Acquire)))
+    } else {
+        None
+    };
+    // Release before assertions so a failing lookup cannot strand hydration.
+    pausing.release_gets();
+    restored.drain().await.unwrap();
+    let after_drain = runtime
+        .active_handle(&fixture.target, CatalogRole::Application)
+        .await;
+    runtime.shutdown().await.unwrap();
+    assert!(after_drain.unwrap().is_none());
+    assert!(matches!(
+        runtime
+            .active_handle(&fixture.target, CatalogRole::Application)
+            .await,
+        Err(cellule_runtime::Error::RuntimeClosed)
+    ));
+    assert_eq!(
+        authority
+            .load(fixture.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .ltx_root(),
+        Some(root)
+    );
+    let (lookup, before, after) =
+        outcome.expect("hydration did not reach the controlled origin wait");
+    let (jobs, resident, owners) = lookup
+        .expect("active lookup waited for hydration or metadata I/O")
+        .unwrap();
+    assert_eq!(jobs, 1);
+    assert!(!resident);
+    assert_eq!(
+        owners,
+        vec![Some((fixture.target.cell_id(), expected_fence)); 64]
+    );
+    assert_eq!(
+        after, before,
+        "active lookup read Cell metadata or origin pages"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1388,6 +1514,13 @@ async fn origin_failure_during_hydration_fences_without_serving_unverified_pages
     assert!(!pausing.fail_next_get.load(Ordering::Acquire));
     assert!(
         runtime
+            .active_handle(&fixture.target, CatalogRole::Application)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        runtime
             .resident_handle(&fixture.target, CatalogRole::Application)
             .await
             .unwrap()
@@ -1576,6 +1709,12 @@ async fn node_lease_loss_during_hydration_cannot_promote_a_stale_owner() {
     })
     .await
     .expect("seed=149: lost node lease did not stop hydration and release the Cell");
+    assert!(matches!(
+        runtime
+            .active_handle(&fixture.target, CatalogRole::Application)
+            .await,
+        Err(cellule_runtime::Error::Fenced)
+    ));
     assert!(matches!(
         runtime
             .resident_handle(&fixture.target, CatalogRole::Application)
