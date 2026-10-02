@@ -21,8 +21,6 @@ jobs:
     timeout-minutes: 30
     outputs:
       application-matrix: ${{ steps.applications.outputs.matrix }}
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-cookbook-target
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -31,6 +29,8 @@ jobs:
         with:
           toolchain: 1.97.0
           components: rustfmt, clippy
+      - name: Configure isolated build directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cellule-cookbook-target" >> "$GITHUB_ENV"
       - name: Record source and runnable application matrix
         id: applications
         run: |
@@ -74,7 +74,6 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.quality.outputs.application-matrix) }}
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cellule-cookbook-target
       COOKBOOK_APPLICATION: ${{ matrix.application }}
       COMPOSE_PROJECT_NAME: cellule-cookbook-${{ matrix.application }}
     steps:
@@ -84,6 +83,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: 1.97.0
+      - name: Configure isolated build directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cellule-cookbook-target" >> "$GITHUB_ENV"
       - name: Record source and build selected binary
         run: |
           mkdir -p "$RUNNER_TEMP/cookbook-evidence"
