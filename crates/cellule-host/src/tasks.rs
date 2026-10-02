@@ -26,7 +26,7 @@ impl<T> Drop for AbortOnDrop<T> {
 pub struct CellNodeTaskGroup {
     pub(super) cancellation: CancellationToken,
     pub(super) node_shutdown: CancellationToken,
-    tasks: Mutex<Vec<NodeTask>>,
+    tasks: Mutex<Vec<Arc<NodeTask>>>,
     pub(super) failed: Arc<AtomicBool>,
     pub(super) draining: AtomicBool,
 }
@@ -34,12 +34,41 @@ pub struct CellNodeTaskGroup {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TaskPhase {
     Work,
+    RetainedWork,
     Lease,
 }
 
 struct NodeTask {
     phase: TaskPhase,
-    handle: JoinHandle<FacilityResult>,
+    abort: tokio::task::AbortHandle,
+    supervisor: tokio::task::AbortHandle,
+    join: tokio::sync::Mutex<TaskJoin>,
+}
+
+type TaskFailure = Arc<dyn std::error::Error + Send + Sync>;
+
+enum TaskJoin {
+    Running(JoinHandle<FacilityResult>),
+    Finished(std::result::Result<(), TaskFailure>),
+}
+
+impl NodeTask {
+    async fn join(&self) -> std::result::Result<(), TaskFailure> {
+        let mut joining = self.join.lock().await;
+        if let TaskJoin::Running(handle) = &mut *joining {
+            let result = match handle.await {
+                Ok(result) => result.map_err(TaskFailure::from),
+                Err(source) => Err(Arc::new(source) as TaskFailure),
+            };
+            // Commit the consumed handle without another await. Cancellation
+            // before this point drops only the waiter and keeps the same join.
+            *joining = TaskJoin::Finished(result);
+        }
+        match &*joining {
+            TaskJoin::Finished(result) => result.clone(),
+            TaskJoin::Running(_) => Err(Arc::new(Error::Control("node task join incomplete"))),
+        }
+    }
 }
 
 impl Drop for CellNodeTaskGroup {
@@ -49,7 +78,8 @@ impl Drop for CellNodeTaskGroup {
             Err(poisoned) => poisoned.into_inner(),
         };
         for task in tasks.iter() {
-            task.handle.abort();
+            task.abort.abort();
+            task.supervisor.abort();
         }
     }
 }
@@ -84,7 +114,7 @@ impl CellNodeTaskGroup {
         }
         self.tasks
             .lock()
-            .map(|tasks| tasks.iter().all(|task| !task.handle.is_finished()))
+            .map(|tasks| tasks.iter().all(|task| !task.supervisor.is_finished()))
             .unwrap_or(false)
     }
 
@@ -136,6 +166,15 @@ impl CellNodeTaskGroup {
         self.spawn_task(task, TaskPhase::Work)
     }
 
+    /// Watch an independently retained facility join without aborting its
+    /// waiter on a deadline. The facility still owns and joins accepted work.
+    pub(super) fn spawn_retained<F>(&self, task: F) -> cellule_runtime::Result<()>
+    where
+        F: Future<Output = FacilityResult> + Send + 'static,
+    {
+        self.spawn_task(task, TaskPhase::RetainedWork)
+    }
+
     fn spawn_task<F>(&self, task: F, phase: TaskPhase) -> cellule_runtime::Result<()>
     where
         F: Future<Output = FacilityResult> + Send + 'static,
@@ -150,8 +189,12 @@ impl CellNodeTaskGroup {
             return Err(Error::Capacity("CellNode task limit reached"));
         }
         let failed = Arc::clone(&self.failed);
+        let task = tokio::spawn(task);
+        // Deadline abortion targets the work, not its supervisor. The latter
+        // stays owned until it joins the work's cancellation and destructor.
+        let abort = task.abort_handle();
         let handle = tokio::spawn(async move {
-            let mut task = AbortOnDrop::new(tokio::spawn(task));
+            let mut task = AbortOnDrop::new(task);
             match task.join().await {
                 Ok(result) => {
                     if result.is_err() {
@@ -165,7 +208,12 @@ impl CellNodeTaskGroup {
                 }
             }
         });
-        tasks.push(NodeTask { phase, handle });
+        tasks.push(Arc::new(NodeTask {
+            phase,
+            abort,
+            supervisor: handle.abort_handle(),
+            join: tokio::sync::Mutex::new(TaskJoin::Running(handle)),
+        }));
         Ok(())
     }
 
@@ -175,11 +223,18 @@ impl CellNodeTaskGroup {
     }
 
     /// Cancels admission and joins tasks in reverse registration order.
+    ///
+    /// Cancelling the caller leaves the original joins owned by this group.
+    /// Every subsequent drain preserves original task failures as error sources.
     pub async fn drain(&self) -> FacilityResult {
         self.drain_until(None).await
     }
 
     /// Cancels admission and joins tasks until an optional absolute deadline.
+    ///
+    /// A deadline aborts unfinished ordinary tasks but retains their handles.
+    /// A later drain joins those tasks and reports their original cancellation
+    /// errors. Watchers of retained facility work continue until that join.
     pub async fn drain_until(&self, deadline: Option<Instant>) -> FacilityResult {
         self.cancel_work();
         self.node_shutdown.cancel();
@@ -188,35 +243,40 @@ impl CellNodeTaskGroup {
 
     async fn join_until(&self, deadline: Option<Instant>, include_lease: bool) -> FacilityResult {
         let tasks = match self.tasks.lock() {
-            Ok(mut tasks) => {
-                let (joining, retained): (Vec<_>, Vec<_>) = std::mem::take(&mut *tasks)
-                    .into_iter()
-                    .partition(|task| include_lease || task.phase == TaskPhase::Work);
-                *tasks = retained;
-                joining.into_iter().map(|task| task.handle).collect()
-            }
+            // Keep the handles and settled results in the same bounded bank.
+            // Multiple drain callers share each join rather than taking it away.
+            Ok(tasks) => tasks
+                .iter()
+                .filter(|task| include_lease || task.phase != TaskPhase::Lease)
+                .cloned()
+                .collect::<Vec<_>>(),
             Err(poisoned) => {
-                for task in poisoned.into_inner().drain(..) {
-                    task.handle.abort();
+                for task in poisoned.into_inner().iter() {
+                    if task.phase != TaskPhase::RetainedWork
+                        && (include_lease || task.phase != TaskPhase::Lease)
+                    {
+                        task.abort.abort();
+                    }
                 }
                 return Err(Box::new(std::io::Error::other(
                     "CellNode task group lock poisoned",
                 )));
             }
         };
-        let mut tasks = TaskBatch {
-            tasks,
-            abort_on_drop: true,
-        };
         let mut first_error = None;
-        let mut timed_out = false;
-        while let Some(index) = tasks.tasks.len().checked_sub(1) {
+        for task in tasks.iter().rev() {
             let result = match deadline {
                 Some(deadline) => {
-                    match tokio::time::timeout_at(deadline.into(), &mut tasks.tasks[index]).await {
+                    match tokio::time::timeout_at(deadline.into(), task.join()).await {
                         Ok(result) => result,
                         Err(_) => {
-                            timed_out = true;
+                            // Preserve the existing deadline abort policy, but
+                            // retain ownership until a later caller joins it.
+                            for task in &tasks {
+                                if task.phase != TaskPhase::RetainedWork {
+                                    task.abort.abort();
+                                }
+                            }
                             first_error.get_or_insert_with(|| {
                                 Box::new(std::io::Error::new(
                                     std::io::ErrorKind::TimedOut,
@@ -228,37 +288,30 @@ impl CellNodeTaskGroup {
                         }
                     }
                 }
-                None => (&mut tasks.tasks[index]).await,
+                None => task.join().await,
             };
-            tasks.tasks.pop();
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) if first_error.is_none() => first_error = Some(error),
-                Ok(Err(_)) => {}
-                Err(error) if first_error.is_none() => {
-                    first_error = Some(Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
-                }
-                Err(_) => {}
+            if let Err(source) = result
+                && first_error.is_none()
+            {
+                first_error = Some(Box::new(RetainedTaskFailure(source))
+                    as Box<dyn std::error::Error + Send + Sync>);
             }
-        }
-        if !timed_out {
-            tasks.abort_on_drop = false;
         }
         first_error.map_or(Ok(()), Err)
     }
 }
 
-struct TaskBatch {
-    pub(super) tasks: Vec<JoinHandle<FacilityResult>>,
-    pub(super) abort_on_drop: bool,
+#[derive(Debug)]
+struct RetainedTaskFailure(TaskFailure);
+
+impl std::fmt::Display for RetainedTaskFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
 }
 
-impl Drop for TaskBatch {
-    fn drop(&mut self) {
-        if self.abort_on_drop {
-            for task in &self.tasks {
-                task.abort();
-            }
-        }
+impl std::error::Error for RetainedTaskFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
     }
 }

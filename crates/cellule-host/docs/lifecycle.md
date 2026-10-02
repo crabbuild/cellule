@@ -35,6 +35,21 @@ inspectable, and the host reaches Stopped only after every required phase
 succeeds. A retained runtime failure preserves its original error as a source
 on every subsequent observation.
 
+The task group retains each join and its original result within its existing
+256-task bound. Concurrent drains share those joins; cancelling a caller leaves
+the work owned. A failure cannot disappear after its handle is consumed, and
+every sibling is joined even when another task fails. A repeated node drain
+still reports that original source and keeps lease maintenance and Draining.
+
+| Task deadline | Retained outcome |
+| --- | --- |
+| Ordinary work | Abort the work task, retain its supervisor, then join its cancellation and destructor on a later drain. Cancellation remains an original error. |
+| Node-log supervisor watcher | Retain the watcher and the existing native facility join. A later drain can succeed after canonical cleanup succeeds. |
+| Lease maintenance | Node drain reaches this phase only after required work and runtime closure succeed. A work failure cannot become session withdrawal on retry. |
+
+Dropping the task group aborts its remaining owned tasks. Stopped still requires
+successful joins through the canonical node drain lane.
+
 ## Requested node-log rotation
 
 Install the existing durability provider during startup, then call

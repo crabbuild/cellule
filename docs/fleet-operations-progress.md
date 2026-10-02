@@ -4,6 +4,116 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 retained node task joins checkpoint
+
+The parent `0132b60` task group removed handles from its bank before joining.
+A failed first shutdown consumed the work failure. The next shutdown could
+find no failure, withdraw lease maintenance and report Stopped. A new public
+node regression reproduced that false success before the production change;
+its first shutdown failed and its second returned Ok. The complete 637-path
+before-source manifest SHA256 is
+`6d53399d1ac48d31852cfdcda62bc77dc4d457bf9348f8c304e8fbc1f439ea77`.
+The original failure, test source and executable are archived. An initial
+compile-only attempt needed an explicit test-helper reference lifetime; it is
+retained separately and supplies no behavioral evidence.
+
+The existing 256-task supervisor now retains every handle and terminal result
+in its original bank. Concurrent callers share the exact join. Cancelling a
+caller drops its waiter; no accepted task ownership disappears. After joining,
+the first and later drains expose the same original error object through the
+source chain. Sibling joins continue after a task failure. Node shutdown still
+closes the runtime but stays Draining with lease maintenance retained when a
+required task fails; a retry cannot erase that failure.
+
+Ordinary deadline abortion now targets the work task, retaining the supervisor
+until it joins that work's cancellation and destructor. The cancelled work's
+original JoinError remains on later drains. Group destruction still aborts its
+remaining owned tasks; task admission and the 256-slot bound are unchanged.
+
+### Native facility watcher and resumable deadlines
+
+An intermediate implementation retained all errors but continued aborting the
+node-log facility watcher on deadline. The full public host suite rejected it:
+96 cases passed and two existing native-cleanup deadline cases failed on retry
+with the watcher's stored cancellation error. Its source manifest SHA256 is
+`fe4d15f94d557a466fc243797bcbe9d0de388f7954228ab5869e58cc09901911`.
+Those logs and source are archived and do not qualify the final change.
+
+The watcher now uses a private retained-work registration in the same bounded
+supervisor. Its deadline drops the waiter while the existing facility continues
+to own the native supervisor; it does not abort that watcher. A later shutdown
+joins the same native cleanup and original watcher result. Genuine native or
+watcher failures still remain errors. No second scheduler, authority, public
+configuration or alternative cleanup path was added. The existing deadline,
+cleanup, withdrawal and zero-resource assertions remain unchanged.
+
+Five public regressions cover repeat shutdown without premature withdrawal,
+cancelled waiters, concurrent joins, exact deadline cancellation and original
+panic retention. They check original error identity and sibling completion.
+The corrected source also passes both previously failing native-cleanup cases.
+
+### Verification scope
+
+Final native commands use an isolated source snapshot, all features and locked
+dependencies. Complete source-set and byte checks run before and after each
+command; all 637 Rust/Cargo/lock paths match final manifest SHA256
+`6e921d09fca19a8e91438e1bc078e315ff42847252691cb21dffc13a49184db4`.
+The snapshot reuses its existing checkout-specific target directory beneath
+`$HOME/Workspace/crabbuild-target`; previous qualified evidence and frozen
+executables remain archived independently.
+
+| Complete final native scope | Observed result |
+| --- | --- |
+| Host library | 29 passed. |
+| Public host node suite | 98 passed; none ignored or filtered. |
+| Fleet operations example | 112 passed; none ignored or filtered; 67.98 seconds. |
+| Application integration | 37 passed; the same 16 documented manual cases ignored. |
+
+These are 276 distinct native cases; the initial 16-case focused run is excluded
+from that count. Host all-target/all-feature Clippy and API documentation pass
+with warnings denied. Format/diff, workspace boundaries/layout, 110 documented
+Rust snippets and 1173 local Markdown links pass. This source supplies no new
+process, provider, mixed-binary or full fleet finalization proof.
+
+The isolated Linux ARM run exits zero with the same complete source checks
+before and after each command:
+
+| Default-feature, locked Linux command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-app -p cellule-host --locked` | Application library 10, contracts 3, integration 37 (the same 16 manual ignores); host library 29, public node 98; five application doctests. Host doctests contain zero cases. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | All 112 cases pass; none ignored or filtered; 81.35 seconds. |
+
+Environment: pinned Rust image, Debian 12/aarch64, Rust/Cargo 1.97.1, two CPUs,
+four GiB and 256 PIDs. The inherited descriptor soft limit is raised from 1024
+to its existing 524288 hard limit, matching the earlier frozen-binary descriptor
+diagnosis. No task, scenario, deadline or qualification bounds change. A launcher
+attempt failed before any Cargo command because the copied script lacked its
+shell interpreter line; its separate log/container record is retained. Adding
+that line changed only the launcher, and the complete subsequent commands
+supplied the results above. Logs, final sources, manifests and frozen native/
+Linux executables are archived independently. The task-owned container is
+removed only after terminal status and evidence are captured.
+
+### Parent CI and remaining scope
+
+The parent qualification contract, coordination model, website, fuzz and
+capacity workflows passed. Its Rust MSRV and workspace test steps passed,
+but [the complete fleet example step](https://github.com/crabbuild/cellule/actions/runs/37016038610/job/110867015361)
+failed: 111 cases passed and the overload scenario settled one movement rather
+than its required two. The raw failure log SHA256 is
+`f0f5be0fa5e3a133b5880143e973887eb9db547abc21ae69f60484651caec3ea`.
+This checkpoint's complete local example pass does not establish that failure's
+cause or claim it repaired. The historical x86 publication-hint cause also
+remains unestablished. Neither failure changes the required profiles, resource
+bounds, scenario counts or deadlines.
+
+This is a W4/W7 shutdown prerequisite. Complete authenticated role/current-
+authority aggregation, replacement/failed-owner evidence, role evacuation,
+terminal finalization handoff without self-join, cross-session recovery,
+Cron/Blob owners, maintenance/failure examples, qualification and rollout
+remain required. SettleRoles and Finalize remain refused. The full W1–W10
+implementation objective remains active.
+
 ## October 2 2026 reader reconciliation lease-boundary repair checkpoint
 
 The parent `8698183` qualification contract failed during reader fixture startup,

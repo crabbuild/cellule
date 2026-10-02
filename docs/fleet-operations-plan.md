@@ -1316,6 +1316,12 @@ node drain/finalization against the existing `shutdown_lock`; short local
 actions must not hold that lane while waiting on remote network I/O.
 Preserve original task and join failures across repeated drain calls; consuming
 a completed task handle cannot turn a previous failure into successful shutdown.
+The bounded node task group now retains each original join/result, shares it
+across concurrent or cancelled drain waiters, and keeps genuine task failures
+as sources on retry. Ordinary deadline-aborted work retains its cancellation
+join; the existing node-log facility watcher retains its canonical work and
+can finish after a deadline. These local guarantees do not supply the complete
+role barrier or fleet finalization handoff required by W7.
 Join every accepted finite job even when another job fails. Settle its resources
 and retained publication obligations independently, and keep the original
 failure diagnostic after settled native resources can be released. A failed

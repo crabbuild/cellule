@@ -2,6 +2,222 @@
 
 use super::*;
 
+fn error_source<'a, E: std::error::Error + 'static>(
+    error: &'a (dyn std::error::Error + 'static),
+) -> &'a E {
+    let mut source = error;
+    loop {
+        if let Some(error) = source.downcast_ref::<E>() {
+            return error;
+        }
+        source = source.source().expect("original error must be retained");
+    }
+}
+
+#[tokio::test]
+async fn repeated_shutdown_retains_task_failure_and_does_not_withdraw_lease() {
+    let node = CellNodeBuilder::new(application())
+        .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+        .with_replica_host(ReplicaHost::default())
+        .with_session(SessionId::from_bytes([34; 16]))
+        .build()
+        .unwrap();
+    let node_shutdown = CancellationToken::new();
+    let tasks = node
+        .install_task_group(CancellationToken::new(), node_shutdown.clone())
+        .unwrap();
+    let withdrawn = Arc::new(AtomicBool::new(false));
+    let lease_withdrawn = Arc::clone(&withdrawn);
+    tasks
+        .spawn_lease_maintenance(async move {
+            node_shutdown.cancelled().await;
+            lease_withdrawn.store(true, Ordering::Release);
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+    let sibling_joined = Arc::new(AtomicBool::new(false));
+    let sibling_finished = Arc::clone(&sibling_joined);
+    let cancellation = tasks.cancellation_token();
+    tasks
+        .spawn(async move {
+            cancellation.cancelled().await;
+            sibling_finished.store(true, Ordering::Release);
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+    tasks
+        .spawn(async { Err::<(), _>(std::io::Error::other("original work failure")) })
+        .unwrap();
+
+    let first = node.shutdown().await.unwrap_err();
+    let second = node.shutdown().await;
+    let state = node.state();
+    let lease_was_withdrawn = withdrawn.load(Ordering::Acquire);
+    // Explicitly join the lease task even when an assertion detects the old
+    // false-success behavior. Node shutdown itself must keep it live.
+    let cleanup = tasks.drain().await;
+
+    let second = second.expect_err("a consumed join must not erase the original failure");
+    assert_eq!(state, NodeState::Draining);
+    assert!(!lease_was_withdrawn);
+    assert!(sibling_joined.load(Ordering::Acquire));
+    assert!(withdrawn.load(Ordering::Acquire));
+    let first_source = error_source::<std::io::Error>(&first);
+    assert_eq!(first_source.to_string(), "original work failure");
+    assert!(std::ptr::eq(
+        first_source,
+        error_source::<std::io::Error>(&second)
+    ));
+    assert!(std::ptr::eq(
+        first_source,
+        error_source::<std::io::Error>(cleanup.unwrap_err().as_ref())
+    ));
+}
+
+#[tokio::test]
+async fn cancelled_task_drain_waiter_retains_the_original_job_and_failure() {
+    let tasks = CellNodeTaskGroup::new(CancellationToken::new(), CancellationToken::new());
+    let started = Arc::new(tokio::sync::Notify::new());
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let finished = Arc::new(AtomicBool::new(false));
+    let task_started = Arc::clone(&started);
+    let task_gate = Arc::clone(&gate);
+    let task_finished = Arc::clone(&finished);
+    tasks
+        .spawn(async move {
+            task_started.notify_one();
+            task_gate.notified().await;
+            task_finished.store(true, Ordering::Release);
+            Err::<(), _>(std::io::Error::other(
+                "accepted task completed after cancellation",
+            ))
+        })
+        .unwrap();
+    started.notified().await;
+
+    let mut waiter = Box::pin(tasks.drain());
+    assert!(futures_util::poll!(&mut waiter).is_pending());
+    drop(waiter);
+    assert!(!finished.load(Ordering::Acquire));
+    gate.notify_one();
+    let first = tasks.drain().await.unwrap_err();
+    assert!(finished.load(Ordering::Acquire));
+    let second = tasks.drain().await.unwrap_err();
+    let source = error_source::<std::io::Error>(first.as_ref());
+    assert_eq!(
+        source.to_string(),
+        "accepted task completed after cancellation"
+    );
+    assert!(std::ptr::eq(
+        source,
+        error_source::<std::io::Error>(second.as_ref())
+    ));
+}
+
+#[tokio::test]
+async fn concurrent_task_drains_share_the_original_join_and_failure() {
+    let tasks = CellNodeTaskGroup::new(CancellationToken::new(), CancellationToken::new());
+    let started = Arc::new(tokio::sync::Notify::new());
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let task_started = Arc::clone(&started);
+    let task_gate = Arc::clone(&gate);
+    let task_completed = Arc::clone(&completed);
+    tasks
+        .spawn(async move {
+            task_started.notify_one();
+            task_gate.notified().await;
+            task_completed.fetch_add(1, Ordering::AcqRel);
+            Err::<(), _>(std::io::Error::other("one shared failure"))
+        })
+        .unwrap();
+    started.notified().await;
+
+    let mut waiters = Box::pin(async { tokio::join!(tasks.drain(), tasks.drain()) });
+    assert!(futures_util::poll!(&mut waiters).is_pending());
+    assert_eq!(completed.load(Ordering::Acquire), 0);
+    gate.notify_one();
+    let (first, second) = waiters.await;
+    let first = first.unwrap_err();
+    let second = second.unwrap_err();
+    assert_eq!(completed.load(Ordering::Acquire), 1);
+    assert!(std::ptr::eq(
+        error_source::<std::io::Error>(first.as_ref()),
+        error_source::<std::io::Error>(second.as_ref())
+    ));
+}
+
+#[tokio::test]
+async fn task_deadline_retains_and_joins_original_cancellation() {
+    struct DropProbe(Arc<AtomicBool>);
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    let tasks = CellNodeTaskGroup::new(CancellationToken::new(), CancellationToken::new());
+    let started = Arc::new(tokio::sync::Notify::new());
+    let dropped = Arc::new(AtomicBool::new(false));
+    let task_started = Arc::clone(&started);
+    let task_dropped = Arc::clone(&dropped);
+    tasks
+        .spawn(async move {
+            let _probe = DropProbe(task_dropped);
+            task_started.notify_one();
+            std::future::pending::<()>().await;
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+    started.notified().await;
+
+    let timeout = tasks
+        .drain_until(Some(Instant::now() + Duration::from_millis(10)))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error_source::<std::io::Error>(timeout.as_ref()).kind(),
+        std::io::ErrorKind::TimedOut
+    );
+    let first = tasks.drain().await.unwrap_err();
+    assert!(dropped.load(Ordering::Acquire));
+    let source = error_source::<tokio::task::JoinError>(first.as_ref());
+    assert!(source.is_cancelled());
+    let second = tasks.drain().await.unwrap_err();
+    assert!(std::ptr::eq(
+        source,
+        error_source::<tokio::task::JoinError>(second.as_ref())
+    ));
+}
+
+#[tokio::test]
+async fn task_panic_is_retained_across_every_drain_and_siblings_join() {
+    let tasks = CellNodeTaskGroup::new(CancellationToken::new(), CancellationToken::new());
+    let finished = Arc::new(AtomicBool::new(false));
+    let task_finished = Arc::clone(&finished);
+    let cancellation = tasks.cancellation_token();
+    tasks
+        .spawn(async move {
+            cancellation.cancelled().await;
+            task_finished.store(true, Ordering::Release);
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+    tasks
+        .spawn_boxed(async { panic!("original supervised panic") })
+        .unwrap();
+
+    let first = tasks.drain().await.unwrap_err();
+    assert!(finished.load(Ordering::Acquire));
+    let source = error_source::<tokio::task::JoinError>(first.as_ref());
+    assert!(source.is_panic());
+    let second = tasks.drain().await.unwrap_err();
+    assert!(std::ptr::eq(
+        source,
+        error_source::<tokio::task::JoinError>(second.as_ref())
+    ));
+}
+
 struct NoopNodeDurabilityProvider;
 
 impl NodeDurabilityProvider for NoopNodeDurabilityProvider {

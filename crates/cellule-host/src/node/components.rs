@@ -147,8 +147,9 @@ impl CellNode {
             )?,
         ])?;
         // The task group owns supervision and health; the facility retains the
-        // actual join so cancelling this watcher cannot cancel accepted effects.
-        let result = task_group.spawn_boxed(async move { supervisor.join().await });
+        // actual join. Retain this watcher across deadlines too, so its forced
+        // cancellation cannot replace the facility's original result.
+        let result = task_group.spawn_retained(async move { supervisor.join().await });
         if result.is_err() {
             self.remove_facility(NODE_DURABILITY_SUPERVISOR_COMPONENT)?;
             self.remove_facility(NODE_DURABILITY_PROVIDER_COMPONENT)?;
