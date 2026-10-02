@@ -143,6 +143,7 @@ pub struct DurabilityGate {
 
 struct GateState {
     leader_session: SessionId,
+    leader_node: NodeId,
     log_epoch: u64,
     members: HashSet<NodeId>,
     follower_through: HashMap<NodeId, u64>,
@@ -178,6 +179,7 @@ impl DurabilityGate {
         Ok(Self {
             inner: Arc::new(Mutex::new(GateState {
                 leader_session,
+                leader_node,
                 log_epoch,
                 members,
                 follower_through,
@@ -269,6 +271,13 @@ impl DurabilityGate {
     /// Returns this gate's immutable enrolled epoch, including after rotation.
     pub fn log_epoch(&self) -> Result<u64> {
         Ok(self.lock()?.log_epoch)
+    }
+
+    /// Returns the immutable configured boot, physical node and epoch. This
+    /// metadata is not a signed authority observation or durability proof.
+    pub fn identity(&self) -> Result<(SessionId, NodeId, u64)> {
+        let state = self.lock()?;
+        Ok((state.leader_session, state.leader_node, state.log_epoch))
     }
 
     pub(crate) fn shipping_scope(&self) -> Result<(SessionId, u64, Vec<NodeId>)> {

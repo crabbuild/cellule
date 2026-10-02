@@ -103,6 +103,7 @@ mod node {
 
     pub mod builder;
     pub mod components;
+    pub mod durability;
     pub mod fleet_actions;
     pub mod fleet_maintenance;
     pub mod fleet_receivers;

@@ -201,9 +201,11 @@ impl CellNode {
         if first_error.is_none() {
             first_error = runtime_result.err();
         }
-        // Session withdrawal fences the log authority. Keep its heartbeat live
-        // until runtime publication and the durable log-close barrier finish.
+        // Session withdrawal fences log authority. An owned enrollment may
+        // still return a committed generation after runtime closure, so retain
+        // lease maintenance until every required facility join also succeeds.
         if runtime_closed
+            && first_error.is_none()
             && let Ok(Some(task_group)) = task_group
             && let Err(source) = task_group.drain_until(deadline).await
             && first_error.is_none()

@@ -111,16 +111,73 @@ impl CellNode {
             .ok_or(Error::Control(
                 "CellNode durability provider requires an installed task group",
             ))?;
-        self.install_owned_component(NODE_DURABILITY_PROVIDER_COMPONENT, Arc::clone(&provider))?;
-        let runtime = self.runtime.clone();
-        let cancellation = task_group.cancellation.clone();
-        let result = task_group.spawn_boxed(async move {
-            run_node_durability_supervisor(provider, runtime, configuration, cancellation).await
-        });
+        task_group.ensure_accepting_tasks()?;
+        let supervisor = Arc::new(DurabilitySupervisor::new(
+            provider.clone(),
+            self.runtime.clone(),
+            configuration,
+            self.session,
+            task_group.cancellation.clone(),
+        ));
+        let drained = Arc::clone(&supervisor);
+        self.install_facilities([
+            CellNodeFacility::owned(NODE_DURABILITY_PROVIDER_COMPONENT, provider, || async {
+                Ok(())
+            })?,
+            CellNodeFacility::owned(
+                NODE_DURABILITY_SUPERVISOR_COMPONENT,
+                Arc::clone(&supervisor),
+                move || {
+                    let drained = Arc::clone(&drained);
+                    async move { drained.drain().await }
+                },
+            )?,
+        ])?;
+        // The task group owns supervision and health; the facility retains the
+        // actual join so cancelling this watcher cannot cancel accepted effects.
+        let result = task_group.spawn_boxed(async move { supervisor.join().await });
         if result.is_err() {
+            self.remove_facility(NODE_DURABILITY_SUPERVISOR_COMPONENT)?;
             self.remove_facility(NODE_DURABILITY_PROVIDER_COMPONENT)?;
         }
         result
+    }
+
+    /// Requests confirmed retirement of one exact epoch through the existing
+    /// supervisor, bypassing normal frame thresholds. The embedding application
+    /// authorizes this call and journals acceptance/results before finalization.
+    /// Duplicate epoch requests share retained progress; dropping a handle does
+    /// not cancel work. An automatic rotation already in flight is refused.
+    pub fn request_node_log_rotation(
+        &self,
+        log_epoch: u64,
+    ) -> cellule_runtime::Result<NodeLogRotationRequest> {
+        let supervisor = self
+            .owned_component::<DurabilitySupervisor>(NODE_DURABILITY_SUPERVISOR_COMPONENT)
+            .ok_or(Error::Control(
+                "CellNode durability supervisor is not installed",
+            ))?;
+        if !matches!(
+            self.state(),
+            NodeState::Ready | NodeState::ScalingDown | NodeState::Maintenance
+        ) {
+            return Err(Error::CellDraining);
+        }
+        supervisor
+            .requests
+            .request(&self.runtime, log_epoch, &supervisor.cancellation)
+    }
+
+    /// Looks up one retained epoch request, including interrupted work during
+    /// drain. Missing local progress never proves role absence or completion.
+    pub fn node_log_rotation_request(
+        &self,
+        log_epoch: u64,
+    ) -> cellule_runtime::Result<Option<NodeLogRotationRequest>> {
+        match self.owned_component::<DurabilitySupervisor>(NODE_DURABILITY_SUPERVISOR_COMPONENT) {
+            Some(supervisor) => supervisor.requests.lookup(log_epoch),
+            None => Ok(None),
+        }
     }
 
     /// Owns read-snapshot refresh, eviction, and terminal close for this node.

@@ -88,6 +88,13 @@ impl NodeDurabilityConfig {
         })
     }
 
+    /// Returns the configured boot, physical node and epoch before construction.
+    /// The provider still owns authenticated enrollment and authority validation.
+    #[must_use]
+    pub const fn identity(&self) -> (SessionId, NodeId, u64) {
+        (self.session, self.node, self.log_epoch)
+    }
+
     /// Constructs the runtime-owned durability object for this epoch.
     pub fn build(self) -> Result<Arc<NodeDurability>> {
         let gate = DurabilityGate::new(self.session, self.node, self.log_epoch, self.members)?;
@@ -259,6 +266,12 @@ impl NodeDurability {
     /// Returns this binding's exact enrolled log epoch.
     pub fn log_epoch(&self) -> Result<u64> {
         self.gate.log_epoch()
+    }
+
+    /// Returns immutable configured scope, including after retirement. This
+    /// metadata does not establish current authority or fleet readiness.
+    pub fn identity(&self) -> Result<(SessionId, NodeId, u64)> {
+        self.gate.identity()
     }
 
     /// Returns the latest joined member results, preserving individual errors.

@@ -450,7 +450,7 @@ The follow-up recovery audit reproduced a qualification gap shared with the
 compared main snapshot. The first-fault collector and both receipt selection
 checks used the startup log's members even though the receipt already contains
 the active log observed after the follower-only acknowledgement. The
-[durability supervisor](../../cellule-host/src/durability.rs) can retire a
+[durability supervisor](../../cellule-host/src/durability/mod.rs) can retire a
 fully covered log and recruit different members before that write. Two public
 receipt regressions demonstrated rejection of a valid later cohort and
 acceptance of an inactive acknowledging log. Selection now uses the active

@@ -35,6 +35,45 @@ inspectable, and the host reaches Stopped only after every required phase
 succeeds. A retained runtime failure preserves its original error as a source
 on every subsequent observation.
 
+## Requested node-log rotation
+
+Install the existing durability provider during startup, then call
+`CellNode::request_node_log_rotation(expected_epoch)` from an authorized
+management adapter. The same supervisor wakes immediately and uses confirmed
+old-member retirement; maintenance does not wait for the normal frame threshold.
+Duplicate requests for that epoch share progress. An automatic best-effort
+rotation already in flight is refused; observe the current binding before retry.
+
+| Inspection | Meaning |
+| --- | --- |
+| `NodeLogRotationRequest::observe()` | Local Queued, Retiring, Recruiting, Completed or Interrupted progress, with first/latest original errors. |
+| `node_log_rotation_request(epoch)` | Recover a retained local request after a lost handle or reply. Missing is not evidence of completion or absence. |
+| `retirement()` | Every original member confirmed its exact fence and canonical old-epoch authority close succeeded. |
+| `completion()` | The retirement proof plus the newer epoch installed through expected-binding replacement. This does not establish redundancy policy or journal settlement. |
+
+Member failures remain retryable in strict mode; timer rotation cannot weaken an
+accepted maintenance request. Existing Cells may continue through the ordinary
+object-proof fallback while retirement or replacement enrollment is pending.
+Applications own follower selection, exclusion of maintenance nodes, enrollment
+barriers, authority reconciliation, deadlines, authorization and durable results.
+
+The node charges bounded request storage to its shared byte ledger. It retains
+one pending request and one most-recent completed request; handles are weak and
+cannot retain the node's resources after drain. Completed local history can be
+evicted, so publish its canonical evidence to the fleet journal before finalizing.
+
+The host retains the single supervisor's join outside its cancellable task-group
+watcher. Caller cancellation or a drain deadline drops only a join waiter.
+Accepted retirement and recruitment replies still join; a recruited replacement
+that returns during drain is canonically closed. The host remains Draining until
+all required joins and cleanup succeed, retaining lease maintenance meanwhile.
+Lost cleanup replies retry the same generation under the retained owner.
+Foreign boot/node or non-advancing replacement configuration is rejected before
+construction or any attempt to close that foreign scope.
+Interrupted rotation never counts as
+fleet settlement. Complete role observation, failed-owner recovery and journal
+retirement remain required before physical-node finalization.
+
 ## Journal bound fleet actions
 
 ### Fleet boot admission

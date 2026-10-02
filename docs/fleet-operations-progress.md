@@ -4,6 +4,93 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 requested host rotation checkpoint
+
+`CellNode::request_node_log_rotation(epoch)` wakes the existing durability
+supervisor without waiting for a frame threshold. Acceptance is linearized with
+automatic rotation: duplicate epochs share progress, and an automatic
+best-effort rotation already in flight is refused. One pending and one latest
+completed request are charged to the node byte ledger. Weak handles can inspect
+or recover local progress after a lost caller; they cannot retain the node's
+resources after drain. Evicted local history proves neither absence nor success.
+
+Requested work keeps confirmed retirement through all retries. Its original
+epoch, complete member set and object-coverage barrier cannot be weakened by a
+timer. Local completion requires every old member's append fence, canonical
+authority closure and a newer binding installed through expected-binding
+replacement. The runtime checks boot, physical leader, epoch advancement and
+the exact old binding under its replacement lock. Foreign replacement inputs
+are rejected before construction or any attempt to close their scope. Tuple
+identity getters supply configured metadata, not signed current authority.
+
+The host retains the single supervisor's join outside the cancellable task-group
+watcher. Cancelling a caller, watcher or facility join leaves accepted native
+retirement/recruitment owned. A replacement that returns during drain is closed
+through the existing canonical path; lost close replies retry that same object.
+Lease maintenance now waits for required facility joins as well as runtime
+closure. Deadlines leave Draining and retain progress; Interrupted never becomes
+Completed. The original first and latest source failures remain independent of
+eventual success.
+
+Eight new public host cases use actual Cell commands and native follower stores.
+They cover strict retirement and recruitment retries while writes continue,
+old/new follower ensembles and ordinary object-proof fallback, duplicate and
+stale requests, dropped handles, cancelled shutdown waiters, an automatic
+rotation already in flight, bounded history/zero final resource charges,
+invalid replacement boot/node/epoch, accepted recruitment across a host deadline,
+and lost cleanup close replies across repeated deadlines. Exact-root readback
+checks Cell state and the original `sys_requests` result. Independent follower
+reopening checks old durable fences. The source authority fixture records and
+reconciles callbacks; it does not exercise signed directory CAS or provider/
+process fault behavior.
+
+Intermediate full-target verification caught a startup regression: reserving
+fixed supervisor bookkeeping through the leased runtime rejected provider
+installation before a lease existed. Fixed supervisor ownership remains under
+the facility/task bounds; accepted request records retain ordinary ledger
+admission. The existing pre-lease installation contract now passes unchanged.
+Lease withdrawal ordering and generation cleanup were repaired without weakening
+the shutdown deadline or expected evidence.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `29780a36c477bb283d19f0f8e3fef11e4c249c1a` |
+| Rust/Cargo manifest | 599 tracked/nonignored `.rs`, `Cargo.toml` and `Cargo.lock` paths; sorted SHA256, two spaces, relative path lines. SHA256 `8092eea2db8eb158ddea7ae56c19a6549be8da94c11a7c44e39df81a2dd9cabb`. |
+| Complete public host node target | 80 passed; none filtered or ignored; includes eight new cases. |
+| Public runtime durability selection | 21 passed; 176 filtered; none ignored. Includes atomic rejection of stale bindings, foreign boots/physical nodes and non-advancing epochs. |
+| Runtime node library selection | 89 passed; 406 filtered; none ignored. |
+| Complete fleet operations example target | 60 passed; none filtered or ignored. |
+| Distinct scoped cases | 250 passed. Initial retirement-only and intermediate target runs are not counted again. |
+| Host lint | All targets/features, warnings denied; passed. |
+| Runtime lint | Library/public runtime target, all features, warnings denied; passed. |
+| Host/runtime API documentation | All features, warnings denied; passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, 110 Rust snippets, 1150 Markdown links and 28 SQL/peer assertions with 566 links passed. |
+
+Commands use all features, Rust/Cargo 1.97.0, the lockfile,
+`CARGO_INCREMENTAL=0` and the checkout's Workspace target directory. The source
+manifest and final logs are retained under
+`/tmp/cellule-fleet-requested-rotation-*`. The host adds the already locked
+`bytes` crate only to test dependencies. `replace_node_durability` now takes
+the exact expected binding; all workspace callers are updated. Persisted IDs,
+object paths, LTX formats and signed message bytes are unchanged.
+
+Baseline `29780a3` passed Rust (36940992641), capacity (36940992651), contract
+(36940992648), website (36940992677), fuzz (36940992676), model (36940992681) and
+Compose smoke (36940992647 / 110632500524). Routing 110632500048 remained running
+when inspected. Optional broad model/simulator campaigns require job-level
+evidence; workflow success alone does not establish their execution. Earlier
+failure evidence remains below and this new source requires its own CI gates.
+
+Next, journal follower production before recruitment CAS and consume complete
+revisioned role observations, replacement policy and failed-owner recovery
+evidence. The new request is a local host primitive: the application still owns
+authorization, deadlines, maintenance-node exclusion, enrollment/results and
+redundancy policy. The reference collector remains explicitly incomplete;
+requested rotation alone cannot complete SettleRoles or Finalize. All remaining
+W6–W10 matrices, sustained convergence, the four executable scenarios,
+process/provider/mixed-binary qualification and operator rollout/runbooks remain
+part of the active goal.
+
 ## October 1 2026 confirmed member retirement checkpoint
 
 `NodeDurability::shutdown_for_maintenance` now shares the existing shipper drain,

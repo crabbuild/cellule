@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::builder::append_required_components;
-use crate::durability::run_node_durability_supervisor;
+use crate::durability::DurabilitySupervisor;
 
 pub(crate) struct FleetStartup {
     pub(crate) intent: cellule_runtime::fleet::operations::NodeIntent,

@@ -298,6 +298,9 @@ impl CellRuntime {
         durability: Arc<NodeDurability>,
     ) -> crate::Result<()> {
         self.ensure_running()?;
+        if durability.identity()?.0 != self.inner.session {
+            return Err(Error::Control("Cell runtime node durability boot differs"));
+        }
         let mut slot = self
             .inner
             .node_durability
@@ -322,10 +325,13 @@ impl CellRuntime {
             .and_then(|slot| slot.clone())
     }
 
-    /// Replaces the active node-log durability binding after an epoch close.
+    /// Replaces the expected node-log binding after an epoch close. The identity
+    /// check and replacement share one write lock; stale supervisors cannot
+    /// overwrite a different binding installed while they awaited provider I/O.
     pub fn replace_node_durability(
         &self,
         application: ApplicationId,
+        expected: &Arc<NodeDurability>,
         durability: Arc<NodeDurability>,
     ) -> crate::Result<Arc<NodeDurability>> {
         self.ensure_running()?;
@@ -334,7 +340,7 @@ impl CellRuntime {
             .node_durability
             .write()
             .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))?;
-        let Some((installed_application, _)) = slot.as_ref() else {
+        let Some((installed_application, installed)) = slot.as_ref() else {
             return Err(Error::Control(
                 "Cell runtime node durability is not installed",
             ));
@@ -342,6 +348,23 @@ impl CellRuntime {
         if *installed_application != application {
             return Err(Error::Control(
                 "Cell runtime node durability application changed",
+            ));
+        }
+        if !Arc::ptr_eq(installed, expected) {
+            return Err(Error::Control(
+                "Cell runtime node durability binding changed",
+            ));
+        }
+        let previous_identity = installed.identity()?;
+        let identity = durability.identity()?;
+        if identity.0 != previous_identity.0 || identity.1 != previous_identity.1 {
+            return Err(Error::Control(
+                "Cell runtime node durability identity changed",
+            ));
+        }
+        if identity.2 <= previous_identity.2 {
+            return Err(Error::Control(
+                "Cell runtime node durability epoch did not advance",
             ));
         }
         let (_, previous) = slot

@@ -244,6 +244,7 @@ name = "cellule-host"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "bytes",
  "cellule-app",
  "cellule-runtime",
  "cellule-store",
