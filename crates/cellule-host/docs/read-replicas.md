@@ -143,7 +143,7 @@ the canonical closure and the application's checked enrollment evidence.
 ## Observe managed reader obligations
 
 `ReadReplicaManager::fleet_readers_page(cursor, limit, now_ms)` returns sorted
-snapshot receipts and the total managed-view count. Choose 1 through 128
+snapshot positions, canonical lifetime observations and the total managed-view count. Choose 1 through 128
 entries. Each page retains one MiB from the node's existing native-byte ledger
 until dropped. The manager limits its collection to 10,000 views; ordinary
 memory and descriptor admission can refuse a view sooner.
@@ -167,7 +167,16 @@ async fn managed_reader_count(
 }
 ```
 
-These receipts are advisory snapshot positions. They do not prove replacement
-policy, live-owner readiness, or closure of accepted queries and retained peer
-clones. Maintenance must settle those obligations and complete the canonical
-host drain before claiming that the node is safe to take offline.
+Each entry is a `cellule_runtime::client::ReadReplicaLifecycleObservation`.
+`receipt()` returns its last installed position. `admission_closed()` and
+`snapshot_attached()` report shared state across every retained reader clone.
+`retained_lifetimes()` counts canonical guards for snapshots and accepted
+operations, including native queries and refresh jobs whose callers cancelled.
+It is neither a query count nor a count of handle copies.
+
+`locally_joined()` requires closed admission, detached shared state and zero
+original lifetimes. Closed plus zero cannot admit another operation or attach a
+new snapshot. A closed reader with pending native work stays visible and reports
+false. These local observations do not prove replacement policy, current remote
+authority, durable producer retirement or successful host shutdown. Maintenance
+must independently settle those obligations before declaring a node safe to stop.

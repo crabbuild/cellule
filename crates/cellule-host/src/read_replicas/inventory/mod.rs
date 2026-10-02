@@ -2,6 +2,7 @@
 
 use super::*;
 use cellule_runtime::cell::actor::NodeByteReservation;
+use cellule_runtime::client::ReadReplicaLifecycleObservation;
 use cellule_runtime::identity::Digest;
 use cellule_runtime::node::NodeMode;
 
@@ -48,7 +49,7 @@ pub struct ReaderInventoryPage {
     observed_at_ms: i64,
     closed: bool,
     total_views: usize,
-    entries: Vec<Receipt>,
+    entries: Vec<ReadReplicaLifecycleObservation>,
     next: Option<ReaderInventoryCursor>,
     _memory: NodeByteReservation,
 }
@@ -84,9 +85,9 @@ impl ReaderInventoryPage {
     pub const fn total_views(&self) -> usize {
         self.total_views
     }
-    /// Returns sorted, locally verified snapshot positions, without readiness proof.
+    /// Returns sorted positions and original native lifetimes, without readiness proof.
     #[must_use]
-    pub fn entries(&self) -> &[Receipt] {
+    pub fn entries(&self) -> &[ReadReplicaLifecycleObservation] {
         &self.entries
     }
     /// Continues until activation, removal, replacement, or shutdown changes topology.
@@ -102,8 +103,10 @@ impl ReadReplicaManager {
     /// Each page retains one MiB from the existing runtime byte ledger. No remote
     /// I/O is performed and no new scheduling task is created. A changed topology
     /// requires restarting pagination. Receipts are advisory local positions:
-    /// replacement policy, accepted queries, retained peer clones, and full host
-    /// facility shutdown must be settled separately before taking a node offline.
+    /// canonical lifetime guards retain accepted query/refresh work, including
+    /// cancelled native jobs. Local joining fences every retained clone; remote
+    /// authority, producer retirement, replacement policy and host facilities
+    /// still require independent settlement before taking a node offline.
     pub async fn fleet_readers_page(
         &self,
         cursor: Option<ReaderInventoryCursor>,
@@ -147,12 +150,12 @@ impl ReadReplicaManager {
             let reader = active.views.get(cell).ok_or(Error::Control(
                 "reader inventory view disappeared under activation lane",
             ))?;
-            entries.push(reader.receipt().await);
+            entries.push(reader.lifecycle_observation().await);
         }
         let next = if end < cells.len() {
             entries.last().map(|last| ReaderInventoryCursor {
                 topology,
-                after: last.cell,
+                after: last.receipt().cell,
             })
         } else {
             None

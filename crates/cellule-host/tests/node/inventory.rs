@@ -218,8 +218,10 @@ async fn reader_inventory_pages_track_real_views_cordon_and_canonical_shutdown()
     assert_eq!(next.topology(), first.topology());
     assert_eq!(next.entries().len(), 2);
     assert!(next.next().is_none());
-    assert!(next.entries()[0].cell.as_bytes() > first.entries()[0].cell.as_bytes());
-    let removed = first.entries()[0].cell;
+    assert!(
+        next.entries()[0].receipt().cell.as_bytes() > first.entries()[0].receipt().cell.as_bytes()
+    );
+    let removed = first.entries()[0].receipt().cell;
     drop(first);
     drop(next);
     assert_eq!(node.stats().retained_bytes(), before);

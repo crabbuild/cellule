@@ -22,6 +22,9 @@ use crate::node::NodeDirectory;
 
 const QUERY_DEADLINE: Duration = Duration::from_secs(5);
 
+mod observation;
+pub use observation::ReadReplicaLifecycleObservation;
+
 /// One immutable replica snapshot that serves explicit, position-tagged reads.
 ///
 /// The caller owns routing and authorization. Every successful

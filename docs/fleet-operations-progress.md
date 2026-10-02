@@ -4,6 +4,55 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 native reader lifetime checkpoint
+
+`CellReadReplica::lifecycle_observation()` reads the original admission CAS word
+and shared snapshot state. It reports the last installed receipt, irreversible
+admission closure, snapshot attachment and retained snapshot/operation guards.
+Accepted queries, native SQL and refresh work stay visible after their callers
+cancel. Retained peer handles share the same closure. Closed admission, detached
+state and zero guards establish local joining; the count is neither a query count
+nor a count of handle copies.
+
+Bounded host reader pages now return these observations through `entries()`.
+Callers use `entry.receipt()` for the previous position fields. Pagination,
+topology checks, the 128-row limit and one-MiB native reservation remain in the
+canonical manager path. The runtime reader module moves to `replica/mod.rs` so
+its focused observation module follows the workspace layout contract.
+
+The public regression cancels an accepted native query, detaches shared state,
+and observes its retained lifetime through both the peer and managed inventory.
+Joining waits for that original callback; retained handles then reject new
+queries, including after host shutdown. Existing regressions also observe old
+snapshots, cancelled refresh opens, stalled authority reads and concurrent close
+waiters. The private CAS case checks that closed zero cannot acquire another
+operation or snapshot guard. Resource and error assertions remain required.
+
+### Scoped verification
+
+| Evidence | Result |
+| --- | --- |
+| New lifetime CAS unit case | 1 passed; 509 filtered. |
+| Runtime reader integration scope | 14 passed; 186 filtered; one documented RustFS case ignored. |
+| Complete host library / public node / fleet example targets | 29 / 89 / 105 passed; none filtered or ignored. |
+| Complete application integration target | 37 passed; none filtered; 16 documented manual cases ignored. |
+| Distinct scoped cases | 275 passed; two new cases. Diagnostic repetitions are excluded. |
+| Host/runtime all-target/all-feature Clippy and API docs | Passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1173 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+
+Every command used the isolated snapshot, all features and locked dependencies.
+The complete active and isolated 635-path Rust/Cargo/lock sets and every byte
+were checked before and after each command. Manifest SHA256:
+`f820e068a457b6fddbd2b2ff70d06e4796afce9c6617b0ec84ac3dc104c7da93`.
+Logs and source comparison drivers are `/tmp/cellule-reader-lifetime-final-*`,
+`/tmp/cellule-reader-lifetime-source.sha256` and
+`/tmp/cellule-reader-lifetime-{app-,}verify.py`.
+
+These local observations still require independent current authority, durable
+producer retirement, replacement policy and full host drain evidence. They do
+not enable SettleRoles or Finalize. Complete W1–W10 implementation and fresh
+process/provider qualification of this source remain required.
+
 ## October 2 2026 canonical root capture checkpoint
 
 The entity process driver now waits for canonical object roots after client jobs
@@ -57,6 +106,41 @@ The native integration binary SHA256 is
 `cf83bd2249db7ae27865ff06c45c29231d0d50483dfa3e2b9913a8e0c46c8205`.
 Verification used Rust/Cargo 1.97.0, all features, locked dependencies and a
 separate Workspace target with `CARGO_INCREMENTAL=0`.
+
+### Root-capture head CI
+
+Head `284dd8cc9d70970a33926885337aecb5c087ebc7` passed workspace/MSRV,
+contracts, both capacity campaigns, Compose smoke, website, decoder fuzz and
+fast/negative TLC. Broad TLC and simulator were skipped. Both routing
+comparisons remained in progress at inspection. These results qualify that head,
+not the subsequent reader-lifetime change or the full fleet plan.
+
+Both capacity artifacts ran synthetic merge
+`7147e9f3e08e69f26c4698a6fae4b49d368518de`, whose parents are
+`191409685b001a82bd02780def45102b4fc2f164` and the root-capture head.
+Driver/node binary SHA256 is
+`f9695b5596bf2955178e07d06d1b6896dcb5a423a275bc96e7681929000fa0cd`.
+The current independent verifier rechecked every returned field against each
+original report, including all raw hashes, receipts, resources, original root
+coverage and the new timing records.
+
+| Campaign | Repeat windows | Acknowledged writes | Barrier elapsed µs |
+| --- | --- | --- | --- |
+| [Follower capacity](https://github.com/crabbuild/cellule/actions/runs/36996826665/job/110805347208) | 18 / 18 / 18 | 6228 / 6230 / 6233 | 8560 / 8740 / 9053 |
+| [Object capacity](https://github.com/crabbuild/cellule/actions/runs/36996826665/job/110805347410) | 17 / 19 / 19 | 5385 / 7400 / 7403 | 7619 / 9261 / 8642 |
+
+Each repeat captured all twelve original Cells in one pass under the unchanged
+two-second limit. Follower repeats verified 6218/6222/6225 follower-proof
+responses and 11316/11716/11720 network appends. Their one-pass captures do not
+exercise waiting; the controlled native regression covers that case. These
+passes do not establish the causes of historical publication-hint failures.
+
+Artifact 11222033521 retains 432 entries; ZIP SHA256:
+`ba871f08d332bc74b7d449818c7dfce6959b568e653b34e6bf0e510f10c951bd`.
+Artifact 11222293106 retains 435 entries; ZIP SHA256:
+`89029d4efe01160eb7e4d3dfb6de9ef2f23fecd435964c7bd56010d63a445807`.
+Archives and independent inspection reports are
+`/tmp/cellule-fleet-284-{follower,object}-capacity*`.
 
 ### Previous head CI
 

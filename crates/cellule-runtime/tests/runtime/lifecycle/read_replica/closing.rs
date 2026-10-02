@@ -198,6 +198,9 @@ async fn joined_close_detaches_native_snapshots_from_retained_peer_clones() {
     let (first, duplicate) = tokio::join!(fixture.reader.close_and_join(), peer.close_and_join(),);
     assert_eq!((first, duplicate), (receipt, receipt));
     assert_eq!(peer.receipt().await, receipt);
+    let joined = peer.lifecycle_observation().await;
+    assert!(joined.locally_joined());
+    assert_eq!(joined.receipt(), receipt);
     assert!(!fixture.original.exists());
     empty(&fixture.runtime);
     assert!(matches!(
@@ -223,6 +226,7 @@ async fn joined_close_detaches_native_snapshots_from_retained_peer_clones() {
     // The external capability remains alive through complete node drain.
     finish(fixture).await;
     assert_eq!(peer.receipt().await, receipt);
+    assert_eq!(peer.lifecycle_observation().await, joined);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -266,6 +270,7 @@ async fn joined_close_keeps_old_native_query_owned_after_query_or_close_waiter_c
         let mut sibling = Box::pin(peer.close_and_join());
         let second_pending = futures_util::poll!(sibling.as_mut()).is_pending();
         let retained = fixture.runtime.stats();
+        let joining = peer.lifecycle_observation().await;
         // Always unblock accepted native SQL before checking fixture assertions.
         pause.release();
         if drop_query {
@@ -278,6 +283,10 @@ async fn joined_close_keeps_old_native_query_owned_after_query_or_close_waiter_c
         }
         assert_eq!(closing.await, receipt);
         assert_eq!(sibling.await, receipt);
+        assert!(joining.admission_closed() && !joining.snapshot_attached());
+        assert!(joining.retained_lifetimes() > 0 && !joining.locally_joined());
+        assert_eq!(joining.receipt(), receipt);
+        assert!(peer.lifecycle_observation().await.locally_joined());
         assert!(first_pending && second_pending && old_retained && new_detached);
         assert_eq!(retained.worker_jobs(), 1);
         assert!(retained.resident_bytes() > 0);
@@ -357,9 +366,20 @@ async fn joined_close_owns_cancelled_refresh_native_open_until_its_uninstalled_v
     let mut closing = Box::pin(fixture.reader.close_and_join());
     let pending = futures_util::poll!(closing.as_mut()).is_pending();
     let before = fixture.runtime.stats();
+    let joining = fixture.reader.lifecycle_observation().await;
     store.release_gets();
     assert_eq!(closing.await, original_receipt);
     assert!(armed.load(Ordering::Acquire) && pending);
+    assert!(joining.admission_closed() && !joining.snapshot_attached());
+    assert!(joining.retained_lifetimes() > 0 && !joining.locally_joined());
+    assert_eq!(joining.receipt(), original_receipt);
+    assert!(
+        fixture
+            .reader
+            .lifecycle_observation()
+            .await
+            .locally_joined()
+    );
     assert_eq!(before.worker_jobs(), 1);
     assert!(before.resident_bytes() > 0);
     assert!(!destination.exists() && !fixture.original.exists());
@@ -390,6 +410,7 @@ async fn joined_close_waits_for_accepted_authority_read_and_fences_its_late_read
     let mut closing = Box::pin(fixture.reader.close_and_join());
     let pending = futures_util::poll!(closing.as_mut()).is_pending();
     let retained = fixture.original.exists();
+    let joining = fixture.reader.lifecycle_observation().await;
     store.release_gets();
     assert!(matches!(
         readiness.await.unwrap(),
@@ -397,6 +418,15 @@ async fn joined_close_waits_for_accepted_authority_read_and_fences_its_late_read
     ));
     assert_eq!(closing.await, receipt);
     assert!(pending && retained);
+    assert!(joining.admission_closed() && !joining.snapshot_attached());
+    assert!(joining.retained_lifetimes() > 0 && !joining.locally_joined());
+    assert!(
+        fixture
+            .reader
+            .lifecycle_observation()
+            .await
+            .locally_joined()
+    );
     empty(&fixture.runtime);
     finish(fixture).await;
 }

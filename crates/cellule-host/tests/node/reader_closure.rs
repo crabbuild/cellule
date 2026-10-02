@@ -489,6 +489,11 @@ async fn cancelled_reader_removal_and_shutdown_keep_owned_views_until_native_que
             .unwrap();
         let retained_count = page.total_views();
         let terminal = page.closed();
+        let joining = *page
+            .entries()
+            .iter()
+            .find(|entry| entry.receipt().cell == cell)
+            .unwrap();
         drop(page);
         let deadline_failed = if shutdown {
             fixture
@@ -511,6 +516,10 @@ async fn cancelled_reader_removal_and_shutdown_keep_owned_views_until_native_que
         assert!(first_pending);
         assert_eq!(retained_count, 2);
         assert_eq!(terminal, shutdown);
+        assert!(joining.admission_closed());
+        assert!(!joining.snapshot_attached());
+        assert!(joining.retained_lifetimes() > 0);
+        assert!(!joining.locally_joined());
         assert_eq!(before.worker_jobs(), 1);
         assert!(before.resident_bytes() > 0);
         if shutdown {
@@ -526,10 +535,74 @@ async fn cancelled_reader_removal_and_shutdown_keep_owned_views_until_native_que
         assert_eq!(stats.local_disk_reserved_bytes(), 0);
         for peer in &fixture.peers {
             assert!(peer.readiness().await.is_err());
+            let observation = peer.lifecycle_observation().await;
+            assert!(observation.locally_joined());
+            assert_eq!(observation.retained_lifetimes(), 0);
         }
         for handle in fixture.handles {
             handle.drain().await.unwrap();
         }
         fixture.source.shutdown().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn reader_lifetime_observation_keeps_cancelled_native_queries_visible_after_detachment() {
+    let fixture = fixture().await;
+    let pause = Pause::new();
+    let token = pause.id;
+    let retained_peer = fixture.peers[0].clone();
+    let querying = retained_peer.clone();
+    let query = tokio::spawn(async move { querying.query::<ReadCounter>(None, token).await });
+    pause.entered().await;
+    let open = retained_peer.lifecycle_observation().await;
+    query.abort();
+    let cancelled = query.await.unwrap_err().is_cancelled();
+    let mut close = Box::pin(retained_peer.close_and_join());
+    let pending = futures_util::poll!(close.as_mut()).is_pending();
+    let joining = retained_peer.lifecycle_observation().await;
+    let page = fixture
+        .manager
+        .fleet_readers_page(None, 128, super::inventory::clock())
+        .await
+        .unwrap();
+    let managed = *page
+        .entries()
+        .iter()
+        .find(|entry| entry.receipt().cell == open.receipt().cell)
+        .unwrap();
+    drop(page);
+    let resources = fixture.node.stats();
+    // Release the native callback before assertions so a red observation cannot
+    // strand its original SQL job, lifetime or shutdown join.
+    pause.release();
+    let joined_receipt = close.await;
+    let joined = retained_peer.lifecycle_observation().await;
+    let refused = retained_peer.query::<ReadCounter>(None, 0).await;
+    fixture.node.shutdown().await.unwrap();
+    let after_shutdown = retained_peer.lifecycle_observation().await;
+    for handle in fixture.handles {
+        handle.drain().await.unwrap();
+    }
+    fixture.source.shutdown().await.unwrap();
+    assert!(cancelled && pending);
+    assert!(!open.admission_closed() && open.snapshot_attached());
+    assert!(open.retained_lifetimes() >= 2 && !open.locally_joined());
+    assert!(joining.admission_closed() && !joining.snapshot_attached());
+    assert!(joining.retained_lifetimes() > 0 && !joining.locally_joined());
+    assert_eq!(managed, joining);
+    assert_eq!(resources.worker_jobs(), 1);
+    assert!(resources.resident_bytes() > 0);
+    assert_eq!(joined_receipt, open.receipt());
+    assert!(joined.locally_joined());
+    assert_eq!(joined.retained_lifetimes(), 0);
+    assert!(matches!(refused, Err(Error::Fenced)));
+    assert_eq!(after_shutdown, joined);
+    let resources = fixture.node.stats();
+    assert_eq!(resources.active_cells(), 0);
+    assert_eq!(resources.retained_bytes(), 0);
+    assert_eq!(resources.resident_bytes(), 0);
+    assert_eq!(resources.worker_jobs(), 0);
+    assert_eq!(resources.file_descriptors(), 0);
+    assert_eq!(resources.local_disk_reserved_bytes(), 0);
 }

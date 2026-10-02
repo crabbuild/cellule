@@ -67,6 +67,12 @@ jobs whose waiters were cancelled. Its receipt preserves the last installed
 position; it does not establish current authority or fleet retirement. See the
 [host reader lifecycle](../../cellule-host/docs/read-replicas.md).
 
+`lifecycle_observation()` reads the same irreversible admission word and shared
+snapshot state. It exposes accepted native lifetimes after caller cancellation
+and detachment. Local joining requires closed admission, detached state and zero
+lifetimes; this supplies no remote authority, enrollment or replacement-policy
+proof. The host's bounded reader pages include these original observations.
+
 `prepare_source()` observes an opaque exact root, owner/epoch, code/schema and
 signed physical boot scope without reserving a view. `open_source()` opens that
 pinned root through the same admitted native path, even if the owner publishes
