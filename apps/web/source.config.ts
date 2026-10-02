@@ -12,6 +12,18 @@ export const docs = defineDocs({
         filterElement: (node) => (node.type === "mdxjsEsm" ? false : true),
         stringify: (node) => {
           if (
+            node.type === "mdxJsxFlowElement" &&
+            node.name === "SvgDiagram"
+          ) {
+            const attribute = (name: string) => node.attributes.find(
+              (item) => item.type === "mdxJsxAttribute" && item.name === name,
+            );
+            const src = attribute("src");
+            const alt = attribute("alt");
+            if (typeof src?.value === "string" && typeof alt?.value === "string")
+              return `\n\n![${alt.value}](${src.value})\n\n`;
+          }
+          if (
             (node.type === "mdxJsxFlowElement" ||
               node.type === "mdxJsxTextElement") &&
             node.name === "Mermaid"
@@ -33,5 +45,8 @@ export const docs = defineDocs({
   },
 });
 export default defineConfig({
-  mdxOptions: { remarkPlugins: [remarkDiagrams] },
+  mdxOptions: {
+    // Convert standalone SVGs before the preset imports images for Next.js.
+    remarkPlugins: (defaults) => [remarkDiagrams, ...defaults],
+  },
 });

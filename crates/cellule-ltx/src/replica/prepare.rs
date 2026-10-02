@@ -7,6 +7,43 @@
 use super::*;
 
 impl CellReplica {
+    /// Appends captured cuts to a private representation-only compaction.
+    ///
+    /// The successor retains the compaction's original predecessor for one
+    /// authority CAS. Both proposals remain immutable and fully uploaded;
+    /// this method neither publishes the compaction nor grants ownership.
+    pub async fn prepare_after_compaction(
+        &self,
+        compacted: &PreparedRoot,
+        cuts: &CaptureBatch,
+        commit_sequence: u64,
+        schema: u32,
+    ) -> Result<PreparedRoot> {
+        let predecessor = compacted
+            .predecessor
+            .ok_or(LtxError::InvalidState("compaction has no predecessor"))?;
+        let root = compacted.root();
+        if root.cell != self.cell
+            || root.incarnation != self.incarnation
+            || root.cell != predecessor.cell
+            || root.incarnation != predecessor.incarnation
+            || root.position != predecessor.position
+            || root.commit_sequence != predecessor.commit_sequence
+        {
+            return Err(LtxError::InvalidState(
+                "append requires a representation-only compaction",
+            ));
+        }
+        let mut successor = self
+            .prepare(Some(&root), cuts, commit_sequence, schema)
+            .await?;
+        // The private compaction authenticates identical logical state. The
+        // final root replaces that original state directly, after every new
+        // dependency has uploaded through the normal preparation path.
+        successor.predecessor = Some(predecessor);
+        Ok(successor)
+    }
+
     /// Verifies and uploads a new immutable root without changing authority.
     pub async fn prepare(
         &self,

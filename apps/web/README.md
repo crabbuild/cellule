@@ -2,7 +2,7 @@
 
 Next.js App Router, Tailwind CSS 4, and Fumadocs. The website follows Compass's
 web application structure and has its own Cellule design, SVG explorers, and
-complete repository documentation.
+curated learning guides and canonical repository references.
 
 ## Develop and verify
 
@@ -36,8 +36,8 @@ npm run test:web
 check validates the website pages and every canonical document route, search,
 Markdown endpoints, unknown-page responses, mobile overflow, theme switching,
 clipboard copy, interactive explorers, tenant/target selection, owner handoff,
-example walkthroughs and retry explanations, diagram zoom/download, and all repository
-Mermaid diagrams rendered as SVG. Screenshots are saved under the ignored
+example walkthroughs and retry explanations, diagram zoom/download, and all
+repository and authored Mermaid diagrams rendered as SVG. Screenshots are saved under the ignored
 `apps/web/test-results/` directory. CI runs this against the production build.
 
 ## Content ownership
@@ -46,8 +46,8 @@ Mermaid diagrams rendered as SVG. Screenshots are saved under the ignored
 | --- | --- |
 | Website pages | `app/(site)` |
 | Documentation shell and rendering | `app/docs`, `lib/source.ts`, `source.config.ts` |
-| Canonical guides, references, reports, audits, and provenance | Repository `README.md`, `docs/`, `crates/`, `CONTRIBUTING.md`, `CHANGELOG.md` |
-| Web-specific documentation entry pages | `content/authored/` |
+| Canonical guides, references, audits, and provenance | Repository `README.md`, `docs/`, `crates/`, `CONTRIBUTING.md`, `CHANGELOG.md` |
+| Web-specific learning chapters and curated crate navigation | `content/authored/` |
 | Marketing capability honeycomb | `components/product-hive.tsx` |
 | Interactive high-level architecture and guided journeys | `components/architecture-explorer.tsx` |
 | Cell identity and transaction boundary lab | `components/cell-model-lab.tsx` |
@@ -58,10 +58,21 @@ Mermaid diagrams rendered as SVG. Screenshots are saved under the ignored
 | Shared visual tokens and responsive styles | `app/globals.css`, `app/learning.css` |
 
 `scripts/sync-docs.mjs` discovers tracked repository Markdown, excludes agent
-instructions, maps it into a deterministic documentation tree, rewrites links
+instructions and repository-only `docs/reference.md`, `docs/roadmap.md`, and
+`docs/verification.md` and performance/benchmark Markdown, maps it into a deterministic documentation tree, rewrites links
 to local docs or GitHub source, preserves explicit anchors, and copies local
 image assets. SVGs are preferred over their raster previews. Original Markdown
 and Rust examples remain authoritative; do not edit `content/docs/`.
+Excluded documents stay in the repository; references to them link to GitHub.
+They do not become website documentation, search results, sitemap entries, or
+Markdown export pages.
+
+The five expanded crate sections pair task-oriented learning chapters with a
+consistent Reference group. Their authored `meta.json` files set explicit sidebar
+order without moving or duplicating canonical Markdown. Performance documents
+under `perf/`, `performance/`, and performance-named files remain repository-only.
+The marketing evidence page uses separate report metadata to link to GitHub;
+report bodies never enter the docs collection or agent exports.
 
 Development startup, type checking, and production builds regenerate content.
 After editing a repository guide during an existing preview, run:
@@ -73,6 +84,14 @@ npm run generate:content -w @cellule/web
 New repository documents must be tracked by Git to join the collection. Authored
 MDX belongs in `content/authored/` and is copied into the generated collection.
 The link checker validates every internal documentation route and anchor.
+
+The Eight primitives guides include complete Rust functions. Run
+`python3 scripts/check-doc-rust-fences.py` for syntax and
+`python3 scripts/check-web-rust-examples.py` to compile authored examples
+against the current framework libraries. On workstations, set `CARGO_TARGET_DIR`
+to this checkout's directory under the mounted Workspace target volume. Rust CI
+runs both checks; website CI validates all authored routes and SVG diagrams.
+
 Generated content, manifests, public repository assets, `.source/`, and `.next/`
 are ignored. The lockfile is committed.
 

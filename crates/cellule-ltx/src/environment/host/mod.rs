@@ -191,23 +191,19 @@ pub struct Host {
     #[cfg(feature = "replica")]
     telemetry: Option<Arc<dyn LtxTelemetry>>,
     #[cfg(feature = "replica")]
-    recovery: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
+    recovery: Option<Arc<HostPermit>>,
     #[cfg(feature = "replica")]
-    dirty: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
+    dirty: Option<Arc<HostPermit>>,
     #[cfg(feature = "replica")]
-    scratch: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
-    #[cfg(feature = "replica")]
-    recovery_resource: Option<Arc<dyn HostResourcePermit>>,
-    #[cfg(feature = "replica")]
-    dirty_resource: Option<Arc<dyn HostResourcePermit>>,
-    #[cfg(feature = "replica")]
-    scratch_resource: Option<Arc<dyn HostResourcePermit>>,
+    scratch: Option<Arc<HostPermit>>,
 }
 
 #[cfg(feature = "replica")]
-pub(crate) struct HostIoPermit {
-    _semaphore: tokio::sync::OwnedSemaphorePermit,
+// The ledger charge must drop before the semaphore wakes a new contender.
+// Cohort clones and dispatched jobs share this pair, including after cancellation.
+pub(crate) struct HostPermit {
     _resource: Option<Arc<dyn HostResourcePermit>>,
+    semaphore: tokio::sync::OwnedSemaphorePermit,
 }
 
 impl Host {
@@ -563,8 +559,11 @@ impl Host {
                 .acquire_owned()
                 .await
                 .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
-            host.dirty_resource = self.reserve_resource(HostResourceKind::Dirty, 1)?;
-            host.dirty = Some(Arc::new(permit));
+            let resource = self.reserve_resource(HostResourceKind::Dirty, 1)?;
+            host.dirty = Some(Arc::new(HostPermit {
+                _resource: resource,
+                semaphore: permit,
+            }));
         }
         Ok(host)
     }
@@ -579,8 +578,11 @@ impl Host {
                 .acquire_owned()
                 .await
                 .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
-            host.recovery_resource = self.reserve_resource(HostResourceKind::Recovery, 1)?;
-            host.recovery = Some(Arc::new(permit));
+            let resource = self.reserve_resource(HostResourceKind::Recovery, 1)?;
+            host.recovery = Some(Arc::new(HostPermit {
+                _resource: resource,
+                semaphore: permit,
+            }));
         }
         Ok(host)
     }
@@ -599,7 +601,7 @@ impl Host {
         }
         let mut host = self.clone();
         if let Some(permit) = &host.scratch {
-            if permit.num_permits() < units as usize {
+            if permit.semaphore.num_permits() < units as usize {
                 return Err(crate::LtxError::Limit(crate::LimitKind::ScratchDiskBytes));
             }
             return Ok(host);
@@ -619,34 +621,34 @@ impl Host {
         self.scratch_monitor
             .ensure_available(reserved_bytes)
             .map_err(crate::LtxError::Io)?;
-        host.scratch_resource = self.reserve_resource(HostResourceKind::Scratch, units)?;
-        host.scratch = Some(Arc::new(permit));
+        let resource = self.reserve_resource(HostResourceKind::Scratch, units)?;
+        host.scratch = Some(Arc::new(HostPermit {
+            _resource: resource,
+            semaphore: permit,
+        }));
         Ok(host)
     }
 
     #[cfg(feature = "replica")]
     pub(crate) fn without_recovery(mut self) -> Self {
         self.recovery = None;
-        self.recovery_resource = None;
         self
     }
 
     #[cfg(feature = "replica")]
     pub(crate) fn without_dirty(mut self) -> Self {
         self.dirty = None;
-        self.dirty_resource = None;
         self
     }
 
     #[cfg(feature = "replica")]
     pub(crate) fn without_scratch(mut self) -> Self {
         self.scratch = None;
-        self.scratch_resource = None;
         self
     }
 
     #[cfg(feature = "replica")]
-    pub(crate) async fn io_permit(&self) -> crate::Result<HostIoPermit> {
+    pub(crate) async fn io_permit(&self) -> crate::Result<HostPermit> {
         let permit = self
             .io_slots
             .clone()
@@ -654,9 +656,9 @@ impl Host {
             .await
             .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
         let resource = self.reserve_resource(HostResourceKind::Io, 1)?;
-        Ok(HostIoPermit {
-            _semaphore: permit,
+        Ok(HostPermit {
             _resource: resource,
+            semaphore: permit,
         })
     }
 
@@ -860,12 +862,6 @@ impl Default for Host {
             dirty: None,
             #[cfg(feature = "replica")]
             scratch: None,
-            #[cfg(feature = "replica")]
-            recovery_resource: None,
-            #[cfg(feature = "replica")]
-            dirty_resource: None,
-            #[cfg(feature = "replica")]
-            scratch_resource: None,
         }
     }
 }

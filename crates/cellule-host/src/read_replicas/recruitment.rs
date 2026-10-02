@@ -8,7 +8,7 @@ use cellule_runtime::{
     peer::ReplicaPeerClient,
 };
 use futures_util::{StreamExt, stream, stream::FuturesUnordered};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::broadcast;
 
 const ACTIVATION_CONCURRENCY: usize = 16;
@@ -205,6 +205,8 @@ impl ReadReplicaRecruiter {
         let mut dirty = VecDeque::new();
         let mut queued = VecDeque::<(Activation, tokio::time::Instant)>::new();
         let mut pending = HashSet::new();
+        let mut running = HashSet::new();
+        let mut refresh = HashMap::new();
         let mut scanning = FuturesUnordered::<BoxFuture<'_, Result<Vec<CatalogEntry>>>>::new();
         let mut preparing = FuturesUnordered::<
             BoxFuture<'_, (tokio::time::Instant, Result<Vec<Activation>>)>,
@@ -221,6 +223,7 @@ impl ReadReplicaRecruiter {
                     pending.remove(&key);
                     continue;
                 }
+                running.insert(key);
                 active.push(Box::pin(async move {
                     let result = tokio::time::timeout_at(deadline, self.activate(activation))
                         .await
@@ -229,8 +232,9 @@ impl ReadReplicaRecruiter {
                 }));
             }
             // Retain at most one discovered Cell's candidate list, plus a bounded
-            // dirty queue. Pending activations survive later publication hints;
-            // only completed (Cell, session) pairs can be scheduled again.
+            // dirty queue. An in-flight activation may already have read the
+            // old root, so retain one latest refresh for each running pair.
+            // This adds at most ACTIVATION_CONCURRENCY retained activations.
             if queued.is_empty()
                 && preparing.is_empty()
                 && let Some(entry) = dirty.pop_front()
@@ -259,7 +263,12 @@ impl ReadReplicaRecruiter {
                     }
                 }
                 Some((key, result)) = active.next(), if !active.is_empty() => {
-                    pending.remove(&key);
+                    running.remove(&key);
+                    if let Some(activation) = refresh.remove(&key) {
+                        queued.push_back(activation);
+                    } else {
+                        pending.remove(&key);
+                    }
                     if let Err(error) = result {
                         tracing::warn!(cell = ?key.0, session = ?key.1, error = %error, "read replica activation hint failed");
                     }
@@ -271,6 +280,8 @@ impl ReadReplicaRecruiter {
                                 let key = (activation.target.cell_id(), activation.node.session());
                                 if pending.insert(key) {
                                     queued.push_back((activation, deadline));
+                                } else if running.contains(&key) {
+                                    refresh.insert(key, (activation, deadline));
                                 }
                             }
                         }

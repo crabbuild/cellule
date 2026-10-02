@@ -641,8 +641,9 @@ async fn objects_to_pin(
   directory asynchronously and dispatches local checksum creation, buffered
   writes, metadata checks, and failure cleanup through the bounded host
   executor.
-- **Cancellation.** Dispatched jobs retain their admission until completion even
-  if the caller cancels.
+- **Cancellation.** Dispatched jobs retain both semaphore slots and node ledger
+  charges until completion even if the caller cancels. A charge releases before
+  its slot wakes the next waiter, so handoff cannot report false capacity pressure.
 - **Durability.** Checksum bases and sparse/immutable placeholders are derived
   session files, so activation does not sync them or their names. SQLite retains
   its normal WAL durability policy; warm reuse separately writes and syncs a

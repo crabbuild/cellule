@@ -668,7 +668,14 @@ async fn remote_runtime_route_skips_local_metadata_without_skipping_local_owner_
             .output,
         0
     );
-    assert_eq!(counted.counts().body_requests(), 3);
+    assert_eq!(counted.counts().body_requests(), 1);
+    assert_eq!(
+        counted.requests()[0].location,
+        fixture
+            .layout
+            .control_path(fixture.target.cell_id().as_bytes())
+            .to_string()
+    );
     fixture.handle().drain().await.unwrap();
 
     // A peer still holding the old handle must refuse after the owner drains,

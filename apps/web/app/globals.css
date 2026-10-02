@@ -332,6 +332,7 @@ kbd {
   text-underline-offset: 5px;
 }
 .cell-explorer {
+  container-type: inline-size;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -355,13 +356,64 @@ kbd {
   border-radius: 99px;
   white-space: nowrap;
 }
+.cell-hive-viewport {
+  overflow-x: auto;
+  min-width: 0;
+}
+.cell-node {
+  color: var(--accent);
+  cursor: pointer;
+  outline: none;
+}
+.cell-node.selected {
+  color: var(--on-accent);
+}
+.cell-node:hover > path {
+  stroke: var(--accent);
+}
+.cell-node:focus-visible > path,
+.cell-node.selected:focus-visible > path {
+  stroke: var(--ink);
+  stroke-width: 3;
+}
+.cell-icon {
+  fill: none;
+  stroke: currentColor;
+  pointer-events: none;
+}
+.cell-hive-center > path {
+  fill: var(--panel);
+  stroke: var(--honey);
+  stroke-width: 2;
+}
+.cell-hive-center .cell-label {
+  font-weight: 600;
+  font-size: 24px;
+}
+.cell-hive-center .cell-role {
+  font-size: 10px;
+}
+.hive-caption {
+  margin: 0;
+  padding: 1rem 1.3rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+@container (max-width: 480px) {
+  .cell-explorer .hive-scroll-hint {
+    display: block;
+  }
+}
 .cell-map {
   width: 100%;
+  min-width: 480px;
   display: block;
   color: var(--accent);
   padding: 0.75rem;
 }
-.cell-node path {
+.cell-node > path {
   fill: var(--wash);
   stroke: var(--line);
   stroke-width: 1.5;
@@ -369,7 +421,7 @@ kbd {
     fill 0.2s,
     stroke 0.2s;
 }
-.cell-node.selected path {
+.cell-node.selected > path {
   fill: var(--accent);
   stroke: var(--accent);
 }
@@ -384,7 +436,7 @@ kbd {
   font-size: 12px;
   fill: var(--muted);
 }
-.cell-node rect {
+.cell-node > rect {
   fill: var(--panel);
 }
 .cell-writer {
@@ -393,11 +445,7 @@ kbd {
 }
 .cell-node.selected .cell-label,
 .cell-node.selected .cell-role {
-  fill: var(--panel);
-}
-.dark .cell-node.selected .cell-label,
-.dark .cell-node.selected .cell-role {
-  fill: #101c2e;
+  fill: var(--on-accent);
 }
 .map-note {
   fill: var(--muted);
@@ -967,35 +1015,105 @@ kbd {
 .layer-detail .small a {
   color: var(--accent);
 }
+.recovery-panel {
+  container-type: inline-size;
+}
+.recovery-viewport {
+  overflow-x: auto;
+}
 .recovery-svg {
   width: 100%;
-  padding: 1rem 1.5rem;
+  min-width: 880px;
+  padding: 1rem;
   display: block;
+  color: var(--accent);
 }
-.recovery-svg path,
+.recovery-stage > rect {
+  fill: var(--panel);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.recovery-stage.is-failed > rect {
+  fill: var(--wash);
+  stroke: var(--amber);
+}
+.recovery-stage.is-blocked > rect {
+  stroke-dasharray: 5 4;
+}
+.recovery-stage.is-blocked {
+  color: var(--muted);
+}
+.recovery-icon {
+  fill: none;
+  stroke: currentColor;
+}
+.recovery-step {
+  fill: var(--accent);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.3px;
+}
+.recovery-title {
+  fill: var(--ink);
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.4px;
+}
+.recovery-copy {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.recovery-divider {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.recovery-connector {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  fill: none;
+}
+.recovery-connector.is-blocked {
+  stroke: var(--muted);
+  stroke-dasharray: 5 4;
+}
+.recovery-gate {
+  fill: var(--teal);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+.recovery-gate.is-failed {
+  fill: var(--amber);
+}
+.recovery-scroll-hint,
+.hive-scroll-hint {
+  display: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding: 0.5rem 1.2rem;
+}
+.recovery-viewport:focus-visible,
+.cell-hive-viewport:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+@container (max-width: 880px) {
+  .recovery-scroll-hint {
+    display: block;
+  }
+}
 .primitive-svg path {
   stroke: var(--accent);
   stroke-width: 2;
 }
-.recovery-svg rect,
 .primitive-svg rect {
   fill: var(--wash);
   stroke: var(--line);
 }
-.recovery-svg text,
 .primitive-svg text {
   fill: var(--ink);
   font-size: 15px;
-}
-.recovery-svg .small-svg {
-  fill: var(--muted);
-  font-size: 11px;
-}
-.recovery-svg .verified rect {
-  stroke: var(--teal);
-}
-.recovery-svg .failed rect {
-  stroke: var(--amber);
 }
 .recovery-detail {
   padding: 0 2rem 1.5rem;
@@ -1176,11 +1294,6 @@ kbd {
   --tw-prose-links: var(--accent);
   --tw-prose-bold: var(--ink);
 }
-.prose table {
-  display: block;
-  overflow-x: auto;
-  max-width: 100%;
-}
 .prose :not(pre) > code {
   overflow-wrap: anywhere;
 }
@@ -1223,7 +1336,8 @@ kbd {
   display: flex;
   gap: 0.3rem;
 }
-.diagram-toolbar button {
+.diagram-toolbar button,
+.diagram-toolbar a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1233,7 +1347,8 @@ kbd {
   border-radius: 4px;
   color: #925b0d;
 }
-.diagram-toolbar button:hover {
+.diagram-toolbar button:hover,
+.diagram-toolbar a:hover {
   background: #fbf3dc;
 }
 .mermaid-scroll {
@@ -1243,6 +1358,16 @@ kbd {
 }
 .mermaid-svg {
   margin-inline: auto;
+}
+.svg-file-canvas {
+  margin-inline: auto;
+}
+.prose .svg-file-canvas img {
+  display: block;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
 }
 .mermaid-svg svg {
   width: 100%;
