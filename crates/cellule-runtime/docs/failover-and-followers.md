@@ -920,6 +920,9 @@ node-log frames:
 - A five-second controller observes the active binding, closes it through the
   idempotent `NodeDurability::shutdown`, and retries `PendingPublication` until
   object coverage is contiguous.
+- It also asks the enrollment provider whether any physical member in the
+  current epoch is no longer live. A failed membership check defers rotation to
+  the next tick; it never shrinks the write-all set in place.
 - It then recruits the next epoch and atomically replaces the runtime binding.
 - New Cell submissions read the current binding at the start of each durability
   attempt; a replacement therefore cannot create a second SQLite writer or a

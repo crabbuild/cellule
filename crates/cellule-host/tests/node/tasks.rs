@@ -2,6 +2,14 @@
 
 use super::*;
 
+use cellule_runtime::follower::FollowerStore;
+use cellule_runtime::identity::NodeId;
+use cellule_runtime::ltx::DiskBudget;
+use cellule_runtime::node::durability::NodeLogAuthority;
+use cellule_runtime::node::log::NodeLogRotationBarrier;
+use cellule_runtime::node::log_transport::{LocalFollowerTransport, NodeLogTransport};
+use std::sync::atomic::AtomicUsize;
+
 struct NoopNodeDurabilityProvider;
 
 impl NodeDurabilityProvider for NoopNodeDurabilityProvider {
@@ -12,6 +20,95 @@ impl NodeDurabilityProvider for NoopNodeDurabilityProvider {
         _live_node_limit: usize,
     ) -> Pin<Box<dyn Future<Output = FacilityResult<Option<NodeDurabilityConfig>>> + Send>> {
         Box::pin(async { Ok(None) })
+    }
+
+    fn rotation_required(
+        self: Arc<Self>,
+        _live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>> {
+        Box::pin(async { Ok(false) })
+    }
+}
+
+struct EmptyTelemetry;
+
+impl cellule_runtime::fleet::telemetry::CellTelemetry for EmptyTelemetry {}
+
+struct TrackingAuthority(Arc<AtomicUsize>);
+
+impl NodeLogAuthority for TrackingAuthority {
+    fn activate<'a>(
+        &'a self,
+        _log_epoch: u64,
+    ) -> futures_util::future::BoxFuture<'a, cellule_runtime::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn advance_coverage<'a>(
+        &'a self,
+        _log_epoch: u64,
+        _tiered_through: u64,
+    ) -> futures_util::future::BoxFuture<'a, cellule_runtime::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn close<'a>(
+        &'a self,
+        _barrier: &'a NodeLogRotationBarrier,
+    ) -> futures_util::future::BoxFuture<'a, cellule_runtime::Result<()>> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct MembershipChangeProvider {
+    recruits: AtomicUsize,
+    checks: AtomicUsize,
+    completed_rotations: AtomicUsize,
+    closes: Arc<AtomicUsize>,
+    transport: Arc<dyn NodeLogTransport>,
+}
+
+impl NodeDurabilityProvider for MembershipChangeProvider {
+    fn recruit(
+        self: Arc<Self>,
+        limits: ReplicaLimits,
+        _required_follower_bytes: u64,
+        _live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<Option<NodeDurabilityConfig>>> + Send>> {
+        Box::pin(async move {
+            let epoch = self.recruits.fetch_add(1, Ordering::SeqCst) as u64 + 1;
+            let result = NodeDurabilityConfig::new(
+                SessionId::from_bytes([41; 16]),
+                NodeId::from_bytes([41; 16]),
+                epoch,
+                vec![NodeId::from_bytes([42; 16])],
+                Arc::clone(&self.transport),
+                Arc::new(TrackingAuthority(Arc::clone(&self.closes))),
+                NodeLeaseGuard::new(0, 60_000)?,
+                limits,
+                cellule_runtime::fleet::telemetry::CellTelemetryHandle::from_sink(Arc::new(
+                    EmptyTelemetry,
+                )),
+            );
+            result
+                .map(Some)
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
+
+    fn rotation_required(
+        self: Arc<Self>,
+        _live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>> {
+        let first_check = self.checks.fetch_add(1, Ordering::SeqCst) == 0;
+        Box::pin(async move { Ok(first_check) })
+    }
+
+    fn rotation_event(&self, event: NodeDurabilityRotation) {
+        if event == NodeDurabilityRotation::Completed {
+            self.completed_rotations.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -44,6 +141,64 @@ async fn node_durability_supervisor_is_host_owned_and_joined() {
         node.owned_component::<NoopNodeDurabilityProvider>(NODE_DURABILITY_PROVIDER_COMPONENT)
             .is_some()
     );
+    node.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn provider_membership_change_rotates_the_host_owned_log_epoch() {
+    let node = CellNodeBuilder::new(application())
+        .with_runtime(SqlWorkerPool::new(1, 1).unwrap(), 16 * 1024 * 1024)
+        .with_replica_host(ReplicaHost::default())
+        .with_session(SessionId::from_bytes([40; 16]))
+        .build()
+        .unwrap();
+    node.install_task_group(CancellationToken::new(), CancellationToken::new())
+        .unwrap();
+    node.install_node_lease_for_startup(NodeLeaseGuard::new(0, 60_000).unwrap())
+        .unwrap();
+    let follower_directory = tempfile::tempdir().unwrap();
+    let follower = NodeId::from_bytes([42; 16]);
+    let follower_store = FollowerStore::open(
+        follower_directory.path().to_owned(),
+        ReplicaLimits::default(),
+        DiskBudget::new(1 << 30),
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> =
+        Arc::new(LocalFollowerTransport::new(follower, follower_store));
+    let provider = Arc::new(MembershipChangeProvider {
+        recruits: AtomicUsize::new(0),
+        checks: AtomicUsize::new(0),
+        completed_rotations: AtomicUsize::new(0),
+        closes: Arc::new(AtomicUsize::new(0)),
+        transport,
+    });
+    node.install_node_durability_provider(
+        Arc::clone(&provider),
+        NodeDurabilitySupervisorConfig::new(
+            ApplicationId::from_bytes([29; 16]),
+            ReplicaLimits::default(),
+            1,
+            1,
+            Duration::from_millis(2),
+            Duration::from_millis(2),
+            1_000_000,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    node.start().unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while provider.completed_rotations.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(provider.recruits.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+
     node.shutdown().await.unwrap();
 }
 
