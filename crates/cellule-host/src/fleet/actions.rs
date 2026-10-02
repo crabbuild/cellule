@@ -82,7 +82,7 @@ impl JobRequest {
     fn validate_endpoint(&self, node: NodeId, session: SessionId) -> Result<(), OperationError> {
         match self {
             Self::Effect { action, .. } => action.validate_endpoint(node, session),
-            Self::Inspection(request) => request.action().validate_endpoint(node, session),
+            Self::Inspection(request) => request.validate_endpoint(node, session),
             Self::Snapshot { request, .. }
                 if request.node() == node && request.session() == session =>
             {

@@ -766,6 +766,14 @@ republication cannot refresh it. The adapter checks current journal authorizatio
 in one read transaction; the host performs actor/authority checks without using
 cached Inspect success or starting recovery. Recheck both journal versions when
 committing a dependent transition. A failed inspection retains the permit.
+After a proven clean release, a fresh inspection may target another established
+node or a new boot of the preferred node that acquired the Cell normally. The
+reconciler selects a possible serving endpoint from authenticated actor rows
+under the current durable roster; native authority and actor checks then prove
+the exact successor position. This read creates no effect acceptance. Cleanup
+continues to require the original receiver's independent resource proof.
+Old inspection readers refuse the additional endpoint shape; deploy and qualify
+upgraded readers before enabling this path in a mixed-version fleet.
 Recovery across receiver sessions, the recurring reconciler,
 busy maintenance, role evacuation, and deployment qualification remain work in
 the

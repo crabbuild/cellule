@@ -145,6 +145,16 @@ impl FleetActionExecutor {
             }
             return Ok(ActionResult::checked(FleetOutcome::Unknown));
         }
+        if (self.node, self.session) != (spec.destination_node, spec.destination) {
+            // The fresh request/journal boundary permits only known-release
+            // successor reads here. Never acquire, inspect another endpoint's
+            // retained effects, or infer settlement of its prepared resources.
+            let inputs = self.inputs(attempt).await?;
+            return self
+                .serving(attempt, &inputs)
+                .await
+                .map(ActionResult::checked);
+        }
         if matches!(
             attempt.phase(),
             AttemptPhase::Recovering | AttemptPhase::Recovered

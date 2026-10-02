@@ -861,6 +861,25 @@ the request-bound method is the canonical observation path. New inspection
 record kinds 17 and 18 require the
 same reader deployment gate as other new fleet records.
 
+After an exact clean release, the fresh request may target an actual successor
+on another node or a new boot of the preferred physical node. Validate the
+current journal and registry, authenticate that endpoint, and prove native
+actor admission plus current authority at or beyond the release. Source node
+and session aliases and mismatched preferred session/node pairs remain invalid.
+This read cannot authorize acquisition, recovery or receiver cleanup. Effect
+acceptance and replay remain bound to their original source or receiver.
+
+When its direct serving check is unresolved, the reconciler uses a bounded
+authenticated Cell row
+under the rechecked durable roster to select an established current boot. That
+row is a routing hint; the request-bound native inspection supplies serving
+proof. Retirement rechecks the actual successor. Resource cleanup always
+targets the original receiver and requires its independent retained proof.
+Partial role coverage can select a known writer but cannot prove absence or
+node finalization. Existing record bytes and action keys are unchanged; old
+inspection readers refuse the newly permitted endpoint shape. Qualify and
+deploy upgraded readers before enabling this route across mixed versions.
+
 For prepared acquisition, retain the exact canonical Idle control, Cell and
 incarnation, epoch, pinned root/sequence, observation time, and original accepted
 action. Require no owner or recovery claim, compatibility with the receiver,

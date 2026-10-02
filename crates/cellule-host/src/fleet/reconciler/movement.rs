@@ -248,12 +248,7 @@ impl FleetReconciler {
         clock: &PassClock<'_>,
         report: &mut FleetReconcileReport,
     ) -> Result<FleetActionOutcome> {
-        let action = report
-            .snapshot
-            .head()
-            .movement_action(attempt.spec().id, MovementAction::Inspect, clock.now()?)
-            .map_err(operation)?;
-        let (node, session) = endpoint(
+        let (mut node, mut session) = endpoint(
             attempt,
             if matches!(
                 attempt.phase(),
@@ -268,6 +263,82 @@ impl FleetReconciler {
                 MovementAction::Activate
             },
         );
+        let discover = attempt.released().is_some()
+            && (attempt.phase() == AttemptPhase::Activating
+                || (attempt.phase() == AttemptPhase::Activated
+                    && attempt.receiver_resources_settled()));
+        if discover && let Some(serving) = attempt.activated() {
+            (node, session) = (serving.node, serving.session);
+        }
+        // Keep the ordinary direct check. Only unresolved serving needs a
+        // fleet traversal, with time reserved for its capture and native read.
+        let preferred_clock = clock.partition(2);
+        let original = self
+            .capture_attempt(
+                attempt,
+                node,
+                session,
+                if discover { &preferred_clock } else { clock },
+                report,
+            )
+            .await;
+        if !discover
+            || matches!(&original, Ok(outcome) if matches!(outcome.outcome, FleetOutcome::Activated(_)))
+        {
+            return original;
+        }
+        let fallback = async {
+            let Some(successor) = self.successor_endpoint(attempt, clock, report).await? else {
+                return Ok(None);
+            };
+            if successor == (node, session) {
+                return Ok(None);
+            }
+            let fresh = self
+                .capture_attempt(attempt, successor.0, successor.1, clock, report)
+                .await?;
+            Ok::<_, Error>(matches!(fresh.outcome, FleetOutcome::Activated(_)).then_some(fresh))
+        }
+        .await;
+        match fallback {
+            Ok(Some(fresh)) => {
+                if let Err(error) = original {
+                    // Preserve the failed original endpoint even when another
+                    // boot proves serving. No failure can free receiver credit.
+                    report.failures.push(super::FleetAttemptFailure {
+                        attempt: attempt.spec().id,
+                        error: Arc::new(error),
+                    });
+                }
+                Ok(fresh)
+            }
+            Ok(None) => original,
+            Err(error) => match original {
+                Err(original) => {
+                    tracing::warn!(error = ?error, "fleet successor fallback failed after original inspection failure");
+                    Err(original)
+                }
+                Ok(_) => Err(error),
+            },
+        }
+    }
+
+    async fn capture_attempt(
+        &self,
+        attempt: &MoveAttempt,
+        node: NodeId,
+        session: SessionId,
+        clock: &PassClock<'_>,
+        report: &mut FleetReconcileReport,
+    ) -> Result<FleetActionOutcome> {
+        // Collecting a routing hint creates no effect acceptance. The request
+        // still binds this pass's exact head, registry and capture interval.
+        // Cleanup and its retained lookups continue using the original receiver.
+        let action = report
+            .snapshot
+            .head()
+            .movement_action(attempt.spec().id, MovementAction::Inspect, clock.now()?)
+            .map_err(operation)?;
         let lease = report
             .snapshot
             .head()

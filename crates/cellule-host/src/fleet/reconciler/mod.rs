@@ -20,6 +20,7 @@ mod maintenance;
 mod movement;
 mod observation;
 mod planning;
+mod successor;
 pub use observation::{FleetObservation, FleetOwnedCell};
 
 /// Application-owned complete roster and authenticated paginated observation.

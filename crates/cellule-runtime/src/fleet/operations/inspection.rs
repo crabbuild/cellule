@@ -1,8 +1,8 @@
 use crate::identity::{Digest, NodeId, SessionId};
 
 use super::{
-    FleetAction, FleetActionKind, FleetActionOutcome, FleetHead, MaintenanceAction, MovementAction,
-    OperationError, RegistryVersion, Result, nonzero,
+    AttemptPhase, FleetAction, FleetActionKind, FleetActionOutcome, FleetHead, FleetOutcome,
+    MaintenanceAction, MovementAction, OperationError, RegistryVersion, Result, nonzero,
 };
 
 /// One caller-assigned nonce and bounded interval for a fresh, read-only check.
@@ -73,6 +73,17 @@ impl FleetInspectionRequest {
         self.deadline_ms
     }
 
+    /// Checks the exact read-only endpoint, including a successor after release.
+    /// This cannot authorize an effect on that endpoint. The adapter separately
+    /// authenticates its boot and checks the retained registry and journal head.
+    pub fn validate_endpoint(&self, node: NodeId, session: SessionId) -> Result<()> {
+        self.validate()?;
+        if node != self.node || session != self.session {
+            return Err(OperationError::Fenced);
+        }
+        Ok(())
+    }
+
     /// Identifies all request inputs, including nonce, endpoint and authorization.
     /// Different passes cannot reuse the stable effect key as fresh evidence.
     pub fn key(&self) -> Result<Digest> {
@@ -106,7 +117,7 @@ impl FleetInspectionRequest {
         if self.registry.scope() != self.action.scope() {
             return Err(OperationError::Conflict);
         }
-        self.action.validate_endpoint(self.node, self.session)?;
+        self.action.validate()?;
         if !matches!(
             self.action.kind(),
             FleetActionKind::Movement {
@@ -120,6 +131,74 @@ impl FleetInspectionRequest {
             || self.deadline_ms <= self.action.issued_at_ms()
         {
             return Err(OperationError::Invalid("invalid fresh inspection request"));
+        }
+        if self
+            .action
+            .validate_endpoint(self.node, self.session)
+            .is_err()
+        {
+            let FleetActionKind::Movement {
+                action: MovementAction::Inspect,
+                attempt,
+            } = self.action.kind()
+            else {
+                return Err(OperationError::Fenced);
+            };
+            let spec = attempt.spec();
+            // A clean release permits observation of an ordinary-acquisition
+            // winner. Unknown release and failed-source recovery keep their
+            // separate proof paths; another actor cannot establish either.
+            if attempt.released().is_none()
+                || !matches!(
+                    attempt.phase(),
+                    AttemptPhase::Released
+                        | AttemptPhase::Activating
+                        | AttemptPhase::Activated
+                        | AttemptPhase::CleaningReceiver
+                )
+                || !nonzero(self.node.as_bytes())
+                || !nonzero(self.session.as_bytes())
+                || self.node == spec.source_node
+                || self.session == spec.source
+                || (self.session == spec.destination && self.node != spec.destination_node)
+            {
+                return Err(OperationError::Fenced);
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_outcome(&self, outcome: &FleetActionOutcome) -> Result<()> {
+        if self
+            .action
+            .validate_endpoint(self.node, self.session)
+            .is_ok()
+        {
+            outcome.validate_for(&self.action)?;
+        } else {
+            // Keep ordinary effect/result validation strict. Only this exact
+            // request-bound read can report a different serving endpoint.
+            outcome.validate()?;
+            if outcome.scope != self.action.scope() || outcome.action_key != self.action.key()? {
+                return Err(OperationError::Conflict);
+            }
+            if !matches!(
+                outcome.outcome,
+                FleetOutcome::Activated(_)
+                    | FleetOutcome::Unknown
+                    | FleetOutcome::Blocked(_)
+                    | FleetOutcome::Rejected(_)
+            ) {
+                return Err(OperationError::Invalid(
+                    "successor inspection cannot prove receiver effects",
+                ));
+            }
+        }
+        if let FleetOutcome::Activated(evidence) = &outcome.outcome
+            && let FleetActionKind::Movement { attempt, .. } = self.action.kind()
+            && attempt.released().is_some()
+        {
+            attempt.validate_activation(evidence)?;
         }
         Ok(())
     }
@@ -202,7 +281,7 @@ impl FleetInspectionObservation {
 
     pub(super) fn validate(&self) -> Result<()> {
         self.request.validate()?;
-        self.outcome.validate_for(&self.request.action)?;
+        self.request.validate_outcome(&self.outcome)?;
         if self.outcome.node != self.request.node
             || self.outcome.session != self.request.session
             || self.capture_started_at_ms < self.request.action.issued_at_ms()

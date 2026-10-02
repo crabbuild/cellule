@@ -4,6 +4,82 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 actual successor inspection checkpoint
+
+Fresh movement inspection can now target another physical node, or a new boot
+of the preferred node, after the journal proves the exact clean source release.
+The additional endpoint cannot authorize an effect or establish failed-source
+recovery. Source aliases, mismatched preferred session/node pairs, insufficient
+positions, changed requests and stale journal/registry barriers remain refused.
+Original effect acceptance, replay and cleanup endpoints are unchanged.
+
+The reconciler first checks the preferred or retained serving endpoint directly.
+If that check is unresolved, a bounded authenticated Cell observation under the
+rechecked durable roster selects an established current boot. Its native actor
+query and authority reads supply serving evidence. The original endpoint error
+is retained when fallback succeeds. Retirement checks the actual successor;
+unused receiver credit stays charged until its original cleanup proof joins it.
+Partial role coverage supplies no absence or finalization proof.
+
+The public node regressions use independent resource budgets and actual
+ordinary acquisition, authority, restored SQL and native inspection. They cover
+another node and another session on the preferred physical node, reject Idle or
+closed actors, and refuse activation effects on the alternate endpoint. The
+second case qualifies session separation in the local API; it does not simulate
+process death or qualify the durable reboot/enrollment protocol.
+The durable example uses three leased nodes and the SQLite journal. It adopts
+an ordinary winner, proves receiver cleanup before permit retirement, resolves
+the original receipt and reads its original SQL value. No acquisition effect
+is accepted on the alternate node and authority advances once.
+
+The corrected parent-code regressions fail at the valid successor request and
+at the driver's missing adoption. Initial fixture failures and corrections,
+original executables and sources are archived separately under
+`/tmp/cellule-successor-inspection-1bd98d8-evidence`. An eager fleet scan also
+failed the unchanged driver's observer-count assertion (five versus one);
+fallback discovery preserves that assertion. A nested-if lint was corrected
+without changing qualification profiles or assertions.
+
+Existing record bytes, indexes and action keys are unchanged. Older inspection
+readers refuse the newly allowed endpoint shape. Deploy and qualify upgraded
+readers before enabling it in a mixed-version fleet; this checkpoint adds no
+mixed-binary or process/provider qualification.
+
+### Verification
+
+All 646 Rust/Cargo/lock paths match the active source and isolated snapshot
+before and after every final command.
+Manifest SHA256:
+`5c92a99e5846aa5bbff3527a2224c0f24fced77735eae01976d282ff0eb67053`.
+
+| Final native scope | Result |
+| --- | --- |
+| Complete runtime library, all features | 518 passed; three existing ignores. |
+| Complete host library, all features | 29 passed. |
+| Complete public host node suite, all features | 106 passed, including both successor endpoint cases. |
+| Complete fleet example, all features | 112 passed; required overload case failed. The new actual-successor scenario passed. |
+| Workspace all targets/features, locked | Check and Clippy passed; lint warnings denied. Runtime/host API docs passed with warnings denied. |
+
+These are 765 distinct passed cases, three existing ignores and one failed
+case. Focused repeats are excluded. The unchanged overload case proves one
+successful movement and safely cancels the other, retiring both permits; it
+fails the required two-release/two-activation result. Its original source,
+executable and complete log are retained. No count, deadline, pressure profile
+or assertion was relaxed. The separate controller-restart case passes this
+native run, which cannot erase its parent CI failure or establish reliable
+convergence across runs.
+
+Parent `1bd98d8` CI passes contract, MSRV, fuzz, fast models, website, object and
+follower qualification and Compose smoke. Its workspace job passes 111 fleet
+example cases and fails the controller-restart case with an unresolved Releasing
+attempt after reply loss. Routing comparisons were pending at inspection.
+The failure log is retained; its cause is not established by this change.
+Reliable overload/controller-restart convergence, complete role/authority and
+replacement-policy barriers, automatic intent supervision, Blob external
+owners, fleet maintenance/failure scenarios and the complete deployment/fault
+matrix remain open. `SettleRoles` and `Finalize` remain refused. Full W1–W10
+is incomplete.
+
 ## October 2 2026 Cron maintenance checkpoint
 
 The public primitive regression in

@@ -12,6 +12,8 @@ mod observation;
 mod reader_tests;
 mod startup;
 #[cfg(test)]
+mod successor_tests;
+#[cfg(test)]
 mod tests;
 
 use super::journal::{JournalError, JournalResult, SqliteJournal};
