@@ -333,6 +333,8 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
     })
     .catch_unwind()
     .await;
+    // Drain against real time even if the watchdog released the paused clock.
+    tokio::time::resume();
     tokio::time::timeout(Duration::from_secs(2), node.shutdown())
         .await
         .unwrap()
