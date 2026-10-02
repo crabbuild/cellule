@@ -14,6 +14,8 @@ use std::{
 };
 use tokio::task::JoinSet;
 
+mod tests;
+
 const WINDOW_SECONDS: usize = 10;
 
 struct Window {
@@ -335,7 +337,7 @@ async fn run_window(
         let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
         tokio::time::sleep_until((started + Duration::from_micros(scheduled_us)).into()).await;
         while let Some(result) = jobs.try_join_next() {
-            retain_sample(&mut output, &mut samples, result.unwrap());
+            samples.push(result.unwrap());
         }
         let started_us = started.elapsed().as_micros() as u64;
         let (entity, write) = destination(window.shape, arrival, expected.len());
@@ -355,7 +357,7 @@ async fn run_window(
             sample.outcome = "scheduler_late";
         }
         if sample.outcome == "scheduler_late" || jobs.len() >= window.concurrency {
-            retain_sample(&mut output, &mut samples, sample);
+            samples.push(sample);
             continue;
         }
         let client = client.clone();
@@ -365,11 +367,16 @@ async fn run_window(
     }
     tokio::time::sleep_until((started + Duration::from_secs(WINDOW_SECONDS as u64)).into()).await;
     while let Some(result) = jobs.join_next().await {
-        retain_sample(&mut output, &mut samples, result.unwrap());
+        samples.push(result.unwrap());
     }
     let elapsed_us = started.elapsed().as_micros() as u64;
     let ended_ms = now_ms();
     let ended_boot_ms = boot_ms();
+    // Keep synchronous evidence I/O outside the arrival and drain clocks. A
+    // slow bind mount must not turn a completed request into missed arrivals.
+    // The already bounded sample vector retains every outcome, including real
+    // scheduler lateness and concurrency refusals, without a catch-up burst.
+    write_samples(&mut output, &samples).unwrap();
     samples.sort_by_key(|sample| sample.arrival);
     assert_eq!(samples.len(), planned);
     for sample in &samples {
@@ -414,29 +421,34 @@ async fn run_window(
     println!(
         "ENTITY_WINDOW label={label} planned={planned} complete={complete} elapsed_us={elapsed_us}"
     );
-    complete == planned
-        && (window.prefix != "capacity"
-            || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + DRAIN_GRACE_US)
+    fully_served(&samples, elapsed_us, window.prefix == "capacity")
 }
 
-fn retain_sample(output: &mut BufWriter<File>, samples: &mut Vec<Sample>, sample: Sample) {
-    writeln!(
-        output,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        sample.arrival,
-        sample.scheduled_us,
-        sample.started_us,
-        sample.elapsed_us,
-        sample.entity,
-        if sample.write { "write" } else { "read" },
-        sample.outcome,
-        sample.sequence,
-        sample.read_sequence,
-        sample.count
-    )
-    .unwrap();
-    output.flush().unwrap();
-    samples.push(sample);
+fn fully_served(samples: &[Sample], elapsed_us: u64, capacity: bool) -> bool {
+    samples
+        .iter()
+        .all(|sample| sample.outcome == "ok" || sample.outcome == "resolved")
+        && (!capacity || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + DRAIN_GRACE_US)
+}
+
+fn write_samples(output: &mut impl Write, samples: &[Sample]) -> std::io::Result<()> {
+    for sample in samples {
+        writeln!(
+            output,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            sample.arrival,
+            sample.scheduled_us,
+            sample.started_us,
+            sample.elapsed_us,
+            sample.entity,
+            if sample.write { "write" } else { "read" },
+            sample.outcome,
+            sample.sequence,
+            sample.read_sequence,
+            sample.count
+        )?;
+    }
+    output.flush()
 }
 
 async fn execute(

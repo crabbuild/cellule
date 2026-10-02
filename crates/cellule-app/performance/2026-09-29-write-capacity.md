@@ -45,6 +45,25 @@ volume, object prefix, and evidence directory. The workflow uploads raw
 samples, logs, binary digests, and provider details even if a repeat fails.
 Its output requires review before a capacity claim.
 
+## Arrival evidence collection
+
+The driver retains each scheduled outcome in its existing bounded sample
+vector during the arrival window and accepted-work drain. It writes and flushes
+the sample TSV after capturing the original end clocks. Synchronous evidence
+storage therefore cannot delay the next scheduled arrival or extend the measured
+drain. The offered rates, concurrency, ten-second arrival window, two-second
+drain allowance, and classification of late arrivals remain unchanged.
+
+PR #37's follower-proof run `37060783753`, repeat 2, recorded 58/60 successful
+actions at the first uniform point. Arrivals 38 and 39 were `scheduler_late`
+and were never dispatched; every dispatched action succeeded. The driver had
+no CPU throttling. The previous loop synchronously flushed completed samples
+before scheduling each next arrival, exposing the arrival clock to evidence
+storage stalls. The traces do not identify the individual stalled syscall;
+deferring these writes removes that known blocking path. This change alone
+does not establish a qualified capacity result: fresh provider repeats remain
+required.
+
 ## Canonical root capture after client work
 
 Follower-proof responses can precede object publication. After joining client
