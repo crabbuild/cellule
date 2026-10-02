@@ -254,8 +254,11 @@ same frozen binary. Artifacts retain the coordination trace, revisions,
 digests, every raw latency sample, per-command publication phases,
 object-read/hop counts, and exact recovery results. CI uses 1,024 commands per
 write lane, verifies 6,144 unique durable mutations per run, and checks every
-publication phase record. The gate requires median-run p95/p99 within 10% and completed-call
-throughput within 10%; paced throughput is excluded because it includes sleep.
+publication phase record. The gate compares medians of all four runs: p95 must
+be at most 150% of baseline, p99 at most 200%, and completed-call throughput
+at least 90%; paced throughput is excluded because it includes sleep.
+The manifest and comparison record these limits. Both latency percentiles
+still produce review alerts above 110% of baseline, with all raw samples retained.
 Historical unleased zero-read routing is reported but cannot qualify a fresh
 authority latency target.
 
@@ -272,9 +275,15 @@ physical read and hop checks, and exact recovery. The final `routing` check
 requires both mode jobs to pass. `routing.py --mode leased` or
 `--mode object_only` runs one complete mode; omitting `--mode` runs both.
 
-The larger CI sample sizes and adjacent pairs retain the original 10% limits.
-Serial full-profile comparisons still failed calibration after increasing the
-sample sizes, including paced local p99 at 1.13–1.15. Adjacent windows control
+The shared-runner blocking latency limits were widened after an identical frozen
+binary control with the complete CI profiles reported p95 at 1.31 times and p99
+at 1.84 times baseline ([control run](https://github.com/crabbuild/cellule/actions/runs/36908854812)).
+These limits catch large latency regressions; a passing job does not establish
+latency equivalence within 10% or a production SLO. Throughput, workloads,
+read/hop counts, authority checks and recovery requirements remain unchanged.
+
+Serial full-profile comparisons failed the earlier 10% calibration after
+increasing the sample sizes, including paced local p99 at 1.13–1.15. Adjacent windows control
 time drift without removing lanes or excluding slow calls. An unchanged-source
 calibration with 128 commands and 12 bursts failed three gates, with paced tail
 ratios up to 1.22 and serial-write p95 at 1.20. Manual measurements default to
