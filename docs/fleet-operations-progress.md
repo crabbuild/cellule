@@ -4,6 +4,61 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 Cron maintenance checkpoint
+
+The public primitive regression in
+[`blob_cron/maintenance`](../crates/cellule-runtime/tests/primitives/blob_cron/maintenance/mod.rs)
+now exercises three independently budgeted runtimes, real SQLite, authority
+CAS, immutable publication and signed Effect delivery to the compiled target
+command. Its source Tick uses the public scheduler inside an accepted native
+command transaction with pinned logical time and an explicit worker gate.
+The barrier closes typed Tick and Effect claim admission while that transaction
+is running. The successor's Ticks use the registered maintenance command.
+
+| Boundary | Checked result |
+| --- | --- |
+| Accepted source Tick | Its occurrence and durable outcome survive quiescence; original request resolution succeeds before release and after restoration. |
+| Source release | Canonical maintenance release returns the authority's exact Idle root and closes the original actor. |
+| Successor acquisition | Serving authority uses the successor session, increments the epoch, and retains the released root. |
+| Due work during quiescence | The unfired schedule retains generation, occurrence and due time; a stale Tick generates nothing and a current Tick generates its first occurrence. |
+| Retried Tick and delivery | Tick replay returns its original receipt. Two deliveries of each Effect return the same destination receipt and leave exactly one application row per occurrence. |
+| Shutdown | All three runtime ledgers return memory, descriptors, disk, retained bytes, jobs, slots and unpublished log bytes to zero. |
+
+The fixture initially failed compilation on codec usage, then rejected its
+application table's protected `cron_` prefix. A later zero-disk assertion
+correctly observed reservations of other live runtimes through the convenience
+Host's process-wide budget. Each simulated node now has an explicit independent
+disk budget; the zero-resource assertions remain intact. Earlier sources and
+failure evidence are retained separately from the final source under
+`/tmp/cellule-cron-maintenance-9ed469c-evidence`.
+
+PR 37 is mergeable. Parent `9ed469c` CI's workspace job still fails the
+required two-movement overload scenario: 111 example cases
+pass, one movement succeeds and the other is safely cancelled. This checkpoint
+adds Cron qualification without changing production scheduling, pressure,
+admission or release rules. Reliable overload convergence, the remaining
+primitive/fault matrix, Blob external owners, full role settlement and node
+finalization, executable maintenance/failure scenarios, and process/provider
+qualification remain open. Full W1–W10 is incomplete.
+
+### Isolated native verification
+
+All 643 Rust/Cargo/lock paths match between the active checkout and isolated
+snapshot before and after every command. Manifest SHA256:
+`32bc2b69c178f9e8295b3fa187e5d976995eb52654761e4e3a475d0934c2057f`.
+
+| Scope | Result |
+| --- | --- |
+| Complete public primitive suite, all features | 50 passed; none ignored or filtered. |
+| Complete public protocol suite, all features | 30 passed; two existing provider diagnostics ignored. |
+| Public runtime maintenance suite, all features | Two passed; 202 other runtime cases unselected. |
+| Focused Cron replay, all features | Passed; excluded from the 82 distinct passed cases above. |
+| Workspace all targets/features, locked | Check and Clippy passed with lint warnings denied. |
+
+The initial corrected fixture also passes its focused default-feature run.
+These results establish the selected native public behavior; they add no
+process, provider, mixed-version or fleet-wide maintenance qualification.
+
 ## October 2 2026 exact source refusal checkpoint
 
 The unchanged overload scenario reproduced its unknown-release failure on

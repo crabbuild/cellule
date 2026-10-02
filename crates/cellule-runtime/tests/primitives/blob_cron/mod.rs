@@ -37,13 +37,13 @@ use crate::support::fixtures::{mutation_identity_window, now_ms};
 
 const BLOB_MODULE: &str = "blob-test";
 const BLOB_NAMESPACE: NamespaceId = NamespaceId::from_bytes([1; 16]);
-const BLOB_MIGRATION: &str = include_str!("../../src/migrations/blob.sql");
+const BLOB_MIGRATION: &str = include_str!("../../../src/migrations/blob.sql");
 const CRON_MODULE: &str = "cron-test";
 const CRON_NAMESPACE: NamespaceId = NamespaceId::from_bytes([2; 16]);
-const CRON_MIGRATION: &str = include_str!("../../src/migrations/cron.sql");
+const CRON_MIGRATION: &str = include_str!("../../../src/migrations/cron.sql");
 const TARGET_MODULE: &str = "cron-target-test";
 const TARGET_NAMESPACE: NamespaceId = NamespaceId::from_bytes([3; 16]);
-const TARGET_MIGRATION: &str = "CREATE TABLE cron_target(value BLOB) STRICT;";
+const TARGET_MIGRATION: &str = "CREATE TABLE received_ticks(value BLOB) STRICT;";
 const TARGET_INPUT_LIMIT: u32 = 300 * 1024;
 const CRON_TARGETS: &[CronTarget] = &[CronTarget::new(
     TARGET_MODULE,
@@ -55,8 +55,17 @@ const CRON_TARGETS: &[CronTarget] = &[CronTarget::new(
 
 const BLOB_COMMANDS: &[OperationDescriptor] = &[operation(1, 300 * 1024, 64), operation(2, 8, 5)];
 const BLOB_QUERIES: &[OperationDescriptor] = &[operation(1, 4 * 1024, 600 * 1024)];
-const CRON_COMMANDS: &[OperationDescriptor] = &[operation(1, 300 * 1024, 16), operation(2, 8, 5)];
-const CRON_QUERIES: &[OperationDescriptor] = &[operation(1, 64, 600 * 1024)];
+const CRON_COMMANDS: &[OperationDescriptor] = &[
+    operation(1, 300 * 1024, 16),
+    operation(2, 8, 5),
+    operation(3, 8, 1 << 20),
+    operation(4, 1 << 20, 16),
+];
+const CRON_QUERIES: &[OperationDescriptor] = &[
+    operation(1, 64, 600 * 1024),
+    operation(2, 1 << 20, 1),
+    operation(3, 32, 1 << 20),
+];
 const TARGET_COMMANDS: &[OperationDescriptor] = &[operation(9, TARGET_INPUT_LIMIT, 1)];
 
 struct TestBlob;
@@ -107,6 +116,14 @@ impl CronModule for TestCron {
     const QUERY_ID: u32 = 1;
 }
 
+impl cellule_runtime::primitives::effects::EffectModule for TestCron {
+    const MODULE: &'static str = CRON_MODULE;
+    const CLAIM_COMMAND_ID: u32 = 3;
+    const LEASE_COMMAND_ID: u32 = 4;
+    const VALIDATE_QUERY_ID: u32 = 2;
+    const STATUS_QUERY_ID: u32 = 3;
+}
+
 impl CellModule for TestCron {
     const NAME: &'static str = CRON_MODULE;
 
@@ -124,7 +141,8 @@ impl CellModule for TestCron {
     }
 
     fn register(self, registry: &mut RegistryBuilder) -> cellule_runtime::Result<()> {
-        register_cron::<Self>(registry)
+        register_cron::<Self>(registry)?;
+        cellule_runtime::primitives::effects::register_effect_delivery::<Self>(registry)
     }
 }
 
@@ -140,9 +158,19 @@ impl Command for ReceiveCron {
     type Output = ();
 
     fn execute(
-        _: &mut CommandContext<'_, '_>,
-        _: Self::Input,
+        context: &mut CommandContext<'_, '_>,
+        input: Self::Input,
     ) -> cellule_runtime::Result<CommandResult<Self::Output>> {
+        use cellule_runtime::codec::{BoundedEncoder, WireValue};
+        use cellule_runtime::primitives::sql::{SqlBatch, SqlStatement, SqlValue};
+        let mut encoder = BoundedEncoder::new(TARGET_INPUT_LIMIT)?;
+        input.encode(&mut encoder)?;
+        context.sql(&SqlBatch {
+            statements: vec![SqlStatement {
+                sql: "INSERT INTO received_ticks(value) VALUES (?)".into(),
+                parameters: vec![SqlValue::Blob(encoder.finish())],
+            }],
+        })?;
         Ok(CommandResult::Success(()))
     }
 }
@@ -593,3 +621,5 @@ const fn operation(id: u32, input_limit: u32, output_limit: u32) -> OperationDes
         output_limit,
     }
 }
+
+mod maintenance;
