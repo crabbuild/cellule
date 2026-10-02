@@ -1,5 +1,6 @@
 //! Scheduled arrivals retain overload and verify every resulting Cell ledger.
 
+use super::root_capture::{DRAIN_GRACE_US, capture};
 use super::*;
 use crate::fleet::{balancer_round_trip, start_balancer};
 use crate::process_performance::Controller;
@@ -14,7 +15,6 @@ use std::{
 use tokio::task::JoinSet;
 
 const WINDOW_SECONDS: usize = 10;
-const CAPACITY_DRAIN_GRACE_US: u64 = 2_000_000;
 
 struct Window {
     id: usize,
@@ -83,6 +83,7 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         BufWriter::new(File::create(sync.join(format!("{evidence_prefix}-owners.tsv"))).unwrap());
     writeln!(owners, "stage\tentity\tcell\towner\tepoch\tincarnation").unwrap();
     let mut expected = Vec::new();
+    let mut latest_sequences = Vec::new();
     let mut window_id = 0;
     let mut capacity_windows = capacity.then(|| {
         let mut output = BufWriter::new(File::create(sync.join("capacity-windows.tsv")).unwrap());
@@ -127,6 +128,8 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         .unwrap();
         let client = Arc::new(EntityReferenceClient::new(handle).unwrap());
         expected.resize(nodes * ENTITIES_PER_NODE, 0_u64);
+        latest_sequences.resize(expected.len(), 0_u64);
+        let mut original_controls = Vec::with_capacity(expected.len());
         for (entity, count) in expected.iter().enumerate() {
             let target = entity_target(&application, entity);
             let control = authority.load(target.cell_id()).await.unwrap().unwrap();
@@ -134,6 +137,7 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             let node = entity / ENTITIES_PER_NODE;
             assert_eq!(owner.session, node_session(node));
             assert_eq!(owner.endpoint, format!("https://{}", addresses[node]));
+            original_controls.push(control.value().clone());
             writeln!(
                 owners,
                 "{nodes}\t{entity}\t{:?}\t{node}\t{}\t{:?}",
@@ -177,7 +181,14 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
                     rate_per_node,
                     concurrency,
                 };
-                let fully_served = run_window(sync, &window, client.clone(), &mut expected).await;
+                let fully_served = run_window(
+                    sync,
+                    &window,
+                    client.clone(),
+                    &mut expected,
+                    &mut latest_sequences,
+                )
+                .await;
                 if let Some(output) = capacity_windows.as_mut() {
                     writeln!(
                         output,
@@ -198,29 +209,48 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
                 assert!(overloaded, "{shape}: rate ramp did not reach overload");
             }
         }
+        let barrier_started = Instant::now();
+        let started_boot_ms = boot_ms();
+        let start_clock_us = barrier_started.elapsed().as_micros() as u64;
+        let captured = capture(&authority, &original_controls, &latest_sequences)
+            .await
+            .unwrap();
+        let end_clock_started = Instant::now();
+        let ended_boot_ms = boot_ms();
+        let clock_read_us = start_clock_us + end_clock_started.elapsed().as_micros() as u64;
+        let elapsed_us = barrier_started.elapsed().as_micros() as u64;
+        assert!(elapsed_us >= captured.elapsed_us && elapsed_us < DRAIN_GRACE_US);
+        publish_marker(
+            &sync.join(format!("{evidence_prefix}-root-barrier-{nodes}.tsv")),
+            format!(
+                "nodes\tcells\tlimit_us\telapsed_us\treads\tstarted_boot_ms\tended_boot_ms\tclock_read_us\n{nodes}\t{}\t{DRAIN_GRACE_US}\t{}\t{}\t{started_boot_ms}\t{ended_boot_ms}\t{clock_read_us}\n",
+                captured.values.len(),
+                elapsed_us,
+                captured.reads,
+            ),
+        );
         let mut roots = BufWriter::new(
             File::create(sync.join(format!("{evidence_prefix}-roots-{nodes}.tsv"))).unwrap(),
         );
         writeln!(
             roots,
-            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest"
+            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest\tminimum_sequence"
         )
         .unwrap();
-        for entity in 0..expected.len() {
-            let target = entity_target(&application, entity);
-            let control = authority.load(target.cell_id()).await.unwrap().unwrap();
-            let owner = control.value().owner.as_ref().unwrap();
+        for (entity, control) in captured.values.iter().enumerate() {
+            let owner = control.owner.as_ref().unwrap();
             let node = entity / ENTITIES_PER_NODE;
             assert_eq!(owner.session, node_session(node));
-            let root = control.value().root.as_ref().unwrap();
+            let root = control.root.as_ref().unwrap();
             writeln!(
                 roots,
-                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}",
-                target.cell_id(),
-                control.value().epoch,
-                control.value().incarnation,
+                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}\t{}",
+                control.cell,
+                control.epoch,
+                control.incarnation,
                 root.commit_sequence,
-                root.digest
+                root.digest,
+                latest_sequences[entity],
             )
             .unwrap();
         }
@@ -283,7 +313,9 @@ async fn run_window(
     window: &Window,
     client: Arc<EntityReferenceClient>,
     expected: &mut [u64],
+    latest_sequences: &mut [u64],
 ) -> bool {
+    assert_eq!(expected.len(), latest_sequences.len());
     let rate = window.nodes * window.rate_per_node;
     let planned = rate * WINDOW_SECONDS;
     let label = window.label();
@@ -343,6 +375,7 @@ async fn run_window(
     for sample in &samples {
         if sample.write && sample.sequence > 0 {
             expected[sample.entity] += 1;
+            latest_sequences[sample.entity] = latest_sequences[sample.entity].max(sample.sequence);
         }
     }
     let mut checks =
@@ -383,7 +416,7 @@ async fn run_window(
     );
     complete == planned
         && (window.prefix != "capacity"
-            || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + CAPACITY_DRAIN_GRACE_US)
+            || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + DRAIN_GRACE_US)
 }
 
 fn retain_sample(output: &mut BufWriter<File>, samples: &mut Vec<Sample>, sample: Sample) {

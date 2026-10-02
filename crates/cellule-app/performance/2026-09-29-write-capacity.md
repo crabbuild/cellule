@@ -45,6 +45,30 @@ volume, object prefix, and evidence directory. The workflow uploads raw
 samples, logs, binary digests, and provider details even if a repeat fails.
 Its output requires review before a capacity claim.
 
+## Canonical root capture after client work
+
+Follower-proof responses can precede object publication. After joining client
+work and checking every receipt ledger, the driver observes canonical roots
+under one two-second deadline for the complete original serving roster. It
+pins owner session and endpoint, epoch, incarnation, code and schema. Changed,
+missing, unreadable or expired authority cannot pass. The barrier only reads
+authority; it does not rotate epochs or force publication.
+
+`capacity-root-barrier-3.tsv` records actual duration, complete read passes and
+Linux boot-clock bounds. The duration includes clock reads, which are measured
+separately for the centisecond clock comparison. `capacity-roots-3.tsv` retains
+actual canonical roots and adds each Cell's minimum acknowledged sequence.
+The independent verifier derives these minima from all arrival records and
+retains the existing root coverage and original owner assertions. Scaling
+stages emit the corresponding `entity-root-barrier-N.tsv` evidence.
+
+This post-load observation is separate from response and arrival latency.
+The ten-second arrival windows, two-second accepted-work drain allowance,
+offered rates, concurrency, readback, overload and follower-proof gates remain.
+Each barrier must finish within two seconds; a stalled publisher still fails.
+Earlier artifacts retain their historical verifier contract and cannot provide
+the new barrier evidence. Later telemetry cannot repair a stale root capture.
+
 ## First isolated object-proof result
 
 [CI run 36649534205](https://github.com/crabbuild/cellule/actions/runs/36649534205)

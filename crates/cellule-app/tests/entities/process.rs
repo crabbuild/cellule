@@ -19,6 +19,7 @@ use tokio::net::TcpListener;
 
 mod driver;
 mod observation;
+mod root_capture;
 
 async fn endpoints(sync: &Path, count: usize) -> Vec<SocketAddr> {
     let mut endpoints = Vec::new();

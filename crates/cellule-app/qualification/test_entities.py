@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_coverage, verify_timing_evidence, verify_window
+from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_barrier, verify_root_coverage, verify_timing_evidence, verify_window
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -226,6 +226,79 @@ class CapacityScheduleEvidence(unittest.TestCase):
         with patch("entities.verify_window", return_value=dict(fully_served_arrivals=False)):
             with self.assertRaisesRegex(AssertionError, "mislabeled fully served rate"):
                 verify_capacity_windows(self.root, {})
+
+
+class RootBarrierEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.control = Path(temporary.name)
+        self.path = self.control / "capacity-root-barrier-3.tsv"
+        self.metadata = dict(nodes="3", cells="12", limit_us="2000000", elapsed_us="10000",
+                             reads="24", started_boot_ms="110000", ended_boot_ms="110010", clock_read_us="0")
+        self.roots = [dict(entity=str(entity), minimum_sequence="5") for entity in range(12)]
+        self.positions = {entity: [2, 3, 5] for entity in range(12)}
+        self.windows = [dict(nodes=3, ended_boot_ms=110000)]
+
+    def verify(self):
+        self.path.write_text("\t".join(self.metadata) + "\n" + "\t".join(self.metadata.values()) + "\n")
+        return verify_root_barrier(self.control, "capacity", 3, self.roots, self.positions, self.windows)
+
+    def test_complete_original_roster_and_budget_are_required(self):
+        self.assertEqual(self.verify()["reads"], 24)
+
+    def test_missing_barrier_is_rejected(self):
+        with self.assertRaises(FileNotFoundError):
+            verify_root_barrier(self.control, "capacity", 3, self.roots, self.positions, self.windows)
+
+    def test_late_and_extended_barriers_are_rejected(self):
+        for field, value, message in [("elapsed_us", "2000000", "exceeded original budget"),
+                                      ("elapsed_us", "2000001", "exceeded original budget"),
+                                      ("elapsed_us", "-1", "exceeded original budget"),
+                                      ("limit_us", "2000001", "budget changed")]:
+            with self.subTest(field=field, value=value):
+                original = self.metadata[field]
+                self.metadata[field] = value
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.metadata[field] = original
+
+    def test_incomplete_roster_and_read_passes_are_rejected(self):
+        for field, value, message in [("cells", "11", "roster changed"),
+                                      ("nodes", "2", "roster changed"),
+                                      ("reads", "11", "complete roster"),
+                                      ("reads", "13", "complete roster")]:
+            with self.subTest(field=field, value=value):
+                original = self.metadata[field]
+                self.metadata[field] = value
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.metadata[field] = original
+
+    def test_barrier_cannot_precede_client_work_or_forge_elapsed_time(self):
+        for field, value, message in [("started_boot_ms", "109999", "preceded accepted"),
+                                      ("ended_boot_ms", "109999", "preceded accepted"),
+                                      ("elapsed_us", "21001", "clocks disagree")]:
+            with self.subTest(field=field, value=value):
+                original = self.metadata[field]
+                self.metadata[field] = value
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.metadata[field] = original
+
+    def test_each_minimum_is_derived_from_all_independent_acknowledgements(self):
+        for minimum in ("3", "6"):
+            self.roots[-1]["minimum_sequence"] = minimum
+            with self.assertRaisesRegex(AssertionError, "omitted an acknowledged sequence"):
+                self.verify()
+
+    def test_clock_read_duration_is_measured_inside_the_original_budget(self):
+        for duration in ("-1", "10001"):
+            self.metadata["clock_read_us"] = duration
+            with self.assertRaisesRegex(AssertionError, "clock-read duration"):
+                self.verify()
+        self.metadata.update(clock_read_us="100", elapsed_us="20100")
+        self.assertEqual(self.verify()["clock_read_us"], 100)
 
 
 class ObjectOperationEvidence(unittest.TestCase):

@@ -4,6 +4,82 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 canonical root capture checkpoint
+
+The entity process driver now waits for canonical object roots after client jobs
+and receipt readbacks join. Follower proofs may acknowledge commands before
+object publication. One read-only barrier covers the entire original serving
+roster under the existing two-second bound. It pins session and endpoint, epoch,
+incarnation, code and schema, and preserves original read errors. Missing or
+changed authority, an unbounded roster, stalled reads or stalled publication fail.
+It does not start another publisher, rotate authority, or use shutdown as proof.
+
+The driver retains each Cell's latest acknowledged sequence across all windows
+and emits actual canonical roots, independently checked minima, complete read
+passes, elapsed duration and boot-clock bounds. Clock reads are included in the
+duration and separately measured for the centisecond clock comparison. The
+arrival windows, rate/concurrency ramp, response and arrival latency, overload
+classification, receipt ledgers, original ownership, follower epochs and final
+root coverage remain required. A barrier must finish within two seconds. See
+the [capacity capture contract](../crates/cellule-app/performance/2026-09-29-write-capacity.md#canonical-root-capture-after-client-work).
+
+The native regression first failed the old one-read pattern with `published root
+does not cover writes`, then passed after the barrier. It uses a real SQL command
+and canonical authority, and reconstructs the captured root to verify both the
+new table and durable request record. This observation test does not claim a
+network follower-proof response. Seven other cases cover every original writer
+binding, a shared deadline across four real Cells and read admission, no progress,
+original typed read errors, dropped observation, closed/missing/successor
+authority and invalid rosters. Each fixture has a private disk ledger and keeps
+all zero-resource shutdown assertions. The initial parallel fixture run failed
+because the default disk ledger is shared; the assertions were retained.
+
+### Scoped verification and remaining qualification
+
+| Evidence | Result |
+| --- | --- |
+| Complete isolated application integration target | 37 passed, none filtered, 16 documented manual cases ignored; eight new cases; 6.53 seconds. |
+| Application all-target/all-feature Clippy | Passed with warnings denied. |
+| Qualification verifier tests | 35 passed across entity and scaling verifiers, including seven new barrier cases. |
+| Static gates | Format/diff, boundaries/layout, 110 documented Rust snippets, 1173 Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+| Original failed follower artifact | All seventeen windows rechecked; the original root coverage gate still rejects Cells 9–11 at 330 versus acknowledged 331. |
+| Historical passing follower artifacts | Their original roots still cover every independent acknowledgement; none supplies the newly required barrier records. |
+
+The unchanged 634-path Rust/Cargo/lock manifest has SHA256
+`724d50a3f8b1e52fd670211966e938dae994b6f38c94fca289db23c65a202122`.
+Active and isolated path sets and every source byte were compared before and
+after both Cargo commands. Logs and the comparison driver are
+`/tmp/cellule-root-barrier-final-*`, `/tmp/cellule-root-barrier-source.sha256`
+and `/tmp/cellule-root-barrier-verify.py`. Original regression and intermediate
+fixture failures are retained in the task record. These are native checks;
+fresh process/provider evidence for this change remains required.
+The native integration binary SHA256 is
+`cf83bd2249db7ae27865ff06c45c29231d0d50483dfa3e2b9913a8e0c46c8205`.
+Verification used Rust/Cargo 1.97.0, all features, locked dependencies and a
+separate Workspace target with `CARGO_INCREMENTAL=0`.
+
+### Previous head CI
+
+PR head `aa12ad905aadd4189f83b4561334efb935a521e3` passed workspace/MSRV,
+contracts, both capacity campaigns, smoke, website, decoder fuzz and fast/negative
+TLC. Broad TLC and simulator were skipped; both routing comparisons remained in
+progress at inspection. This does not establish the causes of earlier failures.
+
+Follower-capacity [job 110794579951](https://github.com/crabbuild/cellule/actions/runs/36993417592/job/110794579951)
+ran three fresh-provider repeats on synthetic merge source
+`096dfb2ff42016519d756c8a302ea22c90a515ea` (parents `191409685b001a82bd02780def45102b4fc2f164`
+and `aa12ad9`). All four driver/node binary records match SHA256
+`ef8ba2ae24a51cb728c937e126e0b94e64ed7110afd06bf4e4cbf2c72fb96ac7`.
+The repeats verified 10/9/9 windows, 2118/1443/1435 acknowledged writes,
+2104/1424/1420 follower-proof responses and 4106/2826/2780 network appends.
+Every recorded raw TSV hash was checked, and the current independent window and
+root-coverage verifier rechecked each repeat. Artifact 11220794009 is retained
+with all 351 entries; ZIP SHA256 is
+`316c295e8e6f33b024354d77d2bff655aa75dbb57a1675dfc2f6bdbab3da3371`.
+The archive and inspection are `/tmp/cellule-fleet-aa12-follower-capacity*`.
+These historical passes cannot qualify the new barrier. Full W1–W10 work,
+including maintenance role settlement/finalization, remains active.
+
 ## October 2 2026 live intent refresh checkpoint
 
 `CellNode::refresh_fleet_intent` reads current physical intent and the original
