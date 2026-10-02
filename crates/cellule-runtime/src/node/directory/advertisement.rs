@@ -190,6 +190,21 @@ impl NodeDirectory {
         Ok(advertisements)
     }
 
+    /// Reports whether every physical node in an enrolled member set is live.
+    pub async fn members_are_live(
+        &self,
+        members: &[NodeId],
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<bool> {
+        let live = self.reader_membership(now_ms, limit).await?;
+        Ok(members.iter().all(|member| {
+            live.iter().any(|advertisement| {
+                advertisement.node == *member && advertisement.expires_at_ms > now_ms
+            })
+        }))
+    }
+
     /// Chooses a destination using only authenticated, measured placement
     /// blocks advertised by the current live fleet.
     ///

@@ -991,7 +991,7 @@ impl Registry {
         invocation: CommandInvocation<'_>,
         issued_at_ms: i64,
     ) -> Result<HandlerOutcome> {
-        if invocation.sequence == 0 || invocation.now_ms < 0 {
+        if invocation.sequence == 0 || invocation.now_ms < 0 || invocation.owner_fence.epoch == 0 {
             return Err(Error::Command("invalid registered command context"));
         }
         let key = BindingKey::new(
@@ -1019,6 +1019,7 @@ impl Registry {
         let mut context = CommandContext {
             transaction,
             target: invocation.target.clone(),
+            owner_fence: invocation.owner_fence,
             effect_targets: self
                 .namespace_modules
                 .get(&invocation.target.namespace())

@@ -48,6 +48,20 @@ pub struct CellPublisher {
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
+enum AppendBase {
+    Published(Option<cellule_ltx::RootRef>),
+    Compacted(Box<cellule_ltx::PreparedRoot>),
+}
+
+impl AppendBase {
+    fn published(&self) -> Option<cellule_ltx::RootRef> {
+        match self {
+            Self::Published(root) => *root,
+            Self::Compacted(prepared) => prepared.predecessor(),
+        }
+    }
+}
+
 impl CellPublisher {
     /// Creates an owner-bound publisher with a private compaction scratch directory.
     ///
@@ -329,7 +343,12 @@ impl CellPublisher {
             return Err(Error::Control("bootstrap control already has a root"));
         }
         let result = self
-            .prepare_cuts(None, cuts, 0, self.observed.value().schema)
+            .prepare_cuts(
+                &AppendBase::Published(None),
+                cuts,
+                0,
+                self.observed.value().schema,
+            )
             .await;
         self.record_publication_cost();
         let prepared = result?;
@@ -376,22 +395,30 @@ impl CellPublisher {
     ) -> Result<cellule_ltx::PreparedRoot> {
         let base = self.compact_before_append(cuts.segments.len()).await?;
         let prepared = match self
-            .prepare_cuts(base.as_ref(), cuts, commit_sequence, schema)
+            .prepare_cuts(&base, cuts, commit_sequence, schema)
             .await
         {
             Ok(prepared) => prepared,
             Err(Error::Ltx(error)) if error.is_cell_graph_limit() => {
-                let Some(root) = base else {
+                let Some(root) = base.published() else {
                     return Err(error.into());
                 };
                 let Some(compacted) = self.force_full_compaction(&root).await? else {
                     return Err(error.into());
                 };
-                self.prepare_cuts(Some(&compacted), cuts, commit_sequence, schema)
-                    .await?
+                self.prepare_cuts(
+                    &AppendBase::Published(Some(compacted)),
+                    cuts,
+                    commit_sequence,
+                    schema,
+                )
+                .await?
             }
             Err(error) => return Err(error),
         };
+        if matches!(base, AppendBase::Compacted(_)) {
+            self.appends_since_compaction_check = 0;
+        }
         self.note_append(&prepared);
         Ok(prepared)
     }
@@ -406,12 +433,9 @@ impl CellPublisher {
         );
     }
 
-    async fn compact_before_append(
-        &mut self,
-        incoming_segments: usize,
-    ) -> Result<Option<cellule_ltx::RootRef>> {
+    async fn compact_before_append(&mut self, incoming_segments: usize) -> Result<AppendBase> {
         let Some(mut base) = self.observed.value().ltx_root() else {
-            return Ok(None);
+            return Ok(AppendBase::Published(None));
         };
         let segment_count = match self.segment_count {
             Some(count) => count,
@@ -426,7 +450,7 @@ impl CellPublisher {
         let debt_limit = COMPACTION_DEBT_SEGMENTS.min(segment_limit);
         let under_pressure = projected >= debt_limit;
         if !under_pressure {
-            return Ok(Some(base));
+            return Ok(AppendBase::Published(Some(base)));
         }
         tracing::debug!(
             segments = segment_count,
@@ -443,16 +467,18 @@ impl CellPublisher {
                     base = compacted;
                 }
                 self.appends_since_compaction_check = 0;
-                return Ok(Some(base));
+                return Ok(AppendBase::Published(Some(base)));
             };
+            let compacted_segments = prepared.verified().segment_count();
+            if compacted_segments.saturating_add(incoming_segments) < debt_limit {
+                // Keep the unchanged-state proposal private. Its append can
+                // replace the original authority root with one fenced CAS.
+                // Cascades that still exceed the bound publish as before.
+                return Ok(AppendBase::Compacted(Box::new(prepared)));
+            }
             let next_due_ms = self.observed.value().next_due_ms;
             base = self.publish_prepared(&prepared, next_due_ms).await?;
-            let compacted_segments = prepared.verified().segment_count();
             self.segment_count = Some(compacted_segments);
-            if compacted_segments.saturating_add(incoming_segments) < debt_limit {
-                self.appends_since_compaction_check = 0;
-                return Ok(Some(base));
-            }
         }
         Err(Error::Control(
             "Cell compaction cascade exceeded level limit",
@@ -530,7 +556,7 @@ impl CellPublisher {
 
     async fn prepare_cuts(
         &mut self,
-        base: Option<&cellule_ltx::RootRef>,
+        base: &AppendBase,
         cuts: &cellule_ltx::CaptureBatch,
         commit_sequence: u64,
         schema: u32,
@@ -538,7 +564,20 @@ impl CellPublisher {
         let mut backoff = Backoff::default();
         loop {
             let replica = self.replica.clone();
-            let attempt = replica.prepare(base, cuts, commit_sequence, schema);
+            let attempt = async {
+                match base {
+                    AppendBase::Published(root) => {
+                        replica
+                            .prepare(root.as_ref(), cuts, commit_sequence, schema)
+                            .await
+                    }
+                    AppendBase::Compacted(prepared) => {
+                        replica
+                            .prepare_after_compaction(prepared, cuts, commit_sequence, schema)
+                            .await
+                    }
+                }
+            };
             tokio::pin!(attempt);
             let result = loop {
                 tokio::select! {

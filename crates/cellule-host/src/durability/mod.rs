@@ -44,6 +44,15 @@ pub trait NodeDurabilityProvider: Send + Sync + 'static {
         live_node_limit: usize,
     ) -> Pin<Box<dyn Future<Output = FacilityResult<Option<NodeDurabilityConfig>>> + Send>>;
 
+    /// Reports whether provider-owned enrollment state requires epoch rotation.
+    ///
+    /// An error defers the decision to a later supervisor tick; it does not
+    /// stop the current object-durable publication path.
+    fn rotation_required(
+        self: Arc<Self>,
+        live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>>;
+
     /// Reports one rotation event to the provider; the default ignores it.
     fn rotation_event(&self, _event: NodeDurabilityRotation) {}
 }

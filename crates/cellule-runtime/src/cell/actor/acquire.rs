@@ -13,6 +13,17 @@ impl CellRuntime {
     /// the peer transport remains responsible for resolving remote authority.
     pub(crate) async fn has_local_owner(&self, cell: CellId) -> crate::Result<bool> {
         self.ensure_running()?;
+        if self.inner.pool.active_cells() == 0 {
+            // Activation reserves a Cell before enqueueing it and holds that
+            // charge through worker teardown. Zero therefore proves a local
+            // miss without waking the dispatcher. A concurrent activation can
+            // change the destination hint; the peer still verifies ownership.
+            self.ensure_running()?;
+            if self.inner.sender.is_closed() {
+                return Err(Error::RuntimeClosed);
+            }
+            return Ok(false);
+        }
         let (reply, response) = oneshot::channel();
         self.inner
             .sender

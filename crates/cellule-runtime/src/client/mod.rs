@@ -798,7 +798,8 @@ impl CellClient {
     /// A lease-fenced resident actor supplies a local route without metadata.
     /// Unleased local actors check fresh catalog and authority. A local miss
     /// delegates without those reads; the peer round trip resolves the remote
-    /// owner and verifies enrollment. This does not acquire an idle Cell.
+    /// owner and verifies enrollment. A runtime with no active or activating
+    /// Cells also avoids a dispatcher lookup. This does not acquire an idle Cell.
     #[must_use]
     pub fn runtime_with_peer(
         registry: Arc<Registry>,

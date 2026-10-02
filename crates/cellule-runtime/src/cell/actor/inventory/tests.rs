@@ -91,7 +91,9 @@ async fn stale_actor_probe_cannot_clear_newer_mutation_markers_or_replace_newer_
     let now = std::time::Instant::now();
     let active = ActiveCell {
         generation: 1,
-        admission: crate::cell::actor::admission::new_cell_admission(),
+        admission: crate::cell::actor::admission::new_cell_admission(
+            publisher.control().value().owner_fence(),
+        ),
         incarnation,
         code: Digest::from_bytes([5; 32]),
         schema: 1,

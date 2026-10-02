@@ -98,8 +98,9 @@ pub(super) fn fence_admission(admission: &CellAdmission) {
     admission.bytes.close();
 }
 
-pub(super) fn new_cell_admission() -> Arc<CellAdmission> {
+pub(super) fn new_cell_admission(owner_fence: crate::control::OwnerFence) -> Arc<CellAdmission> {
     Arc::new(CellAdmission {
+        owner_fence,
         requests: Arc::new(Semaphore::new(CELL_REQUESTS)),
         bytes: Arc::new(Semaphore::new(CELL_BYTES)),
         draining: AtomicBool::new(false),

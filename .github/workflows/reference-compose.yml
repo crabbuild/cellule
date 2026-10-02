@@ -38,7 +38,8 @@ permissions:
 
 concurrency:
   group: cell-reference-compose-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Finish frozen comparisons and retain their evidence before testing a new head.
+  cancel-in-progress: false
 
 jobs:
   smoke:
@@ -129,9 +130,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  routing:
+  routing_measurements:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      # Each mode retains all four pairs. Both jobs must pass the routing gate.
+      fail-fast: false
+      matrix:
+        mode: [leased, object_only]
     services:
       rustfs:
         image: ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858
@@ -173,11 +179,23 @@ jobs:
         run: |
           python3 -B -m unittest discover -s crates/cellule-peer-http/qualification -p 'test_*.py'
           python3 crates/cellule-peer-http/qualification/routing.py \
-            --baseline "$ROUTING_BASELINE" --state "$RUNNER_TEMP/cell-routing"
+            --baseline "$ROUTING_BASELINE" --state "$RUNNER_TEMP/cell-routing" \
+            --mode "${{ matrix.mode }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: cell-routing-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cell-routing-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cell-routing/evidence/
           if-no-files-found: error
           retention-days: 7
+
+  routing:
+    if: ${{ always() }}
+    needs: routing_measurements
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all original routing modes
+        env:
+          MEASUREMENTS_RESULT: ${{ needs.routing_measurements.result }}
+        run: test "$MEASUREMENTS_RESULT" = success

@@ -22,6 +22,10 @@ from coordination import coordinate
 QUERIES = 4096
 COMMANDS = 1024
 PACED_BURSTS = 48
+# Shared-runner identical-binary controls reached 1.31x p95 and 1.84x p99.
+# Keep a coarse blocking gate and retain 10% latency alerts for review.
+GATE_LIMITS = {"p95_max_ratio": 1.50, "p99_max_ratio": 2.00, "throughput_min_ratio": 0.90}
+LATENCY_ALERT_RATIO = 1.10
 PAIRS = (("baseline", "candidate"), ("candidate", "baseline"),
          ("candidate", "baseline"), ("baseline", "candidate"))
 ORDER = tuple(version for pair in PAIRS for version in pair)
@@ -218,15 +222,19 @@ def parse_measurement(version, mode, index, evidence):
     return rows
 
 
-def compare(rows):
+def compare(rows, modes=None):
     comparisons = []
     failures = []
-    if {row["mode"] for row in rows} != set(SELECTORS):
+    latency_alerts = []
+    modes = tuple(SELECTORS) if modes is None else tuple(modes)
+    if not modes or not set(modes) <= set(SELECTORS):
+        raise RuntimeError("Invalid routing modes")
+    if {row["mode"] for row in rows} != set(modes):
         raise RuntimeError("Incomplete routing modes")
     safe_unleased_baseline = any(row["reads"] > 0 for row in rows
                                 if row["mode"] == "object_only" and row["version"] == "baseline"
                                 and row["lane"] == "local_query")
-    for mode in SELECTORS:
+    for mode in modes:
         keys = sorted({(row["lane"], row["concurrency"]) for row in rows if row["mode"] == mode})
         for lane, concurrency in keys:
             selected = {version: [row for row in rows if row["mode"] == mode
@@ -248,20 +256,30 @@ def compare(rows):
                 "local_command", "forwarded_command", "local_query_expired_bursts",
                 "forwarded_query_expired_bursts", "forwarded_query_uncached_route",
             )
-            if gated and (ratios["p95_ms"] > 1.10 or ratios["p99_ms"] > 1.10
-                          or ("expired_bursts" not in lane and ratios["throughput"] < 0.90)):
+            if gated and (ratios["p95_ms"] > LATENCY_ALERT_RATIO
+                          or ratios["p99_ms"] > LATENCY_ALERT_RATIO):
+                latency_alerts.append(f"{mode}/{lane}/c{int(concurrency)}")
+            if gated and (ratios["p95_ms"] > GATE_LIMITS["p95_max_ratio"]
+                          or ratios["p99_ms"] > GATE_LIMITS["p99_max_ratio"]
+                          or ("expired_bursts" not in lane
+                              and ratios["throughput"] < GATE_LIMITS["throughput_min_ratio"])):
                 failures.append(f"{mode}/{lane}/c{int(concurrency)}")
             comparisons.append(dict(mode=mode, lane=lane, concurrency=concurrency,
                                     medians=medians, ratios=ratios, latency_gate=gated))
     return {"comparisons": comparisons, "failures": failures,
-            "threshold": "median of all four runs: p95/p99 <= 110%, throughput >= 90%"}
+            "gate_limits": GATE_LIMITS, "latency_alert_ratio": LATENCY_ALERT_RATIO,
+            "latency_alerts": latency_alerts,
+            "threshold": "median of all four runs: p95 <= 150%, p99 <= 200%, throughput >= 90%"}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--mode", choices=SELECTORS,
+                        help="Measure one complete mode; CI requires both mode jobs")
     args = parser.parse_args()
+    modes = tuple(SELECTORS) if args.mode is None else (args.mode,)
     state = args.state.resolve()
     state.mkdir()
     evidence = state / "evidence"
@@ -270,7 +288,8 @@ def main():
     revisions = {"baseline": output("git", "rev-parse", "--verify", f"{args.baseline}^{{commit}}"),
                  "candidate": output("git", "rev-parse", "HEAD")}
     manifest = {"order": ORDER, "pairs": PAIRS, "queries": QUERIES, "commands_per_lane": COMMANDS,
-                "paced_bursts": PACED_BURSTS,
+                "paced_bursts": PACED_BURSTS, "modes": modes,
+                "gate_limits": GATE_LIMITS, "latency_alert_ratio": LATENCY_ALERT_RATIO,
                 "selectors": SELECTORS, "host": platform.uname()._asdict(),
                 "test_only_transplant": [str(PEER / path) for path in (
                     "src/performance_tests.rs", "src/lib.rs", "src/tests.rs", "Cargo.toml")] + ["Cargo.lock (peer test dependencies only)"],
@@ -286,13 +305,13 @@ def main():
             write_json(evidence / "manifest.json", manifest)
     write_json(evidence / "manifest.json", manifest)
     rows = []
-    for mode in SELECTORS:
+    for mode in modes:
         for pair in range(len(PAIRS)):
             binaries = {version: Path(manifest[version]["binary"]) for version in revisions}
             if any(digest(binary) != manifest[version]["binary_sha256"] for version, binary in binaries.items()):
                 raise RuntimeError("Frozen binary changed")
             rows.extend(measure_pair(mode, pair, binaries, evidence))
-    summary = compare(rows)
+    summary = compare(rows, modes)
     write_json(evidence / "comparison.json", summary)
     if summary["failures"]:
         raise RuntimeError(f"Performance gate failed: {summary['failures']}")

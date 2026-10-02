@@ -56,6 +56,13 @@ Install the existing durability provider during startup, then call
 `CellNode::request_node_log_rotation(expected_epoch)` from an authorized
 management adapter. The same supervisor wakes immediately and uses confirmed
 old-member retirement; maintenance does not wait for the normal frame threshold.
+The provider's `rotation_required(live_node_limit)` hook also requests automatic
+rotation when its enrolled members expire, before the frame threshold. The
+fleet-bound provider delegates this read to `FleetNodeDurabilityProvider`.
+A failed membership read emits Failed and retries on a later tick while the
+object-proof path remains available. After the read, the supervisor rechecks
+its one bounded claim so an accepted maintenance request keeps strict retirement.
+
 Duplicate requests for that epoch share progress. An automatic best-effort
 rotation already in flight is refused; observe the current binding before retry.
 

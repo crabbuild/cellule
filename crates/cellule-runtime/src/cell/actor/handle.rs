@@ -41,6 +41,7 @@ pub struct CellHandle {
 }
 
 pub(super) struct CellAdmission {
+    pub(super) owner_fence: crate::control::OwnerFence,
     pub(super) requests: Arc<Semaphore>,
     pub(super) bytes: Arc<Semaphore>,
     pub(super) draining: AtomicBool,
@@ -124,6 +125,15 @@ impl CellHandle {
     #[must_use]
     pub const fn incarnation(&self) -> IncarnationId {
         self.incarnation
+    }
+
+    /// Returns the fence stamped on this activation's admission capability.
+    ///
+    /// A stale handle retains its original value but cannot admit new work.
+    /// Command handlers receive this same value through `CommandContext`.
+    #[must_use]
+    pub fn owner_fence(&self) -> crate::control::OwnerFence {
+        self.admission.owner_fence
     }
 
     /// Returns the application code digest the Cell serves.
@@ -445,7 +455,7 @@ impl CellHandle {
         }
         self.admission.requests.close();
         self.admission.bytes.close();
-        let successor_admission = new_cell_admission();
+        let successor_admission = new_cell_admission(self.owner_fence());
         let (reply, response) = oneshot::channel();
         self.inner
             .sender

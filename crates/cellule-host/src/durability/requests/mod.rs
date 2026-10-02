@@ -276,6 +276,7 @@ impl RotationRequests {
         &self,
         runtime: &CellRuntime,
         max_frames: u64,
+        provider_rotation: bool,
     ) -> cellule_runtime::Result<Option<RotationWork>> {
         let mut bank = self.lock()?;
         if bank.stopped || bank.running.is_some() {
@@ -296,7 +297,7 @@ impl RotationRequests {
                     "requested node-log binding changed outside supervisor",
                 ));
             }
-        } else if !current.needs_rotation(max_frames) {
+        } else if !provider_rotation && !current.needs_rotation(max_frames) {
             return Ok(None);
         }
         let epoch = current.log_epoch()?;

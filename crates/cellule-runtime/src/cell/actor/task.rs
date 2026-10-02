@@ -375,7 +375,7 @@ pub(super) fn handle_message(
             }
             *next_generation = next_generation.wrapping_add(1).max(1);
             let generation = *next_generation;
-            let admission = new_cell_admission();
+            let admission = new_cell_admission(publisher.control().value().owner_fence());
             let pool = pool.clone();
             tasks.spawn(async move {
                 let mut publisher = publisher;
@@ -880,7 +880,7 @@ pub(super) fn handle_message(
                 active.admission.draining.store(true, Ordering::Release);
                 active.admission.requests.close();
                 active.admission.bytes.close();
-                active.admission = new_cell_admission();
+                active.admission = new_cell_admission(active.admission.owner_fence);
                 active.transfer = Some(TransferPreflight {
                     reply,
                     maintenance: None,

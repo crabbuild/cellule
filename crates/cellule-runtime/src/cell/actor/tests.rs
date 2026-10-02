@@ -1,6 +1,108 @@
 use super::{CellRuntimeStats, bounded_u32};
 
 #[tokio::test]
+async fn empty_runtime_miss_does_not_wait_for_the_dispatcher() {
+    use super::*;
+    use futures_util::FutureExt;
+
+    let pool = SqlWorkerPool::new(1, 1).unwrap();
+    let runtime = CellRuntime::new(pool, 1 << 20, SessionId::from_bytes([62; 16])).unwrap();
+    // On this current-thread executor the actor has not been polled. An empty
+    // runtime must forward without first waking that actor for a negative lookup.
+    assert!(matches!(
+        runtime
+            .has_local_owner(CellId::from_bytes([62; 32]))
+            .now_or_never(),
+        Some(Ok(false))
+    ));
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_runtime_miss_preserves_lease_and_closed_dispatcher_errors() {
+    use super::*;
+
+    let fenced = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        1 << 20,
+        SessionId::from_bytes([64; 16]),
+        cellule_ltx::Host::default(),
+    )
+    .unwrap();
+    let cell = CellId::from_bytes([64; 32]);
+    assert!(matches!(
+        fenced.has_local_owner(cell).await,
+        Err(Error::Fenced)
+    ));
+    fenced.shutdown().await.unwrap();
+
+    let mut runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        1 << 20,
+        SessionId::from_bytes([65; 16]),
+    )
+    .unwrap();
+    let (sender, receiver) = mpsc::channel(1);
+    drop(receiver);
+    let original = std::mem::replace(
+        &mut Arc::get_mut(&mut runtime.inner).unwrap().sender,
+        sender,
+    );
+    assert!(matches!(
+        runtime.has_local_owner(cell).await,
+        Err(Error::RuntimeClosed)
+    ));
+    Arc::get_mut(&mut runtime.inner).unwrap().sender = original;
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn activation_reservation_prevents_the_empty_runtime_shortcut() {
+    use super::*;
+    use futures_util::FutureExt;
+
+    let pool = SqlWorkerPool::new(1, 1).unwrap();
+    let mut runtime =
+        CellRuntime::new(pool.clone(), 1 << 20, SessionId::from_bytes([63; 16])).unwrap();
+    let cell = CellId::from_bytes([63; 32]);
+    let (sender, mut receiver) = mpsc::channel(1);
+    let original = std::mem::replace(
+        &mut Arc::get_mut(&mut runtime.inner).unwrap().sender,
+        sender,
+    );
+    let reservation = pool.reserve_activation().unwrap();
+    {
+        let lookup = runtime.has_local_owner(cell);
+        tokio::pin!(lookup);
+        assert!(lookup.as_mut().now_or_never().is_none());
+        match receiver.try_recv().unwrap() {
+            Message::Lookup {
+                cell: requested,
+                require_resident,
+                reply,
+            } => {
+                assert_eq!(requested, cell);
+                assert!(!require_resident);
+                assert!(reply.send(None).is_ok());
+            }
+            _ => panic!("activation in progress must consult actor admission"),
+        }
+        assert!(!lookup.await.unwrap());
+    }
+    drop(reservation);
+    assert!(matches!(
+        runtime.has_local_owner(cell).now_or_never(),
+        Some(Ok(false))
+    ));
+    Arc::get_mut(&mut runtime.inner).unwrap().sender = original;
+    runtime.shutdown().await.unwrap();
+    assert!(matches!(
+        runtime.has_local_owner(cell).await,
+        Err(Error::RuntimeClosed)
+    ));
+}
+
+#[tokio::test]
 async fn shutdown_reports_deactivation_failure_completed_before_it_started() {
     assert!(matches!(
         shutdown_after_release(Err(super::Error::Fenced), None).await,

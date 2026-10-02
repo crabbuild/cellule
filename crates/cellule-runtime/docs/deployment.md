@@ -129,6 +129,10 @@ flowchart LR
 
 The receiving node resolves the exact owner from `control.json` and its signed live advertisement. It dispatches locally when it owns the Cell, otherwise it forwards once.
 
+`CellClient::runtime_with_peer` forwards without a local dispatcher lookup when
+the runtime has no active or activating Cells. The shared resource ledger proves
+that miss; the destination still checks its own authority and admission.
+
 A stale endpoint retry is allowed only when the first attempt definitely did not start. An ambiguous mutation returns evidence for `Resolve`.
 
 <a id="replica-reads"></a>

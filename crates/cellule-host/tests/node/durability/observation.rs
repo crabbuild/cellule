@@ -7,6 +7,13 @@ struct IdleProvider {
     calls: AtomicUsize,
 }
 impl NodeDurabilityProvider for IdleProvider {
+    fn rotation_required(
+        self: Arc<Self>,
+        _live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>> {
+        Box::pin(async { Ok(false) })
+    }
+
     fn recruit(
         self: Arc<Self>,
         _limits: ReplicaLimits,

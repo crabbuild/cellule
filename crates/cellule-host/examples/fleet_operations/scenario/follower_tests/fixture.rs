@@ -214,6 +214,13 @@ impl Provider {
     }
 }
 impl FleetNodeDurabilityProvider for Provider {
+    fn rotation_required(
+        self: Arc<Self>,
+        _live_node_limit: usize,
+    ) -> std::pin::Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>> {
+        Box::pin(async { Ok(false) })
+    }
+
     fn prepare(
         self: Arc<Self>,
         _limits: Limits,

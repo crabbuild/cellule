@@ -40,6 +40,15 @@ pub trait FleetNodeDurabilityProvider: Send + Sync + 'static {
         live_node_limit: usize,
     ) -> Pin<Box<dyn Future<Output = FacilityResult<Option<FleetNodeLogRecruitment>>> + Send>>;
 
+    /// Reports whether provider-owned enrollment state requires epoch rotation.
+    ///
+    /// An error defers the decision to a later supervisor tick; it does not
+    /// stop the current object-durable publication path.
+    fn rotation_required(
+        self: Arc<Self>,
+        live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>>;
+
     /// Observes the existing supervisor's rotation events.
     fn rotation_event(&self, _event: NodeDurabilityRotation) {}
 }
@@ -329,6 +338,12 @@ impl NodeDurabilityProvider for FleetFollowerEnrollment {
                 .await
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
         })
+    }
+    fn rotation_required(
+        self: Arc<Self>,
+        live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>> {
+        Arc::clone(&self.provider).rotation_required(live_node_limit)
     }
     fn rotation_event(&self, event: NodeDurabilityRotation) {
         self.provider.rotation_event(event);

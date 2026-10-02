@@ -117,6 +117,14 @@ const COMMANDS: &[OperationDescriptor] = &[
         input_limit: 8,
         output_limit: 1,
     },
+    OperationDescriptor {
+        id: 9,
+        codec_version: 1,
+        schema_min: 1,
+        schema_max: 1,
+        input_limit: 64,
+        output_limit: 64,
+    },
 ];
 const QUERIES: &[OperationDescriptor] = &[
     OperationDescriptor {
@@ -161,6 +169,7 @@ impl CellModule for RepositoryModule {
         registry.bind_command::<InvalidResultComment>()?;
         registry.bind_command::<EmitEffectComment>()?;
         registry.bind_command::<EmitUndeclaredEffect>()?;
+        registry.bind_command::<ObserveOwnerFence>()?;
         registry.bind_query::<CountComments>()?;
         register_effect_delivery::<Self>(registry)?;
         Ok(())
@@ -173,6 +182,24 @@ impl EffectModule for RepositoryModule {
     const LEASE_COMMAND_ID: u32 = 5;
     const VALIDATE_QUERY_ID: u32 = 2;
     const STATUS_QUERY_ID: u32 = 3;
+}
+
+struct ObserveOwnerFence;
+impl Command for ObserveOwnerFence {
+    const MODULE: &'static str = MODULE;
+    const ID: u32 = 9;
+    const CODEC_VERSION: u32 = 1;
+    type Input = Vec<u8>;
+    type Output = Vec<u8>;
+    fn execute(
+        context: &mut CommandContext<'_, '_>,
+        _untrusted_input: Vec<u8>,
+    ) -> cellule_runtime::Result<CommandResult<Vec<u8>>> {
+        let fence = context.owner_fence();
+        let mut bytes = fence.incarnation.as_bytes().to_vec();
+        bytes.extend_from_slice(&fence.epoch.to_be_bytes());
+        Ok(CommandResult::Success(bytes))
+    }
 }
 
 struct CreateComment;

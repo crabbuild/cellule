@@ -78,22 +78,22 @@ impl PeerRoundTrip for ReaderHints {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn published_command_wakes_reader_recruitment_before_periodic_scan() {
     publication_hints(1, false).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn stalled_reader_does_not_delay_healthy_reader_publication_hints() {
     publication_hints(2, true).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn publication_hints_reach_readers_beyond_the_activation_concurrency() {
     publication_hints(20, true).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn pending_reader_activation_retains_a_new_publication_hint() {
     publication_hints_with_gate(20, true, true).await;
 }
@@ -109,6 +109,14 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
     };
     use std::time::Duration;
 
+    // A periodic pass may coalesce queued hints with the next publication. Keep
+    // its clock stationary so every observed refresh proves a publication wake-up.
+    // SQL workers run outside Tokio's blocking pool; this guard inhibits automatic
+    // clock advancement while they reply, with a real-time bound for broken tests.
+    let (clock_guard, clock_release) = std::sync::mpsc::channel::<()>();
+    let clock_task = tokio::task::spawn_blocking(move || {
+        let _ = clock_release.recv_timeout(Duration::from_secs(10));
+    });
     let application = Arc::new(compiled());
     let registry = application.registry();
     let tenant = TenantId::from_bytes([81; 16]);
@@ -232,11 +240,13 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
     )
     .unwrap();
     node.start().unwrap();
+    let recruitment_clock = tokio::time::Instant::now();
+    let recruitment_started = std::time::Instant::now();
     // Always drain the host before propagating a failed assertion. A regression
     // must not leave the intentionally stalled transport alive in the suite.
     let observed = std::panic::AssertUnwindSafe(async {
         // Consume the immediate periodic pass before publishing. The next tick is
-        // five seconds away, so only a publication wake-up can satisfy this bound.
+        // five virtual seconds away; the two-second bound excludes its repair.
         for _ in 1..count {
             tokio::time::timeout(Duration::from_secs(2), hints.recv())
                 .await
@@ -284,12 +294,14 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
             .await;
             assert!(
                 received.is_ok(),
-                "publication {occurrence} timed out after {:?}: received {} of {} healthy hints; missing {:?}; held {:?}; pending transports {}",
+                "publication {occurrence} timed out after {:?}: received {} of {} healthy hints; missing {:?}; held {:?}; recruitment elapsed: {:?}; directory age: {}ms; pending transports {}",
                 started.elapsed(),
                 notified.len(),
                 healthy.len() - usize::from(held_session.is_some()),
-                healthy.difference(&notified).collect::<Vec<_>>(),
+                healthy.difference(&notified).filter(|session| Some(**session) != held_session).collect::<Vec<_>>(),
                 held_session,
+                recruitment_started.elapsed(),
+                now_ms() - now,
                 pending.load(std::sync::atomic::Ordering::Relaxed),
             );
             if let Some(held) = held.as_ref().filter(|_| occurrence == 1) {
@@ -312,15 +324,24 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
                 pending.load(std::sync::atomic::Ordering::Relaxed),
                 usize::from(stalled_reader)
             );
+            assert_eq!(
+                tokio::time::Instant::now(),
+                recruitment_clock,
+                "periodic repair must not supply a publication hint"
+            );
         }
     })
     .catch_unwind()
     .await;
+    // Drain against real time even if the watchdog released the paused clock.
+    tokio::time::resume();
     tokio::time::timeout(Duration::from_secs(2), node.shutdown())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(pending.load(std::sync::atomic::Ordering::Relaxed), 0);
+    drop(clock_guard);
+    clock_task.await.unwrap();
     if let Err(failure) = observed {
         std::panic::resume_unwind(failure);
     }

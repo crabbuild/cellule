@@ -58,8 +58,31 @@ async fn rotate<P: NodeDurabilityProvider>(
     cancellation: &CancellationToken,
     requests: &RotationRequests,
 ) -> FacilityResult {
-    let Some(work) = requests.claim(runtime, configuration.max_issued_frames)? else {
-        return Ok(());
+    let work = match requests.claim(runtime, configuration.max_issued_frames, false)? {
+        Some(work) => work,
+        None => {
+            match provider
+                .clone()
+                .rotation_required(configuration.live_node_limit)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => return Ok(()),
+                Err(_) => {
+                    provider.rotation_event(NodeDurabilityRotation::Failed);
+                    return Ok(());
+                }
+            }
+            if cancellation.is_cancelled() {
+                return Ok(());
+            }
+            // Recheck the bounded request bank after provider I/O. Explicit
+            // maintenance and expiry-driven rotation share this one claim.
+            let Some(work) = requests.claim(runtime, configuration.max_issued_frames, true)? else {
+                return Ok(());
+            };
+            work
+        }
     };
     provider.rotation_event(NodeDurabilityRotation::Started);
     if let Some(record) = &work.record {

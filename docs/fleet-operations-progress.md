@@ -4,6 +4,48 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 PR 37 merge conflict resolution
+
+The branch integrates main `0f4ca09` while preserving its retained maintenance
+and shutdown ownership. Four conflicts involved actor admission, replica hint
+fixtures, task supervision fixtures and the split durability module.
+
+- Transfer admission carries the upstream admitted owner fence and the existing
+  maintenance preflight record.
+- Expiry-driven rotation uses the existing bounded supervisor claim. After
+  provider I/O, the claim is rechecked so accepted maintenance remains strict.
+  Fleet-bound recruitment delegates the same provider membership-read hook.
+- Publication-hint tests retain their paused-clock guard, original bounds and
+  assertions, alongside upstream recruitment and directory diagnostics.
+- The upstream rotation fixture uses the canonical retirement observation and
+  the same signed session as its host. The original deadline and close/recruit
+  count assertions remain unchanged.
+
+Verification uses an isolated snapshot with complete source-set and byte checks
+before and after each command. Its 638 Rust/Cargo/lock paths have manifest SHA256
+`c1393c29486a7bc1bffcdf61e88db8cc3a5f6110abe4d9c4fa3d46d4fe62f784`.
+
+| Complete native command scope | Result |
+| --- | --- |
+| Workspace check, all targets and features, locked | Passed. |
+| Runtime library, all features, locked | 515 passed; three existing ignores. |
+| Runtime admitted-owner-fence integration filter | Three passed; 201 unrelated cases filtered. |
+| Host library, all features, locked | 29 passed. |
+| Public host node suite, all features, locked | 99 passed; none ignored or filtered. |
+| Fleet example, all features, locked | 112 passed; none ignored or filtered; 68.65 seconds. |
+| Application integration, all features, locked | 39 passed; the same 16 documented manual ignores. |
+
+These scopes contain 797 distinct passed cases. Host Clippy across all targets
+and features and host API documentation pass with warnings denied. Format,
+boundaries, module layout, 110 Rust snippets, 1173 Markdown links and the SQL/peer
+validator's 28 assertions and 567 links pass.
+
+Initial compile failures and
+an invalid-session fixture run are archived separately; they do not qualify
+this source. Merged-source Linux, process/provider, mixed-binary and complete
+W1–W10 qualification remain open. Prior checkpoint evidence below retains its
+original source scope; earlier green results do not qualify this merge.
+
 ## October 2 2026 retained node task joins checkpoint
 
 The parent `0132b60` task group removed handles from its bank before joining.

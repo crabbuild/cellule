@@ -325,6 +325,7 @@ The actor never reruns a handler after SQLite may have started it. `Resolve` rea
 **Bounded upload concurrency**
 
 - Root preparation also overlaps independent content-addressed uploads. The LTX body and index, changed and initial directory nodes, and root metadata use bounded concurrency under the runtime's shared I/O permits.
+- When foreground compaction clears the segment-debt bound, its successor append retains the original authority predecessor. One fenced CAS selects the final root after all dependencies upload; the unchanged intermediate root stays private. Compaction cascades and quiet-period publication keep their existing bounds.
 - Initial directory construction retains at most eight encoded nodes awaiting upload.
 - The proposal remains private until every dependency upload completes, so authority cannot observe a partial root.
 
@@ -448,6 +449,15 @@ activation, never correctness.
 
 <a id="ownership-renewal"></a>
 ## Renew and self-fence ownership
+
+`CommandContext::owner_fence()` exposes the incarnation and epoch stamped on the
+admission that accepted the execution. Local typed commands and authenticated
+inbox delivery use the same stamp; no authority fetch is added to their command
+path. Operation tokens can bind this fence and reject delayed preparation from
+a predecessor. Admission replacement within the same ownership epoch retains
+the stamp. Recorded outcomes and follower-restored SQL bytes remain unchanged;
+recovery does not rerun application handlers with a guessed current fence.
+
 
 - **Scanner.** Each owner normally becomes due every three seconds. One node-level scanner finds due owners every 100 ms, orders them by their original deadline, and starts at most 32 renewals concurrently. A completed renewal immediately frees a slot for the next due owner; each scan discards stale candidates. This removes the former 320-starts/s tick ceiling without reducing the one-control-update-per-active-Cell cost. A mutation publication also advances owner progress.
 - **Renewal budget.** The runtime gives a control-record renewal up to thirty seconds under object-store pressure.
