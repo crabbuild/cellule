@@ -106,6 +106,17 @@ changed/missing continuations, and keep original failed retirement/error Arcs.
 Idle protocol or absent rows do not establish a joined supervisor or empty native
 lanes. The reference collector still needs authenticated complete role envelopes.
 
+The public host durability suite also captures `fleet_durability_supervisor`
+while original retirement/recruitment is unresolved, after byte admission
+closes during drain, and after local rotation completion. It compares original
+proof/error references and verifies fixed metadata admission and release.
+Supervisor completion and bank availability are separate from producer row
+counts; these captures still cannot certify fleet settlement.
+
+```sh
+cargo test -p cellule-host --test node --all-features --locked node::durability
+```
+
 [`SqliteJournal`](journal/mod.rs) implements all three host journal interfaces
 in one local SQLite transaction domain. It lives in the embedding example;
 the host library remains provider neutral.

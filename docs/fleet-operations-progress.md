@@ -4,6 +4,98 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 retained supervisor observation checkpoint
+
+`CellNode::fleet_durability_supervisor` captures the existing supervisor owner
+without waiting on its join lane, provider I/O or native retirement. It exposes
+unstarted/running/returned/joined states, an unobserved task exit, request-stop
+failure, and the original bounded rotation bank, including automatic claims.
+Supervisor and request-stop failures remain separate original references.
+Unavailable bank capture is an explicit error; missing, idle, canceled or joined
+work supplies no role-absence or safe-finalization proof.
+
+The owner charges four KiB to the shared retained-byte ledger before provider
+work starts. `CellRuntime::try_reserve_node_metadata_bytes` permits bounded
+lifecycle metadata before lease admission and after fencing. It authorizes no
+native work or role; `try_reserve_node_bytes` still checks the node lease, and
+terminal drain closes both allocation paths. Capture uses the installed charge
+after new byte admission closes. Shutdown releases that owner and its charge.
+
+The original task join is committed before stopping its request bank. A failed
+stop cannot leave a consumed JoinHandle available for a second poll. Tests join
+real successful and panicked supervisor tasks with a poisoned original bank,
+repeat the join, and compare the concrete original source addresses and separate
+error Arcs. Public tests capture unresolved retirement and recruitment during
+drain, preserve completed original rotation/proof references, and distinguish
+unbound, wrong-type, invalid-time and exhausted admission without creating work.
+Runtime tests require metadata/native allocations to share the same capacity,
+preserve fencing, reject zero/full/closed allocation and release exact credit.
+
+The first complete node run passed 83 cases and failed the existing provider
+installation before a lease with `Fenced`. The final metadata path preserves
+that startup contract; the original test is unchanged. Earlier public-test
+builder omissions and a trait-object vtable identity assertion are retained in
+the intermediate logs. Concrete downcast source addresses avoid duplicate
+vtable identities while keeping the original-source assertion.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Parent | `9faedb991363cbe2d34dfe90690c8e87cc5e605c`. |
+| Rust/Cargo manifest | 623 sources/manifests/all lockfiles; SHA256 `f1f06c9f28802aef58710332984425116ab4f01681f903c10533d6c651ab6340`. All indexed blobs match the tested manifest. |
+| Environment | Rust/Cargo 1.97.0, all features, locked dependencies, `CARGO_INCREMENTAL=0`, separate Workspace targets for the active and isolated checkouts. |
+| Complete host library / public node / fleet example | 26 / 84 / 90 passed; none filtered or ignored. |
+| Isolated runtime lease selection | Five passed, 196 filtered; none ignored. Includes the new shared metadata/native credit and fencing case. |
+| Isolated complete application integration | 29 passed; none filtered; 16 documented manual cases ignored. |
+| Distinct scoped cases | 234 passed, including ten new cases. Repetitions and intermediate runs are not added. |
+| Clippy / API documentation | Runtime/host/application all-target Clippy and runtime/host API docs passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, 1,172 local Markdown links, 28 SQL/peer assertions and 567 validator links passed. Document gates were rerun after adding the final record. |
+
+Both drivers compare every file and the complete path set after each command.
+Logs, drivers and manifest are `/tmp/cellule-supervisor-observation-final-*`;
+intermediate evidence is `/tmp/cellule-supervisor-observation-*`, including
+`pre-startup-fix`. The full plan and authenticated aggregate observer remain
+incomplete; this checkpoint is a native-owner observation prerequisite.
+
+### Previous checkpoint terminal qualification
+
+The corrected `9faedb9` Linux ARM64 campaign is terminal. With the pinned image
+below, two CPUs, four GiB, zero swap and 8,192 descriptors, run 1 passed 89
+example cases and failed `measured_overload_moves_real_cells_after_durable_controller_reconstruction`
+with `real movement did not settle both attempts`; its cause is unestablished.
+Runs 2–5 each passed all 90 cases, in 28.83, 31.62, 57.06 and 51.62 seconds.
+The 128-reader and canonical renewal cases passed all five runs, including
+beyond the original 30-second expiry. Every before/build/after source manifest
+matches the previous 619-path `fbc5eb81…` source. The original binary SHA256 is
+`6ba713e78de3c0de84d6d6b997681b7a6736199bd94255bba47dccad5ee51a14`.
+All raw logs, build JSON, exact executable, limits, hashes and terminal no-OOM
+state are `/tmp/cellule-host-linux-evidence-reader-pressure-fix/`.
+The first failure prevents claiming this entire campaign passes.
+
+Exact-head `9faedb9` workspace
+[job 110731568907](https://github.com/crabbuild/cellule/actions/runs/36973266806/job/110731568907)
+passes 89 example cases and fails the controller-restart requirement of two
+retained lost release replies: one reply and one attempt remain, with one
+retirement reported. Cause remains unestablished. Its Compose smoke
+[job 110736670337](https://github.com/crabbuild/cellule/actions/runs/36973266798/job/110736670337)
+fails `reader-6 made no progress replacement reader replacement` during scale
+verification. Both jobs checked out PR merge revision
+`3b3bb0a13eae209a845ded4e4ef9316fdc9a930d`, merging `9faedb9` into
+`191409685b001a82bd02780def45102b4fc2f164`; the smoke artifact records that
+exact source. Original logs are `/tmp/cellule-fleet-9faedb9-{workspace,smoke}.log`;
+the original smoke artifact is `/tmp/cellule-fleet-9faedb9-compose.zip`.
+Its replacement interval was 14,247,556 microseconds. Reader lane 6 started
+three calls in that interval, each returned `behind` at approximately five
+seconds, and none supplied an `ok` result wholly inside the interval. This is
+failure evidence; the reason for those responses remains unestablished. The raw
+artifact SHA256 is `5ab774d86a259c548dae1107118bd806d8685e32ce1fe5c1e985b8b698099900`;
+extracted records and the derived summary are `/tmp/cellule-fleet-9faedb9-compose/`
+and `/tmp/cellule-fleet-9faedb9-compose-reader-loss-summary.json`.
+Contracts, MSRV, both capacity jobs, website, fuzz smoke and fast/negative TLC
+pass; broad TLC and the simulator are skipped. Leased routing job 110736670549
+completed success at 2026-10-02 07:19:32 UTC; the object-only comparison was
+still running at the 07:22 UTC capture. These results do not certify the new
+source or complete W1–W10. The new commit requires its own CI; the PR stays draft.
+
 ## October 1 2026 reader fixture admission and lease checkpoint
 
 The 128-view pagination case now has explicit native admission headroom and
@@ -62,8 +154,8 @@ matches the original 618-file manifest
 `0c281c09e65e562a774ecc409a207f750c3e49514d060d9e8b49a588611c69ad`.
 Source hashes, all five logs, build output, original binary and terminal container
 configuration/state are retained in `/tmp/cellule-host-linux-evidence-489c5a9/`.
-The corrected source runs separately with an explicit 8,192-descriptor limit;
-its terminal result must be recorded before claiming that campaign passes.
+The corrected source ran separately with an explicit 8,192-descriptor limit;
+its terminal results are recorded in the October 2 checkpoint above.
 
 ### Current CI limitations
 

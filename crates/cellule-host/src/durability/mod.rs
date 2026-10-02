@@ -95,11 +95,16 @@ impl NodeDurabilitySupervisorConfig {
 }
 
 pub(crate) mod enrollment;
+mod observation;
 mod owner;
 pub use enrollment::{
     FleetNodeDurabilityProvider, FleetNodeLogRecruitment, FollowerEnrollmentCompletion,
     FollowerEnrollmentInventoryCursor, FollowerEnrollmentInventoryPage, FollowerEnrollmentMember,
     FollowerEnrollmentProgress,
+};
+pub use observation::{
+    NodeDurabilitySupervisorObservation, NodeDurabilitySupervisorState, NodeLogRotationEntry,
+    NodeLogRotationInventory,
 };
 mod requests;
 mod supervisor;

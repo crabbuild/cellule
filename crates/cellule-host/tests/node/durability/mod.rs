@@ -1,4 +1,5 @@
 //! Requested rotation, native follower fences and retained supervisor joins.
+mod observation;
 use super::fleet_actions::clock;
 use super::*;
 use bytes::Bytes;
@@ -646,6 +647,30 @@ async fn host_deadline_retains_accepted_recruitment_until_native_cleanup_joins()
     assert!(!test.withdrawn.load(Ordering::Acquire));
     assert!(request.observe().unwrap().completion().is_none());
     assert_eq!(test.provider.recruited.lock().unwrap().len(), 1);
+    until(|| test.node.runtime().is_shutting_down()).await;
+    assert!(matches!(
+        test.node.runtime().try_reserve_node_bytes(1),
+        Err(Error::RuntimeClosed)
+    ));
+    let retained = test.node.stats().retained_bytes();
+    let supervisor = test
+        .node
+        .fleet_durability_supervisor(clock())
+        .unwrap()
+        .unwrap();
+    assert_eq!(supervisor.state, NodeDurabilitySupervisorState::Running);
+    assert!(supervisor.cancellation_requested);
+    let inventory = supervisor.rotations.unwrap();
+    assert!(!inventory.stopped);
+    assert_eq!(inventory.running_epoch, Some(1));
+    let pending = inventory.pending.unwrap();
+    assert_eq!(pending.epoch, 1);
+    assert_eq!(pending.progress.phase(), NodeLogRotationPhase::Recruiting);
+    assert!(Arc::ptr_eq(
+        pending.progress.retirement().unwrap(),
+        request.observe().unwrap().retirement().unwrap()
+    ));
+    assert_eq!(test.node.stats().retained_bytes(), retained);
     test.provider.resume.add_permits(1);
     test.node.shutdown().await.unwrap();
     assert!(!test.provider.abandoned.load(Ordering::Acquire));

@@ -268,6 +268,12 @@ after atomic boot/intent confirmation and required startup checks. These local
 methods supply no remote authorization or canonical enrollment proof. See
 [fleet boot admission](../../cellule-host/docs/lifecycle.md#fleet-boot-admission).
 
+`CellRuntime::try_reserve_node_metadata_bytes` charges bounded lifecycle
+metadata to the same retained-byte ledger before lease admission or after
+fencing. This token authorizes no native work or role. Native byte admission
+still checks the node lease; terminal drain closes both allocation paths.
+The host uses metadata credit for its retained supervisor observation owner.
+
 Old strict JSON readers reject the added schema 3 field. Deploy upgraded
 readers throughout the fleet while continuing schema 2 output, then enable
 schema 3 production through application rollout policy. Complete the

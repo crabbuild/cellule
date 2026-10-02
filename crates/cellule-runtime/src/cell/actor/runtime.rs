@@ -807,6 +807,23 @@ impl CellRuntime {
     /// and returns `RuntimeClosed` once terminal drain begins.
     pub fn try_reserve_node_bytes(&self, bytes: usize) -> crate::Result<NodeByteReservation> {
         self.ensure_running()?;
+        self.try_reserve_node_metadata_bytes(bytes)
+    }
+
+    /// Reserves bounded node lifecycle metadata in the same retained-byte ledger.
+    ///
+    /// Metadata owners may be installed before a live node lease exists, or
+    /// observed after fencing. This token grants no native work, role admission
+    /// or authority. Native work still uses [`Self::try_reserve_node_bytes`].
+    /// Zero/full reservations fail with capacity; terminal drain closes new
+    /// metadata admission with `RuntimeClosed`. Dropping the token releases it.
+    pub fn try_reserve_node_metadata_bytes(
+        &self,
+        bytes: usize,
+    ) -> crate::Result<NodeByteReservation> {
+        if self.inner.shutting_down.load(Ordering::Acquire) {
+            return Err(Error::RuntimeClosed);
+        }
         if bytes == 0 {
             return Err(Error::Capacity("node retained bytes"));
         }

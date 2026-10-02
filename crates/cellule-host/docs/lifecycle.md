@@ -48,6 +48,7 @@ rotation already in flight is refused; observe the current binding before retry.
 | --- | --- |
 | `NodeLogRotationRequest::observe()` | Local Queued, Retiring, Recruiting, Completed or Interrupted progress, with first/latest original errors. |
 | `node_log_rotation_request(epoch)` | Recover a retained local request after a lost handle or reply. Missing is not evidence of completion or absence. |
+| `fleet_durability_supervisor(now_ms)` | Capture the original supervisor lifecycle, separate supervisor/request-stop errors, and the existing pending/completed request bank, including automatic claims. |
 | `retirement()` | Every original member confirmed its exact fence and canonical old-epoch authority close succeeded. |
 | `completion()` | The retirement proof plus the newer epoch installed through expected-binding replacement. This does not establish redundancy policy or journal settlement. |
 
@@ -76,6 +77,19 @@ construction or any attempt to close that foreign scope.
 Interrupted rotation never counts as
 fleet settlement. Complete role observation, failed-owner recovery and journal
 retirement remain required before physical-node finalization.
+
+Supervisor capture uses brief metadata locks and never waits on provider work
+or the original join lane. Its installed owner reserves four KiB before work
+starts; capture still works during drain after new runtime byte admission closes.
+`NotStarted`, `Running`, `FinishedUnobserved` and `Returned` require the original
+join. `JoinedUnsettled` retains a failed request stop; `Joined` can still carry
+the original supervisor failure. Cancellation alone establishes neither join
+nor cleanup. The bounded rotation bank preserves original proof/error Arcs;
+an unavailable bank is an explicit error, never fabricated empty coverage.
+An absent component supplies no coverage, and wrong-type/poisoned owners fail.
+Combine this advisory local capture with producer pages, inbound native lanes,
+fresh authority, replacement policy and authenticated revision-bound evidence
+before settling fleet roles.
 
 ## Journal bound fleet actions
 

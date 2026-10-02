@@ -186,6 +186,21 @@ impl RotationRequests {
             .lock()
             .map_err(|_| Error::Control("node-log rotation request lock poisoned"))
     }
+    pub(super) fn inventory(&self) -> cellule_runtime::Result<NodeLogRotationInventory> {
+        let bank = self.lock()?;
+        let capture = |record: &Arc<RotationRecord>| -> cellule_runtime::Result<_> {
+            Ok(NodeLogRotationEntry {
+                epoch: record.epoch,
+                progress: record.lock()?.clone(),
+            })
+        };
+        Ok(NodeLogRotationInventory {
+            stopped: bank.stopped,
+            running_epoch: bank.running,
+            pending: bank.pending.as_ref().map(capture).transpose()?,
+            completed: bank.completed.as_ref().map(capture).transpose()?,
+        })
+    }
     pub(crate) fn request(
         &self,
         runtime: &CellRuntime,
@@ -332,3 +347,6 @@ pub(super) struct RotationWork {
     pub(super) durability: Arc<NodeDurability>,
     pub(super) record: Option<Arc<RotationRecord>>,
 }
+
+#[cfg(test)]
+mod tests;

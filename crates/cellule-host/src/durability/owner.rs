@@ -1,12 +1,12 @@
 //! Retain the one supervisor join across cancelled waiters and host deadlines.
 use super::*;
+use observation::{SharedFailure, SupervisorProgress};
 use requests::RotationRequests;
 
-type SharedFailure = Arc<dyn std::error::Error + Send + Sync>;
-type SupervisorFuture = Pin<Box<dyn Future<Output = FacilityResult> + Send>>;
+type SupervisorFuture = Pin<Box<dyn Future<Output = Result<(), SharedFailure>> + Send>>;
 enum SupervisorJoin {
     Unstarted(Option<SupervisorFuture>),
-    Running(JoinHandle<FacilityResult>),
+    Running(JoinHandle<Result<(), SharedFailure>>),
     Finished(std::result::Result<(), SharedFailure>),
 }
 
@@ -14,6 +14,9 @@ pub(crate) struct DurabilitySupervisor {
     pub(crate) requests: Arc<RotationRequests>,
     pub(crate) cancellation: CancellationToken,
     join: tokio::sync::Mutex<SupervisorJoin>,
+    application: ApplicationId,
+    session: SessionId,
+    progress: Arc<SupervisorProgress>,
 }
 
 impl DurabilitySupervisor {
@@ -23,12 +26,14 @@ impl DurabilitySupervisor {
         configuration: NodeDurabilitySupervisorConfig,
         session: SessionId,
         cancellation: CancellationToken,
-    ) -> Self {
+    ) -> cellule_runtime::Result<Self> {
         let requests = Arc::new(RotationRequests::new(configuration.application));
+        let progress = Arc::new(SupervisorProgress::new(&runtime)?);
+        let returned = Arc::clone(&progress);
         let task_requests = Arc::clone(&requests);
         let token = cancellation.clone();
         let future = Box::pin(async move {
-            run_node_durability_supervisor(
+            let result = run_node_durability_supervisor(
                 provider,
                 runtime,
                 configuration,
@@ -37,12 +42,34 @@ impl DurabilitySupervisor {
                 task_requests,
             )
             .await
+            .map_err(SharedFailure::from);
+            let captured = returned.returned(&result);
+            match (result, captured) {
+                (Err(source), _) => Err(source),
+                (Ok(()), Err(error)) => Err(Arc::new(error) as SharedFailure),
+                (Ok(()), Ok(())) => Ok(()),
+            }
         });
-        Self {
+        Ok(Self {
             requests,
             cancellation,
             join: tokio::sync::Mutex::new(SupervisorJoin::Unstarted(Some(future))),
-        }
+            application: configuration.application,
+            session,
+            progress,
+        })
+    }
+    pub(crate) fn observe(
+        &self,
+        now_ms: i64,
+    ) -> cellule_runtime::Result<NodeDurabilitySupervisorObservation> {
+        self.progress.capture(
+            self.application,
+            self.session,
+            now_ms,
+            self.cancellation.is_cancelled(),
+            &self.requests,
+        )
     }
     pub(crate) async fn join(&self) -> FacilityResult {
         let mut joining = self.join.lock().await;
@@ -52,27 +79,35 @@ impl DurabilitySupervisor {
                     as Box<dyn std::error::Error + Send + Sync>
             })?;
             *joining = if self.cancellation.is_cancelled() {
-                self.requests.stop(None)?;
                 drop(task);
                 SupervisorJoin::Finished(Ok(()))
             } else {
-                SupervisorJoin::Running(tokio::spawn(task))
+                SupervisorJoin::Running(self.progress.start(task)?)
             };
         }
         if let SupervisorJoin::Running(task) = &mut *joining {
             let result = match task.await {
-                Ok(result) => result.map_err(SharedFailure::from),
+                Ok(result) => result,
                 Err(source) => Err(Arc::new(source) as SharedFailure),
             };
             // No await after a terminal join: a cancelled join waiter leaves
             // the same handle in Running; every later caller joins it in place.
-            self.requests.stop(result.as_ref().err().cloned())?;
             *joining = SupervisorJoin::Finished(result);
         }
         match &*joining {
-            SupervisorJoin::Finished(Ok(())) => Ok(()),
-            SupervisorJoin::Finished(Err(source)) => {
-                Err(Box::new(SharedSupervisorError(Arc::clone(source))))
+            SupervisorJoin::Finished(result) => {
+                // Commit the consumed join before bookkeeping. A stop failure
+                // cannot leave a Ready JoinHandle to be polled a second time.
+                let stopped = self.requests.stop(result.as_ref().err().cloned());
+                let stop_error = stopped.err().map(Arc::new);
+                let captured = self.progress.joined(result, stop_error);
+                if let Some(source) = result.as_ref().err() {
+                    return Err(Box::new(SharedSupervisorError(Arc::clone(source))));
+                }
+                match captured? {
+                    Some(source) => Err(Box::new(SharedSupervisorError(source))),
+                    None => Ok(()),
+                }
             }
             _ => Err(Box::new(Error::Control(
                 "node-log supervisor join incomplete",

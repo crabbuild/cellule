@@ -130,7 +130,7 @@ impl CellNode {
             configuration,
             self.session,
             task_group.cancellation.clone(),
-        ));
+        )?);
         let drained = Arc::clone(&supervisor);
         let drained_provider = Arc::clone(&provider);
         self.install_facilities([
@@ -191,6 +191,26 @@ impl CellNode {
             Some(supervisor) => supervisor.requests.lookup(log_epoch),
             None => Ok(None),
         }
+    }
+
+    /// Captures the retained supervisor without awaiting provider/native work.
+    /// Returned or cancelled work is not joined; joined failure is not role
+    /// absence. None supplies no coverage. Authentication, current authority,
+    /// producer/native inventories and durable revision checks remain required.
+    /// The installed owner charges fixed metadata; capture remains available
+    /// during drain when new runtime byte admission has already closed.
+    pub fn fleet_durability_supervisor(
+        &self,
+        now_ms: i64,
+    ) -> cellule_runtime::Result<Option<NodeDurabilitySupervisorObservation>> {
+        if now_ms < 0 {
+            return Err(Error::Node(
+                "invalid durability supervisor observation time",
+            ));
+        }
+        self.try_owned_component::<DurabilitySupervisor>(NODE_DURABILITY_SUPERVISOR_COMPONENT)?
+            .map(|supervisor| supervisor.observe(now_ms))
+            .transpose()
     }
 
     /// Owns read-snapshot refresh, eviction, and terminal close for this node.

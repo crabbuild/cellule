@@ -24,8 +24,9 @@ pub use durability::{
     FollowerEnrollmentCompletion, FollowerEnrollmentInventoryCursor,
     FollowerEnrollmentInventoryPage, FollowerEnrollmentMember, FollowerEnrollmentProgress,
     NodeDurabilityProvider, NodeDurabilityRotation, NodeDurabilitySupervisorConfig,
-    NodeLogRotationCompletion, NodeLogRotationObservation, NodeLogRotationPhase,
-    NodeLogRotationRequest,
+    NodeDurabilitySupervisorObservation, NodeDurabilitySupervisorState, NodeLogRotationCompletion,
+    NodeLogRotationEntry, NodeLogRotationInventory, NodeLogRotationObservation,
+    NodeLogRotationPhase, NodeLogRotationRequest,
 };
 pub use facility::CellNodeFacility;
 pub use node::CellNode;
