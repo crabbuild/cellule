@@ -64,7 +64,11 @@ async fn exact_position_release_rejects_stale_identity_and_keeps_the_final_root(
                 .await
             {
                 Ok(position) => return position,
-                Err(cellule_runtime::Error::CellDraining) => tokio::task::yield_now().await,
+                Err(cellule_runtime::Error::CellReleaseRefused { source, .. })
+                    if matches!(*source, cellule_runtime::Error::CellDraining) =>
+                {
+                    tokio::task::yield_now().await
+                }
                 Err(error) => panic!("exact release failed: {error}"),
             }
         }

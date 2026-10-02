@@ -58,7 +58,9 @@ pub(super) fn fence_active(active: &mut ActiveCell) {
     active.coordination.step(CoordinationInput::Fence);
     fence_admission(&active.admission);
     if let Some(transfer) = active.transfer.take() {
-        let _ = transfer.reply.send(Err(Error::Fenced));
+        transfer
+            .reply
+            .refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
     }
     active.inventory_refreshing = false;
     while let Some(publication) = active.publications.pop_front() {

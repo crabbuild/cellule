@@ -4,6 +4,78 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 exact source refusal checkpoint
+
+The unchanged overload scenario reproduced its unknown-release failure on
+focused replay 12. Native local eviction selected partition 4 at
+`1790959690253`; fleet Release was accepted at `1790959690255` and returned
+Unknown with the original `CellNotActive` at `1790959690256`. The original
+source, two tagged diagnostic probes, trace, identity derivation and frozen
+executable are archived under `/tmp/cellule-pressure-race-5d350d1-evidence`.
+The diagnostic executable SHA256 is
+`2db7c5baa947dfda20d73fab2443226d4d597505f2c0555b43a797da51401dc4`.
+The separate unchanged full diagnostic scope passed all 112 cases; that pass
+cannot invalidate the reproduced race or qualify the final source.
+
+The canonical actor now identifies exact-position release refusal before this
+request reaches deactivation using `Error::CellReleaseRefused`. It retains the
+original validation, admission or inventory cause. Canonical close, authority
+publication and response-loss errors remain uncertain. The host records a
+Rejected outcome and the underlying original error, allowing existing
+release-refusal transitions to join unused receiver credit. An independent
+local eviction cannot count as this attempt's Released or Activated evidence.
+Neither the automatic pressure classifier nor its movement budget changes.
+
+A deterministic public-host regression prepares actual receiver credit, joins
+canonical source eviction and then submits the exact fleet release. Before the
+fix it failed with Unknown instead of Rejected; the original executable SHA256
+is `2aa151c5a4e75382266fb2e110a2ee7898deb36795f0c7da77c49171f2ed8a6e`.
+The qualified regression source and failure are archived separately from an
+initial compile-only fixture error (comparing the opaque VersionedControl).
+After the fix this regression passes, preserving source authority and joining
+all receiver credit. A second public regression proves that prior journal
+acceptance without its original result remains Unknown after independent local
+eviction, with receiver credit charged. Both focused cases pass.
+
+### Final isolated native verification
+
+All 641 active/snapshot Rust/Cargo/lock paths match before and after each final
+command. Manifest SHA256:
+`4e84a44ffa02ed0b7f55e21cedecffa015664b3a9e2d42a46ac38de4de47395e`.
+
+| Scope | Result |
+| --- | --- |
+| Exact idle-release integration | 6 passed; 198 other integration cases unselected. |
+| Runtime library | 515 passed; 3 existing ignores. |
+| Host library | 29 passed. |
+| Complete public host node suite | 104 passed, including both new cases and the immediate zero-disk-credit assertion. |
+| Complete fleet example | 112 passed; none ignored or filtered; 71.41 seconds. |
+| Application integration | 39 passed; same 16 documented manual ignores. |
+| Workspace all targets/features, locked | Check and Clippy passed; lint warnings denied. |
+| Runtime/host API documentation | Passed with warnings denied. |
+
+These are 805 distinct passed cases; focused repeats are excluded. A separate
+pre-assertion source run also passed, and remains archived independently.
+Format/diff, boundaries/layout, 110 Rust snippets, 1173 Markdown links and the
+28 SQL/peer contract assertions pass. Final sources, logs, complete manifests
+and executables are retained. No Linux, provider/process or mixed-binary
+qualification was added in this checkpoint.
+
+Parent `5d350d1` CI still failed the original overload requirement with 111
+passes and one successful movement. Its object-capacity repeat 3 also failed
+`skewed: no fully served capacity point`; the driver completed 58 of 60 planned
+requests at that point. Original CI logs and the complete object-capacity
+artifact are retained. Neither failure is erased by the positive native run;
+capacity qualification and reliable overload convergence remain required.
+
+This checkpoint fixes refusal classification. It does not complete the required
+two successful movements in the overload scenario: preparation can also refuse
+an invalidated source, and the scenario disables new scheduling after the first
+batch. Required movement/readback counts, deadlines, native pressure behavior
+and qualification profiles remain unchanged. Full W1–W10, role settlement,
+fleet finalization, executable maintenance/failure scenarios and deployment
+qualification remain open.
+
 ## October 2 2026 retained whole-host drain checkpoint
 
 The host now retains the complete canonical closing attempt in one fixed slot.

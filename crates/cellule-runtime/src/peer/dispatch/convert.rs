@@ -204,6 +204,7 @@ pub(crate) fn error_reply(error: Error) -> wire::PeerReply {
             100,
         ),
         Error::Fenced
+        | Error::CellReleaseRefused { .. }
         | Error::CellNotActive
         | Error::CellDraining
         | Error::RuntimeClosed

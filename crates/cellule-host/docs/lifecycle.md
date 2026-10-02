@@ -273,6 +273,7 @@ complete primitive maintenance coverage and role finalization remain under imple
 | Event | Action executor behavior |
 | --- | --- |
 | First acceptance | Commit exact acceptance before its effect. Movement Release rechecks deadline and invokes the canonical actor release for the exact session, generation, incarnation and epoch. |
+| Source preflight refusal | The actor returns `Error::CellReleaseRefused` only before this request begins canonical deactivation. Record Rejected with its original source error; the reconciler then cancels and joins unused receiver credit. Independent local eviction grants no release proof for this attempt. |
 | Prepare receiver | Validate catalog/Cell/incarnation and current release/schema support; reserve actual runtime/LTX resources before returning Reserved. A refusal preserves the original error and leaves the source serving. |
 | Maintenance Cordon | Apply retained Draining intent through the shared admission gate. Replays retain the exact acceptance/result; a dropped waiter leaves publication owned. This preserves existing obligations and uses no shutdown lane. |
 | Other maintenance effects | Refuse role settlement, finalization and maintenance inspection until their inventory and host barriers are implemented. A cordon receipt cannot establish Stopped or withdrawal. |

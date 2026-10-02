@@ -32,6 +32,8 @@ impl CellNode {
     /// invoking this local mechanism. The runtime rechecks session, generation,
     /// incarnation and epoch; its canonical close/release task supplies the root.
     /// A subsequent authority observation is never substituted for that result.
+    /// [`Error::CellReleaseRefused`] proves this request stopped before canonical
+    /// close began. Other errors require outcome inspection or recovery.
     pub async fn release_idle_cell_at(
         &self,
         cell: CellId,

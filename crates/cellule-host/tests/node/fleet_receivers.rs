@@ -308,6 +308,196 @@ async fn counter(handle: &cellule_runtime::cell::actor::CellHandle) -> i64 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_eviction_before_fleet_release_proves_refusal_and_joins_receiver_credit() {
+    let movement = Movement::new(128 << 20).await;
+    let prepared = movement.prepare().await;
+    let FleetOutcome::Reserved(reservation) = prepared.outcome.outcome else {
+        panic!("receiver did not reserve: {prepared:?}")
+    };
+    assert!(prepared.committed && prepared.execution_error.is_none());
+    movement.event(AttemptEvent::Reserved(reservation));
+    assert_eq!(
+        movement.receiver.stats().local_disk_reserved_bytes(),
+        movement.spec.cost.disk_bytes
+    );
+
+    // Emergency local shedding uses this same canonical eviction path. The
+    // exact fleet action has not been accepted while that independent job runs.
+    assert_eq!(
+        movement.source.node.runtime().evict_idle(1).await.unwrap(),
+        1
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = movement
+                .inputs
+                .authority
+                .load(movement.spec.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap();
+            if current.value().state == ControlState::Idle
+                && movement.source.node.stats().active_cells() == 0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let idle = movement
+        .inputs
+        .authority
+        .load(movement.spec.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    movement.event(AttemptEvent::BeginRelease);
+    let action = movement.action(MovementAction::Release);
+    let refused = apply(&movement.source.node, action.clone()).await;
+    assert!(refused.committed && refused.journal_error.is_none());
+    assert_eq!(
+        refused.outcome.outcome,
+        FleetOutcome::Rejected(DrainBlocker::IncompleteObservation)
+    );
+    assert!(matches!(
+        refused.execution_error.as_deref(),
+        Some(Error::CellNotActive)
+    ));
+    let replay = apply(&movement.source.node, action).await;
+    assert_eq!(replay.outcome, refused.outcome);
+    assert_eq!(
+        movement
+            .inputs
+            .authority
+            .load(movement.spec.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .value(),
+        idle.value()
+    );
+
+    movement.event(AttemptEvent::ReleaseRefused(
+        DrainBlocker::IncompleteObservation,
+    ));
+    movement.event(AttemptEvent::BeginCancel);
+    let cancelled = apply(&movement.receiver, movement.action(MovementAction::Cancel)).await;
+    assert!(cancelled.committed && cancelled.execution_error.is_none());
+    assert_eq!(cancelled.outcome.outcome, FleetOutcome::ReceiverCleaned);
+    assert_eq!(movement.receiver.stats().local_disk_reserved_bytes(), 0);
+    movement.event(AttemptEvent::Cancelled);
+    assert!(
+        movement
+            .source
+            .journal
+            .current_attempt()
+            .released()
+            .is_none()
+    );
+    assert!(
+        movement
+            .source
+            .journal
+            .current_attempt()
+            .activated()
+            .is_none()
+    );
+    movement.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn accepted_release_without_result_stays_unknown_after_local_eviction() {
+    let movement = Movement::new(128 << 20).await;
+    let prepared = movement.prepare().await;
+    let FleetOutcome::Reserved(reservation) = prepared.outcome.outcome else {
+        panic!("receiver did not reserve: {prepared:?}")
+    };
+    movement.event(AttemptEvent::Reserved(reservation));
+    movement.event(AttemptEvent::BeginRelease);
+    let action = movement.action(MovementAction::Release);
+    assert!(matches!(
+        movement
+            .source
+            .journal
+            .accept_action(
+                &action,
+                movement.spec.source_node,
+                movement.spec.source,
+                clock()
+            )
+            .await
+            .unwrap(),
+        cellule_host::fleet::FleetActionAcceptance::New(_)
+    ));
+
+    // Journal acceptance with no original result cannot establish whether its
+    // source effect ran. An independently released Idle root grants no proof.
+    assert_eq!(
+        movement.source.node.runtime().evict_idle(1).await.unwrap(),
+        1
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = movement
+                .inputs
+                .authority
+                .load(movement.spec.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap();
+            if current.value().state == ControlState::Idle
+                && movement.source.node.stats().active_cells() == 0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let idle = movement
+        .inputs
+        .authority
+        .load(movement.spec.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let result = apply(&movement.source.node, action).await;
+    assert!(result.committed && result.execution_error.is_some());
+    assert_eq!(result.outcome.outcome, FleetOutcome::Unknown);
+    assert_eq!(
+        movement
+            .inputs
+            .authority
+            .load(movement.spec.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .value(),
+        idle.value()
+    );
+    assert_eq!(
+        movement.receiver.stats().local_disk_reserved_bytes(),
+        movement.spec.cost.disk_bytes
+    );
+    assert!(
+        movement
+            .source
+            .journal
+            .current_attempt()
+            .released()
+            .is_none()
+    );
+    assert_eq!(
+        movement.source.journal.current_attempt().phase(),
+        AttemptPhase::Releasing
+    );
+    movement.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fresh_inspection_bypasses_historical_cache_and_rechecks_stopped_actor() {
     let movement = Movement::new(128 << 20).await;
     let preparation = movement.prepare().await;

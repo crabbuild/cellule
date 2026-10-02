@@ -37,7 +37,8 @@ impl FleetActionExecutor {
                         DrainBlocker::Deadline,
                     )));
                 }
-                self.runtime
+                match self
+                    .runtime
                     .release_idle_cell_at(
                         spec.target.cell_id(),
                         spec.source,
@@ -46,8 +47,13 @@ impl FleetActionExecutor {
                         spec.source_epoch,
                     )
                     .await
-                    .map(FleetOutcome::Released)
-                    .map(ActionResult::checked)
+                {
+                    Ok(position) => Ok(ActionResult::checked(FleetOutcome::Released(position))),
+                    Err(Error::CellReleaseRefused { blocker, source }) => {
+                        Ok(ActionResult::refused(blocker, *source))
+                    }
+                    Err(error) => Err(error),
+                }
             }
             MovementAction::ReleaseMaintenance => {
                 let until = attempt

@@ -304,6 +304,20 @@ pub(super) enum DrainReply {
 }
 
 impl DrainReply {
+    /// Only call before this request transfers its reply to canonical close.
+    /// A later close/publication error must remain an uncertain release.
+    pub(super) fn refuse(self, blocker: DrainBlocker, error: Error) {
+        let error = if matches!(&self, Self::Position(_)) {
+            Error::CellReleaseRefused {
+                blocker,
+                source: Box::new(error),
+            }
+        } else {
+            error
+        };
+        let _ = self.send(Err(error));
+    }
+
     pub(super) fn send(self, result: crate::Result<()>) -> Result<(), crate::Result<()>> {
         self.send_released(result, None)
     }

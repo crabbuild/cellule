@@ -302,7 +302,9 @@ pub(super) fn start_shutdown_drain(
     for (cell, active) in cells.iter_mut() {
         if let Some(transfer) = active.transfer.take() {
             active.coordination.step(CoordinationInput::AbortTransfer);
-            let _ = transfer.reply.send(Err(Error::CellDraining));
+            transfer
+                .reply
+                .refuse(DrainBlocker::BusyExecution, Error::CellDraining);
         }
         active.inventory_refreshing = false;
         active.coordination.step(CoordinationInput::BeginShutdown);
@@ -644,7 +646,9 @@ pub(super) fn handle_message(
             if active.transfer.is_some() {
                 if let Some(transfer) = active.transfer.take() {
                     active.coordination.step(CoordinationInput::AbortTransfer);
-                    let _ = transfer.reply.send(Err(Error::CellDraining));
+                    transfer
+                        .reply
+                        .refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                 }
                 let decision = active.coordination.step(CoordinationInput::BeginDrain);
                 if let CoordinationDecision::Reject(reason) = decision {
@@ -795,25 +799,25 @@ pub(super) fn handle_message(
             reply,
         } => {
             if node_lease.check().is_err() {
-                let _ = reply.send(Err(Error::Fenced));
+                reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
                 return;
             }
             let Some(active) = cells.get(&cell) else {
-                let _ = reply.send(Err(Error::CellNotActive));
+                reply.refuse(DrainBlocker::IncompleteObservation, Error::CellNotActive);
                 return;
             };
             if let Some((incarnation, epoch)) = expected {
                 if active.incarnation != incarnation || active.generation != generation {
-                    let _ = reply.send(Err(Error::Fenced));
+                    reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
                     return;
                 }
                 match active.publisher.as_ref() {
                     Some(publisher) if publisher.control().value().epoch != epoch => {
-                        let _ = reply.send(Err(Error::Fenced));
+                        reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
                         return;
                     }
                     None => {
-                        let _ = reply.send(Err(Error::CellDraining));
+                        reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                         return;
                     }
                     Some(_) => {}
@@ -824,17 +828,20 @@ pub(super) fn handle_message(
                 || active.transfer.is_some()
                 || active.inventory_refreshing
             {
-                let _ = reply.send(Err(Error::CellDraining));
+                reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                 return;
             }
             let Ok(mut permit) = movement.try_start_requested(unix_millis()) else {
-                let _ = reply.send(Err(Error::Capacity("movement budget")));
+                reply.refuse(
+                    DrainBlocker::MovementBudget,
+                    Error::Capacity("movement budget"),
+                );
                 return;
             };
             {
                 let Some(active) = cells.get_mut(&cell) else {
                     movement.complete(&mut permit);
-                    let _ = reply.send(Err(Error::CellNotActive));
+                    reply.refuse(DrainBlocker::IncompleteObservation, Error::CellNotActive);
                     return;
                 };
                 if active.transfer.is_some()
@@ -842,7 +849,7 @@ pub(super) fn handle_message(
                     || active.inventory_refreshing
                 {
                     movement.complete(&mut permit);
-                    let _ = reply.send(Err(Error::CellDraining));
+                    reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                     return;
                 }
                 let decision =
@@ -858,22 +865,22 @@ pub(super) fn handle_message(
                     CoordinationDecision::Fence => {
                         fence_active(active);
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(Error::Fenced));
+                        reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
                         return;
                     }
                     CoordinationDecision::Reject(reason) => {
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(rejection_error(reason)));
+                        reply.refuse(DrainBlocker::BusyExecution, rejection_error(reason));
                         return;
                     }
                     CoordinationDecision::Ignored => {
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(Error::CellDraining));
+                        reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                         return;
                     }
                     _ => {
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(Error::CellDraining));
+                        reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                         return;
                     }
                 }
@@ -968,7 +975,7 @@ pub(super) fn reject_fenced_message(message: Message) {
             let _ = request.reply.send(Err(Error::Fenced));
         }
         Message::ReleaseIdleCell { reply, .. } => {
-            let _ = reply.send(Err(Error::Fenced));
+            reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
         }
         Message::ObservePressure { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));

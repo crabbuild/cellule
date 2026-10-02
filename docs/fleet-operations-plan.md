@@ -620,6 +620,16 @@ after an ordinary `release_idle_cell` reply cannot replace it: a successor
 may already have published a different root. A dropped reply or a crash before
 result publication still requires the unknown/recovery rules below.
 
+The actor's `Error::CellReleaseRefused` distinguishes a definite refusal before
+this exact request began canonical deactivation from an uncertain close result.
+The host publishes Rejected with the underlying error. Existing release-refusal
+transitions cancel and join unused receiver credit before retiring the attempt.
+Emergency local eviction can invalidate a sampled source independently; its
+Idle authority state cannot substitute for this attempt's Released evidence.
+An accepted action with no retained original result remains Unknown, even when
+the source actor is now absent. Observation or transport errors alone grant no
+permission to cancel a possibly accepted source effect.
+
 Keep the reservation charged until it is consumed by activation, explicitly
 cancelled and joined, or proven absent. Reservation expiry permits local
 cancellation; it does not make an unobserved remote task disappear. If the

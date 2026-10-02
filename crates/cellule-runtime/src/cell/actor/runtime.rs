@@ -641,6 +641,8 @@ impl CellRuntime {
     /// The actor checks incarnation and ownership epoch before closing admission,
     /// then its existing worker-close/publication path captures the exact released
     /// root. A later authority read cannot replace this proof with a newer root.
+    /// [`Error::CellReleaseRefused`] identifies a definite refusal before this
+    /// request began canonical close; all other errors retain uncertainty.
     pub async fn release_idle_cell_at(
         &self,
         cell: CellId,
@@ -650,7 +652,10 @@ impl CellRuntime {
         epoch: u64,
     ) -> crate::Result<crate::fleet::operations::PublishedPosition> {
         if epoch == 0 {
-            return Err(Error::Fenced);
+            return Err(Error::CellReleaseRefused {
+                blocker: DrainBlocker::IncompleteObservation,
+                source: Box::new(Error::Fenced),
+            });
         }
         let (reply, response) = oneshot::channel();
         self.request_idle_release(
@@ -660,7 +665,11 @@ impl CellRuntime {
             Some((incarnation, epoch)),
             DrainReply::Position(reply),
         )
-        .await?;
+        .await
+        .map_err(|source| Error::CellReleaseRefused {
+            blocker: DrainBlocker::IncompleteObservation,
+            source: Box::new(source),
+        })?;
         response.await.map_err(|_| Error::RuntimeClosed)?
     }
 

@@ -77,6 +77,16 @@ pub enum Error {
     /// A fleet receiver request failed its exact operation contract.
     #[error("Cell fleet operation failed")]
     FleetOperation(#[source] Box<crate::fleet::operations::OperationError>),
+    /// This exact source request stopped before canonical deactivation or
+    /// authority release began. It proves refusal, not another job's outcome.
+    #[error("Cell source release was refused before deactivation: {blocker:?}")]
+    CellReleaseRefused {
+        /// The condition which prevented this request's release.
+        blocker: crate::fleet::operations::DrainBlocker,
+        /// Original validation, admission, or inventory error.
+        #[source]
+        source: Box<Error>,
+    },
     /// A node advertisement or directory record failed validation.
     #[error("invalid Cell node advertisement: {0}")]
     Node(&'static str),

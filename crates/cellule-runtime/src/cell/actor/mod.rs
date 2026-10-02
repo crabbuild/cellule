@@ -59,6 +59,7 @@ use crate::coordination::{
 };
 use crate::fleet::admission::NodeAdmission;
 use crate::fleet::eviction::{EvictionObservation, EvictionState, select_victims};
+use crate::fleet::operations::DrainBlocker;
 use crate::fleet::pressure::{
     MovementBudget, MovementPermit, PressureClassifier, PressureSample, PressureState,
 };
