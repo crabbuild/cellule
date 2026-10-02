@@ -10,6 +10,7 @@ mod cells;
 mod controller;
 mod enrollment;
 mod inspection;
+mod inventory;
 mod journal;
 mod maintenance;
 mod movement;
@@ -22,6 +23,7 @@ pub use actions::FleetActionCompletion;
 pub use cells::{FleetCellInputs, FleetCellProvider, FleetRecoveryInputs};
 pub use controller::{FleetJournal, FleetJournalSnapshot};
 pub use enrollment::{FleetBootObservation, FleetEnrollmentAcceptance, FleetEnrollmentJournal};
+pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInventoryScan};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};
 pub use reconciler::{
     FleetAttemptFailure, FleetObservation, FleetObserver, FleetOwnedCell, FleetReconcileReport,

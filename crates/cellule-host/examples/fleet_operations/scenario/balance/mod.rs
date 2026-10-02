@@ -97,29 +97,58 @@ pub(super) async fn run(
         if summary.retired == 8 && report.snapshot.head().attempts().is_empty() {
             // Keep scheduling enabled while checking equilibrium. Stopping
             // first would make a no-oscillation assertion vacuous.
-            for _ in 0..2 {
+            let mut complete_samples = 0;
+            while complete_samples < 2 {
+                if Instant::now() >= deadline {
+                    return Err(invalid(
+                        "count equilibrium lacked two complete fresh samples",
+                    ));
+                }
                 let stable = driver
                     .reconcile_once(clock, deadline.min(Instant::now() + Duration::from_secs(5)))
                     .await?;
                 if stable.allocated != 0
                     || !stable.failures.is_empty()
                     || !stable.snapshot.head().attempts().is_empty()
-                    || stable.blockers.contains(
-                        &cellule_runtime::fleet::operations::DrainBlocker::IncompleteObservation,
-                    )
                 {
                     return Err(std::io::Error::other(format!(
                         "count equilibrium did not remain settled with scheduling enabled: {stable:?}"
                     )).into());
                 }
+                // Exact authority renewal or an actor transition can invalidate
+                // an otherwise settled interval. The driver correctly refuses
+                // count planning for it. Require two *consecutive* complete,
+                // post-batch samples within the original convergence deadline;
+                // any new allocation or native failure still fails immediately.
+                if stable.blockers.iter().any(|blocker| {
+                    matches!(
+                        blocker,
+                        cellule_runtime::fleet::operations::DrainBlocker::IncompleteObservation
+                            | cellule_runtime::fleet::operations::DrainBlocker::StaleObservation
+                    )
+                }) {
+                    complete_samples = 0;
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                } else {
+                    complete_samples += 1;
+                }
             }
             let settled = journal.load_snapshot(scope()).await?;
             journal.set_scheduling(settled.registry(), false).await?;
-            let snapshot = journal.load_snapshot(scope()).await?;
-            let roster = FleetRoster::collect(journal.as_ref(), &snapshot, deadline).await?;
-            summary.final_counts = observation::complete_counts(&fleet, &roster, deadline)
-                .await?
-                .ok_or_else(|| invalid("final count coverage is incomplete"))?;
+            loop {
+                if Instant::now() >= deadline {
+                    return Err(invalid("final count coverage did not become complete"));
+                }
+                let snapshot = journal.load_snapshot(scope()).await?;
+                let roster = FleetRoster::collect(journal.as_ref(), &snapshot, deadline).await?;
+                if let Some(counts) =
+                    observation::complete_counts(&fleet, &roster, deadline).await?
+                {
+                    summary.final_counts = counts;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
             break;
         }
         // Each pass drives canonical signed boot renewal. Waiting for actual

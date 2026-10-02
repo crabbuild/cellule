@@ -3,8 +3,9 @@
 
 use super::*;
 use cellule_host::fleet::{
-    FleetNodeSnapshot, FleetObservation, FleetOwnedCell, FleetRoster, FleetSnapshotNativePage,
-    FleetSnapshotRequest, FleetSnapshotSubject,
+    FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation,
+    FleetOwnedCell, FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest,
+    FleetSnapshotSubject,
 };
 use cellule_runtime::control::{Control, ControlState};
 use cellule_runtime::fleet::operations::{EnrollmentRole, EnrollmentStatus, PublishedPosition};
@@ -127,63 +128,56 @@ async fn collect(
     let mut nodes = Vec::new();
     let mut cells = Vec::new();
     let mut seen = HashSet::new();
-    let mut topologies = Vec::new();
+    let mut inventories: Vec<Option<FleetNodeInventory>> = Vec::new();
     for index in 0..3 {
-        let host = page(fleet, roster, index, FleetSnapshotSubject::Host, deadline).await?;
-        let bindings = host.bindings();
-        // Absence of an owner is not proof of absent roles. Here construction
-        // creates only catalog-backed writers, before exposing this private
-        // adapter; verify that no producer/role installation escaped that profile.
-        complete &= bindings.managed_startup
-            && !bindings.readers
-            && !bindings.follower_store
-            && !bindings.follower_producer
-            && !bindings.durability_supervisor
-            && host.node_log().is_none()
-            && host.state_before() == host.state_after();
-        drop(host);
-        for subject in [
-            FleetSnapshotSubject::Readers(None),
-            FleetSnapshotSubject::ReaderEnrollments(None),
-            FleetSnapshotSubject::FollowerLanes(None),
-            FleetSnapshotSubject::FollowerEnrollments(None),
-            FleetSnapshotSubject::DurabilitySupervisor,
-        ] {
+        let mut scan = FleetNodeInventoryScan::new(roster, node_id(index), session(index))?;
+        let mut stable = true;
+        while let Some(subject) = scan.next_subject()? {
             let response = page(fleet, roster, index, subject, deadline).await?;
-            // Role-enabled coverage is unsupported here, including apparently
-            // empty pages. Do not upgrade it to this writer-only profile.
-            complete &= matches!(response.page(), FleetSnapshotNativePage::Unbound)
-                && response.bindings() == bindings;
+            match scan.accept(response.request(), &response, clock()?) {
+                Ok(()) => {}
+                Err(cellule_runtime::Error::Node("native inventory category changed")) => {
+                    stable = false;
+                    break;
+                }
+                Err(source) => return Err(source.into()),
+            }
         }
-        let response = page(
-            fleet,
-            roster,
-            index,
-            FleetSnapshotSubject::Cells(None),
-            deadline,
-        )
-        .await?;
-        let FleetSnapshotNativePage::Cells(actors) = response.page() else {
-            return Err(invalid("example actor page category differs"));
+        // Movement can change topology during the scan. Keep accepted rows for
+        // independent authority/actor revalidation, with completeness disabled.
+        complete &= stable;
+        for cell in scan
+            .cells()
+            .iter()
+            .map(|row| row.observation.target.cell_id())
+            .chain(scan.transitioning_cells().iter().copied())
+        {
+            if !fleet.records.contains_key(&cell) {
+                return Err(invalid("example unregistered native Cell"));
+            }
+            // A release/activation can appear on both sides of this interval.
+            // The fresh exact authority scan below retains only its actual owner.
+            complete &= seen.insert(cell);
+        }
+        cells.extend(scan.cells().iter().cloned());
+        let inventory = if stable {
+            let inventory = scan.finish()?;
+            let bindings = inventory.bindings();
+            // Absence requires this bootstrapped closed writer composition,
+            // native traversal and unexpected directory discovery together.
+            complete &= bindings.managed_startup
+                && !bindings.readers
+                && !bindings.follower_store
+                && !bindings.follower_producer
+                && !bindings.durability_supervisor
+                && inventory.node_log().is_none()
+                && inventory.transitioning_cells().is_empty()
+                && inventory.validate_enrollments(roster).is_ok();
+            Some(inventory)
+        } else {
+            None
         };
-        if actors.next().is_some() {
-            return Err(invalid("example actor inventory exceeds fixed bound"));
-        }
-        complete &= actors.transitioning_cells() == 0;
-        topologies.push(actors.topology());
-        for entry in actors.entries() {
-            if !seen.insert(entry.cell()) || !fleet.records.contains_key(&entry.cell()) {
-                return Err(invalid("example duplicate or unregistered native Cell"));
-            }
-            if let CellInventoryEntry::Owned(row) = entry {
-                cells.push(FleetOwnedCell {
-                    node: node_id(index),
-                    session: session(index),
-                    observation: (**row).clone(),
-                });
-            }
-        }
-        drop(response);
+        inventories.push(inventory);
         // Include expired and fenced leader obligations; live discovery alone
         // could hide a follower role left by a failed boot.
         let logs = directory
@@ -223,38 +217,48 @@ async fn collect(
     }
     // Recheck exact authority after the full scan. A concurrent publication or
     // takeover invalidates that Cell's planning row, not just count completeness.
-    for (cell, original) in &authority {
-        let current = fleet
-            .records
-            .get(cell)
-            .ok_or_else(|| invalid("example authority input disappeared"))?
-            .authority
-            .load(*cell)
-            .await?
-            .ok_or_else(|| invalid("example authority disappeared during capture"))?;
-        if current.value() != original {
-            complete = false;
-            cells.retain(|row| row.observation.target.cell_id() != *cell);
-        }
-    }
-    for (index, topology) in topologies.iter().enumerate() {
-        let response = page(
-            fleet,
-            roster,
-            index,
-            FleetSnapshotSubject::Cells(None),
-            deadline,
-        )
-        .await?;
-        let FleetSnapshotNativePage::Cells(actors) = response.page() else {
-            return Err(invalid("example repeated actor page category differs"));
-        };
-        if actors.topology() != *topology || actors.next().is_some() {
-            complete = false;
-            // A changed topology disables count planning. Unchanged writers
-            // can independently remain pressure-relief candidates.
+    complete &= recheck_authority(fleet, &authority, &mut cells).await?;
+    // Recheck every role category after *all* authority and membership reads.
+    // Stable local-only traversals cannot supply this fleet-wide interval.
+    for (index, inventory) in inventories.iter_mut().enumerate() {
+        let Some(inventory) = inventory else {
+            let response = page(
+                fleet,
+                roster,
+                index,
+                FleetSnapshotSubject::Cells(None),
+                deadline,
+            )
+            .await?;
+            let FleetSnapshotNativePage::Cells(actors) = response.page() else {
+                return Err(invalid("example repeated actor page category differs"));
+            };
             retain_unchanged_writers(&mut cells, index, actors.entries());
+            continue;
+        };
+        let mut recheck = inventory.recheck();
+        while let Some(subject) = recheck.next_subject()? {
+            let response = page(fleet, roster, index, subject.clone(), deadline).await?;
+            if recheck
+                .accept(response.request(), &response, clock()?)
+                .is_err()
+            {
+                complete = false;
+                match response.page() {
+                    FleetSnapshotNativePage::Cells(actors) => {
+                        // Count planning stops on changed topology. Keep only
+                        // independently unchanged writer rows for pressure relief.
+                        retain_unchanged_writers(&mut cells, index, actors.entries());
+                    }
+                    FleetSnapshotNativePage::Host => {
+                        cells.retain(|owned| owned.node != node_id(index));
+                    }
+                    _ => {}
+                }
+                break;
+            }
         }
+        complete &= recheck.finish().is_ok();
     }
     let mut after = directory.advertised_sessions(clock()?, 128).await?;
     after.sort_by_key(|boot| *boot.as_bytes());
@@ -267,6 +271,44 @@ async fn collect(
         nodes,
         cells,
     })
+}
+
+async fn recheck_authority(
+    fleet: &adapters::LocalFleet,
+    authority: &HashMap<CellId, Control>,
+    cells: &mut Vec<FleetOwnedCell>,
+) -> JournalResult<bool> {
+    let mut unchanged = true;
+    for (cell, original) in authority {
+        let current = fleet
+            .records
+            .get(cell)
+            .ok_or_else(|| invalid("example authority input disappeared"))?
+            .authority
+            .load(*cell)
+            .await?
+            .ok_or_else(|| invalid("example authority disappeared during capture"))?;
+        if current.value() != original {
+            let value = current.value();
+            let protected_same = value.cell == original.cell
+                && value.incarnation == original.incarnation
+                && value.epoch == original.epoch
+                && value.state == original.state
+                && value.owner == original.owner
+                && value.root == original.root
+                && value.recovery == original.recovery
+                && value.code == original.code
+                && value.schema == original.schema
+                && value.next_due_ms == original.next_due_ms;
+            eprintln!(
+                "FLEET_CAPTURE authority_changed cell={cell:?} revision={}..{} progress={}..{} protected_fields_unchanged={protected_same}",
+                original.revision, value.revision, original.progress, value.progress,
+            );
+            unchanged = false;
+            cells.retain(|row| row.observation.target.cell_id() != *cell);
+        }
+    }
+    Ok(unchanged)
 }
 
 fn retain_unchanged_writers(

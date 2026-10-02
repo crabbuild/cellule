@@ -383,6 +383,36 @@ observation still requires stable traversal, durable roster confirmation,
 current remote authority and replacement policy. This in-process API defines
 no persisted or wire format; applications own authenticated transport encoding.
 
+### Full native traversal and revalidation
+
+`FleetNodeInventoryScan::new(&roster, node, session)` pins a current Established
+managed boot in a bootstrapped full roster. Serve each `next_subject()` through
+the authenticated snapshot transport and pass the exact request and original
+response to `accept()`. Drop the response after acceptance to release its native
+page charge. A failed acceptance poisons that traversal. `finish()` requires
+every continuation and a fresh first-page recheck of all seven categories.
+Applications account the collector's bounded copied buffers.
+
+| Retained input | Required interpretation |
+| --- | --- |
+| Writer rows and transitioning Cell IDs | Transitions remain obligations; actor maps can overlap. They never imply absent ownership or complete signed counts. |
+| Reader views and producer records/jobs | Preserve original requests, accepted timestamps, publication state and shared errors. Preparation with no Pending row remains visible through job state. |
+| Persisted lanes and follower producer state | Include cold/retired lanes, quarantined files and unknown preparation. An idle producer does not prove a joined supervisor. |
+| Supervisor observation | Preserve the original lifecycle, rotation barriers, completion and failures. |
+| Missing bindings | Retain None/Unbound identity. Absence requires the application's bootstrapped closed composition proof. |
+
+`inventory.validate_enrollments(&roster)` matches the retained native inputs to
+the same full roster. A mismatch disables complete coverage; callers may retain
+independently fresh writers for pressure relief. After scanning **all** nodes,
+unexpected directory records, exact Cell/log authority and replacement policy,
+use `inventory.recheck()` to fetch seven fresh first pages. These pages fingerprint
+the entire category, including rows outside the page. Finish every recheck and
+then reconfirm the full journal barrier. Revalidation keeps the original start
+clock, rejects nonce reuse across rounds, and never refreshes the original rows.
+Matching fingerprints supply interval evidence, not an atomic fleet snapshot.
+Failed-process closure, policy satisfaction and the finalization transaction
+remain separate requirements; these collectors grant no shutdown permission.
+
 ## Caller driven fleet reconciliation
 
 ### Reader producer inventory

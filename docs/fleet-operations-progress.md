@@ -4,6 +4,70 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 native aggregate traversal checkpoint
+
+`FleetNodeInventoryScan` now traverses every native category under the exact
+bootstrapped full roster, preserves native continuations, and rechecks complete
+category fingerprints. Its result retains writer transitions, reader producer
+jobs and original errors, persisted follower lanes, follower preparation state
+and supervisor rotations. `validate_enrollments` matches exact original requests,
+accepted timestamps and published evidence; missing bindings and failed boots
+never become empty roles. Applications account these bounded copied buffers.
+
+The reference observer uses this collector and rechecks all seven categories
+after its fleet-wide Cell authority scan. It retains independently revalidated
+writers for pressure relief when topology invalidates a full traversal. Count
+coverage remains disabled for that interval. Actor maps can overlap during
+release; the collector preserves transitional keys rather than double-counting
+them or treating them as absent.
+
+Seven new public-path cases cover native continuation, nonce reuse, incomplete
+and changed rechecks, partial pressure inputs, a real canonical owner renewal,
+managed reader capture before/after evacuation, and original errors after a
+lost retirement reply. They use actual managed boots, actor/query lifecycles,
+canonical authority and the durable journal. Shutdown checks empty resource
+ledgers through the existing fixtures.
+
+Qualification found two regressions. First, a changing actor topology caused an
+observer error during real movement; this now disables completeness and preserves
+only independently checked pressure rows. Second, the equilibrium example
+required immediately complete captures after its last movement. Instrumented
+runs observed canonical renewals changing revision/progress without changing
+owner, fence or root; the deterministic renewal case verifies that the exact
+authority recheck correctly invalidates such an interval. The example now
+requires two consecutive complete, fresh post-batch samples within its original
+120-second convergence deadline. Extra allocation, active attempts and native
+failures still fail immediately; the final complete count scan also remains
+required. No residence, count, deadline, or receipt requirement was reduced.
+The earlier failure logs and diagnostic traces are retained separately.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `b36f76321539e306bbce5d25973f6595dbac8df5` |
+| Frozen source | 662 Rust, Cargo manifest and Cargo lock paths, including nested qualification locks. |
+| Manifest SHA256 | `9610c21eb6045a461676c449c849cbb91330d05d5b560106c23abbbc2d3dc428` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-native-inventory-evidence` |
+
+The manifest SHA256 hashes sorted-path JSON with two-space indentation and a
+final newline. The complete path set and every Rust/Cargo byte are compared
+against the isolated snapshot and current checkout after qualification.
+
+| Final-source command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --lib --test node --example fleet_operations --all-features --locked -- --test-threads=2` | 32 library, 106 public node and 138 example cases passed; zero failures/ignores. |
+| `cargo clippy -p cellule-host --lib --test node --example fleet_operations --all-features --locked -- -D warnings` | Passed with warnings denied. |
+| `RUSTDOCFLAGS='-D warnings' cargo doc -p cellule-host --all-features --no-deps --locked` | Passed with documentation warnings denied. |
+
+These are 276 distinct passing cases; focused repeats are excluded. Format,
+crate boundaries, module layout, Markdown links/Rust syntax and SQL/peer
+contract gates also pass. This provides canonical local traversal and reference
+consumption. It does not finish W3/W7: complete foreign log authority discovery,
+replacement-policy and failed-process evidence, role-enabled aggregate follower
+fixtures, affected-writer relocation, `SettleRoles`/`Finalize`, terminal action
+handoff, remaining busy-primitive/fault work, full W8 examples and W9–W10 remain
+required. The full plan stays active.
+
 ## October 2 2026 managed reader evacuation checkpoint
 
 `ReadReplicaManager::evacuate` checks one original Established reader against

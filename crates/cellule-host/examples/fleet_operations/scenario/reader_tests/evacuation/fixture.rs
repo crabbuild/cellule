@@ -30,6 +30,41 @@ impl Fixture {
             max_capture_bytes: 16 << 20,
             ..Limits::default()
         };
+        let target = CellTarget::new(
+            TenantId::from_bytes([1; 16]),
+            scope().application,
+            application::NAMESPACE,
+            &[1],
+        )
+        .unwrap();
+        let code = app.registry().module_digests()[0];
+        let proof = CellCatalog::new(layout.clone(), target.tenant())
+            .provision(CatalogEntry::new(&target, CatalogRole::Sql, code, 1).unwrap())
+            .await
+            .unwrap();
+        let incarnation = IncarnationId::from_bytes([1; 16]);
+        let authority = CellAuthority::new(layout.clone());
+        let initial = authority
+            .create_initial(&proof, incarnation, owner(0))
+            .await
+            .unwrap();
+        let replica = CellReplica::new(
+            layout.clone(),
+            *target.cell_id().as_bytes(),
+            *incarnation.as_bytes(),
+            limits,
+        )
+        .unwrap();
+        let records = Arc::new(HashMap::from([(
+            target.cell_id(),
+            Record {
+                target: target.clone(),
+                incarnation,
+                catalog: proof.clone(),
+                replica: replica.clone(),
+                authority: authority.clone(),
+            },
+        )]));
         let mut nodes = Vec::new();
         let mut managers = Vec::new();
         let mut boots = Vec::new();
@@ -59,6 +94,17 @@ impl Fixture {
             );
             node.install_task_group(CancellationToken::new(), CancellationToken::new())
                 .unwrap();
+            node.install_fleet_actions(
+                scope(),
+                node_id(index),
+                journal.clone(),
+                Arc::new(super::super::super::adapters::Cells {
+                    records: records.clone(),
+                    local: index,
+                    root: root.path().into(),
+                }),
+            )
+            .unwrap();
             let manager = node
                 .install_read_replicas(
                     layout.clone(),
@@ -103,31 +149,6 @@ impl Fixture {
             nodes.push(node);
             managers.push(manager);
         }
-        let target = CellTarget::new(
-            TenantId::from_bytes([1; 16]),
-            scope().application,
-            application::NAMESPACE,
-            &[1],
-        )
-        .unwrap();
-        let code = app.registry().module_digests()[0];
-        let proof = CellCatalog::new(layout.clone(), target.tenant())
-            .provision(CatalogEntry::new(&target, CatalogRole::Sql, code, 1).unwrap())
-            .await
-            .unwrap();
-        let incarnation = IncarnationId::from_bytes([1; 16]);
-        let authority = CellAuthority::new(layout.clone());
-        let initial = authority
-            .create_initial(&proof, incarnation, owner(0))
-            .await
-            .unwrap();
-        let replica = CellReplica::new(
-            layout.clone(),
-            *target.cell_id().as_bytes(),
-            *incarnation.as_bytes(),
-            limits,
-        )
-        .unwrap();
         let handle = nodes[0]
             .runtime()
             .bootstrap(

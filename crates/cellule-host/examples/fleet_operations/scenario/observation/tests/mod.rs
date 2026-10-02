@@ -133,7 +133,7 @@ async fn complete_writer_profile_uses_original_pages_authority_and_canonical_hea
         fixture.fleet.journal.load_snapshot(scope()).await.unwrap(),
         before
     );
-    assert_eq!(fixture.fleet.capture_sequence.load(Ordering::SeqCst), 24);
+    assert_eq!(fixture.fleet.capture_sequence.load(Ordering::SeqCst), 63);
     for (index, ad) in capture.nodes.iter().enumerate() {
         let canonical = fixture.fleet.boots[index]
             .directory
@@ -532,3 +532,5 @@ async fn one_canonical_release_keeps_other_native_writers_available_for_pressure
     drop(after);
     fixture.close().await;
 }
+
+mod inventory;

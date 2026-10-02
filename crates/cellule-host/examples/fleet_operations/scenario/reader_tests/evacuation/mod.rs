@@ -10,6 +10,7 @@ use cellule_runtime::{
 use ed25519_dalek::SigningKey;
 
 mod fixture;
+mod inventory_tests;
 mod tests;
 mod transport;
 

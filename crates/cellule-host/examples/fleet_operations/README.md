@@ -62,8 +62,9 @@ and rechecks the original full snapshot after collection. Count balancing also
 requires exact established boot advertisements, settled enrollment and writer
 rows matching signed counts. Its collector uses request-bound native snapshots,
 the original enrolled signing keys, both directory session scans and fresh Cell
-authority. It rereads authority and actor topology and confirms the full journal
-barrier. Complete coverage is supported for this private constructor's bounded
+authority. It uses `FleetNodeInventoryScan` for every native category and continuation,
+rereads authority, rechecks all seven complete category fingerprints after the
+fleet-wide authority scan, and confirms the full journal barrier. Complete coverage is supported for this private constructor's bounded
 writer-only profile: twelve catalog-backed SQL Cells and three managed boots.
 Unexpected advertised boots, Pending/role enrollment, native role installations,
 expired/fenced log obligations, changed topology or stale ownership prevent

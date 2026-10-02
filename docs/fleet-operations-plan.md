@@ -480,8 +480,12 @@ rechecks, both original endpoints of unresolved responsibilities, and retained
 terminal rows. It supplies `FleetRoster` to `FleetObserver::observe` and binds all
 rows into the planner digest. Count balancing additionally requires established
 boot coverage, no Pending enrollment and writer rows matching signed counts.
-The reference observer now uses request-bound native pages, canonical signed
-heartbeats, fresh Cell authority and repeated topology/registry checks. It can
+The host also provides `FleetNodeInventoryScan` for canonical all-category
+traversal, retained native producer/job state, exact roster matching and fresh
+all-category revalidation after fleet-wide discovery. The reference observer
+consumes it with canonical signed heartbeats, fresh Cell authority and repeated
+native/registry checks, preserving independently verified pressure rows when
+count coverage is invalidated. It can
 establish complete counts for its closed writer-only construction profile;
 unexpected boots, role installation/enrollment or missing obligations invalidate
 that coverage. The `balance` command exercises actual residence and repeated
