@@ -22,6 +22,10 @@ from coordination import coordinate
 QUERIES = 4096
 COMMANDS = 1024
 PACED_BURSTS = 48
+# Shared-runner identical-binary controls reached 1.31x p95 and 1.84x p99.
+# Keep a coarse blocking gate and retain 10% latency alerts for review.
+GATE_LIMITS = {"p95_max_ratio": 1.50, "p99_max_ratio": 2.00, "throughput_min_ratio": 0.90}
+LATENCY_ALERT_RATIO = 1.10
 PAIRS = (("baseline", "candidate"), ("candidate", "baseline"),
          ("candidate", "baseline"), ("baseline", "candidate"))
 ORDER = tuple(version for pair in PAIRS for version in pair)
@@ -221,6 +225,7 @@ def parse_measurement(version, mode, index, evidence):
 def compare(rows, modes=None):
     comparisons = []
     failures = []
+    latency_alerts = []
     modes = tuple(SELECTORS) if modes is None else tuple(modes)
     if not modes or not set(modes) <= set(SELECTORS):
         raise RuntimeError("Invalid routing modes")
@@ -251,13 +256,20 @@ def compare(rows, modes=None):
                 "local_command", "forwarded_command", "local_query_expired_bursts",
                 "forwarded_query_expired_bursts", "forwarded_query_uncached_route",
             )
-            if gated and (ratios["p95_ms"] > 1.10 or ratios["p99_ms"] > 1.10
-                          or ("expired_bursts" not in lane and ratios["throughput"] < 0.90)):
+            if gated and (ratios["p95_ms"] > LATENCY_ALERT_RATIO
+                          or ratios["p99_ms"] > LATENCY_ALERT_RATIO):
+                latency_alerts.append(f"{mode}/{lane}/c{int(concurrency)}")
+            if gated and (ratios["p95_ms"] > GATE_LIMITS["p95_max_ratio"]
+                          or ratios["p99_ms"] > GATE_LIMITS["p99_max_ratio"]
+                          or ("expired_bursts" not in lane
+                              and ratios["throughput"] < GATE_LIMITS["throughput_min_ratio"])):
                 failures.append(f"{mode}/{lane}/c{int(concurrency)}")
             comparisons.append(dict(mode=mode, lane=lane, concurrency=concurrency,
                                     medians=medians, ratios=ratios, latency_gate=gated))
     return {"comparisons": comparisons, "failures": failures,
-            "threshold": "median of all four runs: p95/p99 <= 110%, throughput >= 90%"}
+            "gate_limits": GATE_LIMITS, "latency_alert_ratio": LATENCY_ALERT_RATIO,
+            "latency_alerts": latency_alerts,
+            "threshold": "median of all four runs: p95 <= 150%, p99 <= 200%, throughput >= 90%"}
 
 
 def main():
@@ -277,6 +289,7 @@ def main():
                  "candidate": output("git", "rev-parse", "HEAD")}
     manifest = {"order": ORDER, "pairs": PAIRS, "queries": QUERIES, "commands_per_lane": COMMANDS,
                 "paced_bursts": PACED_BURSTS, "modes": modes,
+                "gate_limits": GATE_LIMITS, "latency_alert_ratio": LATENCY_ALERT_RATIO,
                 "selectors": SELECTORS, "host": platform.uname()._asdict(),
                 "test_only_transplant": [str(PEER / path) for path in (
                     "src/performance_tests.rs", "src/lib.rs", "src/tests.rs", "Cargo.toml")] + ["Cargo.lock (peer test dependencies only)"],
