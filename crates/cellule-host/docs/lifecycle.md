@@ -68,6 +68,9 @@ Accepted retirement and recruitment replies still join; a recruited replacement
 that returns during drain is canonically closed. The host remains Draining until
 all required joins and cleanup succeed, retaining lease maintenance meanwhile.
 Lost cleanup replies retry the same generation under the retained owner.
+Complete member responses remain cached before the authority-close await.
+Closure retries reuse those original fences and call only authority reconciliation;
+they do not send retire RPCs after directory authorization has closed.
 Foreign boot/node or non-advancing replacement configuration is rejected before
 construction or any attempt to close that foreign scope.
 Interrupted rotation never counts as

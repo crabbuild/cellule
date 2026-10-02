@@ -10,10 +10,15 @@ use crate::node::advertisement::validate_successor;
 use super::*;
 
 mod advertisement;
+mod enrollment;
 mod inventory;
 mod log;
 mod recovery;
 
+pub use enrollment::{
+    NodeLogEnrollmentAttempt, NodeLogEnrollmentProof, NodeLogEnrollmentRefusalProof,
+    PreparedNodeLogEnrollment,
+};
 pub use inventory::{FollowerLogObservation, LogInventoryCursor, LogInventoryPage, LogLeaderState};
 
 /// Object-store directory for one fleet and compiled release.

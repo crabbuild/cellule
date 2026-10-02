@@ -316,14 +316,30 @@ impl NodeDurability {
         }
         self.shipper.shutdown().await?;
         let barrier = self.gate.begin_rotation()?;
-        let observation = Arc::new(
-            crate::node::log::retire_node_log(Arc::clone(&self.transport), &barrier).await?,
-        );
-        *self
-            .retirement
-            .lock()
-            .map_err(|_| Error::Node("node-log retirement lock poisoned"))? =
-            Some(Arc::clone(&observation));
+        // A complete member fence precedes authority closure. Retain it before
+        // awaiting that CAS: an accepted close with a lost reply makes further
+        // retire RPCs unauthorized, although the original fences remain valid.
+        let retained = self.retirement_observation()?;
+        let observation = match retained {
+            Some(observation) if observation.confirmed().is_ok() => {
+                if observation.barrier() != &barrier {
+                    return Err(Error::Node("retained node-log retirement barrier differs"));
+                }
+                observation
+            }
+            _ => {
+                let observation = Arc::new(
+                    crate::node::log::retire_node_log(Arc::clone(&self.transport), &barrier)
+                        .await?,
+                );
+                *self
+                    .retirement
+                    .lock()
+                    .map_err(|_| Error::Node("node-log retirement lock poisoned"))? =
+                    Some(Arc::clone(&observation));
+                observation
+            }
+        };
         let confirmation = observation.confirmed();
         let proof = if require_confirmation {
             Some(Arc::new(confirmation?))

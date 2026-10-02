@@ -926,14 +926,42 @@ healthy siblings are joined before a member failure is returned.
 | `NodeLogRetirementObservation::confirmed()` | Opaque confirmation of every member's append fence. This alone does not establish authority closure or lane deletion. |
 | `shutdown_for_maintenance()` | Returns the member proof after canonical authority closure succeeds, and retains it for idempotent calls. Earlier best-effort closure with missing responses cannot be upgraded into proof. |
 
-Cancellation of a maintenance waiter creates no proof; retry addresses the same
-epoch and complete member set. Native follower retirement persists its fence
-before responding, so a lost reply may require reconciliation even when the
-lane is already retired. Complete fleet-role observation, journal settlement,
+Before every member confirms, cancellation creates no complete proof; retry
+addresses the same epoch and complete member set. Once every checked response
+is joined, the runtime retains that exact observation before awaiting authority
+closure. A lost closure reply or cancelled closure waiter reuses those fences
+and retries only the original authority callback. It sends no new retirement
+RPCs against an epoch whose directory authorization may already have closed.
+The shutdown proof is returned only after that callback succeeds; applications
+must reconcile their exact original CAS and preserve ownership of accepted work.
+Native follower retirement persists its fence before responding, so a lost
+member reply still requires reconciliation even when the lane is already retired.
+Complete fleet-role observation, journal settlement,
 replacement-policy evidence and failed-process closure still belong to the
 embedding application's maintenance controller. This API alone does not certify
 that a physical node is safe to stop. The host's automatic rotation continues
 to use ordinary best-effort closure.
+
+**Prepared follower enrollment.** A durable fleet producer can separate the
+existing directory selection from its conditional authority write:
+
+| API | Ordering and evidence |
+| --- | --- |
+| `prepare_log_enrollment` | Read-only selection of the complete ensemble through the canonical selector. Retains original signed physical boots and a provider-assigned epoch. |
+| `prepare_log_enrollment_attempt` | Revalidates every original boot, live receiver admission/capacity and the source CAS version. Allows heartbeat updates; never substitutes a new member. |
+| `commit_log_enrollment` | Writes the fixed ensemble using only the retained source version. Fleet producers must accept Pending for every original member before dispatch. |
+| `inspect_log_enrollment` | Reconciles the original leader boot, epoch and complete physical member set across activation, coverage and heartbeats. Absence, expiry, withdrawal or another epoch leaves the result unknown. |
+| `fence_log_enrollment` | Competes against that exact attempt using the same original CAS token. A confirmed no-log successor prevents its delayed write. A newer empty record cannot authorize a rebased fence. |
+
+Prepared values belong to one directory instance and its clones. Providers must
+assign a unique advancing epoch per recruitment request for each leader boot,
+including after ambiguous results and closure. Retain the attempt before its
+first CAS await. Rebase only before registry acceptance; a timeout cannot
+authorize another attempt or another member set. The resulting opaque proof
+observes canonical enrollment. Selected follower boot metadata does not prove
+current receiver authority, fsync, registry publication or retirement. Transport
+construction and fleet producer ownership remain application/host integration
+responsibilities; these APIs alone do not install a journal-bound producer.
 
 **Epoch rotation controller.** The long-lived HTTP runtime applies the same
 barrier when shipping stops or the current epoch reaches `1_000_000` issued

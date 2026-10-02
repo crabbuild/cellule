@@ -4,6 +4,102 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 prepared follower enrollment checkpoint
+
+Runtime recruitment now shares one canonical selector and conditional write
+with a read-only preparation bridge. Opaque selection retains every original
+signed follower boot, complete member set and provider-assigned advancing epoch.
+An opaque attempt revalidates those exact boots and receiver admission/capacity,
+then captures a fresh source CAS token before registry acceptance. Commit uses
+that original token and ensemble; it never substitutes a receiver or rebases an
+ambiguous effect. Directory instance binding permits clones and rejects other
+instances even with identical fleet metadata. Ordinary recruitment preserves
+its caller's observed-version CAS behavior.
+
+Fresh inspection reconciles the original source boot, epoch and complete member
+set across activation, coverage and heartbeat changes. A conditional refusal
+fence competes with enrollment using the same original token and next generation.
+Its checked successor prevents that attempt's delayed CAS. Missing or newer empty
+records cannot create this proof; enrollment followed by closure cannot be
+reported as refusal. These proofs do not assert native follower fsync, current
+receiver authority, fleet journal publication or role retirement. The managed
+host producer still needs to journal all members Pending before native dispatch
+and consume these retained attempts through settlement.
+
+Retirement now caches complete checked member responses before authority closure.
+After a lost close reply or a cancelled close waiter, strict and ordinary retries
+reuse that exact observation and retry the original authority callback. They no
+longer send unauthorized retire requests against an already-closed epoch. Final
+shutdown proof still requires callback success. Partial best-effort closure and
+contradictory receipts preserve their original contracts.
+
+Eleven new directory cases exercise read-only selection, exact signed boot
+metadata, heartbeat rebasing before acceptance, stale dispatch tokens, current
+inspection, absent/withdrawn source, scope isolation, expired/replaced followers,
+receiver capacity/mode/pressure, outbound enrollment from a cordoned leader,
+signer replacement and conditional refusal races. Three new public runtime
+cases use actual Cell commands, native follower stores and signed directory
+authorization/CAS. They lose closure replies, cancel closure waiters, and cancel
+reconciliation after the backend accepted an enrollment/refusal but lost its
+reply. Original member observations, persisted native fences, exact-root state
+and the original `sys_requests` response remain checked. These in-process faults
+do not establish provider/process or complete fleet-role qualification.
+
+The final scoped pipeline passed against the exact Rust/Cargo manifest below.
+The selections establish these contracts and regression evidence; they do not
+qualify the full W1–W10 implementation.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `60922033dc3ecc9a01f3f15877aa62c3cdabd62c` |
+| Rust/Cargo manifest | 601 tracked/nonignored `.rs`, `Cargo.toml` and `Cargo.lock` paths; sorted SHA256, two spaces, relative path lines. SHA256 `787c1c77da2b553be326a312b05cfbc32143a5f98ad5ab45a15abb0bbc7057ee`. |
+| Complete public host node target | 80 passed; none filtered or ignored. |
+| Public runtime durability selection | 24 passed; 176 filtered; none ignored. Includes the three new signed-directory/native-follower cases. |
+| Runtime node library selection | 100 passed; 406 filtered; none ignored. Includes eleven new directory cases. |
+| Complete fleet operations example target | 60 passed; none filtered or ignored. |
+| Distinct scoped cases | 264 passed. Earlier and intermediate selections are not counted again. |
+| Host lint | All targets/features, warnings denied; passed. |
+| Runtime lint | Library/public runtime target, all features, warnings denied; passed. |
+| Host/runtime API documentation | All features, warnings denied; passed. |
+| Static gates | Format, diff whitespace, boundaries/layout, 110 Rust snippets, 1150 Markdown links and 28 SQL/peer assertions with 566 links passed. |
+
+An intermediate retirement-only run passed five existing cases and failed both
+new signed fixtures because their heartbeat lifetime exceeded the existing
+30-second contract. The fixtures now use 20 seconds; the limit and verification
+assertions are unchanged. Final logs and manifest use
+`/tmp/cellule-fleet-enrollment-*`, Rust/Cargo 1.97.0, all features, the lockfile,
+`CARGO_INCREMENTAL=0` and this checkout's Workspace target directory. Persisted
+formats, signed message bytes and object paths are unchanged.
+
+Baseline `6092203` passed Rust (36944383297), capacity (36944383244), contract
+(36944383282), website (36944383388), fuzz (36944383341), and fast/negative TLC
+(36944383262 / 110642975391). Broad TLC and the simulator corpus were skipped.
+Compose smoke **failed** at the reader-scaling step in
+[job 110643075559](https://github.com/crabbuild/cellule/actions/runs/36944383259/job/110643075559).
+Its three initial provider-backed tests passed; the mixed three-node reader
+driver then failed at `process_scaling.rs:548` with `ReplicaUnavailable` after
+successful reader readiness and distribution. The last retained mixed write is
+arrival 184 at about 36.8 seconds, with acknowledged sequence 246/count 216.
+This is a symptom, not an established cause. The raw artifact
+`cell-reference-compose-36944383259-1` (ID `11201985421`) includes original
+driver/node/container logs, TSV arrivals and reads, binary hashes and source
+identity. The downloaded ZIP SHA256 is
+`2ec63e359d13b01ca86ef2fd16ae3763d53e0517480e32d723772fc14a6c06da`.
+The artifact pins synthetic PR merge source
+`68943f6c8b0e1bd7fd57e766590779c067983d34`, whose parents are baseline
+`0dc04a658bd99668936f7ec58032d054f6fbc141` and PR head `6092203`.
+The scaling driver binary SHA256 is
+`d8796fd2b9a195c62fe7c4020aadab033a27a1f013b2ad56ee2bc56ef239ded6`.
+Local copies are `/tmp/cellule-fleet-6092203-compose-smoke*`. Routing job
+`110643075291` remains running when inspected; re-poll its original handle.
+Reader availability and process/provider qualification remain open. No profile,
+required evidence or assertion was weakened.
+
+The full W1–W10 goal remains active. Next work includes managed follower
+production before CAS, journal retirement, complete revisioned role observations,
+failed-owner/replacement-policy proof, role evacuation/finalization and the
+remaining primitive, example, fault, deployment and operator deliverables.
+
 ## October 1 2026 requested host rotation checkpoint
 
 `CellNode::request_node_log_rotation(epoch)` wakes the existing durability

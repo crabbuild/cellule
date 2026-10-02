@@ -119,30 +119,24 @@ impl NodeDirectory {
         live_node_limit: usize,
         now_ms: i64,
     ) -> Result<Option<VersionedNodeAdvertisement>> {
-        self.validate(&observed.advertisement, now_ms)?;
-        if observed.advertisement.log.is_some() {
-            return Err(Error::Node("node session already has an enrolled log"));
-        }
-        let members = self
-            .select_log_members(
-                observed.advertisement.session,
+        let Some(prepared) = self
+            .prepare_log_enrollment(
+                observed,
+                log_epoch,
                 required_follower_bytes,
-                now_ms,
                 live_node_limit,
+                now_ms,
             )
-            .await?;
-        if members.is_empty() {
+            .await?
+        else {
             return Ok(None);
-        }
-        let mut next = observed.advertisement.clone();
-        next.generation = next
-            .generation
-            .checked_add(1)
-            .ok_or(Error::Node("node session generation overflow"))?;
-        next.log = Some(NodeLogStatus::open(next.node, log_epoch, members)?);
-        self.update_advertisement(observed, next, now_ms)
+        };
+        // Preserve the ordinary API's observed-version CAS contract. Managed
+        // producers explicitly rebase before accepting their registry records.
+        let attempt = self.enrollment_attempt(&prepared, observed.clone())?;
+        self.commit_log_enrollment(&attempt, now_ms)
             .await
-            .map(Some)
+            .map(|proof| Some(proof.enrollment().clone()))
     }
 
     /// CAS-activates the exact enrolled epoch after every member fsyncs its first batch.
