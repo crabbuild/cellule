@@ -359,7 +359,12 @@ async fn initialize(
         node.start()?;
     }
     let mut acknowledged = HashMap::new();
-    for (cell, record) in records.iter() {
+    // A reproducible, adversarial order makes the lowest Cell identities the
+    // oldest local eviction candidates. The fleet must use actual actor demand
+    // rather than succeed by chance on HashMap iteration order.
+    let mut initial_cells = records.iter().collect::<Vec<_>>();
+    initial_cells.sort_by_key(|(cell, _)| *cell.as_bytes());
+    for (cell, record) in initial_cells {
         let initial = record
             .authority
             .load(*cell)

@@ -117,6 +117,7 @@ fn demand(cell: u8, source: SessionId) -> CellTransferDemand {
         disk_bytes: 400,
         job_credits: 1,
         resident_since_ms: 0,
+        last_used_ms: 0,
         last_moved_at_ms: None,
         stable_observations: 2,
         settled: true,
@@ -468,4 +469,67 @@ fn balance_donation_requires_the_elected_donor() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn pressure_transfers_prefer_recent_settled_cells_over_local_eviction_victims() {
+    let planner = PlacementPlanner::default();
+    let mut donor = observation(1);
+    donor.pressure = PlacementPressure::Shedding;
+    let mut receiver = observation(2);
+    receiver.free_memory_bytes = 1_000;
+    receiver.free_disk_bytes = 1_000;
+    let oldest = demand(1, donor.session);
+    let mut recent = demand(2, donor.session);
+    recent.last_used_ms = 90;
+    let mut middle = demand(3, donor.session);
+    middle.last_used_ms = 50;
+    let plans = |source, values: &[CellTransferDemand]| {
+        planner
+            .plan_transfers(100, &[source, receiver], values, None)
+            .unwrap()
+    };
+    let expected = vec![recent.cell, middle.cell];
+    for values in [[oldest, middle, recent], [recent, oldest, middle]] {
+        let intents = plans(donor, &values);
+        assert_eq!(
+            intents.iter().map(|intent| intent.cell).collect::<Vec<_>>(),
+            expected
+        );
+    }
+    recent.settled = false;
+    assert_eq!(plans(donor, &[oldest, middle, recent])[0].cell, middle.cell);
+    // Draining remains deterministic in Cell order even under pressure.
+    donor.draining = true;
+    recent.settled = true;
+    assert_eq!(plans(donor, &[recent, middle, oldest])[0].cell, oldest.cell);
+    donor.draining = false;
+    donor.pressure = PlacementPressure::Normal;
+    donor.observed_at_ms = 100_000;
+    receiver.observed_at_ms = 100_000;
+    let ordinary = planner
+        .plan_transfers(100_000, &[donor, receiver], &[recent, middle, oldest], None)
+        .unwrap();
+    assert_eq!(ordinary[0].cell, oldest.cell);
+}
+
+#[test]
+fn pressure_transfer_recency_is_validated_and_ties_use_cell_identity() {
+    let planner = PlacementPlanner::default();
+    let mut donor = observation(1);
+    donor.pressure = PlacementPressure::Shedding;
+    let receiver = observation(2);
+    let first = demand(1, donor.session);
+    let second = demand(2, donor.session);
+    let plans = |values: &[CellTransferDemand]| {
+        planner
+            .plan_transfers(100, &[donor, receiver], values, None)
+            .unwrap()
+    };
+    assert_eq!(plans(&[second, first])[0].cell, first.cell);
+    for at in [-1, 101] {
+        let mut invalid = first;
+        invalid.last_used_ms = at;
+        assert!(plans(&[invalid]).is_empty());
+    }
 }

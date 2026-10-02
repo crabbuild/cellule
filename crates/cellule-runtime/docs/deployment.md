@@ -270,6 +270,14 @@ store integrations must install `runtime.node_admission()` using
 `FollowerStore::with_node_admission` before sharing the store. Existing enrolled
 tail appends and existing reader refreshes continue under their normal fences.
 
+Pressure transfers on an Active donor prefer recently used settled Cells using
+the actor's `last_used_ms`. Local emergency eviction continues closing oldest
+idle Cells under its existing movement budget. Drains and normal balancing
+retain their Cell identity order. Recency conveys no reservation: a racing
+source close can still invalidate a proposal, and exact action validation must
+refuse it and join unused receiver credit. Demand timestamps must be nonnegative
+and no later than the planner's observation time.
+
 Fleet-managed hosts additionally hold this same gate with
 `NodeAdmission::hold_startup` before installing a lease. While held, an otherwise
 Active node reports Cordoned. `confirm_startup(mode)` removes only that hold;

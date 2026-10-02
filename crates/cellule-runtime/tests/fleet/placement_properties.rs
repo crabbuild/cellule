@@ -107,6 +107,7 @@ fn a_dense_member_hands_over_to_an_empty_one() {
         disk_bytes: 1 << 20,
         job_credits: 1,
         resident_since_ms: NOW_MS - 120_000,
+        last_used_ms: NOW_MS - 1,
         last_moved_at_ms: None,
         stable_observations: 3,
         settled: true,
@@ -158,6 +159,7 @@ fn small_fleets_converge_after_owner_loss_with_fresh_settled_views() {
                     disk_bytes: 1 << 20,
                     job_credits: 1,
                     resident_since_ms: now - 120_000,
+                    last_used_ms: now - 1,
                     last_moved_at_ms: None,
                     stable_observations: 3,
                     settled: true,
@@ -218,6 +220,7 @@ fn donations_do_not_overfill_a_preferred_receivers_weighted_share() {
             disk_bytes: 1,
             job_credits: 1,
             resident_since_ms: NOW_MS - 120_000,
+            last_used_ms: NOW_MS - 1,
             last_moved_at_ms: None,
             stable_observations: 3,
             settled: true,
@@ -238,6 +241,52 @@ fn donations_do_not_overfill_a_preferred_receivers_weighted_share() {
         .map(|intent| intent.destination)
         .collect::<Vec<_>>();
     assert_eq!(destinations, vec![session(1), session(2)]);
+}
+
+/// Pressure movement and local idle eviction consume the same actor recency,
+/// in opposite orders. Recency ties still have an identity-based total order.
+#[test]
+fn pressure_recency_order_is_permutation_invariant() {
+    let planner = PlacementPlanner::default();
+    let donor = observation(1, 6, 8, PlacementPressure::Shedding, false);
+    let receiver = observation(2, 0, 8, PlacementPressure::Normal, false);
+    let demands = (0..6)
+        .map(|index| CellTransferDemand {
+            cell: CellId::from_bytes([index; 32]),
+            source: donor.session,
+            generation: 1,
+            memory_bytes: 1 << 20,
+            disk_bytes: 1 << 20,
+            job_credits: 1,
+            resident_since_ms: NOW_MS - 1_000,
+            last_used_ms: NOW_MS - i64::from(5 - index) * 10,
+            last_moved_at_ms: None,
+            stable_observations: 2,
+            settled: true,
+            maintenance: false,
+        })
+        .collect::<Vec<_>>();
+    let expected = planner
+        .plan_transfers(NOW_MS, &[donor, receiver], &demands, None)
+        .unwrap();
+    assert_eq!(
+        expected
+            .iter()
+            .map(|intent| intent.cell)
+            .collect::<Vec<_>>(),
+        vec![CellId::from_bytes([5; 32]), CellId::from_bytes([4; 32])]
+    );
+    for offset in 0..demands.len() {
+        let mut shuffled = demands.clone();
+        shuffled.rotate_left(offset);
+        shuffled.reverse();
+        assert_eq!(
+            planner
+                .plan_transfers(NOW_MS, &[receiver, donor], &shuffled, None)
+                .unwrap(),
+            expected
+        );
+    }
 }
 
 proptest! {
@@ -325,6 +374,7 @@ proptest! {
                     disk_bytes: bytes,
                     job_credits: 1,
                     resident_since_ms: NOW_MS - 1_000,
+                    last_used_ms: NOW_MS - 1,
                     last_moved_at_ms: None,
                     stable_observations: 2,
                     settled: true,

@@ -4,6 +4,77 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 pressure selection checkpoint
+
+The unchanged overload scenario reproduced a competing local eviction. The
+trace binds the same Cell, actor generation and last-use timestamp: native
+oldest-first eviction began at `1790968652472`, fleet allocation followed at
+`1790968652474`, and receiver preparation refused the fenced source. The first
+movement completed while the second was safely cancelled. This is an advisory
+selection race, not permission to weaken source authority or count cancellation
+as successful relocation.
+
+`CellTransferDemand` now carries the actor's actual `last_used_ms`. Under
+Shedding or Critical pressure on an Active donor, the pure planner prefers
+recent settled Cells. Native emergency eviction remains oldest-first and keeps
+its existing budget and dwell rules. Normal balance and maintenance preserve
+Cell identity ordering; invalid recency timestamps are excluded. This is a
+contention reduction, not an actor reservation or a general convergence proof.
+Exact source release and receiver cleanup still handle racing closures.
+
+The native fixture now boots Cells in ascending identity order, making the
+lowest identities the oldest eviction candidates. This adversarial ordering
+removes accidental success from randomized HashMap iteration. The corrected
+fixture fails before the policy change with one movement. The initial fixture
+compile error (CellId has no Ord implementation) and its correction to stable
+identity bytes remain recorded separately. Pressure load, deadlines, residence,
+receiver budgets, two-movement results and zero-resource assertions are intact.
+
+Two private planner regressions and a public permutation case cover the new
+order, settlement, timestamp refusal, stable identity ties and unchanged drain
+and ordinary balance behavior. All 20 paired native replays pass: 20 overload
+and 20 controller-restart cases. Repeats add no distinct test coverage. These
+results do not establish process/provider or mixed-version qualification.
+
+### Current verification
+
+All 646 Rust/Cargo/lock paths are byte-checked between the active checkout and
+isolated snapshot before and after each command. Their final path sets also
+match. Manifest SHA256:
+`c7005daa497dca9ad9893176faf129b0beefbfbd9446e9e003d06f42d140bf70`.
+
+| Native scope | Result |
+| --- | --- |
+| Complete runtime library, all features | 520 passed; three existing ignores. |
+| Complete public fleet suite, all features | 26 passed; one documented provider test ignored. |
+| Complete host library and public node suite | 29 and 106 passed. |
+| Complete fleet example, all features | 112 passed; count equilibrium check failed. Overload and controller restart passed. |
+| Workspace all-target/all-feature locked check and Clippy | Passed; lint warnings denied. |
+| Runtime/host API docs and static gates | Passed with documentation warnings denied; format, boundaries/layout, Rust fences, links and SQL/peer contracts passed. |
+
+These are 793 distinct passed cases, four existing ignores and one failure.
+The balance failure states that equilibrium did not remain settled while
+scheduling stayed enabled; its current error lacks the failed pass detail.
+Its cause is unproven. The full failure, frozen executable and source remain
+retained under `/tmp/cellule-pressure-selection-a2806db-evidence`, alongside
+before/after, diagnostic and replay evidence. Required profiles and expected
+results were not weakened. Parent `a2806db` CI has 112 example passes and the
+original overload failure; native replay does not erase that CI evidence.
+
+### Remaining delivery streams
+
+| Stream | Unfinished work |
+| --- | --- |
+| W2–W5 | Complete role/current-authority observation, ongoing intent supervision, remaining failure/concurrency coverage and reliable count/pressure convergence. |
+| W6 | Remaining primitive maintenance fault matrix, Blob external owners and sustained-traffic evidence. |
+| W7 | Complete reader/follower replacement and failed-owner evidence, role evacuation, terminal action handoff and checked stop/withdrawal. `SettleRoles` and `Finalize` remain refused. |
+| W8 | Runnable complete maintenance and receiver-loss scenarios. |
+| W9 | Full process/provider fault campaign, soak and actual mixed-version qualification. |
+| W10 | Exercised runbooks and staged rollout evidence. |
+
+The complete implementation plan remains active. This checkpoint does not
+complete W1–W10 or establish fleet operation qualification.
+
 ## October 2 2026 actual successor inspection checkpoint
 
 Fresh movement inspection can now target another physical node, or a new boot

@@ -214,6 +214,10 @@ pub struct CellTransferDemand {
     pub job_credits: u32,
     /// Logical time the Cell became resident.
     pub resident_since_ms: i64,
+    /// Actor-observed logical time of the most recent use. Pressure movement
+    /// prefers recently used settled Cells while local eviction closes the
+    /// oldest idle Cells. This observation conveys no source reservation.
+    pub last_used_ms: i64,
     /// Logical time the Cell last moved, when it has.
     pub last_moved_at_ms: Option<i64>,
     /// Consecutive settled samples observed for this Cell.
@@ -411,6 +415,9 @@ impl PlacementPlanner {
     /// projected across selected intents, then rechecked during activation.
     /// Ordinary movement requires settled samples; explicit maintenance uses
     /// configured peak costs and requires a draining donor.
+    /// Pressure on an active donor prefers recently used settled Cells, leaving
+    /// oldest idle Cells to independent local eviction. This reduces contention
+    /// but reserves no actor; exact release must still reject a racing close.
     ///
     /// `balance` is the ownership balance of the same snapshot. When it elects
     /// one of the demands' sources as the donor, its receivers may absorb that
@@ -476,6 +483,21 @@ impl PlacementPlanner {
             };
             priority(right)
                 .cmp(&priority(left))
+                .then_with(|| {
+                    let recency = |demand: &CellTransferDemand| {
+                        observations
+                            .iter()
+                            .find(|node| node.session == demand.source)
+                            .filter(|node| {
+                                !node.draining && node.pressure >= PlacementPressure::Shedding
+                            })
+                            .map_or(0, |_| demand.last_used_ms)
+                    };
+                    // The actor's emergency eviction is oldest-first. Advisory
+                    // fleet movement preserves recently used settled actors on
+                    // another node instead of preparing those same cold victims.
+                    recency(right).cmp(&recency(left))
+                })
                 .then_with(|| left.cell.as_bytes().cmp(right.cell.as_bytes()))
         });
         let mut intents = Vec::new();
@@ -499,6 +521,8 @@ impl PlacementPlanner {
                 || demand.job_credits == 0
                 || demand.resident_since_ms < 0
                 || demand.resident_since_ms > now_ms
+                || demand.last_used_ms < 0
+                || demand.last_used_ms > now_ms
                 || demand
                     .last_moved_at_ms
                     .is_some_and(|at| at < 0 || at > now_ms)

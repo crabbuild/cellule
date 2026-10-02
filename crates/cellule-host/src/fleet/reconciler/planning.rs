@@ -166,6 +166,7 @@ impl FleetReconciler {
                 disk_bytes: cost.disk_bytes,
                 job_credits: cost.job_credits,
                 resident_since_ms: row.resident_since_ms,
+                last_used_ms: row.last_used_ms,
                 last_moved_at_ms: moved,
                 stable_observations: row.stable_observations,
                 settled,

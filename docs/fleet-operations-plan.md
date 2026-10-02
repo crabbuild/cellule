@@ -928,6 +928,13 @@ their existing independent admission paths. Count those separately in
 telemetry; do not claim that a fleet permit cap bounds partitioned residual I/O
 or unrelated recovery work.
 
+On an Active donor under Shedding or Critical pressure, pass the actor's actual
+`last_used_ms` through `CellTransferDemand` and prefer recent settled Cells.
+Emergency local eviction remains oldest-first. This reduces competing selection
+without holding actors or pausing local protection. Drains and ordinary balance
+retain Cell identity ordering. A snapshot is still advisory: exact release must
+refuse a racing close, preserve its error and settle unused receiver admission.
+
 | Bound | Initial choice and status |
 | --- | --- |
 | Periodic reconciliation | Proposed 15 seconds, with progress-triggered wakeups. One pass ends at its supplied deadline. |
