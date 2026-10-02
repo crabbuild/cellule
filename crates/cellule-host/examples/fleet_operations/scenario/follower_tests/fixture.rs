@@ -83,8 +83,25 @@ pub(super) struct Transport {
     locals: Vec<(NodeId, LocalFollowerTransport)>,
     pub requests: Mutex<Vec<(NodeId, RetireRequest)>>,
     pub lose_retire: AtomicBool,
+    retirement_retry: Mutex<
+        Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>,
+    >,
 }
 impl Transport {
+    pub fn pause_retirement_retry(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (entered, captured) = tokio::sync::oneshot::channel();
+        let (resume, release) = tokio::sync::oneshot::channel();
+        *self.retirement_retry.lock().unwrap() = Some((entered, release));
+        (captured, resume)
+    }
     fn local(&self, node: NodeId) -> &LocalFollowerTransport {
         &self
             .locals
@@ -133,7 +150,25 @@ impl NodeLogTransport for Transport {
         request: RetireRequest,
     ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
         Box::pin(async move {
-            self.requests.lock().unwrap().push((member, request));
+            let retry = {
+                let mut requests = self.requests.lock().unwrap();
+                let retry = requests.iter().any(|(peer, original)| {
+                    *peer == member
+                        && original.leader_session == request.leader_session
+                        && original.log_epoch == request.log_epoch
+                });
+                requests.push((member, request));
+                retry
+            };
+            let gate = if retry {
+                self.retirement_retry.lock().unwrap().take()
+            } else {
+                None
+            };
+            if let Some((entered, release)) = gate {
+                entered.send(()).unwrap();
+                release.await.unwrap();
+            }
             self.directory
                 .authorize_log_retire(
                     request.leader_session,
@@ -158,6 +193,25 @@ pub(super) struct Provider {
     lease: NodeLeaseGuard,
     pub prepared: AtomicUsize,
     pub events: Mutex<Vec<NodeDurabilityRotation>>,
+    preparation: Mutex<
+        Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>,
+    >,
+}
+impl Provider {
+    pub fn pause_preparation(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (entered, captured) = tokio::sync::oneshot::channel();
+        let (resume, release) = tokio::sync::oneshot::channel();
+        *self.preparation.lock().unwrap() = Some((entered, release));
+        (captured, resume)
+    }
 }
 impl FleetNodeDurabilityProvider for Provider {
     fn prepare(
@@ -176,6 +230,11 @@ impl FleetNodeDurabilityProvider for Provider {
             // a refused, ambiguous, or incompletely retired original attempt.
             if self.prepared.fetch_add(1, Ordering::AcqRel) != 0 {
                 return Ok(None);
+            }
+            let gate = self.preparation.lock().unwrap().take();
+            if let Some((entered, release)) = gate {
+                entered.send(()).unwrap();
+                release.await.unwrap();
             }
             let now = clock()?;
             let source = self
@@ -315,6 +374,7 @@ impl Fixture {
             locals,
             requests: Mutex::new(Vec::new()),
             lose_retire: AtomicBool::new(false),
+            retirement_retry: Mutex::new(None),
         });
         let authority = Arc::new(Authority {
             directory: directory.clone(),
@@ -330,6 +390,7 @@ impl Fixture {
             lease,
             prepared: AtomicUsize::new(0),
             events: Mutex::new(Vec::new()),
+            preparation: Mutex::new(None),
         });
         Self {
             root,

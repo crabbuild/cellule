@@ -268,21 +268,30 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
                 .as_ref()
                 .filter(|_| occurrence == 1)
                 .map(|held| held.session);
-            let notified = tokio::time::timeout(Duration::from_secs(2), async {
-                let mut received = std::collections::HashSet::new();
+            let started = tokio::time::Instant::now();
+            let mut notified = std::collections::HashSet::new();
+            let received = tokio::time::timeout(Duration::from_secs(2), async {
                 for _ in 0..healthy.len() - usize::from(held_session.is_some()) {
                     let (cell, session) = hints.recv().await.unwrap();
                     assert_eq!(cell, target.cell_id());
                     assert_ne!(Some(session), held_session);
                     assert!(
-                        received.insert(session),
+                        notified.insert(session),
                         "duplicate activation in one publication pass"
                     );
                 }
-                received
             })
             .await;
-            let mut notified = notified.unwrap();
+            assert!(
+                received.is_ok(),
+                "publication {occurrence} timed out after {:?}: received {} of {} healthy hints; missing {:?}; held {:?}; pending transports {}",
+                started.elapsed(),
+                notified.len(),
+                healthy.len() - usize::from(held_session.is_some()),
+                healthy.difference(&notified).collect::<Vec<_>>(),
+                held_session,
+                pending.load(std::sync::atomic::Ordering::Relaxed),
+            );
             if let Some(held) = held.as_ref().filter(|_| occurrence == 1) {
                 // Healthy peers prove that the new publication pass prepared
                 // while this old activation remained in flight.

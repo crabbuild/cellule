@@ -28,4 +28,12 @@ use std::sync::{
 
 mod fixture;
 use fixture::*;
+mod inventory;
 mod tests;
+
+async fn captured(reply: tokio::sync::oneshot::Receiver<()>) {
+    tokio::time::timeout(Duration::from_secs(3), reply)
+        .await
+        .unwrap()
+        .unwrap();
+}

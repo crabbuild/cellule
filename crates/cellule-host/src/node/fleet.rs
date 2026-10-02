@@ -66,6 +66,29 @@ impl CellNode {
             None => Ok(None),
         }
     }
+
+    /// Captures every retained follower epoch through bounded advisory pages.
+    /// A busy protocol includes preparation before any request exists. None
+    /// means no managed producer is installed and supplies no role coverage.
+    /// Current directory authority, inbound lanes and replacement policy must
+    /// also be observed before settlement or maintenance finalization.
+    pub fn fleet_follower_enrollments_page(
+        &self,
+        cursor: Option<crate::FollowerEnrollmentInventoryCursor>,
+        limit: usize,
+        now_ms: i64,
+    ) -> cellule_runtime::Result<Option<crate::FollowerEnrollmentInventoryPage>> {
+        if !(1..=crate::durability::enrollment::MAX_FOLLOWER_ENROLLMENT_EPOCHS).contains(&limit)
+            || now_ms < 0
+        {
+            return Err(Error::Node("invalid follower enrollment inventory bounds"));
+        }
+        self.try_owned_component::<crate::durability::enrollment::FleetFollowerEnrollment>(
+            NODE_DURABILITY_PROVIDER_COMPONENT,
+        )?
+        .map(|producer| producer.page(cursor, limit, now_ms))
+        .transpose()
+    }
     /// Confirms startup against an atomic current-intent/established-boot read.
     /// The application first journals Pending, performs canonical directory
     /// enrollment and publishes checked evidence. Missing, pending or ambiguous

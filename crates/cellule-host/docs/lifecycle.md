@@ -136,6 +136,30 @@ removes local inventory and releases its reservation only after durable settleme
 all member responses, publication state, and separate original native/journal
 errors without waiting on RPCs. Missing local history supplies no fleet proof.
 
+`fleet_follower_enrollments_page(cursor, limit, now_ms)` enumerates every retained
+epoch, including original member requests whose acceptance is unknown. A page
+reserves one MiB before copying fixed-size follower metadata, admits 1–32 epochs,
+and hashes signed inputs/proofs in place. It preserves original retirement/error
+Arcs without deep-copying signed ensembles or provider CAS tokens. Drop the page
+to release its charge. A process-local continuation binds all epochs, native and
+publication progress, pending attempt, shared mode, and protocol state. Changes
+or missing continuation keys require restarting from the first page.
+
+| Capture | Interpretation |
+| --- | --- |
+| Busy protocol, no epochs | Preparation may be awaiting provider/journal I/O before a request exists; zero rows supply no absence proof. |
+| Pending epoch | Preserve all original selected members, including missing acceptance replies; capture starts no CAS or cleanup. |
+| Enrollment/refusal digest | Identifies an original checked proof; it supplies no authentication, current authority or replacement-policy proof. |
+| Retirement observation | Keeps original successful and failed member replies before separate canonical closure and durable publication. |
+| Missing or failed producer | An unbound node returns `None`; wrong component type, failed lock, exhausted or closed runtime byte ledger returns an error. Neither supplies empty coverage. |
+
+An idle protocol and zero retained epochs do not prove a joined supervisor,
+empty inbound follower lanes, withdrawal, or safe finalization. This is an
+interval scan. Applications still collect authenticated request-bound envelopes,
+the complete durable roster, fresh directory authority, native lanes and readers,
+and supervisor/facility completion. `try_owned_component` preserves typed lookup
+failures for these collectors; optional legacy lookups still return `None`.
+
 The provider allocates a never-reused advancing epoch for each leader boot. Its
 transport must address the originally selected signed follower boots. Its authority
 serializes heartbeat/activation/coverage/closure, fresh-loads the exact source

@@ -1,12 +1,5 @@
 use super::*;
 
-async fn captured(reply: tokio::sync::oneshot::Receiver<()>) {
-    tokio::time::timeout(Duration::from_secs(3), reply)
-        .await
-        .unwrap()
-        .unwrap();
-}
-
 async fn refused(fixture: &Fixture) -> Vec<EnrollmentRecord> {
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
@@ -314,6 +307,12 @@ async fn failed_member_keeps_established_rows_until_a_later_native_fence() {
     .unwrap();
     assert!(!completion.native_closed);
     assert!(completion.execution_error.is_some());
+    assert!(matches!(
+        fixture
+            .node
+            .fleet_follower_enrollments_page(None, 1, clock().unwrap()),
+        Err(Error::RuntimeClosed)
+    ));
     assert!(completion.retirement.unwrap().confirmed().is_err());
     assert_eq!(fixture.authority.attempts.load(Ordering::Acquire), 0);
     assert!(

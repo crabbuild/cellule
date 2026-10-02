@@ -399,11 +399,25 @@ impl CellNode {
     where
         T: Send + Sync + 'static,
     {
-        self.facilities
+        self.try_owned_component(name).ok().flatten()
+    }
+
+    /// Looks up an optional typed component, preserving lock and type failures.
+    /// Fleet observations must distinguish missing facilities from failed capture.
+    pub fn try_owned_component<T>(&self, name: &str) -> cellule_runtime::Result<Option<Arc<T>>>
+    where
+        T: Send + Sync + 'static,
+    {
+        let facilities = self
+            .facilities
             .lock()
-            .ok()?
-            .iter()
-            .find(|facility| facility.name == name)
-            .and_then(CellNodeFacility::owner)
+            .map_err(|_| Error::Control("CellNode facility lock poisoned"))?;
+        let Some(facility) = facilities.iter().find(|facility| facility.name == name) else {
+            return Ok(None);
+        };
+        facility
+            .owner()
+            .map(Some)
+            .ok_or(Error::Control("CellNode component type differs"))
     }
 }

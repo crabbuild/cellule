@@ -91,6 +91,22 @@ async fn node_retains_typed_components_without_duplicate_names() {
         node.owned_component::<u64>("fixture-component").as_deref(),
         Some(&7)
     );
+    assert_eq!(
+        node.try_owned_component::<u64>("fixture-component")
+            .unwrap()
+            .as_deref(),
+        Some(&7)
+    );
+    assert!(
+        node.try_owned_component::<String>("fixture-component")
+            .is_err()
+    );
+    assert!(node.try_owned_component::<u64>("unowned").is_err());
+    assert!(
+        node.try_owned_component::<u64>("missing")
+            .unwrap()
+            .is_none()
+    );
     assert!(
         node.install_owned_component("fixture-component", Arc::new(8_u64))
             .is_err()

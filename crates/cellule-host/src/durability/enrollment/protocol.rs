@@ -140,7 +140,7 @@ impl FleetFollowerEnrollment {
                 if bank.draining || self.cancellation.is_cancelled() {
                     return Ok(None);
                 }
-                if epoch <= bank.last_epoch || bank.epochs.len() >= 32 {
+                if epoch <= bank.last_epoch || bank.epochs.len() >= MAX_FOLLOWER_ENROLLMENT_EPOCHS {
                     return Err(Error::Fenced);
                 }
                 let record = Arc::new(Responsibility {

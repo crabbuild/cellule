@@ -18,8 +18,14 @@ use std::collections::BTreeMap;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex as AsyncMutex;
 
+pub(crate) const MAX_FOLLOWER_ENROLLMENT_EPOCHS: usize = 32;
+
 mod authority;
+mod inventory;
 mod protocol;
+pub use inventory::{
+    FollowerEnrollmentInventoryCursor, FollowerEnrollmentInventoryPage, FollowerEnrollmentProgress,
+};
 
 /// Read-only input provider for journal-bound follower recruitment.
 /// Applications own signed directory/transport/authority construction and unique

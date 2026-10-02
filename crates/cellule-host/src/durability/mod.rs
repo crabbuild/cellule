@@ -98,7 +98,8 @@ pub(crate) mod enrollment;
 mod owner;
 pub use enrollment::{
     FleetNodeDurabilityProvider, FleetNodeLogRecruitment, FollowerEnrollmentCompletion,
-    FollowerEnrollmentMember,
+    FollowerEnrollmentInventoryCursor, FollowerEnrollmentInventoryPage, FollowerEnrollmentMember,
+    FollowerEnrollmentProgress,
 };
 mod requests;
 mod supervisor;

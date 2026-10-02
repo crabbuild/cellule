@@ -4,6 +4,118 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 1 2026 follower producer inventory checkpoint
+
+`CellNode::fleet_follower_enrollments_page` captures every retained original
+epoch through the existing supervisor's provider. It includes all selected
+member requests and unknown acceptance, original signed-attempt/proof digests,
+native dispatch/delivery/closure flags, and original retirement/error Arcs.
+Signed ensembles, provider CAS tokens and native proofs are hashed in place
+rather than deep-copied. The [producer inventory](../crates/cellule-host/src/durability/enrollment/inventory/mod.rs)
+reserves one MiB before copying fixed-size follower metadata. Its 1–32-epoch
+pages use the producer's existing 32-epoch bound. Continuations bind every
+epoch, pending attempt, shared mode and protocol state; missing keys or changed
+progress require restarting the scan.
+
+Capture does not await provider/journal/native calls or acquire the async
+protocol lane. A busy lane with zero rows exposes preparation before an original
+request exists. An idle lane or zero rows cannot prove a joined supervisor,
+empty native lanes or fleet settlement. Typed component lookup now preserves
+wrong-type and poisoned-lock failures; unbound `None`, exhausted credit and a
+closed runtime cannot be treated as empty coverage. This remains advisory
+interval observation, with separate current authority and complete role
+envelopes required.
+
+Three new public scenarios use the same SQLite journal, signed directory and
+two actual native follower stores. They cover paused preparation, partial member
+acceptance, original immutable requests/proof identities, exact page charge and
+release, bounds/missing/stale continuations, memory refusal, and original failed
+member/error Arcs during requested rotation. The latter pauses the next native
+retry before comparing two captures, preserving the original response without
+a scheduling race. The existing deadline case additionally requires a closed
+runtime to refuse a page while its unresolved original epoch remains visible
+through retained completion. Three new unit cases cover cursor validation,
+bounded fixed metadata/signing scratch, and native/proof/error progress hashing.
+Public component assertions distinguish missing, unowned and wrong-type owners.
+
+| Source and focused evidence | Recorded value |
+| --- | --- |
+| Baseline | `8cff2c3e6e516ebd5b4434e31fd0cad83c24a509` |
+| Rust/Cargo manifest | 618 sources/manifests/all lockfiles; SHA256 `9eb1e0bef426cfd02bc3212e12d058fe7d123f7a0bafaa731a2f554d60d96fbf`. |
+| Environment | Rust/Cargo 1.97.0, all features, locked dependencies, `CARGO_INCREMENTAL=0`, separate Workspace targets for the active and isolated checkouts. |
+| Complete host library target | 20 passed; none filtered/ignored. |
+| Complete public host node target | 81 passed; none filtered/ignored. |
+| Complete fleet example target | 89 passed; none filtered/ignored. |
+| Isolated complete application integration target | 29 passed; none filtered; 16 documented manual cases ignored. |
+| Distinct scoped cases | 219 passed, including six new cases; repetitions/intermediate runs are not added. |
+| Host/application all-target Clippy and host API docs | Passed with warnings denied. |
+| Static gates | Format/diff, boundaries/layout, 110 Rust snippets, local Markdown links, 28 SQL/peer assertions and 567 validator links passed. |
+
+Both verification drivers compare the complete unchanged Rust/Cargo path set
+and manifest after every command. Final reproduction, manifest and logs are
+`/tmp/cellule-follower-inventory-final-*`. The active link gate also includes the
+independently edited control-plane plan/audit; the final isolated documentation
+snapshot excludes them. Intermediate module/helper/ownership/macro compilation
+failures are archived under `/tmp/cellule-follower-inventory-*`. An intermediate
+full example run passed 87 cases and failed the added page assertion after runtime
+closure. The final case retains the original proof assertions and requires
+`RuntimeClosed`; the separate live rotation case proves original response
+identity before closure. The earlier 219-case run before the deterministic retry
+gate is archived as `pre-retirement-gate` and is not added to the final count.
+
+### Publication-hint reproduction and baseline CI
+
+Baseline `8cff2c3` workspace
+[job 110698431351](https://github.com/crabbuild/cellule/actions/runs/36962309533/job/110698431351)
+failed `pending_reader_activation_retains_a_new_publication_hint` at its
+two-second post-publication bound: 28 application cases passed and 16 manual
+cases were ignored. The log does not identify the occurrence or missing peers.
+The workspace stopped before the host example target. Cause remains unestablished.
+
+Fresh isolated baseline builds passed one initial selected run, 100 serial and
+100 concurrent repetitions, plus ten complete macOS application runs. A copied
+source snapshot from the baseline Git archive (SHA256
+`186c9b451dc62fac9c7d9b39014cb0a94cb37517a3bdd00f161d6eac93ce11db`)
+also passed twenty complete Linux ARM64 application runs, each 29 passed and
+16 manual cases ignored. The pinned Rust image was
+`rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97`,
+with two CPUs, four GiB memory and zero swap in the shared eight-CPU Colima VM.
+Linux binary SHA256 was
+`fe3f3c993893686b1c14b0adff85a1ce929382b85ded5fe7d366b7f4e08cb8f5`.
+These repetitions do not explain the original x86 CI failure or qualify the new
+source. Linux post-run source hashes were not retained. The final new-source
+application run above has its own unchanged 618-file manifest.
+
+Diagnostic drivers/logs are `/tmp/cellule-hint-repeat*`,
+`/tmp/cellule-hint-full-repeat*` and `/tmp/cellule-hint-linux-evidence/`; the latter
+includes every original run, build, binary identity and container limits/state.
+The dedicated Linux container exited zero without OOM and was removed after
+evidence capture. Its build/Cargo volumes remain for reproduction. Initial host
+bind mounts failed because the Docker VM cannot follow the Workspace volume's
+host symlink; copying the pinned archive into the isolated container resolved
+that environment limitation.
+
+The regression now retains partial received-peer state in its timeout assertion
+and reports the publication occurrence, elapsed time, missing/held peers and
+pending transports. Its two-second bound, five-second periodic tick, healthy-peer
+set, duplicate assertions and joined shutdown remain unchanged. No recruitment
+algorithm or qualification profile was changed; the failure remains open pending
+cause evidence.
+
+Baseline `8cff2c3` passes MSRV, both capacity campaigns, contracts, website,
+fuzz smoke, fast/negative TLC and
+[Compose smoke and both routing comparisons](https://github.com/crabbuild/cellule/actions/runs/36962309460).
+Leased job 110698430939 completed success at 2026-10-02 04:23:26 UTC;
+object-only job 110698430922 at 04:41:35 UTC. Broad TLC/simulator were skipped.
+These green comparisons do not establish the cause of the historical routing
+failures below, and new-source CI remains required.
+
+Complete authenticated role/current-authority envelopes, supervisor and failed
+boot evidence, replacement policy, SettleRoles/Finalize, cross-session receiver
+recovery, remaining primitive/fault matrices, convergence, complete maintenance
+and receiver-loss scenarios, process/provider/mixed-binary qualification and
+rollout/runbooks remain required. This checkpoint does not complete W1–W10.
+
 ## October 1 2026 reader producer inventory checkpoint
 
 `ReadReplicaManager::fleet_reader_enrollments_page` supplies bounded original

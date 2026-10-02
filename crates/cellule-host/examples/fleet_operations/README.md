@@ -99,6 +99,13 @@ admission/release, stable pagination and cursor invalidation. Native reader view
 remain a separate inventory; the collector still requires complete role and
 authority evidence before maintenance can finalize.
 
+Follower producer cases capture `fleet_follower_enrollments_page` while provider
+preparation and member acceptance are paused. They preserve all original requests
+and proof identities, check the shared page charge and memory refusal, reject
+changed/missing continuations, and keep original failed retirement/error Arcs.
+Idle protocol or absent rows do not establish a joined supervisor or empty native
+lanes. The reference collector still needs authenticated complete role envelopes.
+
 [`SqliteJournal`](journal/mod.rs) implements all three host journal interfaces
 in one local SQLite transaction domain. It lives in the embedding example;
 the host library remains provider neutral.
