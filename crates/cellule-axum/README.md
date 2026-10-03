@@ -122,11 +122,20 @@ The same example can use real S3 objects. Set `CELLULE_TEST_ENDPOINT`,
 `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. `AWS_DEFAULT_REGION`
 defaults to `us-east-1`; `AWS_SESSION_TOKEN` is optional.
 `CELLULE_AXUM_BIND` selects a loopback listener (default `127.0.0.1:3000`).
+`CELLULE_AXUM_CELLS` selects 1–16 active SQL Cells, and
+`CELLULE_AXUM_WORKERS` selects 1–16 SQL workers; both default to one.
+Order IDs route to shard `id mod active_cells` (Euclidean remainder).
+The application declares 16 fixed shards and activates the selected prefix
+of that topology. Each active Cell has its own database, writer, publication
+root, and request ledger; handlers use `CellClient::local_many` through the
+same typed application handle and `Cellule` extractor.
 The service refuses readiness unless all six storage capability checks pass.
 
 After Ctrl-C drains HTTP and releases the Cell, starting the **same binary**
-with the same S3 prefix restores its authoritative root into a new temporary
-SQLite directory, using a fresh fenced session. An active owner is refused;
+with the same S3 prefix **and Cell count** restores every authoritative root
+into a new temporary SQLite directory, using a fresh fenced session.
+Changing the Cell count changes order routing, so use a fresh prefix for
+each performance point. An active owner is refused;
 this tutorial demonstrates graceful restart, not failed-owner takeover.
 Keep the binary unchanged so its application code digest matches the catalog.
 
@@ -135,6 +144,10 @@ HTTP POST and GET requests, using the adapter, application handles, SQL
 runtime, LTX publication, and RustFS. It verifies receipt sequences, every
 acknowledged row, exact retries, conflicting inputs, expired identities,
 released authority, and cold recovery followed by another durable write.
+For multiple Cells, it verifies distinct Cell identities and contiguous
+sequences separately for every shard, restores every database, and publishes
+one new command per recovered writer. A shared request identity across
+distinct Cells also verifies their independent request ledgers.
 It saves request envelopes, individual timings, responses, service logs,
 and aggregate results. An unexpected response fails the run; uncertain
 commands are never silently retried with new identities.
@@ -162,19 +175,26 @@ export AWS_DEFAULT_REGION=us-east-1
 python3 "$task_dir/source/scripts/bench-axum-rustfs.py" \
   --binary "$CARGO_TARGET_DIR/release/examples/sql" \
   --output "$task_dir/results" \
-  --repeats 3 --concurrency 1 4 16 --writes 500 --reads 2000
+  --repeats 3 --cells 1 4 8 16 --workers 4 --concurrency 16 \
+  --warmup 16 --writes 512 --reads 2048
 sh "$task_dir/source/cookbook/scripts/local-storage.sh" down
 ```
 
 This local Compose project uses disposable example credentials. The runner
 needs Python 3.11 or newer and retains its S3 prefixes for inspection. The
-`down` command preserves the provider's volume. Measurements describe one SQL
-Cell under closed-loop load on the current machine; they do not qualify
+`down` command preserves the provider's volume. `--cells` and `--concurrency`
+form a matrix; each phase must contain at least one request per active Cell.
+The command above holds workers, client concurrency, and total operation
+counts constant while varying the number of Cells. Powers of two and the
+chosen operation counts distribute work evenly across the Cells.
+Measurements describe one service process under closed-loop load on the
+current machine; they do not qualify
 production capacity, distributed ownership, or fault recovery.
 
-See the [measured RustFS HTTP report](performance/2026-10-03-rustfs-http.md)
-for results and retained evidence. CI also runs a small version of the same
-correctness checks, without performance thresholds.
+See the [multicell comparison](performance/2026-10-03-rustfs-multicell.md)
+and [earlier single-Cell report](performance/2026-10-03-rustfs-http.md) for
+results and retained evidence. CI also runs a small 1/4-Cell × 1/4-client
+matrix with the same correctness checks, without performance thresholds.
 
 ```sh
 cargo test -p cellule-axum --all-targets --locked

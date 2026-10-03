@@ -96,7 +96,8 @@ jobs:
           python3 scripts/bench-axum-rustfs.py \
             --binary target/debug/examples/sql \
             --output "$RUNNER_TEMP/cellule-axum-http" \
-            --repeats 1 --concurrency 1 4 --warmup 2 --writes 8 --reads 16
+            --repeats 1 --cells 1 4 --workers 4 --concurrency 1 4 \
+            --warmup 4 --writes 8 --reads 16
       - name: Retain Axum HTTP verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

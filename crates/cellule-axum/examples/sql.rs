@@ -1,4 +1,4 @@
-//! A local Axum orders service backed by one durable SQL Cell.
+//! A local Axum orders service backed by bounded, independently durable SQL Cells.
 //!
 //! Run: `cargo run -p cellule-axum --example sql --locked`
 //!
@@ -12,6 +12,7 @@
 //! The application owns routes, authorization, request identity, and shutdown.
 
 use std::{
+    fmt::Write as _,
     net::SocketAddr,
     sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -19,7 +20,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::Path as HttpPath,
+    extract::{FromRef, Path as HttpPath, State},
     http::StatusCode,
     routing::{get, post},
 };
@@ -44,6 +45,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
+const MAX_CELLS: u32 = 16;
 const SCHEMA: &str = "CREATE TABLE orders (id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
 const COMMANDS: [OperationDescriptor; 1] = [operation(1)];
 const QUERIES: [OperationDescriptor; 1] = [operation(2)];
@@ -84,7 +86,7 @@ impl CellModule for Orders {
                 id: ORDERS,
                 name: Self::NAME,
                 role: CatalogRole::Sql,
-                shards: 1,
+                shards: MAX_CELLS,
                 effect_targets: &[],
                 dead_letter: None,
             }],
@@ -119,7 +121,7 @@ impl CellApplication for OrdersApp {
             "orders",
             ORDERS,
             CatalogRole::Sql,
-            1,
+            MAX_CELLS,
         )?)?;
         Ok(())
     }
@@ -140,12 +142,41 @@ struct Order {
     total_cents: i64,
 }
 
+#[derive(Clone)]
+struct ServiceState {
+    app: ApplicationHandle<OrdersApp>,
+    targets: Arc<Vec<CellTarget>>,
+}
+
+impl FromRef<ServiceState> for ApplicationHandle<OrdersApp> {
+    fn from_ref(state: &ServiceState) -> Self {
+        state.app.clone()
+    }
+}
+
+impl ServiceState {
+    fn target(&self, id: i64) -> cellule_runtime::Result<CellTarget> {
+        let count = i64::try_from(self.targets.len())
+            .map_err(|_| Error::Identity("order Cell count is out of bounds"))?;
+        if count == 0 {
+            return Err(Error::Identity("orders service has no Cells"));
+        }
+        let shard = usize::try_from(id.rem_euclid(count))
+            .map_err(|_| Error::Identity("order shard is out of bounds"))?;
+        self.targets
+            .get(shard)
+            .cloned()
+            .ok_or(Error::Identity("order Cell is unavailable"))
+    }
+}
+
 async fn create_order(
     app: Cellule<OrdersApp>,
+    State(state): State<ServiceState>,
     Json(input): Json<CreateOrder>,
 ) -> Result<(StatusCode, CellJson<Order>), HttpError> {
-    let target = app.target_for_scope(ORDERS, b"orders")?;
-    let sql = app.sql::<Orders>(target)?;
+    let target = state.target(input.id)?;
+    let sql = app.sql::<Orders>(target.clone())?;
     // Retries must retain all three identity fields and the exact input. The
     // service accepts them explicitly instead of inventing an ID per attempt.
     let committed = sql
@@ -167,7 +198,7 @@ async fn create_order(
         )
         .await?;
     // A success reply follows publication and a read proving this receipt.
-    let observed = read_order(&app, input.id, Some(committed.receipt)).await?;
+    let observed = read_order(&app, target, input.id, Some(committed.receipt)).await?;
     let order = observed
         .output
         .ok_or(Error::Control("committed order is missing"))?;
@@ -182,17 +213,18 @@ async fn create_order(
 
 async fn get_order(
     app: Cellule<OrdersApp>,
+    State(state): State<ServiceState>,
     HttpPath(id): HttpPath<i64>,
 ) -> Result<CellJson<Option<Order>>, HttpError> {
-    read_order(&app, id, None).await
+    read_order(&app, state.target(id)?, id, None).await
 }
 
 async fn read_order(
     app: &ApplicationHandle<OrdersApp>,
+    target: CellTarget,
     id: i64,
     minimum: Option<cellule_runtime::Receipt>,
 ) -> Result<CellJson<Option<Order>>, HttpError> {
-    let target = app.target_for_scope(ORDERS, b"orders")?;
     let observed = app
         .sql::<Orders>(target)?
         .query(
@@ -225,6 +257,18 @@ async fn read_order(
         output,
         receipt: observed.receipt,
     })
+}
+
+fn example_count(name: &str, default: u32) -> ExampleResult<u32> {
+    let count = match std::env::var(name) {
+        Ok(value) => value.parse()?,
+        Err(std::env::VarError::NotPresent) => default,
+        Err(error) => return Err(error.into()),
+    };
+    if !(1..=MAX_CELLS).contains(&count) {
+        return Err(format!("{name} must be in 1..={MAX_CELLS}").into());
+    }
+    Ok(count)
 }
 
 async fn example_storage() -> ExampleResult<(Store, Path)> {
@@ -273,6 +317,8 @@ async fn example_storage() -> ExampleResult<(Store, Path)> {
 
 #[tokio::main]
 async fn main() -> ExampleResult<()> {
+    let cells = example_count("CELLULE_AXUM_CELLS", 1)?;
+    let workers = example_count("CELLULE_AXUM_WORKERS", 1)?;
     let bind: SocketAddr = std::env::var("CELLULE_AXUM_BIND")
         .unwrap_or_else(|_| "127.0.0.1:3000".into())
         .parse()?;
@@ -287,94 +333,104 @@ async fn main() -> ExampleResult<()> {
     })?);
     let tenant = TenantId::from_bytes([2; 16]);
     let application_id = ApplicationId::from_bytes([3; 16]);
-    let target = CellTarget::new(tenant, application_id, ORDERS, &partition_for_shard(0))?;
+    let targets: Vec<_> = (0..cells)
+        .map(|shard| CellTarget::new(tenant, application_id, ORDERS, &partition_for_shard(shard)))
+        .collect::<cellule_runtime::Result<_>>()?;
     let (store, prefix) = example_storage().await?;
     let layout = CellStorageLayout::new(store, prefix, *application_id.as_bytes());
     let registry = application.registry();
     let code = registry
         .module_code(Orders::NAME)
         .ok_or(Error::Registry("orders module is missing"))?;
-    // Publish the catalog entry and fenced owner before bootstrapping the Cell.
-    let proof = CellCatalog::new(layout.clone(), tenant)
-        .provision(CatalogEntry::new(&target, CatalogRole::Sql, code, 1)?)
-        .await?;
+    let catalog = CellCatalog::new(layout.clone(), tenant);
     let authority = CellAuthority::new(layout.clone());
     let session = SessionId::from_bytes(*Uuid::now_v7().as_bytes());
     let owner = Owner {
         session,
         endpoint: "https://orders.local".into(),
     };
-    let existing = authority.load(target.cell_id()).await?;
-    let restoring = existing.is_some();
-    let observed = match existing {
-        Some(observed) => observed,
-        None => {
-            authority
-                .create_initial(&proof, IncarnationId::from_bytes([4; 16]), owner.clone())
-                .await?
-        }
-    };
-    let incarnation = observed.value().incarnation;
     let files = tempfile::TempDir::new()?;
     let runtime = CellRuntime::new_with_replica_host(
-        SqlWorkerPool::new(1, 4)?,
+        SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(MAX_CELLS)?)?,
         16 * 1024 * 1024,
         session,
         Host::default().with_local_disk_budget(DiskBudget::new(1 << 30)),
     )?;
     let result: ExampleResult<()> = async {
-        let replica = CellReplica::new(
-            layout,
-            *target.cell_id().as_bytes(),
-            *incarnation.as_bytes(),
-            Limits::default(),
-        )?;
-        let destination = files.path().join("orders.sqlite");
-        let handle = if restoring {
-            // A drained owner released authority to Idle. This public API claims
-            // it with a fresh session and verifies/restores the pinned S3 root.
-            runtime
-                .acquire_idle_restored(
-                    proof,
-                    replica,
-                    authority.clone(),
-                    observed,
-                    destination,
-                    owner,
-                )
-                .await?
-        } else {
-            runtime
-                .bootstrap(
-                    proof,
-                    replica,
-                    authority.clone(),
-                    observed,
-                    destination,
-                    |transaction| {
-                        transaction.execute_batch(SCHEMA)?;
-                        Ok(())
-                    },
-                )
-                .await?
-        };
-        let client = CellClient::local(registry, handle);
+        let mut handles = Vec::with_capacity(targets.len());
+        let mut restored = 0;
+        for (shard, target) in targets.iter().enumerate() {
+            // Publish the catalog entry and fenced owner before bootstrapping each Cell.
+            let proof = catalog
+                .provision(CatalogEntry::new(target, CatalogRole::Sql, code, 1)?)
+                .await?;
+            let existing = authority.load(target.cell_id()).await?;
+            let restoring = existing.is_some();
+            let observed = match existing {
+                Some(observed) => observed,
+                None => {
+                    authority
+                        .create_initial(&proof, IncarnationId::from_bytes([4; 16]), owner.clone())
+                        .await?
+                }
+            };
+            let incarnation = observed.value().incarnation;
+            let replica = CellReplica::new(
+                layout.clone(),
+                *target.cell_id().as_bytes(),
+                *incarnation.as_bytes(),
+                Limits::default(),
+            )?;
+            let destination = files.path().join(format!("orders-{shard}.sqlite"));
+            let handle = if restoring {
+                // A drained owner released authority to Idle. This public API claims
+                // it with a fresh session and verifies/restores the pinned S3 root.
+                runtime
+                    .acquire_idle_restored(
+                        proof,
+                        replica,
+                        authority.clone(),
+                        observed,
+                        destination,
+                        owner.clone(),
+                    )
+                    .await?
+            } else {
+                runtime
+                    .bootstrap(
+                        proof,
+                        replica,
+                        authority.clone(),
+                        observed,
+                        destination,
+                        |transaction| {
+                            transaction.execute_batch(SCHEMA)?;
+                            Ok(())
+                        },
+                    )
+                    .await?
+            };
+            handles.push(handle);
+            restored += usize::from(restoring);
+        }
+        let client = CellClient::local_many(registry, handles)?;
         let typed =
             ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id)?;
         let router = Router::new()
             .route("/orders", post(create_order))
             .route("/orders/{id}", get(get_order))
-            .with_state(typed);
+            .with_state(ServiceState {
+                app: typed,
+                targets: Arc::new(targets.clone()),
+            });
         // This local fixture binds only loopback. A product installs its own
         // authentication and authorization before exposing these handlers.
         let listener = tokio::net::TcpListener::bind(bind).await?;
         println!(
-            "Cell startup: {}; SQLite directory: {}",
-            if restoring {
-                "restored"
-            } else {
-                "bootstrapped"
-            },
+            "Cells startup: {}; restored: {}; workers: {}; SQLite directory: {}",
+            cells,
+            restored,
+            workers,
             files.path().display()
         );
         println!(
@@ -397,24 +453,32 @@ async fn main() -> ExampleResult<()> {
     let shutdown = runtime.shutdown().await;
     result?;
     shutdown?;
-    let drained = authority
-        .load(target.cell_id())
-        .await?
-        .ok_or(Error::Fenced)?;
-    if drained.value().state != cellule_runtime::control::ControlState::Idle
-        || drained.value().owner.is_some()
-    {
-        return Err(Error::Control("shutdown did not release Cell authority").into());
+    for (shard, target) in targets.iter().enumerate() {
+        let drained = authority
+            .load(target.cell_id())
+            .await?
+            .ok_or(Error::Fenced)?;
+        if drained.value().state != cellule_runtime::control::ControlState::Idle
+            || drained.value().owner.is_some()
+        {
+            return Err(Error::Control("shutdown did not release Cell authority").into());
+        }
+        let root = drained
+            .value()
+            .root
+            .as_ref()
+            .ok_or(Error::Control("drained Cell has no root"))?;
+        let mut cell = String::with_capacity(64);
+        for byte in target.cell_id().as_bytes() {
+            write!(cell, "{byte:02x}")?;
+        }
+        println!(
+            "Cell drained: {}",
+            serde_json::json!({
+                "shard": shard, "cell": cell, "state": "idle",
+                "epoch": drained.value().epoch, "commit_sequence": root.commit_sequence
+            })
+        );
     }
-    let root = drained
-        .value()
-        .root
-        .as_ref()
-        .ok_or(Error::Control("drained Cell has no root"))?;
-    println!(
-        "Cell drained: idle; epoch: {}; commit_sequence: {}",
-        drained.value().epoch,
-        root.commit_sequence
-    );
     Ok(())
 }
