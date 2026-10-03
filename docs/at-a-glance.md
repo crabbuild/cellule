@@ -60,6 +60,7 @@ does not require a particular public web framework.
 | Write a module for an existing Cellule host | `cellule-app` for topology and handles; `cellule-runtime` for module, operation, and identity types. |
 | Bootstrap the local reference example yourself | Add `cellule-ltx` and `cellule-store` for the replica and object-store setup used by that example. |
 | Run a serving node | Add `cellule-host` for readiness, facilities, and drain. |
+| Write Axum handlers | Add [`cellule-axum`](../crates/cellule-axum/README.md) for typed extraction and responses with receipts. |
 | Route between nodes over HTTP | Add `cellule-peer-http` only when using its signed peer transport. |
 
 These are the **direct integration surfaces**, not a claim that Cargo's
