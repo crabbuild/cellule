@@ -236,9 +236,11 @@ class FollowerRootDrainEvidence(unittest.TestCase):
         self.identity = {0: ("cell", "0", "1", "incarnation")}
         self.positions = {0: [1, 2]}
         self.before = [dict(entity="0", cell="cell", owner="0", epoch="1",
-                            incarnation="incarnation", root_sequence="1", root_digest="Digest(" + "a" * 64 + ")")]
+                            incarnation="incarnation", root_sequence="1", root_digest="Digest(" + "a" * 64 + ")",
+                            root_txid="1", root_checksum="101", restored_digest="Digest(" + "c" * 64 + ")")]
         self.final = dict(entity="0", cell="cell", owner="0", epoch="1",
                           incarnation="incarnation", root_sequence="2", root_digest="Digest(" + "b" * 64 + ")",
+                          root_txid="2", root_checksum="202", restored_digest="Digest(" + "d" * 64 + ")",
                           state="Idle", owner_present="false", restored_sequence="2", restored_count="2")
         (self.root / "stop").touch()
         (self.root / "node-0.done").touch()
@@ -257,6 +259,12 @@ class FollowerRootDrainEvidence(unittest.TestCase):
         result = self.verify()
         self.assertEqual(result["verified_cells"], 1)
         self.assertEqual(result["pre_drain_root_lag_commits_by_entity"], {0: 1})
+
+    def test_compacted_manifest_at_same_endpoint_requires_identical_restored_bytes(self):
+        self.before[0].update(root_sequence="2", root_txid="2", root_checksum="202",
+                              restored_digest=self.final["restored_digest"])
+        result = self.verify()
+        self.assertEqual(result["verified_cells"], 1)
 
     def test_publication_logs_cannot_replace_fresh_authority_roots(self):
         (self.root / "capacity-final-roots.tsv").unlink()
@@ -307,13 +315,67 @@ class FollowerRootDrainEvidence(unittest.TestCase):
                 self.final[field] = original
                 self.write_final()
 
-    def test_root_regression_or_replacement_at_same_sequence_is_rejected(self):
+    def test_root_regression_or_changed_bytes_at_same_sequence_is_rejected(self):
         self.before[0]["root_sequence"] = "3"
         with self.assertRaisesRegex(AssertionError, "drained root regressed"):
             self.verify()
-        self.before[0]["root_sequence"] = "2"
-        with self.assertRaisesRegex(AssertionError, "same sequence changed root"):
+        self.before[0].update(root_sequence="2", root_txid="2", root_checksum="202")
+        with self.assertRaisesRegex(AssertionError, "same sequence changed restored database"):
             self.verify()
+
+    def test_same_sequence_cannot_change_transaction_or_checksum(self):
+        self.before[0].update(root_sequence="2", root_txid="2", root_checksum="202",
+                              restored_digest=self.final["restored_digest"])
+        for field, value in (("root_txid", "3"), ("root_checksum", "203")):
+            with self.subTest(field=field):
+                original = self.final[field]
+                self.final[field] = value
+                self.write_final()
+                with self.assertRaisesRegex(AssertionError, "same sequence changed root position"):
+                    self.verify()
+                self.final[field] = original
+                self.write_final()
+
+    def test_root_transaction_cannot_regress_or_remain_at_an_advanced_sequence(self):
+        for value, message in (("0", "invalid root position"),
+                               ("1", "advanced sequence did not advance transaction")):
+            with self.subTest(value=value):
+                self.final["root_txid"] = value
+                self.write_final()
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+        self.before[0]["root_txid"] = "3"
+        self.final["root_txid"] = "2"
+        self.write_final()
+        with self.assertRaisesRegex(AssertionError, "drained root transaction regressed"):
+            self.verify()
+
+    def test_positions_and_restored_digests_are_required_in_both_snapshots(self):
+        for field in ("root_txid", "root_checksum", "restored_digest"):
+            for row in (self.before[0], self.final):
+                with self.subTest(field=field, final=row is self.final):
+                    original = row.pop(field)
+                    self.write_final()
+                    with self.assertRaises(KeyError):
+                        self.verify()
+                    row[field] = original
+                    self.write_final()
+
+    def test_invalid_positions_or_restored_digests_are_rejected(self):
+        for field, value, message in (("root_txid", "-1", "invalid root position"),
+                                      ("root_txid", str(2**64), "invalid root position"),
+                                      ("root_checksum", "-1", "invalid root position"),
+                                      ("root_checksum", str(2**64), "invalid root position"),
+                                      ("restored_digest", "Digest(" + "g" * 64 + ")", "invalid restored database digest")):
+            for row in (self.before[0], self.final):
+                with self.subTest(field=field, value=value, final=row is self.final):
+                    original = row[field]
+                    row[field] = value
+                    self.write_final()
+                    with self.assertRaisesRegex(AssertionError, message):
+                        self.verify()
+                    row[field] = original
+                    self.write_final()
 
     def test_missing_or_duplicate_final_cell_is_rejected(self):
         path = self.root / "capacity-final-roots.tsv"

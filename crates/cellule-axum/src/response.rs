@@ -1,5 +1,6 @@
+use crate::{HttpError, ReceiptDto};
 use axum::{
-    Json,
+    http::header,
     response::{IntoResponse, Response},
 };
 use cellule_runtime::client::{Committed, Observed, Receipt};
@@ -18,6 +19,32 @@ pub struct CellJson<T> {
     pub output: T,
     /// Exact observation position returned by the runtime.
     pub receipt: Receipt,
+}
+
+impl<T> CellJson<T> {
+    /// Converts an internal output into a public DTO without changing its receipt.
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> CellJson<U> {
+        CellJson {
+            output: map(self.output),
+            receipt: self.receipt,
+        }
+    }
+
+    /// Converts output while retaining publication evidence if conversion fails.
+    pub fn try_map<U, E>(
+        self,
+        map: impl FnOnce(T) -> Result<U, E>,
+    ) -> Result<CellJson<U>, HttpError>
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        let output =
+            map(self.output).map_err(|source| HttpError::published(self.receipt, source))?;
+        Ok(CellJson {
+            output,
+            receipt: self.receipt,
+        })
+    }
 }
 
 impl<T> From<Committed<T>> for CellJson<T> {
@@ -40,35 +67,21 @@ impl<T> From<Observed<T>> for CellJson<T> {
 
 impl<T: Serialize> IntoResponse for CellJson<T> {
     fn into_response(self) -> Response {
-        Json(OutputBody {
+        let body = OutputBody {
             output: self.output,
-            receipt: ReceiptBody::from(self.receipt),
-        })
-        .into_response()
+            receipt: ReceiptDto::from(self.receipt),
+        };
+        match serde_json::to_vec(&body) {
+            Ok(bytes) => ([(header::CONTENT_TYPE, "application/json")], bytes).into_response(),
+            Err(source) => HttpError::published(self.receipt, source).into_response(),
+        }
     }
 }
 
 #[derive(Serialize)]
-struct OutputBody<T> {
+pub(crate) struct OutputBody<T> {
     output: T,
-    receipt: ReceiptBody,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct ReceiptBody {
-    cell: String,
-    incarnation: String,
-    commit_sequence: u64,
-}
-
-impl From<Receipt> for ReceiptBody {
-    fn from(receipt: Receipt) -> Self {
-        Self {
-            cell: hex(receipt.cell.as_bytes()),
-            incarnation: hex(receipt.incarnation.as_bytes()),
-            commit_sequence: receipt.commit_sequence,
-        }
-    }
+    receipt: ReceiptDto,
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
