@@ -584,6 +584,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "cellule-cookbook-support-desk"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blake3",
+ "cellule-app",
+ "cellule-cookbook-support",
+ "cellule-runtime",
+ "cellule-store",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "object_store",
+ "prost",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "cellule-cookbook-taskboard"
 version = "0.1.0"
 dependencies = [

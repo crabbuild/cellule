@@ -27,10 +27,13 @@ acceptance criteria; implementation proceeds in complete vertical slices.
 | [Release pipeline](apps/release-pipeline/README.md) | Qualified immutable Blob artifacts, human approval, independent HTTP deployment, conditional predecessor compensation, retained definition inventories, Activity reclamation, and interrupted-demo recovery. | `sh cookbook/scripts/release-pipeline.sh` from the repository root. |
 | [Project tracker](apps/project-tracker/README.md) | Qualified project aggregates, immutable Blob attachments, original-input linking reconciliation, revisioned signed dashboard delivery, crash recovery, and interrupted-demo drain. | `sh cookbook/scripts/project-tracker.sh` from the repository root. |
 | [Telemetry ingest](apps/telemetry-ingest/README.md) | Qualified durable Queue ingress, permanent device sequences, original batch audits, bounded signed summary shards, native crash recovery, and a retained interrupted demo. | `sh cookbook/scripts/telemetry-ingest.sh` from the repository root. |
-| Other catalog applications | 9 planned; no placeholder application crates. | See the catalog's implementation order. |
+| [Support desk](apps/support-desk/README.md) | Ticket conversations, immutable private attachments, generation-fenced deadline Workflows, signed escalation Effects, retryable HTTP Activities, authorized customer/agent ingress, and a persistent idempotent receiver. Local process and launcher scenarios pass; CI qualification is pending. | `sh cookbook/scripts/support-desk.sh` from the repository root. |
+| Other catalog applications | 8 planned; no placeholder application crates. | See the catalog's implementation order. |
 
-Nineteen applications are qualified and runnable; nine further applications
-remain planned.
+Twenty applications are implemented and runnable. Nineteen are CI-qualified;
+Support Desk has passed local focused tests, the 17-check isolated process
+scenario, and the default launcher demo, with CI qualification pending. Eight
+further applications remain planned.
 
 The default command starts a pinned local RustFS container, initializes a
 private bucket, runs the selected application scenario, and drains the node. Rust 1.97

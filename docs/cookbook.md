@@ -50,8 +50,15 @@ with cold restoration. [Telemetry ingest](../cookbook/apps/telemetry-ingest/READ
 adds permanent device sequence bindings, native Queue consumers, original batch
 audits, and bounded signed summary shards. Its persistent process driver verifies
 partial-batch recovery, original audit replay, native attempt-two reclamation,
-and resumption of an interrupted demo with its unchanged plan. Nineteen
-applications are qualified and runnable; nine further applications are planned.
+and resumption of an interrupted demo with its unchanged plan.
+[Support desk](../cookbook/apps/support-desk/README.md) adds ticket conversations,
+immutable private attachments, generation-fenced deadline Workflows, signed
+escalation Effects, retryable HTTP notification Activities, authorized
+customer/agent ingress, and a persistent idempotent receiver. Its local process
+scenario verifies crash after receiver publication, exact-plan resume, callback
+racing resolution, and cold restoration. Twenty applications are implemented
+and runnable: nineteen are CI-qualified and Support Desk is awaiting CI
+qualification; eight more applications remain planned.
 The five existing
 [primitive examples](../crates/cellule-app/docs/examples.md) remain runnable
 introductions. The cookbook adds complete application journeys alongside those
