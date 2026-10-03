@@ -316,6 +316,11 @@ async fn recovered_retirement_joins_original_members_retains_fences_and_replays_
         .await
         .unwrap();
     assert_eq!(retired.log().phase(), NodeLogPhase::Retired);
+    let recovered = directory
+        .recovered_session(node(leader), leader, claimant, NOW_MS + 10_004)
+        .await
+        .unwrap();
+    assert_eq!(recovered.log(), Some(retired.log()));
     assert_eq!(
         retired.log().recovery_manifest(),
         sealed.log().recovery_manifest()

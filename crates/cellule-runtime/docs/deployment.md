@@ -715,6 +715,15 @@ Drain ordering against reader admission:
 
 ### Observe an original session's terminal fence
 
+Before terminal log retirement, `NodeDirectory::recovered_session` reads the
+exact permanent boot fence and complete Sealed/Retired log. Open/Recovering logs
+refuse, including inactive logs. Its original manifest digest identifies the
+whole recovered suffix set across applications. This starts no recovery and
+grants no process closure, bundle availability, log retirement or node settlement.
+The [host original-writer recipe](../../cellule-host/docs/original-writers.md)
+binds that complete manifest to committed original owner metadata and fresh
+process/operation barriers before successor verification.
+
 `NodeDirectory::closed_session` returns an opaque `NodeSessionClosure` only
 from the exact physical node/session's permanent tombstone with no enrolled
 leader log or an exact Retired log. A live claimant and fresh canonical read

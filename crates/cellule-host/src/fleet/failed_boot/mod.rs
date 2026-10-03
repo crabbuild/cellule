@@ -11,8 +11,9 @@ use tokio::time::{Instant, timeout_at};
 
 mod writers;
 pub use writers::{
-    FleetOriginalCatalogSet, FleetOriginalCatalogSource, FleetOriginalCatalogs,
-    FleetOriginalWriterCapture, FleetOriginalWriterInventory, FleetOriginalWriterJournal,
+    FleetOriginalBootSuffixInventory, FleetOriginalCatalogSet, FleetOriginalCatalogSource,
+    FleetOriginalCatalogs, FleetOriginalWriterCapture, FleetOriginalWriterInventory,
+    FleetOriginalWriterJournal,
 };
 mod process;
 mod publication;

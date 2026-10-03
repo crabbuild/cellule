@@ -100,6 +100,10 @@ struct Fixture {
     path: PathBuf,
     transport: Arc<Members>,
     sealed: SealedNodeLog,
+    #[cfg(unix)]
+    manifests: RecoveryManifestStore,
+    #[cfg(unix)]
+    recovery_layout: CellStorageLayout,
     originals: Vec<EnrollmentRecord>,
     stores: Vec<FollowerStore>,
     #[cfg(unix)]
@@ -112,6 +116,14 @@ impl Fixture {
     }
 
     async fn with_process_observation(observe: bool) -> Self {
+        Self::with_recovery_inputs(observe, Vec::new(), Vec::new()).await
+    }
+
+    async fn with_recovery_inputs(
+        observe: bool,
+        cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
+        frames: Vec<Bytes>,
+    ) -> Self {
         #[cfg(not(unix))]
         assert!(!observe, "process lifetime stand-in requires Unix");
         let root = tempfile::tempdir().unwrap();
@@ -224,6 +236,17 @@ impl Fixture {
             .commit_log_enrollment(&attempt, NOW + 9_001)
             .await
             .unwrap();
+        if !frames.is_empty() {
+            let enrolled = directory
+                .load(session(0), NOW + 9_001)
+                .await
+                .unwrap()
+                .unwrap();
+            directory
+                .activate_log(&enrolled, NOW + 9_002)
+                .await
+                .unwrap();
+        }
         // Keep the second establishment reply unresolved. Canonical retirement
         // must cover Pending as well as the known Established original request.
         originals[0] = journal
@@ -245,6 +268,13 @@ impl Fixture {
                 DiskBudget::new(1 << 30),
             )
             .unwrap();
+            if !frames.is_empty() {
+                let receipt = store
+                    .append(session(0), 4, frames.clone(), 0)
+                    .await
+                    .unwrap();
+                assert_eq!(receipt.durable_through, frames.len() as u64);
+            }
             peers.push((
                 member,
                 LocalRecoveredFollowerTransport::new(
@@ -330,20 +360,22 @@ impl Fixture {
         };
         let recovery =
             NodeLogRecovery::from_fenced(transport.clone(), &fenced, Limits::default()).unwrap();
-        let completed = RecoveryCoordinator::new(
-            recovery,
-            RecoveryManifestStore::new(layout, Limits::default()),
-        )
-        .recover_and_seal(&directory, fenced, Vec::new(), NOW + 10_002)
-        .await
-        .unwrap();
-        assert!(completed.controls.is_empty());
+        let manifests = RecoveryManifestStore::new(layout.clone(), Limits::default());
+        let completed = RecoveryCoordinator::new(recovery, manifests.clone())
+            .recover_and_seal(&directory, fenced, cells, NOW + 10_002)
+            .await
+            .unwrap();
+        assert_eq!(completed.controls.len(), frames.len());
         Self {
             directory,
             journal,
             path,
             transport,
             sealed: completed.sealed,
+            #[cfg(unix)]
+            manifests,
+            #[cfg(unix)]
+            recovery_layout: layout,
             originals,
             stores,
             #[cfg(unix)]

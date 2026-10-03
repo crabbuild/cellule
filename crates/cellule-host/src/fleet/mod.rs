@@ -42,9 +42,9 @@ pub use failed_boot::{
     FleetFailedBootClosure, FleetFailedBootProcessConfirmation, FleetFailedBootProcessEvidence,
     FleetFailedBootProcessRequest, FleetFailedBootProcesses, FleetFailedBootPublication,
     FleetFailedBootRetirement, FleetFailedReaderClosure, FleetFailedReaderPublication,
-    FleetFailedReaderRetirement, FleetOriginalCatalogSet, FleetOriginalCatalogSource,
-    FleetOriginalCatalogs, FleetOriginalWriterCapture, FleetOriginalWriterInventory,
-    FleetOriginalWriterJournal,
+    FleetFailedReaderRetirement, FleetOriginalBootSuffixInventory, FleetOriginalCatalogSet,
+    FleetOriginalCatalogSource, FleetOriginalCatalogs, FleetOriginalWriterCapture,
+    FleetOriginalWriterInventory, FleetOriginalWriterJournal,
 };
 pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInventoryScan};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};

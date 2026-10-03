@@ -3,9 +3,9 @@
 //! availability or external-job qualification.
 use super::*;
 use cellule_host::fleet::{
-    FleetJournalSnapshot, FleetOriginalCatalogSet, FleetOriginalCatalogSource,
-    FleetOriginalCatalogs, FleetOriginalWriterCapture, FleetOriginalWriterInventory,
-    FleetOriginalWriterJournal,
+    FleetJournalSnapshot, FleetOriginalBootSuffixInventory, FleetOriginalCatalogSet,
+    FleetOriginalCatalogSource, FleetOriginalCatalogs, FleetOriginalWriterCapture,
+    FleetOriginalWriterInventory, FleetOriginalWriterJournal,
 };
 use cellule_runtime::control::Control;
 use cellule_runtime::control::{Transition, authority::CellAuthority};
@@ -60,25 +60,29 @@ struct WriterFixture {
     layouts: Vec<CellStorageLayout>,
 }
 impl WriterFixture {
+    async fn retain(&self) -> FleetOriginalWriterCapture {
+        let capture = self.capture().await.unwrap();
+        let expected = self.base.journal.load_snapshot(scope()).await.unwrap();
+        self.base
+            .journal
+            .persist_original_writers(&expected, capture.record(), capture.pages(), CHECK)
+            .await
+            .unwrap();
+        capture
+    }
     async fn new() -> Self {
         Self::with_originals(33).await
     }
     async fn with_originals(originals_per_catalog: u64) -> Self {
-        let base = Fixture::new().await;
-        let request = FleetFailedBootProcessRequest::capture_fenced(
-            base.journal.as_ref(),
-            &base.directory,
-            &base.roster().await,
-            &base.failed_boot().await,
-            session(1),
-            deadline(),
-            || Ok(CHECK),
-        )
-        .await
-        .unwrap();
+        Self::with_suffixes(originals_per_catalog, false).await
+    }
+    async fn with_suffixes(originals_per_catalog: u64, suffixes: bool) -> Self {
         let mut sources = Vec::new();
         let mut layouts = Vec::new();
         let mut expected = Vec::new();
+        let mut bases = Vec::new();
+        let mut frames = Vec::new();
+        let mut suffix_owners = Vec::new();
         for index in 0..2 {
             let layout = CellStorageLayout::new(
                 Store::new(Arc::new(InMemory::new())),
@@ -110,19 +114,82 @@ impl WriterFixture {
                     )
                     .await
                     .unwrap();
-                let observed = authority
+                let mut observed = authority
                     .create_initial(&proof, IncarnationId::from_bytes([10; 16]), owner(0))
                     .await
                     .unwrap();
-                expected.push(observed.value().clone());
-                authority
-                    .transition(
-                        &observed,
-                        observed.value().takeover(owner(1)).unwrap(),
-                        Transition::Takeover,
-                    )
-                    .await
+                if suffixes && n == 0 {
+                    let root = tempfile::tempdir().unwrap();
+                    let limits = Limits::default();
+                    let mut db =
+                        cellule_runtime::ltx::Db::open(&root.path().join("writer.sqlite"), limits)
+                            .unwrap();
+                    db.transaction(|tx| {
+                        tx.execute_batch(
+                            "CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES(1)",
+                        )
+                    })
                     .unwrap();
+                    let cuts = db.capture().unwrap();
+                    let replica = CellReplica::new(
+                        layout.clone(),
+                        *target.cell_id().as_bytes(),
+                        [10; 16],
+                        limits,
+                    )
+                    .unwrap();
+                    let prepared = replica.prepare(None, &cuts, 1, 1).await.unwrap();
+                    observed = authority
+                        .transition(
+                            &observed,
+                            observed.value().publish_prepared(&prepared, None).unwrap(),
+                            Transition::Publish,
+                        )
+                        .await
+                        .unwrap();
+                    bases.push(cellule_runtime::node::log_recovery::RecoveryCell {
+                        application: target.application(),
+                        authority: authority.clone(),
+                        observed: observed.clone(),
+                    });
+                    suffix_owners.push((authority.clone(), target.cell_id()));
+                    db.transaction(|tx| tx.execute_batch("UPDATE counter SET value=2"))
+                        .unwrap();
+                    let cuts = db.capture().unwrap();
+                    let segment = &cuts.segments[0];
+                    frames.push(
+                        cellule_runtime::ltx::encode_node_frame(
+                            cellule_runtime::ltx::NodeFrameScope {
+                                leader_session: *session(0).as_bytes(),
+                                log_epoch: 4,
+                                node_sequence: frames.len() as u64 + 1,
+                                application: *target.application().as_bytes(),
+                                cell: *target.cell_id().as_bytes(),
+                                incarnation: [10; 16],
+                                cell_epoch: 1,
+                                commit_sequence: 2,
+                            },
+                            segment.info().clone(),
+                            Bytes::from(std::fs::read(segment.path()).unwrap()),
+                            limits,
+                        )
+                        .unwrap()
+                        .encoded()
+                        .clone(),
+                    );
+                    db.close().unwrap();
+                }
+                expected.push(observed.value().clone());
+                if !suffixes || n != 0 {
+                    authority
+                        .transition(
+                            &observed,
+                            observed.value().takeover(owner(1)).unwrap(),
+                            Transition::Takeover,
+                        )
+                        .await
+                        .unwrap();
+                }
             }
             // An unused bootstrap entry is part of complete traversal.
             let target = CellTarget::new(
@@ -149,6 +216,31 @@ impl WriterFixture {
                 .unwrap(),
             );
         }
+        let base = Fixture::with_recovery_inputs(false, bases, frames).await;
+        for (authority, cell) in suffix_owners {
+            let observed = authority.load(cell).await.unwrap().unwrap();
+            assert!(observed.value().recovery.is_some());
+            *expected.iter_mut().find(|row| row.cell == cell).unwrap() = observed.value().clone();
+            authority
+                .transition(
+                    &observed,
+                    observed.value().takeover(owner(1)).unwrap(),
+                    Transition::Takeover,
+                )
+                .await
+                .unwrap();
+        }
+        let request = FleetFailedBootProcessRequest::capture_fenced(
+            base.journal.as_ref(),
+            &base.directory,
+            &base.roster().await,
+            &base.failed_boot().await,
+            session(1),
+            deadline(),
+            || Ok(CHECK),
+        )
+        .await
+        .unwrap();
         let mut child = Process::start(base.process_path());
         child.stop_and_retain(&request);
         let now = CHECK;
@@ -203,6 +295,380 @@ impl WriterFixture {
         )
         .await
     }
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_binds_every_application_and_survives_restart() {
+    let fixture = WriterFixture::with_suffixes(33, true).await;
+    let capture = fixture.retain().await;
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    fixture.base.journal.close().await.unwrap();
+    let journal = fixture.base.reconstruct().await;
+    let inventory = FleetOriginalBootSuffixInventory::collect(
+        &journal,
+        &fixture.base.directory,
+        &Processes::new(fixture.base.process_path()),
+        &fixture.base.manifests,
+        &fixture.request,
+        session(1),
+        deadline(),
+        || Ok(CHECK),
+    )
+    .await
+    .unwrap();
+    assert_eq!(inventory.snapshot(), &before);
+    assert_eq!(inventory.writers().record(), capture.record());
+    assert_eq!(inventory.writers().writers().count(), 66);
+    assert_eq!(inventory.interval(), (CHECK, CHECK));
+    assert_eq!(
+        inventory.process().witness(),
+        capture.record().basis().process_witness
+    );
+    assert_eq!(
+        inventory.recovered().log().unwrap().phase(),
+        cellule_runtime::node::log_state::NodeLogPhase::Sealed
+    );
+    let manifest = inventory.manifest().unwrap();
+    assert_eq!(manifest.cells().len(), 2);
+    assert_ne!(
+        manifest.cells()[0].application,
+        manifest.cells()[1].application
+    );
+    for suffix in manifest.cells() {
+        let original = capture
+            .pages()
+            .iter()
+            .flat_map(|page| page.entries())
+            .find(|row| {
+                row.target.application() == suffix.application
+                    && row.control.cell == suffix.cell
+                    && row.control.incarnation == suffix.incarnation
+                    && row.control.epoch == suffix.cell_epoch
+            })
+            .unwrap();
+        assert_eq!(
+            original.control.root.as_ref(),
+            Some(&suffix.recovery.predecessor)
+        );
+        assert_eq!(suffix.recovery.final_commit_sequence, 2);
+        assert_eq!(suffix.recovery.leader_session, session(0));
+    }
+    assert_eq!(journal.load_snapshot(scope()).await.unwrap(), before);
+    journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_keeps_writers_when_canonical_log_has_no_suffixes() {
+    let fixture = WriterFixture::new().await;
+    let capture = fixture.retain().await;
+    let inventory = FleetOriginalBootSuffixInventory::collect(
+        fixture.base.journal.as_ref(),
+        &fixture.base.directory,
+        &Processes::new(fixture.base.process_path()),
+        &fixture.base.manifests,
+        &fixture.request,
+        session(1),
+        deadline(),
+        || Ok(CHECK),
+    )
+    .await
+    .unwrap();
+    assert!(inventory.manifest().is_none());
+    assert_eq!(inventory.writers().record(), capture.record());
+    assert_eq!(inventory.writers().writers().count(), 66);
+    fixture.base.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_refuses_uncommitted_original_writers() {
+    let fixture = WriterFixture::with_suffixes(1, true).await;
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    let error = FleetOriginalBootSuffixInventory::collect(
+        fixture.base.journal.as_ref(),
+        &fixture.base.directory,
+        &Processes::new(fixture.base.process_path()),
+        &fixture.base.manifests,
+        &fixture.request,
+        session(1),
+        deadline(),
+        || Ok(CHECK),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(
+        error,
+        Error::Control("original writer inventory is not committed")
+    ));
+    assert_eq!(
+        fixture.base.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    fixture.base.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_refuses_omitted_owner_and_changed_predecessor() {
+    for omit in [false, true] {
+        let fixture = WriterFixture::with_suffixes(1, true).await;
+        let capture = fixture.capture().await.unwrap();
+        let mut owners = capture
+            .pages()
+            .iter()
+            .flat_map(|page| page.entries().iter().cloned())
+            .collect::<Vec<_>>();
+        let mut catalogs = capture.record().catalogs().to_vec();
+        if omit {
+            let removed = owners.pop().unwrap();
+            catalogs
+                .iter_mut()
+                .find(|row| {
+                    row.application == removed.target.application()
+                        && row.tenant == removed.target.tenant()
+                })
+                .unwrap()
+                .owners -= 1;
+        } else {
+            owners[0].control.root.as_mut().unwrap().digest = Digest::from_bytes([99; 32]);
+            owners[0]
+                .control
+                .recovery
+                .as_mut()
+                .unwrap()
+                .predecessor
+                .digest = Digest::from_bytes([99; 32]);
+        }
+        // Shape-valid poisoned retained metadata cannot omit or replace a row
+        // from the independently canonical complete manifest.
+        let (record, pages) =
+            OriginalWriterInventoryRecord::new(capture.record().basis().clone(), catalogs, owners)
+                .unwrap();
+        let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+        fixture
+            .base
+            .journal
+            .persist_original_writers(&before, &record, &pages, CHECK)
+            .await
+            .unwrap();
+        let current = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+        let error = FleetOriginalBootSuffixInventory::collect(
+            fixture.base.journal.as_ref(),
+            &fixture.base.directory,
+            &Processes::new(fixture.base.process_path()),
+            &fixture.base.manifests,
+            &fixture.request,
+            session(1),
+            deadline(),
+            || Ok(CHECK),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            matches!(error, Error::Control(message) if message == if omit {
+            "sealed suffix is absent from original writer set"
+        } else { "sealed suffix differs from original writer" })
+        );
+        assert_eq!(
+            fixture.base.journal.load_snapshot(scope()).await.unwrap(),
+            current
+        );
+        fixture.base.journal.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_refuses_missing_or_corrupt_canonical_manifest() {
+    for corrupt in [false, true] {
+        let fixture = WriterFixture::with_suffixes(1, true).await;
+        fixture.retain().await;
+        let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+        let digest = fixture.base.sealed.log().recovery_manifest().unwrap();
+        let path = fixture.base.recovery_layout.node_log_recovery_path(
+            session(0).as_bytes(),
+            4,
+            digest.as_bytes(),
+        );
+        if corrupt {
+            fixture
+                .base
+                .recovery_layout
+                .store()
+                .put_overwrite(&path, Bytes::from_static(b"corrupt"))
+                .await
+                .unwrap();
+        } else {
+            fixture
+                .base
+                .recovery_layout
+                .store()
+                .delete(&path)
+                .await
+                .unwrap();
+        }
+        let error = FleetOriginalBootSuffixInventory::collect(
+            fixture.base.journal.as_ref(),
+            &fixture.base.directory,
+            &Processes::new(fixture.base.process_path()),
+            &fixture.base.manifests,
+            &fixture.request,
+            session(1),
+            deadline(),
+            || Ok(CHECK),
+        )
+        .await
+        .err()
+        .unwrap();
+        if corrupt {
+            assert!(matches!(
+                error,
+                Error::Node("recovery manifest digest differs")
+            ));
+        } else {
+            assert!(matches!(
+                error,
+                Error::Storage(cellule_store::StorageError::NotFound { .. })
+            ));
+        }
+        assert_eq!(
+            fixture.base.journal.load_snapshot(scope()).await.unwrap(),
+            before
+        );
+        fixture.base.journal.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_rechecks_original_process_after_manifest_io() {
+    for source_error in [false, true] {
+        let fixture = WriterFixture::with_suffixes(1, true).await;
+        fixture.retain().await;
+        let mut processes = Processes::new(fixture.base.process_path());
+        processes.fault_read = 2;
+        if source_error {
+            *processes.final_fault.lock().unwrap() = Some(std::io::ErrorKind::PermissionDenied);
+        } else {
+            *processes.final_witness.lock().unwrap() = Some(Digest::from_bytes([91; 32]));
+        }
+        let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+        let error = FleetOriginalBootSuffixInventory::collect(
+            fixture.base.journal.as_ref(),
+            &fixture.base.directory,
+            &processes,
+            &fixture.base.manifests,
+            &fixture.request,
+            session(1),
+            deadline(),
+            || Ok(CHECK),
+        )
+        .await
+        .err()
+        .unwrap();
+        if source_error {
+            let Error::Facility { source, .. } = error else {
+                panic!("original provider error required")
+            };
+            assert_eq!(
+                source.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+        } else {
+            assert!(matches!(
+                error,
+                Error::Control("original failed process evidence changed")
+            ));
+        }
+        assert!(processes.reads.load(Ordering::Acquire) >= 3);
+        assert_eq!(
+            fixture.base.journal.load_snapshot(scope()).await.unwrap(),
+            before
+        );
+        fixture.base.journal.close().await.unwrap();
+    }
+}
+
+struct RegistryChangingProcesses {
+    journal: Arc<SqliteJournal>,
+    original: Processes,
+    reads: AtomicUsize,
+}
+impl FleetFailedBootProcesses for RegistryChangingProcesses {
+    fn confirm_stopped<'a>(
+        &'a self,
+        request: &'a FleetFailedBootProcessRequest,
+    ) -> FleetAdapterFuture<'a, FleetFailedBootProcessEvidence> {
+        Box::pin(async move {
+            if self.reads.fetch_add(1, Ordering::AcqRel) == 2 {
+                let current = self.journal.load_snapshot(scope()).await?;
+                self.journal
+                    .set_scheduling(current.registry(), true)
+                    .await?;
+            }
+            self.original.confirm_stopped(request).await
+        })
+    }
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_refuses_registry_change_after_manifest_io() {
+    let fixture = WriterFixture::with_suffixes(1, true).await;
+    fixture.retain().await;
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    let processes = RegistryChangingProcesses {
+        journal: Arc::clone(&fixture.base.journal),
+        original: Processes::new(fixture.base.process_path()),
+        reads: AtomicUsize::new(0),
+    };
+    let error = FleetOriginalBootSuffixInventory::collect(
+        fixture.base.journal.as_ref(),
+        &fixture.base.directory,
+        &processes,
+        &fixture.base.manifests,
+        &fixture.request,
+        session(1),
+        deadline(),
+        || Ok(CHECK),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(error, Error::FleetOperation(source)
+        if matches!(source.as_ref(), cellule_runtime::fleet::operations::OperationError::Conflict)));
+    assert!(processes.reads.load(Ordering::Acquire) >= 3);
+    let current = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    assert_eq!(
+        current.registry().revision(),
+        before.registry().revision() + 1
+    );
+    fixture.base.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_boot_suffix_inventory_expired_deadline_starts_no_adapter_work() {
+    let fixture = WriterFixture::new().await;
+    fixture.retain().await;
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    let processes = Processes::new(fixture.base.process_path());
+    let error = FleetOriginalBootSuffixInventory::collect(
+        fixture.base.journal.as_ref(),
+        &fixture.base.directory,
+        &processes,
+        &fixture.base.manifests,
+        &fixture.request,
+        session(1),
+        Instant::now(),
+        || Ok(CHECK),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(error, Error::Deadline));
+    assert_eq!(processes.reads.load(Ordering::Acquire), 0);
+    assert_eq!(
+        fixture.base.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    fixture.base.journal.close().await.unwrap();
 }
 #[tokio::test]
 async fn complete_original_writers_survive_takeover_atomic_publication_and_reconstruction() {

@@ -295,7 +295,7 @@ fn hash_control(
     hash.update(&bytes);
     Ok(())
 }
-fn check_operation(
+pub(super) fn check_operation(
     snapshot: &FleetJournalSnapshot,
     roster: &FleetRoster,
     request: &FleetFailedBootProcessRequest,

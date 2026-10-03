@@ -94,6 +94,30 @@ current native roles. Aggregate collectors must independently recheck current
 authority, every successor prefix, process closure and the complete operation
 barrier before acting.
 
+## Collect the original boot's complete sealed suffixes
+
+After publishing the original writer set and canonically sealing recovery, use
+`FleetOriginalBootSuffixInventory::collect`. Supply the retained original process
+request and the application-authenticated manifest store for that original log.
+The collector reads `NodeDirectory::recovered_session`, follows its exact manifest
+digest, and includes rows from every application. Every row must match a retained
+original owner epoch and exact predecessor. It repeats the original process,
+canonical log and full journal checks after manifest I/O.
+
+Open/Recovering logs, uncommitted writers, omitted owners, changed predecessors,
+missing/corrupt manifest bytes and changed process evidence refuse. A canonical
+log with no manifest still retains all object-covered and rootless writers.
+The application accounts the bounded copied writer index and manifest buffers;
+the manifest read is bounded to 2 MiB. One absolute deadline spans collection.
+
+This supplies complete metadata inputs for that original log. It does not verify
+referenced bundles or current successors. Original Controls also retain inherited
+recovery overlays from earlier boots; those must receive their own exact manifest
+and successor proofs. Verify every original root and suffix through native prefix
+verification, then recheck current native serving and the complete role/work
+barrier before settlement. Sealed log recovery permits no log retirement or node
+finalization by itself.
+
 ## Checks and limits
 
 | Boundary | Required behavior |
@@ -122,6 +146,12 @@ removed by actual canonical takeover. They exercise exact replay, reconstruction
 provider errors, missing history, competing clients and canceled/lost replies.
 Reload cases distinguish absent and authenticated empty sets, refuse a stale
 snapshot or missing/corrupt final page, and preserve the original SQL error.
+The suffix fixture publishes real SQLite roots, captures later mutations and
+fsyncs their encoded node frames to two follower stores. Ordinary recovery pins
+and seals one complete two-application manifest. The collector checks its complete
+scope after independent journal reconstruction. Fault cases omit an original,
+change a predecessor, remove/corrupt manifest bytes and change or fail the final
+process read. These are input-boundary cases, not complete maintenance evidence.
 Their joined child is a lifetime stand-in; OS-crashed CellNode, accepted external
 jobs, successor prefixes and provider fault qualification remain required.
 

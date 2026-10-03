@@ -49,6 +49,12 @@ async fn session_closure_requires_exact_permanent_physical_fence_and_live_claima
     assert_eq!(closure.expires_at_ms(), NOW_MS + 10_000);
     assert_eq!(closure.retired_at_ms(), NOW_MS + 10_001);
     assert!(closure.log().is_none());
+    let recovered = directory
+        .recovered_session(physical, leader, claimant, NOW_MS + 10_002)
+        .await
+        .unwrap();
+    assert_eq!(recovered.fence(), &closure.fence());
+    assert!(recovered.log().is_none());
     assert_eq!(
         directory
             .fenced_session(physical, leader, claimant, NOW_MS + 10_002)
@@ -101,6 +107,88 @@ async fn session_closure_requires_exact_permanent_physical_fence_and_live_claima
             .unwrap(),
         closure
     );
+}
+
+#[tokio::test]
+async fn session_recovery_requires_canonical_sealing_without_claiming_log_retirement() {
+    let directory = directory();
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let leader = SessionId::from_bytes([1; 16]);
+    let claimant = SessionId::from_bytes([2; 16]);
+    let original = directory
+        .create(advertisement_for(leader, &key, 1, NOW_MS), NOW_MS)
+        .await
+        .unwrap();
+    for byte in [2, 3] {
+        let peer = SessionId::from_bytes([byte; 16]);
+        directory
+            .create(
+                advertisement_for(peer, &key, 1, NOW_MS + 9_000),
+                NOW_MS + 9_000,
+            )
+            .await
+            .unwrap();
+    }
+    let enrolled = directory
+        .recruit_log(&original, 4, 1, 3, NOW_MS + 9_001)
+        .await
+        .unwrap();
+    let active = directory
+        .activate_log(&enrolled, NOW_MS + 9_002)
+        .await
+        .unwrap();
+    assert!(
+        directory
+            .recovered_session(node(leader), leader, claimant, NOW_MS + 9_003)
+            .await
+            .is_err()
+    );
+    let fenced = directory
+        .claim_expired(leader, claimant, NOW_MS + 10_001)
+        .await
+        .unwrap();
+    assert!(matches!(
+        directory
+            .recovered_session(node(leader), leader, claimant, NOW_MS + 10_001)
+            .await,
+        Err(Error::Control("node session log recovery is incomplete"))
+    ));
+    // Authority boundary fixture: this test asserts the canonical pointer and
+    // phase. Host input tests load actual complete digest-verified manifests.
+    let manifest = Digest::from_bytes([81; 32]);
+    let sealed = directory
+        .seal_recovery(&fenced, Some(manifest), NOW_MS + 10_002)
+        .await
+        .unwrap();
+    let recovered = directory
+        .recovered_session(node(leader), leader, claimant, NOW_MS + 10_003)
+        .await
+        .unwrap();
+    assert_eq!(recovered.fence().session(), leader);
+    assert_eq!(recovered.log(), Some(sealed.log()));
+    assert_eq!(
+        recovered.log().unwrap().members(),
+        active.advertisement().log().unwrap().members()
+    );
+    assert_eq!(recovered.log().unwrap().recovery_manifest(), Some(manifest));
+    assert!(
+        directory
+            .closed_session(node(leader), leader, claimant, NOW_MS + 10_003)
+            .await
+            .is_err()
+    );
+    for (physical, sender, now) in [
+        (NodeId::from_bytes([91; 16]), claimant, NOW_MS + 10_003),
+        (node(leader), leader, NOW_MS + 10_003),
+        (node(leader), claimant, NOW_MS + 19_001),
+    ] {
+        assert!(
+            directory
+                .recovered_session(physical, leader, sender, now)
+                .await
+                .is_err()
+        );
+    }
 }
 
 #[tokio::test]

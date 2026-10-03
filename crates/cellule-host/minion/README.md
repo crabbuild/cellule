@@ -183,6 +183,14 @@ See the [integration recipe](../docs/original-writers.md)
 for source authentication, bounds and successor requirements. This metadata
 foundation does not establish successor availability or maintenance completion.
 
+`FleetOriginalBootSuffixInventory` binds the whole canonical sealed manifest to
+those retained owners across applications. Its cases capture actual SQLite
+mutations and fsync follower frames before ordinary recovery pins/seals the tails.
+The collector survives journal restart and refuses omitted owners, changed roots,
+missing/corrupt manifest bytes and changed original-process evidence. Inherited
+overlays, exact current successor serving, complete roles and accepted work still
+require their independent proofs.
+
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked writer_tests
 ```

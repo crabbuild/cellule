@@ -58,6 +58,7 @@ pub(super) struct Processes {
     reads: AtomicUsize,
     final_fault: Mutex<Option<std::io::ErrorKind>>,
     final_witness: Mutex<Option<Digest>>,
+    fault_read: usize,
 }
 impl Processes {
     pub(super) fn new(path: PathBuf) -> Self {
@@ -66,6 +67,7 @@ impl Processes {
             reads: AtomicUsize::new(0),
             final_fault: Mutex::new(None),
             final_witness: Mutex::new(None),
+            fault_read: 1,
         }
     }
 }
@@ -76,7 +78,7 @@ impl FleetFailedBootProcesses for Processes {
     ) -> FleetAdapterFuture<'a, FleetFailedBootProcessEvidence> {
         Box::pin(async move {
             let read = self.reads.fetch_add(1, Ordering::AcqRel);
-            if read == 1 {
+            if read == self.fault_read {
                 if let Some(kind) = self.final_fault.lock().unwrap().take() {
                     return Err(
                         std::io::Error::new(kind, "original process evidence read lost").into(),
