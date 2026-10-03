@@ -109,7 +109,7 @@ mod owner;
 pub use enrollment::{
     FleetNodeDurabilityProvider, FleetNodeLogRecruitment, FollowerEnrollmentCompletion,
     FollowerEnrollmentInventoryCursor, FollowerEnrollmentInventoryPage, FollowerEnrollmentMember,
-    FollowerEnrollmentProgress,
+    FollowerEnrollmentProgress, FollowerEvacuation,
 };
 pub use observation::{
     NodeDurabilitySupervisorObservation, NodeDurabilitySupervisorState, NodeLogRotationEntry,

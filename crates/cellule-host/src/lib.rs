@@ -23,10 +23,11 @@ pub use durability::{
     FacilityResult, FleetNodeDurabilityProvider, FleetNodeLogRecruitment,
     FollowerEnrollmentCompletion, FollowerEnrollmentInventoryCursor,
     FollowerEnrollmentInventoryPage, FollowerEnrollmentMember, FollowerEnrollmentProgress,
-    NodeDurabilityProvider, NodeDurabilityRotation, NodeDurabilitySupervisorConfig,
-    NodeDurabilitySupervisorObservation, NodeDurabilitySupervisorState, NodeLogRotationCompletion,
-    NodeLogRotationEntry, NodeLogRotationInventory, NodeLogRotationObservation,
-    NodeLogRotationPhase, NodeLogRotationRequest,
+    FollowerEvacuation, NodeDurabilityProvider, NodeDurabilityRotation,
+    NodeDurabilitySupervisorConfig, NodeDurabilitySupervisorObservation,
+    NodeDurabilitySupervisorState, NodeLogRotationCompletion, NodeLogRotationEntry,
+    NodeLogRotationInventory, NodeLogRotationObservation, NodeLogRotationPhase,
+    NodeLogRotationRequest,
 };
 pub use facility::CellNodeFacility;
 pub use node::CellNode;

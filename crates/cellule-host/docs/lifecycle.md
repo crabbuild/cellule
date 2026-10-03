@@ -161,6 +161,30 @@ Combine this advisory local capture with producer pages, inbound native lanes,
 fresh authority, replacement policy and authenticated revision-bound evidence
 before settling fleet roles.
 
+### Verify a live owner's follower evacuation
+
+After the original requested rotation completes, call
+`CellNode::follower_evacuation(original, operation, minimum_members, deadline)`
+on that same live owner. Supply the original Established follower request, the
+current Evacuating operation and the application's nonzero redundancy minimum
+(one or two members). This read-only check returns a blocker while recruitment
+is incomplete. It never requests another rotation or closes a lane.
+
+| Returned evidence | Required checks |
+| --- | --- |
+| Original and Retired rows | Same request, acceptance time and establishment evidence; every old ensemble member is durably Retired. |
+| Original rotation Arc | Confirmed object-covered retirement and the newer binding installed by the existing supervisor; retry leaves original errors inspectable. |
+| Replacement enrollment | Complete original signed source/member boots and canonical epoch; the donor is excluded and the member minimum is met. |
+| Replacement rows and current authority | Every member is Established on an Active managed boot at its exact intent revision; signed boot identities and source authority are rechecked around full journal confirmation. |
+| Capture interval and snapshot | At most thirty seconds, bounded by the operation and caller deadlines; original journal timestamps are never refreshed. |
+
+The returned `FollowerEvacuation` retains its node metadata charge. Publish and
+revalidate this per-owner interval before local history can be evicted. A
+withdrawn or changed replacement, missing original completion, changed registry,
+expired operation or incomplete enrollment produces no settlement evidence.
+Complete foreign/native inventory, Pending producers, failed-owner recovery and
+terminal action handoff remain required before physical-node shutdown.
+
 ## Journal bound fleet actions
 
 ### Fleet boot admission

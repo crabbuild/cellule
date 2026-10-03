@@ -215,6 +215,11 @@ impl BootOwner {
         let memory =
             u64::try_from(stats.resident_capacity_bytes() + stats.retained_capacity_bytes())?;
         let used = u64::try_from(stats.resident_bytes() + stats.retained_bytes())?;
+        let follower = self
+            .node
+            .try_owned_component::<cellule_runtime::follower::FollowerStore>(
+                cellule_host::FOLLOWER_STORE_COMPONENT,
+            )?;
         let original = &self.advertisement;
         let key = SigningKey::from_bytes(&[index as u8 + 1; 32]);
         let now = clock()?;
@@ -235,17 +240,17 @@ impl BootOwner {
             original.peer_versions().to_vec(),
             original.failure_domain().clone(),
             NodeCapacity {
-                follower_free_bytes: self
-                    .node
-                    .try_owned_component::<cellule_runtime::follower::FollowerStore>(
-                        cellule_host::FOLLOWER_STORE_COMPONENT,
-                    )?
+                follower_free_bytes: follower
+                    .as_ref()
                     .map_or(0, |store| store.available_bytes())
                     .min(
                         stats
                             .local_disk_capacity_bytes()
                             .saturating_sub(stats.local_disk_reserved_bytes()),
                     ),
+                follower_retained_bytes: follower
+                    .as_ref()
+                    .map_or(0, |store| store.retained_bytes()),
                 free_memory_bytes: memory.saturating_sub(used),
                 free_disk_bytes: stats
                     .local_disk_capacity_bytes()
@@ -254,7 +259,6 @@ impl BootOwner {
                     .placement_job_capacity()
                     .saturating_sub(stats.placement_running_jobs()),
                 log_protocol: 1,
-                ..NodeCapacity::default()
             },
         )?
         .with_operational_placement(

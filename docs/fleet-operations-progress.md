@@ -4,6 +4,68 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 live-owner follower evacuation checkpoint
+
+`CellNode::follower_evacuation` checks the original requested rotation against
+the current Evacuating operation and full durable roster. It preserves the
+original completion Arc and retirement timestamps, requires every old member's
+Retired row, and verifies the complete newer ensemble outside the donor against
+an explicit application member minimum. The returned evidence retains original
+signed replacement boots, current Open authority, Established member rows,
+exact intent revisions and the checked head/registry. Native owner readiness,
+admission mode, binding and actual lease are rechecked alongside directory
+authority and member boots. Temporary and retained metadata use the existing
+node ledger; deadlines retain original source errors.
+
+The API starts no effects. The same supervisor owns accepted retirement and
+recruitment across cancellation, deadlines and lost replies. Missing local
+completion, insufficient replacement, changed/withdrawn boots, fenced owner or
+stale operation produces no settlement evidence. No-spare recruitment remains
+outstanding after object-covered old retirement; this does not invent a newer
+binding or a completed maintenance operation.
+
+Seven public cases use actual three/four-node managed boots, native persisted
+follower lanes, an acknowledged SQL command, the canonical object barrier and
+the durable reference journal. They cover exact replay, no spare, lost member
+reply with the original error Arc, invalid originals/member requirements,
+expired waiters, replacement withdrawal, owner fencing and deadline extension.
+Retired files/fences remain present. Every fixture joins shutdown, checks empty
+native resource ledgers and requires exact boot/follower retirement counts.
+The reference heartbeat now signs actual retained follower bytes as well as
+available receiving credit.
+
+Initial qualification found two test API assumptions and a query attempted
+after its actual drain closed query admission. Readback now precedes the
+publication barrier and the case verifies its resulting covered watermark.
+The first broad run passed 287 cases; Clippy found a redundant capacity default
+after all fields became explicit. Earlier logs remain separate from final
+source qualification under `/tmp/cellule-follower-evacuation-evidence`.
+The explicit Open/Active authority check subsequently exposed a source boot
+still carrying its closed startup sample. The managed fixture now publishes
+that source's real post-start heartbeat before recording its live-owner proof;
+the production admission check remains required.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `3721ee64d260d57eec2e59dda72632bb77c789ee` |
+| Frozen source | 669 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `169abf0111599ceb01b9f0ff02e61e4a835e348566e48a3471e6d6814c4ad05b` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-follower-evacuation-evidence` |
+
+Final qualification passed 34 host library, 106 public node and 149 example
+cases: 289 distinct tests, no failures or ignores. Host Clippy and host/runtime
+API documentation passed with warnings denied. Format, boundaries, module
+layout, document syntax/links and SQL/peer contract gates pass. The complete
+active/isolated Rust/Cargo path sets and every byte match after qualification.
+Focused repeats and earlier-source runs are excluded from the final count.
+
+Complete observer/failed-process barriers, policy evidence publication and
+revalidation, dead-owner recovery, affected-writer relocation,
+`SettleRoles`/`Finalize`, terminal action handoff, remaining primitive faults
+and W8–W10 remain required. This checkpoint supplies one live-owner role proof,
+not fleet-wide settlement or shutdown permission.
+
 ## October 2 2026 foreign follower authority checkpoint
 
 `FleetFollowerReferences` traverses every canonical directory page for a physical

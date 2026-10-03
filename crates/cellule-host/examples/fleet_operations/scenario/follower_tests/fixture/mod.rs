@@ -3,7 +3,8 @@ use super::*;
 pub(super) struct Authority {
     directory: NodeDirectory,
     serial: tokio::sync::Mutex<()>,
-    closed: Mutex<Option<NodeLogRotationBarrier>>,
+    closed: Mutex<HashMap<u64, NodeLogRotationBarrier>>,
+    members: Mutex<HashMap<u64, Vec<NodeId>>>,
     coverage_gate: Mutex<
         Option<(
             tokio::sync::oneshot::Sender<()>,
@@ -38,10 +39,15 @@ impl Authority {
             .await?
             .ok_or(Error::Fenced)?;
         if observed.advertisement().node() != node_id(0)
-            || observed
-                .advertisement()
-                .log()
-                .is_none_or(|log| log.epoch() != epoch || log.members() != [node_id(1), node_id(2)])
+            || observed.advertisement().log().is_none_or(|log| {
+                log.epoch() != epoch
+                    || self
+                        .members
+                        .lock()
+                        .unwrap()
+                        .get(&epoch)
+                        .is_none_or(|members| log.members() != members)
+            })
         {
             return Err(Error::Fenced);
         }
@@ -90,7 +96,12 @@ impl NodeLogAuthority for Authority {
             retirement.confirmed()?;
             let _serial = self.serial.lock().await;
             self.attempts.fetch_add(1, Ordering::AcqRel);
-            if let Some(original) = self.closed.lock().unwrap().as_ref() {
+            if let Some(original) = self
+                .closed
+                .lock()
+                .unwrap()
+                .get(&retirement.barrier().log_epoch())
+            {
                 assert_eq!(original, retirement.barrier());
                 return Ok(());
             }
@@ -101,7 +112,10 @@ impl NodeLogAuthority for Authority {
                 .await?;
             assert!(closed.advertisement().log().is_none());
             // Preserve the exact checked close receipt before losing its reply.
-            *self.closed.lock().unwrap() = Some(retirement.barrier().clone());
+            self.closed.lock().unwrap().insert(
+                retirement.barrier().log_epoch(),
+                retirement.barrier().clone(),
+            );
             if self.lose_reply.swap(false, Ordering::AcqRel) {
                 return Err(Error::Node("original canonical close reply lost"));
             }
@@ -226,6 +240,7 @@ pub(super) struct Provider {
     authority: Arc<Authority>,
     lease: NodeLeaseGuard,
     pub prepared: AtomicUsize,
+    max_epochs: usize,
     pub events: Mutex<Vec<NodeDurabilityRotation>>,
     preparation: Mutex<
         Option<(
@@ -267,9 +282,10 @@ impl FleetNodeDurabilityProvider for Provider {
         >,
     > {
         Box::pin(async move {
-            // One unique epoch for this fixture. No second selection can hide
-            // a refused, ambiguous, or incompletely retired original attempt.
-            if self.prepared.fetch_add(1, Ordering::AcqRel) != 0 {
+            // Each read-only preparation uses a never-reused epoch. The original
+            // single-epoch profiles remain unable to invent a replacement.
+            let index = self.prepared.fetch_add(1, Ordering::AcqRel);
+            if index >= self.max_epochs {
                 return Ok(None);
             }
             let gate = self.preparation.lock().unwrap().take();
@@ -285,13 +301,18 @@ impl FleetNodeDurabilityProvider for Provider {
                 .ok_or(Error::Fenced)?;
             let prepared = self
                 .directory
-                .prepare_log_enrollment(&source, 1, bytes, live, now)
+                .prepare_log_enrollment(&source, index as u64 + 1, bytes, live, now)
                 .await?
                 .ok_or(Error::Fenced)?;
             let attempt = self
                 .directory
                 .prepare_log_enrollment_attempt(&prepared, now)
                 .await?;
+            self.authority
+                .members
+                .lock()
+                .unwrap()
+                .insert(prepared.log().epoch(), prepared.log().members().to_vec());
             Ok(Some(FleetNodeLogRecruitment::new(
                 self.directory.clone(),
                 attempt,
@@ -421,7 +442,8 @@ impl Fixture {
         let authority = Arc::new(Authority {
             directory: directory.clone(),
             serial: tokio::sync::Mutex::new(()),
-            closed: Mutex::new(None),
+            closed: Mutex::new(HashMap::new()),
+            members: Mutex::new(HashMap::new()),
             coverage_gate: Mutex::new(None),
             attempts: AtomicUsize::new(0),
             lose_reply: AtomicBool::new(false),
@@ -432,6 +454,7 @@ impl Fixture {
             authority: authority.clone(),
             lease,
             prepared: AtomicUsize::new(0),
+            max_epochs: 1,
             events: Mutex::new(Vec::new()),
             preparation: Mutex::new(None),
         });

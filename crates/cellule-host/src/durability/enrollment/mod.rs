@@ -22,10 +22,12 @@ pub(crate) const MAX_FOLLOWER_ENROLLMENT_EPOCHS: usize = 32;
 
 mod authority;
 mod inventory;
+mod maintenance;
 mod protocol;
 pub use inventory::{
     FollowerEnrollmentInventoryCursor, FollowerEnrollmentInventoryPage, FollowerEnrollmentProgress,
 };
+pub use maintenance::FollowerEvacuation;
 
 /// Read-only input provider for journal-bound follower recruitment.
 /// Applications own signed directory/transport/authority construction and unique

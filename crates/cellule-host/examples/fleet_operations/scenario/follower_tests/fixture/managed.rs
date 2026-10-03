@@ -12,6 +12,12 @@ pub(crate) struct ManagedFixture {
 
 impl ManagedFixture {
     pub async fn new() -> Self {
+        Self::with_members(3, 1).await
+    }
+
+    pub async fn with_members(count: usize, max_epochs: usize) -> Self {
+        assert!((3..=4).contains(&count));
+        assert!((1..=2).contains(&max_epochs));
         let root = tempfile::tempdir().unwrap();
         let app = application::compile().unwrap();
         let layout = CellStorageLayout::new(
@@ -79,7 +85,7 @@ impl ManagedFixture {
         )]));
         let mut nodes = Vec::new();
         let mut boots = Vec::new();
-        for index in 0..3 {
+        for index in 0..count {
             let intent = journal
                 .register_initial_intent(
                     &NodeIntent::initial(scope(), node_id(index), session(index)).unwrap(),
@@ -150,7 +156,7 @@ impl ManagedFixture {
             });
             nodes.push(node);
         }
-        let locals = (1..3)
+        let locals = (1..count)
             .map(|index| {
                 let store = nodes[index]
                     .try_owned_component::<FollowerStore>(cellule_host::FOLLOWER_STORE_COMPONENT)
@@ -173,7 +179,8 @@ impl ManagedFixture {
         let authority = Arc::new(Authority {
             directory: directory.clone(),
             serial: tokio::sync::Mutex::new(()),
-            closed: Mutex::new(None),
+            closed: Mutex::new(HashMap::new()),
+            members: Mutex::new(HashMap::new()),
             coverage_gate: Mutex::new(None),
             attempts: AtomicUsize::new(0),
             lose_reply: AtomicBool::new(false),
@@ -184,6 +191,7 @@ impl ManagedFixture {
             authority: authority.clone(),
             lease: boots[0].guard.as_ref().unwrap().clone(),
             prepared: AtomicUsize::new(0),
+            max_epochs,
             events: Mutex::new(Vec::new()),
             preparation: Mutex::new(None),
         });
@@ -197,7 +205,7 @@ impl ManagedFixture {
                     scope().application,
                     limits(),
                     1,
-                    3,
+                    count,
                     Duration::from_millis(10),
                     Duration::from_secs(60),
                     u64::MAX,
@@ -205,14 +213,17 @@ impl ManagedFixture {
                 .unwrap(),
             )
             .unwrap();
-        // No enrollment producer runs until all three original boots are retained.
+        // No enrollment producer runs until all original boots are retained.
         let snapshot = journal.load_snapshot(scope()).await.unwrap();
         journal
             .bootstrap_registry(snapshot.registry())
             .await
             .unwrap();
-        for index in 1..3 {
+        for index in 1..count {
             nodes[index].start().unwrap();
+            if index >= 3 {
+                continue;
+            }
             let ad = boots[index]
                 .refresh_capacity(
                     index,
@@ -225,6 +236,13 @@ impl ManagedFixture {
         }
         nodes[0].start().unwrap();
         until(|| nodes[0].runtime().node_durability().is_some()).await;
+        // Recruitment can use the source's closed startup advertisement for
+        // outbound work. A live replacement proof requires its real Ready-mode
+        // heartbeat, never an invented admission sample.
+        boots[0]
+            .refresh_capacity(0, journal.as_ref(), Instant::now() + Duration::from_secs(3))
+            .await
+            .unwrap();
         let native = Fixture {
             root,
             layout,
@@ -322,17 +340,21 @@ impl ManagedFixture {
             assert_eq!(node.stats().local_disk_reserved_bytes(), 0);
         }
         let rows = self.native.rows().await;
-        assert_eq!(rows.len(), 5);
+        let followers = rows
+            .iter()
+            .filter(|row| matches!(row.spec().role, EnrollmentRole::Follower { .. }))
+            .count();
+        let expected_followers = if self.nodes.len() == 4 && self.native.provider.max_epochs == 2 {
+            4
+        } else {
+            2
+        };
+        assert_eq!(rows.len(), self.nodes.len() + expected_followers);
         assert!(
             rows.iter()
                 .all(|row| row.status() == EnrollmentStatus::Retired)
         );
-        assert_eq!(
-            rows.iter()
-                .filter(|row| matches!(row.spec().role, EnrollmentRole::Follower { .. }))
-                .count(),
-            2
-        );
+        assert_eq!(followers, expected_followers);
         self.native.journal.close().await.unwrap();
     }
 }
