@@ -24,7 +24,7 @@ use crate::response::{ReceiptBody, hex};
 #[derive(Debug)]
 pub struct HttpError {
     status: StatusCode,
-    body: ErrorBody,
+    body: Box<ErrorBody>,
     source: Box<dyn StdError + Send + Sync>,
 }
 
@@ -68,7 +68,7 @@ impl From<Error> for HttpError {
         let (status, body) = runtime_response(&error);
         Self {
             status,
-            body,
+            body: Box::new(body),
             source: Box::new(error),
         }
     }
@@ -99,7 +99,7 @@ impl<T: Send + Sync + 'static> From<InvocationError<T>> for HttpError {
         };
         Self {
             status,
-            body,
+            body: Box::new(body),
             source: Box::new(error),
         }
     }
