@@ -83,6 +83,27 @@ jobs:
             --locked -- --ignored --exact --list | grep -Fx "$smoke_test: test"
           cargo test -p cellule-app --test integration "$smoke_test" \
             --locked -- --ignored --exact --nocapture
+      - name: Verify Axum HTTP publication, retries and cold recovery against RustFS
+        env:
+          AWS_ACCESS_KEY_ID: cellule-ci
+          AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
+          AWS_DEFAULT_REGION: us-east-1
+          CELLULE_TEST_ENDPOINT: http://127.0.0.1:9000
+          CELLULE_TEST_BUCKET: cellule-ci
+          CELLULE_TEST_PREFIX: axum-http-smoke
+        run: |
+          cargo build -p cellule-axum --example sql --locked
+          python3 scripts/bench-axum-rustfs.py \
+            --binary target/debug/examples/sql \
+            --output "$RUNNER_TEMP/cellule-axum-http" \
+            --repeats 1 --concurrency 1 4 --warmup 2 --writes 8 --reads 16
+      - name: Retain Axum HTTP verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cellule-axum-http
+          path: ${{ runner.temp }}/cellule-axum-http
+          if-no-files-found: ignore
       - name: Test local LTX without replica
         run: cargo test -p cellule-ltx --no-default-features --locked
       - name: Test replica feature

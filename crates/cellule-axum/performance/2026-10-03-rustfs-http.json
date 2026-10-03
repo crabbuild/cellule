@@ -1,0 +1,857 @@
+{
+  "environment": {
+    "base_revision": "39a3d0b2a2ae8138a3daa55281d798d1c2c9e62c",
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+    "cpu": "Apple M2 Max",
+    "host_memory_bytes": 34359738368,
+    "macos": "26.5.2",
+    "docker": {
+      "OperatingSystem": "Ubuntu 24.04.4 LTS",
+      "Architecture": "aarch64",
+      "NCPU": 8,
+      "MemTotal": 16732540928,
+      "ServerVersion": "29.5.2"
+    },
+    "rustfs": {
+      "container": "/cellule-axum-perf-54f709e0-rustfs-1",
+      "image": "ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858",
+      "image_id": "sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858",
+      "health": "healthy"
+    }
+  },
+  "measurement": {
+    "started_at_utc": "2026-10-03T17:50:09Z",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "cpu_count": 12,
+    "python": "3.14.6",
+    "binary_sha256": "423146e719e4282b74520d4d7df7d20ec13c9dcd53ea398cbf3f47c96822b4d4",
+    "endpoint": "http://127.0.0.1:19751",
+    "bucket": "cellule-cookbook",
+    "writes": 500,
+    "reads": 2000,
+    "warmup": 20,
+    "repeats": 3,
+    "concurrency": [
+      1,
+      4,
+      16
+    ],
+    "workload": "one SQL Cell; POST inserts then receipt-bound SELECT; GET owner-ordered SELECT; closed loop"
+  },
+  "measured_source_sha256": {
+    "Cargo.lock": "a33ca3aa8a6e0f4f38667534c19a6e1c4aa41d5dd5590fbc555c3922d26d63b5",
+    "crates/cellule-axum/examples/sql.rs": "d846c135379830c9bb814c09744a74d965d22d9d8416b27e15c0ae913127e44b",
+    "scripts/bench-axum-rustfs.py": "f2dc06ffce52d297da5172b0661474a2266c0c3b8af6d0687a92ec29ff53f121"
+  },
+  "container_load_sample": {
+    "rustfs": [
+      {
+        "BlockIO": "64.9MB / 200MB",
+        "CPUPerc": "134.36%",
+        "Container": "c1e2833dff6215a4bb1c733549d1c3b895f562c969c55f4cf2bf3a9f5a12cfbd",
+        "ID": "c1e2833dff62",
+        "MemPerc": "3.18%",
+        "MemUsage": "507.6MiB / 15.58GiB",
+        "Name": "cellule-axum-perf-54f709e0-rustfs-1",
+        "NetIO": "85.6MB / 37MB",
+        "PIDs": "62"
+      }
+    ],
+    "other_running_containers": 9,
+    "other_container_cpu_percent_sum": 30.11
+  },
+  "results": [
+    {
+      "repeat": 1,
+      "concurrency": 1,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r1-c1",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 14.997999540995806,
+        "successful_requests_per_second": 33.3377793907308,
+        "latency_ms_all_attempts": {
+          "p50": 21.918334,
+          "p95": 73.702584,
+          "p99": 157.421958
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 0.5265833751764148,
+        "successful_requests_per_second": 3798.069012964878,
+        "latency_ms_all_attempts": {
+          "p50": 0.162416,
+          "p95": 0.580667,
+          "p99": 1.662459
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 0.373125
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.126167
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 22.986958
+        },
+        "initial_startup_ms": 167.5584998447448,
+        "cold_startup_ms": 161.45229199901223,
+        "initial_drain": {
+          "milliseconds": 78.58954090625048,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 40.038542123511434,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 1,
+      "concurrency": 4,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r1-c4",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 40.10793520882726,
+        "successful_requests_per_second": 12.466361018005141,
+        "latency_ms_all_attempts": {
+          "p50": 213.2555,
+          "p95": 1309.517583,
+          "p99": 1487.321416
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 1.2951729169581085,
+        "successful_requests_per_second": 1544.1953532330454,
+        "latency_ms_all_attempts": {
+          "p50": 1.006625,
+          "p95": 5.395083,
+          "p99": 36.85775
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 8.701
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 2.149875
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 168.063792
+        },
+        "initial_startup_ms": 106.11341707408428,
+        "cold_startup_ms": 2226.084375055507,
+        "initial_drain": {
+          "milliseconds": 851.2757089920342,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 220.58387496508658,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 1,
+      "concurrency": 16,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r1-c16",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 30.88271129108034,
+        "successful_requests_per_second": 16.190288323046683,
+        "latency_ms_all_attempts": {
+          "p50": 715.337375,
+          "p95": 2301.258666,
+          "p99": 4163.66775
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 0.3366893329657614,
+        "successful_requests_per_second": 5940.194132029077,
+        "latency_ms_all_attempts": {
+          "p50": 2.001167,
+          "p95": 6.800375,
+          "p99": 11.077833
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 0.404333
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.114958
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 21.3395
+        },
+        "initial_startup_ms": 609.3585421331227,
+        "cold_startup_ms": 163.80416601896286,
+        "initial_drain": {
+          "milliseconds": 80.40754194371402,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 41.415915824472904,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 2,
+      "concurrency": 1,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r2-c1",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 31.358201958006248,
+        "successful_requests_per_second": 15.944791753990922,
+        "latency_ms_all_attempts": {
+          "p50": 31.997875,
+          "p95": 204.878709,
+          "p99": 433.295292
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 1.3147634998895228,
+        "successful_requests_per_second": 1521.1861298005736,
+        "latency_ms_all_attempts": {
+          "p50": 0.329916,
+          "p95": 1.776459,
+          "p99": 5.848958
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 4.611416
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.325042
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 651.281541
+        },
+        "initial_startup_ms": 159.21487496234477,
+        "cold_startup_ms": 508.11666692607105,
+        "initial_drain": {
+          "milliseconds": 508.56316601857543,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 536.0457499045879,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 2,
+      "concurrency": 4,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r2-c4",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 30.454720166046172,
+        "successful_requests_per_second": 16.417816262105987,
+        "latency_ms_all_attempts": {
+          "p50": 139.320708,
+          "p95": 784.278,
+          "p99": 1578.811875
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 1.397018917137757,
+        "successful_requests_per_second": 1431.6198409808537,
+        "latency_ms_all_attempts": {
+          "p50": 0.629625,
+          "p95": 8.261959,
+          "p99": 45.768042
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 0.771208
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.165709
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 51.182125
+        },
+        "initial_startup_ms": 1807.5656248256564,
+        "cold_startup_ms": 502.1147090010345,
+        "initial_drain": {
+          "milliseconds": 273.9795420784503,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 154.84945802018046,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 2,
+      "concurrency": 16,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r2-c16",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 53.91692770784721,
+        "successful_requests_per_second": 9.273525426175734,
+        "latency_ms_all_attempts": {
+          "p50": 1105.220125,
+          "p95": 4208.635625,
+          "p99": 5901.776583
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 0.3616353329271078,
+        "successful_requests_per_second": 5530.433057555041,
+        "latency_ms_all_attempts": {
+          "p50": 2.179333,
+          "p95": 6.809875,
+          "p99": 13.563875
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 0.453875
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.104916
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 48.306166
+        },
+        "initial_startup_ms": 168.15037513151765,
+        "cold_startup_ms": 531.696500023827,
+        "initial_drain": {
+          "milliseconds": 473.63108303397894,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 344.5537080988288,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 3,
+      "concurrency": 1,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r3-c1",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 38.508225332945585,
+        "successful_requests_per_second": 12.984238969128153,
+        "latency_ms_all_attempts": {
+          "p50": 39.85775,
+          "p95": 288.514375,
+          "p99": 481.410041
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 0.5670286249369383,
+        "successful_requests_per_second": 3527.1587924197456,
+        "latency_ms_all_attempts": {
+          "p50": 0.141292,
+          "p95": 0.7045,
+          "p99": 1.664375
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 0.28125
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.087916
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 22.48175
+        },
+        "initial_startup_ms": 273.6829579807818,
+        "cold_startup_ms": 223.0506669729948,
+        "initial_drain": {
+          "milliseconds": 80.72895789518952,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 75.80612506717443,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 3,
+      "concurrency": 4,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r3-c4",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 16.456057499861345,
+        "successful_requests_per_second": 30.383948281914602,
+        "latency_ms_all_attempts": {
+          "p50": 110.056584,
+          "p95": 262.431666,
+          "p99": 375.556792
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 0.36241929209791124,
+        "successful_requests_per_second": 5518.4700252095845,
+        "latency_ms_all_attempts": {
+          "p50": 0.513375,
+          "p95": 1.727666,
+          "p99": 3.059083
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 0.296916
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.117
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 42.222
+        },
+        "initial_startup_ms": 169.82533317059278,
+        "cold_startup_ms": 165.17662513069808,
+        "initial_drain": {
+          "milliseconds": 70.42908295989037,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 35.07137484848499,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 3,
+      "concurrency": 16,
+      "prefix": "axum-http-perf-20261003-54f709e0-a/r3-c16",
+      "writes": {
+        "attempts": 500,
+        "successes": 500,
+        "errors": 0,
+        "statuses": {
+          "201": 500
+        },
+        "seconds": 14.46789191593416,
+        "successful_requests_per_second": 34.559284995025905,
+        "latency_ms_all_attempts": {
+          "p50": 438.190917,
+          "p95": 691.119291,
+          "p99": 906.389709
+        }
+      },
+      "reads": {
+        "attempts": 2000,
+        "successes": 2000,
+        "errors": 0,
+        "statuses": {
+          "200": 2000
+        },
+        "seconds": 0.25400399998761714,
+        "successful_requests_per_second": 7873.891750120082,
+        "latency_ms_all_attempts": {
+          "p50": 1.874542,
+          "p95": 3.695709,
+          "p99": 4.793041
+        }
+      },
+      "verification": {
+        "warmup_writes": 20,
+        "acknowledged_rows": 520,
+        "live_exact_retries": 520,
+        "conflict": {
+          "status": 409,
+          "body": {
+            "code": "request_conflict",
+            "message": "Request identity was already used for different command bytes."
+          },
+          "latency_ms": 0.853333
+        },
+        "invalid_identity": {
+          "status": 400,
+          "body": {
+            "code": "invalid_request",
+            "message": "Invalid Cell request."
+          },
+          "latency_ms": 0.190625
+        },
+        "cold_recovered_rows": 520,
+        "cold_exact_retries": 520,
+        "next_recovered_write": {
+          "status": 201,
+          "body": {
+            "output": {
+              "id": 521,
+              "total_cents": 6872
+            },
+            "receipt": {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "incarnation": "04040404040404040404040404040404",
+              "commit_sequence": 521
+            }
+          },
+          "latency_ms": 17.678333
+        },
+        "initial_startup_ms": 266.98775007389486,
+        "cold_startup_ms": 163.67666702717543,
+        "initial_drain": {
+          "milliseconds": 67.95279099605978,
+          "epoch": 1,
+          "commit_sequence": 520
+        },
+        "recovered_drain": {
+          "milliseconds": 72.61445792391896,
+          "epoch": 2,
+          "commit_sequence": 521
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    }
+  ]
+}

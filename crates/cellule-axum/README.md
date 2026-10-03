@@ -115,6 +115,67 @@ identity's validity window returns the recorded outcome. Press Ctrl-C to drain.
 Service deployment still supplies providers, credentials, authorization,
 readiness, and node enrollment; see the [framework guide](../../docs/framework.md).
 
+## Verify HTTP against RustFS
+
+The same example can use real S3 objects. Set `CELLULE_TEST_ENDPOINT`,
+`CELLULE_TEST_BUCKET`, a fresh nonempty `CELLULE_TEST_PREFIX`,
+`AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. `AWS_DEFAULT_REGION`
+defaults to `us-east-1`; `AWS_SESSION_TOKEN` is optional.
+`CELLULE_AXUM_BIND` selects a loopback listener (default `127.0.0.1:3000`).
+The service refuses readiness unless all six storage capability checks pass.
+
+After Ctrl-C drains HTTP and releases the Cell, starting the **same binary**
+with the same S3 prefix restores its authoritative root into a new temporary
+SQLite directory, using a fresh fenced session. An active owner is refused;
+this tutorial demonstrates graceful restart, not failed-owner takeover.
+Keep the binary unchanged so its application code digest matches the catalog.
+
+The [performance runner](../../scripts/bench-axum-rustfs.py) measures real
+HTTP POST and GET requests, using the adapter, application handles, SQL
+runtime, LTX publication, and RustFS. It verifies receipt sequences, every
+acknowledged row, exact retries, conflicting inputs, expired identities,
+released authority, and cold recovery followed by another durable write.
+It saves request envelopes, individual timings, responses, service logs,
+and aggregate results. An unexpected response fails the run; uncertain
+commands are never silently retried with new identities.
+
+Use an isolated source snapshot for these process tests. From the repository
+root, build a release binary and start the cookbook's pinned local provider:
+
+```sh
+task_dir="$HOME/Workspace/crabbuild-target/cellule-axum-rustfs-$(date +%s)"
+mkdir -p "$task_dir/source"
+git archive HEAD | tar -x -C "$task_dir/source"
+export CARGO_TARGET_DIR="$task_dir/target"
+cargo build --release -p cellule-axum --example sql --locked --manifest-path "$task_dir/source/Cargo.toml"
+
+export COMPOSE_PROJECT_NAME=cellule-axum-perf
+export CELLULE_COOKBOOK_STORAGE_PORT=19751
+sh "$task_dir/source/cookbook/scripts/local-storage.sh" up
+export CELLULE_TEST_ENDPOINT=http://127.0.0.1:19751
+export CELLULE_TEST_BUCKET=cellule-cookbook
+export CELLULE_TEST_PREFIX="axum-http-$(date +%s)"
+export AWS_ACCESS_KEY_ID=cellule-cookbook
+export AWS_SECRET_ACCESS_KEY=cellule-cookbook-local-only
+export AWS_DEFAULT_REGION=us-east-1
+
+python3 "$task_dir/source/scripts/bench-axum-rustfs.py" \
+  --binary "$CARGO_TARGET_DIR/release/examples/sql" \
+  --output "$task_dir/results" \
+  --repeats 3 --concurrency 1 4 16 --writes 500 --reads 2000
+sh "$task_dir/source/cookbook/scripts/local-storage.sh" down
+```
+
+This local Compose project uses disposable example credentials. The runner
+needs Python 3.11 or newer and retains its S3 prefixes for inspection. The
+`down` command preserves the provider's volume. Measurements describe one SQL
+Cell under closed-loop load on the current machine; they do not qualify
+production capacity, distributed ownership, or fault recovery.
+
+See the [measured RustFS HTTP report](performance/2026-10-03-rustfs-http.md)
+for results and retained evidence. CI also runs a small version of the same
+correctness checks, without performance thresholds.
+
 ```sh
 cargo test -p cellule-axum --all-targets --locked
 ```

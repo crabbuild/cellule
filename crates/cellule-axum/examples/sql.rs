@@ -7,10 +7,15 @@
 //!   GET /orders/{id} -> owner-ordered SELECT -> CellJson optional order
 //!   Ctrl-C -> drain HTTP handlers -> drain runtime and SQLite workers
 //!
-//! In-memory objects and temporary SQLite files make this a local tutorial.
+//! Uses in-memory objects by default; CELLULE_TEST_ENDPOINT selects real S3.
+//! SQLite files are always temporary, including after a cold restart.
 //! The application owns routes, authorization, request identity, and shutdown.
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     Json, Router,
@@ -33,7 +38,7 @@ use cellule_runtime::{
     NamespaceId, RegistryBuilder, SessionId, SqlModule, SqlWorkerPool, TenantId,
     partition_for_shard,
 };
-use cellule_store::Store;
+use cellule_store::{ObjectStoreCredentials, Store, build_explicit_store, probe_storage};
 use object_store::{memory::InMemory, path::Path};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -222,8 +227,58 @@ async fn read_order(
     })
 }
 
+async fn example_storage() -> ExampleResult<(Store, Path)> {
+    let endpoint = match std::env::var("CELLULE_TEST_ENDPOINT") {
+        Ok(endpoint) => endpoint,
+        Err(std::env::VarError::NotPresent) => {
+            if std::env::var_os("CELLULE_TEST_BUCKET").is_some()
+                || std::env::var_os("CELLULE_TEST_PREFIX").is_some()
+            {
+                return Err("S3 bucket/prefix requires CELLULE_TEST_ENDPOINT".into());
+            }
+            return Ok((
+                Store::new(Arc::new(InMemory::new())),
+                Path::from("axum-orders-example"),
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let prefix = Path::parse(std::env::var("CELLULE_TEST_PREFIX")?)?;
+    if prefix.as_ref().is_empty() {
+        return Err("CELLULE_TEST_PREFIX must be nonempty and isolated to this application".into());
+    }
+    let store = build_explicit_store(
+        &std::env::var("CELLULE_TEST_BUCKET")?,
+        ObjectStoreCredentials::Aws {
+            access_key_id: std::env::var("AWS_ACCESS_KEY_ID")?,
+            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY")?,
+            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+            region: std::env::var("AWS_DEFAULT_REGION").unwrap_or_else(|_| "us-east-1".into()),
+        },
+        Some(&endpoint),
+        true,
+    )?;
+    let now_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+    let report = probe_storage(&store, &prefix, now_ms).await?;
+    if !report.passed() {
+        return Err(format!(
+            "storage capability probe failed: {:?}",
+            report.failed_checks()
+        )
+        .into());
+    }
+    println!("Storage probe: passed all six checks; prefix: {prefix}");
+    Ok((store, prefix))
+}
+
 #[tokio::main]
 async fn main() -> ExampleResult<()> {
+    let bind: SocketAddr = std::env::var("CELLULE_AXUM_BIND")
+        .unwrap_or_else(|_| "127.0.0.1:3000".into())
+        .parse()?;
+    if !bind.ip().is_loopback() {
+        return Err("this example requires a loopback HTTP listener".into());
+    }
     let application = Arc::new(OrdersApp::compile(BuildDescriptor {
         source_revision: "local-axum-orders-example".into(),
         cargo_lock_digest: Digest::from_bytes(
@@ -233,12 +288,8 @@ async fn main() -> ExampleResult<()> {
     let tenant = TenantId::from_bytes([2; 16]);
     let application_id = ApplicationId::from_bytes([3; 16]);
     let target = CellTarget::new(tenant, application_id, ORDERS, &partition_for_shard(0))?;
-    let store = Store::new(Arc::new(InMemory::new()));
-    let layout = CellStorageLayout::new(
-        store,
-        Path::from("axum-orders-example"),
-        *application_id.as_bytes(),
-    );
+    let (store, prefix) = example_storage().await?;
+    let layout = CellStorageLayout::new(store, prefix, *application_id.as_bytes());
     let registry = application.registry();
     let code = registry
         .module_code(Orders::NAME)
@@ -248,18 +299,22 @@ async fn main() -> ExampleResult<()> {
         .provision(CatalogEntry::new(&target, CatalogRole::Sql, code, 1)?)
         .await?;
     let authority = CellAuthority::new(layout.clone());
-    let incarnation = IncarnationId::from_bytes([4; 16]);
-    let session = SessionId::from_bytes([5; 16]);
-    let observed = authority
-        .create_initial(
-            &proof,
-            incarnation,
-            Owner {
-                session,
-                endpoint: "https://orders.local".into(),
-            },
-        )
-        .await?;
+    let session = SessionId::from_bytes(*Uuid::now_v7().as_bytes());
+    let owner = Owner {
+        session,
+        endpoint: "https://orders.local".into(),
+    };
+    let existing = authority.load(target.cell_id()).await?;
+    let restoring = existing.is_some();
+    let observed = match existing {
+        Some(observed) => observed,
+        None => {
+            authority
+                .create_initial(&proof, IncarnationId::from_bytes([4; 16]), owner.clone())
+                .await?
+        }
+    };
+    let incarnation = observed.value().incarnation;
     let files = tempfile::TempDir::new()?;
     let runtime = CellRuntime::new_with_replica_host(
         SqlWorkerPool::new(1, 4)?,
@@ -268,24 +323,41 @@ async fn main() -> ExampleResult<()> {
         Host::default().with_local_disk_budget(DiskBudget::new(1 << 30)),
     )?;
     let result: ExampleResult<()> = async {
-        let handle = runtime
-            .bootstrap(
-                proof,
-                CellReplica::new(
-                    layout,
-                    *target.cell_id().as_bytes(),
-                    *incarnation.as_bytes(),
-                    Limits::default(),
-                )?,
-                authority,
-                observed,
-                files.path().join("orders.sqlite"),
-                |transaction| {
-                    transaction.execute_batch(SCHEMA)?;
-                    Ok(())
-                },
-            )
-            .await?;
+        let replica = CellReplica::new(
+            layout,
+            *target.cell_id().as_bytes(),
+            *incarnation.as_bytes(),
+            Limits::default(),
+        )?;
+        let destination = files.path().join("orders.sqlite");
+        let handle = if restoring {
+            // A drained owner released authority to Idle. This public API claims
+            // it with a fresh session and verifies/restores the pinned S3 root.
+            runtime
+                .acquire_idle_restored(
+                    proof,
+                    replica,
+                    authority.clone(),
+                    observed,
+                    destination,
+                    owner,
+                )
+                .await?
+        } else {
+            runtime
+                .bootstrap(
+                    proof,
+                    replica,
+                    authority.clone(),
+                    observed,
+                    destination,
+                    |transaction| {
+                        transaction.execute_batch(SCHEMA)?;
+                        Ok(())
+                    },
+                )
+                .await?
+        };
         let client = CellClient::local(registry, handle);
         let typed =
             ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id)?;
@@ -295,7 +367,16 @@ async fn main() -> ExampleResult<()> {
             .with_state(typed);
         // This local fixture binds only loopback. A product installs its own
         // authentication and authorization before exposing these handlers.
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+        let listener = tokio::net::TcpListener::bind(bind).await?;
+        println!(
+            "Cell startup: {}; SQLite directory: {}",
+            if restoring {
+                "restored"
+            } else {
+                "bootstrapped"
+            },
+            files.path().display()
+        );
         println!(
             "Orders service: http://{} (Ctrl-C to drain)",
             listener.local_addr()?
@@ -316,5 +397,24 @@ async fn main() -> ExampleResult<()> {
     let shutdown = runtime.shutdown().await;
     result?;
     shutdown?;
+    let drained = authority
+        .load(target.cell_id())
+        .await?
+        .ok_or(Error::Fenced)?;
+    if drained.value().state != cellule_runtime::control::ControlState::Idle
+        || drained.value().owner.is_some()
+    {
+        return Err(Error::Control("shutdown did not release Cell authority").into());
+    }
+    let root = drained
+        .value()
+        .root
+        .as_ref()
+        .ok_or(Error::Control("drained Cell has no root"))?;
+    println!(
+        "Cell drained: idle; epoch: {}; commit_sequence: {}",
+        drained.value().epoch,
+        root.commit_sequence
+    );
     Ok(())
 }
