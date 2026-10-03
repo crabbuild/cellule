@@ -7,11 +7,19 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Axum extractors and outcome-aware HTTP responses for Cellule applications"
 
+[features]
+default = []
+openapi = ["dep:utoipa", "dep:utoipa-axum"]
+
 [dependencies]
 axum = { workspace = true, features = ["json"] }
 cellule-app.workspace = true
 cellule-runtime.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+utoipa = { version = "6", optional = true, features = ["uuid", "axum_extras"] }
+utoipa-axum = { version = "0.3", optional = true }
 
 [dev-dependencies]
 axum = { workspace = true, features = ["http1", "tokio"] }
@@ -19,8 +27,12 @@ blake3.workspace = true
 cellule-ltx = { workspace = true, features = ["replica"] }
 cellule-store.workspace = true
 object_store.workspace = true
-serde_json.workspace = true
+rusqlite.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
 tower = { version = "0.5", features = ["util"] }
-uuid.workspace = true
+
+[[example]]
+name = "integration"
+path = "examples/integration.rs"
+required-features = ["openapi"]

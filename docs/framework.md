@@ -72,6 +72,10 @@ receipts, and maps errors while retaining pending or published evidence.
 Compose these helpers into your own router and authorization middleware. The
 [runnable orders service](../crates/cellule-axum/examples/sql.rs) shows a local
 SQL command, a receipt-bound query, and HTTP drain before runtime shutdown.
+The optional `openapi` feature supplies shared wire schemas and typed endpoint
+registration. Its [integration recipes](../crates/cellule-axum/docs/README.md)
+cover request-scoped authorization, atomic prepared-command custody, resolution,
+readiness and generated SDK receipt/retry contracts.
 
 `cellule-peer-http` supplies owner routing, HTTP response classification, and
 pinned mTLS transport using runtime peer contracts. It does not install a
