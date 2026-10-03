@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::fleet::FleetRoster;
+use crate::fleet::{FleetRoleCoverage, FleetRoster};
 use cellule_runtime::cell::actor::OwnedCellObservation;
 use cellule_runtime::fleet::operations::{FleetScope, RegistryVersion};
 use cellule_runtime::fleet::placement::PlacementObservation;
@@ -37,6 +37,7 @@ pub struct FleetObservation {
     pub(super) nodes: Vec<NodeAdvertisement>,
     pub(super) cells: Vec<FleetOwnedCell>,
     roster: Option<FleetRoster>,
+    role_coverage: Option<FleetRoleCoverage>,
 }
 
 impl FleetObservation {
@@ -65,9 +66,49 @@ impl FleetObservation {
             nodes,
             cells,
             roster: None,
+            role_coverage: None,
         };
         observation.placements(capture_finished_at_ms)?;
         Ok(observation)
+    }
+
+    /// Retains the checked native/foreign graph inside this original capture.
+    /// This cannot upgrade `complete`: authentication, membership discovery,
+    /// current Cell authority, policy and failed-process evidence remain the
+    /// adapter's duties. The reconciler compares the exact full roster again.
+    pub fn with_role_coverage(mut self, coverage: FleetRoleCoverage) -> Result<Self> {
+        if self.role_coverage.is_some() {
+            return Err(Error::Control("fleet role coverage already retained"));
+        }
+        self.role_coverage = Some(coverage);
+        self.validate_role_coverage()?;
+        Ok(self)
+    }
+
+    /// Original role graph retained in the planner inputs; never restamped.
+    #[must_use]
+    pub fn role_coverage(&self) -> Option<&FleetRoleCoverage> {
+        self.role_coverage.as_ref()
+    }
+
+    fn validate_role_coverage(&self) -> Result<()> {
+        if let Some(coverage) = &self.role_coverage {
+            let (started, finished) = coverage.interval();
+            if coverage.snapshot().head().scope() != self.scope
+                || coverage.snapshot().registry() != self.registry
+                || started < self.capture_started_at_ms
+                || finished > self.capture_finished_at_ms
+            {
+                return Err(Error::Node("fleet role coverage barrier differs"));
+            }
+            if let Some(roster) = &self.roster
+                && (coverage.snapshot() != roster.snapshot()
+                    || roster.digest()? != coverage.roster_digest())
+            {
+                return Err(Error::Node("fleet role coverage roster differs"));
+            }
+        }
+        Ok(())
     }
 
     /// Retains a fully traversed durable roster in these planner inputs. The
@@ -80,6 +121,7 @@ impl FleetObservation {
             return Err(Error::Node("fleet observation roster barrier differs"));
         }
         self.roster = Some(roster);
+        self.validate_role_coverage()?;
         Ok(self)
     }
 
@@ -102,6 +144,7 @@ impl FleetObservation {
     }
 
     pub(super) fn placements(&self, now_ms: i64) -> Result<Vec<PlacementObservation>> {
+        self.validate_role_coverage()?;
         if self.registry.scope() != self.scope
             || self.membership_revision == 0
             || self.capture_started_at_ms < 0
@@ -151,7 +194,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v4\0");
+        hash.update(b"cellule.fleet-planner-inputs.v5\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -166,6 +209,10 @@ impl FleetObservation {
         hash.update(&[u8::from(self.roster.is_some())]);
         if let Some(roster) = &self.roster {
             hash.update(roster.digest()?.as_bytes());
+        }
+        hash.update(&[u8::from(self.role_coverage.is_some())]);
+        if let Some(coverage) = &self.role_coverage {
+            hash.update(coverage.digest().as_bytes());
         }
         hash.update(&(nodes.len() as u64).to_be_bytes());
         for node in nodes {

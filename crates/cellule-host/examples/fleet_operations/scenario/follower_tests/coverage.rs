@@ -4,7 +4,7 @@ use cellule_host::fleet::{
     FleetFollowerReferences, FleetNodeInventory, FleetRoleCoverage, FleetRoster,
 };
 
-async fn captures(
+pub(super) async fn captures(
     fixture: &ManagedFixture,
     roster: &FleetRoster,
 ) -> (Vec<FleetNodeInventory>, Vec<FleetFollowerReferences>, u64) {
@@ -18,7 +18,7 @@ async fn captures(
     (native, foreign, sequence)
 }
 
-async fn native_rechecks(
+pub(super) async fn native_rechecks(
     fixture: &ManagedFixture,
     roster: &FleetRoster,
     native: &mut [FleetNodeInventory],
@@ -36,7 +36,7 @@ async fn native_rechecks(
     }
 }
 
-async fn foreign_rechecks(
+pub(super) async fn foreign_rechecks(
     fixture: &ManagedFixture,
     roster: &FleetRoster,
     foreign: &mut [FleetFollowerReferences],
@@ -55,7 +55,7 @@ async fn foreign_rechecks(
     }
 }
 
-fn check(
+pub(super) fn check(
     roster: &FleetRoster,
     native: &[FleetNodeInventory],
     foreign: &[FleetFollowerReferences],

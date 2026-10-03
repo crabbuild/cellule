@@ -473,6 +473,17 @@ policy and failed-process closure remain separate adapter duties. Pending rows
 remain obligations. Coverage grants neither role settlement nor permission to
 stop a node.
 
+Attach the original graph with `observation.with_role_coverage(coverage)`.
+`FleetObservation` retains it and includes its digest in canonical planner
+inputs. The graph's collection/recheck interval must fit inside the original
+observation interval; attachment rejects a different scope or registry and
+cannot replace an already retained graph. The reconciler compares its exact
+head, registry and full roster digest again after confirming the journal.
+A controller renewal changing only the head invalidates an earlier graph even
+when the registry is unchanged. Attachment never upgrades the adapter's
+`complete` assertion. The reference observer retains successful graph checks
+through this path; partial pressure inputs retain their incomplete status.
+
 ## Caller driven fleet reconciliation
 
 ### Reader producer inventory

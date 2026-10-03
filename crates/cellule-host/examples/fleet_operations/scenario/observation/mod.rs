@@ -19,6 +19,7 @@ struct Capture {
     complete: bool,
     nodes: Vec<NodeAdvertisement>,
     cells: Vec<FleetOwnedCell>,
+    role_coverage: Option<FleetRoleCoverage>,
 }
 
 pub(super) async fn complete_counts(
@@ -46,7 +47,7 @@ pub(super) async fn observe(
     deadline: Instant,
 ) -> JournalResult<FleetObservation> {
     let capture = collect(fleet, roster, deadline).await?;
-    Ok(FleetObservation::new(
+    let observation = FleetObservation::new(
         scope(),
         roster.snapshot().registry(),
         roster.snapshot().registry().revision(),
@@ -55,7 +56,11 @@ pub(super) async fn observe(
         capture.complete,
         capture.nodes,
         capture.cells,
-    )?)
+    )?;
+    Ok(match capture.role_coverage {
+        Some(coverage) => observation.with_role_coverage(coverage)?,
+        None => observation,
+    })
 }
 
 async fn page(
@@ -280,14 +285,22 @@ async fn collect(
     let mut after = directory.advertised_sessions(clock()?, 128).await?;
     after.sort_by_key(|boot| *boot.as_bytes());
     complete &= after == advertised && roster.covers_advertisements(&nodes, clock()?)?;
-    if complete {
+    let role_coverage = if complete {
         let native = inventories
             .iter()
             .filter_map(Option::as_ref)
             .collect::<Vec<_>>();
         let foreign = references.iter().collect::<Vec<_>>();
-        complete &= FleetRoleCoverage::check(roster, &native, &foreign, clock()?).is_ok();
-    }
+        match FleetRoleCoverage::check(roster, &native, &foreign, clock()?) {
+            Ok(coverage) => Some(coverage),
+            Err(_) => {
+                complete = false;
+                None
+            }
+        }
+    } else {
+        None
+    };
     roster.confirm(fleet.journal.as_ref(), deadline).await?;
     Ok(Capture {
         started,
@@ -295,6 +308,7 @@ async fn collect(
         complete,
         nodes,
         cells,
+        role_coverage,
     })
 }
 

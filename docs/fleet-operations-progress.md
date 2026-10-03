@@ -4,6 +4,51 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 retained role observation checkpoint
+
+`FleetObservation::with_role_coverage` retains the original checked graph and
+binds its digest to canonical planner inputs. Attachment rejects a second graph,
+scope/registry mismatches and intervals outside the original observation.
+After confirming the journal, the reconciler compares the graph's exact full
+head, registry and roster digest before planning. A controller renewal invalidates
+an earlier graph even when enrollment and intent revisions are unchanged.
+The reference observer now retains its graph through this exported path.
+Partial adapter coverage remains partial after attachment.
+
+Three public cases use actual managed follower boots, native collectors and the
+durable journal. They verify retained original metadata and rejected replacement
+or restamping, an earlier head with unchanged registry, and complete role graph
+attachment to a deliberately partial adapter observation. The latter runs the
+exported driver, retains IncompleteObservation and allocates no count movement.
+The stale-head case checks that no effect or inspection was dispatched and no
+attempt was allocated. All fixtures join shutdown and exact boot/member retirement.
+
+Initial runs found two fixture mistakes: the registry advance API requires its
+expected revision, and managed fixtures deliberately keep scheduling disabled.
+The driver cases now explicitly enable reference scheduling before collecting
+their evidence. Production checks and expected barriers remain unchanged.
+Earlier compile/failure logs are retained separately from final qualification.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `8a43d80aafbc581e39e5fd3e13b355c7de3099dc` |
+| Frozen source | 673 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `28331425f9220b9e84ecf665e6bc8fb35580c6c2baa6a131e54f43b60a46f7a8` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-retained-role-evidence` |
+
+Final qualification passed 34 host library, 106 public node and 158 example
+cases: 298 distinct tests, no failures or ignores. Host Clippy and host/runtime
+API documentation passed with warnings denied. The complete active/isolated
+Rust/Cargo path sets and every byte match after qualification. Focused repeats
+are excluded from the final count.
+
+This retains one checked input barrier; it does not establish complete production
+observation or maintenance completion. Replacement-policy publication and
+revalidation, failed-process closure, dead-owner recovery, affected-writer
+relocation, `SettleRoles`/`Finalize`, terminal action handoff, remaining primitive
+faults and W8–W10 remain required. The full implementation plan stays active.
+
 ## October 2 2026 cross-node role coverage checkpoint
 
 `FleetRoleCoverage` checks every required original native boot and every
