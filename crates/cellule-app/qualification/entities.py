@@ -369,6 +369,8 @@ def verify_follower_roots(control: Path, roots: list[dict], positions: dict[int,
         assert positions[entity], f"Cell {entity} received no acknowledged writes"
         assert int(row["root_sequence"]) > 0
         verify_root_digest(row["root_digest"])
+        verify_root_position(row)
+        verify_root_digest(row["restored_digest"], "restored database")
         lags[entity] = max(0, max(positions[entity]) - int(row["root_sequence"]))
     assert (control / "stop").is_file(), "missing shutdown request"
     for node in range((cells + CELLS_PER_NODE - 1) // CELLS_PER_NODE):
@@ -384,17 +386,32 @@ def verify_follower_roots(control: Path, roots: list[dict], positions: dict[int,
         sequence = int(after["root_sequence"])
         assert sequence >= int(before["root_sequence"]), "drained root regressed"
         verify_root_digest(after["root_digest"])
+        before_position, after_position = verify_root_position(before), verify_root_position(after)
+        assert after_position[0] >= before_position[0], "drained root transaction regressed"
+        verify_root_digest(after["restored_digest"], "restored database")
         if sequence == int(before["root_sequence"]):
-            assert after["root_digest"] == before["root_digest"], "same sequence changed root"
+            # Compaction can replace the manifest at the exact same endpoint.
+            # Authenticate both roots and compare their restored bytes instead.
+            assert after_position == before_position, "same sequence changed root position"
+            assert after["restored_digest"] == before["restored_digest"], \
+                "same sequence changed restored database"
+        else:
+            assert after_position[0] > before_position[0], "advanced sequence did not advance transaction"
         assert int(after["restored_sequence"]) == sequence, "restored metadata disagrees with root"
         assert int(after["restored_count"]) == len(positions[entity]), "restored root lost or duplicated write"
     return dict(verified_cells=cells, pre_drain_root_lag_commits_by_entity=lags)
 
 
-def verify_root_digest(value: str) -> None:
+def verify_root_position(row: dict) -> tuple[int, int]:
+    txid, checksum = int(row["root_txid"]), int(row["root_checksum"])
+    assert 0 < txid < 2**64 and 0 <= checksum < 2**64, "invalid root position"
+    return txid, checksum
+
+
+def verify_root_digest(value: str, label: str = "root") -> None:
     assert (len(value) == 72 and value.startswith("Digest(") and value.endswith(")")
             and all(character in "0123456789abcdef" for character in value[7:-1])), \
-        "invalid root digest"
+        f"invalid {label} digest"
 
 
 def verify_entities(control: Path, capacity: bool = False, follower: bool = False) -> dict:

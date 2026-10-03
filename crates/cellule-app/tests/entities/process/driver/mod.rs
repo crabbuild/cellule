@@ -243,7 +243,7 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         );
         writeln!(
             roots,
-            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest\tminimum_sequence"
+            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest\troot_txid\troot_checksum\trestored_digest\tminimum_sequence"
         )
         .unwrap();
         for (entity, control) in captured.values.iter().enumerate() {
@@ -251,14 +251,26 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             let node = entity / ENTITIES_PER_NODE;
             assert_eq!(owner.session, node_session(node));
             let root = control.root.as_ref().unwrap();
+            // Restore this bounded capture's exact root, preserving its receipt
+            // barrier even if a later background publication advances authority.
+            let restored = super::drain::restore_root_evidence(
+                &layout,
+                &application,
+                &control.ltx_root().unwrap(),
+            )
+            .await;
+            assert_eq!(restored.count, expected[entity]);
             writeln!(
                 roots,
-                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}\t{}",
+                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}\t{}\t{}\t{:?}\t{}",
                 control.cell,
                 control.epoch,
                 control.incarnation,
                 root.commit_sequence,
                 root.digest,
+                root.txid,
+                root.checksum,
+                restored.digest,
                 latest_sequences[entity],
             )
             .unwrap();

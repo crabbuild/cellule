@@ -17,10 +17,10 @@ use cellule_store::Store;
 use object_store::{memory::InMemory, path::Path};
 
 pub const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
-pub const SCHEMA: &str =
-    "CREATE TABLE orders (id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
+const SCHEMA: &str = "CREATE TABLE orders (id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
 const COMMANDS: [OperationDescriptor; 2] = [operation(1), operation(3)];
 const QUERIES: [OperationDescriptor; 2] = [operation(2), operation(4)];
+pub type ExampleResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 pub struct Orders;
 
@@ -152,18 +152,13 @@ impl CellApplication for OrdersApp {
     }
 }
 
-pub struct Fixture {
+pub struct ExampleNode {
     pub app: ApplicationHandle<OrdersApp>,
     pub runtime: CellRuntime,
-    // Keep managed SQLite paths alive until the runtime has been drained.
     pub _files: tempfile::TempDir,
 }
 
-pub async fn fixture() -> Fixture {
-    build_fixture().await.unwrap()
-}
-
-async fn build_fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
+pub async fn start() -> ExampleResult<ExampleNode> {
     let application = Arc::new(OrdersApp::compile(BuildDescriptor {
         source_revision: "local-axum-orders-example".into(),
         cargo_lock_digest: Digest::from_bytes(
@@ -207,33 +202,40 @@ async fn build_fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
         session,
         Host::default().with_local_disk_budget(DiskBudget::new(1 << 30)),
     )?;
-    let handle = runtime
-        .bootstrap(
-            proof,
-            CellReplica::new(
-                layout,
-                *target.cell_id().as_bytes(),
-                *incarnation.as_bytes(),
-                Limits::default(),
-            )?,
-            authority,
-            observed,
-            files.path().join("orders.sqlite"),
-            |transaction| {
-                transaction.execute_batch(SCHEMA)?;
-                Ok(())
-            },
-        )
-        .await?;
-    let app = ApplicationHandle::<OrdersApp>::new(
-        CellClient::local(registry, handle),
-        application,
-        tenant,
-        application_id,
-    )?;
-    Ok(Fixture {
-        app,
-        runtime,
-        _files: files,
-    })
+    let result: ExampleResult<ApplicationHandle<OrdersApp>> = async {
+        let handle = runtime
+            .bootstrap(
+                proof,
+                CellReplica::new(
+                    layout,
+                    *target.cell_id().as_bytes(),
+                    *incarnation.as_bytes(),
+                    Limits::default(),
+                )?,
+                authority,
+                observed,
+                files.path().join("orders.sqlite"),
+                |transaction| {
+                    transaction.execute_batch(SCHEMA)?;
+                    Ok(())
+                },
+            )
+            .await?;
+        let client = CellClient::local(registry, handle);
+        let typed =
+            ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id)?;
+        Ok(typed)
+    }
+    .await;
+    match result {
+        Ok(app) => Ok(ExampleNode {
+            app,
+            runtime,
+            _files: files,
+        }),
+        Err(error) => {
+            let _ = runtime.shutdown().await;
+            Err(error)
+        }
+    }
 }
