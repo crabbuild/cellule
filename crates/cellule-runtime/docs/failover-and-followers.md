@@ -1502,47 +1502,69 @@ incarnation, and Cell epoch:
   requires the uncovered suffix to begin at the next commit.
 - Fully rooted groups need no overlay.
 
-The recovery reservation stays owned through immutable pinning.
-It writes shared immutable bundles and one small
-manifest per affected Cell.
+`RecoveryManifestStore::load_manifest` reads every original recovered scope from
+the immutable manifest named by the canonical sealed log. It verifies the bounded
+body, digest, original leader/epoch, canonical encoding and strictly ordered unique
+scopes. The returned `RecoveryManifestInventory` includes every application; the
+store's application does not filter it. A reconstructed controller can still read
+this inventory after successors materialize roots and clear their overlay pointers.
+
+```rust,ignore
+let manifest_digest = sealed.log().recovery_manifest().ok_or(Error::PendingPublication)?;
+let inventory = manifests
+    .load_manifest(sealed.session(), sealed.log().epoch(), manifest_digest)
+    .await?;
+for original in inventory.cells() {
+    // Use the original application's store for byte verification, then check
+    // its current authority and serving state through the ordinary paths.
+    let store = manifest_store_for(original.application)?;
+    let overlay = store
+        .load_overlay(original.cell, original.incarnation, &original.recovery)
+        .await?;
+}
+```
+
+The inventory verifies metadata, not bundle availability or current successors.
+It omits object-covered Cells that needed no overlay. A fleet operation must retain
+the complete original writer set before relocation and separately verify every
+current successor. An empty suffix has no manifest; it cannot prove an empty
+original writer set or authorize node finalization.
+
+The recovery reservation stays owned through immutable pinning. It writes shared
+immutable bundles and one manifest containing all affected scopes. The persisted
+version 1 shape is shown below, formatted for reading; canonical bytes are compact
+JSON, and integers are decimal strings or fixed-width hexadecimal strings.
 
 ```json
 {
   "version": 1,
-  "leader_session": "16-byte-hex",
-  "log_epoch": 3,
-  "application": "16-byte-hex",
-  "cell": "32-byte-hex",
-  "incarnation": "16-byte-hex",
-  "cell_epoch": 12,
-  "predecessor": {
-    "root": "32-byte-hex",
-    "txid": 500,
-    "checksum": 9223372036854776000,
-    "commit_sequence": 700
-  },
-  "entries": [
+  "leader_session": "01010101010101010101010101010101",
+  "log_epoch": "3",
+  "cells": [
     {
-      "node_sequence": 9002,
-      "bundle": "32-byte-hex",
-      "offset": 4096,
-      "length": 8192,
-      "ltx": {
-        "min_txid": 501,
-        "max_txid": 501,
-        "post_checksum": 9223372036854777000,
-        "commit_sequence": 701,
-        "blake3": "32-byte-hex"
-      }
+      "application": "03030303030303030303030303030303",
+      "cell": "0404040404040404040404040404040404040404040404040404040404040404",
+      "incarnation": "05050505050505050505050505050505",
+      "cell_epoch": "12",
+      "first_node_sequence": "9002",
+      "last_node_sequence": "9002",
+      "predecessor_digest": "0606060606060606060606060606060606060606060606060606060606060606",
+      "predecessor_txid": "500",
+      "predecessor_checksum": "8000000000000000",
+      "predecessor_commit_sequence": "700",
+      "final_txid": "501",
+      "final_checksum": "8000000000000001",
+      "final_commit_sequence": "701",
+      "bundle_digest": "0707070707070707070707070707070707070707070707070707070707070707"
     }
   ]
 }
 ```
 
-The final implementation uses canonical strict JSON or the existing canonical
-binary manifest codec; it must not use floating-point numbers or permissive
-unknown fields. The manifest digest covers its canonical bytes. Every bundle
-extent is range-readable and independently BLAKE3-bound.
+The manifest has at most 1,024 strictly ordered unique scopes and a two-MiB body.
+Unknown fields and noncanonical values are rejected. Its digest covers every
+canonical byte. The ordinary overlay loader verifies the referenced bundle and
+retains its disk reservation until the overlay is dropped.
 
 ### Pin every affected Cell
 

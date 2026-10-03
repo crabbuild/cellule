@@ -273,6 +273,21 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8) {
         .await
         .unwrap();
     assert_eq!(repeated.sealed, completed.sealed);
+    let manifest_digest = repeated.sealed.log().recovery_manifest().unwrap();
+    let original_inventory = manifests
+        .load_manifest(leader, repeated.sealed.log().epoch(), manifest_digest)
+        .await
+        .unwrap();
+    assert_eq!(original_inventory.cells().len(), 1);
+    assert_eq!(
+        original_inventory.cells()[0].application,
+        fixture.target.application()
+    );
+    assert_eq!(original_inventory.cells()[0].cell, fixture.target.cell_id());
+    assert_eq!(
+        original_inventory.cells()[0].recovery,
+        *repeated.controls[0].value().recovery.as_ref().unwrap()
+    );
     let attached = repeated.controls.into_iter().next().unwrap();
     let takeover = repeated.takeover;
     let runtime = CellRuntime::new(
@@ -293,7 +308,7 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8) {
             authority.clone(),
             attached,
             takeover,
-            manifests,
+            manifests.clone(),
             fixture._directory.path().join("recovered-takeover.sqlite"),
             Owner {
                 session: successor,
@@ -364,6 +379,24 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8) {
         .unwrap();
     assert_eq!(serving.value().state, ControlState::Serving);
     assert!(serving.value().recovery.is_none());
+    // Materialization clears the control's overlay pointer. The canonical
+    // sealed manifest still retains the original scope after adapter restart.
+    let reconstructed = cellule_runtime::recovery::manifest::RecoveryManifestStore::new(
+        fixture.layout.clone(),
+        Limits::default(),
+    );
+    let retained_inventory = reconstructed
+        .load_manifest(leader, 1, manifest_digest)
+        .await
+        .unwrap();
+    assert_eq!(
+        retained_inventory.cells()[0].recovery,
+        original_inventory.cells()[0].recovery
+    );
+    assert_eq!(
+        retained_inventory.cells()[0].incarnation,
+        serving.value().incarnation
+    );
     assert_eq!(
         serving.value().root.as_ref().unwrap().commit_sequence,
         predecessor.commit_sequence + 1

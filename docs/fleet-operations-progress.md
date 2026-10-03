@@ -4,6 +4,65 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 complete recovered-suffix metadata checkpoint
+
+`RecoveryManifestStore::load_manifest` exposes every original recovered scope in
+one digest-verified immutable manifest, including other applications. Its bounded
+read shares the overlay loader's canonical decoder, digest and original leader/epoch
+checks. Publication and both readers share one conversion to control-ready rows.
+The decoder now rejects duplicate or reordered full scopes; existing producers
+already sort and reject duplicate scopes. Version 1 bytes, object paths and signing
+domains are unchanged. Original storage errors remain available to the caller.
+
+The opaque `RecoveryManifestInventory` retains original application, Cell,
+incarnation, epoch, predecessor and final prefix references after successors clear
+their overlay pointers. Reading it starts no recovery, authority mutation, native
+admission or task owner. It verifies metadata, not bundle availability or current
+successor state. Object-covered Cells without a recovered suffix are absent; an
+empty suffix has no manifest. The full original writer set must still be retained
+before dependent effects, and every successor must be verified separately. This
+checkpoint cannot settle roles or finalize a failed node.
+
+Seven new unit cases cover independent adapter reconstruction, three genuine
+recovered scopes across two applications, ordinary bundle reopening, unavailable
+bundles, original storage errors, invalid scope/digest/path, duplicate/reordered
+rows, noncanonical or malformed metadata and bounded reads. The public takeover
+case reads the canonical sealed identity before materialization and reopens the
+same original metadata after actual successor serving. Existing lost-observation,
+object-covered and unpublished-owner cases remain intact. The follower guide now
+shows the actual version 1 persisted schema and the public read recipe.
+
+| Final selected qualification | Result |
+| --- | --- |
+| All-feature manifest library cases | 14 passed; no failures or ignored cases. |
+| All-feature public recovery cases | Seven passed; no failures; one existing RustFS case ignored without its documented isolated environment. |
+| Runtime/host Clippy, all targets/features | Passed with warnings denied. |
+| Runtime/host API documentation | Passed with warnings denied. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer, diff | Passed. |
+| Frozen Rust/Cargo source | 722 paths; SHA256 `f4a4aae3d86025bdbb5321c92bf5dbfc82593513c668efb8cba371952a818a85`. |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-recovery-inventory-evidence` |
+| Parent revision | `2a155238311fa1bfc61ffb07f136dbb9a49b6af1` |
+
+These 21 selected passes do not represent a full workspace rerun or provider,
+process, external-job, mixed-binary or load qualification. Commands, raw logs,
+source manifests and build environment are retained. The initial static command
+attempted Git's diff check in the non-Git snapshot; that invocation failed and the
+proper active-worktree diff check passed. No Rust failure or weakened expectation
+was involved. Parent CI has passed both follower/object capacity, workspace, MSRV,
+contract, website, fuzz and the fast model checks; Compose was still running when
+inspected. Those parent results do not qualify this new source.
+
+Highest priority remains operation-bound retention of every original affected Cell
+before recovery/relocation effects, including fully object-covered and transitional
+writers, followed by fresh current successor/prefix/serving and failed-process
+proof. Complete authenticated production observation, receiver-session failure
+adoption, reader/follower controller actions and original action join before drain
+handoff remain required. SettleRoles/Finalize, remaining primitive faults, complete
+maintenance/receiver-loss commands and W9–W10 qualification/runbooks/rollout remain
+unfinished. `crates/cellule-host/minion` is the user-approved canonical executable
+location; the Cargo target stays `fleet_operations`. The complete plan stays active.
+
 ## October 2 2026 durable live-owner follower replacement checkpoint
 
 `FollowerEvacuationRecord` now retains the complete original Retired ensemble,
