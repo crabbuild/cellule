@@ -9,6 +9,8 @@ use cellule_runtime::{
 };
 use std::collections::HashMap;
 
+mod observation;
+
 struct Successors {
     cells: HashMap<CellId, FleetOriginalWriterSuccessorInputs>,
     handles: HashMap<CellId, CellHandle>,
@@ -83,7 +85,10 @@ struct SuccessorFixture {
 }
 impl SuccessorFixture {
     async fn new() -> Self {
-        let original = WriterFixture::with_suffixes_and_takeover(2, true, false).await;
+        Self::new_at(NOW).await
+    }
+    async fn new_at(now: i64) -> Self {
+        let original = WriterFixture::with_suffixes_and_takeover_at(2, true, false, now).await;
         original.retain().await;
         let roster = original.base.roster().await;
         let intent = roster
@@ -124,7 +129,7 @@ impl SuccessorFixture {
         let takeover = original
             .base
             .directory
-            .takeover_proof(session(0), session(1), CHECK)
+            .takeover_proof(session(0), session(1), original.check)
             .await
             .unwrap()
             .unwrap();
@@ -229,7 +234,7 @@ impl SuccessorFixture {
             &self.original.request,
             session(1),
             deadline,
-            || Ok(CHECK),
+            || Ok(self.original.check),
         )
         .await
     }
@@ -445,11 +450,18 @@ async fn complete_original_successors_cancellation_releases_shared_origin_admiss
         .unwrap();
     let permit = fixture.slots.acquire().await.unwrap();
     let mut collection = Box::pin(fixture.collect(Instant::now() + Duration::from_secs(3)));
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), &mut collection)
-            .await
-            .is_err()
-    );
+    // Cancellation must reach actual origin admission. A fixed sleep can
+    // expire during the preceding journal/actor reads on a loaded CI worker.
+    // Poll both the original bounded collection and its real reservation;
+    // an early return (including its unchanged deadline) fails this case.
+    tokio::select! {
+        outcome = &mut collection => panic!("collection completed before origin admission: {:?}", outcome.err()),
+        () = async {
+            while fixture.node.stats().retained_bytes() <= 16 << 20 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        } => {}
+    }
     assert!(fixture.node.stats().retained_bytes() > 16 << 20);
     drop(collection);
     // The large caller-owned origin metadata reservation is gone. Already

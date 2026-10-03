@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::fleet::{FleetRoleCoverage, FleetRoster};
+use crate::fleet::{FleetOriginalWriterSuccessorInventory, FleetRoleCoverage, FleetRoster};
 use cellule_runtime::cell::actor::OwnedCellObservation;
 use cellule_runtime::fleet::operations::{FleetScope, RegistryVersion};
 use cellule_runtime::fleet::placement::PlacementObservation;
@@ -38,6 +38,7 @@ pub struct FleetObservation {
     pub(super) cells: Vec<FleetOwnedCell>,
     roster: Option<FleetRoster>,
     role_coverage: Option<FleetRoleCoverage>,
+    original_writer_successors: Option<FleetOriginalWriterSuccessorInventory>,
 }
 
 impl FleetObservation {
@@ -67,6 +68,7 @@ impl FleetObservation {
             cells,
             roster: None,
             role_coverage: None,
+            original_writer_successors: None,
         };
         observation.placements(capture_finished_at_ms)?;
         Ok(observation)
@@ -92,6 +94,7 @@ impl FleetObservation {
     }
 
     fn validate_role_coverage(&self) -> Result<()> {
+        self.validate_original_writer_successors()?;
         if let Some(coverage) = &self.role_coverage {
             let (started, finished) = coverage.interval();
             if coverage.snapshot().head().scope() != self.scope
@@ -194,7 +197,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v5\0");
+        hash.update(b"cellule.fleet-planner-inputs.v6\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -213,6 +216,10 @@ impl FleetObservation {
         hash.update(&[u8::from(self.role_coverage.is_some())]);
         if let Some(coverage) = &self.role_coverage {
             hash.update(coverage.digest().as_bytes());
+        }
+        hash.update(&[u8::from(self.original_writer_successors.is_some())]);
+        if let Some(inventory) = &self.original_writer_successors {
+            hash.update(inventory.digest()?.as_bytes());
         }
         hash.update(&(nodes.len() as u64).to_be_bytes());
         for node in nodes {
@@ -308,5 +315,6 @@ impl FleetObservation {
     }
 }
 
+mod original_writers;
 #[cfg(test)]
 mod tests;

@@ -59,6 +59,7 @@ struct WriterFixture {
     catalogs: Catalogs,
     expected: Vec<Control>,
     layouts: Vec<CellStorageLayout>,
+    check: i64,
 }
 impl WriterFixture {
     async fn retain(&self) -> FleetOriginalWriterCapture {
@@ -66,7 +67,7 @@ impl WriterFixture {
         let expected = self.base.journal.load_snapshot(scope()).await.unwrap();
         self.base
             .journal
-            .persist_original_writers(&expected, capture.record(), capture.pages(), CHECK)
+            .persist_original_writers(&expected, capture.record(), capture.pages(), self.check)
             .await
             .unwrap();
         capture
@@ -85,6 +86,15 @@ impl WriterFixture {
         suffixes: bool,
         takeover: bool,
     ) -> Self {
+        Self::with_suffixes_and_takeover_at(originals_per_catalog, suffixes, takeover, NOW).await
+    }
+    async fn with_suffixes_and_takeover_at(
+        originals_per_catalog: u64,
+        suffixes: bool,
+        takeover: bool,
+        now: i64,
+    ) -> Self {
+        let check = now + 10_005;
         let compiled = super::super::super::application::compile().unwrap();
         let code = *compiled.registry().module_digests().first().unwrap();
         let mut sources = Vec::new();
@@ -229,7 +239,7 @@ impl WriterFixture {
                 .unwrap(),
             );
         }
-        let base = Fixture::with_recovery_inputs(false, bases, frames).await;
+        let base = Fixture::with_recovery_inputs_at(false, bases, frames, now).await;
         for (authority, cell) in suffix_owners {
             let observed = authority.load(cell).await.unwrap().unwrap();
             assert!(observed.value().recovery.is_some());
@@ -252,13 +262,13 @@ impl WriterFixture {
             &base.failed_boot().await,
             session(1),
             deadline(),
-            || Ok(CHECK),
+            || Ok(check),
         )
         .await
         .unwrap();
         let mut child = Process::start(base.process_path());
         child.stop_and_retain(&request);
-        let now = CHECK;
+        let now = check;
         let before = base.journal.load_snapshot(scope()).await.unwrap();
         let snapshot = base
             .journal
@@ -295,6 +305,7 @@ impl WriterFixture {
             },
             expected,
             layouts,
+            check,
         }
     }
     async fn capture(&self) -> cellule_runtime::Result<FleetOriginalWriterCapture> {
@@ -306,7 +317,7 @@ impl WriterFixture {
             &self.request,
             session(1),
             deadline(),
-            || Ok(CHECK),
+            || Ok(self.check),
         )
         .await
     }

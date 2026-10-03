@@ -83,6 +83,7 @@ pub(super) async fn verify(
     Ok(FleetOriginalWriterSuccessorProof {
         original: original.clone(),
         node: inputs.node,
+        release: inputs.host.application().registry().release_digest(),
         serving,
         origin,
         suffixes,

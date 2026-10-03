@@ -124,13 +124,23 @@ impl Fixture {
         cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
         frames: Vec<Bytes>,
     ) -> Self {
+        Self::with_recovery_inputs_at(observe, cells, frames, NOW).await
+    }
+
+    async fn with_recovery_inputs_at(
+        observe: bool,
+        cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
+        frames: Vec<Bytes>,
+        now: i64,
+    ) -> Self {
+        let check = now + 10_005;
         #[cfg(not(unix))]
         assert!(!observe, "process lifetime stand-in requires Unix");
         let compiled = super::application::compile().unwrap();
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("journal.sqlite");
         let journal = Arc::new(
-            SqliteJournal::open(path.clone(), scope(), FleetProfile::default(), NOW)
+            SqliteJournal::open(path.clone(), scope(), FleetProfile::default(), now)
                 .await
                 .unwrap(),
         );
@@ -153,7 +163,7 @@ impl Fixture {
                 )
                 .await
                 .unwrap();
-            let issued = if index == 0 { NOW } else { NOW + 9_000 };
+            let issued = if index == 0 { now } else { now + 9_000 };
             let ad = NodeAdvertisement::sign(
                 node_id(index),
                 session(index),
@@ -191,18 +201,18 @@ impl Fixture {
             intents.push(intent);
         }
         let source = directory
-            .load(session(0), NOW + 9_001)
+            .load(session(0), now + 9_001)
             .await
             .unwrap()
             .unwrap();
         let prepared = directory
-            .prepare_log_enrollment(&source, 4, 1, 3, NOW + 9_001)
+            .prepare_log_enrollment(&source, 4, 1, 3, now + 9_001)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(prepared.followers().len(), 2);
         let attempt = directory
-            .prepare_log_enrollment_attempt(&prepared, NOW + 9_001)
+            .prepare_log_enrollment_attempt(&prepared, now + 9_001)
             .await
             .unwrap();
         let mut originals = Vec::new();
@@ -227,24 +237,24 @@ impl Fixture {
                 role: EnrollmentRole::Follower { log_epoch: 4 },
             };
             let FleetEnrollmentAcceptance::New(row) =
-                journal.accept_enrollment(&spec, NOW + 9_001).await.unwrap()
+                journal.accept_enrollment(&spec, now + 9_001).await.unwrap()
             else {
                 panic!("new enrollment expected")
             };
             originals.push(row);
         }
         directory
-            .commit_log_enrollment(&attempt, NOW + 9_001)
+            .commit_log_enrollment(&attempt, now + 9_001)
             .await
             .unwrap();
         if !frames.is_empty() {
             let enrolled = directory
-                .load(session(0), NOW + 9_001)
+                .load(session(0), now + 9_001)
                 .await
                 .unwrap()
                 .unwrap();
             directory
-                .activate_log(&enrolled, NOW + 9_002)
+                .activate_log(&enrolled, now + 9_002)
                 .await
                 .unwrap();
         }
@@ -254,7 +264,7 @@ impl Fixture {
             .publish_enrollment_result(
                 &originals[0],
                 EnrollmentEvent::Established(Digest::from_bytes([70; 32])),
-                NOW + 9_002,
+                now + 9_002,
             )
             .await
             .unwrap();
@@ -282,7 +292,7 @@ impl Fixture {
                     LocalFollowerTransport::new(member, store.clone()),
                     directory.clone(),
                     session(1),
-                    || Ok(CHECK),
+                    move || Ok(check),
                 )
                 .unwrap(),
             ));
@@ -296,7 +306,7 @@ impl Fixture {
         let mut process =
             observe.then(|| failed_boot::Process::start(root.path().join("process-closure")));
         let fenced = directory
-            .claim_expired(session(0), session(1), NOW + 10_001)
+            .claim_expired(session(0), session(1), now + 10_001)
             .await
             .unwrap();
         #[cfg(unix)]
@@ -322,7 +332,7 @@ impl Fixture {
                     &original,
                     session(1),
                     deadline(),
-                    || Ok(NOW + 10_001)
+                    || Ok(now + 10_001)
                 )
                 .await
                 .is_err()
@@ -334,7 +344,7 @@ impl Fixture {
                 &original,
                 session(1),
                 deadline(),
-                || Ok(NOW + 10_001),
+                || Ok(now + 10_001),
             )
             .await
             .unwrap();
@@ -347,14 +357,14 @@ impl Fixture {
                     &failed_boot::Processes::new(root.path().join("process-closure")),
                     session(1),
                     deadline(),
-                    || Ok(NOW + 10_001),
+                    || Ok(now + 10_001),
                 )
                 .await
                 .unwrap();
             assert_eq!(confirmation.fence(), request.fence());
             assert_eq!(confirmation.snapshot(), roster.snapshot());
             assert_eq!(confirmation.process().request_digest(), request.digest());
-            assert_eq!(confirmation.interval(), (NOW + 10_001, NOW + 10_001));
+            assert_eq!(confirmation.interval(), (now + 10_001, now + 10_001));
             Some(request)
         } else {
             None
@@ -363,7 +373,7 @@ impl Fixture {
             NodeLogRecovery::from_fenced(transport.clone(), &fenced, Limits::default()).unwrap();
         let manifests = RecoveryManifestStore::new(layout.clone(), Limits::default());
         let completed = RecoveryCoordinator::new(recovery, manifests.clone())
-            .recover_and_seal(&directory, fenced, cells, NOW + 10_002)
+            .recover_and_seal(&directory, fenced, cells, now + 10_002)
             .await
             .unwrap();
         assert_eq!(completed.controls.len(), frames.len());

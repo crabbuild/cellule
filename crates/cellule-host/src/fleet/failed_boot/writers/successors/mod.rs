@@ -11,6 +11,7 @@ use cellule_runtime::{
 };
 
 mod collection;
+mod digest;
 mod prefix;
 
 /// Read-only trusted composition for an original writer's current successor.
@@ -51,6 +52,7 @@ pub trait FleetOriginalWriterSuccessors: Send + Sync {
 pub struct FleetOriginalWriterSuccessorProof {
     original: OriginalWriterObservation,
     node: NodeId,
+    release: Digest,
     serving: CellServingObservation,
     origin: VerifiedRootPrefix,
     suffixes: Vec<VerifiedRecoveryPrefix>,
@@ -65,6 +67,11 @@ impl FleetOriginalWriterSuccessorProof {
     #[must_use]
     pub const fn node(&self) -> NodeId {
         self.node
+    }
+    /// Compiled release of the actual native host checked against its signed boot.
+    #[must_use]
+    pub const fn release(&self) -> Digest {
+        self.release
     }
     /// Native FIFO/authority/generation observation repeated after origin work.
     #[must_use]

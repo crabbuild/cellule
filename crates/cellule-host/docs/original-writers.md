@@ -149,6 +149,30 @@ accepted work, operation barriers and finalization remain separate requirements.
 The provider currently accepts actual host references; remote management
 transport and process/provider qualification still need integration.
 
+## Retain the proofs in the reconciler observation
+
+An authenticated `FleetObserver` can attach the complete collection with
+`FleetObservation::with_original_writer_successors`. Start the observation
+before collection and finish it after collecting its signed boots and native
+rows. Preserve the inventory's original interval and every application; only
+the planner rows are scoped to the observation's application.
+
+Attachment checks the scope, registry and interval, actual signed destination
+node/session/endpoint/compiled release, and matching native writer rows. A
+complete observation must include every scoped successor row. The public
+reconciler additionally compares the inventory's full journal snapshot with its
+retained roster, so a changed head refuses even when the registry is unchanged.
+Attaching role coverage requires the same full snapshot. The planner input
+digest binds the complete original proof set, including exact roots, suffixes,
+current native generations and process/log barriers; this is a local producer
+identity, with no new persisted or transport codec.
+
+Attachment cannot upgrade a partial observation or settle roles. The adapter
+still needs complete native/foreign role coverage, current replacement policy,
+all original accepted work and authenticated provider mappings. The six public
+minion observation cases exercise this boundary with real native successors and
+a partial scan; they do not qualify a complete production observer.
+
 ## Checks and limits
 
 | Boundary | Required behavior |

@@ -199,6 +199,16 @@ changed publication and missing current origin bytes, and check cancellation
 resource cleanup and expired deadlines. Complete inherited-overlay aggregate
 faults, remote/process integration and maintenance finalization remain open.
 
+Six further observation cases attach that complete inventory to the public
+`FleetObservation` and exercise the public reconciler. They preserve all four
+original proofs while planner rows cover one application, refuse changed native
+rows, missing scoped rows in a complete scan, mismatched boots, restamped
+intervals and a stale full head with unchanged registry. An actual native
+publication changes the proof digest. Signed operational samples use canonical
+directory heartbeat refresh. The reference observer remains partial and refuses
+maintenance settlement; its test transport injects a disconnected-source error.
+These cases supply no measured-pressure or complete-role claim.
+
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked writer_tests
 ```

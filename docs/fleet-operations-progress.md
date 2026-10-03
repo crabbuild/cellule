@@ -4,6 +4,76 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 original successor observation checkpoint
+
+`FleetObservation::with_original_writer_successors` now retains the complete
+original proof inventory across applications, validates matching planner rows
+and signed physical node/session/endpoint/compiled release, and preserves its
+capture interval. Complete scans must include every scoped successor. The public
+reconciler compares the full retained journal head and registry, including when
+the registry alone is unchanged. Role coverage must share that same snapshot.
+The local planner digest binds the complete original proof set; persisted and
+transport codecs are unchanged. Partial observations remain partial and cannot
+settle roles or complete maintenance.
+
+Six new minion cases use actual native successors and the public observation
+and reconciler APIs. They cover complete cross-application proof retention,
+duplicate attachment, eight protected native-row mismatches, scoped omission,
+missing physical boots, restamped intervals, fresh partial consumption, stale
+full heads and actual native publication changing the digest. Their samples
+publish fresh signed advertisements through canonical directory refresh. The
+original process remains a lifetime stand-in and this observer remains partial.
+
+Current head `c5a572f` passes follower/object capacity and cookbook quality.
+Its workspace CI failed the existing cancellation test's fixed 100-ms stage
+assumption. The corrected test polls the actual origin reservation alongside
+the original three-second collection; an early return or unchanged deadline
+fails it. Cancellation and post-cancellation ledgers still undergo the existing
+checks. No workload, profile, qualification gate or expected proof was weakened.
+
+The leased-routing comparison on this head fails forwarded and local c1 command
+throughput at 86.6% and 87.4% of baseline against the existing 90% gate. Median
+preparation means increase from 8.98 to 10.94 ms and 8.21 to 9.95 ms respectively.
+Raw paired measurements, binaries, manifest and stage analysis are retained
+under `/tmp/cellule-original-observation-evidence`. The preparation stage locates
+the difference; it does not isolate required lineage I/O from backend/runner
+variation. Fresh routing qualification and diagnosis remain required.
+
+### Verification
+
+| Verification on the isolated source | Result |
+| --- | --- |
+| Full framework workspace, all features, locked | 1,652 passed; no failures; 36 documented ignored cases. |
+| Complete canonical minion target | 244 passed; no failures or ignored cases. |
+| Distinct framework/minion passes | 1,896; focused repeats and overlapping local LTX excluded. |
+| Focused observation and cancellation | All six new cases passed; corrected cancellation passed 20 consecutive repeats. |
+| Local LTX without default features | 54 passed. |
+| Framework check, Clippy and API docs | Passed; all targets/features, locked; lint/docs deny warnings. |
+| Separate cookbook quality | Check, Clippy, warning-denied docs, all 256 tests and binary builds passed; locked. |
+| Static gates | Format, boundaries, layout, 127 Rust snippets, 1,245 Markdown links, 28 SQL/peer assertions, 570 protocol links, cookbook layout/format and diff passed. |
+
+All 11 verification commands completed with exit zero. All 1,068 Rust/Cargo
+paths match the isolated tested source. Manifest SHA256:
+`a7c5de87bf0f24d263529fa8751cf0df19094d4d55be201b069f6053a5ca67d7`.
+Source archive, commands/statuses, complete logs and initial fixture failures are
+retained under `/tmp/cellule-original-observation-evidence`. Snapshot and mounted
+target use suffix `cellule-original-observation-c5a572f`. All owned local
+verification processes completed; no local cloud/provider service was started.
+Fresh CI must qualify the published increment; earlier checks do not qualify it.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Qualify current CI, including the corrected cancellation case and both routing modes. Diagnose command preparation without weakening the unchanged qualification gate. |
+| 1 | Complete authenticated production observation: inherited-overlay aggregate success/faults, reader/follower replacement policy and all original accepted work. The public proof attachment alone does not supply these barriers. |
+| 2 | Implement SettleRoles/Finalize, join original actions before terminal drain handoff, and confirm stop, withdrawal, boot retirement and committed operation completion. Finish Cron/Blob external owners and primitive fault matrices. |
+| 3 | Complete cross-session receiver loss, recovery/adoption, refusal/unknown supervision and sustained pressure/count/concurrency evidence. |
+| 4 | Complete canonical minion maintenance/receiver-loss commands, W9 process/provider, mixed-binary, load/soak and capacity campaigns, then W10 exercised runbooks and staged rollout/rollback. |
+
+The full W1–W10 plan remains active. Minion is canonical at
+`crates/cellule-host/minion`, Cargo target `fleet_operations`.
+
 ## October 3 2026 complete original native successor checkpoint
 
 `FleetOriginalWriterSuccessorInventory::collect` verifies every retained
