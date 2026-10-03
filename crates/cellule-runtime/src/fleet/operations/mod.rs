@@ -15,8 +15,12 @@ mod history;
 mod inspection;
 mod intent;
 mod journal;
+mod reader_evacuation;
 mod records;
 mod recovery;
+pub use reader_evacuation::{
+    ReaderEvacuationPage, ReaderEvacuationRecord, ReaderReplacementWitness,
+};
 mod registry;
 pub use recovery::{RecoveredActivation, RecoveryBasis, RecoveryEvidence};
 

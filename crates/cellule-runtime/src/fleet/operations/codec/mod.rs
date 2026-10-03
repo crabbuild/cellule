@@ -12,6 +12,7 @@ mod accepted;
 mod acquisition;
 mod attempt;
 mod inspection;
+mod reader_evacuation;
 mod recovery;
 mod registry;
 use attempt::{read_attempt, write_attempt};
@@ -38,6 +39,9 @@ const ENROLLMENT_PAGE: u8 = 15;
 const ENROLLMENT_SPEC: u8 = 16;
 const INSPECTION_REQUEST: u8 = 17;
 const INSPECTION_OBSERVATION: u8 = 18;
+const READER_EVACUATION: u8 = 19;
+const READER_EVACUATION_PAGE: u8 = 20;
+const READER_EVACUATION_BASIS: u8 = 21;
 
 fn encoder(kind: u8) -> Result<BoundedEncoder> {
     encoder_limited(kind, MAX_RECORD_BYTES)

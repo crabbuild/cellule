@@ -6,7 +6,8 @@ use super::{
 };
 use crate::node::NodeMode;
 
-/// Revision shared by retained physical-node intents and all enrollment rows.
+/// Revision shared by retained physical-node intents, enrollment rows and
+/// committed role-evidence pointers in the same journal transaction domain.
 /// The adapter advances it in the same transaction as every registry mutation.
 /// Readers must recheck it after collecting every required observation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

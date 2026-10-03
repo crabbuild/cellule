@@ -4,6 +4,86 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 durable reader replacement evidence checkpoint
+
+Reader evacuation now produces immutable operation-bound manifests and ordered
+replacement pages. The full 10,000-reader policy bound fits 79 pages, each with
+at most 128 entries and the existing 64-KiB envelope. The manifest retains the
+full original head digest and bootstrapped registry version, exact original
+Established row digest and Retired history, serving authority, policy revision
+or absence, required prefix and capture interval. Pages bind the complete capture
+basis, ordinal, signed boot identities, exact Established replacement requests
+and observed native prefixes. Complete validation rejects missing/reordered/foreign
+pages, duplicate physical nodes/sessions/request keys and regressed prefixes.
+Existing persisted record kinds and domains remain unchanged.
+
+`FleetReaderEvacuationJournal` commits all pages, the manifest and its latest
+per-operation/original-request pointer in the existing journal transaction domain.
+First publication compares the full snapshot, live controller, current operation,
+original retirement and active replacement rows/intents, then advances the shared
+registry. Exact replay returns immutable history without advancing the registry
+or restoring a superseded pointer. The reference SQLite implementation uses its
+existing finite backend owner and immediate transaction; accepted writes survive
+caller cancellation. No new task bank, authority or native closing path is added.
+
+`FleetReaderEvacuationVerifier` loads every page and the latest pointer after
+adapter reconstruction. It checks complete roster barriers, operation/intent,
+current source authority and read policy, exact selected signed boots/enrollment
+rows and ready native prefixes twice. Its separate fresh interval does not
+restamp history. Policy, owner, boot or operation adoption can produce a refreshed
+candidate from the same original native retirement through the ordinary current
+recruitment path. Evacuating and Closing phases both permit this fresh metadata;
+refresh starts no native opening or closure. Publication preserves durable history
+and original shared errors independently of a failed final confirmation.
+Native capture and fresh verification are bounded by monotonic thirty-second
+intervals and the caller/operation deadlines. Historical records grant no complete
+role settlement or terminal node finalization.
+
+Eight public example cases use actual managed CellNode readers, SQLite and the
+existing signed directory/native peer path. They cover immutable page publication,
+independent journal reconstruction, lost replies and cancelled waiters, policy
+changes during publication, zero-reader refresh, superseded-pointer replay,
+unavailable replacements, corrupted pages/stale barriers, suspended probes across
+source authority change and refresh during Closing. Fixture shutdown joins the
+original owners and checks zero native resource ledgers. Seven runtime codec cases
+cover the full policy bound, malformed envelopes and scope/lifetime/history rules.
+These establish selected in-process behavior; they supply no OS-crash, external-job,
+provider-deployment, mixed-binary or measured fleet-load qualification.
+
+The initial reply-pause fixture was not wired into the post-commit response and
+three cases failed to reach their intended race. That raw failure remains under
+`initial/`. Qualification below uses the corrected final source. An empty directory
+left from an earlier isolated module relocation caused the first layout check to
+fail; removing that directory changes no Rust source or compiled path set.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `92313e8293ecc76d525cf3659f837af0f014217a` |
+| Frozen source | 708 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `eaa4010b17ff44ce37f62c0236320ae445e17cef8c297d233f2831077ad74066` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-reader-policy-evidence` |
+
+Final all-feature qualification passed 532 runtime library, 144 runtime lifecycle,
+34 host library, 106 public node and 191 example tests: 1,007 distinct passes, no
+failures. Seven existing provider cases remain ignored without their documented
+isolated RustFS environment and supply no evidence. Focused repeats are excluded.
+Runtime/host Clippy across all targets and API documentation passed with warnings
+denied. Complete active/isolated Rust/Cargo path sets and every byte match final
+qualification. Commands/statuses and build environment are retained in
+`verification.json` and `build-environment.json`. Format, dependency boundaries,
+module layout, document links/Rust fences, SQL/peer and diff gates passed. The
+host recipe and example guide describe the public APIs and their proof scope.
+
+Highest priorities next are durable follower replacement-policy evidence and
+revalidation, complete production observation and reader/follower controller
+integration. Failed receiver/source/Pending producer reconciliation, affected
+writer relocation and SettleRoles/Finalize still require complete barriers and
+the original action join before terminal drain handoff. Remaining primitive faults,
+maintenance/receiver-loss executable scenarios and W9–W10 process/provider,
+mixed-version, load, runbook and rollout qualification remain open. The complete
+fleet operations plan remains unfinished.
+
 ## October 2 2026 failed receiver reader closure checkpoint
 
 `FleetFailedBootProcessRequest::capture` now exposes the original Established

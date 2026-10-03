@@ -382,6 +382,34 @@ actual original process and every accepted external job/producer. See the
 cargo test -p cellule-host --example fleet_operations --all-features --locked failed_reader_closure
 ```
 
+## Durable reader replacement evidence
+
+The `reader_policy_publication` cases use the same three real leased nodes,
+managed boot/reader producers, canonical SQL views, authenticated peer status
+path and SQLite journal as live evacuation. They persist every original policy
+manifest/page and latest pointer in one registry transaction, then recheck fresh
+authority, policy, exact enrollment, selected signed boots and native prefixes.
+Independent clients reload committed history after reconstruction. Exact replay
+retains the original capture and cannot restore a superseded pointer.
+
+Cases cover lost commit replies and their original shared I/O source, cancelled
+waiters, policy changes after commit, fresh zero-reader policy publication,
+refresh during Closing, unavailable replacements, stale registry/corrupt pages
+and authority change during a suspended native probe. Refresh reuses the exact
+original retirement without another close. Codec cases cover all 10,000 readers,
+complete page validation, duplicate boots/requests, prefix/time/shape faults,
+operation boot adoption and malformed bounded envelopes.
+
+These are local native/transaction cases. They do not supply complete controller
+settlement, affected-writer evidence, follower replacement policy, OS/process
+faults or provider/load/mixed-version qualification. See the
+[host contract](../../docs/read-replicas.md#persist-and-revalidate-reader-replacement-coverage).
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked reader_policy_publication
+cargo test -p cellule-runtime --lib --all-features --locked reader_policy_
+```
+
 ## Managed reader producer evidence
 
 The example's test target also exercises `install_fleet_reader_enrollment` with

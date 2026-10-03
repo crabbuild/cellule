@@ -15,6 +15,7 @@ use tokio::sync::{Notify, Semaphore};
 mod actions;
 mod controller;
 mod enrollment;
+mod reader_evacuation;
 mod records;
 use records::{Db, blob, profile_bytes, scope_bytes};
 
@@ -40,6 +41,8 @@ struct Inner {
     boot_reply: Mutex<Option<BootReplyPause>>,
     #[cfg(test)]
     enrollment_reply: Mutex<Option<EnrollmentReplyPause>>,
+    #[cfg(test)]
+    reader_evacuation_reply: Mutex<Option<EnrollmentReplyPause>>,
 }
 
 #[cfg(test)]
@@ -131,6 +134,8 @@ impl SqliteJournal {
                 boot_reply: Mutex::new(None),
                 #[cfg(test)]
                 enrollment_reply: Mutex::new(None),
+                #[cfg(test)]
+                reader_evacuation_reply: Mutex::new(None),
             }),
         })
     }
@@ -233,6 +238,42 @@ impl SqliteJournal {
         (observed, resume)
     }
 
+    #[cfg(test)]
+    pub(crate) fn pause_next_reader_evacuation_reply(
+        &self,
+        lose_reply: bool,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (captured, observed) = tokio::sync::oneshot::channel();
+        let (resume, paused) = tokio::sync::oneshot::channel();
+        let mut slot = self.inner.reader_evacuation_reply.lock().unwrap();
+        assert!(slot.is_none());
+        *slot = Some(EnrollmentReplyPause {
+            before_acceptance: false,
+            publication: true,
+            lose_reply,
+            captured,
+            resume: paused,
+        });
+        (observed, resume)
+    }
+    #[cfg(test)]
+    async fn reader_evacuation_reply(&self) -> JournalResult<()> {
+        let pause = self.inner.reader_evacuation_reply.lock().unwrap().take();
+        if let Some(pause) = pause {
+            let _ = pause.captured.send(());
+            let _ = pause.resume.await;
+            if pause.lose_reply {
+                return Err(std::io::Error::other(
+                    "injected lost reader evacuation reply after durable commit",
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
     #[cfg(test)]
     pub(crate) fn pause_before_enrollment_acceptance(
         &self,

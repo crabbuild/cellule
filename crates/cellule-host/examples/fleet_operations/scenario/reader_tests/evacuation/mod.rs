@@ -11,10 +11,12 @@ use ed25519_dalek::SigningKey;
 
 mod fixture;
 mod inventory_tests;
+mod persisted;
 mod tests;
 mod transport;
 
 struct Fixture {
+    layout: CellStorageLayout,
     root: tempfile::TempDir,
     journal: Arc<SqliteJournal>,
     description: CellDescription,

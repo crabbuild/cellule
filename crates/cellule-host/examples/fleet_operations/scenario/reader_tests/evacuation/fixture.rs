@@ -274,6 +274,7 @@ impl Fixture {
         );
         assert!(nodes[1].is_management_ready());
         Self {
+            layout,
             root,
             journal,
             description,

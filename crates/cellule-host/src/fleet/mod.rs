@@ -16,8 +16,13 @@ mod inventory;
 mod journal;
 mod maintenance;
 mod movement;
+mod reader_evacuation;
 mod reconciler;
 mod recovered;
+pub use reader_evacuation::{
+    FleetReaderEvacuationCandidate, FleetReaderEvacuationCheck, FleetReaderEvacuationJournal,
+    FleetReaderEvacuationPublication, FleetReaderEvacuationVerifier,
+};
 mod references;
 mod roster;
 pub(crate) mod snapshot;

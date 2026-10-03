@@ -1,6 +1,6 @@
 //! Replacement-policy checks followed by the existing native reader closure.
 use super::*;
-use crate::fleet::FleetRoster;
+use crate::fleet::{FleetJournalSnapshot, FleetRoster};
 use cellule_runtime::{
     cell::actor::NodeByteReservation,
     client::CellDescription,
@@ -25,6 +25,10 @@ pub struct ReaderReplacement {
     pub boot_identity: Digest,
     /// Ready native position returned through the existing peer protocol.
     pub receipt: Receipt,
+    /// Exact Established replacement request key.
+    pub enrollment_key: Digest,
+    /// Complete original Established row digest, including its first timestamps.
+    pub enrollment_digest: Digest,
 }
 
 /// Checked per-reader evacuation interval, retaining its native metadata charge.
@@ -32,6 +36,8 @@ pub struct ReaderReplacement {
 /// revalidate replacements, current authority, all remaining roles and inventory
 /// barriers before terminal node shutdown.
 pub struct ReaderEvacuation {
+    snapshot: FleetJournalSnapshot,
+    operation: MaintenanceOperation,
     original: EnrollmentRecord,
     retired: EnrollmentRecord,
     authority: Control,
@@ -43,6 +49,68 @@ pub struct ReaderEvacuation {
     _memory: [NodeByteReservation; 2],
 }
 impl ReaderEvacuation {
+    /// Complete final native capture barrier, before evidence publication.
+    #[must_use]
+    pub fn snapshot(&self) -> &FleetJournalSnapshot {
+        &self.snapshot
+    }
+    /// Exact operation that authorized this original closure.
+    #[must_use]
+    pub fn operation(&self) -> &MaintenanceOperation {
+        &self.operation
+    }
+    /// Builds bounded durable history and every canonical replacement page.
+    /// Applications account these copied metadata buffers. This conversion
+    /// supplies no journal commit or fresh post-reconstruction confirmation.
+    pub fn durable_record(
+        &self,
+    ) -> Result<(
+        cellule_runtime::fleet::operations::ReaderEvacuationRecord,
+        Vec<cellule_runtime::fleet::operations::ReaderEvacuationPage>,
+    )> {
+        use cellule_runtime::fleet::operations::{
+            ReaderEvacuationRecord, ReaderReplacementWitness,
+        };
+        ReaderEvacuationRecord::new(
+            self.operation.clone(),
+            (
+                Digest::from_bytes(
+                    *blake3::hash(
+                        &self
+                            .snapshot
+                            .head()
+                            .to_bytes()
+                            .map_err(crate::fleet::operation)?,
+                    )
+                    .as_bytes(),
+                ),
+                self.snapshot.registry(),
+            ),
+            self.retired.clone(),
+            Digest::from_bytes(
+                *blake3::hash(&self.original.to_bytes().map_err(crate::fleet::operation)?)
+                    .as_bytes(),
+            ),
+            self.authority.clone(),
+            self.policy.map(|policy| policy.revision()),
+            self.policy.map_or(0, |policy| policy.desired_readers()),
+            self.minimum.commit_sequence,
+            self.interval(),
+            self.replacements
+                .iter()
+                .map(|entry| ReaderReplacementWitness {
+                    node: entry.node,
+                    session: entry.session,
+                    boot_identity: entry.boot_identity,
+                    enrollment_key: entry.enrollment_key,
+                    enrollment_digest: entry.enrollment_digest,
+                    commit_sequence: entry.receipt.commit_sequence,
+                })
+                .collect(),
+        )
+        .map_err(crate::fleet::operation)
+    }
+
     /// Original immutable Established request supplied to this attempt.
     #[must_use]
     pub fn original(&self) -> &EnrollmentRecord {
@@ -122,7 +190,7 @@ impl ReadReplicaManager {
         // copies. These charges stay with the returned evidence after closure.
         let records = self
             .runtime
-            .try_reserve_node_metadata_bytes(3 * MAX_RECORD_BYTES as usize + 4096)?;
+            .try_reserve_node_metadata_bytes(4 * MAX_RECORD_BYTES as usize + 4096)?;
         original.to_bytes().map_err(crate::fleet::operation)?;
         let EnrollmentRole::Reader { target, position } = &original.spec().role else {
             return Err(Error::Fenced);
@@ -242,7 +310,8 @@ impl ReadReplicaManager {
         };
         let mut replacements = Vec::with_capacity(desired);
         for node in selected {
-            validate_replacement(&roster, &node, target, minimum)?;
+            let (enrollment_key, enrollment_digest) =
+                validate_replacement(&roster, &node, target, minimum)?;
             let (receipt, ready) = peer.status(target, node.clone(), expected).await?;
             if !ready
                 || receipt.cell != minimum.cell
@@ -255,6 +324,8 @@ impl ReadReplicaManager {
                 node: node.node(),
                 session: node.session(),
                 boot_identity: boot_identity(&node)?,
+                enrollment_key,
+                enrollment_digest,
                 receipt,
             });
         }
@@ -301,7 +372,11 @@ impl ReadReplicaManager {
             {
                 return Err(Error::Fenced);
             }
-            validate_replacement(&after, node, target, minimum)?;
+            if validate_replacement(&after, node, target, minimum)?
+                != (replacement.enrollment_key, replacement.enrollment_digest)
+            {
+                return Err(Error::Fenced);
+            }
             let (receipt, ready) = peer.status(target, node.clone(), expected).await?;
             if !ready
                 || receipt.cell != minimum.cell
@@ -319,6 +394,8 @@ impl ReadReplicaManager {
             .confirm_maintenance_roster(&after, deadline)
             .await?;
         Ok(ReaderEvacuation {
+            snapshot: after.snapshot().clone(),
+            operation: operation.clone(),
             original: original.clone(),
             retired,
             authority: current,
@@ -346,19 +423,7 @@ impl ReadReplicaManager {
         let current = current.value();
         // Publication may advance while a foreign writer serves traffic. Its
         // exact lifetime and nonregressing published prefix must remain bound.
-        if current.state != ControlState::Serving
-            || current.recovery.is_some()
-            || current.incarnation != before.incarnation
-            || current.epoch != before.epoch
-            || current.owner != before.owner
-            || current.code != before.code
-            || current.schema != before.schema
-            || current.root.as_ref().is_none_or(|root| {
-                before
-                    .root
-                    .as_ref()
-                    .is_none_or(|old| root.commit_sequence < old.commit_sequence)
-            })
+        if !same_authority(before, current)
             || self.policy.load(current.cell).await?.map(|row| row.value()) != policy
         {
             return Err(Error::Fenced);
@@ -410,38 +475,45 @@ fn evacuation_deadline(
         return Err(Error::Node("reader evacuation deadline elapsed"));
     }
     let limit = captured
-        .checked_add(Duration::from_millis(remaining as u64))
+        .checked_add(Duration::from_millis(remaining.min(30_000) as u64))
         .ok_or(Error::Node("reader maintenance deadline overflow"))?;
     Ok(requested.min(limit))
 }
 
-fn validate_replacement(
+pub(crate) fn validate_replacement(
     roster: &FleetRoster,
     node: &NodeAdvertisement,
     target: &CellTarget,
     minimum: Receipt,
-) -> Result<()> {
+) -> Result<(Digest, Digest)> {
     if node.fleet() != roster.snapshot().head().scope().fleet
         || !node.accepts_new_roles(now_ms()?)
         || roster.boot(node.node(), node.session())?.intent().mode() != NodeMode::Active
     {
         return Err(Error::Fenced);
     }
-    if !roster.enrollments().iter().any(|row| {
+    let mut matching = roster.enrollments().iter().filter(|row| {
         row.status() == EnrollmentStatus::Established
             && row.spec().target.node == node.node()
             && row.spec().target.session == node.session()
-            && matches!(&row.spec().role, EnrollmentRole::Reader {target: enrolled,position}
-            if enrolled == target && position.incarnation == minimum.incarnation)
-    }) {
-        return Err(Error::Control(
-            "reader replacement lacks Established enrollment",
-        ));
+            && matches!(&row.spec().role,EnrollmentRole::Reader {target:enrolled,position}
+                if enrolled==target && position.incarnation==minimum.incarnation)
+    });
+    let original = matching.next().ok_or(Error::Control(
+        "reader replacement lacks Established enrollment",
+    ))?;
+    if matching.next().is_some() {
+        return Err(Error::Control("reader replacement enrollment is ambiguous"));
     }
-    Ok(())
+    Ok((
+        original.spec().key().map_err(crate::fleet::operation)?,
+        Digest::from_bytes(
+            *blake3::hash(&original.to_bytes().map_err(crate::fleet::operation)?).as_bytes(),
+        ),
+    ))
 }
 
-fn boot_identity(node: &NodeAdvertisement) -> Result<Digest> {
+pub(crate) fn boot_identity(node: &NodeAdvertisement) -> Result<Digest> {
     let mut hash = blake3::Hasher::new();
     hash.update(b"cellule.reader-maintenance-boot.v1\0");
     hash.update(node.node().as_bytes());
@@ -453,4 +525,22 @@ fn boot_identity(node: &NodeAdvertisement) -> Result<Digest> {
     hash.update(&node.verifying_key()?.to_bytes());
     hash.update(node.endpoint().as_bytes());
     Ok(Digest::from_bytes(*hash.finalize().as_bytes()))
+}
+
+/// Shared reader authority lifetime/prefix check for native closure and durable revalidation.
+pub(crate) fn same_authority(before: &Control, current: &Control) -> bool {
+    current.state == ControlState::Serving
+        && current.recovery.is_none()
+        && current.cell == before.cell
+        && current.incarnation == before.incarnation
+        && current.epoch == before.epoch
+        && current.owner == before.owner
+        && current.code == before.code
+        && current.schema == before.schema
+        && current.root.as_ref().is_some_and(|root| {
+            before
+                .root
+                .as_ref()
+                .is_some_and(|old| root.commit_sequence >= old.commit_sequence)
+        })
 }

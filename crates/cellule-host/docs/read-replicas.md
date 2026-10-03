@@ -198,8 +198,8 @@ evidence; a change after closure can leave the original retired while the
 operation remains incomplete. Cancellation, deadlines and lost retirement
 replies preserve the original closure and producer event. Retry that same
 Established request; absence from the local view map alone proves nothing.
-The effective deadline is the earlier of the caller's monotonic deadline and
-the operation's remaining wall-clock deadline. Timeout errors retain their
+The effective deadline is the earliest of the caller's monotonic deadline,
+the operation's remaining wall-clock deadline and thirty-second capture bound. Timeout errors retain their
 original source.
 
 Roster pages, retained records, temporary boot observations and returned
@@ -218,6 +218,66 @@ native readers, cancellation, lost replies and the post-probe refresh race:
 ```sh
 cargo test -p cellule-host --example fleet_operations --locked reader_tests::evacuation
 ```
+
+## Persist and revalidate reader replacement coverage
+
+`ReaderEvacuation::durable_record` builds a `ReaderEvacuationRecord` and every
+canonical replacement page. The manifest retains the original full head digest,
+registry version, maintenance operation, retired request/history, authority,
+policy revision/count, closed prefix and collection interval. Each replacement
+binds its signed boot identity, exact Established enrollment digest and observed
+native prefix. Pages hold at most 128 entries and cover the full 10,000-reader
+policy bound; missing, reordered, foreign or duplicate entries refuse. Decoding
+validates historical shape and supplies no authentication or readiness.
+
+Implement `FleetReaderEvacuationJournal` in the same transaction domain as the
+existing fleet/enrollment/action journal. Commit every immutable page, manifest
+and latest operation/request pointer together, advancing the shared registry.
+Compare the full original snapshot, current operation/controller, original
+Retired row and replacement Established rows/intents inside that transaction.
+Exact replay retains original times and cannot restore a superseded pointer.
+The SQLite example supplies this implementation through its existing finite
+backend jobs; cancellation does not cancel an accepted commit.
+
+```rust
+async fn persist_reader_evacuated(
+    capture: &cellule_host::read_replicas::ReaderEvacuation,
+    journal: &dyn cellule_host::fleet::FleetReaderEvacuationJournal,
+    verifier: &cellule_host::fleet::FleetReaderEvacuationVerifier,
+    deadline: tokio::time::Instant,
+    clock: impl FnMut() -> cellule_runtime::Result<i64>,
+) -> cellule_runtime::Result<cellule_host::fleet::FleetReaderEvacuationPublication> {
+    cellule_host::fleet::FleetReaderEvacuationPublication::publish(
+        capture, journal, verifier, deadline, clock,
+    ).await
+}
+```
+
+Construct the verifier from the existing `NodeDirectory`, `CellAuthority`,
+`ReadPolicyStore` and authenticated `ReplicaPeerClient`. Publication performs
+fresh pre/post checks. Inspect `record()` even if `confirmed()` fails: a lost
+reply or subsequent policy/authority/boot change can leave committed history
+with an independently retained source error. Reconstruct the client, load the
+same digest or latest original request, then call `verifier.recheck`. It reloads
+every page, traverses the complete current roster and probes native readiness
+twice around authority, policy, selection and signed-boot rechecks. Fresh
+confirmation has its own interval; it never restamps historical capture.
+
+After policy, replacement boot, owner, deadline or operation-session changes,
+`verifier.refresh` captures a new immutable policy candidate from the previously
+committed original retirement. The ordinary recruiter must supply current ready
+replacements. `publish_refreshed` commits the candidate under its new exact
+barrier. This can repair coverage while Closing without repeating native reader
+closure; old manifests and original retirement times remain retained. Missing
+capacity, a changed incarnation or incomplete historical pages stay blocked.
+
+Applications account these bounded copied metadata buffers and authenticate
+provider/peer calls. One checked reader still supplies no complete role graph,
+failed-process proof, affected-writer relocation or permission to finalize a
+physical node. Persisted follower policy, aggregate controller settlement and
+process/provider qualification remain required. The
+[executable evidence](../examples/fleet_operations/README.md#durable-reader-replacement-evidence)
+uses real managed readers, signed status probes and independent SQLite clients.
 
 ## Observe managed reader obligations
 
