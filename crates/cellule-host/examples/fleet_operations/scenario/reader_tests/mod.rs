@@ -9,6 +9,7 @@ use cellule_runtime::{
 };
 
 mod evacuation;
+mod failed;
 mod inventory;
 mod leases;
 mod reconciliation;

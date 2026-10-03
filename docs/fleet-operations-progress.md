@@ -4,6 +4,83 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 failed receiver reader closure checkpoint
+
+`FleetFailedBootProcessRequest::capture` now exposes the original Established
+boot and permanent canonical session fence at a complete bootstrapped roster
+while role requests remain unresolved. It starts no native/process effect and
+permits only provider confirmation. Boot retirement still requires all related
+requests settled and complete physical follower-reference checks. Snapshot,
+mutable boot status and collection times are metadata; the original request
+digest remains unchanged across role publication, recapture and reconstruction.
+Existing boot publication shares the same canonical/process confirmation path.
+
+`FleetFailedReaderRetirement` binds one original Pending, Established or replayed
+Retired request to its exact receiver physical node/session and original boot.
+Source failure cannot retire a view on a live receiver. The existing application
+process provider must authenticate and durably retain original termination or
+nonexecution, join all accepted native/external work and producers, and exclude
+session reuse. Expiry, native absence, recovery or another lifetime cannot prove
+it. The capsule creates no drain task, recovery path or second action bank.
+
+Publication confirms the entire original journal barrier again after the provider
+read, then publishes through the existing enrollment journal. Its deterministic
+event binds original full spec/acceptance and immutable process identity/witness;
+legitimate establishment completion cannot change that event. Returned history,
+committed rows and original shared source failures remain independently inspectable
+when a reply or final read fails. Fresh full roster, original boot/reader, permanent
+canonical receiver fence and unchanged process evidence confirm within the original
+monotonic thirty-second interval. Recapture adopts lost replies without refreshing
+original timestamps. Journal/backend owners join accepted work after cancellation.
+
+Ten public example cases use two actual canonical SQLite readers with application-
+owned Pending acceptance before native activation, an actual receiver CellNode,
+joined shutdown, retained reader clones and the durable SQLite journal. One native
+opening retains an unresolved establishment result. Original lifetime evidence is
+stored only after shutdown, local joining, rejected cloned-view queries and zero
+native resource ledgers. The source retains readable acknowledged data. Cases cover
+running-original refusal, failed-source/live-receiver refusal, exact original process,
+payload and acceptance comparison, Pending/Established history, boot closure ordering,
+replay, independent adapter reconstruction, lost publication replies, cancelled waiters,
+suspended provider reads, stale barriers, regressing/expired capture clocks and failed
+or changed final process evidence. Original process identity survives role publication.
+
+The first eight-case run found a fixture expecting Fenced after the entire runtime
+had closed; canonical query admission correctly returns RuntimeClosed first. The
+fixture now checks that exact native outcome together with actual lifetime joining.
+That raw failure and source manifest remain under `initial/`; qualification below
+uses the corrected final source. These are in-process native lifetime cases with no
+external-job workload, not OS-crash or provider-deployment qualification.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `a9cee96cda6d944dad6e5711a0ac8352baa1f6e9` |
+| Frozen source | 696 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `dda6c960a80859e941de7d407f28d74de56c84cd73711af0e7bb6d81cf33e568` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-failed-reader-evidence` |
+
+Final all-feature qualification passed 525 runtime library, 144 runtime lifecycle,
+34 host library, 106 public node and 183 example tests: 992 distinct passes, no
+failures. Seven existing provider cases remain ignored without their documented
+isolated RustFS environment and supply no evidence. Focused repeats are excluded.
+Runtime/host Clippy across all targets and API documentation passed with warnings
+denied. Complete active/isolated Rust/Cargo path sets and every byte match final
+qualification. Commands/statuses and retained build environment are in
+`verification.json` and `build-environment.json`. Format, dependency boundaries,
+module layout, document links/Rust fences and SQL/peer gates passed; the public
+host recipe and example command document the exact scope.
+
+Highest priorities next are persisted reader/follower replacement-policy evidence
+and revalidation, complete production role observation and controller integration.
+A failed source with a live receiver still needs ordinary joined reader closure;
+failed owner/Pending producer reconciliation remains required. Affected-writer
+relocation, SettleRoles/Finalize and the original action join before terminal drain
+handoff remain open, followed by remaining primitive faults, complete maintenance/
+receiver-loss executable scenarios and W9–W10 process/provider/mixed-version/load/
+runbook qualification. This closes individual failed receiver reader enrollments;
+the complete physical maintenance operation and full plan remain unfinished.
+
 ## October 2 2026 original failed boot closure checkpoint
 
 `NodeDirectory::closed_session` now exposes a fresh opaque permanent fence for

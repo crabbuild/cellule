@@ -10,17 +10,77 @@ use std::{future::Future, sync::Arc};
 use tokio::time::{Instant, timeout_at};
 
 mod publication;
+mod readers;
+pub use readers::{
+    FleetFailedReaderClosure, FleetFailedReaderPublication, FleetFailedReaderRetirement,
+};
 mod records;
 
 /// Immutable original boot and canonical fence to verify at the process provider.
 /// Neither an expired lease nor successful data recovery answers this request.
+/// Snapshot, mutable boot status and collection interval are read metadata;
+/// providers bind retained original lifetime evidence to [`Self::digest`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FleetFailedBootProcessRequest {
     boot: EnrollmentRecord,
     canonical: NodeSessionClosure,
     digest: Digest,
+    snapshot: FleetJournalSnapshot,
+    started_at_ms: i64,
+    finished_at_ms: i64,
 }
 impl FleetFailedBootProcessRequest {
+    /// Captures the exact Established original boot and its canonical terminal
+    /// fence at a complete bootstrapped roster. Reader/follower obligations may
+    /// remain unresolved: this request permits only process confirmation, never
+    /// boot retirement or role settlement. It starts no native/process effect.
+    pub async fn capture(
+        journal: &dyn FleetJournal,
+        directory: &NodeDirectory,
+        roster: &FleetRoster,
+        original: &EnrollmentRecord,
+        claimant: SessionId,
+        deadline: Instant,
+        mut clock: impl FnMut() -> Result<i64>,
+    ) -> Result<Self> {
+        let started_at_ms = clock()?;
+        if directory.fleet() != roster.snapshot().head().scope().fleet
+            || roster.snapshot().registry().bootstrap_revision().is_none()
+        {
+            return Err(Error::Fenced);
+        }
+        roster.confirm(journal, deadline).await?;
+        let boot = records::boot(roster, original)?;
+        let endpoint = boot.spec().target;
+        let canonical = bounded(
+            deadline,
+            directory.closed_session(endpoint.node, endpoint.session, claimant, started_at_ms),
+        )
+        .await?;
+        roster.confirm(journal, deadline).await?;
+        let finished_at_ms = clock()?;
+        interval(started_at_ms, finished_at_ms)?;
+        let digest = records::request_digest(&boot, &canonical)?;
+        Ok(Self {
+            boot,
+            canonical,
+            digest,
+            snapshot: roster.snapshot().clone(),
+            started_at_ms,
+            finished_at_ms,
+        })
+    }
+    /// Full barrier used for the original boot/fence capture.
+    #[must_use]
+    pub fn snapshot(&self) -> &FleetJournalSnapshot {
+        &self.snapshot
+    }
+    /// Original process-request collection interval, without restamping.
+    #[must_use]
+    pub const fn interval(&self) -> (i64, i64) {
+        (self.started_at_ms, self.finished_at_ms)
+    }
+
     /// Original request, acceptance time and establishment evidence. Mutable
     /// journal status is not part of the immutable request digest.
     #[must_use]
@@ -128,19 +188,15 @@ impl FleetFailedBootRetirement {
             last = next;
             Ok(next)
         };
-        if directory.fleet() != roster.snapshot().head().scope().fleet
-            || roster.snapshot().registry().bootstrap_revision().is_none()
-        {
-            return Err(Error::Fenced);
-        }
-        roster.confirm(journal, deadline).await?;
-        let boot = records::select(roster, original)?;
-        let endpoint = boot.spec().target;
-        let canonical = bounded(
-            deadline,
-            directory.closed_session(endpoint.node, endpoint.session, claimant, started_at_ms),
+        let mut request = FleetFailedBootProcessRequest::capture(
+            journal, directory, roster, original, claimant, deadline, &mut clock,
         )
         .await?;
+        let boot = records::select(roster, original)?;
+        if boot != request.boot {
+            return Err(Error::Fenced);
+        }
+        let endpoint = boot.spec().target;
         records::references(
             directory,
             roster,
@@ -153,14 +209,10 @@ impl FleetFailedBootRetirement {
         roster.confirm(journal, deadline).await?;
         let finished_at_ms = clock()?;
         interval(started_at_ms, finished_at_ms)?;
-        let digest = records::request_digest(&boot, &canonical)?;
+        request.finished_at_ms = finished_at_ms;
         Ok(Self {
             snapshot: roster.snapshot().clone(),
-            request: FleetFailedBootProcessRequest {
-                boot,
-                canonical,
-                digest,
-            },
+            request,
             started_at_ms,
             finished_at_ms,
         })

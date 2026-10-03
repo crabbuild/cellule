@@ -353,6 +353,35 @@ accepted external-job evidence. See the
 cargo test -p cellule-host --example fleet_operations --all-features --locked failed_boot_closure
 ```
 
+## Failed reader lifetime evidence
+
+The `failed_reader_closure` cases use application-owned enrollments around two
+real canonical SQLite readers on an actual receiver host. The application calls `prepare_source`, journals Pending, then opens through
+`activate_source`. One original establishment
+remains unresolved to exercise closure after a lost result. The fixture retains
+the original lifetime witness only after host shutdown joins native work,
+retained reader clones report local joining and reject queries, and resource
+ledgers return to zero. The source retains readable acknowledged data.
+
+`FleetFailedReaderRetirement` requires the exact receiver boot, complete roster,
+permanent canonical fencing and durable original process evidence. Tests cover
+live receiver/source-failure refusal, Pending/Established history, foreign
+process/payload/acceptance refusal, replay, independent adapter reconstruction,
+lost replies, cancelled waiters, a suspended provider read, changed/failing final
+evidence, stale barriers and monotonic collection expiry. Boot retirement stays
+blocked until both original reader rows settle; process identity survives those
+publications. The journal owner joins accepted work after waiter cancellation.
+
+This is native in-process lifetime evidence with no external-job workload. It
+does not qualify OS crashes, provider termination, replacement redundancy or a
+complete maintenance command. Production providers authenticate and retain the
+actual original process and every accepted external job/producer. See the
+[host recipe](../../docs/lifecycle.md#publish-an-original-failed-receivers-reader-closure).
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked failed_reader_closure
+```
+
 ## Managed reader producer evidence
 
 The example's test target also exercises `install_fleet_reader_enrollment` with

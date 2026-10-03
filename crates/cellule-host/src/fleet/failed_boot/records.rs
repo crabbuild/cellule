@@ -2,10 +2,7 @@ use super::*;
 use crate::fleet::FleetFollowerReferences;
 use cellule_runtime::{identity::NodeId, node::log_state::NodeLogPhase};
 
-pub(super) fn select(
-    roster: &FleetRoster,
-    original: &EnrollmentRecord,
-) -> Result<EnrollmentRecord> {
+pub(super) fn boot(roster: &FleetRoster, original: &EnrollmentRecord) -> Result<EnrollmentRecord> {
     original.to_bytes().map_err(operation)?;
     let spec = original.spec();
     if !matches!(spec.role, EnrollmentRole::Node { .. })
@@ -38,6 +35,15 @@ pub(super) fn select(
     {
         return Err(Error::Fenced);
     }
+    Ok(current.clone())
+}
+
+pub(super) fn select(
+    roster: &FleetRoster,
+    original: &EnrollmentRecord,
+) -> Result<EnrollmentRecord> {
+    let current = boot(roster, original)?;
+    let spec = current.spec();
     for row in roster.enrollments() {
         if row.spec() == spec || !row.unresolved() {
             continue;
@@ -56,7 +62,7 @@ pub(super) fn select(
             ));
         }
     }
-    Ok(current.clone())
+    Ok(current)
 }
 
 pub(super) async fn references(

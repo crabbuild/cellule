@@ -29,9 +29,10 @@ impl FleetFailedBootRetirement {
         };
         let now = clock()?;
         self.confirm_snapshot(journal, deadline).await?;
-        self.confirm_canonical(directory, claimant, now, deadline)
+        self.request
+            .confirm_canonical(directory, claimant, now, deadline)
             .await?;
-        let process = self.confirm_process(processes, deadline).await?;
+        let process = self.request.confirm_process(processes, deadline).await?;
         let evidence = records::retirement(&process);
         if self.request.boot.status() == EnrollmentStatus::Retired
             && self.request.boot.settlement_evidence() != Some(evidence)
@@ -42,7 +43,8 @@ impl FleetFailedBootRetirement {
         // before committing any evidence; a new related role cannot be ignored.
         self.confirm_snapshot(journal, deadline).await?;
         let now = clock()?;
-        self.confirm_canonical(directory, claimant, now, deadline)
+        self.request
+            .confirm_canonical(directory, claimant, now, deadline)
             .await?;
         let record = bounded(deadline, async {
             let returned = journal
@@ -84,46 +86,6 @@ impl FleetFailedBootRetirement {
         }
         Ok(())
     }
-    async fn confirm_canonical(
-        &self,
-        directory: &NodeDirectory,
-        claimant: SessionId,
-        now: i64,
-        deadline: Instant,
-    ) -> Result<()> {
-        if directory.fleet() != self.snapshot.head().scope().fleet {
-            return Err(Error::Fenced);
-        }
-        let endpoint = self.request.boot.spec().target;
-        let canonical = bounded(
-            deadline,
-            directory.closed_session(endpoint.node, endpoint.session, claimant, now),
-        )
-        .await?;
-        if canonical != self.request.canonical {
-            return Err(Error::Fenced);
-        }
-        Ok(())
-    }
-    async fn confirm_process(
-        &self,
-        processes: &dyn FleetFailedBootProcesses,
-        deadline: Instant,
-    ) -> Result<FleetFailedBootProcessEvidence> {
-        let process = bounded(deadline, async {
-            processes
-                .confirm_stopped(&self.request)
-                .await
-                .map_err(adapter_error)
-        })
-        .await?;
-        if process.request != self.request.digest
-            || process.witness.as_bytes().iter().all(|byte| *byte == 0)
-        {
-            return Err(Error::Fenced);
-        }
-        Ok(process)
-    }
     #[allow(clippy::too_many_arguments)]
     async fn finish(
         &self,
@@ -161,9 +123,10 @@ impl FleetFailedBootRetirement {
             clock,
         )
         .await?;
-        self.confirm_canonical(directory, claimant, clock()?, deadline)
+        self.request
+            .confirm_canonical(directory, claimant, clock()?, deadline)
             .await?;
-        if &self.confirm_process(processes, deadline).await? != process {
+        if &self.request.confirm_process(processes, deadline).await? != process {
             return Err(Error::Control("original failed process evidence changed"));
         }
         roster.confirm(journal, deadline).await?;
@@ -177,5 +140,45 @@ impl FleetFailedBootRetirement {
             started_at_ms: self.started_at_ms,
             finished_at_ms,
         })
+    }
+}
+
+impl FleetFailedBootProcessRequest {
+    pub(super) async fn confirm_canonical(
+        &self,
+        directory: &NodeDirectory,
+        claimant: SessionId,
+        now: i64,
+        deadline: Instant,
+    ) -> Result<()> {
+        if directory.fleet() != self.snapshot.head().scope().fleet {
+            return Err(Error::Fenced);
+        }
+        let endpoint = self.boot.spec().target;
+        let canonical = bounded(
+            deadline,
+            directory.closed_session(endpoint.node, endpoint.session, claimant, now),
+        )
+        .await?;
+        if canonical != self.canonical {
+            return Err(Error::Fenced);
+        }
+        Ok(())
+    }
+    pub(super) async fn confirm_process(
+        &self,
+        processes: &dyn FleetFailedBootProcesses,
+        deadline: Instant,
+    ) -> Result<FleetFailedBootProcessEvidence> {
+        let process = bounded(deadline, async {
+            processes.confirm_stopped(self).await.map_err(adapter_error)
+        })
+        .await?;
+        if process.request != self.digest
+            || process.witness.as_bytes().iter().all(|byte| *byte == 0)
+        {
+            return Err(Error::Fenced);
+        }
+        Ok(process)
     }
 }

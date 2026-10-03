@@ -31,6 +31,7 @@ pub use enrollment::{FleetBootObservation, FleetEnrollmentAcceptance, FleetEnrol
 pub use failed_boot::{
     FleetFailedBootClosure, FleetFailedBootProcessEvidence, FleetFailedBootProcessRequest,
     FleetFailedBootProcesses, FleetFailedBootPublication, FleetFailedBootRetirement,
+    FleetFailedReaderClosure, FleetFailedReaderPublication, FleetFailedReaderRetirement,
 };
 pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInventoryScan};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};

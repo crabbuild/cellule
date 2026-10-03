@@ -37,7 +37,7 @@ same action and evidence contracts.
 | Which external facilities are required? | A linearizable journal, complete enrollment registry, authenticated management transport, and trusted local Cell inputs. The reference example supplies these behind the same contracts. |
 | What keeps operations simple? | One operation ID, one status contract, one application loop, bounded defaults, and one canonical host drain lane. |
 | What proves success? | Receipt-preserving actor activation on another node. Maintenance additionally requires settled role obligations, host Stopped, and session withdrawal. |
-| What is the next concrete change? | Connect enrollment producers and the complete observer to the W5 driver. Consume request-bound fresh inspections and exercise the existing local durable adapter through that public path. Keep cross-session recovery and W4's remaining failure/inspection gates in that slice. |
+| What is the next concrete change? | Persist and revalidate replacement-policy evidence around native role closure, complete the production observer, and connect those barriers to SettleRoles/Finalize. Keep cross-session recovery and the remaining failure/inspection gates in scope. |
 
 Start with the [first slice commit sequence](#first-slice-commit-sequence).
 Every increment must expose a reviewable public behavior and retain its test
@@ -288,7 +288,8 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `CellNode::follower_evacuation` | Present per-live-owner replacement and retirement check after the original requested rotation. | Require the declared member minimum, donor exclusion, complete Established replacement rows, pinned signed boots, current authority and full journal rechecks. Retain the original completion/error history and publish/revalidate its interval. This does not settle failed owners, Pending producers or the physical node's other obligations. |
 | Recovered-log authorization, member retirement and canonical Retired CAS | Present runtime tail closure after canonical recovery pinning. | Use `RecoveredNodeLogTransport`, receiver-side `authorize_recovered_log_retire` and `FollowerStore::retire_recovered`; confirm every original member before `retire_recovered_log`. Adopt exact committed closure with `retired_recovered_log` before repeating effects. Publish original enrollments through the host capsule, then complete failed-process barriers and maintenance orchestration; native closure alone cannot finish W7. |
 | `FleetRecoveredFollowerRetirement` | Present checked publication of recovered ensemble enrollment closure. | Capture the exact canonically Retired physical leader/epoch against the full roster, publish all original member requests through the existing journal, then confirm the complete new roster and canonical authority. Retain every original response/error. Fresh recapture adopts lost replies without native RPCs or timestamp refresh; failed boots, replacement policy and operation integration remain required. |
-| `FleetFailedBootRetirement` / `FleetFailedBootProcesses` | Present original failed-boot closure against canonical terminal fencing and durable application process evidence. | Complete every original related request first. The read-only provider proves original process/accepted external work joining and session nonexecution; the capsule publishes through the existing journal and rechecks full roster, authority, physical references and process evidence. Actual provider/failed-reader integration, replacement policy and maintenance actions remain required. |
+| `FleetFailedBootRetirement` / `FleetFailedBootProcesses` | Present original failed-boot closure against canonical terminal fencing and durable application process evidence. | Complete every original related request first. The read-only provider proves original process/accepted external work joining and session nonexecution; the capsule publishes through the existing journal and rechecks full roster, authority, physical references and process evidence. Actual provider qualification, replacement policy and maintenance actions remain required. |
+| `FleetFailedReaderRetirement` / `FleetFailedBootProcessRequest::capture` | Present original failed receiver reader publication, including Pending and Established histories, through the existing journal/provider boundary. | Capture the original boot/process request before role settlement, then publish each exact reader only under joined receiver lifetime evidence. Source failure cannot close a live receiver. Persist replacement-policy evidence, handle live receivers through ordinary closure, and qualify actual OS/process/external-job providers before completing W7. |
 | `FleetActionJournal` | Present in host `fleet/journal.rs`. | Implement acceptance, result publication, original-action lookup, and acquisition/recovery basis and evidence recording/lookup with the specified atomic and durable semantics. |
 | `FleetCellProvider::cell_inputs(spec)` | Present in host `fleet/cells.rs`. | Resolve metadata and canonical local inputs without performing an effect. |
 | `FleetCellProvider::recovery_inputs(spec)` | Present in host `fleet/cells.rs`. | Supply existing canonical failed-session proof and manifest access. Ordinary recovery establishes fencing and tail sealing independently. |
@@ -1094,7 +1095,13 @@ maintenance can claim the node is safe to stop.
    local reader. Periodic repair on a Draining node cannot bypass this check by
    pruning changed placement. The returned per-reader interval is not complete
    role settlement; persist/revalidate its replacements and finish failed-owner
-   and fleet-wide barriers. See the [reader lifecycle contract](../crates/cellule-host/docs/read-replicas.md#evacuate-a-managed-reader).
+   and fleet-wide barriers. `FleetFailedReaderRetirement` now closes an exact
+   failed receiver request through the same journal under permanent canonical
+   fencing and independently joined original process evidence. Capture of the
+   process request does not require other roles to settle first; boot retirement
+   still does. A failed source with a live receiver needs ordinary joined reader
+   closure. Provider qualification and persisted replacement policy remain
+   required. See the [reader lifecycle contract](../crates/cellule-host/docs/read-replicas.md#evacuate-a-managed-reader).
 3. Enumerate local follower lanes and all authoritative node-log epochs that
    reference the physical node, including expired/recovering owner sessions.
    Missing or incomplete inventory blocks finalization. Live advertisements
@@ -1113,8 +1120,8 @@ maintenance can claim the node is safe to stop.
    completed related requests, canonical permanent fence and retained process
    evidence supplied by `FleetFailedBootProcesses`. The application authenticates
    actual termination/nonexecution and joins accepted external jobs; neither
-   expiry nor recovery creates that proof. Finish failed-reader/provider
-   integration, operation action ownership and replacement-policy checks before
+   expiry nor recovery creates that proof. Finish actual process/provider
+   qualification, controller integration, operation action ownership and replacement-policy checks before
    treating the physical role as settled.
 6. Confirm that no admitted new enrollment or unresolved tail obligation can
    appear after the final inventory barrier, then complete host shutdown.

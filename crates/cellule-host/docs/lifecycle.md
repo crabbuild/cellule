@@ -246,6 +246,68 @@ missing member receipts. The closure covers these follower enrollment rows.
 Failed-boot/process closure, replacement policy, affected writers and terminal
 host shutdown remain required before maintenance completion.
 
+### Publish an original failed receiver's reader closure
+
+`FleetFailedReaderRetirement` settles one original reader enrollment after
+its exact receiver boot is permanently fenced and independently proven unable
+to execute again. Capture accepts Pending, Established and exact replayed
+Retired requests at a complete bootstrapped roster. The reader's receiver
+node/session must match the original Established boot; a failed source writer
+cannot authorize closure of a reader on a live receiver.
+
+`FleetFailedBootProcessRequest::capture` can collect the original boot/fence
+request while roles remain unresolved. It permits only read-only process
+confirmation. This breaks the dependency between obtaining durable process
+evidence and settling the roles that must precede boot retirement. Its digest
+excludes mutable enrollment status and collection times, so the same original
+process witness survives reader/follower publication and fresh recapture.
+
+Use the application-owned `FleetFailedBootProcesses` provider described below.
+It must join the original process and all accepted native/external work and
+producers, authenticate that exact lifetime, and prevent session reuse. Neither
+canonical withdrawal nor an expired advertisement supplies process evidence.
+
+```rust
+async fn publish_failed_reader(
+    journal: &dyn cellule_host::fleet::FleetJournal,
+    directory: &cellule_runtime::node::NodeDirectory,
+    processes: &dyn cellule_host::fleet::FleetFailedBootProcesses,
+    original_boot: &cellule_runtime::fleet::operations::EnrollmentRecord,
+    original_reader: &cellule_runtime::fleet::operations::EnrollmentRecord,
+    claimant: cellule_runtime::identity::SessionId,
+    deadline: tokio::time::Instant,
+    mut clock: impl FnMut() -> cellule_runtime::Result<i64>,
+) -> cellule_runtime::Result<cellule_host::fleet::FleetFailedReaderPublication> {
+    let snapshot = journal.load_snapshot(original_reader.spec().scope).await
+        .map_err(|source| cellule_runtime::Error::Facility {
+            name: "example-failed-reader-journal", source,
+        })?;
+    let roster = cellule_host::fleet::FleetRoster::collect(journal, &snapshot, deadline).await?;
+    let retirement = cellule_host::fleet::FleetFailedReaderRetirement::capture(
+        journal, directory, &roster, original_boot, original_reader,
+        claimant, deadline, &mut clock,
+    ).await?;
+    retirement.publish(journal, directory, processes, claimant, deadline, clock).await
+}
+```
+
+Publication rechecks the original complete barrier after provider confirmation,
+then uses the existing enrollment journal. Inspect `record()` even when
+`confirmed()` fails: publication replies and final checks retain separate
+original errors and durable partial state. Fresh recapture adopts lost replies
+without refreshing original acceptance, establishment or retirement times.
+The final roster, original history, canonical receiver fence and unchanged
+process witness must confirm within the original thirty-second interval.
+Backend owners retain and join accepted work after cancellation or deadline.
+
+This closes one original reader lifetime. Replacement-policy coverage, other
+roles, affected writers, boot retirement and physical maintenance finalization
+remain separate requirements. For a failed source with a live receiver, use
+that receiver's ordinary joined reader lifecycle. The
+[native example cases](../examples/fleet_operations/README.md#failed-reader-lifetime-evidence)
+exercise actual SQLite readers, joined host shutdown and independent journal
+reconstruction; OS crash and external-job/provider campaigns remain required.
+
 ### Publish an original failed boot's closure
 
 After recovered follower publication, `FleetFailedBootRetirement` closes the
