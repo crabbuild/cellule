@@ -15,6 +15,7 @@ use tokio::task::JoinSet;
 
 const WINDOW_SECONDS: usize = 10;
 const CAPACITY_DRAIN_GRACE_US: u64 = 2_000_000;
+const ROOT_PUBLICATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Window {
     id: usize,
@@ -83,6 +84,7 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         BufWriter::new(File::create(sync.join(format!("{evidence_prefix}-owners.tsv"))).unwrap());
     writeln!(owners, "stage\tentity\tcell\towner\tepoch\tincarnation").unwrap();
     let mut expected = Vec::new();
+    let mut latest_receipts = Vec::new();
     let mut window_id = 0;
     let mut capacity_windows = capacity.then(|| {
         let mut output = BufWriter::new(File::create(sync.join("capacity-windows.tsv")).unwrap());
@@ -127,6 +129,7 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         .unwrap();
         let client = Arc::new(EntityReferenceClient::new(handle).unwrap());
         expected.resize(nodes * ENTITIES_PER_NODE, 0_u64);
+        latest_receipts.resize(nodes * ENTITIES_PER_NODE, 0_u64);
         for (entity, count) in expected.iter().enumerate() {
             let target = entity_target(&application, entity);
             let control = authority.load(target.cell_id()).await.unwrap().unwrap();
@@ -177,7 +180,14 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
                     rate_per_node,
                     concurrency,
                 };
-                let fully_served = run_window(sync, &window, client.clone(), &mut expected).await;
+                let fully_served = run_window(
+                    sync,
+                    &window,
+                    client.clone(),
+                    &mut expected,
+                    &mut latest_receipts,
+                )
+                .await;
                 if let Some(output) = capacity_windows.as_mut() {
                     writeln!(
                         output,
@@ -198,6 +208,10 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
                 assert!(overloaded, "{shape}: rate ramp did not reach overload");
             }
         }
+        // Follower proofs can acknowledge a durable commit before the
+        // asynchronous publisher advances the root. Drain that gap before
+        // recording the final root snapshot used by the qualification audit.
+        wait_for_published_roots(&authority, &application, &latest_receipts).await;
         let mut roots = BufWriter::new(
             File::create(sync.join(format!("{evidence_prefix}-roots-{nodes}.tsv"))).unwrap(),
         );
@@ -283,6 +297,7 @@ async fn run_window(
     window: &Window,
     client: Arc<EntityReferenceClient>,
     expected: &mut [u64],
+    latest_receipts: &mut [u64],
 ) -> bool {
     let rate = window.nodes * window.rate_per_node;
     let planned = rate * WINDOW_SECONDS;
@@ -361,6 +376,8 @@ async fn run_window(
             actual.output, actual.receipt.commit_sequence
         )
         .unwrap();
+        assert!(actual.receipt.commit_sequence >= latest_receipts[entity]);
+        latest_receipts[entity] = actual.receipt.commit_sequence;
         assert_eq!(
             actual.output, *expected,
             "{label}: Cell {entity} lost or duplicated a mutation"
@@ -384,6 +401,50 @@ async fn run_window(
     complete == planned
         && (window.prefix != "capacity"
             || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + CAPACITY_DRAIN_GRACE_US)
+}
+
+async fn wait_for_published_roots(
+    authority: &CellAuthority,
+    application: &cellule_app::CompiledApplication,
+    latest_receipts: &[u64],
+) {
+    let deadline = Instant::now() + ROOT_PUBLICATION_DRAIN_TIMEOUT;
+    let mut pending: Vec<_> = latest_receipts
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, sequence)| *sequence > 0)
+        .collect();
+    while !pending.is_empty() {
+        let mut lagging = Vec::new();
+        for (entity, required_sequence) in pending {
+            let target = entity_target(application, entity);
+            let observed = authority
+                .load(target.cell_id())
+                .await
+                .unwrap()
+                .expect("Cell control disappeared while draining publication")
+                .value()
+                .root
+                .as_ref()
+                .map_or(0, |root| root.commit_sequence);
+            if observed < required_sequence {
+                lagging.push((entity, observed, required_sequence));
+            }
+        }
+        if lagging.is_empty() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "published roots did not cover final receipts within {ROOT_PUBLICATION_DRAIN_TIMEOUT:?}: {lagging:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        pending = lagging
+            .into_iter()
+            .map(|(entity, _, required_sequence)| (entity, required_sequence))
+            .collect();
+    }
 }
 
 fn retain_sample(output: &mut BufWriter<File>, samples: &mut Vec<Sample>, sample: Sample) {
