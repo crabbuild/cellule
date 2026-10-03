@@ -24,6 +24,7 @@ use cellule_runtime::cell::catalog::CatalogRole;
 use cellule_runtime::cell::executor::Resolution;
 use cellule_runtime::client::{
     CellClient, Committed, InvocationError, Observed, PendingMutation, PreparedCommand,
+    PreparedCommandSnapshot,
 };
 use cellule_runtime::identity::{
     ApplicationId, CellTarget, Digest, NamespaceId, TenantId, partition_for_shard,
@@ -551,6 +552,19 @@ impl<A: CellApplication> ApplicationHandle<A> {
         self.client
             .prepare_command::<C>(target, identity, input)
             .await
+    }
+
+    /// Reconstructs a persisted exact command after enforcing application scope.
+    ///
+    /// Does not refresh identity, owner incarnation or input bytes. Resolve the
+    /// original snapshot evidence before replaying any uncertain dispatch.
+    pub fn restore_command<C: Command>(
+        &self,
+        snapshot: PreparedCommandSnapshot,
+        input: Vec<u8>,
+    ) -> Result<PreparedCommand<C>> {
+        self.validate_target_module(snapshot.evidence().target(), C::MODULE)?;
+        self.client.restore_command::<C>(snapshot, input)
     }
 
     /// Executes one statically typed query after enforcing application scope.

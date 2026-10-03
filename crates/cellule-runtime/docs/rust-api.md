@@ -357,6 +357,41 @@ sequenceDiagram
   unresolved.
 - Preparation itself has no mutation side effect.
 
+For process restart, atomically persist `PreparedCommand::snapshot()` and the
+borrowed `input_bytes()` **before** dispatch. The snapshot is a versioned
+`WireValue` with a 2 KiB metadata ceiling. Keep the original input body separate:
+a legal input at its operation limit remains legal without extra framing, and
+restoration consumes the saved buffer without copying or re-encoding it. Use
+`PreparedCommandSnapshot::to_bytes` and `from_bytes` for complete bounded headers.
+`ApplicationHandle::restore_command` applies the author handle's application and
+module scope before importing the command.
+
+```rust
+use cellule_runtime::{CellClient, Command, PreparedCommand, PreparedCommandSnapshot, Result};
+
+fn restore<C: Command>(
+    client: &CellClient,
+    header: &[u8],
+    original_body: Vec<u8>,
+) -> Result<PreparedCommand<C>> {
+    let snapshot = PreparedCommandSnapshot::from_bytes(header)?;
+    client.restore_command::<C>(snapshot, original_body)
+}
+```
+
+`restore_command` checks the compiled namespace, module, code/schema, operation,
+codec, exact bounds and original input digest without Describe or mutation I/O.
+It preserves the original request identity and owner incarnation. Decode/import
+allows expired evidence so known outcomes can still be resolved; execution
+checks the current clock and owner fence. The decoded header's `evidence()` can
+be resolved without reading the body. A changed incarnation, resolution error,
+`Unknown` or `Expired` never proves absence or authorizes a new mutation.
+
+Snapshots establish byte consistency, not authentication or product custody.
+The application must authenticate their scope, keep header/body retention
+atomic, and durably track dispatch phases. This API does not decide ownership
+transfer, replay across incarnations, or when retained outcomes may be collected.
+
 <a id="state-streams"></a>
 ## Stream mutable Cell state safely
 

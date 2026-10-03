@@ -53,9 +53,11 @@ mod local;
 mod replica;
 mod routing;
 mod runtime;
+mod snapshot;
 
 pub use replica::CellReadReplica;
 pub use routing::ReplicaReadRouter;
+pub use snapshot::PreparedCommandSnapshot;
 
 pub use local::command_operation_digest;
 pub(crate) use local::{
