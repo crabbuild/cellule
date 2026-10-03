@@ -17,6 +17,7 @@ LAYERS = {
     "cellule-app": {"cellule-runtime"},
     "cellule-host": {"cellule-app", "cellule-runtime"},
     "cellule-peer-http": {"cellule-runtime"},
+    "cellule-axum": {"cellule-app", "cellule-runtime"},
 }
 KERNEL = ROOT / "crates/cellule-runtime/src/coordination/mod.rs"
 ACTOR = ROOT / "crates/cellule-runtime/src/cell/actor/mod.rs"

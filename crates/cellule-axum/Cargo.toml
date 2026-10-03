@@ -1,0 +1,26 @@
+[package]
+name = "cellule-axum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Axum extractors and outcome-aware HTTP responses for Cellule applications"
+
+[dependencies]
+axum = { workspace = true, features = ["json"] }
+cellule-app.workspace = true
+cellule-runtime.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+axum = { workspace = true, features = ["http1", "tokio"] }
+blake3.workspace = true
+cellule-ltx = { workspace = true, features = ["replica"] }
+cellule-store.workspace = true
+object_store.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower = { version = "0.5", features = ["util"] }
+uuid.workspace = true

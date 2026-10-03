@@ -4,6 +4,8 @@ Cellule is an embedded Rust framework for distributed, SQLite-backed **Cells**.
 An application defines typed modules and Cell topology; Cellule runs commands
 through a fenced owner, publishes durable outcomes, and restores exact state.
 The application owns HTTP ingress, authorization, credentials, and deployment.
+For Axum services, the optional [`cellule-axum`](crates/cellule-axum/README.md)
+adapter supplies typed handle extraction and responses with Cell receipts.
 
 ![Cellule architecture: application ownership, framework components, one durable Cell, and the eight primitives](diagram/cellule-components.svg)
 
