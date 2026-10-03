@@ -330,6 +330,47 @@ def verify_root_coverage(roots: list[dict], positions: dict[int, list[int]],
         assert int(row["root_sequence"]) >= max(positions[entity]), "published root does not cover writes"
 
 
+def verify_follower_roots(control: Path, roots: list[dict], positions: dict[int, list[int]],
+                          identity: dict[int, tuple], cells: int) -> dict:
+    # A follower proof may precede object publication. Retain the serving
+    # snapshot and its lag, then require full object coverage after shutdown.
+    assert [int(row["entity"]) for row in roots] == list(range(cells))
+    lags = {}
+    for row in roots:
+        entity = int(row["entity"])
+        assert (row["cell"], row["owner"], row["epoch"], row["incarnation"]) == identity[entity], \
+            "pre-drain Cell identity changed"
+        assert positions[entity], f"Cell {entity} received no acknowledged writes"
+        assert int(row["root_sequence"]) > 0
+        verify_root_digest(row["root_digest"])
+        lags[entity] = max(0, max(positions[entity]) - int(row["root_sequence"]))
+    assert (control / "stop").is_file(), "missing shutdown request"
+    for node in range((cells + CELLS_PER_NODE - 1) // CELLS_PER_NODE):
+        assert (control / f"node-{node}.done").is_file(), "missing completed owner drain"
+    final = rows(control / "capacity-final-roots.tsv")
+    # Keep the same strict coverage assertion; publication events alone cannot
+    # stand in for a new authoritative root read and authenticated restoration.
+    verify_root_coverage(final, positions, identity, cells)
+    for before, after in zip(roots, final, strict=True):
+        entity = int(after["entity"])
+        assert after["state"] == "Idle" and after["owner_present"] == "false", \
+            "Cell still has an owner after drain"
+        sequence = int(after["root_sequence"])
+        assert sequence >= int(before["root_sequence"]), "drained root regressed"
+        verify_root_digest(after["root_digest"])
+        if sequence == int(before["root_sequence"]):
+            assert after["root_digest"] == before["root_digest"], "same sequence changed root"
+        assert int(after["restored_sequence"]) == sequence, "restored metadata disagrees with root"
+        assert int(after["restored_count"]) == len(positions[entity]), "restored root lost or duplicated write"
+    return dict(verified_cells=cells, pre_drain_root_lag_commits_by_entity=lags)
+
+
+def verify_root_digest(value: str) -> None:
+    assert (len(value) == 72 and value.startswith("Digest(") and value.endswith(")")
+            and all(character in "0123456789abcdef" for character in value[7:-1])), \
+        "invalid root digest"
+
+
 def verify_entities(control: Path, capacity: bool = False, follower: bool = False) -> dict:
     assert not follower or capacity
     stages = (3,) if capacity else STAGES
@@ -347,7 +388,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
         ingress = list(map(int, (control / f"{evidence_prefix}-ingress-{stage}.txt").read_text().split()))
         assert len(ingress) == stage and min(ingress) > 0 and max(ingress) - min(ingress) <= 1
     assert len({value[0] for value in identity.values()}) == stages[-1] * CELLS_PER_NODE, "entity targets collapsed"
-    windows, positions = [], {}
+    windows, positions, root_recovery = [], {}, None
     for nodes in stages:
         if capacity:
             windows.extend(verify_capacity_windows(control, positions))
@@ -356,7 +397,10 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
                 for rate, concurrency in POINTS:
                     windows.append(verify_window(control, nodes, shape, rate, concurrency, len(windows), positions))
         roots = rows(control / f"{evidence_prefix}-roots-{nodes}.tsv")
-        verify_root_coverage(roots, positions, identity, nodes * CELLS_PER_NODE)
+        if follower:
+            root_recovery = verify_follower_roots(control, roots, positions, identity, nodes * CELLS_PER_NODE)
+        else:
+            verify_root_coverage(roots, positions, identity, nodes * CELLS_PER_NODE)
         for node in range(nodes):
             assert sum(window["acknowledged_writes_by_node"][node] for window in windows if window["nodes"] == nodes) > 0
     resources = {}
@@ -416,6 +460,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
     if capacity:
         if follower:
             extra.update(verify_follower_proof(resources))
+            extra["drained_root_recovery"] = root_recovery
         for window in windows:
             root_lags = {}
             for entity, acknowledged in window["latest_write_sequence_by_entity"].items():
