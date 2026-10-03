@@ -215,33 +215,19 @@ impl FleetOriginalWriterCapture {
                 .load_snapshot(self.snapshot.head().scope())
                 .await
                 .map_err(adapter_error)?;
-            if let Some(original) = journal
-                .original_writers(
-                    &current,
-                    self.record.basis().operation.id(),
-                    self.request.digest(),
-                )
-                .await
-                .map_err(adapter_error)?
+            if let Some(original) = FleetOriginalWriterInventory::load(
+                journal,
+                &current,
+                self.record.basis().operation.id(),
+                self.request.digest(),
+                deadline,
+            )
+            .await?
             {
-                if original != self.record {
+                if original.record() != &self.record || original.pages() != self.pages.as_slice() {
                     return Err(Error::Fenced);
                 }
-                let mut pages = Vec::new();
-                for digest in original.pages() {
-                    pages.push(
-                        journal
-                            .original_writer_page(current.head().scope(), *digest)
-                            .await
-                            .map_err(adapter_error)?
-                            .ok_or(Error::Fenced)?,
-                    );
-                }
-                original.validate_pages(&pages).map_err(operation_error)?;
-                if pages != self.pages {
-                    return Err(Error::Fenced);
-                }
-                return Ok(original);
+                return Ok(original.record().clone());
             }
             if current != self.snapshot {
                 return Err(Error::Fenced);

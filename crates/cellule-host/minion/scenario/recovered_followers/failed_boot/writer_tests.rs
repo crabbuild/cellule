@@ -4,7 +4,8 @@
 use super::*;
 use cellule_host::fleet::{
     FleetJournalSnapshot, FleetOriginalCatalogSet, FleetOriginalCatalogSource,
-    FleetOriginalCatalogs, FleetOriginalWriterCapture, FleetOriginalWriterJournal,
+    FleetOriginalCatalogs, FleetOriginalWriterCapture, FleetOriginalWriterInventory,
+    FleetOriginalWriterJournal,
 };
 use cellule_runtime::control::Control;
 use cellule_runtime::control::{Transition, authority::CellAuthority};
@@ -60,6 +61,9 @@ struct WriterFixture {
 }
 impl WriterFixture {
     async fn new() -> Self {
+        Self::with_originals(33).await
+    }
+    async fn with_originals(originals_per_catalog: u64) -> Self {
         let base = Fixture::new().await;
         let request = FleetFailedBootProcessRequest::capture_fenced(
             base.journal.as_ref(),
@@ -86,7 +90,7 @@ impl WriterFixture {
             let authority = CellAuthority::new(layout.clone());
             // Accepted original metadata commits before process joining. Each
             // original is later removed by the sole authority takeover path.
-            for n in 0_u64..33 {
+            for n in 0_u64..originals_per_catalog {
                 let target = CellTarget::new(
                     tenant,
                     catalog.application(),
@@ -255,30 +259,22 @@ async fn complete_original_writers_survive_takeover_atomic_publication_and_recon
     fixture.base.journal.close().await.unwrap();
     let independent = fixture.base.reconstruct().await;
     let snapshot = independent.load_snapshot(scope()).await.unwrap();
-    let recovered = independent
-        .original_writers(
-            &snapshot,
-            stored.basis().operation.id(),
-            fixture.request.digest(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    let mut pages = Vec::new();
-    for digest in recovered.pages() {
-        pages.push(
-            independent
-                .original_writer_page(scope(), *digest)
-                .await
-                .unwrap()
-                .unwrap(),
-        );
-    }
-    recovered.validate_pages(&pages).unwrap();
-    assert_eq!(recovered.basis().interval, original_interval);
-    let mut actual = pages
-        .iter()
-        .flat_map(|page| page.entries().iter().map(|row| row.control.clone()))
+    let recovered = FleetOriginalWriterInventory::load(
+        &independent,
+        &snapshot,
+        stored.basis().operation.id(),
+        fixture.request.digest(),
+        deadline(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(recovered.record(), &stored);
+    assert_eq!(recovered.pages(), capture.pages());
+    assert_eq!(recovered.record().basis().interval, original_interval);
+    let mut actual = recovered
+        .writers()
+        .map(|row| row.control.clone())
         .collect::<Vec<_>>();
     let mut expected = fixture.expected;
     actual.sort_by_key(|row| *row.cell.as_bytes());
@@ -610,25 +606,259 @@ async fn canceled_publication_waiter_preserves_the_accepted_original_commit() {
         current.registry().revision(),
         before.registry().revision() + 1
     );
-    let retained = independent
-        .original_writers(
-            &current,
-            capture.record().basis().operation.id(),
+    let retained = FleetOriginalWriterInventory::load(
+        &independent,
+        &current,
+        capture.record().basis().operation.id(),
+        fixture.request.digest(),
+        deadline(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(retained.record(), capture.record());
+    assert_eq!(retained.pages(), capture.pages());
+    assert_eq!(retained.writers().count(), 66);
+    independent.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_writer_reload_distinguishes_absence_and_rejects_stale_barriers() {
+    let fixture = WriterFixture::new().await;
+    let capture = fixture.capture().await.unwrap();
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    let operation = capture.record().basis().operation.id();
+    assert!(
+        FleetOriginalWriterInventory::load(
+            fixture.base.journal.as_ref(),
+            &before,
+            operation,
             fixture.request.digest(),
+            deadline(),
         )
         .await
         .unwrap()
+        .is_none()
+    );
+    fixture
+        .base
+        .journal
+        .persist_original_writers(&before, capture.record(), capture.pages(), CHECK)
+        .await
         .unwrap();
-    assert_eq!(retained, *capture.record());
-    for (digest, original) in retained.pages().iter().zip(capture.pages()) {
-        assert_eq!(
-            independent
-                .original_writer_page(scope(), *digest)
-                .await
-                .unwrap()
-                .as_ref(),
-            Some(original)
-        );
+    let current = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    let error = FleetOriginalWriterInventory::load(
+        fixture.base.journal.as_ref(),
+        &before,
+        operation,
+        fixture.request.digest(),
+        deadline(),
+    )
+    .await
+    .err()
+    .unwrap();
+    let Error::Facility { source, .. } = error else {
+        panic!("original journal conflict required")
+    };
+    assert!(matches!(
+        source.downcast_ref::<cellule_runtime::fleet::operations::OperationError>(),
+        Some(cellule_runtime::fleet::operations::OperationError::Conflict)
+    ));
+    let loaded = FleetOriginalWriterInventory::load(
+        fixture.base.journal.as_ref(),
+        &current,
+        operation,
+        fixture.request.digest(),
+        deadline(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(loaded.record(), capture.record());
+    assert_eq!(loaded.pages(), capture.pages());
+    assert_eq!(
+        fixture.base.journal.load_snapshot(scope()).await.unwrap(),
+        current
+    );
+    fixture.base.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_writer_reload_never_returns_a_partial_missing_or_corrupt_set() {
+    for corrupt in [false, true] {
+        let fixture = WriterFixture::new().await;
+        let capture = fixture.capture().await.unwrap();
+        let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+        fixture
+            .base
+            .journal
+            .persist_original_writers(&before, capture.record(), capture.pages(), CHECK)
+            .await
+            .unwrap();
+        fixture.base.journal.close().await.unwrap();
+        // Damage the final page offline. The first page remains valid, so a
+        // streamed or prematurely returned inventory would lose original owners.
+        let db = rusqlite::Connection::open(&fixture.base.path).unwrap();
+        let digest = capture.record().pages()[1];
+        let changed = if corrupt {
+            db.execute(
+                "UPDATE original_writer_pages SET body=?1 WHERE key=?2",
+                rusqlite::params![vec![0_u8], digest.as_bytes().as_slice()],
+            )
+            .unwrap()
+        } else {
+            db.execute(
+                "DELETE FROM original_writer_pages WHERE key=?1",
+                [digest.as_bytes().as_slice()],
+            )
+            .unwrap()
+        };
+        assert_eq!(changed, 1);
+        drop(db);
+        let independent = fixture.base.reconstruct().await;
+        let current = independent.load_snapshot(scope()).await.unwrap();
+        let error = FleetOriginalWriterInventory::load(
+            &independent,
+            &current,
+            capture.record().basis().operation.id(),
+            fixture.request.digest(),
+            deadline(),
+        )
+        .await
+        .err()
+        .unwrap();
+        if corrupt {
+            let Error::Facility { source, .. } = error else {
+                panic!("original page decoder cause required")
+            };
+            assert!(
+                source
+                    .downcast_ref::<cellule_runtime::fleet::operations::OperationError>()
+                    .is_some()
+            );
+        } else {
+            assert!(matches!(error, Error::Fenced));
+        }
+        assert_eq!(independent.load_snapshot(scope()).await.unwrap(), current);
+        independent.close().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn original_writer_reload_preserves_sql_source_errors() {
+    let fixture = WriterFixture::new().await;
+    let capture = fixture.capture().await.unwrap();
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    fixture
+        .base
+        .journal
+        .persist_original_writers(&before, capture.record(), capture.pages(), CHECK)
+        .await
+        .unwrap();
+    fixture.base.journal.close().await.unwrap();
+    let independent = fixture.base.reconstruct().await;
+    let current = independent.load_snapshot(scope()).await.unwrap();
+    // Open creates the schema; remove it afterwards to force the actual reader
+    // to return its source failure rather than a missing-page observation.
+    let db = rusqlite::Connection::open(&fixture.base.path).unwrap();
+    db.execute("DROP TABLE original_writer_pages", []).unwrap();
+    drop(db);
+    let error = FleetOriginalWriterInventory::load(
+        &independent,
+        &current,
+        capture.record().basis().operation.id(),
+        fixture.request.digest(),
+        deadline(),
+    )
+    .await
+    .err()
+    .unwrap();
+    let Error::Facility { source, .. } = error else {
+        panic!("original SQL source cause required")
+    };
+    assert!(source.downcast_ref::<rusqlite::Error>().is_some());
+    assert_eq!(independent.load_snapshot(scope()).await.unwrap(), current);
+    independent.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_writer_reload_refuses_expired_deadlines_and_invalid_keys() {
+    let fixture = WriterFixture::new().await;
+    let current = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    let operation = current.head().maintenance().unwrap().id();
+    let error = FleetOriginalWriterInventory::load(
+        fixture.base.journal.as_ref(),
+        &current,
+        operation,
+        fixture.request.digest(),
+        Instant::now(),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(error, Error::Deadline));
+    let error = FleetOriginalWriterInventory::load(
+        fixture.base.journal.as_ref(),
+        &current,
+        operation,
+        Digest::from_bytes([0; 32]),
+        deadline(),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(
+        error,
+        Error::Control("invalid original writer inventory key")
+    ));
+    assert_eq!(
+        fixture.base.journal.load_snapshot(scope()).await.unwrap(),
+        current
+    );
+    fixture.base.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn original_writer_reload_retains_an_explicit_complete_empty_capture() {
+    // Both authenticated original catalogs contain only unused bootstrap entries;
+    // no original owner has existed. This is a real complete scan, not omission
+    // of populated catalogs or removal of entries from a retained manifest.
+    let fixture = WriterFixture::with_originals(0).await;
+    let capture = fixture.capture().await.unwrap();
+    assert_eq!(capture.record().owner_count(), 0);
+    assert!(capture.pages().is_empty());
+    assert_eq!(capture.record().catalogs().len(), 2);
+    assert_eq!(
+        capture
+            .record()
+            .catalogs()
+            .iter()
+            .map(|row| row.cells)
+            .sum::<u64>(),
+        2
+    );
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    fixture
+        .base
+        .journal
+        .persist_original_writers(&before, capture.record(), capture.pages(), CHECK)
+        .await
+        .unwrap();
+    fixture.base.journal.close().await.unwrap();
+    let independent = fixture.base.reconstruct().await;
+    let current = independent.load_snapshot(scope()).await.unwrap();
+    let retained = FleetOriginalWriterInventory::load(
+        &independent,
+        &current,
+        capture.record().basis().operation.id(),
+        fixture.request.digest(),
+        deadline(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(retained.record(), capture.record());
+    assert!(retained.pages().is_empty());
+    assert_eq!(retained.writers().count(), 0);
     independent.close().await.unwrap();
 }

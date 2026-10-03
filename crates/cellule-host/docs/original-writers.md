@@ -19,8 +19,8 @@ work owner.
    explicit authenticated no-writer configuration.
 4. Capture and publish the original set using the same journal transaction
    domain. Confirm publication before dependent effects. On an ambiguous reply,
-   read the original manifest and all its pages; preserve their original bytes
-   and capture interval.
+   use `FleetOriginalWriterInventory::load` to reconstruct the committed manifest
+   and every exact page; preserve their original bytes and capture interval.
 5. Independently verify every original acknowledged prefix, exact dependency
    availability and current successor serving. Combine complete writer, reader,
    follower and accepted-work evidence before role settlement or node finalization.
@@ -60,6 +60,40 @@ async fn retain_original_writers(
 }
 ```
 
+After controller restart, load the current complete journal snapshot and supply
+the retained operation ID and original process-request digest. The loader checks
+the committed pointer and all ordered pages before exposing an inventory. `None`
+means no committed set at that read; only a returned manifest with zero owners
+establishes retained empty input. Neither result proves accepted capture work
+cannot still publish.
+
+```rust
+use cellule_host::fleet::{
+    FleetJournalSnapshot, FleetOriginalWriterInventory, FleetOriginalWriterJournal,
+};
+use cellule_runtime::{Result, identity::Digest};
+use cellule_runtime::fleet::operations::OperationId;
+use tokio::time::Instant;
+
+async fn reload_original_writers(
+    journal: &dyn FleetOriginalWriterJournal,
+    current: &FleetJournalSnapshot,
+    operation: OperationId,
+    original_process_request: Digest,
+    deadline: Instant,
+) -> Result<Option<FleetOriginalWriterInventory>> {
+    FleetOriginalWriterInventory::load(
+        journal, current, operation, original_process_request, deadline,
+    ).await
+}
+```
+
+The inventory remains immutable historical input. Its `writers()` iterator spans
+every validated page. It does not refresh the collection interval or confirm
+current native roles. Aggregate collectors must independently recheck current
+authority, every successor prefix, process closure and the complete operation
+barrier before acting.
+
 ## Checks and limits
 
 | Boundary | Required behavior |
@@ -72,7 +106,7 @@ async fn retain_original_writers(
 | Bounds | At most 10,000 total catalog entries and 10,000 inspected ownership epochs; at most 10,000 retained observations, 64 per page. Record is at most 64 KiB; page is at most 1 MiB. Excess refuses without truncation. |
 | First publication | Within the original monotonic 30-second interval and operation/controller deadlines, compare full head/registry, boot and intent; atomically publish all pages, the original pointer and one registry advance. |
 | Replay | Exact committed bytes return as historical retention, even after the original deadline. A different original set conflicts. No refreshed timestamp or latest-set replacement. |
-| Reconstruction | Read the current snapshot and `original_writers`; load every `original_writer_page` and call `validate_pages` before using the manifest. |
+| Reconstruction | `FleetOriginalWriterInventory::load` checks the full pointer barrier and validates every immutable page before returning. Missing/corrupt pages refuse the entire set; source errors are preserved. |
 
 Catalog heads are sequential observations. These metadata records provide no
 atomic global snapshot, root-retention pin, authority grant or successor proof.
@@ -86,6 +120,8 @@ in the existing accepted blocking-job owner. Its public capture tests traverse
 two independently configured application/tenant catalogs and retain writers
 removed by actual canonical takeover. They exercise exact replay, reconstruction,
 provider errors, missing history, competing clients and canceled/lost replies.
+Reload cases distinguish absent and authenticated empty sets, refuse a stale
+snapshot or missing/corrupt final page, and preserve the original SQL error.
 Their joined child is a lifetime stand-in; OS-crashed CellNode, accepted external
 jobs, successor prefixes and provider fault qualification remain required.
 

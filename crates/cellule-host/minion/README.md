@@ -175,7 +175,11 @@ catalog and canonical owner history, including rootless originals already remove
 by takeover. `FleetOriginalWriterJournal` retains all pages and one immutable
 operation/process pointer in the same SQLite transaction that advances the
 registry. Exact replay and independent reconstruction preserve original Controls,
-intervals and identities. See the [integration recipe](../docs/original-writers.md)
+intervals and identities. `FleetOriginalWriterInventory::load` follows that
+committed pointer and validates every page before exposing the historical set;
+absence differs from an explicitly retained empty set. Missing/corrupt final
+pages refuse the whole set and journal source errors remain inspectable.
+See the [integration recipe](../docs/original-writers.md)
 for source authentication, bounds and successor requirements. This metadata
 foundation does not establish successor availability or maintenance completion.
 

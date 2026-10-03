@@ -4,6 +4,56 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 committed original writer reload checkpoint
+
+`FleetOriginalWriterInventory::load` reconstructs the original writer manifest
+through the existing journal's committed operation/process pointer and every
+ordered immutable page. It validates the bounded header before allocation and
+the complete page set before returning. Capture replay uses this same path.
+No partial inventory escapes when a final page is missing or corrupt. Adapter
+errors retain their source; one absolute deadline bounds the inline reader.
+The journal's existing finite owner retains accepted storage work.
+
+`None` means no committed inventory at that read. A validated returned manifest
+with zero owners represents explicitly retained empty input. Neither establishes
+that an accepted capture cannot publish later. Original scope, boot, Controls,
+catalog witnesses and collection times remain unchanged. This opaque value is
+historical input, not current serving, suffix availability or role settlement.
+The [host integration recipe](../crates/cellule-host/docs/original-writers.md)
+documents both capture and reconstruction.
+
+Five new public minion cases cover absence versus complete empty capture, stale
+full snapshots, missing/corrupt final pages, original SQL errors and expired
+deadlines/invalid keys. Existing reconstruction and canceled publication cases
+now use the loader, preserving all 66 original epochs across two pages. The
+joined process remains a lifetime stand-in, not an OS-crashed CellNode or
+external-job qualification.
+
+| Verification on the isolated source snapshot | Result |
+| --- | --- |
+| Full workspace, all features, locked | 1,627 passed; no failures; 36 documented ignored cases. Nested filtered child summaries excluded. |
+| Complete canonical minion target | 223 passed; no failures or ignored cases. |
+| Distinct passes | 1,850; focused repeats and overlapping local LTX excluded. |
+| Focused original writer cases | 13 selected and passed, including all five new cases. |
+| Local LTX without default features | 54 passed. |
+| All-target/all-feature check, Clippy, API docs | Passed; warnings denied for lint and docs. |
+| Format, boundaries, layout, links, Rust fences, SQL/peer, diff | Passed; all 125 Rust snippets parse. |
+
+The snapshot contains 755 Rust/Cargo paths; manifest SHA256:
+`38a5f2367e124f66b5273bc0c6125232ccb801a362bc7473865777bf12b335ef`.
+Source archive, command/status records and logs are retained under
+`/tmp/cellule-original-writer-reload-evidence`. Snapshot and mounted target use
+suffix `cellule-original-writer-reload-704fa11`. This checkpoint adds no persisted
+format, authority, retry owner, scheduler or production maintenance effect.
+
+Highest remaining implementation: aggregate every authenticated original writer
+and sealed suffix with current native serving, original physical boot/process,
+reader/follower replacement policy and accepted-work barriers. Then implement
+SettleRoles/Finalize and join original actions before terminal drain handoff.
+Cross-session failure adoption, Cron/Blob owners, complete maintenance and
+receiver-loss minion scenarios, W9 campaigns and W10 exercised operations remain
+required. The full W1–W10 plan remains active.
+
 ## October 3 2026 lineage publication I/O checkpoint
 
 The native publisher strictly creates fresh lineage without an absence GET.
@@ -44,7 +94,7 @@ Final verification passed 1,627 workspace tests and all 218 minion cases:
 without default features passed 54 overlapping cases. Workspace all-target,
 all-feature check, Clippy and API documentation passed with warnings denied.
 Format, boundaries, layout, Rust fences, links, SQL/peer and diff gates pass.
-Both unchanged routing profiles are being collected against the same 754 frozen
+Both unchanged routing profiles were collected against the same 754 frozen
 Rust/Cargo paths. Manifest SHA256:
 `0958df40474c8f2caaee7753962c5a8f230bfaf5e98b7b20cc359f876b9fdb08`.
 Raw commands, source archives, errors and provider evidence remain under
@@ -75,9 +125,26 @@ Public LTX coverage also compares metadata with the final rebased proposal under
 one shared I/O permit. Final full verification was rerun after this correction.
 
 The final candidate overlaps that PUT and retains the final predecessor under
-existing admission. The complete
-four-pair leased and object-only comparison and fresh CI must establish whether
-this closes the routing gate. Workload, pair count, thresholds and expected
+existing admission. The complete local four-pair leased comparison passes every
+unchanged gate. Object-only fails six lanes: forwarded command c1, local command
+c16, forwarded query c1, uncached forwarded routing c16, and local/forwarded
+expired bursts c16. Command throughput ratios are 77.2% and 86.8% in the two
+failing command lanes; all query read counts match baseline. These Mac/ARM runs
+are diagnostic local evidence, not Linux deployment qualification. All sixteen
+benchmark processes confirmed 6,144 commands and exact final sequence recovery.
+The owned provider was inspected, logged and removed after every child exited.
+
+The temporary wrapper passed both modes to its final single-mode summary and
+was rejected. The unchanged comparator was then applied to the saved complete
+rows, separately for each mode and together, preserving every failure without
+rerunning measurements. The published `4f646b5` Linux run also failed all eight
+command lanes; its original artifacts are retained. At published `704fa11`,
+follower/object capacity, workspace/MSRV, Compose smoke, contract, website, fuzz
+and enabled fast models pass. Its Linux object-only routing artifact also passes
+all unchanged gates, with command throughput ratios of 91.7–97.2%; original
+artifacts are retained separately from the failed Mac diagnostic. Linux leased
+routing remains running. Routing qualification remains open. Workload, pair
+count, thresholds and expected
 correctness evidence are unchanged. The initial diagnostic wrapper mistakenly
 compared one pair and was rejected by the unchanged four-repeat comparator; the
 final wrapper compares only complete profiles. A pre-admission verification
