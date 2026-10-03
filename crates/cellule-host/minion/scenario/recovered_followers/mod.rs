@@ -102,10 +102,18 @@ struct Fixture {
     sealed: SealedNodeLog,
     originals: Vec<EnrollmentRecord>,
     stores: Vec<FollowerStore>,
+    #[cfg(unix)]
+    process_request: Option<cellule_host::fleet::FleetFailedBootProcessRequest>,
     _root: tempfile::TempDir,
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_process_observation(false).await
+    }
+
+    async fn with_process_observation(observe: bool) -> Self {
+        #[cfg(not(unix))]
+        assert!(!observe, "process lifetime stand-in requires Unix");
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("journal.sqlite");
         let journal = Arc::new(
@@ -253,10 +261,73 @@ impl Fixture {
             peers,
             retirements: AtomicUsize::new(0),
         });
+        #[cfg(unix)]
+        let mut process =
+            observe.then(|| failed_boot::Process::start(root.path().join("process-closure")));
         let fenced = directory
             .claim_expired(session(0), session(1), NOW + 10_001)
             .await
             .unwrap();
+        #[cfg(unix)]
+        let process_request = if let Some(process) = &mut process {
+            assert_eq!(
+                fenced.log().unwrap().phase(),
+                cellule_runtime::node::log_state::NodeLogPhase::Recovering
+            );
+            let snapshot = journal.load_snapshot(scope()).await.unwrap();
+            let roster = FleetRoster::collect(journal.as_ref(), &snapshot, deadline())
+                .await
+                .unwrap();
+            let original = journal
+                .load_enrollment(scope(), startup::spec(&intents[0]).unwrap().key().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                cellule_host::fleet::FleetFailedBootProcessRequest::capture(
+                    journal.as_ref(),
+                    &directory,
+                    &roster,
+                    &original,
+                    session(1),
+                    deadline(),
+                    || Ok(NOW + 10_001)
+                )
+                .await
+                .is_err()
+            );
+            let request = cellule_host::fleet::FleetFailedBootProcessRequest::capture_fenced(
+                journal.as_ref(),
+                &directory,
+                &roster,
+                &original,
+                session(1),
+                deadline(),
+                || Ok(NOW + 10_001),
+            )
+            .await
+            .unwrap();
+            assert!(request.canonical().is_none());
+            process.stop_and_retain(&request);
+            let confirmation = request
+                .confirm(
+                    journal.as_ref(),
+                    &directory,
+                    &failed_boot::Processes::new(root.path().join("process-closure")),
+                    session(1),
+                    deadline(),
+                    || Ok(NOW + 10_001),
+                )
+                .await
+                .unwrap();
+            assert_eq!(confirmation.fence(), request.fence());
+            assert_eq!(confirmation.snapshot(), roster.snapshot());
+            assert_eq!(confirmation.process().request_digest(), request.digest());
+            assert_eq!(confirmation.interval(), (NOW + 10_001, NOW + 10_001));
+            Some(request)
+        } else {
+            None
+        };
         let recovery =
             NodeLogRecovery::from_fenced(transport.clone(), &fenced, Limits::default()).unwrap();
         let completed = RecoveryCoordinator::new(
@@ -275,6 +346,8 @@ impl Fixture {
             sealed: completed.sealed,
             originals,
             stores,
+            #[cfg(unix)]
+            process_request,
             _root: root,
         }
     }

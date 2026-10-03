@@ -39,9 +39,10 @@ pub use controller::{FleetJournal, FleetJournalSnapshot};
 pub use coverage::FleetRoleCoverage;
 pub use enrollment::{FleetBootObservation, FleetEnrollmentAcceptance, FleetEnrollmentJournal};
 pub use failed_boot::{
-    FleetFailedBootClosure, FleetFailedBootProcessEvidence, FleetFailedBootProcessRequest,
-    FleetFailedBootProcesses, FleetFailedBootPublication, FleetFailedBootRetirement,
-    FleetFailedReaderClosure, FleetFailedReaderPublication, FleetFailedReaderRetirement,
+    FleetFailedBootClosure, FleetFailedBootProcessConfirmation, FleetFailedBootProcessEvidence,
+    FleetFailedBootProcessRequest, FleetFailedBootProcesses, FleetFailedBootPublication,
+    FleetFailedBootRetirement, FleetFailedReaderClosure, FleetFailedReaderPublication,
+    FleetFailedReaderRetirement,
 };
 pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInventoryScan};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};

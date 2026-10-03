@@ -16,7 +16,7 @@ mod inventory;
 mod log;
 mod recovered;
 mod recovery;
-pub use closure::NodeSessionClosure;
+pub use closure::{NodeSessionClosure, NodeSessionFence};
 pub use recovered::RecoveredLogRetirementAuthorization;
 
 pub use enrollment::{

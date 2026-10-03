@@ -10,20 +10,21 @@ use std::{
     sync::Mutex,
 };
 
+mod process_tests;
 mod tests;
 
-struct Process {
+pub(super) struct Process {
     child: Child,
     evidence_path: PathBuf,
 }
 impl Process {
-    fn start(path: PathBuf) -> Self {
+    pub(super) fn start(path: PathBuf) -> Self {
         Self {
             child: Command::new("sleep").arg("60").spawn().unwrap(),
             evidence_path: path,
         }
     }
-    fn stop_and_retain(&mut self, request: &FleetFailedBootProcessRequest) {
+    pub(super) fn stop_and_retain(&mut self, request: &FleetFailedBootProcessRequest) {
         assert!(self.child.try_wait().unwrap().is_none());
         self.child.kill().unwrap();
         let status = self.child.wait().unwrap();
@@ -51,14 +52,14 @@ impl Drop for Process {
     }
 }
 
-struct Processes {
+pub(super) struct Processes {
     path: PathBuf,
     reads: AtomicUsize,
     final_fault: Mutex<Option<std::io::ErrorKind>>,
     final_witness: Mutex<Option<Digest>>,
 }
 impl Processes {
-    fn new(path: PathBuf) -> Self {
+    pub(super) fn new(path: PathBuf) -> Self {
         Self {
             path,
             reads: AtomicUsize::new(0),

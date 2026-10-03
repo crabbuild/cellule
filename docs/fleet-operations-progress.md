@@ -4,6 +4,78 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 original process confirmation before recovery checkpoint
+
+`NodeDirectory::fenced_session` reads the immutable original physical boot fence
+while its log still needs recovery. `closed_session` continues to require a
+canonically Retired log. Neither observation proves process termination or Cell
+relocation. This distinction permits original process and accepted-work joining
+before retaining affected Cells and starting dependent recovery effects.
+
+`FleetFailedBootProcessRequest::capture_fenced` binds the original Established
+boot and permanent fence in a version 2 request identity. Recovery phase,
+manifest, claim adoption and observation times cannot change that identity.
+`confirm` uses the existing application process provider twice, checking the
+complete current roster, original boot, permanent fence and live claimant around
+the reads. It preserves provider errors and rejects changed evidence, stale
+barriers and nonmonotonic or excessive intervals. The provider owns authentication,
+durable joining of the original process and all accepted native/external work,
+and session nonreuse; a PID observation alone is insufficient.
+
+`FleetFailedBootRetirement::capture_retained` reuses that original request after
+related roles close and the native log becomes Retired. Its fresh terminal
+capture and publication rechecks do not restamp the original request interval.
+The existing terminal version 1 request and retirement event encoders remain
+byte-identical. Version 1 and version 2 requests are distinct: restart must retain
+the original basis and witness, and cannot silently convert a published event.
+The public request `canonical()` getter now returns an optional original terminal
+observation; `fence()` is always available. Local callers and documentation use
+the updated API. This is a source API change, not a persisted format rewrite.
+
+Seven new executable cases cover actual child joining before canonical recovery,
+stable identity through sealing and retirement, independent adapter reconstruction,
+lost committed replies, a still-running original child, original provider errors,
+changed witnesses, suspended-provider registry races, log progress, foreign request
+evidence and regressing clocks. One new runtime case distinguishes early fencing
+from strict closure through claim adoption and recovery progress. The child is a
+process-lifetime stand-in in a cold follower ensemble: these cases do not qualify
+an OS-crashed CellNode, an original Cell tail or external job joining.
+
+| Final selected qualification | Result |
+| --- | --- |
+| Runtime library | 545 passed; three existing provider cases ignored. |
+| Runtime lifecycle | 144 passed; four existing provider cases ignored. |
+| Host library / public node / minion | 34 / 106 / 210 passed. |
+| Distinct selected tests | 1,039 passed; no failures; focused repeats excluded. |
+| Runtime/host Clippy, all targets/features | Passed with warnings denied. |
+| Runtime/host API documentation | Passed with warnings denied. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer, diff | Passed. |
+| Frozen Rust/Cargo source | 726 paths; SHA256 `dbd6094dbcec4a15eed39a667c7214c7dac52d751b71dd49e1875041464c5f31`. |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-fenced-process-evidence` |
+| Parent revision | `8e4976e4893edde7658cccb208305f033712e340` |
+
+Commands, build environment, raw logs, complete source manifests and the source
+archive are retained. The first focused test run had 14 passes and one incorrect
+fixture error-class assertion; the complete-roster barrier correctly returned its
+original conflict error. The final assertion checks that exact error. Initial
+syntax and compatibility-audit script diagnostics are also retained. Production
+validators and qualification requirements were not weakened. Seven ignored cases
+require their documented isolated provider environment. These selected suites do
+not establish full workspace, provider, mixed-binary or measured load qualification.
+
+Highest priority next is operation-bound retention of every original affected Cell
+before recovery/relocation effects, including object-covered, unpublished and
+transitional writers, followed by fresh current successor prefix and serving
+verification. A scan after takeover cannot reconstruct the original ownership set.
+Process confirmation supplies no complete Cell inventory. SettleRoles/Finalize
+remain blocked on that evidence and complete authenticated observation. Receiver
+failure adoption, reader/follower controller integration, original action joining
+before drain handoff, remaining primitive faults, complete maintenance commands
+and W9–W10 qualification/runbooks/rollout remain unfinished. The full W1–W10 plan
+stays active. `crates/cellule-host/minion` remains the user-approved canonical
+executable location; the Cargo target stays `fleet_operations`.
+
 ## October 2 2026 complete recovered-suffix metadata checkpoint
 
 `RecoveryManifestStore::load_manifest` exposes every original recovered scope in

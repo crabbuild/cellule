@@ -1,6 +1,9 @@
 //! Permanent session fencing with no outstanding leader-log retirement.
 use super::*;
 
+mod fence;
+pub use fence::NodeSessionFence;
+
 /// Canonical permanent fence for one original physical boot and its leader log.
 /// A Retired log retains its original ensemble and pinned manifest. This proves
 /// neither process termination nor Cell relocation, foreign roles or withdrawal.
@@ -15,6 +18,11 @@ pub struct NodeSessionClosure {
 }
 
 impl NodeSessionClosure {
+    /// The same original permanent fence, without terminal-log assertions.
+    #[must_use]
+    pub fn fence(&self) -> NodeSessionFence {
+        NodeSessionFence::from_closure(self)
+    }
     /// Physical identity retained by the canonical tombstone.
     #[must_use]
     pub const fn node(&self) -> NodeId {
@@ -55,17 +63,9 @@ impl NodeDirectory {
         claimant: SessionId,
         now_ms: i64,
     ) -> Result<NodeSessionClosure> {
-        if now_ms < 0 || claimant == session {
-            return Err(Error::Fenced);
-        }
-        self.load(claimant, now_ms).await?.ok_or(Error::Fenced)?;
-        let path = self.layout.node_path(session.as_bytes());
-        let Some((NodeRecord::Tombstone(current), _)) = self.load_record_at(&path).await? else {
-            return Err(Error::Control("node session has no permanent fence"));
-        };
-        if current.node != node || current.session != session || current.retired_at_ms > now_ms {
-            return Err(Error::Fenced);
-        }
+        let current = self
+            .fenced_session_record(node, session, claimant, now_ms)
+            .await?;
         if current
             .log
             .as_ref()

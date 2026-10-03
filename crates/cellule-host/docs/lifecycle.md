@@ -380,6 +380,71 @@ reconstruction; OS crash and external-job/provider campaigns remain required.
 
 ### Publish an original failed boot's closure
 
+Before recovery can change Cell ownership, obtain original process evidence from
+`FleetFailedBootProcessRequest::capture_fenced` and `confirm`. The directory's
+read-only `fenced_session` supplies the permanent exact physical/session fence
+while the leader log can still be Recovering. It does not prove termination,
+native/external work joining, log retirement or takeover readiness.
+
+The fenced request uses a new v2 identity bound to the full original boot,
+acceptance/establishment and immutable fence times. Recovery phase/manifest,
+claimant, registry and capture times are excluded. It can be recaptured after
+recovery and controller/adapter reconstruction with the same original witness.
+`confirm` checks the current complete roster, original boot, permanent authority
+and stable provider evidence twice in a monotonic thirty-second interval. It
+starts no termination, native or recovery effect. Applications still authenticate
+and durably join the actual original process and every accepted job first.
+
+```rust
+async fn confirm_original_process(
+    journal: &dyn cellule_host::fleet::FleetJournal,
+    directory: &cellule_runtime::node::NodeDirectory,
+    processes: &dyn cellule_host::fleet::FleetFailedBootProcesses,
+    original: &cellule_runtime::fleet::operations::EnrollmentRecord,
+    claimant: cellule_runtime::identity::SessionId,
+    deadline: tokio::time::Instant,
+    mut clock: impl FnMut() -> cellule_runtime::Result<i64>,
+) -> cellule_runtime::Result<(
+    cellule_host::fleet::FleetFailedBootProcessRequest,
+    cellule_host::fleet::FleetFailedBootProcessConfirmation,
+)> {
+    let snapshot = journal.load_snapshot(original.spec().scope).await.map_err(|source| {
+        cellule_runtime::Error::Facility { name: "application-process-journal", source }
+    })?;
+    let roster = cellule_host::fleet::FleetRoster::collect(journal, &snapshot, deadline).await?;
+    let request = cellule_host::fleet::FleetFailedBootProcessRequest::capture_fenced(
+        journal, directory, &roster, original, claimant, deadline, &mut clock,
+    ).await?;
+    let confirmed = request.confirm(
+        journal, directory, processes, claimant, deadline, clock,
+    ).await?;
+    Ok((request, confirmed))
+}
+```
+
+Retain the complete original Cell set before overlay publication, log sealing or
+takeover. A process confirmation permits this collection; it is not the collection
+or successor evidence. Full catalog/native inventory and durable operation-bound
+retention remain required. An active Recovering log blocks independent takeover;
+already Sealed/inactive logs require an earlier retained writer set. Re-reading
+only current failed-owner controls cannot reconstruct Cells that already moved.
+
+After recovery and all related roles close, use
+`FleetFailedBootRetirement::capture_retained` with the original process request
+and a freshly collected roster. It preserves the original request interval and
+identity, and requires fresh terminal-log and physical-reference checks. Publication
+uses the same provider and enrollment journal. Process confirmation cannot bypass
+any boot-retirement barrier. The existing terminal `capture` retains its v1
+digest and event identity. `request.fence()` is always available;
+`request.canonical()` now returns an optional original terminal-log observation.
+It is absent for fenced captures even after their original log later retires.
+After restart, recapture a fenced request with `capture_fenced` and use
+`capture_retained` again. Preserve the basis chosen for the original publication:
+terminal v1 and fenced v2 requests have distinct identities. Changing basis or
+witness cannot adopt an already committed retirement. The provider durably retains
+that original request/witness binding; mixed-binary/provider rollout qualification
+remains required.
+
 After recovered follower publication, `FleetFailedBootRetirement` closes the
 original boot row through the same enrollment journal. It requires a complete
 bootstrapped roster, the exact Established original request and all its related

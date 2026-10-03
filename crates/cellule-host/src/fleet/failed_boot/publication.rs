@@ -29,8 +29,7 @@ impl FleetFailedBootRetirement {
         };
         let now = clock()?;
         self.confirm_snapshot(journal, deadline).await?;
-        self.request
-            .confirm_canonical(directory, claimant, now, deadline)
+        self.confirm_terminal(directory, claimant, now, deadline)
             .await?;
         let process = self.request.confirm_process(processes, deadline).await?;
         let evidence = records::retirement(&process);
@@ -43,8 +42,7 @@ impl FleetFailedBootRetirement {
         // before committing any evidence; a new related role cannot be ignored.
         self.confirm_snapshot(journal, deadline).await?;
         let now = clock()?;
-        self.request
-            .confirm_canonical(directory, claimant, now, deadline)
+        self.confirm_terminal(directory, claimant, now, deadline)
             .await?;
         let record = bounded(deadline, async {
             let returned = journal
@@ -123,8 +121,7 @@ impl FleetFailedBootRetirement {
             clock,
         )
         .await?;
-        self.request
-            .confirm_canonical(directory, claimant, clock()?, deadline)
+        self.confirm_terminal(directory, claimant, clock()?, deadline)
             .await?;
         if &self.request.confirm_process(processes, deadline).await? != process {
             return Err(Error::Control("original failed process evidence changed"));
@@ -135,11 +132,33 @@ impl FleetFailedBootRetirement {
             snapshot,
             digest: records::closure_digest(&boot, process)?,
             boot,
-            canonical: self.request.canonical.clone(),
+            canonical: self.canonical.clone(),
             process: process.clone(),
             started_at_ms: self.started_at_ms,
             finished_at_ms,
         })
+    }
+
+    async fn confirm_terminal(
+        &self,
+        directory: &NodeDirectory,
+        claimant: SessionId,
+        now: i64,
+        deadline: Instant,
+    ) -> Result<()> {
+        self.request
+            .confirm_canonical(directory, claimant, now, deadline)
+            .await?;
+        let endpoint = self.request.boot.spec().target;
+        let current = bounded(
+            deadline,
+            directory.closed_session(endpoint.node, endpoint.session, claimant, now),
+        )
+        .await?;
+        if current != self.canonical {
+            return Err(Error::Fenced);
+        }
+        Ok(())
     }
 }
 
@@ -155,13 +174,24 @@ impl FleetFailedBootProcessRequest {
             return Err(Error::Fenced);
         }
         let endpoint = self.boot.spec().target;
-        let canonical = bounded(
-            deadline,
-            directory.closed_session(endpoint.node, endpoint.session, claimant, now),
-        )
-        .await?;
-        if canonical != self.canonical {
-            return Err(Error::Fenced);
+        if let Some(original) = &self.canonical {
+            let current = bounded(
+                deadline,
+                directory.closed_session(endpoint.node, endpoint.session, claimant, now),
+            )
+            .await?;
+            if &current != original {
+                return Err(Error::Fenced);
+            }
+        } else {
+            let current = bounded(
+                deadline,
+                directory.fenced_session(endpoint.node, endpoint.session, claimant, now),
+            )
+            .await?;
+            if current != self.fence {
+                return Err(Error::Fenced);
+            }
         }
         Ok(())
     }

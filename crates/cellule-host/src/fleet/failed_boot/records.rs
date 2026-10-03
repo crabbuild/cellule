@@ -143,6 +143,22 @@ pub(super) fn retirement(process: &FleetFailedBootProcessEvidence) -> Digest {
     hash.update(process.witness.as_bytes());
     Digest::from_bytes(*hash.finalize().as_bytes())
 }
+
+pub(super) fn fenced_request_digest(
+    boot: &EnrollmentRecord,
+    fence: &NodeSessionFence,
+) -> Result<Digest> {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"cellule.fleet-failed-boot-process-request.v2\0");
+    hash.update(&boot.spec().to_bytes().map_err(operation)?);
+    hash.update(&boot.accepted_at_ms().to_be_bytes());
+    hash.update(boot.established_evidence().ok_or(Error::Fenced)?.as_bytes());
+    hash.update(fence.node().as_bytes());
+    hash.update(fence.session().as_bytes());
+    hash.update(&fence.expires_at_ms().to_be_bytes());
+    hash.update(&fence.retired_at_ms().to_be_bytes());
+    Ok(Digest::from_bytes(*hash.finalize().as_bytes()))
+}
 pub(super) fn result(
     original: &EnrollmentRecord,
     returned: &EnrollmentRecord,

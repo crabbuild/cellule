@@ -136,6 +136,20 @@ a directory for this checkout beneath `$HOME/Workspace/crabbuild-target`.
 
 ## Transaction and lifecycle contract
 
+Original-process cases capture and confirm a permanent boot fence while the
+leader log is still Recovering, before the existing recovery coordinator runs.
+They retain the same process identity through native log retirement, journal
+publication, lost replies and independent adapter reconstruction. Changed provider
+evidence, suspended reads across registry changes, foreign identities and regressing
+clocks refuse. Boot retirement still waits for the complete terminal role barrier.
+These cases use a joined child lifetime stand-in and a cold follower ensemble with
+no Cell suffix or external jobs; they do not qualify an OS-crashed CellNode or
+prove complete affected-writer retention and successors.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked recovered_followers::failed_boot::process_tests
+```
+
 The reader producer cases use `fleet_reader_enrollments_page` while original
 acceptance, establishment and native open replies are paused. They check original
 requests, separate errors, accepted preparation before a row exists, page memory
