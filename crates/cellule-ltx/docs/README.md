@@ -854,7 +854,12 @@ These are per-operation correctness bounds, not an RSS quota.
   bookkeeping, not the LTX format or the authenticated metadata walk required for
   activation.
 - **Connections and caches.** Each open `Db` retains three SQLite connections
-  with a 64 KiB page-cache target per connection. `Host` can share disk, I/O,
+  with a 64 KiB page-cache target and an 8 KiB lookaside arena per connection.
+  Lookaside reduces allocator contention during small SQL preparations;
+  larger or excess allocations use SQLite's normal heap. Runtime native
+  admission charges all three arenas, raising the per-writer reservation
+  from 64 KiB to 88 KiB. These reservations are not RSS limits.
+  `Host` can share disk, I/O,
   blocking-job, recovery, dirty-job, scratch, and telemetry admission across many
   databases. Sparse page read-ahead is capped at 64 pages or 1 MiB per request,
   and the shared decoded page cache is capped at 8 MiB.

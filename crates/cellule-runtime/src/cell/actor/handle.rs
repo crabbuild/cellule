@@ -258,6 +258,8 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Query(Box::new(QueuedQuery {
+                telemetry: self.inner.telemetry.clone(),
+                queued_at: std::time::Instant::now(),
                 cell: self.cell,
                 admission: self.admission.clone(),
                 max_result_bytes,

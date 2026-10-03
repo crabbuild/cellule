@@ -252,6 +252,7 @@ dependencies = [
  "cellule-runtime",
  "cellule-store",
  "object_store",
+ "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",

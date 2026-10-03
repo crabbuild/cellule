@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::{Error, Result};
 
-pub(crate) const ACTIVE_CELL_NATIVE_BYTES: usize = 64 * 1024;
+pub(crate) const ACTIVE_CELL_NATIVE_BYTES: usize = 64 * 1024
+    + (cellule_ltx::MANAGED_SQLITE_CONNECTIONS * cellule_ltx::MANAGED_CONNECTION_LOOKASIDE_BYTES)
+        as usize;
 /// Persistent database, WAL, SHM and capture descriptors reserved per active Cell.
 pub const ACTIVE_CELL_FILE_DESCRIPTORS: usize = 8;
 // Conservatively cover the entire 8 MiB shared page cache plus 4 MiB for

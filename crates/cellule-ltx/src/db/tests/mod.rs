@@ -199,7 +199,7 @@ fn captured_indexes_match_independent_ltx_inspection() {
 }
 
 #[test]
-fn managed_connections_disable_sqlite_lookaside() {
+fn managed_connections_use_bounded_sqlite_lookaside() {
     use rusqlite::ffi;
 
     let temp = tempfile::TempDir::new().unwrap();
@@ -221,8 +221,13 @@ fn managed_connections_disable_sqlite_lookaside() {
             )
         };
         assert_eq!(result, ffi::SQLITE_OK);
-        assert_eq!(current, 0);
-        assert_eq!(highwater, 0);
+        assert!(
+            current > 0,
+            "small statements should use the connection arena"
+        );
+        assert!(highwater >= current);
+        // SQLite may split the arena into 512-byte and 128-byte slots.
+        assert!(u64::try_from(highwater).unwrap() <= MANAGED_CONNECTION_LOOKASIDE_BYTES / 128);
     }
 }
 

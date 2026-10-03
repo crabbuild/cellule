@@ -437,3 +437,126 @@ cargo test -p cellule-axum --doc --all-features --locked
 cargo test -p cellule-axum --doc --no-default-features --locked
 cargo test -p cellule-axum --all-targets --all-features --locked
 ```
+
+## Verify HTTP against RustFS
+
+The same example can use real S3 objects. Set `CELLULE_TEST_ENDPOINT`,
+`CELLULE_TEST_BUCKET`, a fresh nonempty `CELLULE_TEST_PREFIX`,
+`AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. `AWS_DEFAULT_REGION`
+defaults to `us-east-1`; `AWS_SESSION_TOKEN` is optional.
+`CELLULE_AXUM_BIND` selects a loopback listener (default `127.0.0.1:3000`).
+`CELLULE_AXUM_CELLS` selects 1–16 active SQL Cells, and
+`CELLULE_AXUM_WORKERS` selects 1–16 SQL workers; both default to one.
+Order IDs route to shard `id mod active_cells` (Euclidean remainder).
+The application declares 16 fixed shards and activates the selected prefix
+of that topology. Each active Cell has its own database, writer, publication
+root, and request ledger; handlers use `CellClient::local_many` through the
+same typed application handle and `Cellule` extractor.
+The service refuses readiness unless all six storage capability checks pass.
+
+After Ctrl-C drains HTTP and releases the Cell, starting the **same binary**
+with the same S3 prefix **and Cell count** restores every authoritative root
+into a new temporary SQLite directory, using a fresh fenced session.
+Changing the Cell count changes order routing, so use a fresh prefix for
+each performance point. An active owner is refused;
+this tutorial demonstrates graceful restart, not failed-owner takeover.
+Keep the binary unchanged so its application code digest matches the catalog.
+
+The [performance runner](../../scripts/bench-axum-rustfs.py) measures real
+HTTP POST and GET requests, using the adapter, application handles, SQL
+runtime, LTX publication, and RustFS. It verifies receipt sequences, every
+acknowledged row, exact retries, conflicting inputs, expired identities,
+released authority, and cold recovery followed by another durable write.
+For multiple Cells, it verifies distinct Cell identities and contiguous
+sequences separately for every shard, restores every database, and publishes
+one new command per recovered writer. A shared request identity across
+distinct Cells also verifies their independent request ledgers.
+It saves request envelopes, individual timings, responses, service logs,
+and aggregate results. An unexpected response fails the run; uncertain
+commands are never silently retried with new identities.
+
+Use an isolated source snapshot for these process tests. From the repository
+root, build a release binary and start the cookbook's pinned local provider:
+
+```sh
+task_dir="$HOME/Workspace/crabbuild-target/cellule-axum-rustfs-$(date +%s)"
+mkdir -p "$task_dir/source"
+git archive HEAD | tar -x -C "$task_dir/source"
+export CARGO_TARGET_DIR="$task_dir/target"
+cargo build --release -p cellule-axum --examples --locked --manifest-path "$task_dir/source/Cargo.toml"
+
+export COMPOSE_PROJECT_NAME=cellule-axum-perf
+export CELLULE_COOKBOOK_STORAGE_PORT=19751
+sh "$task_dir/source/cookbook/scripts/local-storage.sh" up
+export CELLULE_TEST_ENDPOINT=http://127.0.0.1:19751
+export CELLULE_TEST_BUCKET=cellule-cookbook
+export CELLULE_TEST_PREFIX="axum-http-$(date +%s)"
+export AWS_ACCESS_KEY_ID=cellule-cookbook
+export AWS_SECRET_ACCESS_KEY=cellule-cookbook-local-only
+export AWS_DEFAULT_REGION=us-east-1
+
+python3 "$task_dir/source/scripts/bench-axum-rustfs.py" \
+  --binary "$CARGO_TARGET_DIR/release/examples/sql" \
+  --output "$task_dir/results" \
+  --repeats 3 --cells 1 4 8 16 --workers 4 --concurrency 16 \
+  --warmup 16 --writes 512 --reads 2048
+sh "$task_dir/source/cookbook/scripts/local-storage.sh" down
+```
+
+This local Compose project uses disposable example credentials. The runner
+needs Python 3.11 or newer and retains its S3 prefixes for inspection. The
+`down` command preserves the provider's volume. `--cells` and `--concurrency`
+form a matrix; each phase must contain at least one request per active Cell.
+The command above holds workers, client concurrency, and total operation
+counts constant while varying the number of Cells. Powers of two and the
+chosen operation counts distribute work evenly across the Cells.
+Measurements describe one service process under closed-loop load on the
+current machine; they do not qualify
+production capacity, distributed ownership, or fault recovery.
+
+See the [steady-read optimization](performance/2026-10-03-rustfs-steady.md),
+[earlier multicell comparison](performance/2026-10-03-rustfs-multicell.md),
+and [single-Cell report](performance/2026-10-03-rustfs-http.md) for results
+and retained evidence. CI also runs a small 1/4-Cell × 1/4-client
+matrix with the same correctness checks, without performance thresholds.
+
+For steady-state reads, build both examples and add the Rust driver:
+
+```sh
+python3 "$task_dir/source/scripts/bench-axum-rustfs.py" \
+  --binary "$CARGO_TARGET_DIR/release/examples/sql" \
+  --read-driver "$CARGO_TARGET_DIR/release/examples/http_load" \
+  --output "$task_dir/steady-results" \
+  --repeats 3 --cells 1 4 16 --workers 4 --concurrency 16 64 \
+  --warmup 16 --writes 32 --reads 64 \
+  --read-warmup-seconds 5 --read-seconds 60
+```
+
+The provider must remain running and the S3 prefix must be fresh. Each client
+visits all acknowledged orders, validates every output and minimum receipt,
+and reuses HTTP connections. The bounded histogram records all attempts at
+10 µs resolution through one second; an overflow percentile is reported as
+unknown, and the exact maximum is retained. Latency includes body decoding
+and validation. Payload throughput counts successful JSON response bodies,
+excluding HTTP headers and transport overhead. CPU windows include warmup.
+Service logs report lifetime mean actor queue, worker round-trip, and primitive
+query durations after drain; these include warmup and correctness checks.
+
+Add `--baseline-binary /absolute/path/to/previous/sql` for paired comparisons
+with alternating baseline/candidate order and separate fresh prefixes. Keep
+the driver, topology, HTTP Tokio thread count, and workload identical; repeat
+the matrix with different `--workers` values to vary SQL capacity separately.
+`TOKIO_WORKER_THREADS` controls the example's HTTP runtime independently of
+SQL workers. On macOS, `--sample` records server stacks for diagnosis; omit
+it from final comparisons to avoid profiler overhead.
+
+For a dedicated Linux runner, dispatch the existing capacity workflow in
+`axum-reads` mode. This runs the paired HTTP benchmark separately from the
+unchanged capacity qualification jobs and retains its evidence:
+
+```sh
+gh workflow run write-capacity.yml --ref YOUR_BRANCH \
+  -f mode=axum-reads \
+  -f baseline_ref=a277e5282badab55ceb58433fdddf0dee4dc8542 \
+  -f read_seconds=60
+```

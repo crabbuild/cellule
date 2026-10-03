@@ -176,6 +176,17 @@ pub trait CellTelemetry: Send + Sync {
     ) {
     }
 
+    /// Records an owner query's actor queue wait and SQL worker round trip.
+    /// The round trip includes worker admission, read-only setup, and the handler.
+    /// Queries refused before dispatch are excluded; deadline failures are included.
+    fn query_execution(
+        &self,
+        _queue_wait: Duration,
+        _worker_round_trip: Duration,
+        _succeeded: bool,
+    ) {
+    }
+
     /// Records background root progress separately from the response winner.
     /// Cell IDs and sequences are for local trace correlation, never metric labels.
     fn publication_completed(&self, _cell: CellId, _timing: PublicationTiming) {}
@@ -291,6 +302,17 @@ impl CellTelemetryHandle {
     ) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.command_execution(queue_wait, worker_round_trip, succeeded);
+        }
+    }
+
+    pub(crate) fn query_execution(
+        &self,
+        queue_wait: Duration,
+        worker_round_trip: Duration,
+        succeeded: bool,
+    ) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.query_execution(queue_wait, worker_round_trip, succeeded);
         }
     }
 
