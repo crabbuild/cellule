@@ -188,8 +188,16 @@ those retained owners across applications. Its cases capture actual SQLite
 mutations and fsync follower frames before ordinary recovery pins/seals the tails.
 The collector survives journal restart and refuses omitted owners, changed roots,
 missing/corrupt manifest bytes and changed original-process evidence. Inherited
-overlays, exact current successor serving, complete roles and accepted work still
-require their independent proofs.
+overlays, complete roles and accepted work require their independent proofs.
+
+`FleetOriginalWriterSuccessorInventory` now verifies every retained original
+against an actual managed native successor, with exact origin/prefix checks and
+a global serving/boot/process/journal recheck. Seven cases use four originals
+across two applications, ordinary native takeover, two rootless writers and two
+sealed suffixes. They refuse missing mappings, physical-node substitution,
+changed publication and missing current origin bytes, and check cancellation
+resource cleanup and expired deadlines. Complete inherited-overlay aggregate
+faults, remote/process integration and maintenance finalization remain open.
 
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked writer_tests

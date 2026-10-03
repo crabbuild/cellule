@@ -61,6 +61,14 @@ flowchart LR
 Cell view. Its view and replacement refresh are charged to the node runtime's
 memory, descriptor, and disk ledgers.
 
+**Native serving observation.** `CellRuntime::observe_serving` joins the existing
+actor FIFO and captures the exact current authority root and native generation
+at an epoch strictly after the caller's original epoch. Repeat it after prefix
+or origin I/O and compare `CellServingObservation::same_writer`; demand samples
+remain advisory. Movement and the host's
+[original-writer collector](../../cellule-host/docs/original-writers.md) share
+this path. It starts no acquisition and grants no retention or maintenance rights.
+
 `close()` fences new reader work. `close_and_join()` also detaches snapshots
 from every peer clone and joins accepted query/refresh work, including native
 jobs whose waiters were cancelled. Its receipt preserves the last installed

@@ -118,6 +118,37 @@ verification, then recheck current native serving and the complete role/work
 barrier before settlement. Sealed log recovery permits no log retirement or node
 finalization by itself.
 
+## Verify every original writer against its native successor
+
+`FleetOriginalWriterSuccessorInventory::collect` composes the complete original
+writer/suffix inventory with actual current native writers. Supply a read-only
+`FleetOriginalWriterSuccessors` provider that resolves each original target to
+its existing `Arc<CellNode>`, physical node, canonical catalog and authority,
+exact Cell/incarnation replica, and authenticated historical manifest store.
+Authenticate these mappings across every original application/tenant. The
+provider retains accepted lookup work through its existing finite owner.
+
+The collector checks the host's retained managed startup against the complete
+roster, its live signed boot/endpoint/release, and the compiled Cell contract.
+The shared runtime `observe_serving` joins ordinary FIFO admission and captures
+the current authority root plus native actor generation at a strictly later
+ownership epoch. Native prefix verification checks every original root and
+sealed suffix against that exact current root. Rootless originals still require
+complete current origin verification. An inherited overlay is selected from its
+digest-verified historical manifest with its original Cell epoch preserved.
+
+After all prefix reads, the collector rechecks every retained native host and
+writer position, then repeats the original process/log/full-journal checks and
+confirms the roster. Missing targets, wrong physical boots, changed publication,
+missing origin dependencies and provider errors refuse the complete set. One
+absolute deadline spans collection; native origin memory and I/O use existing
+runtime admission. Applications account the bounded copied result buffers.
+
+This is a point observation. Reader/follower replacement policy, original
+accepted work, operation barriers and finalization remain separate requirements.
+The provider currently accepts actual host references; remote management
+transport and process/provider qualification still need integration.
+
 ## Checks and limits
 
 | Boundary | Required behavior |
@@ -153,7 +184,15 @@ scope after independent journal reconstruction. Fault cases omit an original,
 change a predecessor, remove/corrupt manifest bytes and change or fail the final
 process read. These are input-boundary cases, not complete maintenance evidence.
 Their joined child is a lifetime stand-in; OS-crashed CellNode, accepted external
-jobs, successor prefixes and provider fault qualification remain required.
+jobs and provider fault qualification remain required.
+
+Seven successor cases activate four original writers across two applications
+through ordinary native takeover, including two rootless originals and two
+sealed suffixes. They check complete proof coverage, omitted/error mappings,
+changed publication during another lookup, wrong physical node, removed current
+origin bytes despite a warm actor, cancellation cleanup and expired deadlines.
+The complete inherited-overlay aggregate success/fault campaign remains open;
+the existing native acquisition-prefix tests are separate evidence.
 
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked writer_tests
