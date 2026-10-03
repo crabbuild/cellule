@@ -196,8 +196,16 @@ a global serving/boot/process/journal recheck. Seven cases use four originals
 across two applications, ordinary native takeover, two rootless writers and two
 sealed suffixes. They refuse missing mappings, physical-node substitution,
 changed publication and missing current origin bytes, and check cancellation
-resource cleanup and expired deadlines. Complete inherited-overlay aggregate
-faults, remote/process integration and maintenance finalization remain open.
+resource cleanup and expired deadlines. Six further inherited aggregate cases
+remove an earlier boot's actual canonical manifest during two intermediate
+native acquisitions. The failed claims retain both original overlays. Joined
+native shutdown, exact-byte manifest restoration and later ordinary takeover
+produce real current successors across both applications. Proofs retain the
+earlier suffix's Cell epoch 1, original owner epoch 2 and materialization epoch 3.
+Missing/corrupt historical metadata, substituted storage and missing owner or
+acquisition history refuse complete collection despite warm actors. A later
+publication preserves the exact suffix prefix. Physical process/provider
+integration, complete roles/accepted work and maintenance finalization remain open.
 
 Six further observation cases attach that complete inventory to the public
 `FleetObservation` and exercise the public reconciler. They preserve all four

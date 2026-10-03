@@ -109,8 +109,11 @@ impl Movement {
                 Arc::new(Cells(inputs.clone(), recovery_inputs.clone())),
             )
             .unwrap();
+        let lease_observed_at = clock();
         receiver
-            .install_node_lease(NodeLeaseGuard::new(clock(), clock() + 60_000).unwrap())
+            .install_node_lease(
+                NodeLeaseGuard::new(lease_observed_at, lease_observed_at + 60_000).unwrap(),
+            )
             .unwrap();
         Self {
             source,

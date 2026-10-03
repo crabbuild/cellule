@@ -182,8 +182,11 @@ async fn busy_maintenance_release_preserves_sql_receipt_after_waiter_or_publicat
         receiver
             .install_task_group(CancellationToken::new(), CancellationToken::new())
             .unwrap();
+        let lease_observed_at = clock();
         receiver
-            .install_node_lease(NodeLeaseGuard::new(clock(), clock() + 60_000).unwrap())
+            .install_node_lease(
+                NodeLeaseGuard::new(lease_observed_at, lease_observed_at + 60_000).unwrap(),
+            )
             .unwrap();
         let replica = CellReplica::new(
             fixture.authority.layout().clone(),

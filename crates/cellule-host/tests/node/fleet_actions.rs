@@ -648,7 +648,8 @@ pub(super) async fn fixture() -> Fixture {
         .unwrap();
     node.install_fleet_actions(scope(), physical, journal.clone(), Arc::new(NoCells))
         .unwrap();
-    let lease = NodeLeaseGuard::new(clock(), clock() + 60_000).unwrap();
+    let lease_observed_at = clock();
+    let lease = NodeLeaseGuard::new(lease_observed_at, lease_observed_at + 60_000).unwrap();
     node.install_node_lease(lease.clone()).unwrap();
     let root = tempfile::tempdir().unwrap();
     let layout = CellStorageLayout::new(
@@ -916,8 +917,11 @@ async fn lost_publication_reply_retries_original_proof_without_releasing_again()
     receiver
         .install_task_group(CancellationToken::new(), CancellationToken::new())
         .unwrap();
+    let lease_observed_at = clock();
     receiver
-        .install_node_lease(NodeLeaseGuard::new(clock(), clock() + 60_000).unwrap())
+        .install_node_lease(
+            NodeLeaseGuard::new(lease_observed_at, lease_observed_at + 60_000).unwrap(),
+        )
         .unwrap();
     let replica = CellReplica::new(
         fixture.authority.layout().clone(),

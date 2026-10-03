@@ -9,6 +9,7 @@ use cellule_runtime::{
 };
 use std::collections::HashMap;
 
+mod inherited;
 mod observation;
 
 struct Successors {
@@ -89,6 +90,9 @@ impl SuccessorFixture {
     }
     async fn new_at(now: i64) -> Self {
         let original = WriterFixture::with_suffixes_and_takeover_at(2, true, false, now).await;
+        Self::from_original(original).await
+    }
+    async fn from_original(original: WriterFixture) -> Self {
         original.retain().await;
         let roster = original.base.roster().await;
         let intent = roster

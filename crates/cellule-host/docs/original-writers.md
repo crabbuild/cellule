@@ -215,8 +215,21 @@ through ordinary native takeover, including two rootless originals and two
 sealed suffixes. They check complete proof coverage, omitted/error mappings,
 changed publication during another lookup, wrong physical node, removed current
 origin bytes despite a warm actor, cancellation cleanup and expired deadlines.
-The complete inherited-overlay aggregate success/fault campaign remains open;
-the existing native acquisition-prefix tests are separate evidence.
+Six inherited aggregate cases use an earlier boot's two-application sealed log.
+Removing its actual canonical manifest makes two intermediate native acquisitions
+commit their ownership CAS and then fail. Both retain the exact original overlay
+without a successful acquisition record. After joining and fencing that native
+node, restoring the exact manifest bytes and renewing the later destination
+through canonical heartbeat CAS, ordinary takeover materializes both tails.
+The collector preserves manifest Cell epoch 1, original owner epoch 2 and
+materializing acquisition epoch 3. Missing/corrupt historical manifests,
+substituted storage, missing earlier owner history and missing materialization
+history refuse the complete collection even while the current actors can query.
+A later acknowledged publication retains the exact materialized prefix.
+
+These are in-process native acquisition and collector cases. The original
+process evidence still uses the joined lifetime stand-in; full physical process,
+external work, role replacement policy and provider qualification remain required.
 
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked writer_tests

@@ -133,6 +133,18 @@ impl Fixture {
         frames: Vec<Bytes>,
         now: i64,
     ) -> Self {
+        Self::with_recovered_boot_at(observe, cells, frames, now, 0, 1).await
+    }
+
+    async fn with_recovered_boot_at(
+        observe: bool,
+        cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
+        frames: Vec<Bytes>,
+        now: i64,
+        leader: usize,
+        claimant: usize,
+    ) -> Self {
+        assert!(leader < 3 && claimant < 3 && leader != claimant);
         let check = now + 10_005;
         #[cfg(not(unix))]
         assert!(!observe, "process lifetime stand-in requires Unix");
@@ -163,7 +175,7 @@ impl Fixture {
                 )
                 .await
                 .unwrap();
-            let issued = if index == 0 { now } else { now + 9_000 };
+            let issued = if index == leader { now } else { now + 9_000 };
             let ad = NodeAdvertisement::sign(
                 node_id(index),
                 session(index),
@@ -201,7 +213,7 @@ impl Fixture {
             intents.push(intent);
         }
         let source = directory
-            .load(session(0), now + 9_001)
+            .load(session(leader), now + 9_001)
             .await
             .unwrap()
             .unwrap();
@@ -225,8 +237,8 @@ impl Fixture {
                 scope: scope(),
                 request: Digest::from_bytes([index as u8 + 90; 32]),
                 source: Some(EnrollmentEndpoint {
-                    node: node_id(0),
-                    session: session(0),
+                    node: node_id(leader),
+                    session: session(leader),
                     intent_revision: 1,
                 }),
                 target: EnrollmentEndpoint {
@@ -249,7 +261,7 @@ impl Fixture {
             .unwrap();
         if !frames.is_empty() {
             let enrolled = directory
-                .load(session(0), now + 9_001)
+                .load(session(leader), now + 9_001)
                 .await
                 .unwrap()
                 .unwrap();
@@ -281,7 +293,7 @@ impl Fixture {
             .unwrap();
             if !frames.is_empty() {
                 let receipt = store
-                    .append(session(0), 4, frames.clone(), 0)
+                    .append(session(leader), 4, frames.clone(), 0)
                     .await
                     .unwrap();
                 assert_eq!(receipt.durable_through, frames.len() as u64);
@@ -291,7 +303,7 @@ impl Fixture {
                 LocalRecoveredFollowerTransport::new(
                     LocalFollowerTransport::new(member, store.clone()),
                     directory.clone(),
-                    session(1),
+                    session(claimant),
                     move || Ok(check),
                 )
                 .unwrap(),
@@ -306,7 +318,7 @@ impl Fixture {
         let mut process =
             observe.then(|| failed_boot::Process::start(root.path().join("process-closure")));
         let fenced = directory
-            .claim_expired(session(0), session(1), now + 10_001)
+            .claim_expired(session(leader), session(claimant), now + 10_001)
             .await
             .unwrap();
         #[cfg(unix)]
@@ -320,7 +332,10 @@ impl Fixture {
                 .await
                 .unwrap();
             let original = journal
-                .load_enrollment(scope(), startup::spec(&intents[0]).unwrap().key().unwrap())
+                .load_enrollment(
+                    scope(),
+                    startup::spec(&intents[leader]).unwrap().key().unwrap(),
+                )
                 .await
                 .unwrap()
                 .unwrap();
@@ -330,7 +345,7 @@ impl Fixture {
                     &directory,
                     &roster,
                     &original,
-                    session(1),
+                    session(claimant),
                     deadline(),
                     || Ok(now + 10_001)
                 )
@@ -342,7 +357,7 @@ impl Fixture {
                 &directory,
                 &roster,
                 &original,
-                session(1),
+                session(claimant),
                 deadline(),
                 || Ok(now + 10_001),
             )
@@ -355,7 +370,7 @@ impl Fixture {
                     journal.as_ref(),
                     &directory,
                     &failed_boot::Processes::new(root.path().join("process-closure")),
-                    session(1),
+                    session(claimant),
                     deadline(),
                     || Ok(now + 10_001),
                 )

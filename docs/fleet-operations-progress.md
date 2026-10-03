@@ -4,6 +4,98 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 inherited original recovery checkpoint
+
+Six public minion cases now exercise complete original successor collection with
+inherited overlays across two applications. An earlier boot publishes real
+SQLite predecessors and seals two fsynced follower suffixes. Removing the actual
+canonical manifest causes two ordinary intermediate native takeovers to commit
+their ownership CAS and fail before materialization. Both preserve their exact
+recovery input without a successful acquisition record. The fixture joins and
+fences that CellNode, restores the same manifest bytes, renews the later boot
+through canonical heartbeat CAS, and uses ordinary native takeover to recover
+both Cells. No fabricated successful Control, prepared root or acquisition
+record supplies the proof.
+
+The aggregate preserves the earlier manifest's Cell epoch 1, the original failed
+owner epoch 2 and materializing acquisition epoch 3. It confirms both SQLite
+values and every exact canonical acquisition input. Missing/corrupt historical
+manifests, a substituted backend, missing earlier owner history and missing
+materialization history refuse the complete collection despite warm native
+actors. A later acknowledged publication advances the current root while the
+exact earlier materialized prefix remains required.
+
+Shared private fixture extraction keeps existing default identities, clocks,
+lease lengths, follower inputs and qualification profiles unchanged. Changes are confined to minion and host fixture/test Rust code; no framework
+production, persisted or transport codec changes. Process evidence remains a joined lifetime stand-in;
+physical process/provider, complete role policy, external accepted work and
+maintenance finalization remain unqualified.
+
+### CI lease fixture correction
+
+The preceding `831b83a` head passes follower/object capacity, Compose smoke,
+cookbook quality and scenarios, contracts, website, fuzz, MSRV and the fast model
+matrix. Workspace CI reports `node lease bounds are invalid` in the dropped
+fleet-action waiter case: five fleet fixtures build `now` and `expires` from two
+separate clock readings. Advancing a millisecond between them exceeds the
+unchanged maximum 60-second lease. Each now captures one observation timestamp
+for both bounds. Production lease validation and test assertions are unchanged.
+
+Both routing profiles still fail local command concurrency 16 throughput:
+leased reaches 89.53% and object-only 88.24% of baseline against the unchanged
+90% gate. Forwarded commands and query gates pass. Their publication traces put
+most of the difference in preparation: median per-command means increase from
+9.13 to 10.65 ms (leased) and 8.95 to 10.54 ms (object-only). This locates the
+stage without isolating required lineage I/O from backend/runner variation.
+Both profiles' frozen binaries, manifests, raw samples and stage analysis are
+retained with this checkpoint. Routing qualification remains open.
+
+### Verification
+
+| Verification on the isolated source | Result |
+| --- | --- |
+| Full framework workspace, all features, locked | 1,652 passed; no failures; 36 documented ignored cases. |
+| Complete canonical minion target | 250 passed; no failures or ignored cases. |
+| Distinct framework/minion passes | 1,902; focused repeats and overlapping local LTX excluded. |
+| Focused inherited aggregate | All six new cases passed. |
+| Local LTX without default features | 54 passed. |
+| Framework check, Clippy and API docs | Passed; all targets/features, locked; lint/docs deny warnings. |
+| Separate cookbook quality | Check, Clippy, warning-denied docs, all 256 tests and binary builds passed; locked. |
+| Static gates | Format, boundaries, layout, 127 Rust snippets, 1,245 Markdown links, 28 SQL/peer assertions, 570 protocol links, cookbook layout/format and diff passed. |
+
+All 11 original verification commands and all four supplemental verification
+groups completed with exit zero. The final isolated snapshot differs only in
+the four host test files containing the five lease constructions. Full workspace
+tests again passed 1,652 cases with the same 36 documented ignores; all-target/
+feature check, warning-denied Clippy and 20 consecutive repeats of the affected
+case passed. Minion, framework production and cookbook Rust/Cargo inputs are
+identical across both snapshots. All 1,070 Rust/Cargo paths match the final
+isolated source. Manifest SHA256:
+`dda0346019faf75be5541737dbe8d7110201edba68151e4448bcbbf0c9236922`.
+Complete commands/statuses, logs, source manifests/archives, initial fixture
+failures and raw routing evidence are retained. All owned local verification
+processes completed.
+
+Evidence remains under `/tmp/cellule-inherited-successors-evidence`; the
+original snapshot and mounted target use suffix
+`cellule-inherited-successors-831b83a`, and the final snapshot uses
+`cellule-inherited-successors-final-831b83a`. No local cloud/provider service was
+started. Fresh CI must qualify the published increment; preceding checks do not
+qualify it.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Qualify the current CI head, especially both routing profiles, without weakening required lineage proof or the existing throughput gate. |
+| 1 | Complete authenticated production observation with failed-boot coverage, reader/follower replacement policy and every original accepted-work barrier. Current role coverage explicitly refuses failed follower owners before canonical recovery/retirement. |
+| 2 | Implement SettleRoles/Finalize, join original actions before terminal drain handoff, and confirm stop, withdrawal, boot retirement and committed operation completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss, recovery/adoption, refusal/unknown supervision and sustained convergence; deliver minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider, mixed-binary, load/soak and capacity qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The complete W1–W10 goal remains active. This inherited collector evidence
+supplies no retention pin, complete role settlement or node finalization grant.
+
 ## October 3 2026 original successor observation checkpoint
 
 `FleetObservation::with_original_writer_successors` now retains the complete

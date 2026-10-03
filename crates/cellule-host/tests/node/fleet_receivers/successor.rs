@@ -47,8 +47,11 @@ async fn inspect_successor(preferred_physical_node: bool) {
         Arc::new(Cells(inputs.clone(), Arc::new(Mutex::new(None)))),
     )
     .unwrap();
-    node.install_node_lease(NodeLeaseGuard::new(clock(), clock() + 60_000).unwrap())
-        .unwrap();
+    let lease_observed_at = clock();
+    node.install_node_lease(
+        NodeLeaseGuard::new(lease_observed_at, lease_observed_at + 60_000).unwrap(),
+    )
+    .unwrap();
     let make_request = |nonce| {
         FleetInspectionRequest::new(
             movement.action(MovementAction::Inspect),
