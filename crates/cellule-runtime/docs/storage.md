@@ -521,6 +521,41 @@ absence.
 - `CellAuthority::create_initial` requires a verified `CatalogProof`.
 - Readers recompute every Cell ID and enforce ordering across page boundaries.
 
+**Complete operation traversal.** `CellCatalog::scan_all(limit)` captures every
+head before returning the first page. It streams through the same verified shard
+reader and enforces a nonzero cumulative row bound. A partial, failed or cancelled
+scan supplies no receipt. `finish()` requires observed end-of-stream and rechecks
+all 256 original heads, including absence, revision, locators and ETag. Changes
+fail rather than silently replacing the captured set. The receipt exposes tenant,
+application, entry count and each original revision/page-digest list; `revalidate()`
+reads the same original adapter again.
+
+```rust
+use cellule_runtime::cell::catalog::{CellCatalog, CatalogScanReceipt};
+use cellule_runtime::identity::CellId;
+
+async fn collect_cells(
+    catalog: &CellCatalog,
+    row_limit: usize,
+) -> cellule_runtime::Result<(Vec<CellId>, CatalogScanReceipt)> {
+    let mut scan = catalog.scan_all(row_limit).await?;
+    let mut cells = Vec::new();
+    while let Some(page) = scan.next_page().await? {
+        cells.extend(page.entries().iter().map(|proof| proof.entry().cell()));
+    }
+    let receipt = scan.finish().await?;
+    Ok((cells, receipt))
+}
+```
+
+The scan retains at most 256 heads of 256 locators and returns at most 256
+entries per page. Callers account for their retained output. The heads and final
+checks are sequential observations; they are not a global catalog transaction.
+Application authentication, complete application/tenant enumeration, original
+process and accepted-work joining, authority/history collection and durable
+operation binding remain separate required barriers. A receipt pins no objects,
+proves no successor serving and does not establish continuing page availability.
+
 **Tenant scope and retention**
 
 - Tenant-scoped catalog heads do not make release or backup management

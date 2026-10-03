@@ -4,6 +4,73 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 complete catalog traversal checkpoint
+
+`CellCatalog::scan_all(limit)` now captures all 256 original heads before reading
+pages and streams through the ordinary verified shard reader. Opaque
+`CatalogScanReceipt` requires observed end-of-stream, a successful cumulative row
+bound and final checks of every populated or absent head, including revision,
+locators and ETag. A read/verification failure prevents completion and preserves
+its original error. Later `revalidate()` uses the same original scoped adapter
+without replacing the captured set. The receipt exposes tenant/application,
+entry count and each original revision/page-digest list. This path starts no task,
+storage listing, authority mutation or second scheduler.
+
+Eight new public cases cover empty heads, multi-page/multi-shard iteration,
+independent adapters, tenant isolation, partial consumption, bounds before I/O,
+cumulative failure, old immutable pages after provisioning, populated/absent
+head changes, deletion, same-body ETag changes, missing pages, corrupt bytes and
+later receipt invalidation. Catalog codecs, authority/history and routing
+qualification bytes are unchanged. Minion remains canonical.
+
+| Qualification | Result |
+| --- | --- |
+| Focused public catalog tests | 19 passed; no failures or ignored cases, including eight new complete-scan cases. |
+| Full runtime public integration suite, all features and locked | 209 passed; no failures; four documented provider cases ignored. The 19 catalog passes are included. |
+| Runtime Clippy, all targets/features | Passed with warnings denied. |
+| Runtime API documentation | Passed with warnings denied. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer, diff | Passed. |
+| Frozen Rust/Cargo source | 729 paths; SHA256 `b585bf9e802c1f843ab46a8c3419a9ef08811683a0694b8307da83703c1dcebb`. |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence | `/tmp/cellule-catalog-scan-evidence` |
+| Parent revision | `8659f49fde2f46a2a5cf1121fa8f114ba0d92fae` |
+
+Raw commands, logs, manifests and initial invocation diagnostics are retained.
+An initial preparation invocation used the snapshot as its source, failed with
+SameFileError and launched an old-source invocation. That invocation was deliberately
+terminated with exit 143 and supplies no test evidence. The corrected frozen build
+completed; process inspection during its slow mounted-target I/O is also retained.
+These 209 distinct passes are not full workspace/minion, process/provider,
+mixed-binary or load qualification for this new source.
+
+Parent PR head `8659f49` is mergeable and every required CI check passed, including
+both capacity modes, both routing modes, Compose smoke, Rust/MSRV, contract,
+website, fuzz and fast model checks. The leased routing artifact's actual virtual
+merge candidate is `522b7b2ffd835036319d81251e9aac5e3eef8811`, against baseline
+`18a1244a98c50a04c52da21325f95331055e9884`. Independent replay verified frozen binary
+and harness SHA256, all raw samples/counts/recovery proof and the exact 120-row
+comparison. There are no gate failures; the prior failing uncached lane's median
+throughput ratio is 1.108014.
+
+Identical-binary calibration run `37110515841` passed both complete modes using
+head `8659f49` as baseline and candidate. Independent replay verified identical
+frozen binary hashes, all raw evidence and both exact comparisons. Leased uncached
+throughput ratio is 0.962518; object-only is 0.974094. Leased uncached p99 generated
+its retained 10% review alert (1.117907), below the unchanged 2.0 blocking limit.
+The earlier parent's 89.669% throughput failure remains reproducible from its raw
+measurements and causally unexplained. A passing repeat or four-pair calibration
+cannot explain that earlier failure. Profiles and thresholds were not changed.
+Parent CI does not qualify this new source; fresh CI is required after publication.
+
+Highest priority next is authenticated complete application/tenant enumeration
+and durable operation-bound aggregation of every original affected Cell, with
+original process/accepted-work joining, followed by fresh successor prefix/serving
+verification. Sequential catalog heads are not a global transaction, durable
+object pin or complete physical-node proof. Role/controller integration, failed
+receivers, original action joining before drain handoff, maintenance commands and
+W9–W10 qualification/runbooks/rollout remain unfinished. SettleRoles/Finalize remain
+blocked on their actual required evidence; the full W1–W10 goal stays active.
+
 ## October 3 2026 original owner history before authority departure checkpoint
 
 `CellAuthority::transition` now durably retains the full original owner control
