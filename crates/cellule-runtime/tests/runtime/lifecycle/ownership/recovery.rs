@@ -379,6 +379,16 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8) {
         .unwrap();
     assert_eq!(serving.value().state, ControlState::Serving);
     assert!(serving.value().recovery.is_none());
+    // The original owner remains discoverable after materialization erases
+    // its overlay and a successor serves the acknowledged recovered state.
+    let independent_authority = CellAuthority::new(fixture.layout.clone());
+    let owner_history = independent_authority
+        .owner_history(fixture.target.cell_id(), 2)
+        .await
+        .unwrap();
+    assert_eq!(owner_history.owners().len(), 2);
+    assert_eq!(owner_history.owners()[0], input);
+    assert_eq!(owner_history.current(), serving.value());
     // Materialization clears the control's overlay pointer. The canonical
     // sealed manifest still retains the original scope after adapter restart.
     let reconstructed = cellule_runtime::recovery::manifest::RecoveryManifestStore::new(
@@ -449,6 +459,7 @@ async fn unchanged_unpublished_owner_is_taken_over_then_bootstrapped() {
         session,
     )
     .unwrap();
+    let original_input = stale.value().clone();
     let restored = runtime
         .takeover_unpublished(
             proof,
@@ -492,6 +503,14 @@ async fn unchanged_unpublished_owner_is_taken_over_then_bootstrapped() {
         .unwrap();
     assert_eq!(owned.value().epoch, 2);
     assert_eq!(owned.value().owner.as_ref().unwrap().session, session);
+    let independent_authority = CellAuthority::new(fixture.layout.clone());
+    let owner_history = independent_authority
+        .owner_history(fixture.target.cell_id(), 2)
+        .await
+        .unwrap();
+    assert_eq!(owner_history.owners()[0], original_input);
+    assert!(owner_history.owners()[0].root.is_none());
+    assert_eq!(owner_history.current(), owned.value());
     restored.drain().await.unwrap();
 }
 #[tokio::test]

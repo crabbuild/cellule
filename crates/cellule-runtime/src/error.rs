@@ -10,6 +10,16 @@ pub enum Error {
     /// A control record or transition failed validation.
     #[error("invalid Cell control record: {0}")]
     Control(&'static str),
+    /// A closed owner epoch lacks the original retained control observation.
+    #[error("Cell owner history is incomplete at epoch {epoch}")]
+    OwnerHistoryIncomplete {
+        /// Cell whose history cannot exclude an original failed owner.
+        cell: crate::identity::CellId,
+        /// Current incarnation whose history was requested.
+        incarnation: crate::identity::IncarnationId,
+        /// First missing ownership epoch; absence supplies no closure proof.
+        epoch: u64,
+    },
     /// A catalog record, scan, or head failed validation.
     #[error("invalid Cell catalog: {0}")]
     Catalog(&'static str),

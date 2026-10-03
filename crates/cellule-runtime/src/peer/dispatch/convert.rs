@@ -203,6 +203,12 @@ pub(crate) fn error_reply(error: Error) -> wire::PeerReply {
             "Cell read replica is unavailable",
             100,
         ),
+        Error::OwnerHistoryIncomplete { .. } => (
+            wire::error::Code::Unavailable,
+            wire::error::Outcome::NotStarted,
+            "original Cell owner history is incomplete",
+            100,
+        ),
         Error::Fenced
         | Error::CellReleaseRefused { .. }
         | Error::CellNotActive

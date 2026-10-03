@@ -426,8 +426,14 @@ Retain the complete original Cell set before overlay publication, log sealing or
 takeover. A process confirmation permits this collection; it is not the collection
 or successor evidence. Full catalog/native inventory and durable operation-bound
 retention remain required. An active Recovering log blocks independent takeover;
-already Sealed/inactive logs require an earlier retained writer set. Re-reading
-only current failed-owner controls cannot reconstruct Cells that already moved.
+already Sealed/inactive logs require an earlier retained writer set or verified
+complete original ownership history. The canonical authority path now retains
+full owner observations before departure, including unpublished and object-covered
+controls. Its [per-Cell history read](../../cellule-runtime/docs/storage.md#retain-original-owners-before-departure)
+refuses missing legacy/restore history. Authenticated complete catalog traversal,
+original process joining, durable operation binding and successor verification
+remain required; history alone cannot finalize a node. Re-reading only current
+failed-owner controls cannot reconstruct Cells that already moved.
 
 After recovery and all related roles close, use
 `FleetFailedBootRetirement::capture_retained` with the original process request

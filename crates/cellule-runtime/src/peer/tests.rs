@@ -534,3 +534,20 @@ fn replica_behind_error_preserves_both_positions_over_peer_wire() {
         }
     ));
 }
+
+#[test]
+fn incomplete_owner_history_cannot_be_reported_as_success_or_empty_inventory() {
+    let reply = dispatch::error_reply(Error::OwnerHistoryIncomplete {
+        cell: crate::CellId::from_bytes([1; 32]),
+        incarnation: IncarnationId::from_bytes([2; 16]),
+        epoch: 3,
+    });
+    let decoded = decode_peer_reply(&encode_peer_reply(&reply).unwrap()).unwrap();
+    let Some(wire::peer_reply::Outcome::Error(error)) = decoded.outcome else {
+        panic!("expected history blocker");
+    };
+    assert_eq!(error.code, wire::error::Code::Unavailable as i32);
+    assert_eq!(error.outcome, wire::error::Outcome::NotStarted as i32);
+    assert_eq!(error.message, "original Cell owner history is incomplete");
+    assert!(error.application_details.is_empty());
+}

@@ -48,7 +48,7 @@ replication protocol.
 | Responsibility | Existing owner | Contract to preserve |
 | --- | --- | --- |
 | Product authentication, authorization, and ingress | [HTTP router](https://github.com/crabbuild/crab/blob/beb439039cb37e750afe6625a2358101c70d1191/crates/crab-http-server/src/cells/router.rs) and [peer receiver](https://github.com/crabbuild/crab/blob/beb439039cb37e750afe6625a2358101c70d1191/crates/crab-http-server/src/peer.rs) | Authorize the target and action before dispatch; bound peer hops |
-| Cell identity, owner, epoch, lifecycle, root | [Cell authority](../src/control/authority.rs) | Only conditional control writes grant or change ownership |
+| Cell identity, owner, epoch, lifecycle, root | [Cell authority](../src/control/authority/mod.rs) | Only conditional control writes grant or change ownership |
 | Actor admission and one SQL writer | [Cell actor](../src/cell/actor/mod.rs) | A fenced or draining actor refuses queued and new work |
 | Local SQLite, WAL capture, LTX | [Db](../../cellule-ltx/src/db/mod.rs) | Local commit alone never releases a response |
 | Sparse exact-root page access | [Writable VFS](../../cellule-ltx/src/writable_vfs/mod.rs) and [paged I/O](../../cellule-ltx/src/paged_io.rs) | Verify inherited pages, reserve disk, and create a fresh local file |

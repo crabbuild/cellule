@@ -4,6 +4,89 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 original owner history before authority departure checkpoint
+
+`CellAuthority::transition` now durably retains the full original owner control
+before the ordinary release, takeover or tombstone CAS can remove or replace it.
+This covers unpublished, recovering and fully object-covered controls, including
+their original incarnation, epoch, code/schema, root and recovery overlay. It
+starts no second authority, scheduler or task bank. Same-owner publication and
+renewal add no history write. Storage work remains in the original caller's
+accepted lifetime; unresolved history publication prevents owner departure.
+
+The new typed layout path is
+`cells/v1/apps/<app>/cells/<cell>/owner-history/v1/<inc>/<epoch-hex16>.json`.
+Its body uses the existing canonical control codec and 8 KiB bound. Competing
+departure proposals advance history with ETag CAS. Delayed older proposals cannot
+replace later observations. Equal or later original observations can reconcile
+lost history replies; otherwise the original write error returns to the existing
+coordinator for full predicate revalidation. A retained proposal proves no
+departure CAS. The control codec, transition table, original authority implementation
+apart from this retention call, and all 26 existing layout methods are byte-identical
+to the parent. Existing persisted paths and signed message domains are unchanged.
+
+`owner_observation` reads one exact retained epoch. Opaque `CellOwnerHistory`
+collects every closed epoch in the current incarnation plus its current owner,
+with caller row bounds and an exact authority recheck. Ordinary release closes
+the same ownership epoch; tombstone adds a fence epoch without inventing an owner.
+Missing legacy, restored or older-binary history returns the typed
+`OwnerHistoryIncomplete` with Cell/incarnation/epoch. Foreign, malformed,
+noncanonical, oversized, conflicting or changing observations fail closed.
+Metadata grants no ownership, process joining, complete catalog scope, immutable
+root pin, successor serving or maintenance completion. Immutable collection does
+not delete the history metadata and does not pin its historical root graphs.
+
+Thirteen new authority cases cover original rootless/recovering succession,
+object-covered release/acquisition/tombstone, idle tombstones, same-owner work,
+source errors, lost history and authority replies, delayed and cancelled proposals,
+missing history, bounded/canonical/scope conflicts and authority progress during
+collection. A new peer case rejects an empty/successful interpretation of missing
+history. Existing public recovered-tail and unpublished-takeover cases now reopen
+full original history through independent authority adapters after actual successor
+serving. The typed path test covers the exact new version 1 layout.
+
+| Final qualification | Result |
+| --- | --- |
+| Full workspace tests, all features and locked dependencies | 1,571 passed; no failures; 36 documented provider/process/performance/manual or documentation cases ignored. |
+| Complete minion test target, all features | 210 passed; no failures or ignored cases. |
+| Distinct final passes | 1,781; earlier focused/selected repetitions excluded. |
+| Workspace Clippy, all targets/features | Passed with warnings denied. |
+| Workspace API documentation | Passed with warnings denied. |
+| Workspace all-target/all-feature compilation | Passed before the final test-only borrowed-slice cleanup; final Clippy compiled those targets again. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer, diff | Passed. |
+| Frozen Rust/Cargo source | 728 paths; SHA256 `ee6a914c66822ee253f39b58493381070cc7af9fe167d5b4a8008c3228288e39`. |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-owner-history-evidence` |
+| Parent revision | `de010246a8f32c368dfe1628b3ec940471b623dc` |
+
+Raw commands, logs, build environment, source manifests and archives are retained.
+Initial private-helper, exhaustive-error mapping and test-import compile diagnostics
+are recorded. The selected pre-Clippy suites passed 1,053 runtime/host/executable
+tests and two path cases; Clippy then rejected four unnecessary test clones. The
+final assertions use borrowed slices with identical expectations. Production
+validators, qualification profiles and thresholds were not weakened. Final full
+workspace qualification uses the isolated snapshot. Ignored cases supply no evidence
+for provider, full process, mixed-binary or fleet-load completion.
+
+Parent CI passed follower/object capacity, workspace/MSRV, contract, website,
+fuzz, Compose smoke and fast model checks. Its leased routing comparison failed
+`forwarded_query_uncached_route/c16`: median throughput was 89.669% of baseline,
+below the declared 90% minimum; read/hop counts and correctness matched. The exact
+virtual merge candidate was `714b6c97ba121baaaf5c8ad3cb45e7abaa1bff2c`, compared with
+`18a1244a98c50a04c52da21325f95331055e9884`. Raw logs and the frozen comparison artifact
+are retained under this evidence directory. Its cause remains unproven; a later
+passing run cannot explain this failure. Parent CI does not qualify this new source.
+
+Highest priorities next are diagnosing that measured routing regression, then
+authenticated complete catalog traversal and durable operation-bound aggregation
+of original owner history with original boot/process joining. Fresh successor
+prefix/serving verification remains required. Per-Cell history does not establish
+the original physical-node set. Receiver failure adoption, complete role/controller
+integration, original action joining before drain handoff, remaining primitive
+faults, complete maintenance commands and W9–W10 qualification/runbooks/rollout
+remain unfinished. SettleRoles/Finalize stay blocked on their required evidence;
+the full W1–W10 plan remains active. Minion remains canonical.
+
 ## October 3 2026 original process confirmation before recovery checkpoint
 
 `NodeDirectory::fenced_session` reads the immutable original physical boot fence

@@ -143,6 +143,7 @@ cells/v1/apps/<app>/releases/<digest>.json
 cells/v1/apps/<app>/catalog/tenants/<tenant>/<00..ff>/head.json
 cells/v1/apps/<app>/catalog/objects/<digest>.json
 cells/v1/apps/<app>/cells/<cell>/control.json
+cells/v1/apps/<app>/cells/<cell>/owner-history/v1/<inc>/<epoch-hex16>.json
 cells/v1/apps/<app>/cells/<cell>/inc/<inc>/objects/<digest>.<kind>
 cells/v1/apps/<app>/pins/<pin-id>.json
 cells/v1/apps/<app>/pins/objects/<digest>.json
@@ -185,6 +186,54 @@ cells/v1/nodes/<session>.json
 - **Reads.** Authority reads bypass caches.
 - **Writes.** Every replacement validates the runtime transition table before
   calling conditional update.
+
+### Retain original owners before departure
+
+Before the ordinary release, takeover or tombstone CAS removes or replaces an
+owner, `CellAuthority::transition` retains its complete original control at the
+typed version 1 owner-history path. The body uses the same canonical 8 KiB control
+codec. It includes unpublished and recovering controls, exact roots, code/schema,
+and pinned recovery overlays. Same-owner publication and renewal write no history.
+The existing control CAS remains the only ownership authority.
+
+Several departure proposals can observe the same epoch at different revisions.
+History advances by ETag CAS; a delayed older proposal cannot overwrite a newer
+observation. A failed proposal may leave a retained observation, which supplies no
+departure proof. Ambiguous history replies require a confirmed equal or later
+original observation before control departure. Storage failures remain errors.
+
+`owner_observation` reads one exact original epoch. `owner_history` collects every
+closed ownership epoch in the current incarnation and appends its current owner,
+then rechecks exact current authority. The caller bounds rows and its enclosing
+deadline. Missing history returns `Error::OwnerHistoryIncomplete` with the original
+Cell, incarnation and first missing epoch. Concurrent authority changes refuse the
+read. Ordinary release closes the same epoch; tombstone consumes a final fence
+epoch without inventing another owner.
+
+```rust,no_run
+use cellule_runtime::{Result, identity::CellId};
+use cellule_runtime::control::authority::{CellAuthority, CellOwnerHistory};
+
+async fn original_owners(
+    authority: &CellAuthority,
+    cell: CellId,
+    row_limit: usize,
+) -> Result<CellOwnerHistory> {
+    authority.owner_history(cell, row_limit).await
+}
+```
+
+This is retained metadata for one Cell incarnation, not a complete physical-node
+inventory or a root retention pin. Fleet collection must traverse authenticated
+complete application/tenant catalogs, bind original boot/process joining and
+operation scope, durably retain the selected complete set, and freshly verify
+successor prefixes and serving. Include object-covered and unpublished writers.
+A current-owner filter or recovered-suffix manifest alone omits originals after
+takeover. Legacy departures, older binaries and restored controls may lack history;
+never interpret that absence as proof that an original boot owned no Cells.
+Mixed-binary qualification and a verified earlier inventory are required before
+fleet completion can use such scope. The existing immutable-object collector
+does not delete these metadata records or pin their historical root graphs.
 
 <a id="immutable-roots"></a>
 ## Store roots as bounded immutable graphs
