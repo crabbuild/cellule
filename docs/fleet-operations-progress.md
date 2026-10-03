@@ -4,6 +4,85 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 complete original native successor checkpoint
+
+`FleetOriginalWriterSuccessorInventory::collect` verifies every retained
+original writer across applications against an actual managed native successor.
+It combines complete original boot suffix inputs with the original root,
+exact sealed suffixes and inherited-overlay manifest rows. Rootless originals
+still require complete current origin verification. Historical overlay selection
+preserves its original Cell epoch. Missing mappings, wrong physical boots,
+changed publication, missing origin dependencies and provider errors refuse
+collection without exposing a partial result.
+
+The shared `CellRuntime::observe_serving` joins ordinary FIFO admission and
+checks exact authority position and native generation at a later ownership
+epoch. Movement uses this same observation. The collector repeats every
+retained successor after all prefix reads, then rechecks the original
+process/log/full-journal and roster barriers. One absolute deadline spans the
+inline collector; existing providers retain accepted work and native memory/I/O
+uses shared admission. The application authenticates canonical backends and
+accounts bounded copied result buffers.
+
+Seven new minion cases use four original writers across two applications,
+ordinary native takeover, two rootless originals and two genuine sealed suffixes.
+Cases cover omitted/error mappings, physical-node substitution, changed
+publication during another lookup, deleted origin bytes despite a warm actor,
+cancellation cleanup and an expired deadline before provider work. Two native
+cases cover exact later serving, changed position, foreign runtime/incarnation,
+drain and closure. Complete inherited-overlay aggregate success/fault scenarios
+remain required. The provider currently accepts actual `Arc<CellNode>` references;
+remote/process integration, full role policy, accepted work and finalization
+remain unfinished. The original process child remains a lifetime stand-in.
+
+Main is incorporated through `39a3d0b`. Conflicts retain native lineage metadata,
+verified descriptor reuse, the original-owner root capture and its two-second
+qualification bound. Main's final drained-root restore evidence is added to the
+existing strict coverage checks. Minion remains canonical at
+`crates/cellule-host/minion`, Cargo target `fleet_operations`.
+
+### Verification
+
+| Verification on the final isolated merged source | Result |
+| --- | --- |
+| Full framework workspace, all features, locked | 1,652 passed; no failures; 36 documented ignored cases. |
+| Complete canonical minion target | 238 passed; no failures or ignored cases. |
+| Distinct framework/minion passes | 1,890; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | 54 passed. |
+| All-target/all-feature check, Clippy, API docs | Passed; warnings denied for lint and docs. |
+| Cookbook quality | Check, Clippy, warning-denied docs, all 256 tests and binary builds passed; locked dependencies. |
+| Python qualification contracts | All 44 passed, preserving both root-barrier and drained-restore requirements. |
+| Format, boundaries, layout, fences, links, SQL/peer, diff | Passed; 127 Rust snippets, 1,245 Markdown links, 28 SQL/peer assertions and 570 protocol links. |
+
+All 1,065 Rust/Cargo paths match the final isolated source. Manifest SHA256:
+`ec39634292a6e7ff6066662c27063c1703359e59e26fc9bfdfb339c6cdeff713`.
+Source archive, commands, statuses and complete logs remain under
+`/tmp/cellule-original-successors-final-evidence`; the separate snapshot and
+mounted target use suffix `cellule-original-successors-final-5e19875`.
+Earlier focused failures and the first merged snapshot's independent verification
+are retained under `/tmp/cellule-original-successors-evidence`.
+
+### CI and remaining delivery
+
+Published `c78ab9d` passed follower/object capacity, both routing profiles and
+their aggregate, workspace/MSRV, Compose smoke, contract, website, fuzz and
+enabled fast models. Cookbook quality failed because its separate lock omitted
+`cellule-host`'s existing `blake3` dependency; process scenarios were skipped.
+The repair adds that single dependency entry and retains `--locked` and all
+qualification gates. These earlier CI passes do not qualify the newer merged
+source; fresh CI remains required.
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 1 | Consume the complete original-writer/suffix/native-successor collector in authenticated production observation. Exercise inherited-overlay aggregate success/faults and complete reader/follower replacement policy and original accepted-work barriers. |
+| 2 | Implement SettleRoles/Finalize, join original actions before terminal drain handoff, and confirm stop, withdrawal, boot retirement and committed operation completion. Finish Cron/Blob external owners and primitive fault matrices. |
+| 3 | Complete cross-session receiver loss, replacement, recovery/adoption, refusal/unknown supervision and sustained pressure/count/concurrency scenarios. |
+| 4 | Complete canonical minion maintenance and receiver-loss commands, then W9 process/provider, mixed-binary, load/soak and capacity qualification. |
+| 5 | W10 exercised operator runbooks, staged rollout and rollback evidence. |
+
+The full W1–W10 plan remains active. This point collector grants no retention
+pin, role settlement, stopped-node proof or complete maintenance support.
+
 ## October 3 2026 complete original boot suffix input checkpoint
 
 `FleetOriginalBootSuffixInventory::collect` combines the committed original
