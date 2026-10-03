@@ -220,8 +220,9 @@ impl FleetActionExecutor {
             .basis()
             .validate_acceptance(accepted)
             .map_err(operation)?;
-        let required = recovery.restored().root.as_ref().ok_or(Error::Fenced)?;
-        let serving = self.serving_evidence(attempt, inputs, required).await?;
+        let serving = self
+            .serving_evidence(attempt, inputs, ServingPrefix::Recovered(&recovery))
+            .await?;
         let outcome = FleetOutcome::Recovered(Box::new(RecoveredActivation { recovery, serving }));
         let envelope = cellule_runtime::fleet::operations::FleetActionOutcome {
             scope: self.scope,

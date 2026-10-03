@@ -111,7 +111,7 @@ impl FleetActionExecutor {
             ))
         })?;
         let evidence = self
-            .serving_evidence(attempt, inputs, &release.root)
+            .serving_evidence(attempt, inputs, ServingPrefix::Released(&release.root))
             .await?;
         attempt.validate_activation(&evidence).map_err(operation)?;
         Ok(FleetOutcome::Activated(evidence))
@@ -121,7 +121,7 @@ impl FleetActionExecutor {
         &self,
         attempt: &MoveAttempt,
         inputs: &FleetCellInputs,
-        required: &cellule_runtime::control::RootRef,
+        required: ServingPrefix<'_>,
     ) -> cellule_runtime::Result<ActivationEvidence> {
         let spec = attempt.spec();
         let current = inputs
@@ -165,15 +165,7 @@ impl FleetActionExecutor {
             return Err(Error::Fenced);
         }
         let root = latest.value().ltx_root().ok_or(Error::Fenced)?;
-        self.runtime
-            .verify_root_prefix(
-                &inputs.catalog,
-                &inputs.authority,
-                inputs.replica.clone(),
-                required.to_ltx(spec.target.cell_id(), spec.incarnation),
-                root,
-                10_000,
-            )
+        self.verify_serving_prefix(attempt, inputs, required, root)
             .await?;
         // Origin verification can outlive the first actor query. Recheck the
         // same admitted native owner and exact selected root before returning

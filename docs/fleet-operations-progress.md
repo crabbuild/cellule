@@ -4,6 +4,91 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 original sealed suffix checkpoint
+
+`VerifiedRecoveryPrefix` binds one exact original `PinnedRecoveryCell` to the
+retained closed owner and canonical acquisition metadata, then verifies native
+materialization lineage and the complete current successor origin graph. The
+selected Serving owner, epoch, incarnation and root are rechecked after that walk.
+The original manifest epoch and every sealed boundary remain unchanged. An
+interrupted ownership claim can materialize at a later epoch; missing earlier
+acquisition metadata cannot replace or alter the original suffix.
+
+The runtime wrapper reuses existing shared transient-memory admission and LTX
+I/O facilities. The caller owns a finite deadline; no detached work, authority,
+publication or scheduler is added. Missing original owner/acquisition metadata,
+wrong original scope, corrupt records and unavailable current origin data refuse.
+Direct authority callers own equivalent admission and authenticated mappings.
+
+Host recovered serving compares the entire journal input/result with canonical
+acquisition metadata. A pinned overlay requires a read-only lookup through the
+existing recovery provider, the original digest-verified manifest row and this
+exact suffix proof. An 8-MiB transient token covers acquisition/manifest metadata
+before I/O and stays charged through verification. The host then repeats the
+ordinary native actor, selected authority and inventory checks. Historical
+result replay remains historical and supplies no refreshed serving observation.
+
+Two new authority refusal tests preserve original read errors and reject matching
+endpoints with different recovery inputs. A genuine public interrupted-claim case
+leaves no acquisition record at its first claimed epoch, materializes through the
+ordinary later takeover, advances the root and verifies the original suffix.
+Normal and interrupted cases mutate all 16 original scope/boundary fields, remove
+and corrupt canonical acquisition metadata, remove current origin bytes and check
+memory refusal and token cleanup. Two host cases require canonical acquisition
+metadata despite a live actor. Two further host cases build real captured SQLite
+frames, fsync them to a follower, canonically seal and materialize the tail, advance
+the successor and require the original manifest on fresh serving inspection.
+Missing/corrupt evidence refuses; restoring exact original bytes permits fresh
+adoption. Complete node shutdown asserts zero retained resources.
+
+| Verification | Result |
+| --- | --- |
+| Full workspace, all features and locked dependencies | 1,616 passed; no failures; 36 documented cases ignored. Nested crash-fixture child summaries excluded. |
+| Complete canonical minion target, all features | 218 passed; no failures or ignored cases. |
+| Distinct final passes | 1,834; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | 54 passed; no failures or ignored cases. |
+| Workspace check, all targets/features | Passed. |
+| Workspace Clippy and API documentation | Passed with warnings denied. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer and diff | Passed; 124 Rust snippets parse. |
+| Frozen Rust/Cargo source, including nested qualification locks | 750 paths; SHA256 `fa5b6cdb82e924c3053c7dbb64490f02514761ea0b59fba8973f3bd71e38d67c`. |
+| Isolated checkout / mounted Workspace target suffix | `/tmp/cellule-reader-prelease-8698183` / `cellule-reader-prelease-8698183`. |
+| Published parent | `1898f05db4d6f29aabb177b38510f75bdf41b4f1`. |
+
+Raw commands, frozen source, final logs, downloaded routing evidence and initial
+diagnostics are in `/tmp/cellule-recovered-prefix-evidence`. The first negative
+fixture selected Recovering rather than the required Serving state; the initial
+interrupted-claim advertisement exceeded the existing lifetime limit. Both
+fixtures were corrected without weakening production contracts. Full suites and
+gates ran on the final frozen Rust/Cargo source. Initial runs do not qualify it.
+
+### CI blocker and remaining work streams
+
+Published parent `1898f05db4d6f29aabb177b38510f75bdf41b4f1` is mergeable.
+Workspace, MSRV, follower/object capacity, contract, website, fuzz, fast models
+and Compose pass. Both routing performance jobs and their aggregate fail.
+Their command lanes fail the unchanged 90% throughput gate. The downloaded
+leased artifact records 0.807–0.888 candidate/baseline throughput and approximately
+one additional origin read for each of 1,024 commands. The new lineage preflight
+read is a concrete investigation lead; causality and a qualified fix remain open.
+Passing correctness tests cannot close this performance gate. The earlier
+unchanged reader-balance failure also remains causally unexplained. Profiles,
+workloads, thresholds and expected evidence remain unchanged.
+
+| Priority | Stream | Required delivery |
+| --- | --- | --- |
+| 0 | Routing CI regression | Reproduce the measured command regression, distinguish lineage metadata I/O from other costs, fix the cause while retaining exact durable prefix proof, and pass both unchanged routing profiles. |
+| 1 | Complete observation and writer proof | Aggregate every original writer and sealed suffix with authenticated complete backend, physical boot/process and operation scope. Consume current native successor serving, reader/follower replacement policy and accepted-work observations through the existing reconciler. |
+| 2 | Maintenance completion | Implement SettleRoles/Finalize, join original accepted actions before terminal drain handoff and confirm checked stop/withdrawal/boot retirement. Finish Cron/Blob external owners and primitive fault matrices. |
+| 3 | Movement convergence | Finish receiver-session replacement, recovery/adoption, refusal/unknown and source/receiver-failure reconciliation; complete sustained pressure/count and concurrency evidence. |
+| 4 | Canonical minion scenarios | Deliver complete runnable maintenance and receiver-loss scenarios at `crates/cellule-host/minion`; Cargo target remains `fleet_operations`. |
+| 5 | W9 qualification | Complete process/provider fault, mixed-binary, load/soak and capacity campaigns in their documented environments. |
+| 6 | W10 operations | Exercise operator runbooks and collect staged rollout evidence. |
+
+This checkpoint supplies one exact original sealed-suffix observation, including
+interrupted claims. It does not aggregate all original writers/suffixes, prove
+complete role replacement, pin storage or finish maintenance. SettleRoles and
+Finalize remain refused. The full W1–W10 goal remains active.
+
 ## October 3 2026 exact root prefix and current origin checkpoint
 
 The canonical publisher and recovered-overlay materialization retain native

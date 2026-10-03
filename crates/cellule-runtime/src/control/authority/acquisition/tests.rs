@@ -332,3 +332,132 @@ async fn missing_foreign_and_corrupt_history_is_not_successful_acquisition() {
             .is_err()
     );
 }
+
+fn suffix() -> crate::recovery::manifest::PinnedRecoveryCell {
+    crate::recovery::manifest::PinnedRecoveryCell {
+        application: crate::identity::ApplicationId::from_bytes([7; 16]),
+        cell: CellId::from_bytes([1; 32]),
+        incarnation: IncarnationId::from_bytes([2; 16]),
+        cell_epoch: 1,
+        recovery: crate::control::RecoveryOverlayRef {
+            leader_session: SessionId::from_bytes([3; 16]),
+            log_epoch: 1,
+            manifest_digest: Digest::from_bytes([9; 32]),
+            first_node_sequence: 1,
+            last_node_sequence: 2,
+            predecessor: RootRef {
+                digest: Digest::from_bytes([6; 32]),
+                txid: 1,
+                checksum: cellule_ltx::types::CHECKSUM_FLAG,
+                commit_sequence: 1,
+            },
+            final_txid: 2,
+            final_checksum: cellule_ltx::types::CHECKSUM_FLAG | 1,
+            final_commit_sequence: 2,
+        },
+    }
+}
+// These shape fixtures exercise refusal before any origin graph can succeed.
+async fn original_suffix_scope(
+    authority: &CellAuthority,
+    required: &crate::recovery::manifest::PinnedRecoveryCell,
+    selected: &Control,
+) {
+    let mut original = input();
+    original.state = ControlState::Serving;
+    original.root = Some(required.recovery.predecessor.clone());
+    let original = original.attach_recovery(required.recovery.clone()).unwrap();
+    authority.retain_owner(&original).await.unwrap();
+    authority
+        .layout
+        .store()
+        .create_strict(
+            &authority.layout.control_path(required.cell.as_bytes()),
+            Bytes::from(selected.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn recovered_prefix_requires_original_acquisition_and_preserves_read_errors() {
+    let store = Arc::new(FaultStore::default());
+    let authority = authority(store.clone());
+    let required = suffix();
+    let root = cellule_ltx::RootRef {
+        cell: *required.cell.as_bytes(),
+        incarnation: *required.incarnation.as_bytes(),
+        digest: [8; 32],
+        position: cellule_ltx::Position {
+            txid: 2,
+            checksum: required.recovery.final_checksum,
+        },
+        commit_sequence: 2,
+    };
+    let replica = cellule_ltx::CellReplica::new(
+        authority.layout.clone(),
+        root.cell,
+        root.incarnation,
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let mut selected = successor(&input());
+    selected.state = ControlState::Serving;
+    selected.root = Some(RootRef::from_ltx(required.cell, required.incarnation, root).unwrap());
+    original_suffix_scope(&authority, &required, &selected).await;
+    store.fault.store(6, Ordering::SeqCst);
+    assert!(matches!(
+        authority
+            .verify_recovered_prefix(&required, root, &replica, 0)
+            .await,
+        Err(Error::Capacity(_))
+    ));
+    assert_eq!(store.fault.load(Ordering::SeqCst), 6);
+    assert!(matches!(
+        authority
+            .verify_recovered_prefix(&required, root, &replica, 8)
+            .await,
+        Err(Error::Storage(_))
+    ));
+    assert!(
+        matches!(authority.verify_recovered_prefix(&required, root, &replica, 8).await,
+        Err(Error::AcquisitionHistoryIncomplete { cell, incarnation, epoch })
+        if cell==required.cell && incarnation==required.incarnation && epoch==2)
+    );
+}
+#[tokio::test]
+async fn matching_endpoint_cannot_replace_a_sealed_recovery_input() {
+    let authority = authority(Arc::new(InMemory::new()));
+    let required = suffix();
+    let mut original = input();
+    original.state = ControlState::Serving;
+    original.root = Some(RootRef {
+        digest: Digest::from_bytes([8; 32]),
+        txid: required.recovery.final_txid,
+        checksum: required.recovery.final_checksum,
+        commit_sequence: required.recovery.final_commit_sequence,
+    });
+    let claimed = successor(&original);
+    authority
+        .retain_acquisition(&original, &claimed)
+        .await
+        .unwrap();
+    let root = claimed.ltx_root().unwrap();
+    let mut selected = claimed.clone();
+    selected.state = ControlState::Serving;
+    original_suffix_scope(&authority, &required, &selected).await;
+    let replica = cellule_ltx::CellReplica::new(
+        authority.layout.clone(),
+        root.cell,
+        root.incarnation,
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        authority
+            .verify_recovered_prefix(&required, root, &replica, 8)
+            .await,
+        Err(Error::Control(
+            "canonical acquisition recovery input differs"
+        ))
+    ));
+}

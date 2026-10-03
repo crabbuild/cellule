@@ -565,6 +565,11 @@ fn missing_or_unproven_root_lineage_cannot_be_reported_as_success() {
         commit_sequence: 1,
     };
     for source in [
+        Error::AcquisitionHistoryIncomplete {
+            cell: crate::identity::CellId::from_bytes(root.cell),
+            incarnation: crate::identity::IncarnationId::from_bytes(root.incarnation),
+            epoch: 2,
+        },
         Error::RootLineageIncomplete { root },
         Error::RootPrefixUnproven {
             prefix: Box::new(root),

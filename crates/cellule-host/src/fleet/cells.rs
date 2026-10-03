@@ -45,6 +45,9 @@ pub trait FleetCellProvider: Send + Sync + 'static {
     /// Resolves existing canonical recovery proof. This lookup must not fence
     /// a node, seal a log, publish an overlay, or acquire a Cell. The ordinary
     /// recovery coordinator establishes those prerequisites independently.
+    /// Fresh recovered-serving inspection repeats this read-only lookup after
+    /// acquisition and result publication. Keep the original pinned manifest's
+    /// canonical backend available; reconstruct inputs without repeating effects.
     fn recovery_inputs<'a>(
         &'a self,
         spec: &'a MoveAttemptSpec,

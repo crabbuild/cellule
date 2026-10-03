@@ -125,6 +125,18 @@ node leases, reservation timestamps and observations use actual time. This is
 in-process controller replacement with durable local reconstruction; process
 crash, provider and receiver-session loss qualification remain outstanding.
 
+Recovered movement's fresh serving check requires canonical acquisition metadata
+matching the full journal input/result. A pinned suffix additionally requires the
+original digest-verified manifest row, original closed owner, exact canonical
+materialization and native lineage/current origin verification. Interrupted
+claims may materialize at a later epoch while preserving the original manifest
+scope. The existing provider's read-only lookup must remain available after
+reconstruction and publication; missing/corrupt metadata refuses fresh serving.
+The host charges transient acquisition/manifest bytes through its runtime ledger,
+then repeats the ordinary actor/authority/inventory boundary. Historical outcome
+replay does not refresh this observation. Complete original writer/suffix
+aggregation and maintenance finalization remain required.
+
 To inspect a retained example journal, supply a database path in an existing directory,
 outside canonical Cell storage. The command creates the journal if absent or
 reopens it with the same scope and profile, prints its bounded head summary,

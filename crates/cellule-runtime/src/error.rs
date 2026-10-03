@@ -20,6 +20,16 @@ pub enum Error {
         /// First missing ownership epoch; absence supplies no closure proof.
         epoch: u64,
     },
+    /// A required canonical successful acquisition lacks its retained input.
+    #[error("Cell acquisition history is incomplete at epoch {epoch}")]
+    AcquisitionHistoryIncomplete {
+        /// Cell whose original recovery materialization must be proven.
+        cell: crate::identity::CellId,
+        /// Original incarnation, without substituting a new Cell lifetime.
+        incarnation: crate::identity::IncarnationId,
+        /// Exact missing successful acquisition epoch.
+        epoch: u64,
+    },
     /// A required root lacks its canonical preparation links.
     #[error("Cell root lineage is incomplete at {root:?}")]
     RootLineageIncomplete {

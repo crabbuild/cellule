@@ -3,6 +3,8 @@ use super::*;
 use crate::control::ControlState;
 
 mod codec;
+mod prefix;
+pub use prefix::VerifiedRecoveryPrefix;
 #[cfg(test)]
 mod tests;
 

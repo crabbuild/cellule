@@ -258,7 +258,7 @@ settlement. Missing metadata remains `None`: initial bootstrap, direct activatio
 of an already-claimed Control, older binaries and cancellation before retention
 can supply no record. Never infer successful acquisition or an empty writer set
 from that absence. The existing object collector neither deletes these records
-nor pins their referenced roots. A future prefix verifier must combine complete
+nor pins their referenced roots. Prefix verification must combine complete
 original scope with independently checked ownership lineage, exact dependencies
 and current native serving.
 
@@ -339,8 +339,51 @@ async fn verify_prefix(
 }
 ```
 
-Fleet movement now requires the exact released root or retained recovery
-materialization as its prefix. After complete origin verification, it rechecks
+### Prove an original sealed recovery suffix
+
+`CellRuntime::verify_recovered_prefix` consumes one exact `PinnedRecoveryCell`
+from the original digest-verified manifest. It binds that row to the retained
+closed owner, then checks bounded canonical acquisitions through the selected
+Serving epoch. An interrupted claim can leave no acquisition record; a later
+materialization must retain the identical original overlay. Its original Cell
+epoch remains the manifest epoch, rather than the later acquisition input epoch.
+All leader/log/manifest, node-sequence, predecessor and final boundaries compare
+exactly. A matching endpoint without the original overlay is insufficient.
+
+| Boundary | Contract |
+| --- | --- |
+| Materialization | Select the last canonical acquisition with the exact original overlay; require its exact final TXID, checksum and sequence, then verify native derivation to the current successor and every current origin dependency. |
+| Bounds | The same caller limit caps both acquisition epochs and lineage traversal, at most 10,000. Excess refuses; storage/corrupt-record errors remain errors. |
+| Missing metadata | An absent original owner yields `OwnerHistoryIncomplete`. Without a matching materialization, missing acquisition records yield `AcquisitionHistoryIncomplete`; different recovery inputs refuse. No legacy rows are fabricated. |
+| Selected authority | Require Serving at the selected root and recheck owner, incarnation, epoch, state and exact root after origin verification. Lease renewal may continue. |
+| Resource ownership | Reuse the root verifier's shared memory reservation and configured LTX I/O host before metadata/origin I/O. The caller supplies the finite deadline; cancellation drops the reservation. |
+| Proof scope | `VerifiedRecoveryPrefix` retains the exact required row, materialization epoch and opaque root-prefix proof. It grants no native serving, root pin, authenticated physical boot/backend scope or aggregate settlement. |
+
+```rust,no_run
+use cellule_runtime::{Result, cell::{actor::CellRuntime, catalog::CatalogProof}};
+use cellule_runtime::control::authority::{CellAuthority, VerifiedRecoveryPrefix};
+use cellule_runtime::ltx::{CellReplica, RootRef};
+use cellule_runtime::recovery::manifest::PinnedRecoveryCell;
+
+async fn verify_suffix(
+    runtime: &CellRuntime,
+    catalog: &CatalogProof,
+    authority: &CellAuthority,
+    replica: CellReplica,
+    original: &PinnedRecoveryCell,
+    successor: RootRef,
+) -> Result<VerifiedRecoveryPrefix> {
+    runtime.verify_recovered_prefix(catalog, authority, replica, original, successor, 10_000).await
+}
+```
+
+Fleet movement requires the exact released root or retained recovery
+materialization as its prefix. Recovered serving first compares the entire
+journal recovery input/result with canonical acquisition metadata. With a pinned
+overlay, it repeats the existing read-only provider lookup, loads the original
+manifest and verifies the exact original row through `verify_recovered_prefix`.
+The host charges an additional 8-MiB transient acquisition/manifest envelope
+before I/O and holds it through verification. After complete origin verification, it rechecks
 the same native actor through ordinary FIFO admission, selected root/owner/epoch
 and native ownership inventory before returning fresh serving evidence. Durable
 historical results remain historical; their replay does not refresh this proof.

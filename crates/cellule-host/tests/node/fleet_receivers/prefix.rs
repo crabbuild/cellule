@@ -118,3 +118,74 @@ async fn inspect_missing_evidence(origin: bool) {
     ));
     movement.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_recovery_requires_canonical_acquisition_even_with_a_live_actor() {
+    inspect_acquisition(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn corrupt_acquisition_cannot_certify_an_idle_source_recovery() {
+    inspect_acquisition(true).await;
+}
+
+async fn inspect_acquisition(corrupt: bool) {
+    let movement = Movement::new(128 << 20).await;
+    movement.start_recovery(corrupt).await;
+    let action = movement.action(MovementAction::Recover);
+    let result = apply(&movement.receiver, action.clone()).await;
+    assert!(result.committed && result.execution_error.is_none());
+    let FleetOutcome::Recovered(recovered) = &result.outcome.outcome else {
+        panic!("not recovered")
+    };
+    movement.event(AttemptEvent::Recovered(recovered.clone()));
+    let cleaned = apply(&movement.receiver, movement.action(MovementAction::Cancel)).await;
+    assert!(matches!(
+        cleaned.outcome.outcome,
+        FleetOutcome::ReceiverCleaned
+    ));
+    movement.event(AttemptEvent::ReceiverCleaned);
+    movement.inspect(241).await;
+    let restored = recovered.recovery.restored();
+    let layout = movement.inputs.authority.layout();
+    let path = layout.acquisition_record_path(
+        restored.cell.as_bytes(),
+        restored.incarnation.as_bytes(),
+        restored.epoch,
+    );
+    let (original, _) = layout.store().get_with_etag(&path).await.unwrap();
+    layout.store().delete(&path).await.unwrap();
+    if corrupt {
+        layout
+            .store()
+            .create_strict(&path, bytes::Bytes::from_static(b"corrupt-acquisition"))
+            .await
+            .unwrap();
+    }
+    // Historical replay preserves its original committed outcome; it cannot
+    // replace the independent fresh native inspection or restore missing proof.
+    assert_eq!(
+        apply(&movement.receiver, action).await.outcome,
+        result.outcome
+    );
+    let error = movement
+        .receiver
+        .inspect_fleet_action(movement.inspection(242))
+        .await
+        .unwrap_err();
+    if corrupt {
+        assert!(matches!(error.as_ref(), Error::Control(_)));
+        layout.store().delete(&path).await.unwrap();
+    } else {
+        assert!(
+            matches!(error.as_ref(), Error::AcquisitionHistoryIncomplete { epoch, .. }
+            if *epoch==restored.epoch)
+        );
+    }
+    layout.store().create_strict(&path, original).await.unwrap();
+    assert!(matches!(
+        movement.inspect(243).await.outcome().outcome,
+        FleetOutcome::Recovered(_)
+    ));
+    movement.shutdown().await;
+}

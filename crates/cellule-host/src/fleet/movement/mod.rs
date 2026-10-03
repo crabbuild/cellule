@@ -15,8 +15,14 @@ use cellule_runtime::fleet::operations::{
 
 mod activation;
 mod inspection;
+mod prefix;
 mod receiver;
 mod recovery;
+
+pub(super) enum ServingPrefix<'a> {
+    Released(&'a cellule_runtime::control::RootRef),
+    Recovered(&'a cellule_runtime::fleet::operations::RecoveryEvidence),
+}
 
 impl FleetActionExecutor {
     pub(super) async fn perform_movement(

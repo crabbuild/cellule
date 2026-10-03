@@ -29,6 +29,44 @@ impl CellRuntime {
         root: cellule_ltx::RootRef,
         limit: usize,
     ) -> crate::Result<crate::control::authority::VerifiedRootPrefix> {
+        let (_metadata, replica) = self.prefix_replica(catalog, replica, root, limit)?;
+        let proof = authority
+            .verify_root_prefix(prefix, root, &replica, limit)
+            .await?;
+        self.ensure_running()?;
+        Ok(proof)
+    }
+
+    /// Verifies the exact original sealed recovery row through canonical retained
+    /// acquisition input, native materialization lineage and complete origin bytes.
+    ///
+    /// Uses the same shared admission and caller-owned deadline as root-prefix
+    /// verification. The caller authenticates original manifest/log/boot scope;
+    /// this grants no current serving, retention pin or aggregate settlement.
+    pub async fn verify_recovered_prefix(
+        &self,
+        catalog: &CatalogProof,
+        authority: &CellAuthority,
+        replica: cellule_ltx::CellReplica,
+        required: &crate::recovery::manifest::PinnedRecoveryCell,
+        root: cellule_ltx::RootRef,
+        limit: usize,
+    ) -> crate::Result<crate::control::authority::VerifiedRecoveryPrefix> {
+        let (_metadata, replica) = self.prefix_replica(catalog, replica, root, limit)?;
+        let proof = authority
+            .verify_recovered_prefix(required, root, &replica, limit)
+            .await?;
+        self.ensure_running()?;
+        Ok(proof)
+    }
+
+    fn prefix_replica(
+        &self,
+        catalog: &CatalogProof,
+        replica: cellule_ltx::CellReplica,
+        root: cellule_ltx::RootRef,
+        limit: usize,
+    ) -> crate::Result<(NodeByteReservation, cellule_ltx::CellReplica)> {
         self.ensure_running()?;
         self.check_application_limits(catalog, replica.limits())?;
         if catalog.entry().cell().as_bytes() != &root.cell {
@@ -38,12 +76,7 @@ impl CellRuntime {
             return Err(Error::Capacity("invalid Cell root lineage traversal bound"));
         }
         let bytes = ORIGIN_METADATA_BYTES + (MAX_LINEAGE_ROOTS + limit + 1) * PREFIX_ENTRY_BYTES;
-        let _metadata = self.try_reserve_node_bytes(bytes)?;
-        let replica = self.replica_for_read(replica);
-        let proof = authority
-            .verify_root_prefix(prefix, root, &replica, limit)
-            .await?;
-        self.ensure_running()?;
-        Ok(proof)
+        let metadata = self.try_reserve_node_bytes(bytes)?;
+        Ok((metadata, self.replica_for_read(replica)))
     }
 }
