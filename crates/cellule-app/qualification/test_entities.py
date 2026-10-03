@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_barrier, verify_root_coverage, verify_timing_evidence, verify_window
+from entities import destination, verify_capacity_windows, verify_follower_proof, verify_follower_roots, verify_object_operations, verify_root_barrier, verify_root_coverage, verify_timing_evidence, verify_window
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -299,6 +299,115 @@ class RootBarrierEvidence(unittest.TestCase):
                 self.verify()
         self.metadata.update(clock_read_us="100", elapsed_us="20100")
         self.assertEqual(self.verify()["clock_read_us"], 100)
+
+
+class FollowerRootDrainEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.identity = {0: ("cell", "0", "1", "incarnation")}
+        self.positions = {0: [1, 2]}
+        self.before = [dict(entity="0", cell="cell", owner="0", epoch="1",
+                            incarnation="incarnation", root_sequence="1", root_digest="Digest(" + "a" * 64 + ")")]
+        self.final = dict(entity="0", cell="cell", owner="0", epoch="1",
+                          incarnation="incarnation", root_sequence="2", root_digest="Digest(" + "b" * 64 + ")",
+                          state="Idle", owner_present="false", restored_sequence="2", restored_count="2")
+        (self.root / "stop").touch()
+        (self.root / "node-0.done").touch()
+        self.write_final()
+
+    def write_final(self):
+        with (self.root / "capacity-final-roots.tsv").open("w", newline="") as target:
+            writer = csv.DictWriter(target, fieldnames=self.final, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(self.final)
+
+    def verify(self):
+        return verify_follower_roots(self.root, self.before, self.positions, self.identity, 1)
+
+    def test_follower_acknowledgements_are_covered_after_shutdown_drain(self):
+        result = self.verify()
+        self.assertEqual(result["verified_cells"], 1)
+        self.assertEqual(result["pre_drain_root_lag_commits_by_entity"], {0: 1})
+
+    def test_publication_logs_cannot_replace_fresh_authority_roots(self):
+        (self.root / "capacity-final-roots.tsv").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.verify()
+
+    def test_missing_shutdown_or_owner_drain_is_rejected(self):
+        for name, message in [("stop", "missing shutdown request"),
+                              ("node-0.done", "missing completed owner drain")]:
+            with self.subTest(name=name):
+                (self.root / name).unlink()
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                (self.root / name).touch()
+
+    def test_final_root_still_requires_every_acknowledged_sequence(self):
+        self.final.update(root_sequence="1", restored_sequence="1", restored_count="1")
+        self.write_final()
+        with self.assertRaisesRegex(AssertionError, "published root does not cover writes"):
+            self.verify()
+
+    def test_changed_cell_owner_epoch_or_incarnation_is_rejected(self):
+        for field in ("cell", "owner", "epoch", "incarnation"):
+            for row in (self.before[0], self.final):
+                with self.subTest(field=field, final=row is self.final):
+                    original = row[field]
+                    row[field] = "different"
+                    self.write_final()
+                    with self.assertRaises(AssertionError):
+                        self.verify()
+                    row[field] = original
+                    self.write_final()
+
+    def test_serving_owner_or_incomplete_restore_is_rejected(self):
+        for field, value, message in [
+            ("state", "Serving", "still has an owner"),
+            ("owner_present", "true", "still has an owner"),
+            ("restored_sequence", "1", "restored metadata disagrees"),
+            ("restored_count", "1", "lost or duplicated write"),
+            ("restored_count", "3", "lost or duplicated write"),
+        ]:
+            with self.subTest(field=field, value=value):
+                original = self.final[field]
+                self.final[field] = value
+                self.write_final()
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.final[field] = original
+                self.write_final()
+
+    def test_root_regression_or_replacement_at_same_sequence_is_rejected(self):
+        self.before[0]["root_sequence"] = "3"
+        with self.assertRaisesRegex(AssertionError, "drained root regressed"):
+            self.verify()
+        self.before[0]["root_sequence"] = "2"
+        with self.assertRaisesRegex(AssertionError, "same sequence changed root"):
+            self.verify()
+
+    def test_missing_or_duplicate_final_cell_is_rejected(self):
+        path = self.root / "capacity-final-roots.tsv"
+        lines = path.read_text().splitlines()
+        for content in (lines[:1], lines + [lines[-1]]):
+            with self.subTest(content=content):
+                path.write_text("\n".join(content) + "\n")
+                with self.assertRaises(AssertionError):
+                    self.verify()
+
+    def test_malformed_digest_is_rejected_in_both_snapshots(self):
+        for value in ("a" * 64, "Digest(" + "a" * 63 + ")", "Digest(" + "g" * 64 + ")"):
+            for row in (self.before[0], self.final):
+                with self.subTest(value=value, final=row is self.final):
+                    original = row["root_digest"]
+                    row["root_digest"] = value
+                    self.write_final()
+                    with self.assertRaisesRegex(AssertionError, "invalid root digest"):
+                        self.verify()
+                    row["root_digest"] = original
+                    self.write_final()
 
 
 class ObjectOperationEvidence(unittest.TestCase):

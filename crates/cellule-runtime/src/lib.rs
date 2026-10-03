@@ -54,7 +54,7 @@ pub use cell::executor::{MutationIdentity, Resolution};
 pub use cell::worker::SqlWorkerPool;
 pub use client::{
     CellClient, CellReadReplica, Committed, InvocationError, Observed, PendingMutation,
-    PreparedCommand, ReadReplicaSource, Receipt,
+    PreparedCommand, PreparedCommandSnapshot, ReadReplicaSource, Receipt,
 };
 
 pub use error::{Error, Result};

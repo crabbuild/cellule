@@ -31,9 +31,9 @@ use crate::registry::{
 
 const MODULE: &str = "pending-test";
 const ADMISSION_CELL: crate::CellId = crate::CellId::from_bytes([1; 32]);
-const NAMESPACE: NamespaceId = NamespaceId::from_bytes([3; 16]);
+pub(super) const NAMESPACE: NamespaceId = NamespaceId::from_bytes([3; 16]);
 const MIGRATION: &str = "CREATE TABLE pending_test(value BLOB NOT NULL)";
-const RETAINED_CODE: Digest = Digest::from_bytes([14; 32]);
+pub(super) const RETAINED_CODE: Digest = Digest::from_bytes([14; 32]);
 
 #[test]
 fn pending_rejection_preserves_published_receipt() {
@@ -79,7 +79,7 @@ fn pending_rejection_preserves_published_receipt() {
     ));
 }
 
-struct PendingCommand;
+pub(super) struct PendingCommand;
 
 impl Command for PendingCommand {
     const MODULE: &'static str = MODULE;
@@ -198,7 +198,7 @@ async fn ambiguous_peer_command_preserves_identity_without_retry() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
-struct PendingModule;
+pub(super) struct PendingModule;
 
 impl CellModule for PendingModule {
     const NAME: &'static str = MODULE;

@@ -991,6 +991,31 @@ impl Registry {
         invocation: CommandInvocation<'_>,
         issued_at_ms: i64,
     ) -> Result<HandlerOutcome> {
+        self.execute_command_context(transaction, invocation, issued_at_ms, None)
+    }
+
+    pub(crate) fn execute_command_with_mutation(
+        &self,
+        transaction: &Transaction<'_>,
+        invocation: CommandInvocation<'_>,
+        identity: MutationIdentity,
+        operation_digest: Digest,
+    ) -> Result<HandlerOutcome> {
+        self.execute_command_context(
+            transaction,
+            invocation,
+            identity.issued_at_ms,
+            Some((identity, operation_digest)),
+        )
+    }
+
+    fn execute_command_context(
+        &self,
+        transaction: &Transaction<'_>,
+        invocation: CommandInvocation<'_>,
+        issued_at_ms: i64,
+        mutation: Option<(MutationIdentity, Digest)>,
+    ) -> Result<HandlerOutcome> {
         if invocation.sequence == 0 || invocation.now_ms < 0 || invocation.owner_fence.epoch == 0 {
             return Err(Error::Command("invalid registered command context"));
         }
@@ -1028,6 +1053,7 @@ impl Registry {
             sequence: invocation.sequence,
             now_ms: invocation.now_ms,
             issued_at_ms,
+            mutation,
             input_limit: operation.input_limit,
             output_limit: operation.output_limit,
             effects: None,

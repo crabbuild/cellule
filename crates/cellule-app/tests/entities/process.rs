@@ -17,6 +17,7 @@ use std::{
 };
 use tokio::net::TcpListener;
 
+mod drain;
 mod driver;
 mod observation;
 mod root_capture;
