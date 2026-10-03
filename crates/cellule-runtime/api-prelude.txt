@@ -33,6 +33,7 @@ NodeLeaseGuard
 Observed
 PendingMutation
 PreparedCommand
+PreparedCommandSnapshot
 QualificationExecution
 QualificationOperation
 QualificationOperationExecutor

@@ -125,6 +125,14 @@ const COMMANDS: &[OperationDescriptor] = &[
         input_limit: 64,
         output_limit: 64,
     },
+    OperationDescriptor {
+        id: 10,
+        codec_version: 1,
+        schema_min: 1,
+        schema_max: 1,
+        input_limit: 64,
+        output_limit: 512,
+    },
 ];
 const QUERIES: &[OperationDescriptor] = &[
     OperationDescriptor {
@@ -170,6 +178,7 @@ impl CellModule for RepositoryModule {
         registry.bind_command::<EmitEffectComment>()?;
         registry.bind_command::<EmitUndeclaredEffect>()?;
         registry.bind_command::<ObserveOwnerFence>()?;
+        registry.bind_command::<mutation_context::RecordMutation>()?;
         registry.bind_query::<CountComments>()?;
         register_effect_delivery::<Self>(registry)?;
         Ok(())
@@ -655,7 +664,9 @@ impl PeerRoundTrip for LoopbackRoundTrip {
 }
 
 mod effects;
+mod mutation_context;
 mod publication;
 mod routing;
+mod snapshot;
 mod telemetry;
 mod typed;

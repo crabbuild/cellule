@@ -84,6 +84,7 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         BufWriter::new(File::create(sync.join(format!("{evidence_prefix}-owners.tsv"))).unwrap());
     writeln!(owners, "stage\tentity\tcell\towner\tepoch\tincarnation").unwrap();
     let mut expected = Vec::new();
+    let mut identities = Vec::new();
     let mut latest_receipts = Vec::new();
     let mut window_id = 0;
     let mut capacity_windows = capacity.then(|| {
@@ -137,6 +138,12 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             let node = entity / ENTITIES_PER_NODE;
             assert_eq!(owner.session, node_session(node));
             assert_eq!(owner.endpoint, format!("https://{}", addresses[node]));
+            let identity = (control.value().epoch, control.value().incarnation);
+            if entity == identities.len() {
+                identities.push(identity);
+            } else {
+                assert_eq!(identities[entity], identity);
+            }
             writeln!(
                 owners,
                 "{nodes}\t{entity}\t{:?}\t{node}\t{}\t{:?}",
@@ -268,6 +275,10 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             .unwrap()
             .is_empty()
     );
+    if follower_enabled {
+        super::drain::verify_follower_roots(sync, &layout, &application, &expected, &identities)
+            .await;
+    }
 }
 
 fn destination(shape: &str, arrival: usize, cells: usize) -> (usize, bool) {

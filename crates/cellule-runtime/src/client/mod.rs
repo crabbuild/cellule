@@ -53,9 +53,11 @@ mod local;
 mod replica;
 mod routing;
 mod runtime;
+mod snapshot;
 
 pub use replica::CellReadReplica;
 pub use routing::ReplicaReadRouter;
+pub use snapshot::PreparedCommandSnapshot;
 
 pub use local::command_operation_digest;
 pub(crate) use local::{
@@ -289,6 +291,22 @@ pub struct PendingMutation {
 }
 
 impl PendingMutation {
+    pub(crate) const fn admitted(
+        target: CellTarget,
+        incarnation: IncarnationId,
+        identity: MutationIdentity,
+        operation_digest: Digest,
+        max_result_bytes: usize,
+    ) -> Self {
+        Self {
+            target,
+            incarnation,
+            identity,
+            operation_digest,
+            max_result_bytes,
+        }
+    }
+
     /// Returns the identity that resolves this mutation.
     #[must_use]
     pub const fn identity(&self) -> MutationIdentity {

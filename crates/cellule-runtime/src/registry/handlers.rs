@@ -16,6 +16,7 @@ pub struct CommandContext<'borrow, 'connection> {
     pub(super) sequence: u64,
     pub(super) now_ms: i64,
     pub(super) issued_at_ms: i64,
+    pub(super) mutation: Option<(MutationIdentity, Digest)>,
     pub(super) input_limit: u32,
     pub(super) output_limit: u32,
     pub(super) effects: Option<EffectBatch>,
@@ -42,6 +43,31 @@ impl CommandContext<'_, '_> {
     #[must_use]
     pub const fn owner_fence(&self) -> OwnerFence {
         self.owner_fence
+    }
+
+    /// Returns the original SDK mutation admitted by the runtime, when present.
+    ///
+    /// Local and authenticated peer commands expose the same evidence. It is
+    /// absent for direct registry dispatch and effect inbox delivery, which have
+    /// no SDK mutation identity. Client input cannot replace this value. A
+    /// recorded result is replayed without running the handler again.
+    ///
+    /// Applications can bind a durable recovery record to this evidence and
+    /// `sequence()` in the command's SQL transaction. Neither value proves
+    /// durable publication until the runtime returns its committed receipt.
+    #[must_use]
+    pub fn mutation_evidence(&self) -> Option<PendingMutation> {
+        // Copy only the fixed-size stamp at dispatch. Allocate the target's
+        // partition only for handlers that request owned recovery evidence.
+        self.mutation.map(|(identity, digest)| {
+            PendingMutation::admitted(
+                self.target.clone(),
+                self.owner_fence.incarnation,
+                identity,
+                digest,
+                self.output_limit as usize,
+            )
+        })
     }
 
     /// Returns the actor-ordered sequence the command was admitted at.
