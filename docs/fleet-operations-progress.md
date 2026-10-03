@@ -8,8 +8,8 @@ balancing, maintenance, or deployment qualification.
 
 `FleetObservation::with_role_evacuations` retains fresh reader/follower policy
 checks through the public controller. Each confirmation now preserves its full
-immutable durable record. Checks agree on one exact full head, registry, roster
-and original capture interval, and compare selected signed boots with their
+immutable durable record. Checks agree on one exact full head, registry and
+roster, retain their fresh intervals inside the outer observation, and compare selected signed boots with their
 existing reader/follower producer identities. Duplicate original obligations,
 including overlapping retired ensembles, refuse. Matching current writer rows
 and follower epoch/ensemble cannot contradict the confirmed policy. Attachment
@@ -33,16 +33,37 @@ planner digest and refuses replacement without upgrading coverage.
 
 ### Verification and CI
 
-All six focused cases pass. Initial isolated Rust 1.99 verification completes
-with all 11 commands and nine static gates passing: 1,655 framework cases,
-269 minion cases and 256 cookbook cases pass; 36 documented framework cases
-remain ignored. Verification will repeat after merging the new `main` source.
-Commands, exact source archives, raw failures and results are retained under
-`/tmp/cellule-role-evacuation-observation-evidence`.
+All six focused cases pass. Both intervening `main` merges are incorporated,
+through `5724959`. The final isolated Rust 1.99 source passes eight fresh Rust
+commands, including the normal minion executable build and Axum without default
+features. Nine static gates pass, covering 132 Rust snippets and 1,278 Markdown
+links; the process qualification harness passes 49 Python unit cases.
 
-Published `7ebc0c1` passes every required CI check, including both routing and
-capacity profiles. `main` advanced to `4c627d3`; the workflow conflict requires
-preserving both minion and the incoming Axum HTTP gates before qualification.
+| Verification | Result |
+| --- | --- |
+| Full framework, all features, locked | 1,667 passed; zero failures; 36 documented ignored cases. |
+| Complete canonical minion | 269 passed; zero failures or ignores. |
+| Distinct framework/minion passes | 1,936; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | All 54 passed. |
+| Framework check, Clippy and API docs | All targets/features pass; lint/docs deny warnings. |
+| Cookbook | All 256 tests, check, Clippy, warning-denied docs and binary builds pass. |
+
+All 11 commands passed on the preceding merged snapshot. Its five cookbook
+results are reused only after comparing exact source inputs: cookbook's own
+lockfile and every production dependency remain byte-identical. All latest-merge
+changes lie outside those build inputs; 1,512 source files match the earlier
+snapshot. All 1,089 committed Rust/Cargo paths match the final qualified inputs,
+with manifest SHA256
+`703808afa4d01192ee0b1cc2147d6ecfb08a263a0b31dc737fdb9a182454abb3`.
+Commands, exact source archives, original failures, scope comparison and results
+are retained under `/tmp/cellule-role-evacuation-observation-evidence`, including
+`merged-final` and `latest-main-final`.
+
+Published parent `7ebc0c1` passes every required CI check, including both routing
+and capacity profiles. Merge resolution preserves both minion and Axum HTTP CI
+gates, the new public Axum error envelope, and the bounded original receipt/root
+capture alongside exact restored-byte evidence. Fresh CI must qualify the new
+head. No profile, deadline, throughput/latency gate or proof is weakened.
 The preceding `fe378b0` routing campaign fails only leased forwarded commands at
 concurrency 16 (88.92% of baseline) and object-only local commands at concurrency
 16 (86.19%), against the unchanged 90% throughput gate. All latency gates pass.

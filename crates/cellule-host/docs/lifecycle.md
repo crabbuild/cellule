@@ -872,7 +872,8 @@ fn retain_current_role_policy(
 }
 ```
 
-Every check must match the exact full head, registry, roster and outer interval.
+Every check must match the exact full head, registry and roster. Its original
+fresh interval must lie inside the outer observation interval.
 Original retired obligations cannot occur twice, including overlapping follower
 ensembles. Signed replacement boots must match the existing producer-specific
 identity; a changed writer row or follower epoch/ensemble invalidates the input.
