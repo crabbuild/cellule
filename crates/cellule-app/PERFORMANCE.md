@@ -45,6 +45,19 @@ window. File I/O cannot delay the next offered arrival; its cost still counts
 in the window duration. Lateness, concurrency, receipt, and drain-grace gates
 remain unchanged, and missed arrivals remain visible in the raw rows.
 
+The follower capacity lane preserves the serving root snapshot in
+`capacity-roots-3.tsv`; a follower-acknowledged write can still be waiting for
+object publication there. After all hosts finish shutdown and withdraw their
+live sessions, the driver reads authority again and requires idle Cells with
+the original epoch and incarnation. Each exact final root is authenticated
+and restored through a fresh replica onto fresh disk. Its SQLite commit
+sequence must match the root, and its invoice count must equal every
+acknowledged write without loss or duplication. `capacity-final-roots.tsv`
+retains this proof. The verifier applies the original strict root coverage
+check to these drained roots and reports the earlier snapshot's lag separately.
+This final recovery check runs outside the scheduled load windows; their
+latency, throughput, resource, overload and drain-grace limits stay unchanged.
+
 ## Dated evidence
 
 | Question | Reports |

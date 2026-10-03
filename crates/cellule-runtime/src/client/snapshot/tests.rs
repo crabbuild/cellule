@@ -316,9 +316,10 @@ async fn import_rejects_corrupt_body_target_contract_and_identity_without_io() {
     );
 }
 #[tokio::test]
-async fn expired_snapshot_resolves_known_outcome_but_cannot_execute_or_refresh_incarnation() {
+async fn expired_snapshot_import_preserves_identity_without_authorizing_execution_or_absence() {
     let target = target(b"expired");
     let io = transport(&target, false, false, false);
+    *io.outcome.lock().unwrap() = Resolution::Expired;
     let client = CellClient::new(registry(), io.clone());
     let prepared = client
         .prepare_command::<PendingCommand>(&target, identity(), b"original".to_vec())
@@ -340,7 +341,7 @@ async fn expired_snapshot_resolves_known_outcome_but_cannot_execute_or_refresh_i
         .unwrap();
     assert!(matches!(
         client.resolve(snapshot.evidence()).await.unwrap(),
-        Resolution::Committed(_)
+        Resolution::Expired
     ));
     assert!(matches!(
         restored.execute().await,
