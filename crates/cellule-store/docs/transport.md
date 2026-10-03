@@ -20,6 +20,11 @@ sequenceDiagram
 | Read admission | Reserve before backend work and release on completion/cancellation. |
 | Observation | Count requests and bytes without changing ownership semantics. |
 
+Observed GET, listing, and deletion streams remain finished after EOF, including
+empty bodies. Polling them again returns `None` and records no second terminal
+observation. Completion, provider errors, and cancellation each release the
+active operation exactly once.
+
 `StorageError` keeps its source where available. `RetryClass` separates
 transient, throttled, state-dependent, and fatal failures. A caller controls
 its own deadline and whether an ambiguous write can be retried.
