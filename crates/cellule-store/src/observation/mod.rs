@@ -506,7 +506,7 @@ fn observe_get_stream(
     stream: BoxStream<'static, object_store::Result<Bytes>>,
     observation: ActiveObservation,
 ) -> BoxStream<'static, object_store::Result<Bytes>> {
-    Box::pin(futures_util::stream::unfold(
+    futures_util::stream::unfold(
         (stream, Some(observation)),
         |(mut stream, mut observation)| async move {
             let active = observation.as_mut()?;
@@ -525,14 +525,16 @@ fn observe_get_stream(
                 }
             }
         },
-    ))
+    )
+    .fuse()
+    .boxed()
 }
 
 fn observe_stream<T: Send + 'static>(
     stream: BoxStream<'static, object_store::Result<T>>,
     observation: ActiveObservation,
 ) -> BoxStream<'static, object_store::Result<T>> {
-    Box::pin(futures_util::stream::unfold(
+    futures_util::stream::unfold(
         (stream, Some(observation)),
         |(mut stream, mut observation)| async move {
             let active = observation.as_mut()?;
@@ -548,7 +550,9 @@ fn observe_stream<T: Send + 'static>(
                 }
             }
         },
-    ))
+    )
+    .fuse()
+    .boxed()
 }
 
 fn classify_error(error: &object_store::Error) -> StorageOutcome {
