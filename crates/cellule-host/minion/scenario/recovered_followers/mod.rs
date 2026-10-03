@@ -126,6 +126,7 @@ impl Fixture {
     ) -> Self {
         #[cfg(not(unix))]
         assert!(!observe, "process lifetime stand-in requires Unix");
+        let compiled = super::application::compile().unwrap();
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("journal.sqlite");
         let journal = Arc::new(
@@ -142,7 +143,7 @@ impl Fixture {
             layout.clone(),
             scope().fleet,
             Digest::from_bytes([31; 32]),
-            Digest::from_bytes([32; 32]),
+            compiled.registry().release_digest(),
         );
         let mut intents = Vec::new();
         for index in 0..3 {
@@ -160,12 +161,12 @@ impl Fixture {
                 scope().fleet,
                 Digest::from_bytes([30; 32]),
                 Digest::from_bytes([31; 32]),
-                Digest::from_bytes([32; 32]),
+                compiled.registry().release_digest(),
                 &SigningKey::from_bytes(&[index as u8 + 1; 32]),
                 1,
                 issued,
                 issued + 10_000,
-                vec![Digest::from_bytes([33; 32])],
+                compiled.registry().module_digests(),
                 vec![1],
                 NodeFailureDomain::default(),
                 NodeCapacity {

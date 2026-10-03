@@ -44,7 +44,9 @@ pub use failed_boot::{
     FleetFailedBootRetirement, FleetFailedReaderClosure, FleetFailedReaderPublication,
     FleetFailedReaderRetirement, FleetOriginalBootSuffixInventory, FleetOriginalCatalogSet,
     FleetOriginalCatalogSource, FleetOriginalCatalogs, FleetOriginalWriterCapture,
-    FleetOriginalWriterInventory, FleetOriginalWriterJournal,
+    FleetOriginalWriterInventory, FleetOriginalWriterJournal, FleetOriginalWriterSuccessorInputs,
+    FleetOriginalWriterSuccessorInventory, FleetOriginalWriterSuccessorProof,
+    FleetOriginalWriterSuccessors,
 };
 pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInventoryScan};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};

@@ -344,3 +344,92 @@ async fn runtime_prefix_verification_admits_memory_before_io_and_releases_every_
     handle.drain().await.unwrap();
     source.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn native_serving_observation_requires_exact_later_admitted_owner() {
+    let fixture = fixture_for(b"native-serving-boundary");
+    let (runtime, handle, _) = activate_runtime(&fixture, 64 << 20).await;
+    let catalog = handle.catalog().clone();
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let current = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let first = runtime
+        .observe_serving(&catalog, &authority, current.value().incarnation, 0)
+        .await
+        .unwrap();
+    let second = runtime
+        .observe_serving(&catalog, &authority, current.value().incarnation, 0)
+        .await
+        .unwrap();
+    assert!(first.same_writer(&second));
+    assert_eq!(first.owner(), current.value().owner.as_ref().unwrap());
+    assert_eq!(&first.native().target, &fixture.target);
+    assert!(matches!(
+        runtime
+            .observe_serving(
+                &catalog,
+                &authority,
+                current.value().incarnation,
+                current.value().epoch
+            )
+            .await,
+        Err(cellule_runtime::Error::Fenced)
+    ));
+    assert!(matches!(
+        runtime
+            .observe_serving(&catalog, &authority, IncarnationId::from_bytes([99; 16]), 0)
+            .await,
+        Err(cellule_runtime::Error::Fenced)
+    ));
+    increment(&handle, 88).await;
+    let advanced = runtime
+        .observe_serving(&catalog, &authority, current.value().incarnation, 0)
+        .await
+        .unwrap();
+    assert!(!first.same_writer(&advanced));
+    assert!(advanced.position().root.commit_sequence > first.position().root.commit_sequence);
+    handle.drain().await.unwrap();
+    assert!(
+        runtime
+            .observe_serving(&catalog, &authority, current.value().incarnation, 0)
+            .await
+            .is_err()
+    );
+    runtime.shutdown().await.unwrap();
+    assert!(matches!(
+        runtime
+            .observe_serving(&catalog, &authority, current.value().incarnation, 0)
+            .await,
+        Err(cellule_runtime::Error::RuntimeClosed)
+    ));
+}
+
+#[tokio::test]
+async fn a_different_runtime_cannot_report_a_native_serving_writer() {
+    let fixture = fixture_for(b"native-serving-other-runtime");
+    let (source, handle, _) = activate_runtime(&fixture, 64 << 20).await;
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let current = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let other = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        64 << 20,
+        SessionId::from_bytes([99; 16]),
+    )
+    .unwrap();
+    assert!(matches!(
+        other
+            .observe_serving(handle.catalog(), &authority, current.value().incarnation, 0)
+            .await,
+        Err(cellule_runtime::Error::Fenced)
+    ));
+    other.shutdown().await.unwrap();
+    handle.drain().await.unwrap();
+    source.shutdown().await.unwrap();
+}

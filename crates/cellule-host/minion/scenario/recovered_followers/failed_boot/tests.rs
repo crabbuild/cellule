@@ -585,12 +585,18 @@ async fn failed_boot_closure_replay_preserves_new_boot_foreign_roles_on_the_same
         scope().fleet,
         Digest::from_bytes([30; 32]),
         Digest::from_bytes([31; 32]),
-        Digest::from_bytes([32; 32]),
+        super::super::super::application::compile()
+            .unwrap()
+            .registry()
+            .release_digest(),
         &SigningKey::from_bytes(&[50; 32]),
         1,
         CHECK,
         CHECK + 10_000,
-        vec![Digest::from_bytes([33; 32])],
+        super::super::super::application::compile()
+            .unwrap()
+            .registry()
+            .module_digests(),
         vec![1],
         NodeFailureDomain::default(),
         NodeCapacity {

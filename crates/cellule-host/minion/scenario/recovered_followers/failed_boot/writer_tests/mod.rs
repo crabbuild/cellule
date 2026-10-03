@@ -12,7 +12,8 @@ use cellule_runtime::control::{Transition, authority::CellAuthority};
 use cellule_runtime::fleet::operations::{
     JournalTransition, MaintenanceOperation, OperationId, OriginalWriterInventoryRecord,
 };
-use cellule_runtime::identity::NamespaceId;
+
+mod successors;
 
 struct Catalogs {
     sources: Vec<FleetOriginalCatalogSource>,
@@ -77,6 +78,15 @@ impl WriterFixture {
         Self::with_suffixes(originals_per_catalog, false).await
     }
     async fn with_suffixes(originals_per_catalog: u64, suffixes: bool) -> Self {
+        Self::with_suffixes_and_takeover(originals_per_catalog, suffixes, true).await
+    }
+    async fn with_suffixes_and_takeover(
+        originals_per_catalog: u64,
+        suffixes: bool,
+        takeover: bool,
+    ) -> Self {
+        let compiled = super::super::super::application::compile().unwrap();
+        let code = *compiled.registry().module_digests().first().unwrap();
         let mut sources = Vec::new();
         let mut layouts = Vec::new();
         let mut expected = Vec::new();
@@ -98,20 +108,12 @@ impl WriterFixture {
                 let target = CellTarget::new(
                     tenant,
                     catalog.application(),
-                    NamespaceId::from_bytes([9; 16]),
+                    super::super::super::application::NAMESPACE,
                     &n.to_be_bytes(),
                 )
                 .unwrap();
                 let proof = catalog
-                    .provision(
-                        CatalogEntry::new(
-                            &target,
-                            CatalogRole::Sql,
-                            Digest::from_bytes([8; 32]),
-                            1,
-                        )
-                        .unwrap(),
-                    )
+                    .provision(CatalogEntry::new(&target, CatalogRole::Sql, code, 1).unwrap())
                     .await
                     .unwrap();
                 let mut observed = authority
@@ -120,13 +122,27 @@ impl WriterFixture {
                     .unwrap();
                 if suffixes && n == 0 {
                     let root = tempfile::tempdir().unwrap();
-                    let limits = Limits::default();
+                    let limits = Limits {
+                        max_database_bytes: 64 << 20,
+                        max_capture_bytes: 16 << 20,
+                        ..Limits::default()
+                    };
+                    let mut connection =
+                        rusqlite::Connection::open(root.path().join("writer.sqlite")).unwrap();
+                    cellule_runtime::cell::schema::install_runtime_schema(
+                        &mut connection,
+                        target.cell_id(),
+                        IncarnationId::from_bytes([10; 16]),
+                        1,
+                    )
+                    .unwrap();
+                    connection.close().unwrap();
                     let mut db =
                         cellule_runtime::ltx::Db::open(&root.path().join("writer.sqlite"), limits)
                             .unwrap();
                     db.transaction(|tx| {
                         tx.execute_batch(
-                            "CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES(1)",
+                            "CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES(1); UPDATE sys_meta SET commit_sequence=1, logical_time_ms=1",
                         )
                     })
                     .unwrap();
@@ -153,7 +169,7 @@ impl WriterFixture {
                         observed: observed.clone(),
                     });
                     suffix_owners.push((authority.clone(), target.cell_id()));
-                    db.transaction(|tx| tx.execute_batch("UPDATE counter SET value=2"))
+                    db.transaction(|tx| tx.execute_batch("UPDATE counter SET value=2; UPDATE sys_meta SET commit_sequence=2, logical_time_ms=2"))
                         .unwrap();
                     let cuts = db.capture().unwrap();
                     let segment = &cuts.segments[0];
@@ -180,7 +196,7 @@ impl WriterFixture {
                     db.close().unwrap();
                 }
                 expected.push(observed.value().clone());
-                if !suffixes || n != 0 {
+                if takeover && (!suffixes || n != 0) {
                     authority
                         .transition(
                             &observed,
@@ -195,15 +211,12 @@ impl WriterFixture {
             let target = CellTarget::new(
                 tenant,
                 catalog.application(),
-                NamespaceId::from_bytes([9; 16]),
+                super::super::super::application::NAMESPACE,
                 b"unused",
             )
             .unwrap();
             catalog
-                .provision(
-                    CatalogEntry::new(&target, CatalogRole::Sql, Digest::from_bytes([8; 32]), 1)
-                        .unwrap(),
-                )
+                .provision(CatalogEntry::new(&target, CatalogRole::Sql, code, 1).unwrap())
                 .await
                 .unwrap();
             layouts.push(layout.clone());
@@ -221,14 +234,16 @@ impl WriterFixture {
             let observed = authority.load(cell).await.unwrap().unwrap();
             assert!(observed.value().recovery.is_some());
             *expected.iter_mut().find(|row| row.cell == cell).unwrap() = observed.value().clone();
-            authority
-                .transition(
-                    &observed,
-                    observed.value().takeover(owner(1)).unwrap(),
-                    Transition::Takeover,
-                )
-                .await
-                .unwrap();
+            if takeover {
+                authority
+                    .transition(
+                        &observed,
+                        observed.value().takeover(owner(1)).unwrap(),
+                        Transition::Takeover,
+                    )
+                    .await
+                    .unwrap();
+            }
         }
         let request = FleetFailedBootProcessRequest::capture_fenced(
             base.journal.as_ref(),
@@ -941,13 +956,13 @@ async fn catalog_and_process_changes_before_first_publication_refuse() {
             let target = CellTarget::new(
                 catalog.tenant(),
                 catalog.application(),
-                NamespaceId::from_bytes([9; 16]),
+                super::super::super::application::NAMESPACE,
                 b"later",
             )
             .unwrap();
             catalog
                 .provision(
-                    CatalogEntry::new(&target, CatalogRole::Sql, Digest::from_bytes([8; 32]), 1)
+                    CatalogEntry::new(&target, CatalogRole::Sql, fixture.expected[0].code, 1)
                         .unwrap(),
                 )
                 .await

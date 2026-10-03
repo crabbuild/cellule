@@ -16,6 +16,11 @@ mod inventory;
 pub use inventory::FleetOriginalWriterInventory;
 mod suffixes;
 pub use suffixes::FleetOriginalBootSuffixInventory;
+mod successors;
+pub use successors::{
+    FleetOriginalWriterSuccessorInputs, FleetOriginalWriterSuccessorInventory,
+    FleetOriginalWriterSuccessorProof, FleetOriginalWriterSuccessors,
+};
 
 /// One application-authenticated canonical catalog source. Construct from the
 /// same storage layout for catalog and authority; never accept remote credentials.

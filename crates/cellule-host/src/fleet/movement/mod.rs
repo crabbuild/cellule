@@ -6,11 +6,11 @@ use super::actions::{
 };
 use super::{FleetActionAcceptance, FleetCellInputs};
 use cellule_runtime::Error;
-use cellule_runtime::cell::actor::{CellInventoryEntry, PreparedCellReceiver, ReceiverState};
+use cellule_runtime::cell::actor::{PreparedCellReceiver, ReceiverState};
 use cellule_runtime::control::{ControlState, authority::VersionedControl};
 use cellule_runtime::fleet::operations::{
     AcceptedFleetAction, AcquisitionBasis, ActivationEvidence, AttemptPhase, DrainBlocker,
-    FleetActionKind, FleetOutcome, MoveAttempt, MovementAction, PublishedPosition,
+    FleetActionKind, FleetOutcome, MoveAttempt, MovementAction,
 };
 
 mod activation;

@@ -13,7 +13,9 @@ mod writers;
 pub use writers::{
     FleetOriginalBootSuffixInventory, FleetOriginalCatalogSet, FleetOriginalCatalogSource,
     FleetOriginalCatalogs, FleetOriginalWriterCapture, FleetOriginalWriterInventory,
-    FleetOriginalWriterJournal,
+    FleetOriginalWriterJournal, FleetOriginalWriterSuccessorInputs,
+    FleetOriginalWriterSuccessorInventory, FleetOriginalWriterSuccessorProof,
+    FleetOriginalWriterSuccessors,
 };
 mod process;
 mod publication;

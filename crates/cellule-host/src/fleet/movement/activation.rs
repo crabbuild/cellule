@@ -140,82 +140,52 @@ impl FleetActionExecutor {
         {
             return Err(Error::Fenced);
         }
-        let handle = self
+        let before = self
             .runtime
-            .local_handle(inputs.catalog.clone(), &current)
-            .await?
-            .ok_or(Error::CellDraining)?;
-        // The ordinary FIFO query/admission boundary checks the lease and joins
-        // prior publication. It creates no command or alternative response gate.
-        handle.query(1, 1, |_| Ok(Vec::new())).await?;
-        let latest = inputs
-            .authority
-            .load(spec.target.cell_id())
-            .await?
-            .ok_or(Error::Fenced)?;
-        if latest.value().incarnation != spec.incarnation
-            || latest.value().epoch != current.value().epoch
-            || latest.value().state != ControlState::Serving
-            || latest
-                .value()
-                .owner
-                .as_ref()
-                .is_none_or(|owner| owner.session != self.session)
-        {
+            .observe_serving(
+                &inputs.catalog,
+                &inputs.authority,
+                spec.incarnation,
+                spec.source_epoch,
+            )
+            .await?;
+        if before.owner().session != self.session {
             return Err(Error::Fenced);
         }
-        let root = latest.value().ltx_root().ok_or(Error::Fenced)?;
+        let root = before
+            .position()
+            .root
+            .to_ltx(spec.target.cell_id(), spec.incarnation);
         self.verify_serving_prefix(attempt, inputs, required, root)
             .await?;
-        // Origin verification can outlive the first actor query. Recheck the
-        // same admitted native owner and exact selected root before returning
-        // serving evidence; historical counters cannot replace this boundary.
-        handle.query(1, 1, |_| Ok(Vec::new())).await?;
-        let confirmed = inputs
-            .authority
-            .load(spec.target.cell_id())
-            .await?
-            .ok_or(Error::Fenced)?;
-        self.check_contract(attempt, inputs, &confirmed)?;
-        if confirmed.value().owner != latest.value().owner
-            || confirmed.value().epoch != latest.value().epoch
-            || confirmed.value().state != ControlState::Serving
-            || confirmed.value().ltx_root() != Some(root)
-        {
+        // Share the canonical native FIFO/authority/generation observation with
+        // complete original-writer collection. Prefix I/O grants no serving.
+        let after = self
+            .runtime
+            .observe_serving(
+                &inputs.catalog,
+                &inputs.authority,
+                spec.incarnation,
+                spec.source_epoch,
+            )
+            .await?;
+        if !before.same_writer(&after) {
             return Err(Error::Fenced);
         }
-        let position = PublishedPosition {
-            incarnation: latest.value().incarnation,
-            epoch: latest.value().epoch,
-            root: latest.value().root.clone().ok_or(Error::Fenced)?,
-        };
-        let mut cursor = None;
-        loop {
-            let page = self.runtime.fleet_cells_page(cursor, 128).await?;
-            if let Some(entry) = page
-                .entries()
-                .iter()
-                .find(|entry| entry.cell() == spec.target.cell_id())
-            {
-                return match entry {
-                    CellInventoryEntry::Owned(owner)
-                        if owner.incarnation == spec.incarnation
-                            && owner.position.as_ref() == Some(&position) =>
-                    {
-                        let evidence = ActivationEvidence {
-                            node: self.node,
-                            session: self.session,
-                            position,
-                        };
-                        Ok(evidence)
-                    }
-                    _ => Err(Error::CellDraining),
-                };
-            }
-            match page.next() {
-                Some(next) => cursor = Some(next),
-                None => return Err(Error::Fenced),
-            }
+        if !self.registry.supports_cell(
+            spec.target.namespace(),
+            inputs.catalog.entry().role(),
+            after.native().code,
+            after.native().schema,
+        ) {
+            return Err(Error::Registry(
+                "fleet receiver does not support current Cell contract",
+            ));
         }
+        Ok(ActivationEvidence {
+            node: self.node,
+            session: self.session,
+            position: after.position().clone(),
+        })
     }
 }
