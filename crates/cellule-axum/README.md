@@ -588,6 +588,11 @@ histograms after drain, including warmup and correctness checks. Histogram
 upper bounds have 100 µs resolution through two seconds; overflow percentiles
 are unknown. The paired write workflow instruments both servers identically.
 
+The [sustained-write report](performance/2026-10-03-rustfs-steady-writes.md)
+retains all paired results and durability evidence. The initial compaction
+comparison improves compaction time but does not establish consistent gains
+in HTTP write throughput or tail latency.
+
 ```sh
 cargo test -p cellule-axum --all-targets --locked
 ```
