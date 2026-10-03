@@ -49,6 +49,11 @@ the append's schema and can choose the final root with one CAS
 against the original authority record. Every immutable dependency still finishes
 uploading before the successor proposal is returned.
 
+The verified compaction composition sets the original predecessor in the native
+factory before derivation metadata runs. Metadata and the complete proposal name
+the same input. That private preparation context is removed from the immutable
+read view; subsequent preparations cannot inherit an earlier rebase.
+
 ## Verify current origin dependencies
 
 `CellReplica::reachable_objects` authenticates the exact root's complete current

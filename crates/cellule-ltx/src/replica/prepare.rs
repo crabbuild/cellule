@@ -34,14 +34,14 @@ impl CellReplica {
                 "append requires a representation-only compaction",
             ));
         }
-        let mut successor = self
-            .prepare(Some(&root), cuts, commit_sequence, schema)
-            .await?;
         // The private compaction authenticates identical logical state. The
-        // final root replaces that original state directly, after every new
-        // dependency has uploaded through the normal preparation path.
-        successor.predecessor = Some(predecessor);
-        Ok(successor)
+        // native factory must name the final authority predecessor before
+        // exposing derivation metadata, not rebase it after retention.
+        let mut replica = self.clone();
+        replica.preparation_predecessor = Some(predecessor);
+        replica
+            .prepare(Some(&root), cuts, commit_sequence, schema)
+            .await
     }
 
     /// Verifies and uploads a new immutable root without changing authority.
@@ -647,11 +647,10 @@ impl CellReplica {
         // verified view carries no preparation callback beyond this owned call.
         let mut view_replica = self.clone().with_host(host);
         view_replica.root_metadata = None;
+        view_replica.preparation_predecessor = None;
         let verified = VerifiedRoot::from_graph(view_replica, root, &document, descriptors)?;
-        let preparation = RootPreparation {
-            root,
-            predecessor: base.copied(),
-        };
+        let predecessor = self.preparation_predecessor.or_else(|| base.copied());
+        let preparation = RootPreparation { root, predecessor };
         let metadata = async {
             if let Some(metadata) = &self.root_metadata {
                 // Metadata shares native origin admission. It owns no second
@@ -672,7 +671,7 @@ impl CellReplica {
         )
         .await?;
         Ok(PreparedRoot {
-            predecessor: base.copied(),
+            predecessor,
             verified,
         })
     }

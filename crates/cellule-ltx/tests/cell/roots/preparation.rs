@@ -93,6 +93,27 @@ async fn preparation_metadata_has_exact_native_inputs_and_no_detached_lifetime()
         Some(second.preparation())
     );
     assert_eq!(second.preparation().predecessor(), Some(first.root()));
+    let compacted = replica
+        .prepare_compaction(&second.root(), 0..2, 1, directory.path())
+        .await
+        .unwrap();
+    assert_ne!(compacted.root(), second.root());
+    database
+        .transaction(|transaction| {
+            transaction.execute("UPDATE counter SET value = 9", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let third = replica
+        .prepare_after_compaction(&compacted, &database.capture().unwrap(), 3, 1)
+        .await
+        .unwrap();
+    assert_eq!(third.predecessor(), Some(second.root()));
+    assert_eq!(
+        metadata.observed.lock().unwrap().last().copied(),
+        Some(third.preparation()),
+        "native metadata must observe the final rebased predecessor"
+    );
     assert_eq!(metadata.active.load(Ordering::SeqCst), 0);
     assert_eq!(slots.available_permits(), 1);
     database.close().unwrap();

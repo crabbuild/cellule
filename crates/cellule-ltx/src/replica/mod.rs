@@ -707,6 +707,9 @@ pub struct CellReplica {
     host: Host,
     cost: Arc<PublicationLedger>,
     root_metadata: Option<Arc<dyn RootPreparationMetadata>>,
+    // Set only by verified representation-only compaction composition. It
+    // follows this one preparation and never survives in a prepared read view.
+    preparation_predecessor: Option<RootRef>,
 }
 
 impl CellReplica {
@@ -728,6 +731,7 @@ impl CellReplica {
             host: Host::default(),
             cost: Arc::new(PublicationLedger::default()),
             root_metadata: None,
+            preparation_predecessor: None,
         })
     }
 

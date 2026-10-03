@@ -21,6 +21,9 @@ completion of both yields `PreparedRoot`. Cancellation drops inline work and
 releases its permit. A bounded private one-entry confirmation avoids repeating
 that exact metadata write before authority CAS. External and rebased compaction
 proposals retain their exact inputs through the canonical path before CAS.
+Verified private compaction composition supplies the final original predecessor
+in the native factory before metadata runs. That context is cleared from read
+views; the complete proposal and its retained derivation name the same input.
 
 The runtime recovers its original typed metadata errors while preserving native
 LTX retry classes and hints. No detached task, second retry owner, authority,
@@ -28,7 +31,7 @@ queue, scheduler, persisted codec or dependency is added. Native prepared views
 do not retain the callback. Minion remains canonical at
 `crates/cellule-host/minion`, with Cargo target `fleet_operations`.
 
-Ten new cases cover fresh publication I/O, competing/stale additive merges,
+Eleven new cases cover fresh publication I/O, competing/stale additive merges,
 failed/lost replies, ordering with paused native uploads and metadata, failed
 uploads, original source/retry preservation, exact native predecessor identity
 and single-permit cancellation cleanup. Existing foreground compaction and
@@ -36,19 +39,19 @@ migration cases verify the original published prefix through the rebased path.
 
 ### Verification and remaining qualification
 
-Final verification passed 1,626 workspace tests and all 218 minion cases:
-**1,844 distinct passes**, with 36 documented workspace cases ignored. Local LTX
+Final verification passed 1,627 workspace tests and all 218 minion cases:
+**1,845 distinct passes**, with 36 documented workspace cases ignored. Local LTX
 without default features passed 54 overlapping cases. Workspace all-target,
 all-feature check, Clippy and API documentation passed with warnings denied.
 Format, boundaries, layout, Rust fences, links, SQL/peer and diff gates pass.
 Both unchanged routing profiles are being collected against the same 754 frozen
 Rust/Cargo paths. Manifest SHA256:
-`317bd0207e4de67c040fd59bb9b38752a71611b389a6645c07f413059f219dd7`.
+`0958df40474c8f2caaee7753962c5a8f230bfaf5e98b7b20cc359f876b9fdb08`.
 Raw commands, source archives, errors and provider evidence remain under
 `/tmp/cellule-lineage-routing-evidence`. The isolated checkout and mounted target
 use suffix `cellule-reader-prelease-8698183`.
 
-Published parent `a2edbe5` is mergeable and passes follower/object capacity,
+Earlier published `a2edbe5` is mergeable and passes follower/object capacity,
 workspace/MSRV, Compose smoke, contract, website, fuzz and enabled fast models.
 Both routing profiles and their aggregate fail: all eight command lanes measure
 79.5–88.1% of baseline against the unchanged 90% throughput gate, with
@@ -58,7 +61,21 @@ fresh strict creation removes those GETs. One diagnostic local pair then showed
 the remaining serial lineage PUT adding about 3 ms to the authority phase.
 That incomplete comparison is retained and does not qualify a fix.
 
-The final candidate overlaps that PUT under existing admission. The complete
+The first overlapping candidate, published as `4f646b5`, completed a local
+leased diagnostic pair. Its compaction metadata named the private compacted
+predecessor before the complete proposal was rebased. The second strict create
+then hit Store's conflict retry schedule. The candidate's 53 local-c1 spikes
+added roughly 25.8 seconds to authority work; mean authority time was 28.24 ms
+against 3.05 ms baseline. The incomplete comparison is retained, and the next
+pair was interrupted with its child processes joined after this cause was found.
+A new real 41-publication compaction regression failed with one lineage read
+instead of zero. Moving verified compaction composition into the native factory
+before metadata retention passes with zero reads and exactly 41 lineage writes.
+Public LTX coverage also compares metadata with the final rebased proposal under
+one shared I/O permit. Final full verification was rerun after this correction.
+
+The final candidate overlaps that PUT and retains the final predecessor under
+existing admission. The complete
 four-pair leased and object-only comparison and fresh CI must establish whether
 this closes the routing gate. Workload, pair count, thresholds and expected
 correctness evidence are unchanged. The initial diagnostic wrapper mistakenly

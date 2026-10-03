@@ -253,3 +253,81 @@ async fn failed_native_upload_cannot_select_root_even_with_retained_metadata() {
         .unwrap();
     fixture.database.close().unwrap();
 }
+
+#[tokio::test]
+async fn native_compaction_records_final_predecessor_without_a_second_conflict_write() {
+    let mut fixture = NativePreparation::new().await;
+    let initial = fixture
+        .publisher
+        .prepare_initial(&fixture.cuts)
+        .await
+        .unwrap();
+    fixture
+        .publisher
+        .publish_prepared(&initial, None)
+        .await
+        .unwrap();
+    for sequence in 1..=40 {
+        fixture
+            .database
+            .transaction(|transaction| {
+                transaction.execute("INSERT INTO events VALUES (?1)", [sequence])?;
+                Ok(())
+            })
+            .unwrap();
+        let cuts = fixture.database.capture_deferred().unwrap();
+        let original = fixture
+            .authority
+            .load(CellId::from_bytes([1; 32]))
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .ltx_root()
+            .unwrap();
+        let prepared = fixture
+            .publisher
+            .prepare_batch(&cuts, sequence)
+            .await
+            .unwrap();
+        assert_eq!(prepared.predecessor(), Some(original));
+        fixture
+            .publisher
+            .publish_prepared(&prepared, None)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        fixture.store.lineage_reads.load(Ordering::SeqCst),
+        0,
+        "native compaction must retain its final authority predecessor before Ready escapes"
+    );
+    assert_eq!(
+        fixture.store.lineage_writes.load(Ordering::SeqCst),
+        41,
+        "one exact lineage write per complete proposal"
+    );
+    let replica = CellReplica::new(
+        fixture.authority.layout.clone(),
+        [1; 32],
+        [2; 16],
+        Limits::default(),
+    )
+    .unwrap();
+    let latest = fixture
+        .authority
+        .load(CellId::from_bytes([1; 32]))
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    assert!(replica.open_root(&latest).await.unwrap().segment_count() < 32);
+    fixture
+        .authority
+        .verify_root_prefix(initial.root(), latest, &replica, 64)
+        .await
+        .unwrap();
+    fixture.database.close().unwrap();
+}
