@@ -573,6 +573,10 @@ impl CellReplica {
         );
         let root_uploads = self.finish_root(
             base,
+            base_graph
+                .as_ref()
+                .map(|graph| graph.document.segment_pages.as_slice())
+                .unwrap_or_default(),
             descriptors,
             target,
             commit_sequence,
@@ -591,6 +595,7 @@ impl CellReplica {
     pub(super) async fn finish_root(
         &self,
         base: Option<&RootRef>,
+        inherited_segment_pages: &[[u8; 32]],
         descriptors: Vec<SegmentDescriptor>,
         target: Position,
         commit_sequence: u64,
@@ -608,7 +613,12 @@ impl CellReplica {
         for page in descriptors.chunks(SEGMENTS_PER_PAGE) {
             let bytes = encode_segment_page(page)?;
             let digest = *blake3::hash(&bytes).as_bytes();
-            root_objects.push((digest, bytes));
+            // load_graph authenticated these exact predecessor pages and
+            // rechecked cached metadata at origin. Reuse their immutable names;
+            // a duplicate create would otherwise trigger a conflict and GET.
+            if !inherited_segment_pages.contains(&digest) {
+                root_objects.push((digest, bytes));
+            }
             segment_pages.push(digest);
         }
         if segment_pages.len() > MAX_SEGMENT_PAGES {

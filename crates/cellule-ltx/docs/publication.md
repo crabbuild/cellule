@@ -31,6 +31,12 @@ retry pins and rechecks the selected capture bytes, so path replacement cannot
 change an in-flight proposal. The host owns request admission, deadlines, and
 reconciliation after ambiguous results.
 
+Preparation reuses byte-identical descriptor pages from the verified predecessor
+instead of uploading them again. Cached predecessor metadata still requires
+origin presence checks; a missing page fails preparation. New bodies, indexes,
+directory nodes, descriptor pages, and the root finish uploading before a
+proposal returns. Object formats and authority publication are unchanged.
+
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the
 predecessor's position, commit sequence, Cell and incarnation. The runtime selects
