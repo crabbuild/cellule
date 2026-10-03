@@ -1,10 +1,10 @@
-# Fleet operations reference example
+# Minion fleet operations reference
 
 Status: durable journal and public-driver models, plus a finite real three-node
 admission-overload and controller-restart scenarios with receipt readback.
 The `balance` command exercises real count convergence. Complete maintenance,
 receiver-loss, production observations and
-qualification remain required by the [fleet plan](../../../../docs/fleet-operations-plan.md).
+qualification remain required by the [fleet plan](../../../docs/fleet-operations-plan.md).
 
 ## Run
 
@@ -299,7 +299,7 @@ controlled bootstrap/import barrier, wire every enrollment producer, authenticat
 management requests, retain canonical enrollment proofs, produce complete fresh
 observations, and supervise the public reconciliation driver. The reference
 adapter does not infer these facts from an empty directory or a bootstrap flag.
-See the [implementation evidence](../../../../docs/fleet-operations-progress.md)
+See the [implementation evidence](../../../docs/fleet-operations-progress.md)
 for exact source fingerprints and remaining work.
 
 The synthetic controller deadline cases use Tokio's test clock after fixture
@@ -315,6 +315,9 @@ uses its real clocks and committed profiles.
 
 ## Recovered follower enrollment evidence
 
+The recovered closure and live replacement evidence have distinct requirements;
+the durable live path is described [below](#durable-follower-replacement-evidence).
+
 The test target drives canonical recovery of a cold two-member ensemble,
 native retirement and `FleetRecoveredFollowerRetirement` through this durable
 journal. It checks Pending/Established original rows, lost publication replies,
@@ -325,7 +328,7 @@ new epoch request blocks the final roster barrier. Successful sibling writes
 remain visible when complete closure fails.
 The failed leader's boot remains an obligation. These cold-lane cases do not
 qualify Cell suffix pinning, failed-process closure or complete maintenance.
-See the [host publication recipe](../../docs/lifecycle.md#publish-a-recovered-owners-follower-retirement).
+See the [host publication recipe](../docs/lifecycle.md#publish-a-recovered-owners-follower-retirement).
 
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked recovered_publication
@@ -347,7 +350,7 @@ external provider jobs. This is adapter-contract evidence, not the plan's
 multi-process, storage-fault, workload, replacement or maintenance qualification.
 Production adapters authenticate and retain the actual process and all its
 accepted external-job evidence. See the
-[host recipe](../../docs/lifecycle.md#publish-an-original-failed-boots-closure).
+[host recipe](../docs/lifecycle.md#publish-an-original-failed-boots-closure).
 
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked failed_boot_closure
@@ -376,13 +379,15 @@ This is native in-process lifetime evidence with no external-job workload. It
 does not qualify OS crashes, provider termination, replacement redundancy or a
 complete maintenance command. Production providers authenticate and retain the
 actual original process and every accepted external job/producer. See the
-[host recipe](../../docs/lifecycle.md#publish-an-original-failed-receivers-reader-closure).
+[host recipe](../docs/lifecycle.md#publish-an-original-failed-receivers-reader-closure).
 
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked failed_reader_closure
 ```
 
 ## Durable reader replacement evidence
+
+See also the [durable follower path](#durable-follower-replacement-evidence).
 
 The `reader_policy_publication` cases use the same three real leased nodes,
 managed boot/reader producers, canonical SQL views, authenticated peer status
@@ -403,11 +408,44 @@ operation boot adoption and malformed bounded envelopes.
 These are local native/transaction cases. They do not supply complete controller
 settlement, affected-writer evidence, follower replacement policy, OS/process
 faults or provider/load/mixed-version qualification. See the
-[host contract](../../docs/read-replicas.md#persist-and-revalidate-reader-replacement-coverage).
+[host contract](../docs/read-replicas.md#persist-and-revalidate-reader-replacement-coverage).
 
 ```sh
 cargo test -p cellule-host --example fleet_operations --all-features --locked reader_policy_publication
 cargo test -p cellule-runtime --lib --all-features --locked reader_policy_
+```
+
+## Durable follower replacement evidence
+
+The `follower_policy_publication` cases use four actual managed leased nodes,
+native follower stores, an acknowledged SQLite Cell, the original durability
+supervisor and the shared SQLite journal. They persist complete original and
+replacement ensembles with immutable boot/request identities, policy revision,
+object-covered retirement watermark and original timestamps. Reconstructed
+clients recheck the current policy and canonical ensemble together with complete
+source/receiver native traversal and all-category rechecks. The transport routes
+fresh nonce-bound pages to the existing finite `fleet_snapshot` owner.
+
+Cases cover duplicate and lost replies, cancelled publication waiters, policy
+CAS races and changes during publication, superseded-pointer replay, missing
+history and stale barriers, regressing clocks, withdrawn receivers, original
+leader shutdown, local fencing while the directory remains live, Closing and
+deadline repair. A third native rotation exercises refresh after the original
+local receipt is evicted. Installed epochs before their first append remain
+valid through their actual native binding and producer; inactive directory
+enrollment alone cannot prove installation. Fixture shutdown joins the original
+owners and checks native resource ledgers. Five codec cases cover bounded
+ensembles, malformed data and scope/history/policy/lifetime rules.
+
+These cases establish selected in-process live-owner behavior. Failed-owner
+replacement policy still needs canonical recovery plus affected-Cell successors;
+complete fleet observation, maintenance action orchestration, OS/process/provider,
+mixed-binary and measured load qualification remain required. The public recipe
+is in the [host lifecycle guide](../docs/lifecycle.md#persist-and-revalidate-follower-replacement-evidence).
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked follower_policy_publication
+cargo test -p cellule-runtime --lib --all-features --locked follower_policy_
 ```
 
 ## Managed reader producer evidence

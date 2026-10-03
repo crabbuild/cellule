@@ -276,7 +276,7 @@ provider/peer calls. One checked reader still supplies no complete role graph,
 failed-process proof, affected-writer relocation or permission to finalize a
 physical node. Persisted follower policy, aggregate controller settlement and
 process/provider qualification remain required. The
-[executable evidence](../examples/fleet_operations/README.md#durable-reader-replacement-evidence)
+[executable evidence](../minion/README.md#durable-reader-replacement-evidence)
 uses real managed readers, signed status probes and independent SQLite clients.
 
 ## Observe managed reader obligations

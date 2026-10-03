@@ -37,7 +37,7 @@ same action and evidence contracts.
 | Which external facilities are required? | A linearizable journal, complete enrollment registry, authenticated management transport, and trusted local Cell inputs. The reference example supplies these behind the same contracts. |
 | What keeps operations simple? | One operation ID, one status contract, one application loop, bounded defaults, and one canonical host drain lane. |
 | What proves success? | Receipt-preserving actor activation on another node. Maintenance additionally requires settled role obligations, host Stopped, and session withdrawal. |
-| What is the next concrete change? | Complete persisted follower replacement policy and the production observer, then connect reader/follower barriers to SettleRoles/Finalize. Keep cross-session recovery and the remaining failure/inspection gates in scope. |
+| What is the next concrete change? | Complete failed-owner replacement evidence and the production observer, then connect reader/follower barriers to SettleRoles/Finalize. Keep cross-session recovery and the remaining failure/inspection gates in scope. |
 
 Start with the [first slice commit sequence](#first-slice-commit-sequence).
 Every increment must expose a reviewable public behavior and retain its test
@@ -119,7 +119,7 @@ Focused implementation checkpoints are recorded in
 its source fingerprint, selected commands, and limits; it does not mark an
 entire work package complete.
 
-The [fleet journal example](../crates/cellule-host/examples/fleet_operations/README.md)
+The [fleet journal example](../crates/cellule-host/minion/README.md)
 currently supports `inspect-journal <database-path>`, `overload`, and
 `controller-restart`. The first reopens the local durable reference journal.
 The latter commands exercise real bounded movement, including a new controller
@@ -284,7 +284,8 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `FleetNodeInventoryScan` and `FleetNodeInventory::recheck` | Present complete native traversal and all-category rechecks at a full roster barrier. | Preserve original requests, native lifetimes, transitions and shared errors. Validate enrollment matching, then recheck every category after fleet-wide authority/policy discovery and reconfirm the journal. Native interval evidence cannot settle failed processes or grant finalization. |
 | `FleetFollowerReferences` | Present complete foreign-log traversal and exact authority recheck. | Include expired/fenced leaders, retain native continuations and compare all original epoch/phase/ensemble/coverage/liveness fields after native collection. Match original roster requests and reconfirm that full barrier. Missing references cannot settle Pending work; retired local lanes can still have foreign authority obligations. Replacement policy and canonical recovery/retirement remain required. |
 | `FleetRoleCoverage` | Present cross-node original producer, native lane and current foreign authority matching. | Supply every required original boot and physical reference scan; finish initial collection, global native rechecks, then exact foreign rechecks and full journal confirmation. Observe enrolled lanes before their first append through the complete original producer/ensemble witness. Authentication, unexpected advertisements, current Cell authority, replacement policy and failed-process closure remain required; coverage does not grant settlement or finalization. |
-| `ReaderEvacuationRecord` / `FleetReaderEvacuationJournal` / `FleetReaderEvacuationVerifier` | Present bounded durable reader policy history, complete replacement pages, atomic latest pointers and independent native revalidation/refresh. | Commit through the shared registry transaction; confirm exact policy, authority, enrolled selected boots and ready prefixes after reconstruction. Refresh from the original committed retirement after policy/boot/owner changes, including Closing. Follower policy, failed receiver integration, complete fleet observation and aggregate maintenance actions remain required. |
+| `ReaderEvacuationRecord` / `FleetReaderEvacuationJournal` / `FleetReaderEvacuationVerifier` | Present bounded durable reader policy history, complete replacement pages, atomic latest pointers and independent native revalidation/refresh. | Commit through the shared registry transaction; confirm exact policy, authority, enrolled selected boots and ready prefixes after reconstruction. Refresh from the original committed retirement after policy/boot/owner changes, including Closing. Failed-owner follower policy, failed receiver integration, complete fleet observation and aggregate maintenance actions remain required. |
+| `FollowerEvacuationRecord` / `FleetFollowerEvacuationJournal` / `FleetFollowerEvacuationVerifier` | Present bounded durable live-owner ensemble history, revisioned application policy, atomic latest pointers and canonical/native revalidation/refresh. | Bind every original Retired member and replacement request, confirm current canonical ensemble plus the actual source/member native owners through `FleetSnapshotTransport`. Refresh after policy/epoch/operation changes without repeating original retirement. Complete failed-owner successor policy, full observer and SettleRoles/Finalize integration; this per-owner evidence cannot finish maintenance. |
 | `FleetObservation::with_role_coverage` | Present retained graph attachment and planner-input binding. | Preserve the original interval and reject replacement or scope/registry mismatches. The reconciler rechecks the graph's exact head/registry and full roster digest; unchanged registry alone cannot admit an earlier controller head. Attachment never upgrades partial adapter coverage. |
 | `CellNode::follower_evacuation` | Present per-live-owner replacement and retirement check after the original requested rotation. | Require the declared member minimum, donor exclusion, complete Established replacement rows, pinned signed boots, current authority and full journal rechecks. Retain the original completion/error history and publish/revalidate its interval. This does not settle failed owners, Pending producers or the physical node's other obligations. |
 | Recovered-log authorization, member retirement and canonical Retired CAS | Present runtime tail closure after canonical recovery pinning. | Use `RecoveredNodeLogTransport`, receiver-side `authorize_recovered_log_retire` and `FollowerStore::retire_recovered`; confirm every original member before `retire_recovered_log`. Adopt exact committed closure with `retired_recovered_log` before repeating effects. Publish original enrollments through the host capsule, then complete failed-process barriers and maintenance orchestration; native closure alone cannot finish W7. |
@@ -297,7 +298,7 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `CellRuntime::fleet_cells_page`, `prepare_receiver`, and `activate_prepared_receiver` | Present in runtime actor modules. | Reuse generation-bound inventory and actual resource-token ownership. Do not replace them with host counters. |
 | `AcquisitionObserver` and observed Idle/takeover methods | Present in runtime actor modules. | Confirm exact input before CAS and actual recovery position before admission; use canonical rollback on failure. |
 | `FleetJournal` and `FleetEnrollmentJournal` | Present transaction contracts in host `fleet/controller.rs` and `fleet/enrollment.rs`. | Implement both with the action journal in one durable transaction domain. Persist retained rows and operations, exact registry versions, scheduling policy, and history. |
-| Example `SqliteJournal` | Present in host `examples/fleet_operations/journal/`; implements all three journal contracts. | Reuse for local reference execution. Independent SQLite clients and reconstruction have focused evidence; complete observer coverage and process/provider qualification remain required. |
+| Example `SqliteJournal` | Present in host `minion/journal/`; implements all three journal contracts. | Reuse for local reference execution. Independent SQLite clients and reconstruction have focused evidence; complete observer coverage and process/provider qualification remain required. |
 | `FleetReconciler`, `FleetObserver`, and `FleetTransport` | Present settled-movement driver and adapter contracts under host `fleet/reconciler/`. | Wire real observation and management adapters. Existing evidence uses SQLite and simulated transport effects; it does not establish complete W5 or three-node restoration. |
 | Complete aggregate observation and node finalization actions | Remaining aggregate/maintenance surfaces. | Compose complete role inventory and implement W6–W7 barriers through the existing drain lane. |
 
@@ -1266,7 +1267,7 @@ consumers, tests, and the nearest `AGENTS.md` before changing each contract.
 | Driver and application adapters | Host `lib.rs`, `builder.rs`, `node/mod.rs`, `fleet/actions.rs`, `fleet/journal.rs`, `fleet/cells.rs`, and `fleet/movement/` | Add focused driver and observation/transport adapter modules under `fleet/`; extend the existing action and journal paths. |
 | Reader/follower evacuation | Host `durability/`, `read_replicas/`; runtime `node/directory/log.rs`, `follower/`, `recovery/manifest/` | Extend requested rotation and canonical role closure; consume bounded inventories. |
 | Finalization | Host `node/lifecycle.rs`, `node/scale_down.rs`, `tasks.rs` | Share the existing drain lane; require fleet evidence before finalization. |
-| Public scenarios and evidence | Runtime `tests/fleet.rs`, host `tests/node.rs`, runtime `qualification/` | Focused integration modules, host `examples/fleet_operations/main.rs`, and the versioned qualification profile. |
+| Public scenarios and evidence | Runtime `tests/fleet.rs`, host `tests/node.rs`, runtime `qualification/` | Focused integration modules, host `minion/main.rs`, and the versioned qualification profile. |
 
 The first implementation slice is one settled SQL Cell moving between two
 independently leased nodes inside a three-node reference fleet:
@@ -1503,7 +1504,7 @@ confirm host stop and withdrawal. Active maintenance intent survives reboot.
 
 Dependencies: W5, W7.
 
-Complete `crates/cellule-host/examples/fleet_operations/main.rs` with support
+Complete `crates/cellule-host/minion/main.rs` with support
 files under that example's directory. Reuse its local durable journal adapter.
 Exercise three nodes and shared strict
 CAS-backed test storage with deterministic identities. Supply overload,

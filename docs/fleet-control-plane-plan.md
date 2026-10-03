@@ -80,7 +80,7 @@ them by configuration.
 | [FleetRoster](../crates/cellule-host/src/fleet/roster/mod.rs) | Traverse retained intents and enrollments, including failed boots and Pending work. | Match complete native writer, reader, producer, and follower evidence. |
 | [Fleet action contracts](../crates/cellule-host/src/fleet/actions.rs) | Journal exact node effects and preserve original accepted inputs/results. | Full maintenance actions and finalization qualification. |
 | [Pressure classifier](../crates/cellule-runtime/src/fleet/pressure.rs) | Use actual locally classified, signed pressure. | Application telemetry and independent health/slowness evaluation. |
-| [Fleet operations example](../crates/cellule-host/examples/fleet_operations/README.md) | Journal contracts and real movement/restart scenario patterns. | Remote HTTP, multiple processes, sustained convergence, production authentication and providers. |
+| [Fleet operations example](../crates/cellule-host/minion/README.md) | Journal contracts and real movement/restart scenario patterns. | Remote HTTP, multiple processes, sustained convergence, production authentication and providers. |
 
 The current ownership-only example explicitly reports incomplete role coverage.
 Its overload and controller-restart scenarios do not establish complete node

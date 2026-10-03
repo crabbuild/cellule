@@ -11,6 +11,7 @@ use super::*;
 mod accepted;
 mod acquisition;
 mod attempt;
+mod follower_evacuation;
 mod inspection;
 mod reader_evacuation;
 mod recovery;
@@ -42,6 +43,8 @@ const INSPECTION_OBSERVATION: u8 = 18;
 const READER_EVACUATION: u8 = 19;
 const READER_EVACUATION_PAGE: u8 = 20;
 const READER_EVACUATION_BASIS: u8 = 21;
+const FOLLOWER_POLICY: u8 = 22;
+const FOLLOWER_EVACUATION: u8 = 23;
 
 fn encoder(kind: u8) -> Result<BoundedEncoder> {
     encoder_limited(kind, MAX_RECORD_BYTES)

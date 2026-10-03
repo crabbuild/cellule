@@ -863,7 +863,7 @@ journal. Implement all three against the same transaction domain. Conditional
 head publication must retain intent/operation changes and progress atomically;
 enrollment acceptance must linearize current intent checks with Pending. These
 records and pure tests do not establish complete fleet observation. The host's
-[fleet journal example](../../cellule-host/examples/fleet_operations/README.md)
+[fleet journal example](../../cellule-host/minion/README.md)
 implements these contracts in one local SQLite transaction domain, with focused
 lost-reply and reconstruction evidence. The host's caller-driven reconciler now
 uses the existing planner and reducer for settled movement; its initial tests

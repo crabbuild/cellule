@@ -13,6 +13,19 @@ mod capture;
 mod request;
 pub use request::{FleetSnapshotRequest, FleetSnapshotSubject};
 
+/// Authenticated fresh native-page transport through the node's existing finite
+/// fleet executor. Preserve exact requests and original errors; cached effect
+/// results or restamped responses cannot satisfy this read-only boundary.
+pub trait FleetSnapshotTransport: Send + Sync + 'static {
+    /// Captures this exact boot, category, continuation, nonce and journal barrier.
+    /// Dropping the waiter leaves any accepted native capture owned by the node.
+    fn capture<'a>(
+        &'a self,
+        request: &'a FleetSnapshotRequest,
+        deadline: tokio::time::Instant,
+    ) -> super::FleetAdapterFuture<'a, Arc<FleetNodeSnapshot>>;
+}
+
 /// Exact local installed owner bindings. Unbound owners supply no role coverage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FleetSnapshotBindings {

@@ -4,6 +4,92 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 durable live-owner follower replacement checkpoint
+
+`FollowerEvacuationRecord` now retains the complete original Retired ensemble,
+the original Established donor digest, object-covered retirement watermark,
+signed source boot, full capture head/registry, maintenance operation and interval.
+Every replacement binds its exact Established request and signed boot identity.
+The bounded codecs support the canonical one/two-member ensembles; existing
+record kinds and signing domains remain unchanged. Shape validation supplies no
+native retirement or authentication rights.
+
+`FleetFollowerEvacuationJournal` stores revisioned application redundancy policy,
+immutable captures and the latest operation/request pointer in the existing
+registry transaction domain. Policy absence blocks publication. First publication
+checks the full barrier, live controller, current operation/intent, policy and
+complete original/replacement rows before advancing the registry. Exact replay
+returns history without restamping, advancing the registry or restoring an older
+pointer. The SQLite adapter retains accepted work in its original finite backend
+owner through cancelled waiters and lost replies.
+
+`FleetFollowerEvacuationVerifier` reloads current policy and complete roster,
+checks the current canonical ensemble and pinned signed boots, and collects
+complete source/receiver inventories through `FleetSnapshotTransport`. Requests
+use the existing finite native snapshot owner, including its 32-epoch enrollment
+page limit. All categories are rechecked after authority discovery. A native
+source fence cannot hide behind a still-live directory record. Installed epochs
+before their first append need the actual source binding and delivered producer;
+inactive directory enrollment alone supplies no installation proof.
+
+Refresh during Evacuating or Closing retains the original retirement, including
+after later rotations evict its original local receipt. It observes the current
+ensemble and policy without starting another rotation, retirement or recovery.
+Publication and fresh confirmation preserve original errors independently;
+capture clocks are monotonic and bounded by thirty seconds and caller/operation
+deadlines. Copied collector buffers remain the application's accounting duty.
+Failed original owners require canonical recovery and affected-Cell successor
+evidence; this live-owner record cannot settle every role or finalize a node.
+
+Twelve public cases use four actual managed CellNodes, signed canonical boots,
+native follower stores, an acknowledged SQLite Cell and independent journal
+clients. They cover full ensemble publication, policy CAS races, cancellation,
+lost replies/source errors, policy changes during publication, superseded pointer
+replay, missing history/stale barriers, regressing clocks, withdrawn receivers,
+original leader shutdown, local fencing, Closing/deadline refresh and a third
+rotation after original receipt eviction. Shutdown joins original owners and
+checks empty native resource ledgers. Five codec cases cover bounded envelopes,
+complete row identities, policy/scope/time faults and operation adoption.
+
+Initial compile, directory-only, snapshot-limit and codec-fixture failures remain
+under `initial/`. The codec fixture now uses the required maintenance transitions
+and drain evidence; production validators and qualification requirements are
+unchanged. One unchanged queued-query lifecycle case hit its outer seven-second
+waiter timeout during final qualification. Its standalone and full lifecycle
+reruns passed with the same assertions; the raw failure remains under
+`initial/minion-queued-timeout/`. The executable was relocated to
+`crates/cellule-host/minion` during verification. Final qualification uses that
+canonical location; its Cargo example target remains `fleet_operations`.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `72c5d3a704b69cc1cbc8d3736652dffbceb7dd7d` |
+| Frozen source | 721 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `5a5c48f26dfece662f4abaccadc3bdbbca1dc77ab995c13f05774181a9a26864` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-follower-policy-evidence` |
+
+Final all-feature qualification passed 537 runtime library, 144 runtime lifecycle,
+34 host library, 106 public node and 203 executable tests: 1,024 distinct passes,
+no failures. Seven existing provider cases remain ignored without their documented
+isolated RustFS environment and supply no evidence. Focused repeats are excluded.
+Runtime/host Clippy across all targets and API documentation passed with warnings
+denied. Complete active/isolated Rust/Cargo path sets and bytes match qualification.
+Commands, statuses and build environment remain in `verification.json` and
+`build-environment.json`; format, boundaries, layout, documentation links/Rust
+fences, SQL/peer and diff gates passed. These selected in-process tests supply no
+OS-crash, external-job, provider-deployment, mixed-binary or measured fleet-load
+qualification.
+
+Highest priorities next are failed-owner replacement/successor evidence, complete
+production observation and reader/follower controller integration. Receiver-session
+recovery, failed Pending producers and live-receiver joining, affected writer
+relocation and SettleRoles/Finalize remain open. Terminal drain handoff must join
+the original fleet action before entering the existing drain owner. Remaining
+primitive faults, maintenance/receiver-loss executable scenarios and W9–W10
+process/provider/mixed-version/load/runbook/rollout qualification remain required.
+The complete fleet operations plan remains unfinished.
+
 ## October 2 2026 durable reader replacement evidence checkpoint
 
 Reader evacuation now produces immutable operation-bound manifests and ordered
@@ -3805,7 +3891,7 @@ complete, and earlier work packages retain the gaps listed in the full plan.
 
 ## October 1 2026 durable local journal checkpoint
 
-The [embedding example](../crates/cellule-host/examples/fleet_operations/README.md)
+The [embedding example](../crates/cellule-host/minion/README.md)
 now implements `FleetJournal`, `FleetEnrollmentJournal`, and `FleetActionJournal`
 against one SQLite file. Each call uses `BEGIN IMMEDIATE`; current head/registry,
 intent checks and record publication share the transaction. WAL with FULL

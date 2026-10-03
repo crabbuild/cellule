@@ -28,4 +28,4 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"
 
 [[example]]
 name = "fleet_operations"
-path = "examples/fleet_operations/main.rs"
+path = "minion/main.rs"

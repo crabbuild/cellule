@@ -35,3 +35,17 @@ CREATE TABLE IF NOT EXISTS latest_reader_evacuations (
     operation BLOB NOT NULL CHECK(length(operation)=16), original BLOB NOT NULL CHECK(length(original)=32),
     witness BLOB NOT NULL REFERENCES reader_evacuations(key), PRIMARY KEY(operation,original)
 );
+CREATE TABLE IF NOT EXISTS follower_policy (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    body BLOB NOT NULL CHECK(length(body) <= 65536)
+);
+CREATE TABLE IF NOT EXISTS follower_evacuations (
+    key BLOB PRIMARY KEY CHECK(length(key) = 32),
+    body BLOB NOT NULL CHECK(length(body) <= 1048576)
+);
+CREATE TABLE IF NOT EXISTS latest_follower_evacuations (
+    operation BLOB NOT NULL CHECK(length(operation) = 16),
+    original BLOB NOT NULL CHECK(length(original) = 32),
+    witness BLOB NOT NULL REFERENCES follower_evacuations(key),
+    PRIMARY KEY(operation, original)
+);

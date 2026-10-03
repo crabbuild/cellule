@@ -33,6 +33,7 @@ mod coverage;
 mod evacuation;
 mod inventory;
 mod observation;
+mod persisted;
 mod tests;
 
 async fn captured(reply: tokio::sync::oneshot::Receiver<()>) {

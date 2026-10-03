@@ -11,6 +11,11 @@ mod controller;
 mod coverage;
 mod enrollment;
 mod failed_boot;
+mod follower_evacuation;
+pub use follower_evacuation::{
+    FleetFollowerEvacuationCandidate, FleetFollowerEvacuationCheck, FleetFollowerEvacuationJournal,
+    FleetFollowerEvacuationPublication, FleetFollowerEvacuationVerifier,
+};
 mod inspection;
 mod inventory;
 mod journal;
@@ -52,7 +57,7 @@ pub use references::FleetFollowerReferences;
 pub use roster::{FleetRoster, FleetRosterBoot};
 pub use snapshot::{
     FleetNodeSnapshot, FleetSnapshotBindings, FleetSnapshotNativePage, FleetSnapshotRequest,
-    FleetSnapshotSubject,
+    FleetSnapshotSubject, FleetSnapshotTransport,
 };
 
 pub(crate) use actions::FleetActionExecutor;

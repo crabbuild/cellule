@@ -22,7 +22,7 @@ pub(crate) const MAX_FOLLOWER_ENROLLMENT_EPOCHS: usize = 32;
 
 mod authority;
 mod inventory;
-mod maintenance;
+pub(crate) mod maintenance;
 mod protocol;
 pub use inventory::{
     FollowerEnrollmentInventoryCursor, FollowerEnrollmentInventoryPage, FollowerEnrollmentProgress,

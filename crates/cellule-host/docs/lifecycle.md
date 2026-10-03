@@ -166,7 +166,7 @@ before settling fleet roles.
 After the original requested rotation completes, call
 `CellNode::follower_evacuation(original, operation, minimum_members, deadline)`
 on that same live owner. Supply the original Established follower request, the
-current Evacuating operation and the application's nonzero redundancy minimum
+current Evacuating or Closing operation and the application's nonzero redundancy minimum
 (one or two members). This read-only check returns a blocker while recruitment
 is incomplete. It never requests another rotation or closes a lane.
 
@@ -184,6 +184,76 @@ withdrawn or changed replacement, missing original completion, changed registry,
 expired operation or incomplete enrollment produces no settlement evidence.
 Complete foreign/native inventory, Pending producers, failed-owner recovery and
 terminal action handoff remain required before physical-node shutdown.
+
+### Persist and revalidate follower replacement evidence
+
+`FollowerReplacementPolicy` gives the application's nonzero member minimum a
+durable revision in the existing fleet journal. `FleetFollowerEvacuationJournal`
+loads it at the complete head/registry barrier. Policy changes compare that
+barrier and live controller, advance the policy revision exactly once and bump
+the shared registry. Absence blocks publication; it cannot silently reduce
+redundancy. Applications authorize these changes and make their ordinary
+recruitment satisfy the same policy.
+
+`FollowerEvacuation::durable_record` preserves every original Retired member,
+the original Established donor request identity, object-covered watermark,
+signed source/member boot identities, complete replacement requests and the
+capture interval. The journal atomically commits the bounded manifest and its
+latest operation/request pointer. Replay returns original history without
+restoring a superseded pointer or refreshing timestamps.
+
+`FleetSnapshotTransport::capture` routes exact read-only requests to
+`CellNode::fleet_snapshot` through its existing finite task owner. Authenticate
+the physical endpoint and boot, preserve original request/response/error values,
+and return fresh captures. The transport owns no second runtime or role executor.
+`FleetFollowerEvacuationVerifier` combines canonical directory/policy reads with
+complete source/member native traversals and all-category rechecks. A replacement
+epoch can be enrolled and installed before its first append; its native producer,
+supervisor and runtime binding prove installation even while the canonical log
+is inactive. An inactive advertisement alone grants no such evidence.
+
+```rust,no_run
+use cellule_host::{FollowerEvacuation, fleet::{
+    FleetFollowerEvacuationJournal, FleetFollowerEvacuationPublication,
+    FleetFollowerEvacuationVerifier, FleetSnapshotTransport,
+}};
+use cellule_runtime::{Error, Result, node::NodeDirectory};
+use std::sync::Arc;
+use tokio::time::Instant;
+
+async fn persist_follower_replacement(
+    capture: &FollowerEvacuation,
+    journal: &dyn FleetFollowerEvacuationJournal,
+    directory: NodeDirectory,
+    transport: Arc<dyn FleetSnapshotTransport>,
+    deadline: Instant,
+    clock: impl FnMut() -> Result<i64>,
+) -> Result<FleetFollowerEvacuationPublication> {
+    let policy = journal.follower_replacement_policy(capture.snapshot()).await
+        .map_err(|source| Error::Facility { name: "fleet-policy", source })?
+        .ok_or(Error::Fenced)?;
+    let verifier = FleetFollowerEvacuationVerifier::new(directory, transport);
+    FleetFollowerEvacuationPublication::publish(
+        capture, policy, journal, &verifier, deadline, clock,
+    ).await
+}
+```
+
+After reconstruction, load immutable history and call `recheck`. A committed
+record and a failed final confirmation remain separately inspectable, with
+original shared source errors. `refresh` builds new metadata from that committed
+original retirement when policy, current ensemble, or operation deadline/session
+changes. Ordinary rotation supplies the new ensemble. The original local rotation
+receipt may already be evicted; refresh starts no rotation or retirement. Publish
+the opaque candidate through `publish_refreshed`. Both Evacuating and Closing
+allow this repair before terminal finalization.
+
+Applications account bounded copied manifest/collector buffers and join accepted
+backend/native work. Fresh checks use monotonic thirty-second intervals and caller,
+controller and operation deadlines. This supplies live-owner replacement evidence.
+A failed original leader requires canonical recovery and affected-Cell successor
+evidence; complete fleet role observation, process providers and terminal action
+handoff remain required. See the [reference evidence cases](../minion/README.md#durable-follower-replacement-evidence).
 
 ### Publish a recovered owner's follower retirement
 
@@ -304,7 +374,7 @@ This closes one original reader lifetime. Replacement-policy coverage, other
 roles, affected writers, boot retirement and physical maintenance finalization
 remain separate requirements. For a failed source with a live receiver, use
 that receiver's ordinary joined reader lifecycle. The
-[native example cases](../examples/fleet_operations/README.md#failed-reader-lifetime-evidence)
+[native example cases](../minion/README.md#failed-reader-lifetime-evidence)
 exercise actual SQLite readers, joined host shutdown and independent journal
 reconstruction; OS crash and external-job/provider campaigns remain required.
 
@@ -364,7 +434,7 @@ This closure settles that boot's enrollment. It does not convert a recovered
 tombstone into planned withdrawal or prove replacement policy, affected-writer
 relocation, operation completion or permission to stop the physical node.
 `SettleRoles`/`Finalize` still require those additional barriers and the existing
-native shutdown handoff. The [focused example cases](../examples/fleet_operations/README.md#failed-boot-process-evidence)
+native shutdown handoff. The [focused example cases](../minion/README.md#failed-boot-process-evidence)
 exercise a joined child lifetime and independently reconstructed evidence;
 they do not qualify a complete multi-process fleet or provider deployment.
 
@@ -403,7 +473,7 @@ serving while live intent closes new roles. The application owns supervision,
 polling cadence, error handling and the lease renewal policy; this API starts no task.
 Authorized Cordon actions use the same gate and remain replayable after refresh.
 
-The [reference example](../examples/fleet_operations/README.md) wires this order
+The [reference example](../minion/README.md) wires this order
 to actual signed directory enrollment and one durable SQLite transaction domain.
 Managed reader and follower bindings provide the local producer barriers below.
 Complete fleet observation remains integration work.
@@ -781,7 +851,7 @@ this same registry version and blocks only new planned allocations. Previously
 accepted actions and their resource obligations still reconcile.
 
 The application supplies the durable backend, authorization, and canonical
-enrollment evidence. The [fleet journal example](../examples/fleet_operations/README.md)
+enrollment evidence. The [fleet journal example](../minion/README.md)
 implements all three journal contracts in one local SQLite transaction domain.
 Its focused tests exercise independent clients, lost commit replies and
 reconstruction. Boot production uses the startup barrier above. The

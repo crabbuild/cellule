@@ -14,6 +14,7 @@ use cellule_runtime::node::{MAX_NODE_BYTES, NodeAdvertisement, NodeMode};
 pub struct FollowerEvacuation {
     original: EnrollmentRecord,
     retired: EnrollmentRecord,
+    retired_members: Vec<EnrollmentRecord>,
     snapshot: FleetJournalSnapshot,
     rotation: Arc<NodeLogRotationCompletion>,
     replacement: NodeLogEnrollmentProof,
@@ -26,6 +27,65 @@ pub struct FollowerEvacuation {
 }
 
 impl FollowerEvacuation {
+    /// Complete original Retired ensemble, preserving every member's history.
+    #[must_use]
+    pub fn retired_members(&self) -> &[EnrollmentRecord] {
+        &self.retired_members
+    }
+
+    /// Builds immutable durable metadata under the current application policy.
+    /// Copied buffers remain the embedding application's accounting obligation.
+    pub fn durable_record(
+        &self,
+        policy: cellule_runtime::fleet::operations::FollowerReplacementPolicy,
+    ) -> cellule_runtime::Result<cellule_runtime::fleet::operations::FollowerEvacuationRecord> {
+        use cellule_runtime::fleet::operations::{
+            FollowerEvacuationRecord, FollowerReplacementWitness,
+        };
+        if usize::from(policy.minimum_members()) != self.minimum_members {
+            return Err(Error::Fenced);
+        }
+        FollowerEvacuationRecord::new(
+            self.snapshot
+                .head()
+                .maintenance()
+                .ok_or(Error::Fenced)?
+                .clone(),
+            (
+                Digest::from_bytes(
+                    *blake3::hash(&self.snapshot.head().to_bytes().map_err(super::operation)?)
+                        .as_bytes(),
+                ),
+                self.snapshot.registry(),
+            ),
+            policy,
+            (
+                self.original.spec().key().map_err(super::operation)?,
+                Digest::from_bytes(
+                    *blake3::hash(&self.original.to_bytes().map_err(super::operation)?).as_bytes(),
+                ),
+            ),
+            self.retired_members.clone(),
+            self.rotation.retirement().barrier().covered_through(),
+            boot_identity(&self.authority)?,
+            (
+                self.rotation.replacement_epoch(),
+                self.replacement.evidence_digest()?,
+            ),
+            self.replacements
+                .iter()
+                .zip(self.replacement.prepared().followers())
+                .map(|(enrollment, boot)| {
+                    Ok(FollowerReplacementWitness {
+                        enrollment: enrollment.clone(),
+                        boot_identity: boot_identity(boot)?,
+                    })
+                })
+                .collect::<cellule_runtime::Result<Vec<_>>>()?,
+            self.interval(),
+        )
+        .map_err(super::operation)
+    }
     /// Immutable Established request named by the caller, without restamping.
     #[must_use]
     pub fn original(&self) -> &EnrollmentRecord {
@@ -102,7 +162,7 @@ impl CellNode {
             return Err(Error::Deadline);
         }
         let limit = captured
-            .checked_add(Duration::from_millis(remaining as u64))
+            .checked_add(Duration::from_millis(remaining.min(30_000) as u64))
             .ok_or(Error::Deadline)?;
         let deadline = deadline.min(limit);
         let producer = self
@@ -135,7 +195,7 @@ impl FleetFollowerEnrollment {
         // A canonical epoch has at most two members; copied records and transient
         // directory bodies remain bounded even when the full roster is much larger.
         let memory = self.runtime.try_reserve_node_metadata_bytes(
-            8 * MAX_RECORD_BYTES as usize + 8 * MAX_NODE_BYTES as usize + 8192,
+            10 * MAX_RECORD_BYTES as usize + 8 * MAX_NODE_BYTES as usize + 8192,
         )?;
         original.to_bytes().map_err(super::operation)?;
         let EnrollmentRole::Follower { log_epoch } = original.spec().role else {
@@ -153,7 +213,10 @@ impl FleetFollowerEnrollment {
             || original.spec().target.node != operation.node()
             || original.spec().target.session != operation.session()
             || operation.node() == self.node
-            || operation.phase() != MaintenancePhase::Evacuating
+            || !matches!(
+                operation.phase(),
+                MaintenancePhase::Evacuating | MaintenancePhase::Closing
+            )
         {
             return Err(Error::Fenced);
         }
@@ -246,21 +309,33 @@ impl FleetFollowerEnrollment {
             ))?;
         // Every old member is settled, not only the donor's row. A changed or
         // delayed original producer must not be hidden by a newer ensemble.
+        let mut retired_members = Vec::with_capacity(barrier.members().len());
         for member in barrier.members() {
             let mut rows = roster.enrollments().iter().filter(|row| {
                 row.spec().source.is_some_and(|source| source.node == self.node && source.session == self.session)
                     && row.spec().target.node == *member
                     && matches!(row.spec().role, EnrollmentRole::Follower { log_epoch: epoch } if epoch == log_epoch)
             });
-            if rows
-                .next()
-                .is_none_or(|row| row.status() != EnrollmentStatus::Retired)
-                || rows.next().is_some()
-            {
+            let row = rows.next().ok_or(Error::Fenced)?;
+            if row.status() != EnrollmentStatus::Retired || rows.next().is_some() {
                 return Err(Error::Fenced);
             }
+            retired_members.push(row.clone());
         }
         let mut replacements = Vec::new();
+        if roster
+            .enrollments()
+            .iter()
+            .filter(|row| {
+                row.spec().source.is_some_and(|source| {
+                    source.node == self.node && source.session == self.session
+                }) && row.spec().role == (EnrollmentRole::Follower { log_epoch })
+            })
+            .count()
+            != retired_members.len()
+        {
+            return Err(Error::Fenced);
+        }
         if replacement.members.len() != prepared.followers().len() {
             return Err(Error::Fenced);
         }
@@ -374,6 +449,7 @@ impl FleetFollowerEnrollment {
         Ok(FollowerEvacuation {
             original: original.clone(),
             retired,
+            retired_members,
             snapshot,
             rotation,
             replacement: enrollment,
@@ -404,4 +480,44 @@ fn same_boot(
         && original.failure_domain() == current.failure_domain()
         && current.generation() >= original.generation()
         && current.issued_at_ms() >= original.issued_at_ms())
+}
+
+/// Immutable identity shared by native capture and durable revalidation.
+pub(crate) fn boot_identity(node: &NodeAdvertisement) -> cellule_runtime::Result<Digest> {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"cellule.follower-maintenance-boot.v1\0");
+    for value in [
+        node.node().as_bytes().as_slice(),
+        node.session().as_bytes().as_slice(),
+        node.fleet().as_bytes().as_slice(),
+        node.certificate().as_bytes().as_slice(),
+        node.image().as_bytes().as_slice(),
+        node.release().as_bytes().as_slice(),
+        node.endpoint().as_bytes(),
+    ] {
+        hash.update(&(value.len() as u64).to_le_bytes());
+        hash.update(value);
+    }
+    hash.update(&node.verifying_key()?.to_bytes());
+    hash.update(&(node.module_digests().len() as u64).to_le_bytes());
+    for digest in node.module_digests() {
+        hash.update(digest.as_bytes());
+    }
+    hash.update(&(node.peer_versions().len() as u64).to_le_bytes());
+    for version in node.peer_versions() {
+        hash.update(&version.to_le_bytes());
+    }
+    for label in [node.failure_domain().zone(), node.failure_domain().host()] {
+        match label {
+            Some(label) => {
+                hash.update(&[1]);
+                hash.update(&(label.len() as u64).to_le_bytes());
+                hash.update(label.as_bytes());
+            }
+            None => {
+                hash.update(&[0]);
+            }
+        }
+    }
+    Ok(Digest::from_bytes(*hash.finalize().as_bytes()))
 }

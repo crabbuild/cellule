@@ -11,6 +11,10 @@ mod actions;
 mod attempt;
 mod codec;
 mod enrollment;
+mod follower_evacuation;
+pub use follower_evacuation::{
+    FollowerEvacuationRecord, FollowerReplacementPolicy, FollowerReplacementWitness,
+};
 mod history;
 mod inspection;
 mod intent;

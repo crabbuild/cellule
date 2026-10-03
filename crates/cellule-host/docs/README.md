@@ -4,7 +4,7 @@
 | --- | --- |
 | [Lifecycle](lifecycle.md) | Start and stop one node safely. |
 | [Read replicas](read-replicas.md) | Install and supervise immutable views. |
-| [Fleet journal example](../examples/fleet_operations/README.md) | Run the durable local journal foundation and inspect its integration limits. |
+| [Fleet journal example](../minion/README.md) | Run the durable local journal foundation and inspect its integration limits. |
 | [Crate entry](../README.md) | Ownership and test command. |
 
 The host is a lifecycle facade. It does not add a second Cell scheduler,

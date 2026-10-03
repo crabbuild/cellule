@@ -17,7 +17,7 @@ impl ManagedFixture {
 
     pub async fn with_members(count: usize, max_epochs: usize) -> Self {
         assert!((3..=4).contains(&count));
-        assert!((1..=2).contains(&max_epochs));
+        assert!((1..=3).contains(&max_epochs));
         let root = tempfile::tempdir().unwrap();
         let app = application::compile().unwrap();
         let layout = CellStorageLayout::new(
@@ -344,8 +344,8 @@ impl ManagedFixture {
             .iter()
             .filter(|row| matches!(row.spec().role, EnrollmentRole::Follower { .. }))
             .count();
-        let expected_followers = if self.nodes.len() == 4 && self.native.provider.max_epochs == 2 {
-            4
+        let expected_followers = if self.nodes.len() == 4 && self.native.provider.max_epochs >= 2 {
+            2 * self.native.provider.max_epochs
         } else {
             2
         };
