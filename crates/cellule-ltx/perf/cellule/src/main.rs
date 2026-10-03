@@ -1,4 +1,9 @@
-use cellule_ltx::{CaptureTiming, Db, Limits, Position, VerifiedPlan, compact_exact, restore_exact};
+#[path = "../../payload.rs"]
+mod fixture;
+
+use cellule_ltx::{
+    CaptureTiming, Db, Limits, Position, VerifiedPlan, compact_exact, restore_exact,
+};
 use serde::Serialize;
 use std::error::Error;
 use std::path::Path;
@@ -10,6 +15,7 @@ const CRAB_SOURCE: &str = "workspace cellule-ltx";
 struct Config {
     transactions: usize,
     payload_bytes: usize,
+    random_payload: bool,
     rounds: usize,
     warmup: usize,
     durability_batch: usize,
@@ -40,6 +46,13 @@ struct Sample {
     compacted_ltx_bytes: u64,
     source_database_bytes: u64,
     final_txid: u64,
+    command_samples: Vec<CommandSample>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CommandSample {
+    commit_us: u64,
+    capture_us: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +68,7 @@ struct Report {
 struct ConfigOutput {
     transactions: usize,
     payload_bytes: usize,
+    random_payload: bool,
     measured_rounds: usize,
     warmup_rounds: usize,
     durability_batch: usize,
@@ -102,6 +116,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         config: ConfigOutput {
             transactions: config.transactions,
             payload_bytes: config.payload_bytes,
+            random_payload: config.random_payload,
             measured_rounds: config.rounds,
             warmup_rounds: config.warmup,
             durability_batch: config.durability_batch,
@@ -121,6 +136,7 @@ impl Config {
         let args = args.into_iter().collect::<Vec<_>>();
         let transactions = option(&args, "--transactions")?.unwrap_or(128);
         let payload_bytes = option(&args, "--payload-bytes")?.unwrap_or(4096);
+        let random_payload = args.iter().any(|arg| arg == "--random-payload");
         let rounds = option(&args, "--rounds")?.unwrap_or(5);
         let warmup = option(&args, "--warmup")?.unwrap_or(1);
         let durability_batch = option(&args, "--durability-batch")?.unwrap_or(1);
@@ -132,6 +148,7 @@ impl Config {
         Ok(Self {
             transactions,
             payload_bytes,
+            random_payload,
             rounds,
             warmup,
             durability_batch,
@@ -160,6 +177,7 @@ fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error>> {
     let mut capture_phases = CapturePhases::default();
     let mut capture_barrier_us = 0;
     let mut pending_captures = 0;
+    let mut command_samples = Vec::with_capacity(config.transactions);
     let mut workload_write_us = 0;
     let mut capture_us = 0;
 
@@ -182,7 +200,7 @@ fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error>> {
     capture_us += elapsed_us(started);
 
     for id in 0..config.transactions {
-        let payload = payload(id, config.payload_bytes);
+        let payload = payload(id, config.payload_bytes, config.random_payload);
         let started = Instant::now();
         database.transaction(|transaction| {
             transaction.execute(
@@ -191,7 +209,8 @@ fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error>> {
             )?;
             Ok(())
         })?;
-        workload_write_us += elapsed_us(started);
+        let commit_us = elapsed_us(started);
+        workload_write_us += commit_us;
 
         let started = Instant::now();
         append_capture(
@@ -203,7 +222,12 @@ fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error>> {
             &mut pending_captures,
             &mut capture_barrier_us,
         )?;
-        capture_us += elapsed_us(started);
+        let command_capture_us = elapsed_us(started);
+        capture_us += command_capture_us;
+        command_samples.push(CommandSample {
+            commit_us,
+            capture_us: command_capture_us,
+        });
     }
 
     if pending_captures > 0 {
@@ -235,7 +259,7 @@ fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error>> {
     let started = Instant::now();
     restore_exact(&compact_plan, &restored)?;
     let restore_us = elapsed_us(started);
-    validate_restore(&restored, config.transactions)?;
+    validate_restore(&restored, config)?;
 
     let recovery_us = recovery_us(verify_us, compact_us, compact_verify_us, restore_us);
     let total_us = total_us(workload_write_us, capture_us, recovery_us);
@@ -267,6 +291,7 @@ fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error>> {
         compacted_ltx_bytes: compacted.info().size_bytes,
         source_database_bytes,
         final_txid: position.txid,
+        command_samples,
     })
 }
 
@@ -366,11 +391,21 @@ impl CapturePhases {
     }
 }
 
-fn validate_restore(path: &Path, transactions: usize) -> Result<(), Box<dyn Error>> {
+fn validate_restore(path: &Path, config: Config) -> Result<(), Box<dyn Error>> {
     let connection = cellule_ltx::rusqlite::Connection::open(path)?;
     let count: i64 = connection.query_row("SELECT COUNT(*) FROM payloads", [], |row| row.get(0))?;
+    let transactions = config.transactions;
     if count != transactions as i64 {
         return Err(format!("restored {count} rows, expected {transactions}").into());
+    }
+    let mut statement = connection.prepare("SELECT id, value FROM payloads ORDER BY id")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: usize = row.get(0)?;
+        let value: Vec<u8> = row.get(1)?;
+        if value != payload(id, config.payload_bytes, config.random_payload) {
+            return Err("restore changed a committed payload".into());
+        }
     }
     let integrity: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
     if integrity != "ok" {
@@ -379,7 +414,10 @@ fn validate_restore(path: &Path, transactions: usize) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-fn payload(id: usize, bytes: usize) -> Vec<u8> {
+fn payload(id: usize, bytes: usize, random: bool) -> Vec<u8> {
+    if random {
+        return fixture::high_entropy(id, bytes);
+    }
     (0..bytes)
         .map(|offset| ((id.wrapping_mul(31).wrapping_add(offset)) % 251) as u8)
         .collect()

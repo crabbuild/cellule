@@ -1,3 +1,6 @@
+#[path = "../../payload.rs"]
+mod fixture;
+
 use celld_ltx::{Db, FileReplicaClient, TXID};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -13,6 +16,7 @@ const CELLD_SOURCE: &str = "celld 10cb1303dac710dcb3b557e318e08c855261f68b";
 struct Config {
     transactions: usize,
     payload_bytes: usize,
+    random_payload: bool,
     rounds: usize,
     warmup: usize,
     sync_parent: bool,
@@ -37,6 +41,13 @@ struct Sample {
     compacted_ltx_bytes: u64,
     source_database_bytes: u64,
     final_txid: u64,
+    command_samples: Vec<CommandSample>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CommandSample {
+    commit_us: u64,
+    capture_us: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,6 +63,7 @@ struct Report {
 struct ConfigOutput {
     transactions: usize,
     payload_bytes: usize,
+    random_payload: bool,
     measured_rounds: usize,
     warmup_rounds: usize,
     sync_parent: bool,
@@ -94,6 +106,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         config: ConfigOutput {
             transactions: config.transactions,
             payload_bytes: config.payload_bytes,
+            random_payload: config.random_payload,
             measured_rounds: config.rounds,
             warmup_rounds: config.warmup,
             sync_parent: config.sync_parent,
@@ -113,6 +126,7 @@ impl Config {
         let args = args.into_iter().collect::<Vec<_>>();
         let transactions = option(&args, "--transactions")?.unwrap_or(128);
         let payload_bytes = option(&args, "--payload-bytes")?.unwrap_or(4096);
+        let random_payload = args.iter().any(|arg| arg == "--random-payload");
         let rounds = option(&args, "--rounds")?.unwrap_or(5);
         let warmup = option(&args, "--warmup")?.unwrap_or(1);
         let sync_parent = args.iter().any(|arg| arg == "--sync-parent");
@@ -122,6 +136,7 @@ impl Config {
         Ok(Self {
             transactions,
             payload_bytes,
+            random_payload,
             rounds,
             warmup,
             sync_parent,
@@ -151,6 +166,7 @@ async fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error
     writer.pragma_update(None, "synchronous", "FULL")?;
     writer.pragma_update(None, "foreign_keys", true)?;
 
+    let mut command_samples = Vec::with_capacity(config.transactions);
     let mut workload_write_us = 0;
     let mut capture_us = 0;
     let started = Instant::now();
@@ -165,7 +181,7 @@ async fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error
     capture_us += elapsed_us(started);
 
     for id in 0..config.transactions {
-        let payload = payload(id, config.payload_bytes);
+        let payload = payload(id, config.payload_bytes, config.random_payload);
         let started = Instant::now();
         let transaction = writer.transaction()?;
         transaction.execute(
@@ -173,14 +189,20 @@ async fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error
             rusqlite::params![id as i64, payload.as_slice()],
         )?;
         transaction.commit()?;
-        workload_write_us += elapsed_us(started);
+        let commit_us = elapsed_us(started);
+        workload_write_us += commit_us;
 
         let started = Instant::now();
         ltx_db.sync()?;
         if config.sync_parent {
             sync_ltx_parent(ltx_db.meta_path(), 0)?;
         }
-        capture_us += elapsed_us(started);
+        let command_capture_us = elapsed_us(started);
+        capture_us += command_capture_us;
+        command_samples.push(CommandSample {
+            commit_us,
+            capture_us: command_capture_us,
+        });
     }
 
     let meta_path = ltx_db.meta_path().to_path_buf();
@@ -220,7 +242,7 @@ async fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error
         sync_parent(&restored)?;
     }
     let restore_us = elapsed_us(started);
-    validate_restore(&restored, config.transactions)?;
+    validate_restore(&restored, config)?;
 
     let recovery_us = recovery_us(0, compact_us, 0, restore_us);
     let total_us = total_us(workload_write_us, capture_us, recovery_us);
@@ -243,6 +265,7 @@ async fn run_round(config: Config, round: usize) -> Result<Sample, Box<dyn Error
         compacted_ltx_bytes,
         source_database_bytes,
         final_txid: output.info.max_txid.0,
+        command_samples,
     })
 }
 
@@ -281,11 +304,21 @@ fn list_ltx_files(root: &Path, level: u32) -> Result<Vec<(PathBuf, u64)>, Box<dy
     Ok(files)
 }
 
-fn validate_restore(path: &Path, transactions: usize) -> Result<(), Box<dyn Error>> {
+fn validate_restore(path: &Path, config: Config) -> Result<(), Box<dyn Error>> {
     let connection = Connection::open(path)?;
     let count: i64 = connection.query_row("SELECT COUNT(*) FROM payloads", [], |row| row.get(0))?;
+    let transactions = config.transactions;
     if count != transactions as i64 {
         return Err(format!("restored {count} rows, expected {transactions}").into());
+    }
+    let mut statement = connection.prepare("SELECT id, value FROM payloads ORDER BY id")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: usize = row.get(0)?;
+        let value: Vec<u8> = row.get(1)?;
+        if value != payload(id, config.payload_bytes, config.random_payload) {
+            return Err("restore changed a committed payload".into());
+        }
     }
     let integrity: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
     if integrity != "ok" {
@@ -294,7 +327,10 @@ fn validate_restore(path: &Path, transactions: usize) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-fn payload(id: usize, bytes: usize) -> Vec<u8> {
+fn payload(id: usize, bytes: usize, random: bool) -> Vec<u8> {
+    if random {
+        return fixture::high_entropy(id, bytes);
+    }
     (0..bytes)
         .map(|offset| ((id.wrapping_mul(31).wrapping_add(offset)) % 251) as u8)
         .collect()

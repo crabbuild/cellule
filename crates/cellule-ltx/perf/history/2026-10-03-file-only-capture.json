@@ -1,0 +1,228 @@
+{
+  "experiment": {
+    "source_commit": "3c3e9da01ab1b831ef54cf0aa8d97b7bfa67a82e",
+    "scope": "local capture only; SQLite FULL and LTX file sync retained",
+    "processes": 3,
+    "transactions": 128,
+    "measured_rounds": 2,
+    "warmup_rounds": 1,
+    "payload_bytes": [
+      4096,
+      65536
+    ],
+    "payload_pattern": "xorshift64-command-seeded",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "binaries_sha256": {
+      "cellule-immediate": "d46b91c0f01a870de7e0a7398c21f2703afec1dc035888b86b241a5b54420921",
+      "cellule-file-only": "3795174d0ef43f95b72d93cfc236bac9b483e04b2e58ff25875c8cac2d1442e3",
+      "celld-default": "1bffc8f2d0f30e62fd3b216973b503d4d4ce4f42cefe967c740e2b3562000193"
+    },
+    "patch_sha256": "90c56f08642291a3c16fb73973a1db1fcc6fbbda69fb409dab8bf6481ce8fe03",
+    "runner_sha256": "864e2bcc9c4a8837046809cef3644bc1ac887c515af2898f6891ac32144d0c80",
+    "elapsed_seconds": 124.58698579203337
+  },
+  "benchmark_only_patch": "--- a/crates/cellule-ltx/src/capture/wal.rs\n+++ b/crates/cellule-ltx/src/capture/wal.rs\n@@ -631,7 +631,7 @@\n             self.timing_begin(crate::capture::TimingPhase::ParentSync);\n             if durable {\n                 self.host\n-                    .rename(Path::new(tmp_filename), Path::new(filename))?;\n+                    .rename_uncommitted(Path::new(tmp_filename), Path::new(filename))?;\n             } else {\n                 self.host\n                     .rename_uncommitted(Path::new(tmp_filename), Path::new(filename))?;\n--- a/crates/cellule-ltx/src/capture/mod.rs\n+++ b/crates/cellule-ltx/src/capture/mod.rs\n@@ -286,14 +286,7 @@\n         if self.l0_ancestors_durable {\n             return Ok(());\n         }\n-        let ltx = self.meta_path.join(\"ltx\");\n-        let l0 = ltx.join(\"0\");\n-        self.timing_begin(TimingPhase::ParentSync);\n-        let result = [&l0, &ltx, &self.meta_path]\n-            .into_iter()\n-            .try_for_each(|path| self.host.facilities.filesystem.sync_parent(path));\n-        self.timing_end(TimingPhase::ParentSync);\n-        result?;\n+        // Isolated benchmark: deliberately omit the first-cut directory barrier.\n         self.l0_ancestors_durable = true;\n         Ok(())\n     }\n",
+  "results": {
+    "4096-cellule-immediate": {
+      "commands_per_second": 40.349609731866835,
+      "process_commands_per_second": [
+        66.25642856176697,
+        40.349609731866835,
+        36.76615293953788
+      ],
+      "capture_us": {
+        "p50": 22064,
+        "p95": 28448,
+        "p99": 100049,
+        "samples": 768
+      },
+      "command_us": {
+        "p50": 22622,
+        "p95": 29171,
+        "p99": 100517,
+        "samples": 768
+      },
+      "phase_us_per_round": {
+        "capture_us": 2963363.5,
+        "capture_position_us": 1887.0,
+        "capture_wal_read_us": 5372.5,
+        "capture_page_collection_us": 1081.5,
+        "capture_verification_us": 0.0,
+        "capture_encode_us": 4324.5,
+        "capture_local_write_us": 6851.5,
+        "capture_fsync_us": 1496063.0,
+        "capture_parent_sync_us": 1418680.5,
+        "capture_barrier_us": 0.0
+      }
+    },
+    "4096-cellule-file-only": {
+      "commands_per_second": 171.11035611766778,
+      "process_commands_per_second": [
+        171.11035611766778,
+        171.94896550096053,
+        77.78160169264746
+      ],
+      "capture_us": {
+        "p50": 5431,
+        "p95": 13090,
+        "p99": 15220,
+        "samples": 768
+      },
+      "command_us": {
+        "p50": 5919,
+        "p95": 13901,
+        "p99": 17282,
+        "samples": 768
+      },
+      "phase_us_per_round": {
+        "capture_us": 689299.0,
+        "capture_position_us": 2019.5,
+        "capture_wal_read_us": 4930.0,
+        "capture_page_collection_us": 1041.5,
+        "capture_verification_us": 0.0,
+        "capture_encode_us": 3522.0,
+        "capture_local_write_us": 4951.0,
+        "capture_fsync_us": 650371.5,
+        "capture_parent_sync_us": 13797.5,
+        "capture_barrier_us": 0.0
+      }
+    },
+    "4096-celld-default": {
+      "commands_per_second": 81.99346270226869,
+      "process_commands_per_second": [
+        174.56892069542232,
+        79.73990295816361,
+        81.99346270226869
+      ],
+      "capture_us": {
+        "p50": 10448,
+        "p95": 13624,
+        "p99": 17606,
+        "samples": 768
+      },
+      "command_us": {
+        "p50": 11017,
+        "p95": 14691,
+        "p99": 18828,
+        "samples": 768
+      }
+    },
+    "4096-paired": {
+      "throughput_ratios": [
+        2.582547230992864,
+        4.261477784880797,
+        2.1155762970512493
+      ],
+      "median_ratio": 2.582547230992864
+    },
+    "65536-cellule-immediate": {
+      "commands_per_second": 37.05022084724148,
+      "process_commands_per_second": [
+        37.05022084724148,
+        39.68853540891885,
+        36.20724929759812
+      ],
+      "capture_us": {
+        "p50": 24281,
+        "p95": 31798,
+        "p99": 62579,
+        "samples": 768
+      },
+      "command_us": {
+        "p50": 25080,
+        "p95": 33012,
+        "p99": 63462,
+        "samples": 768
+      },
+      "phase_us_per_round": {
+        "capture_us": 3173002.5,
+        "capture_position_us": 5957.5,
+        "capture_wal_read_us": 29878.0,
+        "capture_page_collection_us": 6431.0,
+        "capture_verification_us": 0.0,
+        "capture_encode_us": 26428.5,
+        "capture_local_write_us": 11277.5,
+        "capture_fsync_us": 1598350.5,
+        "capture_parent_sync_us": 1445130.0,
+        "capture_barrier_us": 0.0
+      }
+    },
+    "65536-cellule-file-only": {
+      "commands_per_second": 60.369292112289926,
+      "process_commands_per_second": [
+        60.369292112289926,
+        57.33967075803399,
+        68.59476968506367
+      ],
+      "capture_us": {
+        "p50": 13111,
+        "p95": 20221,
+        "p99": 98140,
+        "samples": 768
+      },
+      "command_us": {
+        "p50": 13856,
+        "p95": 24014,
+        "p99": 98787,
+        "samples": 768
+      },
+      "phase_us_per_round": {
+        "capture_us": 1805773.0,
+        "capture_position_us": 5376.5,
+        "capture_wal_read_us": 28728.5,
+        "capture_page_collection_us": 6478.0,
+        "capture_verification_us": 0.0,
+        "capture_encode_us": 26323.5,
+        "capture_local_write_us": 11147.5,
+        "capture_fsync_us": 1611370.5,
+        "capture_parent_sync_us": 23277.5,
+        "capture_barrier_us": 0.0
+      }
+    },
+    "65536-celld-default": {
+      "commands_per_second": 58.4241993117471,
+      "process_commands_per_second": [
+        49.322598660180034,
+        58.4241993117471,
+        73.90256940265743
+      ],
+      "capture_us": {
+        "p50": 12572,
+        "p95": 44124,
+        "p99": 174977,
+        "samples": 768
+      },
+      "command_us": {
+        "p50": 13291,
+        "p95": 45375,
+        "p99": 175674,
+        "samples": 768
+      }
+    },
+    "65536-paired": {
+      "throughput_ratios": [
+        1.6293908843672829,
+        1.4447414137924715,
+        1.8945037531369178
+      ],
+      "median_ratio": 1.6293908843672829
+    },
+    "4096-vs-celld-paired": {
+      "throughput_ratios": [
+        0.9801879706652432,
+        2.156372896405146,
+        0.9486317461074285
+      ],
+      "median_ratio": 0.9801879706652432
+    },
+    "65536-vs-celld-paired": {
+      "throughput_ratios": [
+        1.2239681961653877,
+        0.9814369975713976,
+        0.9281784143569587
+      ],
+      "median_ratio": 0.9814369975713976
+    }
+  }
+}

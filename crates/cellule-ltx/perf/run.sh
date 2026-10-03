@@ -23,9 +23,10 @@ celld_report=$(mktemp)
 trap 'rm -f "$cellule_report" "$celld_report"' EXIT
 
 CARGO_TARGET_DIR="$target_dir/cellule" cargo run --quiet --release \
-  --manifest-path "$script_dir/cellule/Cargo.toml" -- "${common_args[@]}" >"$cellule_report"
+  --locked --manifest-path "$script_dir/cellule/Cargo.toml" -- "${common_args[@]}" >"$cellule_report"
 CARGO_TARGET_DIR="$target_dir/celld" cargo run --quiet --release \
-  --manifest-path "$script_dir/celld/Cargo.toml" -- "${common_args[@]}" >"$celld_report"
+  --locked --manifest-path "$script_dir/celld/Cargo.toml" \
+  --bin cellule-ltx-perf-celld -- "${common_args[@]}" >"$celld_report"
 
 printf '%s\n' "=== cellule-ltx ==="
 cat "$cellule_report"
