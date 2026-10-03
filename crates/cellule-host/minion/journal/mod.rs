@@ -18,6 +18,7 @@ mod enrollment;
 mod follower_evacuation;
 mod reader_evacuation;
 mod records;
+mod writer_inventory;
 use records::{Db, blob, profile_bytes, scope_bytes};
 
 #[cfg(test)]
@@ -46,6 +47,8 @@ struct Inner {
     reader_evacuation_reply: Mutex<Option<EnrollmentReplyPause>>,
     #[cfg(test)]
     follower_evacuation_reply: Mutex<Option<EnrollmentReplyPause>>,
+    #[cfg(test)]
+    original_writer_reply: Mutex<Option<BootReplyPause>>,
 }
 
 #[cfg(test)]
@@ -141,6 +144,8 @@ impl SqliteJournal {
                 reader_evacuation_reply: Mutex::new(None),
                 #[cfg(test)]
                 follower_evacuation_reply: Mutex::new(None),
+                #[cfg(test)]
+                original_writer_reply: Mutex::new(None),
             }),
         })
     }
@@ -218,6 +223,33 @@ impl SqliteJournal {
             resume: paused,
         });
         (observed, resume)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_next_original_writer_reply(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (captured, observed) = tokio::sync::oneshot::channel();
+        let (resume, paused) = tokio::sync::oneshot::channel();
+        let mut slot = self.inner.original_writer_reply.lock().unwrap();
+        assert!(slot.is_none());
+        *slot = Some(BootReplyPause {
+            captured,
+            resume: paused,
+        });
+        (observed, resume)
+    }
+
+    #[cfg(test)]
+    async fn original_writer_reply(&self) {
+        let pause = self.inner.original_writer_reply.lock().unwrap().take();
+        if let Some(pause) = pause {
+            let _ = pause.captured.send(());
+            let _ = pause.resume.await;
+        }
     }
 
     #[cfg(test)]

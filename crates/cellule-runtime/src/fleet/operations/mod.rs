@@ -26,7 +26,13 @@ pub use reader_evacuation::{
     ReaderEvacuationPage, ReaderEvacuationRecord, ReaderReplacementWitness,
 };
 mod registry;
+mod writer_inventory;
 pub use recovery::{RecoveredActivation, RecoveryBasis, RecoveryEvidence};
+pub use writer_inventory::{
+    MAX_ORIGINAL_CATALOGS, MAX_ORIGINAL_WRITERS, OriginalCatalogWitness,
+    OriginalWriterInventoryBasis, OriginalWriterInventoryPage, OriginalWriterInventoryRecord,
+    OriginalWriterObservation,
+};
 
 pub use accepted::AcceptedFleetAction;
 pub use acquisition::AcquisitionBasis;

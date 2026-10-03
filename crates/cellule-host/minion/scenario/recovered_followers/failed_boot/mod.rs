@@ -12,6 +12,7 @@ use std::{
 
 mod process_tests;
 mod tests;
+mod writer_tests;
 
 pub(super) struct Process {
     child: Child,

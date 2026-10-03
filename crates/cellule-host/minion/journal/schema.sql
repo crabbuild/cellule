@@ -49,3 +49,16 @@ CREATE TABLE IF NOT EXISTS latest_follower_evacuations (
     witness BLOB NOT NULL REFERENCES follower_evacuations(key),
     PRIMARY KEY(operation, original)
 );
+-- One immutable original ownership set per operation/process request. Pages and
+-- this pointer commit in the same transaction as the registry advance.
+CREATE TABLE IF NOT EXISTS original_writers (
+    operation BLOB NOT NULL CHECK(length(operation)=16),
+    process BLOB NOT NULL CHECK(length(process)=32),
+    key BLOB NOT NULL UNIQUE CHECK(length(key)=32),
+    body BLOB NOT NULL CHECK(length(body)<=65536),
+    PRIMARY KEY(operation,process)
+);
+CREATE TABLE IF NOT EXISTS original_writer_pages (
+    key BLOB PRIMARY KEY CHECK(length(key)=32),
+    body BLOB NOT NULL CHECK(length(body)<=1048576)
+);

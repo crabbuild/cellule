@@ -9,6 +9,11 @@ use cellule_runtime::{
 use std::{future::Future, sync::Arc};
 use tokio::time::{Instant, timeout_at};
 
+mod writers;
+pub use writers::{
+    FleetOriginalCatalogSet, FleetOriginalCatalogSource, FleetOriginalCatalogs,
+    FleetOriginalWriterCapture, FleetOriginalWriterJournal,
+};
 mod process;
 mod publication;
 mod retained;

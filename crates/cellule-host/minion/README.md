@@ -150,6 +150,19 @@ prove complete affected-writer retention and successors.
 cargo test -p cellule-host --example fleet_operations --all-features --locked recovered_followers::failed_boot::process_tests
 ```
 
+The original writer capture traverses every authenticated application/tenant
+catalog and canonical owner history, including rootless originals already removed
+by takeover. `FleetOriginalWriterJournal` retains all pages and one immutable
+operation/process pointer in the same SQLite transaction that advances the
+registry. Exact replay and independent reconstruction preserve original Controls,
+intervals and identities. See the [integration recipe](../docs/original-writers.md)
+for source authentication, bounds and successor requirements. This metadata
+foundation does not establish successor availability or maintenance completion.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked writer_tests
+```
+
 The reader producer cases use `fleet_reader_enrollments_page` while original
 acceptance, establishment and native open replies are paused. They check original
 requests, separate errors, accepted preparation before a row exists, page memory
@@ -203,6 +216,7 @@ the host library remains provider neutral.
 | Unaccepted action | `ResolveUnaccepted` checks that the exact attempt/effect/endpoint has no acceptance in the same `BEGIN IMMEDIATE` transaction that advances the head revision. A delayed old envelope then fails; an acceptance that won the race prevents retry. Both permits remain charged. |
 | Results and recovery | Retain original acquisition/recovery inputs and positions. Require matching basis/evidence before publishing successful activation or recovery. Unknown may advance to checked completion; terminal results are immutable. |
 | Fresh inspection | Check the request's exact head action, registry version and endpoint intent in one read transaction. Create no effect acceptance or cached observation result. The public host path performs the actual current check. |
+| Original writers | Compare the full barrier, original boot and current Draining operation; atomically insert every page and the immutable operation/process manifest. Exact replay preserves bytes without a registry advance. |
 | History | Insert the exact progress page in the same transaction that retires permits. Loading verifies the page digest and head reference. |
 | Durability | SQLite WAL with `synchronous=FULL`, foreign keys and a five-second busy timeout. Each client owns one connection; independently opened clients serialize through SQLite. |
 | Bounds | At most 32 accepted blocking jobs per client. Excess calls return Capacity. Pages contain at most 128 sorted records; canonical codecs bound record sizes. |

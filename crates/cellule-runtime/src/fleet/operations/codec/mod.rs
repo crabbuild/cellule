@@ -16,6 +16,7 @@ mod inspection;
 mod reader_evacuation;
 mod recovery;
 mod registry;
+mod writer_inventory;
 use attempt::{read_attempt, write_attempt};
 mod actions;
 mod pages;
@@ -45,6 +46,9 @@ const READER_EVACUATION_PAGE: u8 = 20;
 const READER_EVACUATION_BASIS: u8 = 21;
 const FOLLOWER_POLICY: u8 = 22;
 const FOLLOWER_EVACUATION: u8 = 23;
+const WRITER_INVENTORY: u8 = 24;
+const WRITER_INVENTORY_PAGE: u8 = 25;
+const WRITER_INVENTORY_BASIS: u8 = 26;
 
 fn encoder(kind: u8) -> Result<BoundedEncoder> {
     encoder_limited(kind, MAX_RECORD_BYTES)

@@ -4,6 +4,101 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 complete original writer inventory checkpoint
+
+`FleetOriginalWriterCapture` joins the original failed boot through its existing
+process provider, traverses every authenticated application/tenant catalog and
+canonical owner history, and retains each full original Control and target.
+Rootless, recovering and fully object-covered originals remain in the set even
+when a later canonical takeover has removed the original owner. Complete catalog
+entries with no initial Control and ownership epochs outside the original boot
+remain explicit in the per-scope witness. Missing legacy/restored owner history
+is a typed blocker.
+
+`FleetOriginalCatalogs` is an application authentication boundary. Its stable
+witness attests the original complete configuration and actual canonical backend
+mappings; source construction validates shape only. Collection rereads that set,
+revalidates all original catalog heads/ETags, joins the original process again and
+rechecks the full boot/intent/registry/head/claimant barrier. At most 128 scopes,
+10,000 total catalog entries and 10,000 inspected ownership epochs are permitted;
+excess refuses without truncation. Original observations pack in canonical
+64-row pages with the ordinary one-MiB envelope and a 64-KiB manifest.
+
+`FleetOriginalWriterJournal` uses minion's existing accepted SQLite work owner.
+First publication checks the full fresh barrier and commits all pages, the one
+immutable operation/process pointer and one registry advance in the same
+transaction. Exact replay returns original bytes and capture times, without
+provider recollection or another registry advance. Different original inputs
+conflict. Independent clients serialize through the same SQLite file; lost replies
+and canceled waiters preserve the accepted durable commit.
+
+The [integration recipe](../crates/cellule-host/docs/original-writers.md) records
+ordering, bounds, source authentication and reconstruction. New codec kinds 24–26
+use the existing version/domain; kinds 1–23 and all existing IDs, control formats,
+object paths and signed messages are unchanged. Minion remains canonical, with
+Cargo target `fleet_operations`.
+
+Seven runtime cases cover full-Control round trips, all truncations and envelopes,
+explicit authenticated empty sets, duplicate/reordered/missing/foreign pages,
+scope/count/time/budget failures, root/code/schema binding and repeated original
+epoch ordering across page boundaries. Eight minion cases retain 66 actual original
+owner Controls across two canonical application/tenant catalogs and 68 entries,
+with real sole-authority takeovers. They cover atomic replay/reconstruction,
+provider causes, missing history, stale barriers, catalog/process changes,
+independent competing clients, dropped waiters and lost commit replies.
+Their child process is a lifetime stand-in, supplying no OS-crashed CellNode,
+accepted external-job, successor-prefix or dependency-availability qualification.
+
+| Verification | Result |
+| --- | --- |
+| Full workspace, all features and locked dependencies | 1,586 passed; no failures; 36 documented provider/process/performance/manual or documentation cases ignored. |
+| Complete minion target, all features | 218 passed; no failures or ignored cases. |
+| Distinct final passes | 1,804; focused repetitions excluded. |
+| Workspace Clippy, all targets/features | Passed with warnings denied. |
+| Workspace API documentation | Passed with warnings denied. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer and diff | Passed. |
+| Frozen Rust/Cargo source, including nested qualification locks | 737 paths; SHA256 `ef4ac129a38eac68f5b1244a01d1cf46b3617b9d1c72b37dfc55f248d8ba7eb8`. |
+| Isolated checkout / target suffix | `/tmp/cellule-reader-prelease-8698183` / `cellule-reader-prelease-8698183` beneath the mounted Workspace target. |
+| Raw commands, logs, initial diagnostics and manifests | `/tmp/cellule-original-writer-evidence` |
+| Parent revision | `b0552ee3b60b8cd453844876d84a64eb535e63f2` |
+
+Initial checks found a missing Digest import and typed IDs used as ordered keys;
+byte-array keys preserve the existing ID contract. Test compilation then exposed a
+missing test-only snapshot import. An initial stale-barrier test requested an
+already-stopped scheduling state; it now changes the state and asserts the actual
+registry advance before requiring refusal. All initial diagnostics remain
+retained and provide no passing evidence.
+
+### Parent CI and reader balance investigation
+
+Parent `b0552ee` is mergeable. Both complete write-capacity modes, both routing
+modes and their aggregate, Compose smoke, MSRV, contract, website, fuzz and fast
+model checks passed. Rust workspace run `37112788891` failed in the unchanged
+balanced three-process smoke at `process_replica.rs:193`: the twelve successful
+replica reads were not evenly split within its unchanged one-read tolerance.
+The failure log has no actual per-reader counts before that assertion.
+
+An isolated container used the exact CI RustFS image digest and disposable
+fixture credentials, a fresh bucket and unique object prefixes. The exact
+process test passed once, followed by five same-binary repeats. These local
+passes do not explain the CI failure and establish no fix. Ten further same-binary repeats during workspace verification also passed. These
+contention reproduction logs and the original binary SHA256 remain with the evidence.
+Qualification profiles, workload counts and acceptance thresholds are unchanged.
+Fresh CI is required after publication; parent results do not certify new source.
+
+### Highest remaining priorities
+
+Verify every retained original acknowledged prefix and exact root dependencies,
+then verify current successor authority and actor serving. Historical metadata
+provides no root-retention pin or successor proof; sequential catalog heads are
+not a global transaction. Integrate complete writer, reader/follower policy and
+native accepted-work observations through the existing observer/controller.
+`SettleRoles` and `Finalize` still refuse without their actual evidence. Join
+original action work before terminal drain handoff, finish failed-receiver and
+cross-session recovery/adoption, Cron/Blob external owners, runnable maintenance
+and receiver-loss scenarios, and W9–W10 process/provider/mixed-binary/load
+qualification, exercised runbooks and rollout. The full W1–W10 goal remains open.
+
 ## October 3 2026 complete catalog traversal checkpoint
 
 `CellCatalog::scan_all(limit)` now captures all 256 original heads before reading

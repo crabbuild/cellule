@@ -4,6 +4,7 @@
 | --- | --- |
 | [Lifecycle](lifecycle.md) | Start and stop one node safely. |
 | [Read replicas](read-replicas.md) | Install and supervise immutable views. |
+| [Original failed-boot writers](original-writers.md) | Retain complete original ownership metadata before dependent effects. |
 | [Fleet journal example](../minion/README.md) | Run the durable local journal foundation and inspect its integration limits. |
 | [Crate entry](../README.md) | Ownership and test command. |
 
