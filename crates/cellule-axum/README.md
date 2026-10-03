@@ -238,6 +238,33 @@ gh workflow run write-capacity.yml --ref YOUR_BRANCH \
   -f read_seconds=60
 ```
 
+For sustained writes, use timed POST admission after five seconds of write
+warmup. Every issued identity and response is retained, and every acknowledged
+row and exact retry is checked live and after a fresh-file cold restore:
+
+```sh
+python3 "$task_dir/source/scripts/bench-axum-rustfs.py" \
+  --binary "$CARGO_TARGET_DIR/release/examples/sql" \
+  --output "$task_dir/write-results" \
+  --repeats 3 --cells 1 4 16 --workers 4 --concurrency 16 \
+  --warmup 16 --writes 32 --reads 64 \
+  --write-warmup-seconds 5 --write-seconds 120
+
+gh workflow run write-capacity.yml --ref YOUR_BRANCH \
+  -f mode=axum-writes -f baseline_ref=BASELINE_COMMIT -f write_seconds=120
+```
+
+Timed writes replace the fixed `--writes` count. Clients stop admitting POSTs
+at the deadline and wait for every in-flight request; throughput includes that
+drain time. JSON response-body throughput excludes headers and transport.
+The closed-loop Python write driver is intended for storage-bound commands.
+Its per-client ledgers retain uncertain transport outcomes without retrying
+them; any error fails verification. Each phase retains at most 100,000 responses.
+The example reports lifetime publication, compaction, worker and queue timing
+histograms after drain, including warmup and correctness checks. Histogram
+upper bounds have 100 µs resolution through two seconds; overflow percentiles
+are unknown. The paired write workflow instruments both servers identically.
+
 ```sh
 cargo test -p cellule-axum --all-targets --locked
 ```

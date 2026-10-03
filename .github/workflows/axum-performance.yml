@@ -1,4 +1,4 @@
-name: Paired Axum read performance
+name: Paired Axum HTTP performance
 
 on:
   workflow_call:
@@ -9,12 +9,18 @@ on:
       read_seconds:
         type: number
         default: 60
+      workload:
+        type: string
+        default: reads
+      write_seconds:
+        type: number
+        default: 120
 
 permissions:
   contents: read
 
 jobs:
-  steady-reads:
+  steady-http:
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     services:
@@ -41,11 +47,18 @@ jobs:
       - name: Build both release servers before measuring
         env:
           BASELINE_REF: ${{ inputs.baseline_ref }}
+          WORKLOAD: ${{ inputs.workload }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/axum-evidence"
           baseline_commit=$(git rev-parse --verify --end-of-options "$BASELINE_REF^{commit}")
           git worktree add --detach "$RUNNER_TEMP/axum-baseline-source" "$baseline_commit"
+          if [ "$WORKLOAD" = writes ]; then
+            # Instrument both variants identically without changing the
+            # example's application source digest or any framework behavior.
+            cp crates/cellule-axum/examples/sql_metrics/mod.rs \
+              "$RUNNER_TEMP/axum-baseline-source/crates/cellule-axum/examples/sql_metrics/mod.rs"
+          fi
           printf '%s\n' "$baseline_commit" > "$RUNNER_TEMP/axum-evidence/baseline-revision.txt"
           git rev-parse HEAD > "$RUNNER_TEMP/axum-evidence/candidate-revision.txt"
           uname -a > "$RUNNER_TEMP/axum-evidence/host.txt"
@@ -57,9 +70,12 @@ jobs:
             --manifest-path "$RUNNER_TEMP/axum-baseline-source/Cargo.toml"
           CARGO_TARGET_DIR="$RUNNER_TEMP/axum-candidate-target" \
             cargo build --release -p cellule-axum --examples --locked
-      - name: Measure paired steady reads and verify every Cell
+      - name: Measure paired steady HTTP and verify every Cell
         env:
           READ_SECONDS: ${{ inputs.read_seconds }}
+          WRITE_SECONDS: ${{ inputs.write_seconds }}
+          WORKLOAD: ${{ inputs.workload }}
+          TOKIO_WORKER_THREADS: "4"
           AWS_ACCESS_KEY_ID: cellule-ci
           AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
           AWS_DEFAULT_REGION: us-east-1
@@ -69,20 +85,30 @@ jobs:
           CELLULE_TEST_PREFIX: paired-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          python3 -c 'import os; assert 30 <= int(os.environ["READ_SECONDS"]) <= 120'
+          case "$WORKLOAD" in
+            reads)
+              python3 -c 'import os; assert 30 <= int(os.environ["READ_SECONDS"]) <= 120'
+              load_args=(--read-driver "$RUNNER_TEMP/axum-candidate-target/release/examples/http_load"
+                --read-warmup-seconds 5 --read-seconds "$READ_SECONDS")
+              ;;
+            writes)
+              python3 -c 'import os; assert 60 <= int(os.environ["WRITE_SECONDS"]) <= 180'
+              load_args=(--write-warmup-seconds 5 --write-seconds "$WRITE_SECONDS")
+              ;;
+            *) exit 1 ;;
+          esac
           aws --endpoint-url "$CELLULE_TEST_ENDPOINT" s3api create-bucket --bucket "$CELLULE_TEST_BUCKET"
           python3 scripts/bench-axum-rustfs.py \
             --binary "$RUNNER_TEMP/axum-candidate-target/release/examples/sql" \
             --baseline-binary "$RUNNER_TEMP/axum-baseline-target/release/examples/sql" \
-            --read-driver "$RUNNER_TEMP/axum-candidate-target/release/examples/http_load" \
             --output "$RUNNER_TEMP/axum-evidence/results" \
             --repeats 3 --cells 1 4 16 --workers 4 --concurrency 16 \
             --warmup 16 --writes 32 --reads 64 \
-            --read-warmup-seconds 5 --read-seconds "$READ_SECONDS"
+            "${load_args[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: axum-steady-${{ github.run_id }}-${{ github.run_attempt }}
+          name: axum-steady-${{ inputs.workload }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/axum-evidence/
           if-no-files-found: error
           retention-days: 7
