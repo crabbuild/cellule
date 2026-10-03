@@ -63,7 +63,7 @@ impl CellTransport for LocalCellTransport {
                     move |transaction| {
                         let (sequence, now_ms) = next_metadata(transaction, command.now_ms)?;
                         let started = Instant::now();
-                        let result = registry.execute_command_with_issue_time(
+                        let result = registry.execute_command_with_mutation(
                             transaction,
                             CommandInvocation {
                                 module: command.module,
@@ -76,7 +76,8 @@ impl CellTransport for LocalCellTransport {
                                 now_ms,
                                 input: &command.input,
                             },
-                            command.identity.issued_at_ms,
+                            command.identity,
+                            command.operation_digest,
                         );
                         telemetry.primitive_operation(
                             command.module,

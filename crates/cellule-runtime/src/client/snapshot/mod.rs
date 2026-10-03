@@ -58,7 +58,8 @@ impl PreparedCommandSnapshot {
 
     fn validate(&self) -> std::result::Result<(), CodecError> {
         // Validate lifetime bounds at issuance, not against a restart's clock:
-        // expired evidence still resolves previously committed outcomes.
+        // Import must preserve the original identity even after expiry. The
+        // runtime's resolution and execution expiry checks remain unchanged.
         self.evidence
             .identity
             .expired(self.evidence.identity.issued_at_ms)

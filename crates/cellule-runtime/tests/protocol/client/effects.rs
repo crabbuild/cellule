@@ -2,7 +2,7 @@
 
 use super::*;
 
-fn effect_client(
+pub(super) fn effect_client(
     fixture: &Fixture,
     handle: cellule_runtime::cell::actor::CellHandle,
 ) -> EffectPeerClient {

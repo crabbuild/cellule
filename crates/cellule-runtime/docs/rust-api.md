@@ -255,6 +255,7 @@ Add exact byte fixtures for every new input and output version.
 | `cell_id()` | Read the verified target Cell ID |
 | `target()` | Derive deterministic effect targets |
 | `owner_fence()` | Compare a stored operation token with the admitted incarnation/epoch |
+| `mutation_evidence()` | Bind application recovery state to the actual admitted SDK mutation |
 | `sequence()` | Allocate stable transition-local identities |
 | `now_ms()` | Use the runtime-sampled logical timestamp |
 | `sql()` | Execute an authorized bounded SQL batch |
@@ -271,6 +272,15 @@ so it preserves the original result rather than substituting the new owner's
 fence.
 
 Bind operation tokens to their Cell ID or target as well as `OwnerFence`.
+`mutation_evidence()` returns an owned `PendingMutation` for local and
+authenticated peer SDK commands. It contains their original target,
+incarnation, identity and operation digest. An application can record that
+evidence and `sequence()` alongside its domain transition in the same SQL
+transaction; all writes still follow the canonical durable response gate.
+The method returns `None` for direct registry execution and inbox effects,
+which use a different identity contract. It grants no additional authority,
+does not change identity expiry, and does not run during stored-result replay.
+
 Embedders that invoke `Registry::execute_command` directly must supply the
 admitting handle's fence in `CommandInvocation`; the registry does not verify
 ownership independently.
@@ -382,8 +392,11 @@ fn restore<C: Command>(
 `restore_command` checks the compiled namespace, module, code/schema, operation,
 codec, exact bounds and original input digest without Describe or mutation I/O.
 It preserves the original request identity and owner incarnation. Decode/import
-allows expired evidence so known outcomes can still be resolved; execution
-checks the current clock and owner fence. The decoded header's `evidence()` can
+allows expired evidence without refreshing its lifetime; execution checks the
+current clock and owner fence. SDK resolution returns `Expired` before looking
+up an expired identity, even if its command committed. Applications needing
+recovery beyond that lifetime must retain their own original result and phase
+in the command transaction. The decoded header's `evidence()` can
 be resolved without reading the body. A changed incarnation, resolution error,
 `Unknown` or `Expired` never proves absence or authorizes a new mutation.
 
