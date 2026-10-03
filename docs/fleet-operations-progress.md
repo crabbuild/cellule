@@ -4,6 +4,85 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 complete original boot suffix input checkpoint
+
+`FleetOriginalBootSuffixInventory::collect` combines the committed original
+writer set with the exact original boot's canonical sealed/retired log and its
+complete digest-verified recovery manifest. It retains every application and
+matches each suffix to its exact original owner epoch and predecessor. Fresh
+process, physical fence, canonical log and full journal checks surround manifest
+I/O. Missing commitment, unresolved recovery, omitted owners, corrupt bytes,
+changed predecessors and changed process/registry evidence refuse collection.
+One absolute deadline bounds inline collection; existing providers retain
+accepted storage work and its original errors.
+
+The native `NodeDirectory::recovered_session` supplies this read boundary without
+retiring the log or granting node closure. No manifest means canonical no-suffix
+input for that log, while every original object-covered/rootless writer remains
+retained. Earlier-boot overlays preserved in original Controls still require
+independent exact manifest and successor proofs. This collector is an exported
+input building block, exercised by minion; complete production observation and
+maintenance finalization remain unfinished.
+
+Eight new minion cases use actual SQLite roots, later captured mutations,
+two fsynced followers and ordinary two-application recovery/pinning/sealing.
+Independent journal reconstruction retains all 66 original owners and both
+sealed suffixes. Fault cases cover uncommitted/omitted owners, changed
+predecessors, missing/corrupt manifest bytes, process failures/witness changes,
+registry changes and an expired deadline before provider work. Native tests
+cover no-log, unresolved, sealed and retired boundaries and exact physical
+identity/live claimant. The process child remains a lifetime stand-in; these
+cases do not establish an OS-crashed CellNode or external-job qualification.
+
+The branch incorporates main through `c23ca51`. Its qualification-driver
+conflict retains the exact original-owner root capture and two-second bound,
+and adds upstream's receipt-monotonic readback check.
+
+### Verification
+
+| Verification on the isolated merged source | Result |
+| --- | --- |
+| Full framework workspace, all features, locked | 1,630 passed; no failures; 36 documented ignored cases. |
+| Complete canonical minion target | 231 passed; no failures or ignored cases. |
+| Distinct passes | 1,861; focused repeats and overlapping local LTX excluded. |
+| Focused original writer cases | All 21 selected cases passed. |
+| Local LTX without default features | 54 passed. |
+| All-target/all-feature check, Clippy, API docs | Passed; warnings denied for lint and docs. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer, diff | Passed; 125 Rust snippets, 1,224 Markdown links, 28 SQL/peer assertions and 569 protocol links. |
+
+The frozen source contains 1,045 Rust/Cargo paths, including upstream's separate
+cookbook workspace; the test commands above cover the framework workspace and
+canonical minion. Manifest SHA256:
+`dadb6aec396ca1a7f35249c18de8df817c06452937ce8a30f95e293c1793c70c`.
+Source archive, exact commands, statuses and complete logs are retained under
+`/tmp/cellule-original-suffix-inventory-evidence`; snapshot and mounted target
+use suffix `cellule-original-suffix-inventory-37e3184`. Initial compile and
+fixture-assertion failures remain beside their corrected passing runs.
+
+### Current CI and highest remaining work
+
+Published `37e3184` passes follower/object capacity, workspace/MSRV, Compose
+smoke, contract, website, fuzz and enabled fast models. Its routing comparisons
+fail four unchanged command lanes: leased forwarded c1, leased local c1/c16 and
+object-only local c1. Throughput is respectively 80.2%, 82.1%, 89.8% and 88.4%
+of baseline against the existing 90% gate. Original artifacts and comparison
+rows are retained under this checkpoint's evidence directory. Parent `704fa11`
+passed both Linux routing modes and their aggregate; that earlier result does
+not qualify the newer head. Fresh CI and routing diagnosis remain required.
+No workload, pair count, threshold or expected evidence was weakened.
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Diagnose and qualify both routing profiles on the current merged head. |
+| 1 | Complete production observation: every original root, original/inherited suffix, exact current native serving, physical boot/process, operation barrier, reader/follower replacement policy and accepted work. |
+| 2 | Implement SettleRoles/Finalize, joining original actions before terminal drain handoff; confirm stop, withdrawal, boot retirement and committed operation completion. Finish Cron/Blob external owners and primitive fault matrices. |
+| 3 | Complete cross-session receiver loss, replacement, recovery/adoption, refusal/unknown supervision and sustained pressure/count/concurrency scenarios. |
+| 4 | Complete canonical minion maintenance and receiver-loss scenarios, then W9 process/provider, mixed-binary, load/soak and capacity campaigns. |
+| 5 | W10 exercised operator runbooks, staged rollout and rollback evidence. |
+
+The complete W1–W10 plan remains active. This checkpoint grants no authority,
+current serving, role settlement, stopped-node proof or maintenance completion.
+
 ## October 3 2026 committed original writer reload checkpoint
 
 `FleetOriginalWriterInventory::load` reconstructs the original writer manifest
@@ -142,8 +221,9 @@ command lanes; its original artifacts are retained. At published `704fa11`,
 follower/object capacity, workspace/MSRV, Compose smoke, contract, website, fuzz
 and enabled fast models pass. Its Linux object-only routing artifact also passes
 all unchanged gates, with command throughput ratios of 91.7–97.2%; original
-artifacts are retained separately from the failed Mac diagnostic. Linux leased
-routing remains running. Routing qualification remains open. Workload, pair
+artifacts are retained separately from the failed Mac diagnostic. Its Linux leased
+routing artifact and aggregate also pass at that head. Later-head qualification
+remains open; see the current checkpoint above. Workload, pair
 count, thresholds and expected
 correctness evidence are unchanged. The initial diagnostic wrapper mistakenly
 compared one pair and was rejected by the unchanged four-repeat comparator; the
