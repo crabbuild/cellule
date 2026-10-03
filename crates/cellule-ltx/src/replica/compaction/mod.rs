@@ -172,6 +172,7 @@ async fn prepare_root(
     replica
         .finish_root(
             Some(base),
+            &graph.document.segment_pages,
             descriptors,
             base.position,
             base.commit_sequence,
