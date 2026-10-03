@@ -73,8 +73,10 @@ impl NodeIntent {
     }
 
     /// Rebinds an already Active physical node to a separately validated boot.
-    /// The application must prove old-session withdrawal and new-session
-    /// enrollment. This cannot reopen a retained cordon after a reboot.
+    /// The application must prove old-session withdrawal or complete failed-boot
+    /// closure (including process/accepted external work joining and all original
+    /// roles settled), and new-session enrollment. Expiry/takeover is insufficient.
+    /// This cannot reopen a retained cordon after a reboot.
     pub fn rebind_active(&self, session: SessionId, revision: u64) -> Result<Self> {
         self.validate()?;
         if self.mode != NodeMode::Active || session == self.session || revision <= self.revision {

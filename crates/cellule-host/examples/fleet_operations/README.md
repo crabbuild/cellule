@@ -331,6 +331,28 @@ See the [host publication recipe](../../docs/lifecycle.md#publish-a-recovered-ow
 cargo test -p cellule-host --example fleet_operations --all-features --locked recovered_publication
 ```
 
+## Failed boot process evidence
+
+On Unix, the test target combines the cold recovered ensemble with an actual
+child lifetime. Its test provider retains request-bound termination evidence
+only after child kill/wait joins, then rereads the same file after adapter/client
+reconstruction. `FleetFailedBootRetirement` refuses a running original,
+unretired leader logs, unsettled/duplicate requests, stale barriers, foreign
+process evidence and regressed clocks. Lost retirement replies and failed or
+changed final process confirmation retain the original committed row/errors;
+a delayed original-session request prevents closure even after boot retirement.
+
+The child represents only a process lifetime; it does not run a CellNode or
+external provider jobs. This is adapter-contract evidence, not the plan's
+multi-process, storage-fault, workload, replacement or maintenance qualification.
+Production adapters authenticate and retain the actual process and all its
+accepted external-job evidence. See the
+[host recipe](../../docs/lifecycle.md#publish-an-original-failed-boots-closure).
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked failed_boot_closure
+```
+
 ## Managed reader producer evidence
 
 The example's test target also exercises `install_fleet_reader_enrollment` with

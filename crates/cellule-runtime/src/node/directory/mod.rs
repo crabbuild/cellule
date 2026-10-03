@@ -10,11 +10,13 @@ use crate::node::advertisement::validate_successor;
 use super::*;
 
 mod advertisement;
+mod closure;
 mod enrollment;
 mod inventory;
 mod log;
 mod recovered;
 mod recovery;
+pub use closure::NodeSessionClosure;
 pub use recovered::RecoveredLogRetirementAuthorization;
 
 pub use enrollment::{

@@ -288,6 +288,7 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `CellNode::follower_evacuation` | Present per-live-owner replacement and retirement check after the original requested rotation. | Require the declared member minimum, donor exclusion, complete Established replacement rows, pinned signed boots, current authority and full journal rechecks. Retain the original completion/error history and publish/revalidate its interval. This does not settle failed owners, Pending producers or the physical node's other obligations. |
 | Recovered-log authorization, member retirement and canonical Retired CAS | Present runtime tail closure after canonical recovery pinning. | Use `RecoveredNodeLogTransport`, receiver-side `authorize_recovered_log_retire` and `FollowerStore::retire_recovered`; confirm every original member before `retire_recovered_log`. Adopt exact committed closure with `retired_recovered_log` before repeating effects. Publish original enrollments through the host capsule, then complete failed-process barriers and maintenance orchestration; native closure alone cannot finish W7. |
 | `FleetRecoveredFollowerRetirement` | Present checked publication of recovered ensemble enrollment closure. | Capture the exact canonically Retired physical leader/epoch against the full roster, publish all original member requests through the existing journal, then confirm the complete new roster and canonical authority. Retain every original response/error. Fresh recapture adopts lost replies without native RPCs or timestamp refresh; failed boots, replacement policy and operation integration remain required. |
+| `FleetFailedBootRetirement` / `FleetFailedBootProcesses` | Present original failed-boot closure against canonical terminal fencing and durable application process evidence. | Complete every original related request first. The read-only provider proves original process/accepted external work joining and session nonexecution; the capsule publishes through the existing journal and rechecks full roster, authority, physical references and process evidence. Actual provider/failed-reader integration, replacement policy and maintenance actions remain required. |
 | `FleetActionJournal` | Present in host `fleet/journal.rs`. | Implement acceptance, result publication, original-action lookup, and acquisition/recovery basis and evidence recording/lookup with the specified atomic and durable semantics. |
 | `FleetCellProvider::cell_inputs(spec)` | Present in host `fleet/cells.rs`. | Resolve metadata and canonical local inputs without performing an effect. |
 | `FleetCellProvider::recovery_inputs(spec)` | Present in host `fleet/cells.rs`. | Supply existing canonical failed-session proof and manifest access. Ordinary recovery establishes fencing and tail sealing independently. |
@@ -1108,9 +1109,13 @@ maintenance can claim the node is safe to stop.
    member retirement, fresh canonical receiver authorization and a complete
    native proof before the Retired tombstone CAS. Preserve original enrollment
    identities. `FleetRecoveredFollowerRetirement` now publishes/revalidates the
-   complete original member set through the durable journal. Finish failed-boot
-   and process barriers, operation action ownership and replacement-policy
-   checks before treating the physical role as settled.
+   complete original member set through the durable journal. `FleetFailedBootRetirement` then binds the original Established boot,
+   completed related requests, canonical permanent fence and retained process
+   evidence supplied by `FleetFailedBootProcesses`. The application authenticates
+   actual termination/nonexecution and joins accepted external jobs; neither
+   expiry nor recovery creates that proof. Finish failed-reader/provider
+   integration, operation action ownership and replacement-policy checks before
+   treating the physical role as settled.
 6. Confirm that no admitted new enrollment or unresolved tail obligation can
    appear after the final inventory barrier, then complete host shutdown.
    Retain retired files and their fences under the current grace/collection

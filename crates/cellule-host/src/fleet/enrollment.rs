@@ -98,7 +98,10 @@ pub trait FleetEnrollmentJournal: Send + Sync + 'static {
     ) -> FleetAdapterFuture<'a, NodeIntent>;
 
     /// Rebinds an Active intent after application-validated authoritative old
-    /// withdrawal and new boot enrollment. Check the exact original intent and
+    /// withdrawal or complete failed-boot closure, and new boot enrollment.
+    /// Failed closure includes original process/accepted external work joining
+    /// and every original role settled; expiry or takeover alone is insufficient.
+    /// Check the exact original intent and
     /// derive the successor with `rebind_active` inside the shared transaction.
     fn rebind_active_intent<'a>(
         &'a self,

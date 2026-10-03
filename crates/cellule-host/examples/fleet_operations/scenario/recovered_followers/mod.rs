@@ -29,6 +29,8 @@ use ed25519_dalek::SigningKey;
 use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(unix)]
+mod failed_boot;
 mod tests;
 
 const NOW: i64 = 1_000_000;

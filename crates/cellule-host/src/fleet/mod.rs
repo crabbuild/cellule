@@ -10,6 +10,7 @@ mod cells;
 mod controller;
 mod coverage;
 mod enrollment;
+mod failed_boot;
 mod inspection;
 mod inventory;
 mod journal;
@@ -27,6 +28,10 @@ pub use cells::{FleetCellInputs, FleetCellProvider, FleetRecoveryInputs};
 pub use controller::{FleetJournal, FleetJournalSnapshot};
 pub use coverage::FleetRoleCoverage;
 pub use enrollment::{FleetBootObservation, FleetEnrollmentAcceptance, FleetEnrollmentJournal};
+pub use failed_boot::{
+    FleetFailedBootClosure, FleetFailedBootProcessEvidence, FleetFailedBootProcessRequest,
+    FleetFailedBootProcesses, FleetFailedBootPublication, FleetFailedBootRetirement,
+};
 pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInventoryScan};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};
 pub use reconciler::{

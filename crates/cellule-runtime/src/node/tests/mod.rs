@@ -21,6 +21,7 @@ use crate::peer::{PeerOperation, PeerPrincipal, PeerSigner, wire as peer_wire};
 // fixtures stay here.
 mod append_authorization;
 mod candidates;
+mod closure;
 mod enrollment;
 mod log;
 mod operational;

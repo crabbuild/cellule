@@ -4,6 +4,87 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 original failed boot closure checkpoint
+
+`NodeDirectory::closed_session` now exposes a fresh opaque permanent fence for
+an exact physical node/session, with no leader log or its exact Retired log.
+Missing/live/expired advertisements and Open/Recovering/Sealed logs refuse,
+including inactive enrolled logs. The original fencing/expiry and terminal
+ensemble/manifest survive claim renewal. No record, wire or persistence codec
+changes; this canonical read starts no retirement or process effect.
+
+`FleetFailedBootRetirement` binds that fence to the complete bootstrapped roster
+and the original Established request/history. Missing/duplicate boot requests,
+unresolved original reader/follower/Pending rows and contradictory live foreign
+references prevent capture. A new boot may retain other registered foreign epochs
+on the same physical node; old closure cannot retire or substitute that role.
+`FleetFailedBootProcesses` is a read-only application boundary for authenticated
+durable original process/nonexecution evidence. Providers must join the process
+and its accepted external jobs/producers, exclude reuse of the same session and
+retain the same original witness across reconstruction. Expiry, takeover,
+missing inventory, recovery success and a replacement process cannot supply it.
+The evidence constructor validates shape, never provider authentication.
+
+Publication rechecks the entire original journal barrier after the provider
+read, then uses the existing enrollment journal. A committed row and its
+original shared source failure remain inspectable when a publication reply or
+final check fails. Fresh complete roster, exact returned original history,
+canonical authority, physical references and the same durable process witness
+must confirm within the original monotonic thirty-second interval. Fresh
+recapture adopts original times after cancellation/lost replies or controller
+restart. The application/adapter retains and joins accepted backend work;
+this capsule creates no task, kill/drain operation or second action bank.
+Active intent rebinding now documents either checked planned withdrawal or
+complete failed-boot/process/role closure as the old-session prerequisite.
+
+One runtime case covers missing/live/expired, exact physical identity (distinct
+from SessionId), claimant expiry and immutable original closure through claim
+renewal. Eight Unix example cases combine actual cold canonical recovery and
+two-member retirement, the SQLite journal and a real child lifetime. They cover
+running-original refusal, kill/wait before durable evidence, independent adapter
+reconstruction, replay without timestamp refresh, lost retirement reply with
+original source/Arc retention, cancellation followed by backend joining,
+unretired logs, unresolved roles, duplicate requests, foreign process witnesses,
+regressed clocks, stale snapshots, final process error/changed evidence, delayed
+original-session responsibility and a new boot's foreign role on the same node.
+The child is a lifetime stand-in, not a CellNode process or external-job workload;
+those fixtures do not supply multi-process/provider deployment qualification.
+The existing real acknowledged-tail recovery case remains in the lifecycle suite.
+
+The first runtime-focused case passed. Host compilation then exhausted the
+mounted Workspace volume before running any host case. That source manifest and
+raw build failure remain in `disk-full/`. Only this task's generated isolated
+target artifacts were removed. Final qualification disables incremental build
+storage and debug symbols, preserving all features, test assertions, workloads
+and named qualification profiles. Its environment is retained separately.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `6fba32403c13f3a9ecf8444cf1763990bedc4524` |
+| Frozen source | 688 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `a1cab1a03e91c77a97df6cf8a3407d2162125b205233af7a87b857874368dfda` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-failed-boot-evidence` |
+
+Final all-feature qualification passed 525 runtime library, 144 runtime lifecycle,
+34 host library, 106 public node and 173 example tests: 982 passes, no failures.
+Seven existing provider cases remain ignored without their documented isolated
+RustFS environment and supply no evidence. Earlier/focused repeats are excluded.
+Runtime/host Clippy across all targets and API documentation passed with warnings
+denied. Format, boundaries, module layout, document links/Rust fences and SQL/peer
+gates passed. Complete active/isolated Rust/Cargo path sets and every byte match
+qualification. Commands/statuses and the build environment are retained in
+`verification.json` and `build-environment.json`; guides include the public recipe
+and focused command.
+
+Highest priorities next are failed-reader/process integration, persisted
+replacement-policy revalidation and complete production role observation.
+Affected-writer relocation, `SettleRoles`/`Finalize`, the original action's join
+before terminal drain handoff, remaining primitive faults, four executable
+scenarios and W9–W10 provider/compatibility/load/runbook qualification remain
+required. This closes one original boot enrollment under explicit application
+process evidence, not a physical maintenance operation. The full plan stays active.
+
 ## October 2 2026 recovered follower enrollment publication checkpoint
 
 `FleetRecoveredFollowerRetirement` binds a fresh canonically Retired epoch to

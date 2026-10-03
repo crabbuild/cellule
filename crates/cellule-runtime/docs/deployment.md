@@ -713,6 +713,23 @@ Drain ordering against reader admission:
 - Every phase uses the same absolute shutdown deadline.
 - A failed drain must not authorize a durability-mode change.
 
+### Observe an original session's terminal fence
+
+`NodeDirectory::closed_session` returns an opaque `NodeSessionClosure` only
+from the exact physical node/session's permanent tombstone with no enrolled
+leader log or an exact Retired log. A live claimant and fresh canonical read
+are required. Missing/expired advertisements and Open/Recovering/Sealed logs
+refuse, including inactive logs awaiting native retirement. The closure retains
+original fencing/expiry times, epoch, ensemble, coverage and pinned manifest;
+mutable recovery claim renewal does not change this identity.
+
+This read starts no retirement or process effect. It proves no process joining,
+affected Cell relocation, foreign role settlement or planned withdrawal. The
+[host failed-boot publication](../../cellule-host/docs/lifecycle.md#publish-an-original-failed-boots-closure)
+combines it with complete original enrollment closure and application-authenticated
+durable process/accepted external work evidence. Grace retention and the
+existing single-writer/recovery protocols still apply.
+
 ### Prepare capacity before releasing a Cell
 
 `CellRuntime::prepare_receiver` binds an exact movement attempt, catalog proof,

@@ -246,6 +246,66 @@ missing member receipts. The closure covers these follower enrollment rows.
 Failed-boot/process closure, replacement policy, affected writers and terminal
 host shutdown remain required before maintenance completion.
 
+### Publish an original failed boot's closure
+
+After recovered follower publication, `FleetFailedBootRetirement` closes the
+original boot row through the same enrollment journal. It requires a complete
+bootstrapped roster, the exact Established original request and all its related
+reader/follower requests settled. A fresh `NodeDirectory::closed_session` checks
+the physical node/session's permanent fence and Retired leader log. Sealed or
+inactive unretired logs, missing records and expired advertisements refuse.
+Complete physical follower discovery also rejects a live reference belonging to
+that original boot; registered obligations of a different boot remain separate.
+
+The application implements `FleetFailedBootProcesses`. Its read-only
+`confirm_stopped` checks durable evidence that the original process and its
+accepted external jobs/producers have joined and that the same session cannot
+execute again. Authentication, provider termination and evidence persistence
+belong to the application. A witness digest identifies that evidence; its public
+constructor checks shape and supplies no authentication or process observation.
+Do not create a witness from a reusable PID, expiry, missing inventory, timeout,
+recovery result or replacement process. Start and own termination through the
+application's supervised finite work before requesting confirmation.
+
+```rust
+async fn publish_failed_boot(
+    journal: &dyn cellule_host::fleet::FleetJournal,
+    directory: &cellule_runtime::node::NodeDirectory,
+    processes: &dyn cellule_host::fleet::FleetFailedBootProcesses,
+    original: &cellule_runtime::fleet::operations::EnrollmentRecord,
+    claimant: cellule_runtime::identity::SessionId,
+    deadline: tokio::time::Instant,
+    mut clock: impl FnMut() -> cellule_runtime::Result<i64>,
+) -> cellule_runtime::Result<cellule_host::fleet::FleetFailedBootPublication> {
+    let snapshot = journal.load_snapshot(original.spec().scope).await.map_err(|source| {
+        cellule_runtime::Error::Facility { name: "application-failed-boot-journal", source }
+    })?;
+    let roster = cellule_host::fleet::FleetRoster::collect(journal, &snapshot, deadline).await?;
+    let retirement = cellule_host::fleet::FleetFailedBootRetirement::capture(
+        journal, directory, &roster, original, claimant, deadline, &mut clock,
+    ).await?;
+    retirement.publish(journal, directory, processes, claimant, deadline, clock).await
+}
+```
+
+Inspect `record()` even if `confirmed()` fails: a lost reply or final check can
+leave an actual committed retirement. The original source error remains shared
+and inspectable. Fresh recapture and the same durable process witness adopt the
+original request, acceptance, establishment and retirement time after controller
+or adapter restart. A changed witness conflicts with committed retirement.
+The final complete roster, exact returned row, canonical authority, physical
+references and process proof must revalidate within the original thirty-second
+interval. Accepted backend jobs remain with the journal/provider owner after a
+waiter cancellation or deadline.
+
+This closure settles that boot's enrollment. It does not convert a recovered
+tombstone into planned withdrawal or prove replacement policy, affected-writer
+relocation, operation completion or permission to stop the physical node.
+`SettleRoles`/`Finalize` still require those additional barriers and the existing
+native shutdown handoff. The [focused example cases](../examples/fleet_operations/README.md#failed-boot-process-evidence)
+exercise a joined child lifetime and independently reconstructed evidence;
+they do not qualify a complete multi-process fleet or provider deployment.
+
 ## Journal bound fleet actions
 
 ### Fleet boot admission
