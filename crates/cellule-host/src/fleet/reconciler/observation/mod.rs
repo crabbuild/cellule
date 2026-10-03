@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::fleet::{FleetOriginalWriterSuccessorInventory, FleetRoleCoverage, FleetRoster};
+use crate::fleet::{
+    FleetFailedBootClosure, FleetOriginalWriterSuccessorInventory, FleetRoleCoverage, FleetRoster,
+};
 use cellule_runtime::cell::actor::OwnedCellObservation;
 use cellule_runtime::fleet::operations::{FleetScope, RegistryVersion};
 use cellule_runtime::fleet::placement::PlacementObservation;
@@ -39,6 +41,7 @@ pub struct FleetObservation {
     roster: Option<FleetRoster>,
     role_coverage: Option<FleetRoleCoverage>,
     original_writer_successors: Option<FleetOriginalWriterSuccessorInventory>,
+    failed_boot_closures: Option<Vec<FleetFailedBootClosure>>,
 }
 
 impl FleetObservation {
@@ -69,6 +72,7 @@ impl FleetObservation {
             roster: None,
             role_coverage: None,
             original_writer_successors: None,
+            failed_boot_closures: None,
         };
         observation.placements(capture_finished_at_ms)?;
         Ok(observation)
@@ -95,6 +99,7 @@ impl FleetObservation {
 
     fn validate_role_coverage(&self) -> Result<()> {
         self.validate_original_writer_successors()?;
+        self.validate_failed_boot_closures()?;
         if let Some(coverage) = &self.role_coverage {
             let (started, finished) = coverage.interval();
             if coverage.snapshot().head().scope() != self.scope
@@ -197,7 +202,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v6\0");
+        hash.update(b"cellule.fleet-planner-inputs.v7\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -220,6 +225,36 @@ impl FleetObservation {
         hash.update(&[u8::from(self.original_writer_successors.is_some())]);
         if let Some(inventory) = &self.original_writer_successors {
             hash.update(inventory.digest()?.as_bytes());
+        }
+        hash.update(&[u8::from(self.failed_boot_closures.is_some())]);
+        if let Some(closures) = &self.failed_boot_closures {
+            let mut ordered = closures.iter().collect::<Vec<_>>();
+            ordered.sort_by_key(|closure| {
+                let boot = closure.boot().spec().target;
+                (*boot.node.as_bytes(), *boot.session.as_bytes())
+            });
+            hash.update(&(ordered.len() as u64).to_be_bytes());
+            for closure in ordered {
+                hash.update(closure.digest().as_bytes());
+                for bytes in [
+                    closure
+                        .snapshot()
+                        .head()
+                        .to_bytes()
+                        .map_err(super::operation)?,
+                    closure
+                        .snapshot()
+                        .registry()
+                        .to_bytes()
+                        .map_err(super::operation)?,
+                ] {
+                    hash.update(&(bytes.len() as u64).to_be_bytes());
+                    hash.update(&bytes);
+                }
+                for time in [closure.interval().0, closure.interval().1] {
+                    hash.update(&time.to_be_bytes());
+                }
+            }
         }
         hash.update(&(nodes.len() as u64).to_be_bytes());
         for node in nodes {
@@ -315,6 +350,7 @@ impl FleetObservation {
     }
 }
 
+mod failed_boots;
 mod original_writers;
 #[cfg(test)]
 mod tests;

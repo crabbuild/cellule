@@ -10,6 +10,8 @@ use std::{
     sync::Mutex,
 };
 
+mod confirmation;
+mod observation;
 mod process_tests;
 mod tests;
 mod writer_tests;

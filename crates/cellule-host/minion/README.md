@@ -442,6 +442,25 @@ accepted external-job evidence. See the
 cargo test -p cellule-host --example fleet_operations --all-features --locked failed_boot_closure
 ```
 
+The `failed_boot_confirmation` cases reconfirm an already committed original
+retirement without journal writes or native retirement RPCs. They cover controller
+and SQLite client reconstruction, missing retirement, both failing or changed
+provider reads, independent full-head changes with unchanged registry, and capture
+clock/deadline refusal.
+
+The `failed_boot_observation` cases attach these fresh capsules to actual surviving
+native inventories and physical-reference scans, then call the public reconciler.
+They refuse duplicates, timestamp restamping, stale full heads and signed retired
+session advertisements. The complete graph has two surviving managed boots, three
+physical nodes and no writers. It uses an actual joined child lifetime and retains
+Pending/Established follower closure history. This empty-writer profile does not
+qualify combined writer relocation, replacement policy or full maintenance.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked failed_boot_confirmation
+cargo test -p cellule-host --example fleet_operations --all-features --locked failed_boot_observation
+```
+
 ## Failed reader lifetime evidence
 
 The `failed_reader_closure` cases use application-owned enrollments around two

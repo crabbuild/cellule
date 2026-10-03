@@ -4,6 +4,109 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 fresh failed boot observation checkpoint
+
+`FleetFailedBootRetirement::confirm` freshly rechecks an already committed
+original Retired boot without publishing an enrollment event or starting a native
+or process effect. It retains the original row, immutable process witness and
+closure digest. Capture and both provider reads share one monotonic thirty-second
+interval and the exact complete head/registry. The ordinary publication final
+check supplies the terminal authority, related-role and physical-reference
+barriers. Missing retirement, changed process evidence and a changed full head
+refuse; provider source errors remain inspectable.
+
+`FleetObservation::with_failed_boot_closures` retains these capsules in the public
+observer/reconciler path. It refuses duplicate boots or attachment, interval
+restamping, inconsistent full barriers and current advertisements/Cell rows from
+a retired session. Retained roster rows and matching original writer evidence
+must agree. Planner input digest v7 binds collection presence, canonical boot
+order, full barriers, closure digests and original intervals. This changes no
+persisted enrollment, action or transport encoding and cannot upgrade partial
+coverage.
+
+Five public minion confirmation cases cover read-only replay, independent SQLite
+client reconstruction, missing retirement, both failing or changed process reads,
+full-head changes with unchanged registry, and clock/deadline refusal. Four
+observation cases consume actual surviving native inventories and physical
+reference scans through the public reconciler and refuse stale, duplicate,
+restamped or retired-session inputs. The complete observation fixture has two
+surviving managed boots, three physical nodes and no writers; its child is a
+joined lifetime stand-in. Combined original-writer/closure qualification, actual
+failed CellNode processes, replacement policy and external accepted work remain
+required.
+
+### Current CI and HTTP error correction
+
+Published `f655139` passes framework tests and all 250 preceding minion cases,
+including the corrected lease fixtures. Follower capacity, Compose smoke,
+cookbook quality/scenarios, contracts, website, fuzz, MSRV and the fast model
+matrix pass. Workspace fails Rust 1.99 Clippy because the Axum handler's HTTP
+error contains at least 136 inline bytes. Its private response body is now boxed;
+the integration size guard fails on the original source and passes with the
+correction. Existing public HTTP behavior tests preserve status, JSON, receipts,
+pending evidence and typed source downcasting. No lint allowance was added.
+
+Object capacity repeat 1 passes; repeat 2 fails on an unresolved original mutation
+in the skewed 128 actions/node/s window after SQL deadlines and active Cell counts
+fall from 4 to 2/3 on two nodes. Earlier skewed 64 completes. The raw artifact's
+per-command execution/publication/provider files are empty, so these observations
+do not isolate the cause. Driver/node/provider logs, resources and raw hashes are
+retained. Current object-only routing passes. Leased routing fails local command
+concurrency 1 throughput at 85.71% of baseline against the unchanged 90% gate;
+its concurrency 16 and all other gates pass. Median preparation means increase
+from 8.46 to 10.51 ms, and authority means from 4.66 to 4.99 ms. These stage
+observations do not isolate required lineage work from provider/runner variation.
+Both profiles retain frozen
+binaries, manifests, samples and comparisons. This increment does not claim
+a capacity or leased-routing fix. Profiles, workloads, deadlines and proof gates remain
+unchanged.
+
+Rust 1.99 cookbook Clippy also flags fixed-size `chunks_exact` loops. Five
+bounded hex decoders now use `as_chunks::<2>()`; their exact length/lowercase
+validation, decoded bytes, source errors and encoded identities remain unchanged.
+No lint allowance or qualification change is used. Only these five cookbook
+Rust paths change after successful framework/minion verification; cookbook cannot
+supply dependencies to the framework. All cookbook gates are repeated on the
+final isolated source.
+
+### Verification
+
+| Verification on the isolated Rust 1.99 source | Result |
+| --- | --- |
+| Full framework workspace, all features, locked | 1,654 passed; zero failures; 36 documented ignored cases. |
+| Complete canonical minion target | 259 passed; zero failures or ignores. |
+| Distinct framework/minion passes | 1,913; focused repeats and overlapping local LTX excluded. |
+| Focused new public behavior | Five confirmation and four observation cases pass; HTTP behavior and before/after size regression pass. |
+| Local LTX without default features | 54 passed. |
+| Framework check, Clippy and API docs | All targets/features pass; lint/docs deny warnings. |
+| Separate cookbook quality | Check, Clippy, warning-denied docs, all 256 tests and binary builds pass; locked. |
+| Static gates | Format, boundaries, layout, 128 Rust snippets, 1,245 Markdown links, 28 SQL/peer assertions, 570 protocol links, cookbook layout/format and diff pass. |
+
+All 11 final verification commands completed with exit zero. All 1,074 final
+Rust/Cargo paths match the qualified isolated inputs. Manifest SHA256:
+`4ddf546a61fe8cc73fb7d4d2598ac395044a3973262430ac8b8652ff130ec849`. The only post-framework source changes are the
+five cookbook decoders, each included in the repeated cookbook gates.
+
+Evidence remains under `/tmp/cellule-failed-boot-observation-evidence`. The prior
+isolated checkout/target `cellule-inherited-successors-final-831b83a` is reused only
+after its prior readers finished; earlier committed source archives remain under
+`/tmp/cellule-inherited-successors-evidence`. Current verification uses Rust 1.99,
+matching workspace CI. Exact Rust/Cargo inputs, raw failures, commands/statuses,
+source archives and final merge checks are retained.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Complete capacity SQL-deadline/unknown-result diagnosis and both routing qualifications; qualify the new published head without weakening proofs or gates. |
+| 1 | Complete authenticated production observation with combined original writer/closure evidence, reader/follower replacement policy and every original accepted-work barrier. |
+| 2 | Implement SettleRoles/Finalize, join original actions before terminal drain handoff, and confirm Stopped, withdrawal, boot retirement and committed operation completion. Finish Cron/Blob external owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss, recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider, mixed-binary, load/soak and capacity qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The complete W1–W10 goal remains active. Fresh failed-boot confirmation supplies
+no writer availability, replacement-policy or maintenance-finalization grant.
+
 ## October 3 2026 inherited original recovery checkpoint
 
 Six public minion cases now exercise complete original successor collection with

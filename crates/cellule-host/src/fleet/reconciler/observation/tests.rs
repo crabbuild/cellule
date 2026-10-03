@@ -104,6 +104,16 @@ fn observation() -> FleetObservation {
 }
 
 #[test]
+fn planner_digest_binds_failed_boot_collection_presence_without_upgrading_coverage() {
+    let initial = observation().digest(100).unwrap();
+    let retained = observation().with_failed_boot_closures(Vec::new()).unwrap();
+    assert!(!retained.complete);
+    assert!(retained.failed_boot_closures().unwrap().is_empty());
+    assert_ne!(initial, retained.digest(100).unwrap());
+    assert!(retained.with_failed_boot_closures(Vec::new()).is_err());
+}
+
+#[test]
 fn planner_digest_binds_peak_cost_presence_and_every_admission_dimension() {
     let baseline = observation().digest(100).unwrap();
     for field in 0..5 {

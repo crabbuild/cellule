@@ -71,7 +71,11 @@ impl FleetFailedBootRetirement {
         })
     }
 
-    async fn confirm_snapshot(&self, journal: &dyn FleetJournal, deadline: Instant) -> Result<()> {
+    pub(super) async fn confirm_snapshot(
+        &self,
+        journal: &dyn FleetJournal,
+        deadline: Instant,
+    ) -> Result<()> {
         let snapshot = bounded(deadline, async {
             journal
                 .load_snapshot(self.snapshot.head().scope())
@@ -85,7 +89,7 @@ impl FleetFailedBootRetirement {
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
-    async fn finish(
+    pub(super) async fn finish(
         &self,
         journal: &dyn FleetJournal,
         directory: &NodeDirectory,

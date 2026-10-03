@@ -501,6 +501,44 @@ references and process proof must revalidate within the original thirty-second
 interval. Accepted backend jobs remain with the journal/provider owner after a
 waiter cancellation or deadline.
 
+For a later observation, recapture the original retained request at the current
+complete roster and call `FleetFailedBootRetirement::confirm`. This read-only
+path requires the already committed Retired row and its original process witness;
+it publishes no enrollment event. It repeats the same terminal authority,
+related-role, physical-reference and process checks at one exact full head and
+registry. Missing retirement, changed witness, stale head and regressed clocks
+refuse. The returned capsule preserves the committed row and digest while
+recording the new confirmation interval.
+
+```rust
+async fn observe_failed_boot(
+    journal: &dyn cellule_host::fleet::FleetJournal,
+    directory: &cellule_runtime::node::NodeDirectory,
+    processes: &dyn cellule_host::fleet::FleetFailedBootProcesses,
+    request: &cellule_host::fleet::FleetFailedBootProcessRequest,
+    claimant: cellule_runtime::identity::SessionId,
+    deadline: tokio::time::Instant,
+    mut clock: impl FnMut() -> cellule_runtime::Result<i64>,
+) -> cellule_runtime::Result<cellule_host::fleet::FleetFailedBootClosure> {
+    let snapshot = journal.load_snapshot(request.boot().spec().scope).await.map_err(|source| {
+        cellule_runtime::Error::Facility { name: "application-failed-boot-journal", source }
+    })?;
+    let roster = cellule_host::fleet::FleetRoster::collect(journal, &snapshot, deadline).await?;
+    let retirement = cellule_host::fleet::FleetFailedBootRetirement::capture_retained(
+        journal, directory, &roster, request, claimant, deadline, &mut clock,
+    ).await?;
+    retirement.confirm(journal, directory, processes, claimant, deadline, clock).await
+}
+```
+
+Attach these fresh capsules with `FleetObservation::with_failed_boot_closures`.
+The observation retains every original interval and binds the full barrier and
+closure digest in its planner inputs. Capsules must agree with retained role
+coverage, roster and original writer evidence. A retired session cannot advertise
+or supply current Cell rows; a replacement session remains separate. Attachment
+cannot upgrade an incomplete observation. Authenticate discovery and process
+evidence, establish replacement policy, and join all accepted work separately.
+
 This closure settles that boot's enrollment. It does not convert a recovered
 tombstone into planned withdrawal or prove replacement policy, affected-writer
 relocation, operation completion or permission to stop the physical node.

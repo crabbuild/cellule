@@ -18,6 +18,7 @@ impl FleetObservation {
         }
         self.original_writer_successors = Some(inventory);
         self.validate_original_writer_successors()?;
+        self.validate_failed_boot_closures()?;
         Ok(self)
     }
 

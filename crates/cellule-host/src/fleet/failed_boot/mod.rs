@@ -17,6 +17,7 @@ pub use writers::{
     FleetOriginalWriterSuccessorInventory, FleetOriginalWriterSuccessorProof,
     FleetOriginalWriterSuccessors,
 };
+mod confirmation;
 mod process;
 mod publication;
 mod retained;
