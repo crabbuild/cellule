@@ -31,6 +31,20 @@ On workstations with the mounted Workspace volume, always set `CARGO_TARGET_DIR`
 `$HOME/Workspace/crabbuild-target`, with a unique directory per checkout. Use CI
 or a dedicated verification snapshot for broad suites and process tests. The [application integration smoke](docs/quickstart.md#exercise-all-primitives-and-recovery) exercises SQL, KV, Blob, Queue, Workflow/Activity, and Cron/Effect with visible read-back results.
 
+## Website and documentation
+
+The [website guide](apps/web/README.md) documents the Next.js and Fumadocs app.
+Use Node.js 22+ and npm 11. Run `npm ci`, `npm run check:web`, and
+`npm run build:web` from the repository root. The website browser checks run
+against a running server with `npm run test:web`; install Chromium with
+`npx playwright install chromium` first.
+
+Edit canonical guides in their current repository paths. Website builds map
+those documents into Fumadocs and rewrite local links. Put website-specific
+entry pages in `apps/web/content/authored/`; do not edit generated docs.
+Keep measured claims tied to the report's revision and environment. CI checks
+all internal website documentation links and SVG diagram rendering.
+
 ## Change boundaries
 
 Put provider-neutral transport in `cellule-store`, SQLite/LTX mechanics in `cellule-ltx`, authority and execution in `cellule-runtime`, typed application declarations in `cellule-app`, and node lifecycle in `cellule-host`. Product authentication, HTTP, credentials, and deployment policy belong to the application. Run the boundary checker after dependency changes.

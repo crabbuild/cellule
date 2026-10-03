@@ -11,6 +11,7 @@ use super::*;
 pub struct CommandContext<'borrow, 'connection> {
     pub(super) transaction: &'borrow Transaction<'connection>,
     pub(super) target: CellTarget,
+    pub(super) owner_fence: OwnerFence,
     pub(super) effect_targets: &'static [NamespaceId],
     pub(super) sequence: u64,
     pub(super) now_ms: i64,
@@ -31,6 +32,16 @@ impl CommandContext<'_, '_> {
     #[must_use]
     pub const fn target(&self) -> &CellTarget {
         &self.target
+    }
+
+    /// Returns the incarnation/epoch stamped on the admitted activation.
+    ///
+    /// Compare it with application operation tokens before staging or publishing.
+    /// Client inputs cannot select this value. A recorded result is replayed
+    /// without running the handler again; replay does not substitute a new fence.
+    #[must_use]
+    pub const fn owner_fence(&self) -> OwnerFence {
+        self.owner_fence
     }
 
     /// Returns the actor-ordered sequence the command was admitted at.
@@ -325,6 +336,8 @@ pub struct CommandInvocation<'a> {
     pub schema: u32,
     /// Validated target the command must own.
     pub target: CellTarget,
+    /// Fence supplied by the runtime-validated admission, never client input.
+    pub owner_fence: OwnerFence,
     /// Actor-ordered sequence of the command.
     pub sequence: u64,
     /// Logical runtime time for the command.

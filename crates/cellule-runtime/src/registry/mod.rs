@@ -1,4 +1,5 @@
 //! Compiled primitive registry: descriptors, schemas, handlers, and builder.
+pub use crate::control::OwnerFence;
 mod descriptor;
 pub use builder::{Registry, RegistryBuilder};
 pub use handlers::{

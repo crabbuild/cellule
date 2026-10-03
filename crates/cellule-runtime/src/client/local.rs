@@ -50,6 +50,7 @@ impl CellTransport for LocalCellTransport {
                 return Err(Error::Command("encoded command input exceeds limit"));
             }
             let schema = handle.schema();
+            let owner_fence = handle.owner_fence();
             let input_bytes = command.input.len();
             let output_limit = command.output_limit as usize;
             handle
@@ -70,6 +71,7 @@ impl CellTransport for LocalCellTransport {
                                 codec_version: command.codec_version,
                                 schema,
                                 target: command.target.clone(),
+                                owner_fence,
                                 sequence,
                                 now_ms,
                                 input: &command.input,

@@ -1,0 +1,42 @@
+name: Website
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Types, complete content, links, and anchors
+        run: npm run check:web
+      - name: Production build
+        run: npm run build:web
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+      - name: Production browser and SVG checks
+        run: |
+          npm run start -w @cellule/web -- --hostname 127.0.0.1 --port 3000 > /tmp/cellule-web.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$web_pid"' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://localhost:3000 > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:web
+      - name: Server diagnostics on failure
+        if: failure()
+        run: cat /tmp/cellule-web.log 2>/dev/null || true

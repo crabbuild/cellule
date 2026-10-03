@@ -856,6 +856,33 @@ impl NodeDurabilityProvider for ProcessDurabilityProvider {
             result.map_err(|source| Box::new(source) as Box<dyn std::error::Error + Send + Sync>)
         })
     }
+
+    fn rotation_required(
+        self: Arc<Self>,
+        live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>> {
+        Box::pin(async move {
+            let result: Result<bool> = async {
+                let members = {
+                    let observed = self.enrollment.observed.lock().await;
+                    observed
+                        .advertisement()
+                        .log()
+                        .ok_or(Error::Node("active follower log is missing"))?
+                        .members()
+                        .to_vec()
+                };
+                let members_live = self
+                    .enrollment
+                    .directory
+                    .members_are_live(&members, now_ms(), live_node_limit)
+                    .await?;
+                Ok(!members_live)
+            }
+            .await;
+            result.map_err(|source| Box::new(source) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
 }
 
 #[cfg(test)]

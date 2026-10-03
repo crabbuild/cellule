@@ -322,6 +322,13 @@ tests from provider and production evidence. The dated
 [performance evidence](crates/cellule-app/PERFORMANCE.md) describe their
 recorded revisions and environments.
 
+## Website development
+
+The Next.js and Fumadocs website lives in [apps/web](apps/web/README.md).
+With Node.js 22+ and npm 11, run `npm ci` and `npm run dev:web` from this
+repository root. The site renders the canonical guides, crate references,
+and measured evidence with searchable navigation and SVG diagrams.
+
 ## License
 
 The Cellule workspace crates are licensed under the [Apache License 2.0](LICENSE).

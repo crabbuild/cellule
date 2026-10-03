@@ -12,16 +12,12 @@ A `CellType` declares a module, stable namespace, role, and partition rule. A
 address one Cell. Many targets can use the same Cell type; ownership can move
 between nodes without changing a target's identity.
 
-```mermaid
-flowchart LR
-    Type["Orders Cell type<br/>module + namespace + partition rule"]
-    Type --> A["Cell A<br/>tenant + app + orders + partition for order 42"]
-    Type --> B["Cell B<br/>tenant + app + orders + partition for order 43"]
-    A --> Owner["One fenced writer<br/>for Cell A"]
-    Owner --> SQL["Cell A SQLite state<br/>and request outcomes"]
-    SQL --> Durable["Verified LTX root<br/>or recoverable follower proof"]
-    B --> Other["Separate owner and state<br/>for Cell B"]
-```
+![One Orders Cell type defines two independently addressed Cells. Each has one fenced writer, its own SQLite state and request outcomes, and durability proof before success.](diagram/cell-model.svg)
+
+Open the [full-size Cell model SVG](diagram/cell-model.svg). The example targets
+use tenant `acme`, application `shop`, namespace `orders`, and an entity
+partition for order `42` or `43`. The two writers may run on the same node or
+different nodes; the ownership and transaction boundaries remain per Cell.
 
 A command changes one Cell in one SQLite transaction. Its state change and
 request outcome commit together. The returned `Receipt` lets a later query

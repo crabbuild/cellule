@@ -8,6 +8,14 @@ struct ReaderHints {
     sent: tokio::sync::mpsc::UnboundedSender<(cellule_runtime::CellId, cellule_runtime::SessionId)>,
     stalled: Option<cellule_runtime::SessionId>,
     pending: Arc<std::sync::atomic::AtomicUsize>,
+    held: Option<Arc<HeldReaderHint>>,
+}
+
+struct HeldReaderHint {
+    session: cellule_runtime::SessionId,
+    calls: std::sync::atomic::AtomicUsize,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
 }
 
 struct PendingHint(Arc<std::sync::atomic::AtomicUsize>);
@@ -46,7 +54,15 @@ impl PeerRoundTrip for ReaderHints {
                 std::future::pending().await
             });
         }
+        let held = self.held.clone().filter(|held| {
+            session == held.session
+                && held.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+        });
         Box::pin(async move {
+            if let Some(held) = held {
+                held.entered.notify_one();
+                held.release.notified().await;
+            }
             use cellule_runtime::peer::{encode_peer_reply, wire};
             encode_peer_reply(&wire::PeerReply {
                 outcome: Some(wire::peer_reply::Outcome::Read(wire::ReadReply {
@@ -62,28 +78,45 @@ impl PeerRoundTrip for ReaderHints {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn published_command_wakes_reader_recruitment_before_periodic_scan() {
     publication_hints(1, false).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn stalled_reader_does_not_delay_healthy_reader_publication_hints() {
     publication_hints(2, true).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(start_paused = true)]
 async fn publication_hints_reach_readers_beyond_the_activation_concurrency() {
     publication_hints(20, true).await;
 }
 
+#[tokio::test(start_paused = true)]
+async fn pending_reader_activation_retains_a_new_publication_hint() {
+    publication_hints_with_gate(20, true, true).await;
+}
+
 async fn publication_hints(readers: usize, stalled_reader: bool) {
+    publication_hints_with_gate(readers, stalled_reader, false).await;
+}
+
+async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_first: bool) {
     use cellule_runtime::{
         cell::application::ApplicationIdentity, node::lease::NodeLeaseGuard,
         peer::ReplicaPeerClient, read_policy::ReadPolicyStore,
     };
     use std::time::Duration;
 
+    // A periodic pass may coalesce queued hints with the next publication. Keep
+    // its clock stationary so every observed refresh proves a publication wake-up.
+    // SQL workers run outside Tokio's blocking pool; this guard inhibits automatic
+    // clock advancement while they reply, with a real-time bound for broken tests.
+    let (clock_guard, clock_release) = std::sync::mpsc::channel::<()>();
+    let clock_task = tokio::task::spawn_blocking(move || {
+        let _ = clock_release.recv_timeout(Duration::from_secs(10));
+    });
     let application = Arc::new(compiled());
     let registry = application.registry();
     let tenant = TenantId::from_bytes([81; 16]);
@@ -175,6 +208,14 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
     .unwrap();
     let (sent, mut hints) = tokio::sync::mpsc::unbounded_channel();
     let pending = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let held = hold_first.then(|| {
+        Arc::new(HeldReaderHint {
+            session: node_session(3),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        })
+    });
     node.install_read_replica_recruitment(
         ApplicationIdentity::new(tenant, app),
         ReplicaPeerClient::new(
@@ -193,20 +234,28 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
                 sent,
                 stalled: stalled_reader.then_some(node_session(2)),
                 pending: pending.clone(),
+                held: held.clone(),
             }),
         ),
     )
     .unwrap();
     node.start().unwrap();
+    let recruitment_clock = tokio::time::Instant::now();
+    let recruitment_started = std::time::Instant::now();
     // Always drain the host before propagating a failed assertion. A regression
     // must not leave the intentionally stalled transport alive in the suite.
     let observed = std::panic::AssertUnwindSafe(async {
         // Consume the immediate periodic pass before publishing. The next tick is
-        // five seconds away, so only a publication wake-up can satisfy this bound.
+        // five virtual seconds away; the two-second bound excludes its repair.
         for _ in 1..count {
             tokio::time::timeout(Duration::from_secs(2), hints.recv())
                 .await
                 .unwrap()
+                .unwrap();
+        }
+        if let Some(held) = &held {
+            tokio::time::timeout(Duration::from_secs(2), held.entered.notified())
+                .await
                 .unwrap();
         }
         let client = CellClient::local(registry, handle);
@@ -225,37 +274,74 @@ async fn publication_hints(readers: usize, stalled_reader: bool) {
                 .receive_cron(identity(108, occurrence, 0), invocation(occurrence as u64))
                 .await
                 .unwrap();
-            let notified = tokio::time::timeout(Duration::from_secs(2), async {
-                let mut received = std::collections::HashSet::new();
-                for _ in 0..healthy.len() {
+            let held_session = held
+                .as_ref()
+                .filter(|_| occurrence == 1)
+                .map(|held| held.session);
+            let started = std::time::Instant::now();
+            let mut notified = std::collections::HashSet::new();
+            let completed = tokio::time::timeout(Duration::from_secs(2), async {
+                for _ in 0..healthy.len() - usize::from(held_session.is_some()) {
                     let (cell, session) = hints.recv().await.unwrap();
                     assert_eq!(cell, target.cell_id());
+                    assert_ne!(Some(session), held_session);
                     assert!(
-                        received.insert(session),
+                        notified.insert(session),
                         "duplicate activation in one publication pass"
                     );
                 }
-                received
             })
             .await;
+            assert!(
+                completed.is_ok(),
+                "publication {occurrence} timed out after {:?}; recruitment elapsed: {:?}; directory age: {}ms; missing readers: {:?}; pending stalled hints: {}",
+                started.elapsed(),
+                recruitment_started.elapsed(),
+                now_ms() - now,
+                healthy
+                    .difference(&notified)
+                    .filter(|session| Some(**session) != held_session)
+                    .collect::<Vec<_>>(),
+                pending.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            if let Some(held) = held.as_ref().filter(|_| occurrence == 1) {
+                // Healthy peers prove that the new publication pass prepared
+                // while this old activation remained in flight.
+                held.release.notify_one();
+                let (cell, session) = tokio::time::timeout(Duration::from_secs(2), hints.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(cell, target.cell_id());
+                assert_eq!(session, held.session);
+                assert!(notified.insert(session));
+            }
             assert_eq!(
-                notified.unwrap(),
-                healthy,
+                notified, healthy,
                 "publication was blocked or repeated a pending activation"
             );
             assert_eq!(
                 pending.load(std::sync::atomic::Ordering::Relaxed),
                 usize::from(stalled_reader)
             );
+            assert_eq!(
+                tokio::time::Instant::now(),
+                recruitment_clock,
+                "periodic repair must not supply a publication hint"
+            );
         }
     })
     .catch_unwind()
     .await;
+    // Drain against real time even if the watchdog released the paused clock.
+    tokio::time::resume();
     tokio::time::timeout(Duration::from_secs(2), node.shutdown())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(pending.load(std::sync::atomic::Ordering::Relaxed), 0);
+    drop(clock_guard);
+    clock_task.await.unwrap();
     if let Err(failure) = observed {
         std::panic::resume_unwind(failure);
     }

@@ -40,8 +40,13 @@ same registry, actor, SQLite, and LTX publication path.
 
 | Client constructor | Local Cell | Cell owned by another node |
 | --- | --- | --- |
-| `CellClient::local_runtime` | Uses lease-fenced resident admission; unleased actors and misses read fresh catalog and owner records in parallel. | Not supported; embedded single-node routing only. |
-| `CellClient::runtime_with_peer` | Uses lease-fenced resident admission; unleased local actors check fresh catalog and owner records. | A local actor miss delegates without those metadata reads to one authenticated peer round trip. |
+| `CellClient::local_runtime` | Resident admission under a live node lease; otherwise one fresh authority read for a resident actor. | Not supported; embedded single-node routing only. |
+| `CellClient::runtime_with_peer` | Resident admission under a live node lease; otherwise one fresh authority read for a resident actor. | A local actor miss delegates without those metadata reads to one authenticated peer round trip. |
+
+Resident routes reuse the actor's immutable catalog proof and share a stateless
+authority reader, avoiding storage-prefix copies for each request. Each unleased
+invocation still loads fresh authority. A nonresident lookup reads catalog and
+authority in parallel.
 
 The product server supplies the peer transport and owner lookup. Neither
 constructor acquires an idle Cell.

@@ -363,3 +363,55 @@ fn provider_failures_use_bounded_outcomes() {
     assert_eq!(classify_error(&forbidden), StorageOutcome::Auth);
     assert_eq!(classify_error(&cancelled), StorageOutcome::Cancelled);
 }
+
+#[tokio::test]
+async fn empty_observed_body_can_be_collected_through_get_result() {
+    let observer = Arc::new(RecordingObserver::default());
+    let erased: Arc<dyn StorageObserver> = observer.clone();
+    let provider = InMemory::new();
+    let path = Path::from("repository/empty");
+    provider
+        .put(&path, Bytes::new().into())
+        .await
+        .expect("put empty");
+    let mut result = provider.get(&path).await.expect("get metadata");
+    // S3 can expose a zero-chunk body. GetResult::bytes calls collect_bytes,
+    // which polls twice even when the first poll reaches EOF.
+    result.payload = GetResultPayload::Stream(observe_get_stream(
+        futures_util::stream::empty().boxed(),
+        ActiveObservation::new(StorageOperation::Get, &erased),
+    ));
+    assert!(result.bytes().await.expect("collect empty body").is_empty());
+    assert_eq!(observer.active(StorageOperation::Get), 0);
+    let observations = observer.observations();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].outcome, StorageOutcome::Success);
+    assert_eq!(observations[0].bytes_read, 0);
+}
+
+#[tokio::test]
+async fn observed_streams_remain_finished_after_repeated_eof_polls() {
+    let observer = Arc::new(RecordingObserver::default());
+    let erased: Arc<dyn StorageObserver> = observer.clone();
+    let mut body = observe_get_stream(
+        futures_util::stream::empty().boxed(),
+        ActiveObservation::new(StorageOperation::Get, &erased),
+    );
+    let mut listing = observe_stream::<Path>(
+        futures_util::stream::empty().boxed(),
+        ActiveObservation::new(StorageOperation::List, &erased),
+    );
+    for _ in 0..3 {
+        assert!(body.next().await.is_none());
+        assert!(listing.next().await.is_none());
+    }
+    assert_eq!(observer.active(StorageOperation::Get), 0);
+    assert_eq!(observer.active(StorageOperation::List), 0);
+    let observations = observer.observations();
+    assert_eq!(observations.len(), 2);
+    assert!(
+        observations
+            .iter()
+            .all(|entry| entry.outcome == StorageOutcome::Success)
+    );
+}

@@ -6,7 +6,8 @@ defect even when no test compiles it: the docs are `rust,ignore` precisely
 because they need a provider, not because they may be syntactically broken.
 
 Rules:
-  1. Every ```rust fence in the root README, framework guides, and crates
+  1. Every ```rust fence in the root README, framework guides, crates, and
+     authored website MDX
      parses after being wrapped in `fn main() { ... }`, so a statement snippet
      parses while a broken one fails.
   2. Incomplete pseudocode uses a text fence; Rust fences must parse.
@@ -78,6 +79,7 @@ def main() -> int:
     paths = [ROOT / "README.md"]
     for crate in CRATES:
         paths.extend(sorted((ROOT / crate).rglob("*.md")))
+    paths.extend(sorted((ROOT / "apps/web/content/authored").rglob("*.mdx")))
     for path in paths:
         if "target" in path.parts:
             continue

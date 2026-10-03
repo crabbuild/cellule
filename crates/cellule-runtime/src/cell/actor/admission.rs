@@ -17,7 +17,7 @@ pub(super) fn finish_shutdown(shutdown: &mut ShutdownState) {
 }
 
 pub(super) fn subtract_unpublished_bytes(total: &AtomicU64, bytes: u64) {
-    let _ = total.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+    let _ = total.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
         Some(current.saturating_sub(bytes))
     });
 }
@@ -98,8 +98,9 @@ pub(super) fn fence_admission(admission: &CellAdmission) {
     admission.bytes.close();
 }
 
-pub(super) fn new_cell_admission() -> Arc<CellAdmission> {
+pub(super) fn new_cell_admission(owner_fence: crate::control::OwnerFence) -> Arc<CellAdmission> {
     Arc::new(CellAdmission {
+        owner_fence,
         requests: Arc::new(Semaphore::new(CELL_REQUESTS)),
         bytes: Arc::new(Semaphore::new(CELL_BYTES)),
         draining: AtomicBool::new(false),

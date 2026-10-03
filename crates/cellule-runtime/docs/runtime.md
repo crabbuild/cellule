@@ -111,9 +111,34 @@ flowchart LR
 
 - **`CellHandle`.** A cloneable mailbox sender. It never exposes a SQLite connection.
 - **Routing.** Stable Cell-ID routing keeps one `Db` on one operating-system thread until close.
+
 - **Bootstrap.** Bootstrap passes the runtime-configured replica host to both that worker-owned `Db` and the publisher, so local filesystem and resource admission apply to the same captured cuts.
 - **`CellNode`.** Binds the compiled application's per-namespace database and capture ceilings to its runtime before serving.
 - **Limit checks.** Every bootstrap, idle acquisition, and takeover checks the supplied `CellReplica` limits before changing ownership or opening a root. Restored paths also check the recovery-store limits. Standalone `CellRuntime` users supply their own LTX policy.
+
+| Resident routing mode | Metadata work per invocation | Ownership gate |
+| --- | --- | --- |
+| Live node-session lease | No catalog or control read | Node lease and exact actor admission token |
+| Object-only, without a node-session lease | One fresh control read; reuse immutable catalog identity | Fresh owner/code observation and actor admission after I/O |
+
+The unleased control observation is never cached. Catalog reuse cannot authorize
+an old owner after takeover, hide an origin error, or revive a drained actor.
+
+Local lookup does not require a dense database:
+
+| Runtime lookup | Eligible local owner | Metadata reads |
+| --- | --- | --- |
+| `active_handle(target, role)` | Sparse, hydrating or resident | None |
+| `resident_handle(target, role)` | Fully resident only | None |
+| `local_handle(catalog, control)` | Active owner matching the supplied observation | Caller supplies the catalog and control |
+
+The first two methods use the same actor ownership gate. They exclude fenced,
+draining and transferring owners. A returned handle is not a promise that later
+work will be admitted: dispatch rechecks its admission and node lease. A miss
+does not prove the Cell is idle or authorize acquisition; use fresh authority
+and the normal fenced acquisition path. Embedders should use `active_handle`
+when validating a cached local route so background hydration does not turn a
+warm owner into a cold-admission request.
 
 The node bounds:
 
@@ -316,6 +341,7 @@ The actor never reruns a handler after SQLite may have started it. `Resolve` rea
 **Bounded upload concurrency**
 
 - Root preparation also overlaps independent content-addressed uploads. The LTX body and index, changed and initial directory nodes, and root metadata use bounded concurrency under the runtime's shared I/O permits.
+- When foreground compaction clears the segment-debt bound, its successor append retains the original authority predecessor. One fenced CAS selects the final root after all dependencies upload; the unchanged intermediate root stays private. Compaction cascades and quiet-period publication keep their existing bounds.
 - Initial directory construction retains at most eight encoded nodes awaiting upload.
 - The proposal remains private until every dependency upload completes, so authority cannot observe a partial root.
 
@@ -439,6 +465,15 @@ activation, never correctness.
 
 <a id="ownership-renewal"></a>
 ## Renew and self-fence ownership
+
+`CommandContext::owner_fence()` exposes the incarnation and epoch stamped on the
+admission that accepted the execution. Local typed commands and authenticated
+inbox delivery use the same stamp; no authority fetch is added to their command
+path. Operation tokens can bind this fence and reject delayed preparation from
+a predecessor. Admission replacement within the same ownership epoch retains
+the stamp. Recorded outcomes and follower-restored SQL bytes remain unchanged;
+recovery does not rerun application handlers with a guessed current fence.
+
 
 - **Scanner.** Each owner normally becomes due every three seconds. One node-level scanner finds due owners every 100 ms, orders them by their original deadline, and starts at most 32 renewals concurrently. A completed renewal immediately frees a slot for the next due owner; each scan discards stale candidates. This removes the former 320-starts/s tick ceiling without reducing the one-control-update-per-active-Cell cost. A mutation publication also advances owner progress.
 - **Renewal budget.** The runtime gives a control-record renewal up to thirty seconds under object-store pressure.

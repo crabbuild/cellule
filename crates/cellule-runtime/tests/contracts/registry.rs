@@ -342,6 +342,10 @@ fn compiled_registry_is_canonical_and_executes_only_declared_bindings() {
                 codec_version: 1,
                 schema: 1,
                 target,
+                owner_fence: cellule_runtime::control::OwnerFence {
+                    incarnation: cellule_runtime::identity::IncarnationId::from_bytes([7; 16]),
+                    epoch: 3,
+                },
                 sequence: 1,
                 now_ms: 10,
                 input: &input,
@@ -414,6 +418,10 @@ fn command_execution_rejects_a_module_targeting_another_namespace_owner() {
                 codec_version: 1,
                 schema: 1,
                 target,
+                owner_fence: cellule_runtime::control::OwnerFence {
+                    incarnation: cellule_runtime::identity::IncarnationId::from_bytes([7; 16]),
+                    epoch: 3
+                },
                 sequence: 1,
                 now_ms: 10,
                 input: &input,
@@ -666,4 +674,46 @@ fn dead_letter_cycles_are_rejected() {
         finish_with(leaked(descriptor)),
         Err(Error::Registry("dead-letter cycle"))
     ));
+}
+
+#[test]
+fn registered_commands_reject_an_unadmitted_zero_epoch_before_running_the_handler() {
+    let registry = build_registry(false);
+    let mut connection = cellule_ltx::rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(MIGRATION).unwrap();
+    let tx = connection.transaction().unwrap();
+    let input = wire(&b"unadmitted".to_vec(), 16);
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        ApplicationId::from_bytes([2; 16]),
+        NamespaceId::from_bytes([1; 16]),
+        b"unadmitted",
+    )
+    .unwrap();
+    let outcome = registry.execute_command(
+        &tx,
+        CommandInvocation {
+            module: "first",
+            operation_id: 1,
+            codec_version: 1,
+            schema: 1,
+            target,
+            sequence: 1,
+            now_ms: 10,
+            input: &input,
+            owner_fence: cellule_runtime::control::OwnerFence {
+                incarnation: cellule_runtime::identity::IncarnationId::from_bytes([7; 16]),
+                epoch: 0,
+            },
+        },
+    );
+    assert!(matches!(
+        outcome,
+        Err(Error::Command("invalid registered command context"))
+    ));
+    assert_eq!(
+        tx.query_row("SELECT count(*) FROM items", [], |r| r.get::<_, u64>(0))
+            .unwrap(),
+        0
+    );
 }
