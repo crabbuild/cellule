@@ -61,7 +61,7 @@ pub use capacity::{
 pub use directory::{
     EnrolledPeerVerifier, FollowerLogObservation, LogInventoryCursor, LogInventoryPage,
     LogLeaderState, NodeDirectory, NodeLogEnrollmentAttempt, NodeLogEnrollmentProof,
-    NodeLogEnrollmentRefusalProof, PreparedNodeLogEnrollment,
+    NodeLogEnrollmentRefusalProof, PreparedNodeLogEnrollment, RecoveredLogRetirementAuthorization,
 };
 mod advertisement;
 mod capacity;

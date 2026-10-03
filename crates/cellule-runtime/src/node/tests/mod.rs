@@ -26,6 +26,7 @@ mod log;
 mod operational;
 mod placement;
 mod records;
+mod recovered_retirement;
 mod sessions;
 
 // Thread-local operation counts let canonical codec tests assert a verification

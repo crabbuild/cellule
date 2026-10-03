@@ -554,7 +554,10 @@ impl NodeTakeoverProof {
         let recovering = fenced.log.as_ref().ok_or(Error::Fenced)?;
         let sealed_log = sealed.log();
         if sealed.session() != fenced.session
-            || sealed_log.phase() != NodeLogPhase::Sealed
+            || !matches!(
+                sealed_log.phase(),
+                NodeLogPhase::Sealed | NodeLogPhase::Retired
+            )
             || sealed_log.epoch() != recovering.epoch()
             || sealed_log.members() != recovering.members()
             || sealed_log.active() != recovering.active()

@@ -286,6 +286,7 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `FleetRoleCoverage` | Present cross-node original producer, native lane and current foreign authority matching. | Supply every required original boot and physical reference scan; finish initial collection, global native rechecks, then exact foreign rechecks and full journal confirmation. Observe enrolled lanes before their first append through the complete original producer/ensemble witness. Authentication, unexpected advertisements, current Cell authority, replacement policy and failed-process closure remain required; coverage does not grant settlement or finalization. |
 | `FleetObservation::with_role_coverage` | Present retained graph attachment and planner-input binding. | Preserve the original interval and reject replacement or scope/registry mismatches. The reconciler rechecks the graph's exact head/registry and full roster digest; unchanged registry alone cannot admit an earlier controller head. Attachment never upgrades partial adapter coverage. |
 | `CellNode::follower_evacuation` | Present per-live-owner replacement and retirement check after the original requested rotation. | Require the declared member minimum, donor exclusion, complete Established replacement rows, pinned signed boots, current authority and full journal rechecks. Retain the original completion/error history and publish/revalidate its interval. This does not settle failed owners, Pending producers or the physical node's other obligations. |
+| Recovered-log authorization, member retirement and canonical Retired CAS | Present runtime tail closure after canonical recovery pinning. | Use `RecoveredNodeLogTransport`, receiver-side `authorize_recovered_log_retire` and `FollowerStore::retire_recovered`; confirm every original member before `retire_recovered_log`. Adopt exact committed closure with `retired_recovered_log` before repeating effects. Integrate durable enrollment publication, failed-process barriers and maintenance orchestration; native closure alone cannot finish W7. |
 | `FleetActionJournal` | Present in host `fleet/journal.rs`. | Implement acceptance, result publication, original-action lookup, and acquisition/recovery basis and evidence recording/lookup with the specified atomic and durable semantics. |
 | `FleetCellProvider::cell_inputs(spec)` | Present in host `fleet/cells.rs`. | Resolve metadata and canonical local inputs without performing an effect. |
 | `FleetCellProvider::recovery_inputs(spec)` | Present in host `fleet/cells.rs`. | Supply existing canonical failed-session proof and manifest access. Ordinary recovery establishes fencing and tail sealing independently. |
@@ -1102,7 +1103,11 @@ maintenance can claim the node is safe to stop.
    existing object-proof fallback can continue writes during recruitment.
 5. For a dead owner, finish the existing seal/gather/recovery-overlay protocol
    before releasing required tail copies. A missing owner is not proof that
-   its follower data is unneeded.
+   its follower data is unneeded. The runtime now supplies explicit recovered
+   member retirement, fresh canonical receiver authorization and a complete
+   native proof before the Retired tombstone CAS. Preserve original enrollment
+   identities, publish/revalidate that closure through the durable journal and
+   finish failed-process barriers before treating the physical role as settled.
 6. Confirm that no admitted new enrollment or unresolved tail obligation can
    appear after the final inventory barrier, then complete host shutdown.
    Retain retired files and their fences under the current grace/collection

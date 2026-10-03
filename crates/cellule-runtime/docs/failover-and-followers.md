@@ -387,12 +387,40 @@ race through stale local state.
 append-fence marker for ten minutes. The server then:
 
 - Scans at most 64 lanes per minute.
-- Requires the exact node-session record to exist and no longer name that log
-  epoch.
+- Requires the exact node-session record to exist and no longer require local
+  copies of that epoch, including a canonically recovered Retired tombstone.
 - Rechecks the unchanged marker and its filesystem timestamp under the lane
   lock, and only then deletes it and releases disk admission.
 
 Missing authority fails closed.
+
+**Recovered failed-owner retirement.** After the canonical recovery coordinator
+pins the affected overlays and seals the tombstone, use
+`retire_recovered_members` with a `RecoveredNodeLogTransport`. This extends the
+same ordinary transport with an explicit recovery request. The receiver
+authenticates the live requester and calls
+`NodeDirectory::authorize_recovered_log_retire` for its own physical member,
+original leader/epoch and pinned manifest. Open/Recovering records, foreign
+members, changed manifests and expired requesters are refused. A native seal
+alone cannot authorize retirement.
+
+`FollowerStore::retire_recovered` uses the same lane lock, byte ledger, scanner
+and durable retired marker as ordinary retirement. Active lanes require their
+original seal watermark to exactly match verified local records. An inactive
+enrollment can fence an empty lane; unexpected records still block it. The
+caller supplies no truncation watermark. Every original member's retirement
+response is joined and retained, including failures and contradictory receipts.
+Only complete confirmation can authorize `NodeDirectory::retire_recovered_log`.
+
+That CAS preserves the original epoch, ensemble and manifest in the permanent
+Retired tombstone. Takeover remains valid; original recovery completion can
+adopt the terminal record after a lost reply. `retired_recovered_log` rechecks
+exact canonical retirement before effects, including after local grace
+collection; `None` keeps a matching Sealed epoch outstanding. `Retired` stops
+referencing local copies for collection purposes. The existing grace boundary,
+exact marker check and external authority check still apply. This supplies a
+tail retirement boundary, not failed-process joining, fleet enrollment
+publication, replacement policy or permission to stop a physical node.
 
 Deterministic fault coverage includes the two ambiguous recovery boundaries:
 

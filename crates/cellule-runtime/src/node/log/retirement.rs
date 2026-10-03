@@ -11,6 +11,12 @@ pub struct NodeLogMemberRetirement {
     result: std::result::Result<FollowerReceipt, Arc<Error>>,
 }
 impl NodeLogMemberRetirement {
+    pub(crate) fn new(member: NodeId, result: Result<FollowerReceipt>) -> Self {
+        Self {
+            member,
+            result: result.map_err(Arc::new),
+        }
+    }
     /// Returns the exact member addressed by the retirement request.
     #[must_use]
     pub const fn member(&self) -> NodeId {

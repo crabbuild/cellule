@@ -43,11 +43,12 @@ impl NodeDirectory {
         Ok(log)
     }
 
-    /// Reports whether the authoritative session record still names one log epoch.
+    /// Reports whether authority still requires local copies of one log epoch.
     ///
     /// A missing record is corruption rather than collection authority and fails
     /// closed. Callers may delete an exact grace-aged retired follower lane only
-    /// when this returns `false`.
+    /// when this returns `false`. Recovered Retired tombstones preserve the epoch
+    /// and manifest as history after every original member confirms retirement.
     pub async fn log_epoch_referenced(&self, session: SessionId, epoch: u64) -> Result<bool> {
         if epoch == 0 {
             return Err(Error::Node("node-log epoch is zero"));
@@ -64,7 +65,9 @@ impl NodeDirectory {
             advertisement.validate_shape()?;
             advertisement.verify_signature()?;
         }
-        Ok(record.log().is_some_and(|log| log.epoch() == epoch))
+        Ok(record
+            .log()
+            .is_some_and(|log| log.epoch() == epoch && log.phase() != NodeLogPhase::Retired))
     }
 
     /// Verifies a live claimant may seal or read this follower's failed-owner lane.

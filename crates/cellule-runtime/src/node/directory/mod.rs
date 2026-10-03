@@ -13,7 +13,9 @@ mod advertisement;
 mod enrollment;
 mod inventory;
 mod log;
+mod recovered;
 mod recovery;
+pub use recovered::RecoveredLogRetirementAuthorization;
 
 pub use enrollment::{
     NodeLogEnrollmentAttempt, NodeLogEnrollmentProof, NodeLogEnrollmentRefusalProof,

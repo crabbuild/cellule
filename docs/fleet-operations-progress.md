@@ -4,6 +4,58 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 recovered follower retirement checkpoint
+
+Recovered failed-owner tails now close through an explicit capability of the
+existing node-log transport. Each receiver authenticates a live requester and
+rechecks the exact canonical Sealed/Retired epoch, original member and pinned
+manifest. The native store accepts no caller-selected watermark. It uses the
+existing lane lock, byte ledger, verified scanner and durable retirement marker;
+active lanes require their exact original seal. Inactive enrollment only fences
+empty lanes, refusing unexpected records even when they have a native seal.
+
+All original member calls join and retain their individual responses/errors.
+Incomplete or contradictory receipts cannot produce the opaque confirmation
+required for the canonical Retired CAS. The tombstone preserves the epoch,
+ensemble and recovery manifest. Takeover and original recovery completion remain
+valid. Exact canonical retirement can be adopted after controller restart or
+local grace collection, without inventing missing member receipts. Grace-aged
+collection still requires the unchanged native marker and external authority.
+
+Three unit cases cover live/Recovering and foreign/expired authorization,
+unsealed and corrupt-seal refusal, different original prefixes, lost member
+replies, contradictory receipts, durable fences, exact replay, native collection
+and inactive unexpected records. Their authority fixtures do not establish
+full recovery pinning. The real lost-acknowledgement lifecycle case does: it pins
+the recovery overlay, retires the suffix, loses the committed retirement CAS
+reply, adopts its canonical result, then restores the successor and verifies the
+original command outcome without re-execution. Earlier qualification logs are
+retained separately before the seal and inactive-lane refinements.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `af40830ebf495e348235fcdc016626844986b99a` |
+| Frozen source | 676 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `7f70f0f5930eacc13553247c3a543f2fc1970abad8c1accaacf8b3ccbfe7fffb` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-recovered-retirement-evidence` |
+
+Final all-feature qualification passed 524 runtime library, 144 runtime lifecycle,
+34 host library, 106 public node and 158 example tests: 966 passes, no failures.
+The runtime suites ignored seven existing provider cases whose required isolated
+RustFS environment was not supplied; they provide no evidence here. Focused
+repeats are excluded from these counts. Runtime/host Clippy across all targets
+and API documentation passed with warnings denied. Format, boundaries, module
+layout, document links/Rust fences and SQL/peer gates passed. The complete
+active/isolated Rust/Cargo path sets and every byte match after qualification.
+All command arguments and exit statuses are retained in `verification.json`.
+
+This establishes runtime tail closure, not failed-process joining, replacement
+policy or fleet finalization. Durable publication against every original member
+request, failed-boot closure, complete production observation, affected-writer
+relocation, `SettleRoles`/`Finalize`, terminal action handoff, remaining primitive
+faults and W8–W10 remain required. The full implementation plan stays active.
+
 ## October 2 2026 retained role observation checkpoint
 
 `FleetObservation::with_role_coverage` retains the original checked graph and

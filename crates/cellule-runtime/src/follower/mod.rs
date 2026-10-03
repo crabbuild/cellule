@@ -73,6 +73,11 @@ struct Lane {
     epoch: u64,
 }
 
+enum RetirementWatermark {
+    Covered(u64),
+    Recovered { active: bool },
+}
+
 type LaneState = Arc<Mutex<Option<LaneMemory>>>;
 type LaneMap = Arc<Mutex<HashMap<Lane, LaneState>>>;
 
@@ -336,6 +341,41 @@ impl FollowerStore {
         covered_through: u64,
     ) -> Result<FollowerReceipt> {
         let lane = Lane { leader, epoch };
+        self.retire_lane(lane, RetirementWatermark::Covered(covered_through))
+            .await
+    }
+
+    /// Retires a canonically recovered lane through its existing durable fence.
+    /// The application binds `member` to this receiver and authenticates the
+    /// requester before obtaining fresh directory authorization. Active lanes
+    /// must retain their actual native seal; no caller watermark is accepted.
+    pub async fn retire_recovered(
+        &self,
+        member: crate::identity::NodeId,
+        authorization: crate::node::RecoveredLogRetirementAuthorization,
+    ) -> Result<FollowerReceipt> {
+        if authorization.member() != member {
+            return Err(Error::Fenced);
+        }
+        let sealed = authorization.sealed();
+        let lane = Lane {
+            leader: sealed.session(),
+            epoch: sealed.log().epoch(),
+        };
+        self.retire_lane(
+            lane,
+            RetirementWatermark::Recovered {
+                active: sealed.log().active(),
+            },
+        )
+        .await
+    }
+
+    async fn retire_lane(
+        &self,
+        lane: Lane,
+        watermark: RetirementWatermark,
+    ) -> Result<FollowerReceipt> {
         let lock = self.lane_lock(lane)?;
         let root = self.root.clone();
         let limits = self.limits;
@@ -351,7 +391,7 @@ impl FollowerStore {
             if !lane_directory(&root, lane).join("retired").exists() {
                 retained.try_grow(8)?;
             }
-            let result = retire_sync(&root, lane, covered_through, limits, &scan_counter);
+            let result = retire_sync(&root, lane, watermark, limits, &scan_counter);
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
             *state = None;

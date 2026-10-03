@@ -520,7 +520,7 @@ impl NodeDirectory {
             return Err(Error::Fenced);
         };
         if let Some(log) = &current.log
-            && log.phase() == NodeLogPhase::Sealed
+            && matches!(log.phase(), NodeLogPhase::Sealed | NodeLogPhase::Retired)
             && log.recovery_manifest() == recovery_manifest
         {
             return Ok(SealedNodeLog {
@@ -547,8 +547,10 @@ impl NodeDirectory {
                 Some((NodeRecord::Tombstone(current), _))
                     if current.session == fenced.session
                         && current.log.as_ref().is_some_and(|current| {
-                            current.phase() == NodeLogPhase::Sealed
-                                && current.recovery_manifest() == recovery_manifest
+                            matches!(
+                                current.phase(),
+                                NodeLogPhase::Sealed | NodeLogPhase::Retired
+                            ) && current.recovery_manifest() == recovery_manifest
                         }) =>
                 {
                     Ok(SealedNodeLog {
