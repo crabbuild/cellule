@@ -413,6 +413,22 @@ Matching fingerprints supply interval evidence, not an atomic fleet snapshot.
 Failed-process closure, policy satisfaction and the finalization transaction
 remain separate requirements; these collectors grant no shutdown permission.
 
+`FleetFollowerReferences::collect(directory, roster, member, page_limit, deadline,
+clock)` traverses all authoritative log references for a physical follower,
+including expired advertisements and fenced tombstones. It preserves exact
+leader/session, epoch, phase, ensemble and coverage. Its enrollment check matches
+retained original requests; Pending requests without a current reference still
+require their original nonexecution or closure evidence. Applications account
+the bounded copied buffer, with at most 10,000 rows and 128 rows per page.
+
+After native and policy collection, `references.recheck(...)` traverses every
+page again and compares exact rows. Native topology fingerprints intentionally
+omit volatile coverage and leader liveness, so a first-page fingerprint cannot
+replace this authority recheck. A changed row, deadline, missing page or changed
+roster returns an error and preserves the original interval. Reconfirm the full
+roster after both authority and native rechecks. A closed local lane can still
+have a foreign authority reference; zero local writers do not settle that tail.
+
 ## Caller driven fleet reconciliation
 
 ### Reader producer inventory

@@ -4,6 +4,56 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 foreign follower authority checkpoint
+
+`FleetFollowerReferences` traverses every canonical directory page for a physical
+follower, including expired advertisements and fenced tombstones. It matches
+references to the original full roster and rechecks exact authority rows after
+native collection. Coverage and leader liveness are compared even though native
+continuation fingerprints omit them. Changed or incomplete captures retain the
+original rows and interval; no reference absence settles Pending work.
+
+The closed writer example now uses this collector and its final recheck. The
+canonical heartbeat advertises real available follower-store bytes when that
+component is installed. A new managed fixture uses three actual boot owners,
+node-owned follower stores, canonical enrollment and an acknowledged SQL mutation.
+Its object-coverage callback is paused to exercise the actual follower response
+proof, then resumed and joined before observation.
+
+Four public cases cover original producer/foreign lane matching, lost retirement
+replies with shared original errors, real object publication changing coverage
+without changing topology, and deadlines/regressed clocks/expiry. A retired local
+lane still has a foreign obligation until canonical owner closure confirms.
+Two directory cases exercise real canonical continuation pages and refuse a
+foreign member or regressed capture. They are directory contract fixtures,
+separate from the managed three-node cases.
+
+Initial qualification caught two fixture assumptions: object proof can win before
+log activation, and the supervisor retains its old binding while replacement
+recruitment waits. The fixture now explicitly proves the follower path and the
+rotation case checks confirmed old retirement plus the outstanding Recruiting
+phase. No replacement is invented. Initial logs and a passing pre-layout run
+are retained separately; final qualification follows the corrected module layout.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `57559a5ef3fe534ab3081f8e6f8eb9da4d3011cd` |
+| Frozen source | 667 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `a16464289aca4f39375582da32328fa1f0e2b006e338cb5409bb8eb07ec01ee3` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-follower-references-evidence` |
+
+The final source passed 34 host library, 106 public node and 142 fleet example
+tests: 282 distinct cases, zero failures or ignores. Host Clippy and host/runtime
+API documentation passed with warnings denied. Format, boundary, module layout,
+document syntax/links and SQL/peer contract gates pass. The complete path set and
+every Rust/Cargo byte are compared against the isolated snapshot after the run.
+
+This supplies complete reference discovery and managed aggregate regression
+coverage. Complete observer/policy/failed-process barriers, live-owner replacement
+ensembles, dead-owner recovery, affected-writer relocation, `SettleRoles`/`Finalize`,
+terminal action handoff, remaining primitive faults and W8–W10 still remain.
+
 ## October 2 2026 merge qualification checkpoint
 
 Merged `main` at `18a1244a98c50a04c52da21325f95331055e9884` into the native

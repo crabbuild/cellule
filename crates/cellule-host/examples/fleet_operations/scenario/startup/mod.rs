@@ -235,6 +235,17 @@ impl BootOwner {
             original.peer_versions().to_vec(),
             original.failure_domain().clone(),
             NodeCapacity {
+                follower_free_bytes: self
+                    .node
+                    .try_owned_component::<cellule_runtime::follower::FollowerStore>(
+                        cellule_host::FOLLOWER_STORE_COMPONENT,
+                    )?
+                    .map_or(0, |store| store.available_bytes())
+                    .min(
+                        stats
+                            .local_disk_capacity_bytes()
+                            .saturating_sub(stats.local_disk_reserved_bytes()),
+                    ),
                 free_memory_bytes: memory.saturating_sub(used),
                 free_disk_bytes: stats
                     .local_disk_capacity_bytes()

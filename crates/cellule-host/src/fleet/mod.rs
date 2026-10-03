@@ -15,6 +15,7 @@ mod journal;
 mod maintenance;
 mod movement;
 mod reconciler;
+mod references;
 mod roster;
 pub(crate) mod snapshot;
 pub(crate) mod withdrawal;
@@ -29,6 +30,7 @@ pub use reconciler::{
     FleetAttemptFailure, FleetObservation, FleetObserver, FleetOwnedCell, FleetReconcileReport,
     FleetReconciler, FleetTransport,
 };
+pub use references::FleetFollowerReferences;
 pub use roster::{FleetRoster, FleetRosterBoot};
 pub use snapshot::{
     FleetNodeSnapshot, FleetSnapshotBindings, FleetSnapshotNativePage, FleetSnapshotRequest,

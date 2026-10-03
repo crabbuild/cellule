@@ -66,6 +66,9 @@ authority. It uses `FleetNodeInventoryScan` for every native category and contin
 rereads authority, rechecks all seven complete category fingerprints after the
 fleet-wide authority scan, and confirms the full journal barrier. Complete coverage is supported for this private constructor's bounded
 writer-only profile: twelve catalog-backed SQL Cells and three managed boots.
+Foreign log discovery uses `FleetFollowerReferences` to traverse every page and
+recheck exact coverage/liveness after native capture, including expired or fenced
+owners. Its complete listing supplies no permission to discard a required tail.
 Unexpected advertised boots, Pending/role enrollment, native role installations,
 expired/fenced log obligations, changed topology or stale ownership prevent
 complete counts. Unbound pages alone supply no absence proof; the closed

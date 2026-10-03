@@ -28,6 +28,7 @@ use std::sync::{
 
 mod fixture;
 use fixture::*;
+mod aggregate;
 mod inventory;
 mod tests;
 

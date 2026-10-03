@@ -3,8 +3,8 @@
 
 use super::*;
 use cellule_host::fleet::{
-    FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation,
-    FleetOwnedCell, FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest,
+    FleetFollowerReferences, FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot,
+    FleetObservation, FleetOwnedCell, FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest,
     FleetSnapshotSubject,
 };
 use cellule_runtime::control::{Control, ControlState};
@@ -129,6 +129,7 @@ async fn collect(
     let mut cells = Vec::new();
     let mut seen = HashSet::new();
     let mut inventories: Vec<Option<FleetNodeInventory>> = Vec::new();
+    let mut references = Vec::new();
     for index in 0..3 {
         let mut scan = FleetNodeInventoryScan::new(roster, node_id(index), session(index))?;
         let mut stable = true;
@@ -180,10 +181,17 @@ async fn collect(
         inventories.push(inventory);
         // Include expired and fenced leader obligations; live discovery alone
         // could hide a follower role left by a failed boot.
-        let logs = directory
-            .follower_logs_page(node_id(index), None, 128, clock()?)
-            .await?;
-        complete &= logs.total_logs() == 0 && logs.next().is_none();
+        let logs = FleetFollowerReferences::collect(
+            directory,
+            roster,
+            node_id(index),
+            128,
+            deadline,
+            clock,
+        )
+        .await?;
+        complete &= logs.entries().is_empty() && logs.validate_enrollments(roster).is_ok();
+        references.push(logs);
         nodes.push(
             fleet.boots[index]
                 .refresh_capacity(index, fleet.journal.as_ref(), deadline)
@@ -259,6 +267,15 @@ async fn collect(
             }
         }
         complete &= recheck.finish().is_ok();
+    }
+    for logs in &mut references {
+        match logs.recheck(directory, roster, 128, deadline, clock).await {
+            Ok(()) => {}
+            Err(cellule_runtime::Error::Node("authoritative follower inventory changed")) => {
+                complete = false;
+            }
+            Err(source) => return Err(source.into()),
+        }
     }
     let mut after = directory.advertised_sessions(clock()?, 128).await?;
     after.sort_by_key(|boot| *boot.as_bytes());

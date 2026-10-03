@@ -4,10 +4,30 @@ pub(super) struct Authority {
     directory: NodeDirectory,
     serial: tokio::sync::Mutex<()>,
     closed: Mutex<Option<NodeLogRotationBarrier>>,
+    coverage_gate: Mutex<
+        Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+            tokio::sync::oneshot::Sender<()>,
+        )>,
+    >,
     pub attempts: AtomicUsize,
     pub lose_reply: AtomicBool,
 }
 impl Authority {
+    pub fn pause_coverage(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
+        let (entered, captured) = tokio::sync::oneshot::channel();
+        let (resume, release) = tokio::sync::oneshot::channel();
+        let (done, completed) = tokio::sync::oneshot::channel();
+        *self.coverage_gate.lock().unwrap() = Some((entered, release, done));
+        (captured, resume, completed)
+    }
     async fn current(
         &self,
         epoch: u64,
@@ -43,11 +63,22 @@ impl NodeLogAuthority for Authority {
         through: u64,
     ) -> BoxFuture<'a, cellule_runtime::Result<()>> {
         Box::pin(async move {
+            let gate = self.coverage_gate.lock().unwrap().take();
+            let done = if let Some((entered, release, done)) = gate {
+                entered.send(()).unwrap();
+                release.await.unwrap();
+                Some(done)
+            } else {
+                None
+            };
             let _serial = self.serial.lock().await;
             let observed = self.current(epoch).await?;
             self.directory
                 .advance_log_coverage(&observed, through, clock()?)
                 .await?;
+            if let Some(done) = done {
+                done.send(()).unwrap();
+            }
             Ok(())
         })
     }
@@ -83,6 +114,7 @@ pub(super) struct Transport {
     locals: Vec<(NodeId, LocalFollowerTransport)>,
     pub requests: Mutex<Vec<(NodeId, RetireRequest)>>,
     pub lose_retire: AtomicBool,
+    pub appends: AtomicUsize,
     retirement_retry: Mutex<
         Option<(
             tokio::sync::oneshot::Sender<()>,
@@ -127,7 +159,9 @@ impl NodeLogTransport for Transport {
                     clock()?,
                 )
                 .await?;
-            self.local(member).append(member, request).await
+            let receipt = self.local(member).append(member, request).await?;
+            self.appends.fetch_add(1, Ordering::AcqRel);
+            Ok(receipt)
         })
     }
     fn seal<'a>(
@@ -381,12 +415,14 @@ impl Fixture {
             locals,
             requests: Mutex::new(Vec::new()),
             lose_retire: AtomicBool::new(false),
+            appends: AtomicUsize::new(0),
             retirement_retry: Mutex::new(None),
         });
         let authority = Arc::new(Authority {
             directory: directory.clone(),
             serial: tokio::sync::Mutex::new(()),
             closed: Mutex::new(None),
+            coverage_gate: Mutex::new(None),
             attempts: AtomicUsize::new(0),
             lose_reply: AtomicBool::new(false),
         });
@@ -507,3 +543,6 @@ pub(super) fn limits() -> Limits {
         ..Limits::default()
     }
 }
+
+mod managed;
+pub(super) use managed::ManagedFixture;
