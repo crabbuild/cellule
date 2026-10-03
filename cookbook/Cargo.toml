@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["support", "apps/taskboard", "apps/settings", "apps/file-vault", "apps/work-queue", "apps/interval-scheduler", "apps/approvals", "apps/tenant-workspace", "apps/entity-registry", "apps/quotas", "apps/reservations", "apps/webhook-delivery", "apps/media-pipeline", "apps/report-export", "apps/endpoint-monitor", "apps/checkout", "apps/provisioning", "apps/release-pipeline", "apps/project-tracker"]
+members = ["support", "apps/taskboard", "apps/settings", "apps/file-vault", "apps/work-queue", "apps/interval-scheduler", "apps/approvals", "apps/tenant-workspace", "apps/entity-registry", "apps/quotas", "apps/reservations", "apps/webhook-delivery", "apps/media-pipeline", "apps/report-export", "apps/endpoint-monitor", "apps/checkout", "apps/provisioning", "apps/release-pipeline", "apps/project-tracker", "apps/telemetry-ingest"]
 
 [workspace.package]
 version = "0.1.0"

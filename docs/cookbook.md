@@ -46,8 +46,12 @@ drain with the original request and exact bytes restored.
 [Project tracker](../cookbook/apps/project-tracker/README.md) demonstrates project
 aggregate boundaries, immutable attachment reconciliation, revisioned signed
 dashboard delivery, exact native Effect reclamation, and interrupted-demo drain
-with cold restoration. Eighteen applications are qualified and runnable; ten
-further applications are planned.
+with cold restoration. [Telemetry ingest](../cookbook/apps/telemetry-ingest/README.md)
+adds permanent device sequence bindings, native Queue consumers, original batch
+audits, and bounded signed summary shards. Its persistent process driver verifies
+partial-batch recovery, original audit replay, native attempt-two reclamation,
+and resumption of an interrupted demo with its unchanged plan. Nineteen
+applications are qualified and runnable; nine further applications are planned.
 The five existing
 [primitive examples](../crates/cellule-app/docs/examples.md) remain runnable
 introductions. The cookbook adds complete application journeys alongside those

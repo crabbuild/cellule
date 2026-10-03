@@ -605,6 +605,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "cellule-cookbook-telemetry-ingest"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "cellule-app",
+ "cellule-cookbook-support",
+ "cellule-runtime",
+ "cellule-store",
+ "object_store",
+ "prost",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "cellule-cookbook-tenant-workspace"
 version = "0.1.0"
 dependencies = [
