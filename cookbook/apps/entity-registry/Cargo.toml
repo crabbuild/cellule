@@ -1,0 +1,32 @@
+[package]
+name = "cellule-cookbook-entity-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Stable device Cells with durable asynchronous directory projections"
+
+[dependencies]
+cellule-store.workspace = true
+cellule-ltx.workspace = true
+cellule-app.workspace = true
+cellule-runtime.workspace = true
+cellule-cookbook-support.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+object_store.workspace = true
+uuid.workspace = true
+prost.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

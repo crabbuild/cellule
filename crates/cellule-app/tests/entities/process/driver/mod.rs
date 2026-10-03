@@ -372,6 +372,8 @@ async fn run_window(
             actual.output, actual.receipt.commit_sequence
         )
         .unwrap();
+        assert!(actual.receipt.commit_sequence >= latest_sequences[entity]);
+        latest_sequences[entity] = actual.receipt.commit_sequence;
         assert_eq!(
             actual.output, *expected,
             "{label}: Cell {entity} lost or duplicated a mutation"

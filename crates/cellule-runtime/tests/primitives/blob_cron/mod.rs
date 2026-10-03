@@ -298,8 +298,8 @@ async fn typed_blob_and_cron_recover_after_owner_loss() {
         )
         .await
         .unwrap();
-    blobs
-        .mutate(
+    let prepared_part = blobs
+        .prepare_mutation(
             mutation_identity_window(27, start_now_ms, start_now_ms + 60_000),
             BlobMutation::PutPart {
                 key: key.clone(),
@@ -310,6 +310,21 @@ async fn typed_blob_and_cron_recover_after_owner_loss() {
         )
         .await
         .unwrap();
+    let evidence = prepared_part.evidence().clone();
+    let resolver = CellClient::local(registry.clone(), blob_handle.clone());
+    assert!(matches!(
+        resolver.resolve(&evidence).await.unwrap(),
+        cellule_runtime::Resolution::Absent
+    ));
+    let stored_part = prepared_part.execute().await.unwrap();
+    assert!(matches!(
+        stored_part.output,
+        BlobMutationOutcome::PartStored { .. }
+    ));
+    assert!(matches!(
+        resolver.resolve(&evidence).await.unwrap(),
+        cellule_runtime::Resolution::Committed(_)
+    ));
     let committed = blobs
         .mutate(
             mutation_identity_window(28, start_now_ms, start_now_ms + 60_000),

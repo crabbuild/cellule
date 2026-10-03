@@ -1,0 +1,29 @@
+[package]
+name = "cellule-cookbook-approvals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Human purchase approvals with durable deadlines and idempotent reminder activities"
+
+[dependencies]
+cellule-app.workspace = true
+cellule-runtime.workspace = true
+cellule-cookbook-support.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+object_store.workspace = true
+uuid.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+cellule-store.workspace = true
+
+[lints]
+workspace = true

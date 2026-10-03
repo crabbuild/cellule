@@ -1,0 +1,50 @@
+[workspace]
+resolver = "3"
+members = ["support", "apps/taskboard", "apps/settings", "apps/file-vault", "apps/work-queue", "apps/interval-scheduler", "apps/approvals", "apps/tenant-workspace", "apps/entity-registry", "apps/quotas", "apps/reservations", "apps/webhook-delivery", "apps/media-pipeline", "apps/report-export", "apps/endpoint-monitor", "apps/checkout", "apps/provisioning", "apps/release-pipeline", "apps/project-tracker", "apps/telemetry-ingest", "apps/support-desk", "apps/usage-ledger"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+cellule-app = { path = "../crates/cellule-app" }
+cellule-host = { path = "../crates/cellule-host" }
+cellule-ltx = { path = "../crates/cellule-ltx" }
+cellule-runtime = { path = "../crates/cellule-runtime" }
+cellule-store = { path = "../crates/cellule-store" }
+cellule-cookbook-support = { path = "support" }
+blake3 = "1.8"
+ed25519-dalek = "2.2"
+object_store = { version = "0.14.1", features = ["aws"] }
+rand = "0.9"
+prost = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1.49", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "=1.24.0", features = ["v7"] }
+url = "2.5"
+tempfile = "3"
+axum = { version = "=0.8.8", default-features = false, features = ["http1", "json", "tokio", "query", "matched-path"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+hyper = { version = "=1.11.1", features = ["server", "http1"] }
+hyper-util = { version = "=0.1.20", features = ["tokio"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+csv = "=1.4.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

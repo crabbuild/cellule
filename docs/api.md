@@ -180,7 +180,7 @@ SQL and source effects select an explicit target.
 | --- | --- | --- |
 | `sql::<M>(target)` | `SqlCell<M>` | `batch(identity, SqlBatch)`, `query(minimum, SqlBatch)` |
 | `kv::<M>(namespace)` | `KvNamespace<M>` | `atomic`, `get`, `list` on a scope-derived shard |
-| `blob::<M>()` | `BlobNamespace<M>` | `mutate`, `query`, `list_shard` |
+| `blob::<M>()` | `BlobNamespace<M>` | `prepare_mutation`, `mutate`, `query`, `list_shard` |
 | `queue::<M>()` | `QueueNamespace<M>` | `send`, `claim`, `validate_claim`, `ack`, `retry`, `extend`, controls |
 | `cron::<M>()` | `CronNamespace<M>` | `mutate`, `get`, `list_shard` |
 | `workflow::<M>()` | `WorkflowNamespace<M>` | `start`, `signal`, `cancel`, `pause`, `resume`, `restart`, `state` |
@@ -207,7 +207,9 @@ for exercised SQL, KV, Blob, Queue, Cron, Workflow, Activity, and Effect paths.
   the next conditional request. The [basic example](../crates/cellule-app/examples/basic.rs)
   writes a setting and reads at its receipt.
 - **Blob:** `Begin`, `PutPart`, then `Complete` with separate mutation
-  identities; read the object at the completion receipt. The
+  identities; use `prepare_mutation` to retain exact evidence before dispatch,
+  and read the object at the completion receipt. Preparing a part stages its
+  immutable bytes but does not publish a manifest reference. The
   [Blob example](../crates/cellule-app/examples/blob.rs) also
   verifies the bytes and content type.
 - **Queue:** `send` with a producer identity, `claim` from a chosen shard,

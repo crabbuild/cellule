@@ -1,0 +1,30 @@
+[package]
+name = "cellule-cookbook-taskboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Persistent task management through typed, entity-scoped Cellule commands"
+
+[dependencies]
+cellule-app.workspace = true
+cellule-runtime.workspace = true
+cellule-cookbook-support.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+object_store.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+cellule-store.workspace = true
+ed25519-dalek.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
