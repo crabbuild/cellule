@@ -433,3 +433,138 @@ async fn retained_fenced_boot_retirement_adopts_lost_reply_with_unchanged_proces
     assert_eq!(replay.request().interval(), request.interval());
     fixture.journal.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn retired_process_confirmation_refuses_a_stable_changed_witness() {
+    let fixture = confirmation::settled(NOW, true).await;
+    let request = fixture.process_request.as_ref().unwrap();
+    let before = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let retired = fixture.failed_boot().await;
+    let original = request
+        .confirm(
+            fixture.journal.as_ref(),
+            &fixture.directory,
+            &Processes::new(fixture.process_path()),
+            session(1),
+            deadline(),
+            || Ok(CHECK),
+        )
+        .await
+        .unwrap();
+    let changed =
+        FleetFailedBootProcessEvidence::new(request, Digest::from_bytes([234; 32])).unwrap();
+    assert_ne!(&changed, original.process());
+    assert!(matches!(
+        request
+            .confirm(
+                fixture.journal.as_ref(),
+                &fixture.directory,
+                &ForeignEvidence(changed),
+                session(1),
+                deadline(),
+                || Ok(CHECK),
+            )
+            .await,
+        Err(Error::Fenced)
+    ));
+    assert_eq!(fixture.failed_boot().await, retired);
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    assert_eq!(fixture.transport.retirements.load(Ordering::Acquire), 2);
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn retired_process_confirmation_refuses_switching_the_original_request_basis() {
+    let fixture = confirmation::settled(NOW, true).await;
+    let fenced = fixture.process_request.as_ref().unwrap();
+    let original = Processes::new(fixture.process_path())
+        .confirm_stopped(fenced)
+        .await
+        .unwrap();
+    let before = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let retired = fixture.failed_boot().await;
+    let terminal = FleetFailedBootProcessRequest::capture(
+        fixture.journal.as_ref(),
+        &fixture.directory,
+        &fixture.roster().await,
+        &retired,
+        session(1),
+        deadline(),
+        || Ok(CHECK),
+    )
+    .await
+    .unwrap();
+    assert_ne!(terminal.digest(), fenced.digest());
+    // The shape-valid alternate provider binds the same lifetime witness to a
+    // different request. Neither constructor nor two equal reads can change the
+    // immutable binding already published in the original Retired boot row.
+    let alternate = FleetFailedBootProcessEvidence::new(&terminal, original.witness()).unwrap();
+    assert!(matches!(
+        terminal
+            .confirm(
+                fixture.journal.as_ref(),
+                &fixture.directory,
+                &ForeignEvidence(alternate),
+                session(1),
+                deadline(),
+                || Ok(CHECK),
+            )
+            .await,
+        Err(Error::Fenced)
+    ));
+    assert_eq!(fixture.failed_boot().await, retired);
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    assert_eq!(fixture.transport.retirements.load(Ordering::Acquire), 2);
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn retired_process_confirmation_preserves_the_original_terminal_v1_binding() {
+    let fixture = Fixture::new().await;
+    fixture.settle_followers().await;
+    let original = fixture.failed_boot().await;
+    let capsule = fixture.failed_capture(&original).await;
+    assert!(capsule.request().canonical().is_some());
+    let mut child = Process::start(fixture.process_path());
+    child.stop_and_retain(capsule.request());
+    let publication = capsule
+        .publish(
+            fixture.journal.as_ref(),
+            &fixture.directory,
+            &Processes::new(fixture.process_path()),
+            session(1),
+            deadline(),
+            || Ok(CHECK),
+        )
+        .await
+        .unwrap();
+    let closure = publication.confirmed().unwrap();
+    let before = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let confirmed = capsule
+        .request()
+        .confirm(
+            fixture.journal.as_ref(),
+            &fixture.directory,
+            &Processes::new(fixture.process_path()),
+            session(1),
+            deadline(),
+            || Ok(CHECK + 1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(confirmed.process(), closure.process());
+    assert_eq!(confirmed.snapshot(), &before);
+    assert_eq!(fixture.failed_boot().await, *closure.boot());
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        before
+    );
+    assert_eq!(fixture.transport.retirements.load(Ordering::Acquire), 2);
+    fixture.journal.close().await.unwrap();
+}

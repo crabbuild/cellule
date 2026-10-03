@@ -539,6 +539,13 @@ or supply current Cell rows; a replacement session remains separate. Attachment
 cannot upgrade an incomplete observation. Authenticate discovery and process
 evidence, establish replacement policy, and join all accepted work separately.
 
+`FleetFailedBootProcessRequest::confirm` also checks an already Retired boot's
+committed request/witness binding. Two equal provider reads cannot replace that
+binding or switch between the original fenced and terminal request bases. Both
+existing bases remain valid when they match the committed retirement.
+Combined successor/closure observation requires the same full head and registry
+in either attachment order; matching registry revisions alone are insufficient.
+
 This closure settles that boot's enrollment. It does not convert a recovered
 tombstone into planned withdrawal or prove replacement policy, affected-writer
 relocation, operation completion or permission to stop the physical node.

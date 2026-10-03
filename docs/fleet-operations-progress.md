@@ -4,6 +4,70 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 committed process binding checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`.
+
+`FleetFailedBootProcessRequest::confirm` now binds process evidence to an already
+Retired boot's immutable settlement digest before dependent writer/suffix/successor
+collection. Previously two equal provider reads could supply a different witness
+or request basis. Both public regressions fail on the preceding implementation
+and pass with the correction. A third case preserves an original terminal v1
+retirement. The original fenced v2 request also remains valid; no persisted or
+transport encoding changes.
+
+Two public minion cases combine fresh failed-boot closure and actual native
+original-writer successor inventory across two applications. They retain four
+successor proofs and two original recovery suffixes at one full head/registry,
+then consume both attachment orders through the public reconciler. A changed
+full head with the same registry is refused in either order. The scoped
+observation remains partial: it cannot settle roles or finish maintenance.
+The process child is still a joined lifetime stand-in, requiring separate
+physical CellNode/provider/external-work qualification.
+
+### Verification and CI
+
+All five focused cases pass. All 11 full Rust 1.99 verification commands complete
+with exit zero on the isolated source. Nine static gates pass.
+
+| Verification | Result |
+| --- | --- |
+| Full framework, all features, locked | 1,654 passed; zero failures; 36 documented ignored cases. |
+| Complete canonical minion | 264 passed; zero failures or ignores. |
+| Distinct framework/minion passes | 1,918; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | 54 passed. |
+| Framework check, Clippy and API docs | All targets/features pass; lint/docs deny warnings. |
+| Separate cookbook | Check, Clippy, warning-denied docs, all 256 tests and binary builds pass; locked. |
+| Static gates | Format, boundaries, layout, 128 Rust snippets, 1,245 Markdown links, 28 SQL/peer assertions, 570 protocol links, cookbook layout/format and diff pass. |
+
+The frozen Rust/Cargo manifest has 1,075 paths and SHA256
+`a87bb01c7430c1419bf95f3fae0669cecfccb1851b61394334f2ce92dd65c2ed`.
+Before/after failures, focused logs, exact source archive and verification
+commands/statuses are retained under `/tmp/cellule-retired-process-binding-evidence`.
+The previous isolated checkout and mounted target are reused after their prior
+readers finish; previous committed archives remain preserved.
+
+Published parent `fe378b0` is mergeable and passes workspace/MSRV, both
+object/follower capacity checks, Compose smoke, cookbook quality, contracts,
+website, fuzz, all cookbook scenarios and the fast model matrix. Both routing
+profiles are still running at the latest read. Successful capacity
+qualification does not isolate the preceding SQL-deadline/unknown-result failure.
+Workloads, proof requirements, deadlines and routing gates remain unchanged.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Complete current/new-head qualification, including both routing profiles; retain and diagnose any capacity unknown-result recurrence. |
+| 1 | Complete authenticated production observation with reader/follower replacement policy and every original native/external accepted-work barrier. Joint original-writer/closure consumption alone cannot make coverage complete. |
+| 2 | Implement SettleRoles/Finalize, join original accepted actions before terminal drain handoff, then confirm Stopped, withdrawal, boot retirement and committed operation completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider, mixed-binary and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The complete W1–W10 goal remains active. This correction enforces committed
+evidence identity; it grants no replacement policy or maintenance finalization.
+
 ## October 3 2026 fresh failed boot observation checkpoint
 
 `FleetFailedBootRetirement::confirm` freshly rechecks an already committed

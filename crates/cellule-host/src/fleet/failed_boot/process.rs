@@ -151,6 +151,8 @@ impl FleetFailedBootProcessRequest {
     /// canonical basis and provider twice, then confirms the full barrier. The
     /// read-only provider owns actual authentication and original native/external
     /// lifetime joining. Cancellation starts no replacement effect here.
+    /// An already Retired boot pins the original request/witness binding; even
+    /// two equal provider reads cannot substitute different retirement evidence.
     #[allow(clippy::too_many_arguments)]
     pub async fn confirm(
         &self,
@@ -187,10 +189,15 @@ impl FleetFailedBootProcessRequest {
         if snapshot.registry().bootstrap_revision().is_none() {
             return Err(Error::Fenced);
         }
-        records::boot(&roster, &self.boot)?;
+        let boot = records::boot(&roster, &self.boot)?;
         self.confirm_canonical(directory, claimant, now()?, deadline)
             .await?;
         let process = self.confirm_process(processes, deadline).await?;
+        if boot.status() == EnrollmentStatus::Retired {
+            // Reuse the publication comparison before allowing this evidence
+            // to feed original writer, suffix or successor collection.
+            records::result(&self.boot, &boot, records::retirement(&process))?;
+        }
         roster.confirm(journal, deadline).await?;
         self.confirm_canonical(directory, claimant, now()?, deadline)
             .await?;

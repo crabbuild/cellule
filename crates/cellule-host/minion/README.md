@@ -461,6 +461,22 @@ cargo test -p cellule-host --example fleet_operations --all-features --locked fa
 cargo test -p cellule-host --example fleet_operations --all-features --locked failed_boot_observation
 ```
 
+The `retired_process_confirmation` cases refuse a stable changed process witness
+or a switched original request basis after retirement, and preserve the original
+terminal v1 binding. Both refusal cases fail on the preceding implementation.
+The `combined_original_observation` cases combine the committed boot closure
+with four actual native successor proofs, two original recovery suffixes and
+catalogs across two applications. Both attachment orders pass through the public
+reconciler; a changed full head with the same registry is refused in either order.
+This scoped observation remains incomplete and cannot settle or finish maintenance.
+The child remains a process lifetime stand-in; physical CellNode/provider and
+external-work qualification still apply.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked retired_process_confirmation
+cargo test -p cellule-host --example fleet_operations --all-features --locked combined_original_observation
+```
+
 ## Failed reader lifetime evidence
 
 The `failed_reader_closure` cases use application-owned enrollments around two

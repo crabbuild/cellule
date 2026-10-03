@@ -9,6 +9,8 @@ use cellule_runtime::fleet::operations::{
 };
 use cellule_runtime::node::{NodeMode, NodeOperationalSample, NodePlacementCapacity, NodePressure};
 
+mod combined;
+
 impl SuccessorFixture {
     async fn collect_current(
         &self,
