@@ -55,6 +55,11 @@ sequence must match the root, and its invoice count must equal every
 acknowledged write without loss or duplication. `capacity-final-roots.tsv`
 retains this proof. The verifier applies the original strict root coverage
 check to these drained roots and reports the earlier snapshot's lag separately.
+Both snapshots retain the LTX transaction ID, checksum, and BLAKE3 digest of
+the authenticated database restored onto fresh disk. Compaction may change a
+root manifest digest at the same command sequence, but its LTX position and
+restored database bytes must remain identical. Missing position or restored
+digest evidence fails verification; earlier artifacts must be regenerated.
 This final recovery check runs outside the scheduled load windows; their
 latency, throughput, resource, overload and drain-grace limits stay unchanged.
 

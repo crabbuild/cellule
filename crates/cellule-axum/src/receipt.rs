@@ -76,7 +76,7 @@ fn unhex<const N: usize>(text: &str) -> Result<[u8; N], Error> {
         return Err(Error::Identity("invalid receipt identity length"));
     }
     let mut output = [0; N];
-    for (slot, pair) in output.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+    for (slot, pair) in output.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
         let digit = |byte| match byte {
             b'0'..=b'9' => Ok(byte - b'0'),
             b'a'..=b'f' => Ok(byte - b'a' + 10),
