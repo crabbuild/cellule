@@ -54,11 +54,16 @@ and resumption of an interrupted demo with its unchanged plan.
 [Support desk](../cookbook/apps/support-desk/README.md) adds ticket conversations,
 immutable private attachments, generation-fenced deadline Workflows, signed
 escalation Effects, retryable HTTP notification Activities, authorized
-customer/agent ingress, and a persistent idempotent receiver. Its local process
+customer/agent ingress, and a persistent idempotent receiver. Its CI process
 scenario verifies crash after receiver publication, exact-plan resume, callback
-racing resolution, and cold restoration. Twenty applications are implemented
-and runnable: nineteen are CI-qualified and Support Desk is awaiting CI
-qualification; eight more applications remain planned.
+racing resolution, and cold restoration. Usage ledger adds permanent account
+events, signed period projections, per-account close fences, complete-set
+reconciliation, native close Workflows, and content-addressed CSV reports. Its
+retained process journey recovers after Blob publication and settles delayed
+Effects after period sealing. Twenty-one applications are implemented and
+runnable: twenty are already CI-qualified, while Usage Ledger passes local
+package and process verification and awaits CI qualification; seven more
+applications remain planned.
 The five existing
 [primitive examples](../crates/cellule-app/docs/examples.md) remain runnable
 introductions. The cookbook adds complete application journeys alongside those

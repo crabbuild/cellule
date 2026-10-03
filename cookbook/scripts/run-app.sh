@@ -4,7 +4,7 @@ set -eu
 application=${1:?usage: run-app.sh APPLICATION [ARGUMENTS]}
 shift
 case "$application" in
-  taskboard|settings|file-vault|work-queue|interval-scheduler|approvals|tenant-workspace|entity-registry|quotas|reservations|webhook-delivery|media-pipeline|report-export|endpoint-monitor|checkout|provisioning|release-pipeline|project-tracker|telemetry-ingest|support-desk) ;;
+  taskboard|settings|file-vault|work-queue|interval-scheduler|approvals|tenant-workspace|entity-registry|quotas|reservations|webhook-delivery|media-pipeline|report-export|endpoint-monitor|checkout|provisioning|release-pipeline|project-tracker|telemetry-ingest|support-desk|usage-ledger) ;;
   *) echo "unknown runnable application: $application" >&2; exit 2 ;;
 esac
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

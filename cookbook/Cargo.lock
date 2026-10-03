@@ -681,6 +681,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "cellule-cookbook-usage-ledger"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blake3",
+ "cellule-app",
+ "cellule-cookbook-support",
+ "cellule-runtime",
+ "cellule-store",
+ "object_store",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "cellule-cookbook-webhook-delivery"
 version = "0.1.0"
 dependencies = [
