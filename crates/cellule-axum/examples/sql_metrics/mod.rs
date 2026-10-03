@@ -154,8 +154,8 @@ impl QueryMetrics {
             "mean_actor_queue_us": mean_us(&self.queue_ns, queries),
             "mean_worker_round_trip_us": mean_us(&self.worker_ns, queries),
             "primitive_queries": primitives,
-            "mean_primitive_query_us": mean_us(&self.primitive_ns, primitives)
-            ,"writes": {
+            "mean_primitive_query_us": mean_us(&self.primitive_ns, primitives),
+            "writes": {
                 "actor_queue": self.writes.queue.snapshot(),
                 "worker": self.writes.worker.snapshot(),
                 "preparation": self.writes.preparation.snapshot(),

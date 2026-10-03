@@ -3,6 +3,117 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn canceled_parallel_output_flushes_retain_both_jobs_and_scratch() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    let (directory, faults, host, mut writer) = fixture();
+    let jobs = Arc::new(tokio::sync::Semaphore::new(2));
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let scratch = Arc::new(tokio::sync::Semaphore::new(128));
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(counted.clone()),
+            ObjectPath::from("cancel-output-flushes"),
+            [181; 16],
+        ),
+        [182; 32],
+        [183; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(
+        host.with_job_slots(jobs.clone())
+            .with_dirty_slots(dirty.clone())
+            .with_recovery_slots(recovery.clone())
+            .with_scratch_slots(scratch.clone()),
+    );
+    let root = replica
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    writer.close().unwrap();
+    counted.reset();
+    let pause = Arc::new(Pause {
+        operation: "compaction_output_sync",
+        entered: tokio::sync::Notify::new(),
+        released: Mutex::new(false),
+        wake: std::sync::Condvar::new(),
+    });
+    let release = Release(pause.clone());
+    *faults.output_pause.lock().unwrap() = Some(pause);
+    let compacting = replica.clone();
+    let destination = directory.path().to_owned();
+    let task = tokio::spawn(async move {
+        compacting
+            .prepare_compaction(&root, 0..1, 9, &destination)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while faults.output_sync_started.load(Ordering::Relaxed) < 2 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    assert_eq!(jobs.available_permits(), 0);
+    assert_eq!(dirty.available_permits(), 0);
+    assert_eq!(recovery.available_permits(), 0);
+    assert!(scratch.available_permits() < 128);
+    assert_eq!(counted.put_requests(), 0);
+    assert_eq!(
+        std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter(|entry| entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".crab-compaction-"))
+            .count(),
+        5,
+        "cancellation must not unlink a dispatched flush's files"
+    );
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        // Cleanup also needs a job slot. Observe release without taking all
+        // slots ahead of the cleanup job we are waiting to verify.
+        while jobs.available_permits() != 2
+            || dirty.available_permits() != 1
+            || recovery.available_permits() != 1
+            || scratch.available_permits() != 128
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "cancelled preparation cannot upload"
+    );
+    assert!(!std::fs::read_dir(directory.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".crab-compaction-")
+    }));
+    replica
+        .open_root(&root)
+        .await
+        .unwrap()
+        .restore(&directory.path().join("original.sqlite"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn compaction_dependency_failure_cannot_return_metadata_proposal() {
     use cellule_store::test_support::CountingObjectStore;
 
