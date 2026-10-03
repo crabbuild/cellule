@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 485" role="img" aria-labelledby="title description">
+  <title id="title">Cellule and Axum integration</title>
+  <desc id="description">HTTP clients call application-owned Axum routes and authorization. The cellule-axum adapter uses an existing scoped application handle and retains command evidence in an application-owned journal before dispatch. The Cellule runtime executes commands and returns receipts after its durability gate. OpenAPI describes the HTTP routes.</desc>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#94a3b8"/>
+    </marker>
+    <marker id="violet-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#a78bfa"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace; fill: #e2e8f0; }
+    .name { font-size: 15px; font-weight: 600; text-anchor: middle; }
+    .detail { font-size: 12px; fill: #cbd5e1; text-anchor: middle; }
+    .label { font-size: 11px; fill: #94a3b8; text-anchor: middle; }
+    .region { font-size: 13px; font-weight: 600; }
+    .connection { fill: none; stroke: #94a3b8; stroke-width: 1.5; marker-end: url(#arrow); }
+  </style>
+  <rect width="1080" height="485" fill="#0f172a"/>
+  <rect width="1080" height="485" fill="url(#grid)"/>
+
+  <rect x="220" y="108" width="245" height="309" rx="12" fill="none" stroke="#fbbf24" stroke-dasharray="8 4"/>
+  <rect x="505" y="108" width="550" height="309" rx="12" fill="none" stroke="#34d399" stroke-dasharray="8 4"/>
+
+  <path class="connection" d="M 180 198 H 240"/>
+  <path class="connection" d="M 445 198 H 525"/>
+  <path class="connection" d="M 740 198 H 815"/>
+  <path d="M 632 236 V 340 H 445" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#violet-arrow)"/>
+  <path d="M 925 236 V 305" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#violet-arrow)"/>
+
+  <rect x="40" y="160" width="140" height="76" rx="8" fill="#0f172a"/>
+  <rect x="240" y="160" width="205" height="76" rx="8" fill="#0f172a"/>
+  <rect x="525" y="160" width="215" height="76" rx="8" fill="#0f172a"/>
+  <rect x="815" y="160" width="220" height="76" rx="8" fill="#0f172a"/>
+  <rect x="240" y="305" width="205" height="70" rx="8" fill="#0f172a"/>
+  <rect x="815" y="305" width="220" height="70" rx="8" fill="#0f172a"/>
+
+  <rect x="40" y="160" width="140" height="76" rx="8" fill="#083344" fill-opacity="0.5" stroke="#22d3ee" stroke-width="1.5"/>
+  <rect x="240" y="160" width="205" height="76" rx="8" fill="#881337" fill-opacity="0.35" stroke="#fb7185" stroke-width="1.5"/>
+  <rect x="525" y="160" width="215" height="76" rx="8" fill="#065f46" fill-opacity="0.4" stroke="#34d399" stroke-width="1.5"/>
+  <rect x="815" y="160" width="220" height="76" rx="8" fill="#065f46" fill-opacity="0.4" stroke="#34d399" stroke-width="1.5"/>
+  <rect x="240" y="305" width="205" height="70" rx="8" fill="#4c1d95" fill-opacity="0.4" stroke="#a78bfa" stroke-width="1.5"/>
+  <rect x="815" y="305" width="220" height="70" rx="8" fill="#4c1d95" fill-opacity="0.4" stroke="#a78bfa" stroke-width="1.5"/>
+
+  <text class="region" x="240" y="134" fill="#fbbf24" style="fill:#fbbf24">Your application</text>
+  <text class="region" x="525" y="134" fill="#34d399" style="fill:#34d399">Cellule framework</text>
+  <text class="label" x="210" y="184">HTTP</text>
+  <text class="label" x="485" y="184">scope</text>
+  <text class="label" x="777" y="184">typed</text>
+
+  <text class="name" x="110" y="190">Client / SDK</text>
+  <text class="detail" x="110" y="213">JSON + receipt</text>
+  <text class="name" x="342" y="190">Axum routes</text>
+  <text class="detail" x="342" y="213">Authorize caller + target</text>
+  <text class="name" x="632" y="190">cellule-axum</text>
+  <text class="detail" x="632" y="213">Existing scoped handle</text>
+  <text class="name" x="925" y="190">Cellule runtime</text>
+  <text class="detail" x="925" y="213">Execute + return receipt</text>
+
+  <text class="detail" x="535" y="289" style="fill:#a78bfa">retain before dispatch</text>
+  <text class="name" x="342" y="332">Recovery journal</text>
+  <text class="detail" x="342" y="354">Snapshot + original bytes</text>
+  <text class="label" x="859" y="270">success requires</text>
+  <text class="name" x="925" y="332">Durability gate</text>
+  <text class="detail" x="925" y="354">Publication / follower proof</text>
+  <text class="detail" x="632" y="388">Optional: routes + OpenAPI</text>
+  <text class="label" x="342" y="399">Listener, providers, shutdown</text>
+
+  <circle cx="42" cy="450" r="5" fill="#fbbf24"/>
+  <text x="55" y="454" font-size="12">Application policy and lifecycle</text>
+  <circle cx="425" cy="450" r="5" fill="#34d399"/>
+  <text x="438" y="454" font-size="12">Typed integration and execution</text>
+  <circle cx="800" cy="450" r="5" fill="#a78bfa"/>
+  <text x="813" y="454" font-size="12">Durable evidence</text>
+  <text x="35" y="42" font-size="22" font-weight="700">One application handle, two HTTP integration paths</text>
+  <text x="35" y="70" font-size="13" style="fill:#94a3b8">Manual handlers or generated typed routes share the same runtime contracts.</text>
+</svg>

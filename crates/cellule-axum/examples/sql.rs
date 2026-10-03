@@ -25,7 +25,7 @@ use axum::{
     routing::{get, post},
 };
 use cellule_app::{ApplicationHandle, CellApplication, CellType};
-use cellule_axum::{CellJson, Cellule, HttpError};
+use cellule_axum::{CellJson, Cellule, HttpError, MinimumReceipt};
 use cellule_ltx::{CellReplica, DiskBudget, Host, Limits};
 use cellule_runtime::cell::catalog::{CatalogEntry, CellCatalog};
 use cellule_runtime::control::{Owner, authority::CellAuthority};
@@ -217,8 +217,9 @@ async fn get_order(
     app: Cellule<OrdersApp>,
     State(state): State<ServiceState>,
     HttpPath(id): HttpPath<i64>,
+    MinimumReceipt(minimum): MinimumReceipt,
 ) -> Result<CellJson<Option<Order>>, HttpError> {
-    read_order(&app, state.target(id)?, id, None).await
+    read_order(&app, state.target(id)?, id, minimum).await
 }
 
 async fn read_order(

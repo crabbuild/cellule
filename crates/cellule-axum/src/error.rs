@@ -8,7 +8,7 @@ use axum::{
 use cellule_runtime::{Error, client::InvocationError};
 use serde::Serialize;
 
-use crate::response::{ReceiptBody, hex};
+use crate::{ReceiptDto, response::hex};
 
 /// An outcome-aware HTTP error that retains its original Rust source.
 ///
@@ -24,11 +24,59 @@ use crate::response::{ReceiptBody, hex};
 #[derive(Debug)]
 pub struct HttpError {
     status: StatusCode,
-    body: ErrorBody,
+    body: Box<ErrorDto>,
     source: Box<dyn StdError + Send + Sync>,
 }
 
 impl HttpError {
+    pub(crate) fn request<E: StdError + Send + Sync + 'static>(
+        status: StatusCode,
+        code: &'static str,
+        message: &'static str,
+        source: E,
+    ) -> Self {
+        Self {
+            status,
+            body: Box::new(ErrorDto::new(code, message)),
+            source: Box::new(source),
+        }
+    }
+
+    pub(crate) fn invalid_request<E: StdError + Send + Sync + 'static>(source: E) -> Self {
+        Self::request(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Invalid Cell request.",
+            source,
+        )
+    }
+
+    /// Retains an application integration failure with a safe `internal_error` reply.
+    ///
+    /// Do not use this to replace an invocation failure: convert that failure
+    /// directly so its pending or committed evidence stays in the public reply.
+    pub fn internal<E: StdError + Send + Sync + 'static>(source: E) -> Self {
+        Self::request(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Cell operation failed.",
+            source,
+        )
+    }
+
+    pub(crate) fn published<E: StdError + Send + Sync + 'static>(
+        receipt: cellule_runtime::Receipt,
+        source: E,
+    ) -> Self {
+        let mut error = Self::request(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid_published_result",
+            "Published output could not be converted; recover the original result before retrying.",
+            source,
+        );
+        error.body.receipt = Some(receipt.into());
+        error
+    }
     /// Returns the HTTP status chosen for this failure.
     #[must_use]
     pub const fn status(&self) -> StatusCode {
@@ -68,7 +116,7 @@ impl From<Error> for HttpError {
         let (status, body) = runtime_response(&error);
         Self {
             status,
-            body,
+            body: Box::new(body),
             source: Box::new(error),
         }
     }
@@ -79,27 +127,27 @@ impl<T: Send + Sync + 'static> From<InvocationError<T>> for HttpError {
         let (status, body) = match &error {
             InvocationError::NotStarted(source) => runtime_response(source),
             InvocationError::Pending(pending) => {
-                let mut body = ErrorBody::unknown();
+                let mut body = ErrorDto::unknown();
                 body.request_id = Some(hex(pending.identity().request_id.as_bytes()));
                 (StatusCode::SERVICE_UNAVAILABLE, body)
             }
             InvocationError::Rejected(committed) => {
-                let mut body = ErrorBody::new("command_rejected", "Command was durably rejected.");
-                body.receipt = Some(Box::new(committed.receipt.into()));
+                let mut body = ErrorDto::new("command_rejected", "Command was durably rejected.");
+                body.receipt = Some(committed.receipt.into());
                 (StatusCode::CONFLICT, body)
             }
             InvocationError::InvalidPublishedResult { receipt, .. } => {
-                let mut body = ErrorBody::new(
+                let mut body = ErrorDto::new(
                     "invalid_published_result",
                     "Published output could not be decoded; recover the original result before retrying.",
                 );
-                body.receipt = Some(Box::new((*receipt).into()));
+                body.receipt = Some((*receipt).into());
                 (StatusCode::INTERNAL_SERVER_ERROR, body)
             }
         };
         Self {
             status,
-            body,
+            body: Box::new(body),
             source: Box::new(error),
         }
     }
@@ -118,17 +166,28 @@ impl IntoResponse for HttpError {
     }
 }
 
+/// Public HTTP error envelope; source errors remain available only in Rust.
 #[derive(Debug, Serialize)]
-struct ErrorBody {
-    code: &'static str,
-    message: &'static str,
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ErrorDto {
+    /// Stable machine-readable outcome or request error code.
+    pub code: &'static str,
+    /// Safe public explanation, without source-error details.
+    pub message: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    request_id: Option<String>,
+    /// Original mutation identity when the outcome is uncertain.
+    #[cfg_attr(
+        feature = "openapi",
+        schema(nullable = false, pattern = "^[0-9a-f]{32}$")
+    )]
+    pub request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    receipt: Option<Box<ReceiptBody>>,
+    /// Published observation when an outcome already exists.
+    #[cfg_attr(feature = "openapi", schema(inline, nullable = false))]
+    pub receipt: Option<ReceiptDto>,
 }
 
-impl ErrorBody {
+impl ErrorDto {
     fn new(code: &'static str, message: &'static str) -> Self {
         Self {
             code,
@@ -146,30 +205,30 @@ impl ErrorBody {
     }
 }
 
-fn runtime_response(error: &Error) -> (StatusCode, ErrorBody) {
+fn runtime_response(error: &Error) -> (StatusCode, ErrorDto) {
     match error {
         Error::Identity(_) | Error::Command(_) => (
             StatusCode::BAD_REQUEST,
-            ErrorBody::new("invalid_request", "Invalid Cell request."),
+            ErrorDto::new("invalid_request", "Invalid Cell request."),
         ),
         Error::RequestConflict => (
             StatusCode::CONFLICT,
-            ErrorBody::new(
+            ErrorDto::new(
                 "request_conflict",
                 "Request identity was already used for different command bytes.",
             ),
         ),
         Error::Deadline => (
             StatusCode::GATEWAY_TIMEOUT,
-            ErrorBody::new("deadline_exceeded", "Cell invocation deadline exceeded."),
+            ErrorDto::new("deadline_exceeded", "Cell invocation deadline exceeded."),
         ),
         Error::OutcomeUnknown { request_id, .. } => {
-            let mut body = ErrorBody::unknown();
+            let mut body = ErrorDto::unknown();
             body.request_id = Some(hex(request_id.as_bytes()));
             (StatusCode::SERVICE_UNAVAILABLE, body)
         }
         Error::EffectOutcomeUnknown { .. } | Error::PeerTransportUnknown { .. } => {
-            (StatusCode::SERVICE_UNAVAILABLE, ErrorBody::unknown())
+            (StatusCode::SERVICE_UNAVAILABLE, ErrorDto::unknown())
         }
         Error::Capacity(_)
         | Error::RuntimeClosed
@@ -181,11 +240,11 @@ fn runtime_response(error: &Error) -> (StatusCode, ErrorBody) {
         | Error::ReplicaUnavailable
         | Error::PeerTransport { .. } => (
             StatusCode::SERVICE_UNAVAILABLE,
-            ErrorBody::new("unavailable", "Cell is temporarily unavailable."),
+            ErrorDto::new("unavailable", "Cell is temporarily unavailable."),
         ),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            ErrorBody::new("internal_error", "Cell operation failed."),
+            ErrorDto::new("internal_error", "Cell operation failed."),
         ),
     }
 }

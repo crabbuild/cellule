@@ -224,24 +224,34 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         );
         writeln!(
             roots,
-            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest"
+            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest\troot_txid\troot_checksum\trestored_digest"
         )
         .unwrap();
-        for entity in 0..expected.len() {
+        for (entity, expected_count) in expected.iter().enumerate() {
             let target = entity_target(&application, entity);
             let control = authority.load(target.cell_id()).await.unwrap().unwrap();
             let owner = control.value().owner.as_ref().unwrap();
             let node = entity / ENTITIES_PER_NODE;
             assert_eq!(owner.session, node_session(node));
             let root = control.value().root.as_ref().unwrap();
+            let restored = super::drain::restore_root_evidence(
+                &layout,
+                &application,
+                &control.value().ltx_root().unwrap(),
+            )
+            .await;
+            assert_eq!(restored.count, *expected_count);
             writeln!(
                 roots,
-                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}",
+                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}\t{}\t{}\t{:?}",
                 target.cell_id(),
                 control.value().epoch,
                 control.value().incarnation,
                 root.commit_sequence,
-                root.digest
+                root.digest,
+                root.txid,
+                root.checksum,
+                restored.digest,
             )
             .unwrap();
         }
