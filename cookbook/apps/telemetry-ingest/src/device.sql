@@ -1,0 +1,14 @@
+CREATE TABLE device (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ device_key TEXT NOT NULL UNIQUE,
+ start_ms INTEGER NOT NULL CHECK(start_ms>=60000 AND start_ms%60000=0),
+ minutes INTEGER NOT NULL CHECK(minutes BETWEEN 1 AND 16),
+ revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 129),
+ effect_id BLOB NOT NULL CHECK(length(effect_id)=32)
+) STRICT;
+CREATE TABLE events (
+ sequence INTEGER PRIMARY KEY CHECK(sequence>0 AND sequence<9223372036854775807),
+ at_ms INTEGER NOT NULL CHECK(at_ms>0 AND at_ms<9223372036854775807),
+ value_milli INTEGER NOT NULL CHECK(value_milli BETWEEN -1000000 AND 1000000),
+ reordered INTEGER NOT NULL CHECK(reordered IN (0,1))
+) STRICT;

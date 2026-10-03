@@ -1,0 +1,35 @@
+[package]
+name = "cellule-cookbook-support-desk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Ticket conversations, immutable attachments, generation-fenced deadlines, and notification Activities"
+
+[dependencies]
+cellule-app.workspace = true
+cellule-cookbook-support.workspace = true
+cellule-runtime.workspace = true
+cellule-store.workspace = true
+blake3.workspace = true
+object_store.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+url.workspace = true
+reqwest.workspace = true
+axum.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+
+[lints]
+workspace = true

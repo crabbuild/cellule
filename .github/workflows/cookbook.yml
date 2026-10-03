@@ -1,0 +1,118 @@
+name: Cellule cookbook applications
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cookbook.yml"
+      - "cookbook/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      application-matrix: ${{ steps.applications.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.0
+          components: rustfmt, clippy
+      - name: Configure isolated build directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cellule-cookbook-target" >> "$GITHUB_ENV"
+      - name: Record source and runnable application matrix
+        id: applications
+        run: |
+          mkdir -p "$RUNNER_TEMP/cookbook-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/cookbook-evidence/source-revision.txt"
+          shasum -a 256 cookbook/Cargo.lock > "$RUNNER_TEMP/cookbook-evidence/cargo-lock.sha256"
+          python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          import tomllib
+          root = Path("cookbook")
+          members = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["members"]
+          applications = sorted(Path(member).name for member in members if Path(member).parent == Path("apps"))
+          print("matrix=" + json.dumps({"application": applications}, separators=(",", ":")))
+          PYTHON
+      - name: Check cookbook boundaries and formatting
+        run: |
+          python3 cookbook/scripts/check-layout.py
+          cargo fmt --manifest-path cookbook/Cargo.toml --all --check
+      - name: Check, lint, document, and test applications
+        run: |
+          cargo check --manifest-path cookbook/Cargo.toml --workspace --all-targets --locked
+          cargo clippy --manifest-path cookbook/Cargo.toml --workspace --all-targets --locked -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path cookbook/Cargo.toml --workspace --no-deps --locked
+          cargo test --manifest-path cookbook/Cargo.toml --workspace --locked
+      - name: Build runnable binaries
+        run: cargo build --manifest-path cookbook/Cargo.toml --workspace --bins --locked
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cellule-cookbook-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cookbook-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  scenarios:
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.quality.outputs.application-matrix) }}
+    env:
+      COOKBOOK_APPLICATION: ${{ matrix.application }}
+      COMPOSE_PROJECT_NAME: cellule-cookbook-${{ matrix.application }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.0
+      - name: Configure isolated build directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cellule-cookbook-target" >> "$GITHUB_ENV"
+      - name: Record source and build selected binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/cookbook-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/cookbook-evidence/source-revision.txt"
+          shasum -a 256 cookbook/Cargo.lock > "$RUNNER_TEMP/cookbook-evidence/cargo-lock.sha256"
+          cargo build --manifest-path cookbook/Cargo.toml -p "cellule-cookbook-$COOKBOOK_APPLICATION" --bin "cellule-cookbook-$COOKBOOK_APPLICATION" --locked
+      - name: Verify persistent process journey
+        run: |
+          sh cookbook/scripts/local-storage.sh up
+          # Versioned scenarios must establish the predecessor before a demo
+          # opens the current inventory in this retained storage installation.
+          python3 "cookbook/scenarios/$COOKBOOK_APPLICATION.py" "$CARGO_TARGET_DIR/debug/cellule-cookbook-$COOKBOOK_APPLICATION" \
+            > "$RUNNER_TEMP/cookbook-evidence/$COOKBOOK_APPLICATION-process.json"
+          "$CARGO_TARGET_DIR/debug/cellule-cookbook-$COOKBOOK_APPLICATION" demo "$RUNNER_TEMP/$COOKBOOK_APPLICATION-demo" \
+            > "$RUNNER_TEMP/cookbook-evidence/$COOKBOOK_APPLICATION-demo.jsonl"
+      - name: Retain storage diagnostics and stop containers
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/cookbook-evidence"
+          log_status=0
+          docker compose -f cookbook/compose.yaml logs --no-color \
+            > "$RUNNER_TEMP/cookbook-evidence/storage.log" 2>&1 || log_status=$?
+          sh cookbook/scripts/local-storage.sh down
+          exit "$log_status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cellule-cookbook-${{ matrix.application }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cookbook-evidence/
+          if-no-files-found: error
+          retention-days: 7

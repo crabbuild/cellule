@@ -37,6 +37,7 @@ cellule-host → cellule-app → cellule-runtime → cellule-ltx → cellule-sto
 | Exercise public primitives and recovery | [Application integration suite](../crates/cellule-app/tests/integration.rs) and [primitive suite](../crates/cellule-app/tests/primitives.rs) |
 | Understand shutdown behavior | [Host lifecycle tests](../crates/cellule-host/tests) |
 | Study qualification and measured evidence | [Qualification profiles](../crates/cellule-runtime/qualification/README.md) |
+| Plan complete application crates and their acceptance criteria | [Application cookbook catalog](cookbook.md) |
 
 ## Verification routes
 

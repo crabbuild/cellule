@@ -1,0 +1,3 @@
+CREATE TABLE products(sku TEXT PRIMARY KEY,total INTEGER NOT NULL CHECK(total BETWEEN 1 AND 10000),available INTEGER NOT NULL CHECK(available BETWEEN 0 AND total),held INTEGER NOT NULL CHECK(held BETWEEN 0 AND total),sold INTEGER NOT NULL CHECK(sold BETWEEN 0 AND total),CHECK(available+held+sold=total)) STRICT;
+CREATE TABLE reservations(order_id BLOB PRIMARY KEY CHECK(length(order_id)=16),reservation BLOB NOT NULL CHECK(length(reservation)<=4096)) STRICT;
+CREATE TABLE stock_messages(message_key BLOB PRIMARY KEY CHECK(length(message_key)=32),call_bytes BLOB NOT NULL CHECK(length(call_bytes)<=4096),reply_bytes BLOB NOT NULL CHECK(length(reply_bytes)<=4096)) STRICT;
