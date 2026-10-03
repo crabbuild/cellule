@@ -203,6 +203,8 @@ impl QueuedOperation {
 }
 
 pub(super) struct QueuedQuery {
+    pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
+    pub(super) queued_at: std::time::Instant,
     pub(super) cell: CellId,
     pub(super) admission: Arc<CellAdmission>,
     pub(super) max_result_bytes: usize,

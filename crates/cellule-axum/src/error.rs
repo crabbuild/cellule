@@ -85,7 +85,7 @@ impl<T: Send + Sync + 'static> From<InvocationError<T>> for HttpError {
             }
             InvocationError::Rejected(committed) => {
                 let mut body = ErrorBody::new("command_rejected", "Command was durably rejected.");
-                body.receipt = Some(committed.receipt.into());
+                body.receipt = Some(Box::new(committed.receipt.into()));
                 (StatusCode::CONFLICT, body)
             }
             InvocationError::InvalidPublishedResult { receipt, .. } => {
@@ -93,7 +93,7 @@ impl<T: Send + Sync + 'static> From<InvocationError<T>> for HttpError {
                     "invalid_published_result",
                     "Published output could not be decoded; recover the original result before retrying.",
                 );
-                body.receipt = Some((*receipt).into());
+                body.receipt = Some(Box::new((*receipt).into()));
                 (StatusCode::INTERNAL_SERVER_ERROR, body)
             }
         };
@@ -125,7 +125,7 @@ struct ErrorBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    receipt: Option<ReceiptBody>,
+    receipt: Option<Box<ReceiptBody>>,
 }
 
 impl ErrorBody {

@@ -650,6 +650,8 @@ pub(super) async fn execute_query(
     generation: u64,
     effect_id: u64,
 ) -> TaskResult {
+    let queue_wait = query.queued_at.elapsed();
+    let execution_started = std::time::Instant::now();
     let deadline = SqlDeadline::new(std::time::Instant::now() + SQL_WALL_DEADLINE);
     let result = match query.handler.take() {
         Some(handler) => {
@@ -665,6 +667,9 @@ pub(super) async fn execute_query(
                 Err(_) => {
                     let fenced = !deadline.cancel_queued();
                     tracing::warn!(cell = ?query.cell, sql_started = fenced, "Cell SQL query deadline expired");
+                    query
+                        .telemetry
+                        .query_execution(queue_wait, execution_started.elapsed(), false);
                     if fenced {
                         interrupt.interrupt();
                         fence_admission(&query.admission);
@@ -687,6 +692,9 @@ pub(super) async fn execute_query(
         }
         None => Err(Error::Fenced),
     };
+    query
+        .telemetry
+        .query_execution(queue_wait, execution_started.elapsed(), result.is_ok());
     let fenced = result.is_err()
         && !deadline.cancelled()
         && !matches!(pool.state(query.cell).await, Ok(WorkerState::Ready));

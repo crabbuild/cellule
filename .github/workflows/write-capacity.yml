@@ -13,6 +13,20 @@ on:
       - "crates/cellule-ltx/**"
       - "crates/cellule-store/**"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Qualification or paired Axum read measurements
+        type: choice
+        default: qualification
+        options: [qualification, axum-reads]
+      baseline_ref:
+        description: Baseline with the multicell Axum SQL example
+        type: string
+        default: a277e5282badab55ceb58433fdddf0dee4dc8542
+      read_seconds:
+        description: Seconds per steady-state read phase (30 to 120)
+        type: number
+        default: 60
 
 permissions:
   contents: read
@@ -23,6 +37,7 @@ concurrency:
 
 jobs:
   object-proof:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode != 'axum-reads'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
@@ -82,7 +97,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  axum-reads:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'axum-reads'
+    uses: ./.github/workflows/axum-performance.yml
+    with:
+      baseline_ref: ${{ inputs.baseline_ref }}
+      read_seconds: ${{ fromJSON(format('{0}', inputs.read_seconds || 60)) }}
+
   follower-proof:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode != 'axum-reads'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:

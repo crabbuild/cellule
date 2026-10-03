@@ -208,6 +208,7 @@ impl SqlWorkerPool {
     /// The default covers the configured writer count. Hosts admitting read
     /// replicas must also budget their snapshots, including overlapping refreshes.
     /// This is reserved native memory, not an RSS limit; retained cuts are separate.
+    /// Each writer reserves 88 KiB, including three 8 KiB SQLite lookaside arenas.
     /// Zero or a ceiling below existing reservations returns a capacity error.
     pub fn with_native_memory_limit(self, bytes: usize) -> Result<Self> {
         self.inner.resources.set_resident_limit(bytes)?;
