@@ -162,6 +162,7 @@ class Service:
         return {
             "milliseconds": (time.perf_counter() - started) * 1000,
             "cells": drained,
+            "query_metrics": next((json.loads(line.removeprefix("Query metrics: ")) for line in self.log.read_text().splitlines() if line.startswith("Query metrics: ")), None),
         }
 
     def abort(self):
@@ -173,6 +174,55 @@ class Service:
                 self.process.kill()
                 self.process.wait(timeout=10)
         self.output.close()
+
+
+def process_usage(pid):
+    fields = subprocess.check_output(["ps", "-p", str(pid), "-o", "time=", "-o", "rss="], text=True).split()
+    cpu = fields[0]
+    days, cpu = cpu.split("-", 1) if "-" in cpu else ("0", cpu)
+    seconds = float(days) * 86400
+    for index, value in enumerate(reversed(cpu.split(":"))):
+        seconds += float(value) * 60 ** index
+    return {"cpu_seconds": seconds, "rss_bytes": int(fields[1]) * 1024}
+
+
+def steady_reads(args, directory, service, concurrency, acknowledged):
+    config = {
+        "address": service.address, "concurrency": concurrency,
+        "seconds": args.read_seconds, "warmup_seconds": args.read_warmup_seconds,
+        "orders": [body for _, body in acknowledged],
+    }
+    config_path = directory / "steady-config.json"
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    before = process_usage(service.process.pid)
+    profiler = None
+    if args.sample and platform.system() == "Darwin":
+        profiler = subprocess.Popen(["/usr/bin/sample", str(service.process.pid), "10", "-file", str(directory / "server-sample.txt")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    started = time.perf_counter()
+    try:
+        load = subprocess.run(["/usr/bin/time", "-p", str(args.read_driver), str(config_path)], capture_output=True, text=True, timeout=args.read_seconds + args.read_warmup_seconds + 90)
+    finally:
+        if profiler is not None:
+            profiler.wait(timeout=30)
+    wall = time.perf_counter() - started
+    after = process_usage(service.process.pid)
+    (directory / "steady-driver.stderr").write_text(load.stderr)
+    (directory / "steady-driver.stdout").write_text(load.stdout)
+    require(load.returncode == 0, f"steady-state driver failed; see {directory}")
+    result = json.loads(load.stdout)
+    driver_cpu = sum(float(value) for value in re.findall(r"^(?:user|sys)\s+([\d.]+)$", load.stderr, re.MULTILINE))
+    result["resources"] = {
+        "window_seconds_including_warmup": wall,
+        "server_cpu_seconds": after["cpu_seconds"] - before["cpu_seconds"],
+        "server_cpu_cores": (after["cpu_seconds"] - before["cpu_seconds"]) / wall,
+        "driver_cpu_seconds": driver_cpu, "driver_cpu_cores": driver_cpu / wall,
+        "server_cpu_us_per_read": (after["cpu_seconds"] - before["cpu_seconds"]) * 1_000_000 / (result["attempts"] + result["warmup_successes"]),
+        "server_rss_before_bytes": before["rss_bytes"], "server_rss_after_bytes": after["rss_bytes"],
+        "sample_requested": args.sample,
+    }
+    (directory / "steady-reads.json").write_text(json.dumps(result, indent=2) + "\n")
+    require(result["errors"] == 0 and all(result["per_order_successes"]), "steady-state reads failed validation or coverage")
+    return result
 
 
 def verify_active_owner_refused(binary, directory, prefix, cells, workers):
@@ -188,7 +238,8 @@ def verify_active_owner_refused(binary, directory, prefix, cells, workers):
 
 def point(args, directory, repeat, concurrency, cells):
     directory.mkdir()
-    prefix = f"{os.environ['CELLULE_TEST_PREFIX']}/r{repeat}-n{cells}-c{concurrency}"
+    suffix = f"-{args.variant}" if args.baseline_binary else ""
+    prefix = f"{os.environ['CELLULE_TEST_PREFIX']}/r{repeat}-n{cells}-c{concurrency}{suffix}"
     service = Service(args.binary, directory, prefix, "initial", cells, args.workers)
     acknowledged = []
     try:
@@ -245,6 +296,7 @@ def point(args, directory, repeat, concurrency, cells):
         (directory / "reads.json").write_text(json.dumps(reads, indent=2) + "\n")
         read_summary = summary(reads, elapsed, 200)
         require(read_summary["errors"] == 0, "read errors")
+        steady = steady_reads(args, directory, service, concurrency, acknowledged) if args.read_seconds else None
 
         def replay(connection, item):
             envelope, original = item
@@ -305,8 +357,8 @@ def point(args, directory, repeat, concurrency, cells):
             require(item["epoch"] > previous["epoch"] and item["cell"] == previous["cell"], "recovery did not acquire the Cell's new fence")
             require(item["commit_sequence"] == maxima[item["shard"]] + 1, "recovery shutdown root is wrong")
         result = {
-            "repeat": repeat, "concurrency": concurrency, "cells": cells, "workers": args.workers, "prefix": prefix,
-            "writes": write_summary, "reads": read_summary,
+            "repeat": repeat, "concurrency": concurrency, "cells": cells, "workers": args.workers, "prefix": prefix, "variant": args.variant,
+            "writes": write_summary, "reads": read_summary, "steady_reads": steady,
             "verification": {
                 "warmup_writes": args.warmup, "acknowledged_rows": len(acknowledged),
                 "live_exact_retries": len(replayed), "conflicts": conflicts,
@@ -336,6 +388,7 @@ def positive(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--baseline-binary", type=Path, help="alternate baseline/candidate order on each repeat")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=positive, default=3)
     parser.add_argument("--concurrency", type=positive, nargs="+", default=[1, 4, 16])
@@ -344,8 +397,19 @@ def main():
     parser.add_argument("--writes", type=positive, default=300)
     parser.add_argument("--reads", type=positive, default=1500)
     parser.add_argument("--warmup", type=positive, default=20)
+    parser.add_argument("--read-driver", type=Path, help="release http_load example binary")
+    parser.add_argument("--read-seconds", type=positive, help="steady-state read duration, up to 3600 seconds")
+    parser.add_argument("--read-warmup-seconds", type=positive, default=5)
+    parser.add_argument("--sample", action="store_true", help="capture a ten-second macOS server stack sample")
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
+    if args.baseline_binary:
+        args.baseline_binary = args.baseline_binary.resolve(strict=True)
+    require(bool(args.read_driver) == bool(args.read_seconds), "read driver and duration must be supplied together")
+    if args.read_driver:
+        args.read_driver = args.read_driver.resolve(strict=True)
+        require(args.read_seconds <= 3600 and args.read_warmup_seconds <= 60, "read duration/warmup exceed driver bounds")
+        require(max(args.concurrency) <= 128, "steady-state clients are bounded at 128")
     require(len(set(args.concurrency)) == len(args.concurrency), "concurrency points must be distinct")
     require(len(set(args.cells)) == len(args.cells), "Cell counts must be distinct")
     require(max(args.cells) <= 16 and args.workers <= 16, "Cells and workers are bounded at 16")
@@ -356,6 +420,14 @@ def main():
     args.output.mkdir(parents=True)
     with args.binary.open("rb") as binary:
         binary_digest = hashlib.file_digest(binary, "sha256").hexdigest()
+    driver_digest = None
+    if args.read_driver:
+        with args.read_driver.open("rb") as driver:
+            driver_digest = hashlib.file_digest(driver, "sha256").hexdigest()
+    baseline_digest = None
+    if args.baseline_binary:
+        with args.baseline_binary.open("rb") as binary:
+            baseline_digest = hashlib.file_digest(binary, "sha256").hexdigest()
     metadata = {
         "started_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "platform": platform.platform(), "cpu_count": os.cpu_count(),
@@ -363,17 +435,30 @@ def main():
         "endpoint": os.environ["CELLULE_TEST_ENDPOINT"], "bucket": os.environ["CELLULE_TEST_BUCKET"],
         "writes": args.writes, "reads": args.reads, "warmup": args.warmup,
         "repeats": args.repeats, "concurrency": args.concurrency, "cells": args.cells, "workers": args.workers,
+        "read_seconds": args.read_seconds, "read_warmup_seconds": args.read_warmup_seconds,
+        "read_driver_sha256": driver_digest, "baseline_binary_sha256": baseline_digest,
+        "http_tokio_workers": os.environ.get("TOKIO_WORKER_THREADS", "system_default"),
         "workload": "order_id mod active Cells; POST inserts then receipt-bound SELECT; GET owner-ordered SELECT; closed loop",
     }
     (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     results = []
+    candidate_binary = args.binary
     for repeat in range(1, args.repeats + 1):
         for concurrency in args.concurrency:
             for cells in args.cells:
-                result = point(args, args.output / f"r{repeat}-n{cells}-c{concurrency}", repeat, concurrency, cells)
-                results.append(result)
-                (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-                print(json.dumps({"repeat": repeat, "concurrency": concurrency, "cells": cells, "workers": args.workers, "writes": result["writes"], "reads": result["reads"], "verified": True}), flush=True)
+                variants = [("candidate", candidate_binary)]
+                if args.baseline_binary:
+                    variants.insert(0, ("baseline", args.baseline_binary))
+                    if repeat % 2 == 0:
+                        variants.reverse()
+                for variant, binary in variants:
+                    args.variant, args.binary = variant, binary
+                    suffix = f"-{variant}" if args.baseline_binary else ""
+                    result = point(args, args.output / f"r{repeat}-n{cells}-c{concurrency}{suffix}", repeat, concurrency, cells)
+                    results.append(result)
+                    (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+                    steady = {key: value for key, value in (result["steady_reads"] or {}).items() if key != "per_order_successes"}
+                    print(json.dumps({"repeat": repeat, "concurrency": concurrency, "cells": cells, "workers": args.workers, "variant": variant, "writes": result["writes"], "reads": result["reads"], "steady_reads": steady, "verified": True}), flush=True)
 
 
 if __name__ == "__main__":

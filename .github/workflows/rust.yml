@@ -92,12 +92,14 @@ jobs:
           CELLULE_TEST_BUCKET: cellule-ci
           CELLULE_TEST_PREFIX: axum-http-smoke
         run: |
-          cargo build -p cellule-axum --example sql --locked
+          cargo build -p cellule-axum --examples --locked
           python3 scripts/bench-axum-rustfs.py \
             --binary target/debug/examples/sql \
             --output "$RUNNER_TEMP/cellule-axum-http" \
             --repeats 1 --cells 1 4 --workers 4 --concurrency 1 4 \
-            --warmup 4 --writes 8 --reads 16
+            --warmup 4 --writes 8 --reads 16 \
+            --read-driver target/debug/examples/http_load \
+            --read-warmup-seconds 1 --read-seconds 2
       - name: Retain Axum HTTP verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

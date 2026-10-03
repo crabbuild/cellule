@@ -44,6 +44,8 @@ use object_store::{memory::InMemory, path::Path};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod sql_metrics;
+
 const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
 const MAX_CELLS: u32 = 16;
 const SCHEMA: &str = "CREATE TABLE orders (id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
@@ -356,7 +358,9 @@ async fn main() -> ExampleResult<()> {
         session,
         Host::default().with_local_disk_budget(DiskBudget::new(1 << 30)),
     )?;
+    let query_metrics = Arc::new(sql_metrics::QueryMetrics::default());
     let result: ExampleResult<()> = async {
+        runtime.install_telemetry(query_metrics.clone())?;
         let mut handles = Vec::with_capacity(targets.len());
         let mut restored = 0;
         for (shard, target) in targets.iter().enumerate() {
@@ -413,7 +417,8 @@ async fn main() -> ExampleResult<()> {
             handles.push(handle);
             restored += usize::from(restoring);
         }
-        let client = CellClient::local_many(registry, handles)?;
+        let client =
+            CellClient::local_many_with_telemetry(registry, handles, runtime.telemetry_handle())?;
         let typed =
             ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id)?;
         let router = Router::new()
@@ -453,6 +458,7 @@ async fn main() -> ExampleResult<()> {
     let shutdown = runtime.shutdown().await;
     result?;
     shutdown?;
+    println!("Query metrics: {}", query_metrics.snapshot());
     for (shard, target) in targets.iter().enumerate() {
         let drained = authority
             .load(target.cell_id())

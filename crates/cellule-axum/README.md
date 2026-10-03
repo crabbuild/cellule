@@ -160,7 +160,7 @@ task_dir="$HOME/Workspace/crabbuild-target/cellule-axum-rustfs-$(date +%s)"
 mkdir -p "$task_dir/source"
 git archive HEAD | tar -x -C "$task_dir/source"
 export CARGO_TARGET_DIR="$task_dir/target"
-cargo build --release -p cellule-axum --example sql --locked --manifest-path "$task_dir/source/Cargo.toml"
+cargo build --release -p cellule-axum --examples --locked --manifest-path "$task_dir/source/Cargo.toml"
 
 export COMPOSE_PROJECT_NAME=cellule-axum-perf
 export CELLULE_COOKBOOK_STORAGE_PORT=19751
@@ -195,6 +195,47 @@ See the [multicell comparison](performance/2026-10-03-rustfs-multicell.md)
 and [earlier single-Cell report](performance/2026-10-03-rustfs-http.md) for
 results and retained evidence. CI also runs a small 1/4-Cell × 1/4-client
 matrix with the same correctness checks, without performance thresholds.
+
+For steady-state reads, build both examples and add the Rust driver:
+
+```sh
+python3 "$task_dir/source/scripts/bench-axum-rustfs.py" \
+  --binary "$CARGO_TARGET_DIR/release/examples/sql" \
+  --read-driver "$CARGO_TARGET_DIR/release/examples/http_load" \
+  --output "$task_dir/steady-results" \
+  --repeats 3 --cells 1 4 16 --workers 4 --concurrency 16 64 \
+  --warmup 16 --writes 32 --reads 64 \
+  --read-warmup-seconds 5 --read-seconds 60
+```
+
+The provider must remain running and the S3 prefix must be fresh. Each client
+visits all acknowledged orders, validates every output and minimum receipt,
+and reuses HTTP connections. The bounded histogram records all attempts at
+10 µs resolution through one second; an overflow percentile is reported as
+unknown, and the exact maximum is retained. Latency includes body decoding
+and validation. Payload throughput counts successful JSON response bodies,
+excluding HTTP headers and transport overhead. CPU windows include warmup.
+Service logs report lifetime mean actor queue, worker round-trip, and primitive
+query durations after drain; these include warmup and correctness checks.
+
+Add `--baseline-binary /absolute/path/to/previous/sql` for paired comparisons
+with alternating baseline/candidate order and separate fresh prefixes. Keep
+the driver, topology, HTTP Tokio thread count, and workload identical; repeat
+the matrix with different `--workers` values to vary SQL capacity separately.
+`TOKIO_WORKER_THREADS` controls the example's HTTP runtime independently of
+SQL workers. On macOS, `--sample` records server stacks for diagnosis; omit
+it from final comparisons to avoid profiler overhead.
+
+For a dedicated Linux runner, dispatch the existing capacity workflow in
+`axum-reads` mode. This runs the paired HTTP benchmark separately from the
+unchanged capacity qualification jobs and retains its evidence:
+
+```sh
+gh workflow run write-capacity.yml --ref YOUR_BRANCH \
+  -f mode=axum-reads \
+  -f baseline_ref=a277e5282badab55ceb58433fdddf0dee4dc8542 \
+  -f read_seconds=60
+```
 
 ```sh
 cargo test -p cellule-axum --all-targets --locked
