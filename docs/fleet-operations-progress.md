@@ -4,6 +4,94 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 exact root prefix and current origin checkpoint
+
+The canonical publisher and recovered-overlay materialization retain native
+`PreparedRoot` links before their root authority CAS. `CellRootLineage` uses the
+additional version 1 Cell/incarnation/digest path with an 8-KiB checksummed record.
+Up to 64 distinct verified inputs accumulate through ETag CAS; delayed writers
+cannot erase links. This supports byte-identical roots derived from different
+inputs, including representation-only compaction. Failed authority publication
+can leave verified proposal metadata; it grants no ownership or acknowledgement.
+Existing control/LTX formats, paths and signed peer messages are unchanged.
+
+`VerifiedRootPrefix` reaches the exact original digest, scope, TXID, checksum and
+sequence through native verified preparation links. Higher counters cannot prove
+that prefix. The canonical LTX origin inventory then authenticates every current
+successor dependency, including body/index bytes and complete directory coverage.
+Missing legacy/manual-publication metadata, unrelated prefixes, corrupt metadata
+and unavailable origin data refuse. Old root documents may disappear after
+compaction while retained links still prove derivation and the current graph
+remains fully available. Metadata retention is not a root pin.
+
+The host's serving checks consume the exact released or materialized recovery
+root, then repeat the native actor query, selected-root/owner authority check and
+native inventory check after origin verification. Fresh inspection uses these
+checks; historical action result replay is unchanged. The runtime wrapper charges
+transient metadata through its existing shared retained-byte ledger before I/O.
+Its conservative envelope covers fixed graph/cache/fetch/decode work, bounded
+lineage maps and at most 10,000 origin objects. Accepted fleet work stays under
+its existing finite action owner; no scheduler or task lane is added. Direct
+callers own equivalent admission and deadlines, and application Store adapters
+supply bounded stream chunks.
+
+Seven new lineage unit cases exercise the maximum codec, every truncation and
+byte corruption, malformed scope/position/order, additive replay/reconstruction,
+competing inputs, original write failure, lost replies, native publication
+ordering and corrupt/foreign metadata. A new peer case preserves the existing
+Unavailable/NotStarted error contract. Four new public runtime cases exercise
+real acknowledged writes through movement/compaction, missing old documents,
+missing/corrupt current origin bodies, legacy/unrelated/scope/limit refusal and
+shared memory admission/release on cancellation, success, error and shutdown.
+Two new public host cases retain a live successor actor while deleting its
+lineage or current root, require fresh inspection refusal, restore the exact
+original bytes and verify fresh adoption. Existing native quiet/foreground
+compaction, migration and genuinely recovered pinned-tail cases also check exact
+prefixes; the LTX inventory case checks exact and insufficient count limits.
+
+| Verification | Result |
+| --- | --- |
+| Full workspace, all features and locked dependencies | 1,609 passed; no failures; 36 documented cases ignored. Nested crash-fixture child summaries excluded. |
+| Complete canonical minion target, all features | 218 passed; no failures or ignored cases. |
+| Distinct final passes | 1,827; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | 54 passed; no failures or ignored cases. |
+| Workspace check, all targets/features | Passed. |
+| Workspace Clippy and API documentation | Passed with warnings denied. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer and diff | Passed; 123 Rust snippets parse. |
+| Frozen Rust/Cargo source, including nested qualification locks | 747 paths; SHA256 `d6a8e49f73a539a7f59ad2e116c265ed03b48e921e4ab1282a4aa2cca4fcf3b0`. |
+| Isolated checkout / mounted Workspace target suffix | `/tmp/cellule-reader-prelease-8698183` / `cellule-reader-prelease-8698183`. |
+| Published parent | `6a9443f097c69143f984c0e109b0454f3f3a4c84` |
+
+Raw commands, frozen source archives, final logs and initial diagnostics are
+retained in `/tmp/cellule-root-prefix-evidence`. Initial compilation caught a
+missing export/import and test API errors. The memory-admission test needed a
+`Duration` import. The first Clippy run rejected the new two-root error's large
+payload; its exact details are now boxed. Full suites and gates were rerun on
+the final frozen source. Initial runs do not qualify it.
+
+Published parent `6a9443f` is mergeable and passes every enabled CI check,
+including follower/object capacity, both routing modes and their aggregate,
+Compose, workspace, MSRV, contract, website, fuzz and fast models. The earlier
+unchanged reader-balance failure remains causally unexplained; passing repeats
+establish no fix. Profiles, workloads, expected evidence and thresholds remain
+unchanged. Fresh CI must qualify this new checkpoint.
+
+### Remaining work streams
+
+| Priority | Stream | Required delivery |
+| --- | --- | --- |
+| 1 | Complete observation and writer proof | Bind every original writer and sealed recovery suffix to its authenticated canonical backend, exact successor prefix/current native serving and the full revisioned fleet barrier. Consume complete writer, reader/follower replacement-policy and accepted-work observations in the existing reconciler. |
+| 2 | Role evacuation and maintenance completion | Implement SettleRoles/Finalize with all original role proofs, join original accepted actions before terminal drain handoff, and confirm checked stop/withdrawal/boot retirement. Finish Cron/Blob external-owner integration and primitive fault matrices. |
+| 3 | Movement resilience and convergence | Finish recovery/adoption across receiver sessions, refusal/unknown and source/receiver-failure reconciliation, ongoing intent supervision, sustained pressure/count convergence and concurrency evidence. |
+| 4 | Canonical minion scenarios | Deliver complete runnable maintenance and receiver-loss scenarios through `crates/cellule-host/minion`; Cargo target remains `fleet_operations`. |
+| 5 | W9 qualification | Run complete process/provider fault, mixed-binary compatibility, load/soak and capacity campaigns with their documented environments. |
+| 6 | W10 operations | Exercise operator runbooks and collect staged rollout evidence. |
+
+This checkpoint proves one per-movement prefix and availability observation. It
+does not aggregate every original physical-boot writer or recovery suffix, prove
+reader/follower replacement policy, pin storage, or complete fleet maintenance.
+SettleRoles and Finalize remain refused. The full W1–W10 goal remains active.
+
 ## October 3 2026 canonical acquisition metadata checkpoint
 
 The ordinary Idle acquisition, published takeover and rootless takeover now

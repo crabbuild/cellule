@@ -20,6 +20,20 @@ pub enum Error {
         /// First missing ownership epoch; absence supplies no closure proof.
         epoch: u64,
     },
+    /// A required root lacks its canonical preparation links.
+    #[error("Cell root lineage is incomplete at {root:?}")]
+    RootLineageIncomplete {
+        /// Exact root whose absence cannot establish an acknowledged prefix.
+        root: cellule_ltx::RootRef,
+    },
+    /// Complete bounded preparation links did not reach the required root.
+    #[error("Cell root {root:?} has no verified preparation path from {prefix:?}")]
+    RootPrefixUnproven {
+        /// Required exact historical root.
+        prefix: Box<cellule_ltx::RootRef>,
+        /// Requested successor root, without any authority grant.
+        root: Box<cellule_ltx::RootRef>,
+    },
     /// A catalog record, scan, or head failed validation.
     #[error("invalid Cell catalog: {0}")]
     Catalog(&'static str),

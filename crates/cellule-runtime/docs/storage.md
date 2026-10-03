@@ -279,6 +279,75 @@ async fn retained_claim(
 <a id="immutable-roots"></a>
 ## Store roots as bounded immutable graphs
 
+### Prove an exact root prefix after compaction
+
+Canonical publication retains verified `PreparedRoot` inputs before the root CAS,
+including ordinary append, quiet/foreground compaction, migration and recovery
+overlay publication. The version 1 runtime metadata path is
+`cells/v1/apps/<app>/cells/<cell>/root-lineage/v1/<incarnation>/<root-digest>.bin`.
+It adds no field to control JSON or LTX roots. Only native opaque preparations
+produce links; failed root CAS leaves a verified proposal, never ownership.
+
+| Boundary | Contract |
+| --- | --- |
+| Codec | Fixed-width scoped root references, sorted distinct predecessors and a BLAKE3 envelope checksum; at most 64 predecessors and 8 KiB. |
+| Byte-equivalent roots | Several valid preparations may produce identical root bytes. ETag CAS accumulates their original links; a delayed writer cannot erase an earlier input. |
+| Publication | Confirm the required link before selecting its root. Lost replies require a confirmed equal/superset record. Existing publisher retry and acquisition rollback own failures; no new task or retry owner. |
+| Identity compaction | Preparing the same exact root introduces no self-link. Traversal also detects repeated roots, so representation cycles cannot loop indefinitely. |
+| Prefix | `verify_root_prefix` must reach the exact requested digest, scope, TXID, checksum and sequence. Higher counters alone are insufficient. |
+| Bounds | The caller permits at most 10,000 expanded/queued lineage roots. Complete origin inventory also caps at 10,000 objects. One enclosing deadline bounds the work; excess refuses without truncating evidence. |
+| Availability | After finding a verified derivation path, authenticate the successor's complete current origin graph through the canonical `reachable_objects_bounded` walk, including every body/extent; metadata caches cannot substitute. |
+| Missing data | Missing legacy/manual-publication links yield `RootLineageIncomplete`; a complete path search that cannot reach the prefix yields `RootPrefixUnproven`. Storage, corrupt metadata and missing/corrupt graph dependencies preserve their errors. |
+
+The runtime wrapper reserves transient metadata in the existing node retained-byte
+ledger before I/O: 16 MiB for bounded graph/cache/fetch/decode work, plus 1 KiB
+per permitted lineage root and each of 10,000 origin objects. Vector growth and
+map overhead are included conservatively. The token spans awaited work and drops
+on success, error or caller cancellation. Origin body bytes stream through the
+configured shared LTX I/O host; application Store adapters supply bounded chunks.
+Direct authority callers own equivalent admission. No new task or scheduler is
+created; the existing finite fleet action owner retains accepted work.
+
+`VerifiedRootPrefix` is an opaque point observation of native verified derivation
+and complete successor dependency availability. It is not selected authority,
+current actor serving, an immutable-root pin, a complete original physical-boot
+inventory, recovered-suffix scope or maintenance settlement. Applications
+authenticate canonical backend mappings and protect these runtime metadata writes
+with the same storage authorization as authority. Old root objects may be collected
+after valid compaction; the retained preparation links remain metadata, and the
+verified successor graph must still contain the current state. The existing
+immutable-object collector does not delete these lineage metadata records.
+
+Use `CellRuntime::verify_root_prefix` for the runtime's shared configured LTX I/O
+host; standalone callers can use `CellAuthority::verify_root_prefix`. Neither path
+starts a scheduler, changes Cell authority or invents a legacy link.
+
+```rust,no_run
+use cellule_runtime::{Result, cell::{actor::CellRuntime, catalog::CatalogProof}};
+use cellule_runtime::control::authority::{CellAuthority, VerifiedRootPrefix};
+use cellule_runtime::ltx::{CellReplica, RootRef};
+
+async fn verify_prefix(
+    runtime: &CellRuntime,
+    catalog: &CatalogProof,
+    authority: &CellAuthority,
+    replica: CellReplica,
+    original: RootRef,
+    successor: RootRef,
+) -> Result<VerifiedRootPrefix> {
+    runtime.verify_root_prefix(catalog, authority, replica, original, successor, 10_000).await
+}
+```
+
+Fleet movement now requires the exact released root or retained recovery
+materialization as its prefix. After complete origin verification, it rechecks
+the same native actor through ordinary FIFO admission, selected root/owner/epoch
+and native ownership inventory before returning fresh serving evidence. Durable
+historical results remain historical; their replay does not refresh this proof.
+Complete original-writer/suffix aggregation, physical boot/process scope, reader
+and follower replacement policy, and terminal action joining remain separate
+requirements before role settlement or finalization.
+
 One root identifies the complete SQLite state at one transaction ID.
 
 ```mermaid

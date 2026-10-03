@@ -3,6 +3,7 @@
 use super::*;
 
 mod lease;
+mod prefix;
 mod recovery;
 mod sparse_process;
 mod succession;

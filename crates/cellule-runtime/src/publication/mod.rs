@@ -641,11 +641,17 @@ impl CellPublisher {
                     Transition::Publish,
                 ),
             };
-            match self
-                .authority
-                .transition(&self.observed, successor.clone(), transition)
-                .await
-            {
+            // Retain verified preparation inputs before the authority can
+            // select this root. A failed CAS leaves only a private proposal;
+            // the same retry/adoption owner handles metadata ambiguity.
+            let publication = async {
+                self.authority.retain_root_lineage(prepared).await?;
+                self.authority
+                    .transition(&self.observed, successor.clone(), transition)
+                    .await
+            }
+            .await;
+            match publication {
                 Ok(published) => {
                     self.check_node_lease()?;
                     self.observed = published;

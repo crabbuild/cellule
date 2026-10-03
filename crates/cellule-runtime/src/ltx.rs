@@ -5,5 +5,5 @@
 
 pub use cellule_ltx::{
     CaptureTiming, CellObjectKind, CellReplica, CellStorageLayout, DiskBudget, DiskReservation,
-    Host, Limits, LtxPhase, LtxReadOrigin, LtxRequestOutcome, ScratchMonitor,
+    Host, Limits, LtxPhase, LtxReadOrigin, LtxRequestOutcome, RootRef, ScratchMonitor,
 };

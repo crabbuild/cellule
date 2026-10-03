@@ -54,7 +54,10 @@ impl ObjectStore for FaultStore {
         if control {
             self.control_writes.fetch_add(1, Ordering::SeqCst);
         }
-        let fault = if history || path.as_ref().contains("/acquisitions/") {
+        let fault = if history
+            || path.as_ref().contains("/acquisitions/")
+            || path.as_ref().contains("/root-lineage/")
+        {
             self.fault
                 .try_update(Ordering::SeqCst, Ordering::SeqCst, |fault| {
                     (1..=3).contains(&fault).then_some(0)

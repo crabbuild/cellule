@@ -37,3 +37,16 @@ predecessor's position, commit sequence, Cell and incarnation. The runtime selec
 the append's schema and can choose the final root with one CAS
 against the original authority record. Every immutable dependency still finishes
 uploading before the successor proposal is returned.
+
+## Verify current origin dependencies
+
+`CellReplica::reachable_objects` authenticates the exact root's complete current
+origin graph, including root metadata, descriptor pages, directory coverage and
+all body/index bytes. A process cache cannot certify availability.
+`reachable_objects_bounded` uses the same walk with a caller-selected maximum
+inventory count. Zero or excess objects refuse with
+`LimitKind::RootInventoryObjects`; callers never receive a truncated inventory.
+Directory digests obey that bound while descriptor work keeps the existing fixed
+root/segment ceilings. The caller owns memory admission, bounded Store stream
+chunks and the enclosing deadline. This graph proof grants no selected authority,
+retention pin or current serving.

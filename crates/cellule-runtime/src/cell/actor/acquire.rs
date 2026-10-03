@@ -625,6 +625,7 @@ impl CellRuntime {
         let successor = observed
             .value()
             .publish_recovery(&prepared, observed.value().next_due_ms)?;
+        authority.retain_root_lineage(&prepared).await?;
         match authority
             .transition(&observed, successor.clone(), Transition::PublishRecovery)
             .await

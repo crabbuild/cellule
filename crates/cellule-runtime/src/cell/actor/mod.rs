@@ -22,6 +22,7 @@ use state::*;
 use task::*;
 mod acquire;
 mod acquisition_observer;
+mod prefix;
 pub use acquisition_observer::{AcquisitionObservation, AcquisitionObserver};
 mod admission;
 mod lifecycle;

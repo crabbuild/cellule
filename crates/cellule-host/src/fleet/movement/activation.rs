@@ -105,7 +105,14 @@ impl FleetActionExecutor {
         attempt: &MoveAttempt,
         inputs: &FleetCellInputs,
     ) -> cellule_runtime::Result<FleetOutcome> {
-        let evidence = self.serving_evidence(attempt, inputs).await?;
+        let release = attempt.released().ok_or_else(|| {
+            operation(cellule_runtime::fleet::operations::OperationError::Invalid(
+                "activation without release",
+            ))
+        })?;
+        let evidence = self
+            .serving_evidence(attempt, inputs, &release.root)
+            .await?;
         attempt.validate_activation(&evidence).map_err(operation)?;
         Ok(FleetOutcome::Activated(evidence))
     }
@@ -114,6 +121,7 @@ impl FleetActionExecutor {
         &self,
         attempt: &MoveAttempt,
         inputs: &FleetCellInputs,
+        required: &cellule_runtime::control::RootRef,
     ) -> cellule_runtime::Result<ActivationEvidence> {
         let spec = attempt.spec();
         let current = inputs
@@ -153,6 +161,34 @@ impl FleetActionExecutor {
                 .owner
                 .as_ref()
                 .is_none_or(|owner| owner.session != self.session)
+        {
+            return Err(Error::Fenced);
+        }
+        let root = latest.value().ltx_root().ok_or(Error::Fenced)?;
+        self.runtime
+            .verify_root_prefix(
+                &inputs.catalog,
+                &inputs.authority,
+                inputs.replica.clone(),
+                required.to_ltx(spec.target.cell_id(), spec.incarnation),
+                root,
+                10_000,
+            )
+            .await?;
+        // Origin verification can outlive the first actor query. Recheck the
+        // same admitted native owner and exact selected root before returning
+        // serving evidence; historical counters cannot replace this boundary.
+        handle.query(1, 1, |_| Ok(Vec::new())).await?;
+        let confirmed = inputs
+            .authority
+            .load(spec.target.cell_id())
+            .await?
+            .ok_or(Error::Fenced)?;
+        self.check_contract(attempt, inputs, &confirmed)?;
+        if confirmed.value().owner != latest.value().owner
+            || confirmed.value().epoch != latest.value().epoch
+            || confirmed.value().state != ControlState::Serving
+            || confirmed.value().ltx_root() != Some(root)
         {
             return Err(Error::Fenced);
         }

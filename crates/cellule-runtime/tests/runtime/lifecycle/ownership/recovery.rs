@@ -410,6 +410,38 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8) {
         .unwrap();
     assert_eq!(acquisition.input(), &input);
     assert_eq!(acquisition.materialized(), &recorded);
+    let recovered_root = recorded.ltx_root().unwrap();
+    independent_authority
+        .verify_root_prefix(predecessor, recovered_root, &fixture.replica, 16)
+        .await
+        .unwrap();
+    let clock = now_ms();
+    restored
+        .execute(
+            mutation_identity_window(47, clock, clock + 60_000),
+            Digest::from_bytes([47; 32]),
+            clock,
+            64,
+            64,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .await
+        .unwrap();
+    let advanced = authority
+        .load(input.cell)
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    independent_authority
+        .verify_root_prefix(recovered_root, advanced, &fixture.replica, 16)
+        .await
+        .unwrap();
 
     // Materialization clears the control's overlay pointer. The canonical
     // sealed manifest still retains the original scope after adapter restart.

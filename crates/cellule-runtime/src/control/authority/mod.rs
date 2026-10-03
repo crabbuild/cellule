@@ -15,6 +15,9 @@ mod acquisition;
 pub use acquisition::CellAcquisitionRecord;
 mod history;
 pub use history::CellOwnerHistory;
+mod lineage;
+pub(crate) use lineage::MAX_LINEAGE_ROOTS;
+pub use lineage::{CellRootLineage, VerifiedRootPrefix};
 
 #[cfg(test)]
 mod tests;

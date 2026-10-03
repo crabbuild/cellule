@@ -551,3 +551,33 @@ fn incomplete_owner_history_cannot_be_reported_as_success_or_empty_inventory() {
     assert_eq!(error.message, "original Cell owner history is incomplete");
     assert!(error.application_details.is_empty());
 }
+
+#[test]
+fn missing_or_unproven_root_lineage_cannot_be_reported_as_success() {
+    let root = cellule_ltx::RootRef {
+        cell: [1; 32],
+        incarnation: [2; 16],
+        digest: [3; 32],
+        position: cellule_ltx::Position {
+            txid: 1,
+            checksum: cellule_ltx::types::CHECKSUM_FLAG,
+        },
+        commit_sequence: 1,
+    };
+    for source in [
+        Error::RootLineageIncomplete { root },
+        Error::RootPrefixUnproven {
+            prefix: Box::new(root),
+            root: Box::new(root),
+        },
+    ] {
+        let reply = dispatch::error_reply(source);
+        let decoded = decode_peer_reply(&encode_peer_reply(&reply).unwrap()).unwrap();
+        let Some(wire::peer_reply::Outcome::Error(error)) = decoded.outcome else {
+            panic!("expected prefix blocker");
+        };
+        assert_eq!(error.code, wire::error::Code::Unavailable as i32);
+        assert_eq!(error.outcome, wire::error::Outcome::NotStarted as i32);
+        assert!(error.application_details.is_empty());
+    }
+}

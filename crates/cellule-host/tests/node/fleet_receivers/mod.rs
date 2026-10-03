@@ -13,6 +13,7 @@ use cellule_runtime::fleet::operations::*;
 use cellule_runtime::identity::RequestId;
 use cellule_runtime::ltx::CellReplica;
 
+mod prefix;
 mod successor;
 
 struct Cells(FleetCellInputs, Arc<Mutex<Option<FleetRecoveryInputs>>>);

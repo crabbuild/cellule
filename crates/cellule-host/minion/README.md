@@ -53,6 +53,14 @@ cannot settle boot retirement. Replay
 can adopt an already committed withdrawal or retirement. A missing advertisement,
 lease expiry or unresolved Pending record alone cannot prove closure.
 
+Movement serving checks now prove native derivation from the exact released or
+materialized recovery root, then verify every current origin dependency and
+recheck actor/authority state. Compaction cannot substitute higher counters for
+the original prefix. Verification uses shared runtime memory/I/O admission and
+bounded inventories; missing legacy lineage or current origin bytes refuse the
+observation. See the [prefix contract](../../cellule-runtime/docs/storage.md#prove-an-exact-root-prefix-after-compaction).
+This per-movement evidence does not certify complete physical maintenance.
+
 This measures **admission pressure**, not physical disk usage or throughput. The
 actor retains its existing local eviction budget; fleet counts cover only its
 journal-backed batch. The fixed three-boot transport pins identities in trusted

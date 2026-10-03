@@ -29,6 +29,8 @@ pub enum LimitKind {
     CellBundleBytes,
     /// The Cell root exceeded its byte budget.
     CellRootBytes,
+    /// The exact-root dependency inventory exceeded its object-count budget.
+    RootInventoryObjects,
     /// The Cell root exceeded its segment-count budget.
     CellRootSegments,
     /// One Cell scale-load batch exceeded its byte budget.
@@ -96,6 +98,7 @@ impl LimitKind {
             Self::CapturedLtxBytes => "captured LTX bytes",
             Self::CellBundleBytes => "Cell bundle bytes",
             Self::CellRootBytes => "Cell root bytes",
+            Self::RootInventoryObjects => "root inventory objects",
             Self::CellRootSegments => "Cell root segments",
             Self::CellScaleBytes => "Cell scale bytes",
             Self::CellScaleChecksumLength => "Cell scale checksum length",

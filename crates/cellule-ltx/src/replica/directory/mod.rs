@@ -300,6 +300,7 @@ pub(super) async fn reachable_digests(
     root: [u8; 32],
     height: u32,
     expected_root: Aggregate,
+    max_objects: Option<usize>,
 ) -> Result<Vec<[u8; 32]>> {
     if height > 3 || verification.database_pages == 0 {
         return Err(LtxError::LTXCorrupted);
@@ -316,6 +317,9 @@ pub(super) async fn reachable_digests(
         let header = Header::parse(&bytes)?;
         if (remaining == 0) != (header.kind == 0) {
             return Err(LtxError::LTXCorrupted);
+        }
+        if max_objects.is_some_and(|limit| digests.len() == limit) {
+            return Err(LtxError::Limit(crate::LimitKind::RootInventoryObjects));
         }
         digests.push(digest);
         if header.kind == 0 {

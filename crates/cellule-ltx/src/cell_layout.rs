@@ -142,6 +142,23 @@ impl CellStorageLayout {
         ))
     }
 
+    /// Runtime-retained verified preparation links for an exact immutable root.
+    /// This metadata path grants no authority or immutable-root retention pin.
+    #[must_use]
+    pub fn root_lineage_path(
+        &self,
+        cell: &[u8; 32],
+        incarnation: &[u8; 16],
+        root: &[u8; 32],
+    ) -> Path {
+        self.application_path(&format!(
+            "cells/{}/root-lineage/v1/{}/{}.bin",
+            encode_hex(cell),
+            encode_hex(incarnation),
+            encode_hex(root),
+        ))
+    }
+
     /// Returns the advisory desired read-replica count for one Cell.
     #[must_use]
     pub fn read_policy_path(&self, cell: &[u8; 32]) -> Path {
@@ -328,6 +345,12 @@ mod tests {
                 .acquisition_record_path(&[0xcd; 32], &[0xef; 16], 10)
                 .as_ref(),
             "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/acquisitions/v1/efefefefefefefefefefefefefefefef/000000000000000a.bin"
+        );
+        assert_eq!(
+            layout
+                .root_lineage_path(&[0xcd; 32], &[0xef; 16], &[0xab; 32])
+                .as_ref(),
+            "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/root-lineage/v1/efefefefefefefefefefefefefefefef/abababababababababababababababababababababababababababababababab.bin"
         );
         assert_eq!(
             layout.node_directory_path().as_ref(),
