@@ -45,7 +45,8 @@ not hidden HTTP retries. Automatic compaction is absent from the append matrix.
 
 ## Method
 
-130 independent processes completed and verified their restored payloads:
+The initial evaluation includes 130 independent processes that completed and
+verified their restored payloads:
 48 local baseline processes, 36 remote baseline processes, 36 updated remote
 processes, and 10 paired long-history processes. Local processes warm one round
 and measure three rounds of 128 inserts. Remote processes warm eight commands
@@ -96,6 +97,55 @@ At 4 KiB the median durable command cost is close to Celld with directory syncs;
 Celld default pays fewer barriers. Grouped Cellule barriers improve throughput,
 but change when individual cuts may be acknowledged. The embedding runtime
 already uses deferred capture behind its stronger external publication proof.
+
+## File-only capture experiment — October 3
+
+An additional 18 local processes test the same file-only capture boundary as
+Celld default. An isolated Cellule source copy retains immediate LTX file sync
+and SQLite `synchronous=FULL`, uses `rename_uncommitted` for each captured cut,
+and omits the first-cut ancestor directory barrier. Production capture and its
+directory-sync contract remain unchanged. Compaction and restore retain their
+normal syncs; this experiment measures capture, not weaker recovery installation.
+
+Three independent processes per mode and payload size each warm one round and
+measure two rounds of 128 high-entropy inserts. The three modes rotate through
+every execution position once. Every round verifies SQLite integrity and every
+restored payload. Pooled capture percentiles retain 768 samples per row and
+exclude SQLite commit and remote publication. Builds completed before measuring.
+
+| Payload | Mode | Capture p50 / p95 ms | Commit + capture commands/s |
+| --- | --- | ---: | ---: |
+| 4 KiB | Cellule immediate | 22.06 / 28.45 | 40.3 |
+| 4 KiB | Cellule file-only experiment | 5.43 / 13.09 | 171.1 |
+| 4 KiB | Celld default | 10.45 / 13.62 | 82.0 |
+| 64 KiB | Cellule immediate | 24.28 / 31.80 | 37.1 |
+| 64 KiB | Cellule file-only experiment | 13.11 / 20.22 | 60.4 |
+| 64 KiB | Celld default | 12.57 / 44.12 | 58.4 |
+
+The median within-block throughput ratio for Cellule file-only versus Cellule
+immediate is **2.58x at 4 KiB** and **1.63x at 64 KiB**. Against Celld default,
+the median within-block ratio is approximately **0.98x at both sizes**. Each
+block contains one independent process per mode, not simultaneous matched
+storage conditions. At 4 KiB, file-only Cellule process rates range from
+77.8–171.9 commands/s, and Celld from 79.7–174.6. The ratio of their aggregate
+medians obscures this variation; it does not establish a twofold advantage.
+These shared-workstation measurements support comparable performance under
+the same capture barrier, not a stable cross-implementation speedup.
+
+Skipping directory barriers weakens standalone local LTX durability: file
+contents are synced, but the new filename and directory chain are not sealed
+against power loss. Exact restore checks do not qualify this crash boundary.
+Cellule's public `capture()` contract includes durable bytes and names; the
+runtime already has `capture_deferred()` for cuts covered by a stronger selected
+remote or follower proof. Keep that protocol distinction when assessing costs.
+
+[Machine-readable results and the isolated source patch](2026-10-03-file-only-capture.json)
+record executable hashes, process rates, capture distributions, and phase
+timings. The full runner, raw reports, stderr, build logs and source snapshot
+are retained under the evidence directory's `capture-file-only/` and the sibling
+`capture-file-only-source/`. Apply the recorded patch only in an isolated copy,
+build its local runner separately, and use the same high-entropy payloads with
+`--transactions 128 --rounds 2 --warmup 1` in three rotating process blocks.
 
 ## Updated build against Celld on RustFS
 
