@@ -24,7 +24,10 @@ acceptance criteria; implementation proceeds in complete vertical slices.
 | [Endpoint monitor](apps/endpoint-monitor/README.md) | Scheduled HTTP probe Workflows, immutable observations, incident watermarks, atomic notification intent, and a signed notification inbox; persistent restart, redelivery, and cold restore verified. | `sh cookbook/scripts/endpoint-monitor.sh` from the repository root. |
 | [Checkout](apps/checkout/README.md) | Qualified order saga, atomic stock reservations, independent payment simulator, verified compensation, explicit review, signed callbacks, native action recovery, and cold restore. | `sh cookbook/scripts/checkout.sh` from the repository root. |
 | [Resource provisioning](apps/provisioning/README.md) | Qualified provider lifecycle, stable external keys, signed callbacks, cancellation, retrying cleanup, read-only due hints, native recovery, and cold restore. | `sh cookbook/scripts/provisioning.sh` from the repository root. |
-| Other catalog applications | 12 planned; no placeholder application crates. | See the catalog's implementation order. |
+| [Release pipeline](apps/release-pipeline/README.md) | Qualified immutable Blob artifacts, human approval, independent HTTP deployment, conditional predecessor compensation, retained definition inventories, Activity reclamation, and interrupted-demo recovery. | `sh cookbook/scripts/release-pipeline.sh` from the repository root. |
+| Other catalog applications | 11 planned; no placeholder application crates. | See the catalog's implementation order. |
+
+Seventeen applications are qualified and runnable; eleven remain planned.
 
 The default command starts a pinned local RustFS container, initializes a
 private bucket, runs the selected application scenario, and drains the node. Rust 1.97
@@ -71,6 +74,8 @@ The CI workflow first checks the complete workspace, then runs each application
 in its own process-scenario job with private local storage. Its matrix comes
 from Cargo membership; every application must supply a launcher and persistent
 scenario. Each job records source and lockfile identity and retains its evidence.
+Process qualification precedes the demo so versioned scenarios establish their
+predecessor before a demo opens the current inventory in retained storage.
 
 Use a checkout-specific target directory under the mounted Workspace build
 volume. Broad suites and process scenarios must run in CI or an isolated

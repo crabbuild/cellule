@@ -94,10 +94,12 @@ jobs:
       - name: Verify persistent process journey
         run: |
           sh cookbook/scripts/local-storage.sh up
-          "$CARGO_TARGET_DIR/debug/cellule-cookbook-$COOKBOOK_APPLICATION" demo "$RUNNER_TEMP/$COOKBOOK_APPLICATION-demo" \
-            > "$RUNNER_TEMP/cookbook-evidence/$COOKBOOK_APPLICATION-demo.jsonl"
+          # Versioned scenarios must establish the predecessor before a demo
+          # opens the current inventory in this retained storage installation.
           python3 "cookbook/scenarios/$COOKBOOK_APPLICATION.py" "$CARGO_TARGET_DIR/debug/cellule-cookbook-$COOKBOOK_APPLICATION" \
             > "$RUNNER_TEMP/cookbook-evidence/$COOKBOOK_APPLICATION-process.json"
+          "$CARGO_TARGET_DIR/debug/cellule-cookbook-$COOKBOOK_APPLICATION" demo "$RUNNER_TEMP/$COOKBOOK_APPLICATION-demo" \
+            > "$RUNNER_TEMP/cookbook-evidence/$COOKBOOK_APPLICATION-demo.jsonl"
       - name: Retain storage diagnostics and stop containers
         if: always()
         run: |

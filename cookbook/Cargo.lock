@@ -446,6 +446,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "cellule-cookbook-release-pipeline"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "cellule-app",
+ "cellule-cookbook-support",
+ "cellule-runtime",
+ "cellule-store",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "object_store",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "cellule-cookbook-report-export"
 version = "0.1.0"
 dependencies = [

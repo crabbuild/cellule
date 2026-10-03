@@ -37,8 +37,13 @@ after authorization and cold restoration of both writer domains.
 [Resource provisioning](../cookbook/apps/provisioning/README.md) adds permanent
 provider keys, asynchronous lifecycle deadlines, verified resource details,
 cancellation and retrying cleanup, read-only due hints, and explicit operator
-review. Sixteen applications are qualified and runnable; 12 further applications
-are planned.
+review. [Release pipeline](../cookbook/apps/release-pipeline/README.md) adds
+immutable Blob artifacts, authenticated human approval, independently durable
+HTTP deployment, generation-fenced predecessor compensation, retained Workflow
+definition inventories, and signed SQL acknowledgments. Its persistent process
+driver verifies crash recovery through a real code rollout and interrupted-demo
+drain with the original request and exact bytes restored. Seventeen applications
+are qualified and runnable; 11 further applications are planned.
 The five existing
 [primitive examples](../crates/cellule-app/docs/examples.md) remain runnable
 introductions. The cookbook adds complete application journeys alongside those
