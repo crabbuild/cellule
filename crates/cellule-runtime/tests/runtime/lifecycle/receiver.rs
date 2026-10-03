@@ -170,6 +170,7 @@ async fn prepared_credit_transfers_into_exact_root_sql_and_one_fenced_writer() {
     assert_eq!(Some(&released.root), idle.value().root.as_ref());
     assert_eq!(released.epoch, spec.source_epoch);
     let root = idle.value().root.clone();
+    let original_input = idle.value().clone();
     let activated = receiver
         .activate_prepared_receiver(&prepared, authority.clone(), idle, owner(), now_ms())
         .await
@@ -197,6 +198,21 @@ async fn prepared_credit_transfers_into_exact_root_sql_and_one_fenced_writer() {
     assert_eq!(serving.value().owner.as_ref().unwrap().session, RECEIVER);
     assert_eq!(serving.value().epoch, spec.source_epoch + 1);
     assert_eq!(serving.value().root, root);
+    let independent = CellAuthority::new(fixture.layout.clone());
+    let acquisition = independent
+        .acquisition_record(
+            fixture.target.cell_id(),
+            spec.incarnation,
+            serving.value().epoch,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acquisition.input(), &original_input);
+    assert_eq!(acquisition.materialized().root, root);
+    assert_eq!(acquisition.materialized().owner, serving.value().owner);
+    assert_eq!(acquisition.materialized().state, ControlState::Recovering);
+
     let after = receiver.stats();
     assert_eq!(after.active_cells(), 1);
     assert_eq!(after.worker_jobs(), 0);
@@ -567,8 +583,10 @@ async fn lost_activation_waiter_and_cas_reply_leave_one_inspectable_serving_acto
         .await
         .unwrap()
         .unwrap();
+    let original_input = idle.value().clone();
     store.arm_next_update();
     store.lose_next_update_response();
+    store.acquisition_fault.store(2, Ordering::Release);
     let activation = {
         let receiver = receiver.clone();
         let prepared = prepared.clone();
@@ -614,6 +632,19 @@ async fn lost_activation_waiter_and_cas_reply_leave_one_inspectable_serving_acto
         .unwrap();
     assert_eq!(counter(&activated).await, 0);
     assert_eq!(serving.value().owner.as_ref().unwrap().session, RECEIVER);
+    assert_eq!(store.acquisition_fault.load(Ordering::Acquire), 0);
+    let record = CellAuthority::new(fixture.layout.clone())
+        .acquisition_record(
+            original_input.cell,
+            original_input.incarnation,
+            serving.value().epoch,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.input(), &original_input);
+    assert_eq!(record.materialized().root, serving.value().root);
+    assert_eq!(record.materialized().state, ControlState::Recovering);
     assert_eq!(receiver.stats().active_cells(), 1);
     receiver.shutdown().await.unwrap();
     assert_eq!(receiver.stats().local_disk_reserved_bytes(), 0);

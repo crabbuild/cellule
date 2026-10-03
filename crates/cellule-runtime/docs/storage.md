@@ -235,6 +235,47 @@ Mixed-binary qualification and a verified earlier inventory are required before
 fleet completion can use such scope. The existing immutable-object collector
 does not delete these metadata records or pin their historical root graphs.
 
+### Retain the successful acquisition input
+
+The canonical Idle acquisition, published takeover and rootless takeover paths
+retain a `CellAcquisitionRecord` after the ownership CAS and any recovery-root
+publication, before actor admission. It keeps the exact successful CAS input,
+including a pinned recovery overlay, and the exact claimed/materialized Control.
+Later renewal, publication, release and compaction do not replace this record.
+
+| Boundary | Contract |
+| --- | --- |
+| Path | `cells/v1/apps/<app>/cells/<cell>/acquisitions/v1/<incarnation>/<epoch>.bin`; epoch is fixed-width 16-digit hex. |
+| Codec | Version 1 domain, two big-endian length-prefixed canonical Controls, at most 8 KiB each; the complete envelope is bounded to 20 KiB. |
+| Validation | Rebuild the ordinary Takeover from its input and require exact equality, or validate its one canonical PublishRecovery transition. Reject changed scope, owner, epoch, root, code or schema. |
+| Publication | Strict immutable creation. Identical committed bytes can resolve an ambiguous reply; conflicting metadata cannot be overwritten. |
+| Admission failure | No actor admission before confirmed retention. Published acquisition follows ordinary rollback. A rootless failure retains the claimed Recovering Control for ordinary bootstrap/takeover recovery. |
+| Reader | `CellAuthority::acquisition_record` performs a bounded origin read and verifies Cell, incarnation and epoch. Storage and malformed-record failures remain errors. |
+
+The record may survive failed activation and proves no restore completion,
+current serving, root retention, full acknowledged-prefix coverage or maintenance
+settlement. Missing metadata remains `None`: initial bootstrap, direct activation
+of an already-claimed Control, older binaries and cancellation before retention
+can supply no record. Never infer successful acquisition or an empty writer set
+from that absence. The existing object collector neither deletes these records
+nor pins their referenced roots. A future prefix verifier must combine complete
+original scope with independently checked ownership lineage, exact dependencies
+and current native serving.
+
+```rust,no_run
+use cellule_runtime::{Result, identity::{CellId, IncarnationId}};
+use cellule_runtime::control::authority::{CellAuthority, CellAcquisitionRecord};
+
+async fn retained_claim(
+    authority: &CellAuthority,
+    cell: CellId,
+    incarnation: IncarnationId,
+    epoch: u64,
+) -> Result<Option<CellAcquisitionRecord>> {
+    authority.acquisition_record(cell, incarnation, epoch).await
+}
+```
+
 <a id="immutable-roots"></a>
 ## Store roots as bounded immutable graphs
 

@@ -14,11 +14,11 @@ use std::sync::{
 use tokio::sync::Notify;
 
 #[derive(Debug, Default)]
-struct FaultStore {
+pub(super) struct FaultStore {
     inner: InMemory,
-    fault: AtomicUsize,
-    entered: Notify,
-    resume: Notify,
+    pub(super) fault: AtomicUsize,
+    pub(super) entered: Notify,
+    pub(super) resume: Notify,
     history_writes: AtomicUsize,
     control_writes: AtomicUsize,
 }
@@ -54,7 +54,7 @@ impl ObjectStore for FaultStore {
         if control {
             self.control_writes.fetch_add(1, Ordering::SeqCst);
         }
-        let fault = if history {
+        let fault = if history || path.as_ref().contains("/acquisitions/") {
             self.fault
                 .try_update(Ordering::SeqCst, Ordering::SeqCst, |fault| {
                     (1..=3).contains(&fault).then_some(0)
@@ -92,6 +92,14 @@ impl ObjectStore for FaultStore {
         self.inner.put_multipart_opts(path, opts).await
     }
     async fn get_opts(&self, path: &Path, opts: GetOptions) -> object_store::Result<GetResult> {
+        if path.as_ref().contains("/acquisitions/")
+            && self
+                .fault
+                .compare_exchange(6, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            return Err(denied(path));
+        }
         if path.as_ref().contains("/owner-history/")
             && self
                 .fault

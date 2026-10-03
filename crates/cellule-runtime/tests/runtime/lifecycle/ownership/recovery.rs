@@ -337,8 +337,22 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8) {
             assert_eq!(current.value(), &input);
             assert!(current.value().recovery.is_some());
             assert!(recorder.restored.lock().unwrap().is_empty());
+            assert!(
+                authority
+                    .acquisition_record(input.cell, input.incarnation, input.epoch + 1)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
         } else {
             let recorded = recorder.restored.lock().unwrap()[0].clone();
+            let retained = authority
+                .acquisition_record(input.cell, input.incarnation, recorded.epoch)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(retained.input(), &input);
+            assert_eq!(retained.materialized(), &recorded);
             assert_eq!(current.value().state, ControlState::Idle);
             assert!(current.value().recovery.is_none());
             assert_eq!(current.value().root, recorded.root);
@@ -389,6 +403,14 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8) {
     assert_eq!(owner_history.owners().len(), 2);
     assert_eq!(owner_history.owners()[0], input);
     assert_eq!(owner_history.current(), serving.value());
+    let acquisition = independent_authority
+        .acquisition_record(input.cell, input.incarnation, recorded.epoch)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acquisition.input(), &input);
+    assert_eq!(acquisition.materialized(), &recorded);
+
     // Materialization clears the control's overlay pointer. The canonical
     // sealed manifest still retains the original scope after adapter restart.
     let reconstructed = cellule_runtime::recovery::manifest::RecoveryManifestStore::new(
@@ -511,6 +533,15 @@ async fn unchanged_unpublished_owner_is_taken_over_then_bootstrapped() {
     assert_eq!(owner_history.owners()[0], original_input);
     assert!(owner_history.owners()[0].root.is_none());
     assert_eq!(owner_history.current(), owned.value());
+    let acquisition = independent_authority
+        .acquisition_record(original_input.cell, original_input.incarnation, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acquisition.input(), &original_input);
+    assert!(acquisition.materialized().root.is_none());
+    assert_eq!(acquisition.materialized().owner, owned.value().owner);
+
     restored.drain().await.unwrap();
 }
 #[tokio::test]

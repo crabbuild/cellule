@@ -4,6 +4,78 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 canonical acquisition metadata checkpoint
+
+The ordinary Idle acquisition, published takeover and rootless takeover now
+retain the exact successful ownership-CAS input and claimed/materialized Control
+before actor admission. The immutable `CellAcquisitionRecord` preserves pinned
+recovery overlays and their canonical materialized positions across later
+publication, release and compaction. Strict creation adopts only identical
+committed data after a lost reply; competing different data refuses. The bounded
+origin reader validates the typed Cell/incarnation/epoch path, version, canonical
+Controls and their ordinary Takeover/PublishRecovery transitions.
+
+This is acquisition metadata, not complete successor-prefix proof. It can
+survive failed activation; it establishes no current serving, root-retention pin,
+exact dependency availability or maintenance settlement. Initial bootstrap,
+direct activation of already-claimed Controls, older binaries and cancellation
+before retention can leave no record. Absence must block any proof requiring
+that record. Published acquisition retains ordinary rollback; rootless failure
+leaves its claimed Recovering Control available to the ordinary recovery path.
+Existing control/LTX formats, paths and peer messages remain unchanged; the new
+version 1 acquisition path is an additional persistence contract.
+
+Eight unit cases cover canonical round trips, all truncations, malformed scope,
+root/owner/epoch/code drift, immutable replay and conflicts, competing writers,
+lost replies, source-read failure, cancellation before publication and corrupt or
+oversized metadata. Two new public Idle cases exercise actual metadata failure,
+rollback, actor non-admission, exact-root SQL after a lost reply and receiver
+resource release using a dedicated disk budget. Existing genuine recovered-tail,
+rootless takeover and prepared-receiver cases assert exact metadata; accepted
+receiver work retains it after a dropped waiter and lost CAS/metadata replies.
+The storage guide documents ordering, bounds, reconstruction and proof limits.
+
+| Verification | Result |
+| --- | --- |
+| Full workspace, all features and locked dependencies | 1,595 passed; no failures; 36 documented cases ignored. Nested crash-fixture child summaries excluded. |
+| Complete minion target, all features | 218 passed; no failures or ignored cases. |
+| Distinct final passes | 1,813; focused repeats and the overlapping local LTX run excluded. |
+| Local LTX, no default features | 54 passed; no failures or ignored cases. |
+| Workspace check, all targets/features | Passed. |
+| Workspace Clippy and API documentation | Passed with warnings denied. |
+| Format, boundaries, layout, Rust fences, links, SQL/peer and diff | Passed; 122 Rust snippets parse. |
+| Frozen Rust/Cargo source, including nested qualification locks | 740 paths; SHA256 `9aa13b336df94e30e4211720f30da368897dcbbf23507b20ce4a5937974d8475`. |
+| Isolated checkout / target suffix | `/tmp/cellule-reader-prelease-8698183` / `cellule-reader-prelease-8698183` beneath the mounted Workspace target. |
+| Parent revision | `e532964006d56a510f2663628356e9283f4d991a` |
+
+Raw commands, initial diagnostics and logs are retained in
+`/tmp/cellule-acquisition-history-evidence`.
+The initial compile failed on two test-only API names; a later corrupt-object
+fixture incorrectly used immutable Store publication to overwrite its original
+object. The first public disk assertion used the process-wide default budget and
+observed unrelated tests' charges. It now uses a dedicated receiver budget while
+preserving all zero-resource assertions. Those initial runs are not passing
+evidence.
+
+Published parent `e532964006d56a510f2663628356e9283f4d991a` is mergeable; all
+enabled CI checks pass, including follower/object capacity, both routing modes
+and their aggregate, Compose, workspace, MSRV, contract, website, fuzz and fast
+models. The earlier unchanged reader-balance failure remains causally unexplained;
+passing repeats establish no fix. Minion remains the canonical executable source
+at `crates/cellule-host/minion`, with Cargo target `fleet_operations`.
+
+### Highest remaining priorities
+
+Implement complete successor lineage, every original acknowledged prefix and
+exact dependency availability, then fresh native serving. Higher sequence values
+and historical acquisition metadata cannot substitute for that proof after
+compaction. Consume complete writer, reader/follower replacement-policy and
+accepted-work observations in the existing controller before `SettleRoles` or
+`Finalize`. Join original action work before terminal drain handoff; finish
+cross-session receiver recovery/adoption, Cron/Blob external owners, maintenance
+and receiver-loss minion scenarios, W9 process/provider/mixed-binary/load gates and
+W10 exercised runbooks/rollout. The full W1–W10 goal remains unfinished.
+
 ## October 3 2026 complete original writer inventory checkpoint
 
 `FleetOriginalWriterCapture` joins the original failed boot through its existing
@@ -51,9 +123,9 @@ accepted external-job, successor-prefix or dependency-availability qualification
 
 | Verification | Result |
 | --- | --- |
-| Full workspace, all features and locked dependencies | 1,586 passed; no failures; 36 documented provider/process/performance/manual or documentation cases ignored. |
+| Full workspace, all features and locked dependencies | 1,585 passed; no failures; 36 documented provider/process/performance/manual or documentation cases ignored. |
 | Complete minion target, all features | 218 passed; no failures or ignored cases. |
-| Distinct final passes | 1,804; focused repetitions excluded. |
+| Distinct final passes | 1,803; focused repetitions and the nested LTX child-process result excluded. |
 | Workspace Clippy, all targets/features | Passed with warnings denied. |
 | Workspace API documentation | Passed with warnings denied. |
 | Format, boundaries, layout, Rust fences, links, SQL/peer and diff | Passed. |
@@ -61,6 +133,9 @@ accepted external-job, successor-prefix or dependency-availability qualification
 | Isolated checkout / target suffix | `/tmp/cellule-reader-prelease-8698183` / `cellule-reader-prelease-8698183` beneath the mounted Workspace target. |
 | Raw commands, logs, initial diagnostics and manifests | `/tmp/cellule-original-writer-evidence` |
 | Parent revision | `b0552ee3b60b8cd453844876d84a64eb535e63f2` |
+
+The original report counted one nested LTX crash-fixture child result twice;
+the corrected workspace and distinct counts above exclude that child summary.
 
 Initial checks found a missing Digest import and typed IDs used as ordered keys;
 byte-array keys preserve the existing ID contract. Test compilation then exposed a

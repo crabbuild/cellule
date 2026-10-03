@@ -67,6 +67,7 @@ pub(super) struct PausingStore {
     failing: AtomicBool,
     transient_put_failures: AtomicUsize,
     lost_update_response: AtomicBool,
+    acquisition_fault: AtomicUsize,
     failed: AtomicBool,
     blocked: AtomicBool,
     released: AtomicBool,
@@ -93,6 +94,7 @@ impl PausingStore {
             failing: AtomicBool::new(false),
             transient_put_failures: AtomicUsize::new(0),
             lost_update_response: AtomicBool::new(false),
+            acquisition_fault: AtomicUsize::new(0),
             failed: AtomicBool::new(false),
             blocked: AtomicBool::new(false),
             released: AtomicBool::new(false),
@@ -194,6 +196,20 @@ impl ObjectStore for PausingStore {
         payload: PutPayload,
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
+        let acquisition_fault = if location.as_ref().contains("/acquisitions/") {
+            self.acquisition_fault.swap(0, Ordering::AcqRel)
+        } else {
+            0
+        };
+        if acquisition_fault == 1 {
+            return Err(object_store::Error::PermissionDenied {
+                path: location.to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected acquisition metadata failure",
+                )),
+            });
+        }
         if self
             .transient_put_failures
             .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
@@ -233,6 +249,15 @@ impl ObjectStore for PausingStore {
             }
         }
         let result = self.inner.put_opts(location, payload, options).await?;
+        if acquisition_fault == 2 {
+            return Err(object_store::Error::PermissionDenied {
+                path: location.to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "acquisition metadata response lost after commit",
+                )),
+            });
+        }
         if update && self.lost_update_response.swap(false, Ordering::AcqRel) {
             return Err(object_store::Error::Generic {
                 store: "pausing-store",

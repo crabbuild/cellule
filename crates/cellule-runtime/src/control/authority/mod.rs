@@ -11,6 +11,8 @@ use crate::{Error, Result};
 
 const MAX_CONTROL_BYTES: u64 = 8 * 1024;
 
+mod acquisition;
+pub use acquisition::CellAcquisitionRecord;
 mod history;
 pub use history::CellOwnerHistory;
 

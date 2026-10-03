@@ -126,6 +126,22 @@ impl CellStorageLayout {
         ))
     }
 
+    /// Runtime acquisition input/materialization metadata for one owner epoch.
+    /// This path grants no authority, native serving or immutable-root pin.
+    #[must_use]
+    pub fn acquisition_record_path(
+        &self,
+        cell: &[u8; 32],
+        incarnation: &[u8; 16],
+        epoch: u64,
+    ) -> Path {
+        self.application_path(&format!(
+            "cells/{}/acquisitions/v1/{}/{epoch:016x}.bin",
+            encode_hex(cell),
+            encode_hex(incarnation),
+        ))
+    }
+
     /// Returns the advisory desired read-replica count for one Cell.
     #[must_use]
     pub fn read_policy_path(&self, cell: &[u8; 32]) -> Path {
@@ -306,6 +322,12 @@ mod tests {
                 .owner_observation_path(&[0xcd; 32], &[0xef; 16], 10)
                 .as_ref(),
             "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/owner-history/v1/efefefefefefefefefefefefefefefef/000000000000000a.json"
+        );
+        assert_eq!(
+            layout
+                .acquisition_record_path(&[0xcd; 32], &[0xef; 16], 10)
+                .as_ref(),
+            "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/acquisitions/v1/efefefefefefefefefefefefefefefef/000000000000000a.bin"
         );
         assert_eq!(
             layout.node_directory_path().as_ref(),

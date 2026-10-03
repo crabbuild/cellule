@@ -211,6 +211,11 @@ impl CellRuntime {
                     }
                 }
             };
+            // Keep the actual successful input before initialization can admit
+            // an actor. Rootless takeover has no acknowledged database prefix.
+            authority
+                .retain_acquisition(current.value(), claimed.value())
+                .await?;
             let incarnation = claimed.value().incarnation;
             let schema = claimed.value().schema;
             return self
@@ -386,6 +391,9 @@ impl CellRuntime {
         let rollback_claim = claimed.clone();
         let rollback_replica = replica.clone();
         let activation = async {
+            authority
+                .retain_acquisition(observed.value(), claimed.value())
+                .await?;
             if let Some(observer) = &observer {
                 observer
                     .before_activation(observed.value(), claimed.value())
@@ -554,6 +562,9 @@ impl CellRuntime {
             };
             let rollback_claim = claimed.clone();
             let activation = async {
+                authority
+                    .retain_acquisition(current.value(), claimed.value())
+                    .await?;
                 if let Some(observer) = &observer {
                     observer
                         .before_activation(current.value(), claimed.value())
