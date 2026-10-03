@@ -102,7 +102,7 @@ jobs:
     uses: ./.github/workflows/axum-performance.yml
     with:
       baseline_ref: ${{ inputs.baseline_ref }}
-      read_seconds: ${{ inputs.read_seconds }}
+      read_seconds: ${{ fromJSON(format('{0}', inputs.read_seconds || 60)) }}
 
   follower-proof:
     if: github.event_name != 'workflow_dispatch' || inputs.mode != 'axum-reads'
