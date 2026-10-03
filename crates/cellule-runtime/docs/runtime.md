@@ -230,6 +230,12 @@ The worker transaction applies this procedure:
 - **Savepoint errors.** Handler errors roll back the application savepoint. Runtime ledger updates still commit when the error is a durable business rejection.
 - **Telemetry.** Every registered call reports its owning module, kind, outcome, and duration to the installed `CellTelemetry` sink from the thread that executed the handler, so the server can chart one primitive module without knowing its operations.
 
+`CellTelemetry::query_execution` separates an owner query's actor queue wait
+from its SQL worker round trip. The latter includes worker admission,
+read-only setup, and handler execution. Compare it with the registered
+primitive's duration to distinguish SQL work from dispatch and waiting.
+Pre-dispatch refusals are excluded; SQL deadline failures are included.
+
 **Automatic rollback**
 
 - SQLite may automatically roll back the whole command on capacity or interruption errors. The managed LTX writer recognizes completed rollback using autocommit and its WAL commit observer, preserves the original error, and keeps the Cell servable.

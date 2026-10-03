@@ -17,6 +17,13 @@ pub const MANAGED_SQLITE_CONNECTIONS: u64 = 3;
 pub const MANAGED_CONNECTION_PAGE_CACHE_BYTES: u64 = 64 * 1024;
 
 const MANAGED_CONNECTION_PAGE_CACHE_KIB: i64 = 64;
+const LOOKASIDE_SLOT_BYTES: i32 = 512;
+const LOOKASIDE_SLOT_COUNT: i32 = 16;
+
+/// Fixed lookaside arena requested for each managed SQLite connection.
+/// SQLite owns and releases this arena; larger allocations use its normal heap.
+pub const MANAGED_CONNECTION_LOOKASIDE_BYTES: u64 =
+    LOOKASIDE_SLOT_BYTES as u64 * LOOKASIDE_SLOT_COUNT as u64;
 
 /// One exclusive local capture session with a serialized SQLite writer.
 ///
@@ -1006,16 +1013,16 @@ pub(crate) fn open_connection(path: &Path, vfs: Option<&str>) -> rusqlite::Resul
 }
 
 pub(crate) fn configure_managed_connection(connection: &Connection) -> rusqlite::Result<()> {
-    disable_lookaside(connection)?;
+    configure_lookaside(connection)?;
     connection.pragma_update(None, "cache_size", -MANAGED_CONNECTION_PAGE_CACHE_KIB)
 }
 
-fn disable_lookaside(connection: &Connection) -> rusqlite::Result<()> {
+fn configure_lookaside(connection: &Connection) -> rusqlite::Result<()> {
     use rusqlite::ffi;
 
-    // SQLite's default lookaside arena reserves memory per connection. Managed
-    // LTX connections use a small, stable statement vocabulary, so keeping
-    // that arena only adds resident cost across a dense Cell fleet.
+    // Small SQL preparations otherwise contend on SQLite's global allocator
+    // across workers. Keep a fixed 8 KiB arena, charged by runtime admission,
+    // rather than SQLite's larger default. SQLite frees it with the connection.
     // SAFETY: callers configure a newly opened connection before any SQLite
     // operation, so no lookaside slot can be in use.
     let result = unsafe {
@@ -1023,8 +1030,8 @@ fn disable_lookaside(connection: &Connection) -> rusqlite::Result<()> {
             connection.handle(),
             ffi::SQLITE_DBCONFIG_LOOKASIDE,
             std::ptr::null_mut::<std::ffi::c_void>(),
-            0,
-            0,
+            LOOKASIDE_SLOT_BYTES,
+            LOOKASIDE_SLOT_COUNT,
         )
     };
     if result != ffi::SQLITE_OK {

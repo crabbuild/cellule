@@ -1,0 +1,5481 @@
+{
+  "environment": {
+    "base_revision": "cf2bbb2003e7d3fa4a6e8472a53530b3fc4b23bb",
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+    "cpu": "Apple M2 Max",
+    "host_memory_bytes": 34359738368,
+    "macos": "26.5.2",
+    "docker": {
+      "OperatingSystem": "Ubuntu 24.04.4 LTS",
+      "Architecture": "aarch64",
+      "NCPU": 8,
+      "MemTotal": 16732540928,
+      "ServerVersion": "29.5.2"
+    },
+    "rustfs": {
+      "container": "/cellule-axum-perf-54f709e0-rustfs-1",
+      "image": "ghcr.io/rustfs/rustfs:1.0.0-glibc@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858",
+      "image_id": "sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858",
+      "health": "healthy"
+    }
+  },
+  "measurement": {
+    "started_at_utc": "2026-10-03T18:57:45Z",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "cpu_count": 12,
+    "python": "3.14.6",
+    "binary_sha256": "f00bff2380c3a1a6987763db12e3e8c57c1914aec4100989b8bd95b7d602fea2",
+    "endpoint": "http://127.0.0.1:19751",
+    "bucket": "cellule-cookbook",
+    "writes": 512,
+    "reads": 2048,
+    "warmup": 16,
+    "repeats": 3,
+    "concurrency": [
+      16
+    ],
+    "cells": [
+      1,
+      4,
+      8,
+      16
+    ],
+    "workers": 4,
+    "workload": "order_id mod active Cells; POST inserts then receipt-bound SELECT; GET owner-ordered SELECT; closed loop"
+  },
+  "measured_source_sha256": {
+    "Cargo.lock": "a33ca3aa8a6e0f4f38667534c19a6e1c4aa41d5dd5590fbc555c3922d26d63b5",
+    "crates/cellule-axum/examples/sql.rs": "70dc2c5aa3f0a224d79cd8597c08996d09ab317aa8aabc7f5f5b38f011406388",
+    "crates/cellule-axum/src/error.rs": "39b730b758810663df8bd1189ffbf05368ee52b9377c5b134b3aa2125232ebef",
+    "scripts/bench-axum-rustfs.py": "7bb8461b1e6270b196df3cb0c548a4f0c78efdba5671d6d5cbbb4b900498e62d"
+  },
+  "results": [
+    {
+      "repeat": 1,
+      "concurrency": 16,
+      "cells": 1,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r1-n1-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 35.05128970812075,
+        "successful_requests_per_second": 14.60716579228692,
+        "latency_ms_all_attempts": {
+          "p50": 686.434083,
+          "p95": 3772.072083,
+          "p99": 4647.688167
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.23917295783758163,
+        "successful_requests_per_second": 8562.840960434844,
+        "latency_ms_all_attempts": {
+          "p50": 1.441042,
+          "p95": 4.316458,
+          "p99": 6.077167
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.68825
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.128125
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 529
+              }
+            },
+            "latency_ms": 46.263125,
+            "request": {
+              "request_id": "752af30b-0271-4fef-a1ae-290e3212550f",
+              "issued_at_ms": 1791053902259,
+              "expires_at_ms": 1791057502259,
+              "id": 529,
+              "total_cents": 100
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 528
+        },
+        "initial_startup_ms": 317.6243749912828,
+        "cold_startup_ms": 107.93741699308157,
+        "initial_drain": {
+          "milliseconds": 69.32704197242856,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 528,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 36.646290915086865,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 529,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 1,
+      "concurrency": 16,
+      "cells": 4,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r1-n4-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 12.40620933403261,
+        "successful_requests_per_second": 41.26965668679198,
+        "latency_ms_all_attempts": {
+          "p50": 336.972917,
+          "p95": 811.494792,
+          "p99": 980.071917
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.33339129108935595,
+        "successful_requests_per_second": 6142.931908353577,
+        "latency_ms_all_attempts": {
+          "p50": 1.897209,
+          "p95": 6.415042,
+          "p99": 10.686708
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.736417
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.752209
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.579208
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.276833
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.131375
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.187417
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.506375
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.136792
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 47.1265,
+            "request": {
+              "request_id": "f9cc0c0e-10fe-4e90-a5e8-e7c9ffbc3162",
+              "issued_at_ms": 1791053917245,
+              "expires_at_ms": 1791057517245,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 32.1045,
+            "request": {
+              "request_id": "f9cc0c0e-10fe-4e90-a5e8-e7c9ffbc3162",
+              "issued_at_ms": 1791053917245,
+              "expires_at_ms": 1791057517245,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 28.465459,
+            "request": {
+              "request_id": "f9cc0c0e-10fe-4e90-a5e8-e7c9ffbc3162",
+              "issued_at_ms": 1791053917245,
+              "expires_at_ms": 1791057517245,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 38.633,
+            "request": {
+              "request_id": "f9cc0c0e-10fe-4e90-a5e8-e7c9ffbc3162",
+              "issued_at_ms": 1791053917245,
+              "expires_at_ms": 1791057517245,
+              "id": 532,
+              "total_cents": 103
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 132,
+          "1": 132,
+          "2": 132,
+          "3": 132
+        },
+        "initial_startup_ms": 528.5093751735985,
+        "cold_startup_ms": 415.58466595597565,
+        "initial_drain": {
+          "milliseconds": 124.99279086478055,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 127.38320790231228,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 1,
+      "concurrency": 16,
+      "cells": 8,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r1-n8-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 5.428403750061989,
+        "successful_requests_per_second": 94.3187028035918,
+        "latency_ms_all_attempts": {
+          "p50": 161.37775,
+          "p95": 246.486458,
+          "p99": 494.972083
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.24388687498867512,
+        "successful_requests_per_second": 8397.335855384177,
+        "latency_ms_all_attempts": {
+          "p50": 1.3655,
+          "p95": 4.58675,
+          "p99": 7.105667
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 1.151292
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.665584
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.335083
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.570958
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.336541
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.215833
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.216875
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.389417
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.233958
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.203
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.104291
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.384292
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.176875
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.107
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.136708
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.206375
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 57.921791,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 53.073625,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 39.635958,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 40.078416,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 532,
+              "total_cents": 103
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 533,
+                "total_cents": 104
+              },
+              "receipt": {
+                "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 117.342958,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 533,
+              "total_cents": 104
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 534,
+                "total_cents": 105
+              },
+              "receipt": {
+                "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 49.123625,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 534,
+              "total_cents": 105
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 535,
+                "total_cents": 106
+              },
+              "receipt": {
+                "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 36.35575,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 535,
+              "total_cents": 106
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 536,
+                "total_cents": 107
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 35.089,
+            "request": {
+              "request_id": "43b3e520-19ca-48df-a609-a3a1d5972e0d",
+              "issued_at_ms": 1791053925771,
+              "expires_at_ms": 1791057525771,
+              "id": 536,
+              "total_cents": 107
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 66,
+          "1": 66,
+          "2": 66,
+          "3": 66,
+          "4": 66,
+          "5": 66,
+          "6": 66,
+          "7": 66
+        },
+        "initial_startup_ms": 628.0645418446511,
+        "cold_startup_ms": 862.2500000055879,
+        "initial_drain": {
+          "milliseconds": 334.57004092633724,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 7,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 176.98358302004635,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 7,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 1,
+      "concurrency": 16,
+      "cells": 16,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r1-n16-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 10.158625084208325,
+        "successful_requests_per_second": 50.400521306363466,
+        "latency_ms_all_attempts": {
+          "p50": 209.579583,
+          "p95": 881.397125,
+          "p99": 1250.03525
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.26926187495701015,
+        "successful_requests_per_second": 7605.978381926442,
+        "latency_ms_all_attempts": {
+          "p50": 1.692167,
+          "p95": 4.656875,
+          "p99": 7.068166
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.483375
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.195459
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.21825
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.18925
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.192375
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.2155
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.204291
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.248833
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.149833
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.2405
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.229
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.154709
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.346334
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.371041
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.5895
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.340792
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.210458
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.125333
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.09275
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.114042
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.118916
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.14275
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.126917
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.128667
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.086542
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.102708
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.096125
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.102334
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.090166
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.228708
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.188792
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.142042
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 32.01475,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 30.976791,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 35.455375,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 33.3985,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 532,
+              "total_cents": 103
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 533,
+                "total_cents": 104
+              },
+              "receipt": {
+                "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 34.433792,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 533,
+              "total_cents": 104
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 534,
+                "total_cents": 105
+              },
+              "receipt": {
+                "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 36.464792,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 534,
+              "total_cents": 105
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 535,
+                "total_cents": 106
+              },
+              "receipt": {
+                "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 40.303417,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 535,
+              "total_cents": 106
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 536,
+                "total_cents": 107
+              },
+              "receipt": {
+                "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 34.3655,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 536,
+              "total_cents": 107
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 537,
+                "total_cents": 108
+              },
+              "receipt": {
+                "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 56.134084,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 537,
+              "total_cents": 108
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 538,
+                "total_cents": 109
+              },
+              "receipt": {
+                "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 26.925542,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 538,
+              "total_cents": 109
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 539,
+                "total_cents": 110
+              },
+              "receipt": {
+                "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 28.664458,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 539,
+              "total_cents": 110
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 540,
+                "total_cents": 111
+              },
+              "receipt": {
+                "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 17.971208,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 540,
+              "total_cents": 111
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 541,
+                "total_cents": 112
+              },
+              "receipt": {
+                "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 15.179,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 541,
+              "total_cents": 112
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 542,
+                "total_cents": 113
+              },
+              "receipt": {
+                "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 19.89525,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 542,
+              "total_cents": 113
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 543,
+                "total_cents": 114
+              },
+              "receipt": {
+                "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 15.56625,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 543,
+              "total_cents": 114
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 544,
+                "total_cents": 115
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 17.131,
+            "request": {
+              "request_id": "b6376ef4-6ad4-4d4d-ac5c-87b97a8d95d1",
+              "issued_at_ms": 1791053940366,
+              "expires_at_ms": 1791057540366,
+              "id": 544,
+              "total_cents": 115
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 33,
+          "1": 33,
+          "2": 33,
+          "3": 33,
+          "4": 33,
+          "5": 33,
+          "6": 33,
+          "7": 33,
+          "8": 33,
+          "9": 33,
+          "10": 33,
+          "11": 33,
+          "12": 33,
+          "13": 33,
+          "14": 33,
+          "15": 33
+        },
+        "initial_startup_ms": 1252.624792046845,
+        "cold_startup_ms": 1050.2170419786125,
+        "initial_drain": {
+          "milliseconds": 335.2704159915447,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 7,
+              "state": "idle"
+            },
+            {
+              "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 8,
+              "state": "idle"
+            },
+            {
+              "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 9,
+              "state": "idle"
+            },
+            {
+              "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 10,
+              "state": "idle"
+            },
+            {
+              "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 11,
+              "state": "idle"
+            },
+            {
+              "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 12,
+              "state": "idle"
+            },
+            {
+              "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 13,
+              "state": "idle"
+            },
+            {
+              "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 14,
+              "state": "idle"
+            },
+            {
+              "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 15,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 276.25887491740286,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 7,
+              "state": "idle"
+            },
+            {
+              "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 8,
+              "state": "idle"
+            },
+            {
+              "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 9,
+              "state": "idle"
+            },
+            {
+              "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 10,
+              "state": "idle"
+            },
+            {
+              "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 11,
+              "state": "idle"
+            },
+            {
+              "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 12,
+              "state": "idle"
+            },
+            {
+              "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 13,
+              "state": "idle"
+            },
+            {
+              "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 14,
+              "state": "idle"
+            },
+            {
+              "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 15,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 2,
+      "concurrency": 16,
+      "cells": 1,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r2-n1-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 20.12410374986939,
+        "successful_requests_per_second": 25.44212683277003,
+        "latency_ms_all_attempts": {
+          "p50": 586.007667,
+          "p95": 1680.175541,
+          "p99": 1709.960041
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.21356987487524748,
+        "successful_requests_per_second": 9589.36741989617,
+        "latency_ms_all_attempts": {
+          "p50": 1.308958,
+          "p95": 3.741167,
+          "p99": 5.871584
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.41775
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.092667
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 529
+              }
+            },
+            "latency_ms": 17.022583,
+            "request": {
+              "request_id": "24896ad6-baa2-41b0-bcc5-05956efa082f",
+              "issued_at_ms": 1791053962909,
+              "expires_at_ms": 1791057562909,
+              "id": 529,
+              "total_cents": 100
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 528
+        },
+        "initial_startup_ms": 161.26145794987679,
+        "cold_startup_ms": 106.96050012484193,
+        "initial_drain": {
+          "milliseconds": 72.09504093043506,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 528,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 17.871249932795763,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 529,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 2,
+      "concurrency": 16,
+      "cells": 4,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r2-n4-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 5.347849250072613,
+        "successful_requests_per_second": 95.73942272083455,
+        "latency_ms_all_attempts": {
+          "p50": 145.8235,
+          "p95": 313.421292,
+          "p99": 346.359833
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.18679225002415478,
+        "successful_requests_per_second": 10964.052308032939,
+        "latency_ms_all_attempts": {
+          "p50": 1.158417,
+          "p95": 3.29475,
+          "p99": 4.602209
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.468042
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.21275
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.2165
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.367791
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.210708
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.098292
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.289292
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.127917
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 22.250042,
+            "request": {
+              "request_id": "3b46a250-1b62-4406-a782-60c1147151d7",
+              "issued_at_ms": 1791053969511,
+              "expires_at_ms": 1791057569511,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 18.069708,
+            "request": {
+              "request_id": "3b46a250-1b62-4406-a782-60c1147151d7",
+              "issued_at_ms": 1791053969511,
+              "expires_at_ms": 1791057569511,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 18.961584,
+            "request": {
+              "request_id": "3b46a250-1b62-4406-a782-60c1147151d7",
+              "issued_at_ms": 1791053969511,
+              "expires_at_ms": 1791057569511,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 16.010167,
+            "request": {
+              "request_id": "3b46a250-1b62-4406-a782-60c1147151d7",
+              "issued_at_ms": 1791053969511,
+              "expires_at_ms": 1791057569511,
+              "id": 532,
+              "total_cents": 103
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 132,
+          "1": 132,
+          "2": 132,
+          "3": 132
+        },
+        "initial_startup_ms": 209.67054180800915,
+        "cold_startup_ms": 214.32162495329976,
+        "initial_drain": {
+          "milliseconds": 125.81200012937188,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 119.63245808146894,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 2,
+      "concurrency": 16,
+      "cells": 8,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r2-n8-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 3.7092820829711854,
+        "successful_requests_per_second": 138.03210123881468,
+        "latency_ms_all_attempts": {
+          "p50": 90.245916,
+          "p95": 239.408083,
+          "p99": 441.729959
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.22794995899312198,
+        "successful_requests_per_second": 8984.428025546586,
+        "latency_ms_all_attempts": {
+          "p50": 1.351125,
+          "p95": 4.149,
+          "p99": 7.444125
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.343875
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.146375
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.184333
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.18075
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.5005
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.316708
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 1.301
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.427
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.089416
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.071208
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.083
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.126834
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.336292
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.150667
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.260167
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.134166
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 77.361375,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 26.2635,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 18.49,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 23.046583,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 532,
+              "total_cents": 103
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 533,
+                "total_cents": 104
+              },
+              "receipt": {
+                "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 37.237875,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 533,
+              "total_cents": 104
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 534,
+                "total_cents": 105
+              },
+              "receipt": {
+                "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 39.917166,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 534,
+              "total_cents": 105
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 535,
+                "total_cents": 106
+              },
+              "receipt": {
+                "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 65.719167,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 535,
+              "total_cents": 106
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 536,
+                "total_cents": 107
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 26.6965,
+            "request": {
+              "request_id": "3653b09e-4fc2-4ac1-9661-8ba065a8bb0f",
+              "issued_at_ms": 1791053976386,
+              "expires_at_ms": 1791057576386,
+              "id": 536,
+              "total_cents": 107
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 66,
+          "1": 66,
+          "2": 66,
+          "3": 66,
+          "4": 66,
+          "5": 66,
+          "6": 66,
+          "7": 66
+        },
+        "initial_startup_ms": 472.29679208248854,
+        "cold_startup_ms": 1268.080959096551,
+        "initial_drain": {
+          "milliseconds": 176.37462494894862,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 7,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 237.81270789913833,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 7,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 2,
+      "concurrency": 16,
+      "cells": 16,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r2-n16-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 4.521762875141576,
+        "successful_requests_per_second": 113.2301746327132,
+        "latency_ms_all_attempts": {
+          "p50": 107.316875,
+          "p95": 220.309792,
+          "p99": 838.035917
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.2218635838944465,
+        "successful_requests_per_second": 9230.897491380802,
+        "latency_ms_all_attempts": {
+          "p50": 1.403875,
+          "p95": 3.764,
+          "p99": 5.39475
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.345042
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.201292
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.228
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.161667
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.175292
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.173625
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.175083
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.271041
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.205667
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.316417
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.209625
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.187334
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.21225
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.159625
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.163375
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.234958
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.107375
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.138959
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.104709
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.096208
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.086042
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.102083
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.117792
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.191541
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.14375
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.215875
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.162125
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.148292
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.086834
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.083625
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.085542
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.134916
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 16.875542,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 16.120834,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 13.382,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 14.036375,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 532,
+              "total_cents": 103
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 533,
+                "total_cents": 104
+              },
+              "receipt": {
+                "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 13.760208,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 533,
+              "total_cents": 104
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 534,
+                "total_cents": 105
+              },
+              "receipt": {
+                "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 12.766209,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 534,
+              "total_cents": 105
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 535,
+                "total_cents": 106
+              },
+              "receipt": {
+                "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 14.336042,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 535,
+              "total_cents": 106
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 536,
+                "total_cents": 107
+              },
+              "receipt": {
+                "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 13.785667,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 536,
+              "total_cents": 107
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 537,
+                "total_cents": 108
+              },
+              "receipt": {
+                "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 13.302791,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 537,
+              "total_cents": 108
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 538,
+                "total_cents": 109
+              },
+              "receipt": {
+                "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 11.79675,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 538,
+              "total_cents": 109
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 539,
+                "total_cents": 110
+              },
+              "receipt": {
+                "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 16.361625,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 539,
+              "total_cents": 110
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 540,
+                "total_cents": 111
+              },
+              "receipt": {
+                "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 17.623917,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 540,
+              "total_cents": 111
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 541,
+                "total_cents": 112
+              },
+              "receipt": {
+                "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 22.763458,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 541,
+              "total_cents": 112
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 542,
+                "total_cents": 113
+              },
+              "receipt": {
+                "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 22.723708,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 542,
+              "total_cents": 113
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 543,
+                "total_cents": 114
+              },
+              "receipt": {
+                "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 22.111833,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 543,
+              "total_cents": 114
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 544,
+                "total_cents": 115
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 24.180708,
+            "request": {
+              "request_id": "b2927733-9389-493d-96d7-34833a6f79a2",
+              "issued_at_ms": 1791053983914,
+              "expires_at_ms": 1791057583914,
+              "id": 544,
+              "total_cents": 115
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 33,
+          "1": 33,
+          "2": 33,
+          "3": 33,
+          "4": 33,
+          "5": 33,
+          "6": 33,
+          "7": 33,
+          "8": 33,
+          "9": 33,
+          "10": 33,
+          "11": 33,
+          "12": 33,
+          "13": 33,
+          "14": 33,
+          "15": 33
+        },
+        "initial_startup_ms": 772.0152498222888,
+        "cold_startup_ms": 518.9787910785526,
+        "initial_drain": {
+          "milliseconds": 229.9097920767963,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 7,
+              "state": "idle"
+            },
+            {
+              "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 8,
+              "state": "idle"
+            },
+            {
+              "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 9,
+              "state": "idle"
+            },
+            {
+              "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 10,
+              "state": "idle"
+            },
+            {
+              "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 11,
+              "state": "idle"
+            },
+            {
+              "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 12,
+              "state": "idle"
+            },
+            {
+              "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 13,
+              "state": "idle"
+            },
+            {
+              "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 14,
+              "state": "idle"
+            },
+            {
+              "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 15,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 285.9583750832826,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 7,
+              "state": "idle"
+            },
+            {
+              "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 8,
+              "state": "idle"
+            },
+            {
+              "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 9,
+              "state": "idle"
+            },
+            {
+              "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 10,
+              "state": "idle"
+            },
+            {
+              "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 11,
+              "state": "idle"
+            },
+            {
+              "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 12,
+              "state": "idle"
+            },
+            {
+              "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 13,
+              "state": "idle"
+            },
+            {
+              "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 14,
+              "state": "idle"
+            },
+            {
+              "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 15,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 3,
+      "concurrency": 16,
+      "cells": 1,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r3-n1-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 13.702041666954756,
+        "successful_requests_per_second": 37.36669413542885,
+        "latency_ms_all_attempts": {
+          "p50": 369.463125,
+          "p95": 755.282167,
+          "p99": 805.274083
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.25923445797525346,
+        "successful_requests_per_second": 7900.184319615034,
+        "latency_ms_all_attempts": {
+          "p50": 1.626125,
+          "p95": 4.468542,
+          "p99": 6.622583
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.376167
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.105708
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 529
+              }
+            },
+            "latency_ms": 38.728875,
+            "request": {
+              "request_id": "d1569d78-4ad2-405a-9d8d-06a5fbf826d8",
+              "issued_at_ms": 1791053999611,
+              "expires_at_ms": 1791057599611,
+              "id": 529,
+              "total_cents": 100
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 528
+        },
+        "initial_startup_ms": 108.31737495027483,
+        "cold_startup_ms": 164.52558408491313,
+        "initial_drain": {
+          "milliseconds": 122.37374996766448,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 528,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 125.40266686119139,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 529,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 3,
+      "concurrency": 16,
+      "cells": 4,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r3-n4-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 4.56908645783551,
+        "successful_requests_per_second": 112.0574111969304,
+        "latency_ms_all_attempts": {
+          "p50": 134.577292,
+          "p95": 228.439625,
+          "p99": 280.433875
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.14723095810040832,
+        "successful_requests_per_second": 13910.117997081215,
+        "latency_ms_all_attempts": {
+          "p50": 0.923041,
+          "p95": 2.440709,
+          "p99": 3.694417
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.689167
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.302917
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.307375
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.185166
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.162625
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.16
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.124083
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.226166
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 19.541625,
+            "request": {
+              "request_id": "c2a08cf7-e221-482e-8f8e-7708bfb11f6f",
+              "issued_at_ms": 1791054006263,
+              "expires_at_ms": 1791057606263,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 15.272583,
+            "request": {
+              "request_id": "c2a08cf7-e221-482e-8f8e-7708bfb11f6f",
+              "issued_at_ms": 1791054006263,
+              "expires_at_ms": 1791057606263,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 20.83975,
+            "request": {
+              "request_id": "c2a08cf7-e221-482e-8f8e-7708bfb11f6f",
+              "issued_at_ms": 1791054006263,
+              "expires_at_ms": 1791057606263,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 133
+              }
+            },
+            "latency_ms": 15.928875,
+            "request": {
+              "request_id": "c2a08cf7-e221-482e-8f8e-7708bfb11f6f",
+              "issued_at_ms": 1791054006263,
+              "expires_at_ms": 1791057606263,
+              "id": 532,
+              "total_cents": 103
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 132,
+          "1": 132,
+          "2": 132,
+          "3": 132
+        },
+        "initial_startup_ms": 469.7999160271138,
+        "cold_startup_ms": 216.14212496206164,
+        "initial_drain": {
+          "milliseconds": 130.38691692054272,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 132,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 126.25433295033872,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 133,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 3,
+      "concurrency": 16,
+      "cells": 8,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r3-n8-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 4.46593499998562,
+        "successful_requests_per_second": 114.64564531316478,
+        "latency_ms_all_attempts": {
+          "p50": 115.868,
+          "p95": 298.020333,
+          "p99": 410.835125
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.13947133300825953,
+        "successful_requests_per_second": 14684.021123385382,
+        "latency_ms_all_attempts": {
+          "p50": 0.895334,
+          "p95": 2.266958,
+          "p99": 3.331709
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.359666
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.166
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.151833
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.142917
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.105542
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.108292
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.137375
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.142292
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.090834
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.08225
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.100583
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.078708
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.067625
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.062
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.08075
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.089666
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 13.655333,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 9.838541,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 12.865958,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 12.836708,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 532,
+              "total_cents": 103
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 533,
+                "total_cents": 104
+              },
+              "receipt": {
+                "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 12.978667,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 533,
+              "total_cents": 104
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 534,
+                "total_cents": 105
+              },
+              "receipt": {
+                "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 14.1855,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 534,
+              "total_cents": 105
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 535,
+                "total_cents": 106
+              },
+              "receipt": {
+                "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 14.434125,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 535,
+              "total_cents": 106
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 536,
+                "total_cents": 107
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 67
+              }
+            },
+            "latency_ms": 15.143833,
+            "request": {
+              "request_id": "2fb3519d-5f22-44ca-9a45-6c014ebaf1b4",
+              "issued_at_ms": 1791054012556,
+              "expires_at_ms": 1791057612556,
+              "id": 536,
+              "total_cents": 107
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 66,
+          "1": 66,
+          "2": 66,
+          "3": 66,
+          "4": 66,
+          "5": 66,
+          "6": 66,
+          "7": 66
+        },
+        "initial_startup_ms": 535.3524999227375,
+        "cold_startup_ms": 270.5387088935822,
+        "initial_drain": {
+          "milliseconds": 124.95966581627727,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 66,
+              "epoch": 1,
+              "shard": 7,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 126.6665831208229,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 67,
+              "epoch": 2,
+              "shard": 7,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    },
+    {
+      "repeat": 3,
+      "concurrency": 16,
+      "cells": 16,
+      "workers": 4,
+      "prefix": "axum-multicell-perf-20261003-54f709e0-a/r3-n16-c16",
+      "writes": {
+        "attempts": 512,
+        "successes": 512,
+        "errors": 0,
+        "statuses": {
+          "201": 512
+        },
+        "seconds": 3.515879957936704,
+        "successful_requests_per_second": 145.6249946316334,
+        "latency_ms_all_attempts": {
+          "p50": 82.649042,
+          "p95": 177.560916,
+          "p99": 619.402375
+        }
+      },
+      "reads": {
+        "attempts": 2048,
+        "successes": 2048,
+        "errors": 0,
+        "statuses": {
+          "200": 2048
+        },
+        "seconds": 0.20036875014193356,
+        "successful_requests_per_second": 10221.154738696903,
+        "latency_ms_all_attempts": {
+          "p50": 1.233875,
+          "p95": 3.44325,
+          "p99": 5.07775
+        }
+      },
+      "verification": {
+        "warmup_writes": 16,
+        "acknowledged_rows": 528,
+        "live_exact_retries": 528,
+        "conflicts": [
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.37575
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.153375
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.151
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.180875
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.15475
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.109667
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.10725
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.09875
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.133791
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.158959
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.159584
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.171083
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.219917
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.199792
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.227125
+          },
+          {
+            "status": 409,
+            "body": {
+              "code": "request_conflict",
+              "message": "Request identity was already used for different command bytes."
+            },
+            "latency_ms": 0.367458
+          }
+        ],
+        "invalid_identities": [
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.090958
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.121667
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.108834
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.098708
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.070459
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.098292
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.079458
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.062375
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.099
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.199166
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.092416
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.128542
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.172333
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.107375
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.099542
+          },
+          {
+            "status": 400,
+            "body": {
+              "code": "invalid_request",
+              "message": "Invalid Cell request."
+            },
+            "latency_ms": 0.099084
+          }
+        ],
+        "cold_recovered_rows": 528,
+        "cold_exact_retries": 528,
+        "next_recovered_writes": [
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 529,
+                "total_cents": 100
+              },
+              "receipt": {
+                "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 43.293208,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 529,
+              "total_cents": 100
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 530,
+                "total_cents": 101
+              },
+              "receipt": {
+                "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 22.5765,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 530,
+              "total_cents": 101
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 531,
+                "total_cents": 102
+              },
+              "receipt": {
+                "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 18.076333,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 531,
+              "total_cents": 102
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 532,
+                "total_cents": 103
+              },
+              "receipt": {
+                "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 25.149083,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 532,
+              "total_cents": 103
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 533,
+                "total_cents": 104
+              },
+              "receipt": {
+                "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 21.6565,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 533,
+              "total_cents": 104
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 534,
+                "total_cents": 105
+              },
+              "receipt": {
+                "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 16.319583,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 534,
+              "total_cents": 105
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 535,
+                "total_cents": 106
+              },
+              "receipt": {
+                "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 14.362375,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 535,
+              "total_cents": 106
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 536,
+                "total_cents": 107
+              },
+              "receipt": {
+                "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 29.038167,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 536,
+              "total_cents": 107
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 537,
+                "total_cents": 108
+              },
+              "receipt": {
+                "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 22.80425,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 537,
+              "total_cents": 108
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 538,
+                "total_cents": 109
+              },
+              "receipt": {
+                "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 23.855792,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 538,
+              "total_cents": 109
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 539,
+                "total_cents": 110
+              },
+              "receipt": {
+                "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 24.166083,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 539,
+              "total_cents": 110
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 540,
+                "total_cents": 111
+              },
+              "receipt": {
+                "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 21.915083,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 540,
+              "total_cents": 111
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 541,
+                "total_cents": 112
+              },
+              "receipt": {
+                "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 27.733958,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 541,
+              "total_cents": 112
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 542,
+                "total_cents": 113
+              },
+              "receipt": {
+                "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 15.863541,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 542,
+              "total_cents": 113
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 543,
+                "total_cents": 114
+              },
+              "receipt": {
+                "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 21.515625,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 543,
+              "total_cents": 114
+            }
+          },
+          {
+            "status": 201,
+            "body": {
+              "output": {
+                "id": 544,
+                "total_cents": 115
+              },
+              "receipt": {
+                "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+                "incarnation": "04040404040404040404040404040404",
+                "commit_sequence": 34
+              }
+            },
+            "latency_ms": 20.616625,
+            "request": {
+              "request_id": "2fe0f6f2-b341-47a9-8ec4-4e071bd80b2d",
+              "issued_at_ms": 1791054019047,
+              "expires_at_ms": 1791057619047,
+              "id": 544,
+              "total_cents": 115
+            }
+          }
+        ],
+        "independent_request_ledgers": true,
+        "per_cell_acknowledged_rows": {
+          "0": 33,
+          "1": 33,
+          "2": 33,
+          "3": 33,
+          "4": 33,
+          "5": 33,
+          "6": 33,
+          "7": 33,
+          "8": 33,
+          "9": 33,
+          "10": 33,
+          "11": 33,
+          "12": 33,
+          "13": 33,
+          "14": 33,
+          "15": 33
+        },
+        "initial_startup_ms": 896.897834027186,
+        "cold_startup_ms": 582.5965830590576,
+        "initial_drain": {
+          "milliseconds": 344.39941705204546,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 7,
+              "state": "idle"
+            },
+            {
+              "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 8,
+              "state": "idle"
+            },
+            {
+              "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 9,
+              "state": "idle"
+            },
+            {
+              "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 10,
+              "state": "idle"
+            },
+            {
+              "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 11,
+              "state": "idle"
+            },
+            {
+              "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 12,
+              "state": "idle"
+            },
+            {
+              "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 13,
+              "state": "idle"
+            },
+            {
+              "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 14,
+              "state": "idle"
+            },
+            {
+              "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+              "commit_sequence": 33,
+              "epoch": 1,
+              "shard": 15,
+              "state": "idle"
+            }
+          ]
+        },
+        "recovered_drain": {
+          "milliseconds": 228.68887498043478,
+          "cells": [
+            {
+              "cell": "df6f163b3e49b7f3227053e8144f98c9af381caa196f358000d99ad4ecc2a0c2",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 0,
+              "state": "idle"
+            },
+            {
+              "cell": "c2f1b977e9e21a9a47e1ff6e8e5f9ab3898ff17257f5793a529b556bbce068de",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 1,
+              "state": "idle"
+            },
+            {
+              "cell": "74f6e9e0c2eb6ee4c3b0b46d724b8ba77b45f1b8efe7e7d648d2a5d02ec579e1",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 2,
+              "state": "idle"
+            },
+            {
+              "cell": "6d910f9e4ecb60eac76430cdb1ec800382d2a906eb4994e5d95990dbaa3f9f50",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 3,
+              "state": "idle"
+            },
+            {
+              "cell": "77e7408b1db9d2145521bfd5735a24944af2485f16afdce74a9a4eb834fc41d4",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 4,
+              "state": "idle"
+            },
+            {
+              "cell": "1e95b23c5cb14cd71ca5d28d26343f8cd884f8090ba68de70738d3241d1517e4",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 5,
+              "state": "idle"
+            },
+            {
+              "cell": "4287675d6a7aa0c1689dd16ef231b7e1fa7df7ddb741f7151dd6773018d4673d",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 6,
+              "state": "idle"
+            },
+            {
+              "cell": "a915d0b8913404fb458cae167e7aad75449c2e74fb67531bbabe937153622650",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 7,
+              "state": "idle"
+            },
+            {
+              "cell": "3113aa1f6e1650b8e3d4b9619a618aaee8f296aba3ceab52bbfa19b7b87ab5db",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 8,
+              "state": "idle"
+            },
+            {
+              "cell": "1b7614c2ba16a2e99f3f780734139a67ced16f73321cf7e80c26ab0a7537177f",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 9,
+              "state": "idle"
+            },
+            {
+              "cell": "c995c1e8c00107ca230f00fc0f70f8aed451e6bd4a43e65b15c95edef90342b7",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 10,
+              "state": "idle"
+            },
+            {
+              "cell": "0a6ab7ac342ceadc8a77dfbbf3dae91219372caf4eae502be4d91ad5d24b2d89",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 11,
+              "state": "idle"
+            },
+            {
+              "cell": "9e77ad2d444450cd047d8029527de624d3d35cdca4c6fb71dab94b9d4e9b037b",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 12,
+              "state": "idle"
+            },
+            {
+              "cell": "8ebc82e90bc2f723db3e328eb18bc7172f67604a6a070f9901839836b5d7908a",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 13,
+              "state": "idle"
+            },
+            {
+              "cell": "c14dc3f50b47f76115733b5b6bd41c662c95824303daae71b693c2debcf6de13",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 14,
+              "state": "idle"
+            },
+            {
+              "cell": "3bb5e462bed0663822407bfe911d7f272308f40123f212f26a085cc7f1372f9e",
+              "commit_sequence": 34,
+              "epoch": 2,
+              "shard": 15,
+              "state": "idle"
+            }
+          ]
+        },
+        "fresh_sqlite": true,
+        "active_owner_refused": true,
+        "passed": true
+      }
+    }
+  ]
+}

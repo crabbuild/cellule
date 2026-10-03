@@ -726,7 +726,7 @@ fn scale_snapshot(cells: u64) -> serde_json::Value {
         "threads": 1,
         "file_descriptors": 1 + cells * 8,
         "sqlite_cache_bytes": cells * 1_024,
-        "admitted_resident_bytes": cells * 65_536,
+        "admitted_resident_bytes": cells * crate::fleet::resource::ACTIVE_CELL_NATIVE_BYTES as u64,
         "admitted_file_descriptors": cells * 8,
         "retained_bytes": 0,
         "local_disk_reserved_bytes": cells * 4_096,
