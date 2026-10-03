@@ -21,6 +21,12 @@ pub(super) struct FaultStore {
     pub(super) resume: Notify,
     history_writes: AtomicUsize,
     control_writes: AtomicUsize,
+    pub(super) lineage_reads: AtomicUsize,
+    pub(super) lineage_writes: AtomicUsize,
+    pub(super) lineage_update_fault: AtomicUsize,
+    pub(super) root_writes: AtomicUsize,
+    pub(super) root_written: Notify,
+    pub(super) root_fault: AtomicUsize,
 }
 
 impl std::fmt::Display for FaultStore {
@@ -54,6 +60,9 @@ impl ObjectStore for FaultStore {
         if control {
             self.control_writes.fetch_add(1, Ordering::SeqCst);
         }
+        if path.as_ref().contains("/root-lineage/") {
+            self.lineage_writes.fetch_add(1, Ordering::SeqCst);
+        }
         let fault = if history
             || path.as_ref().contains("/acquisitions/")
             || path.as_ref().contains("/root-lineage/")
@@ -66,6 +75,18 @@ impl ObjectStore for FaultStore {
         } else {
             0
         };
+        let update_fault = if path.as_ref().contains("/root-lineage/")
+            && matches!(&opts.mode, object_store::PutMode::Update(_))
+        {
+            self.lineage_update_fault.swap(0, Ordering::SeqCst)
+        } else {
+            0
+        };
+        let fault = if update_fault == 0 {
+            fault
+        } else {
+            update_fault
+        };
         if fault == 1 {
             return Err(denied(path));
         }
@@ -73,7 +94,21 @@ impl ObjectStore for FaultStore {
             self.entered.notify_one();
             self.resume.notified().await;
         }
+        if path.as_ref().ends_with(".root") {
+            match self.root_fault.swap(0, Ordering::SeqCst) {
+                1 => return Err(denied(path)),
+                3 => {
+                    self.entered.notify_one();
+                    self.resume.notified().await;
+                }
+                _ => {}
+            }
+        }
         let result = self.inner.put_opts(path, body, opts).await?;
+        if path.as_ref().ends_with(".root") {
+            self.root_writes.fetch_add(1, Ordering::SeqCst);
+            self.root_written.notify_one();
+        }
         if fault == 2 {
             return Err(denied(path));
         }
@@ -95,6 +130,9 @@ impl ObjectStore for FaultStore {
         self.inner.put_multipart_opts(path, opts).await
     }
     async fn get_opts(&self, path: &Path, opts: GetOptions) -> object_store::Result<GetResult> {
+        if path.as_ref().contains("/root-lineage/") {
+            self.lineage_reads.fetch_add(1, Ordering::SeqCst);
+        }
         if path.as_ref().contains("/acquisitions/")
             && self
                 .fault

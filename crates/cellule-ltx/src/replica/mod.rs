@@ -17,7 +17,9 @@ mod cache;
 mod compaction;
 pub(crate) mod directory;
 mod merge;
+mod preparation;
 mod prepare;
+pub use preparation::{RootPreparation, RootPreparationFuture, RootPreparationMetadata};
 mod read_only;
 mod restore;
 pub(crate) mod root;
@@ -211,6 +213,15 @@ impl RecoveryOverlay {
 }
 
 impl PreparedRoot {
+    /// Returns the exact native derivation after all immutable uploads completed.
+    #[must_use]
+    pub fn preparation(&self) -> RootPreparation {
+        RootPreparation {
+            root: self.root(),
+            predecessor: self.predecessor,
+        }
+    }
+
     /// Returns the exact root that was prepared.
     #[must_use]
     pub fn root(&self) -> RootRef {
@@ -695,6 +706,7 @@ pub struct CellReplica {
     limits: Limits,
     host: Host,
     cost: Arc<PublicationLedger>,
+    root_metadata: Option<Arc<dyn RootPreparationMetadata>>,
 }
 
 impl CellReplica {
@@ -715,6 +727,7 @@ impl CellReplica {
             limits: limits.validate()?,
             host: Host::default(),
             cost: Arc::new(PublicationLedger::default()),
+            root_metadata: None,
         })
     }
 
@@ -750,6 +763,14 @@ impl CellReplica {
     #[must_use]
     pub fn take_publication_cost(&self) -> PublicationCost {
         self.cost.take()
+    }
+
+    /// Joins caller-owned verified-derivation metadata with root uploads.
+    /// This replaces the one metadata facility; it supplies no authority policy.
+    #[must_use]
+    pub fn with_root_metadata(mut self, metadata: Arc<dyn RootPreparationMetadata>) -> Self {
+        self.root_metadata = Some(metadata);
+        self
     }
 
     /// Selects the caller's bounded I/O and blocking execution facilities.

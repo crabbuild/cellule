@@ -146,10 +146,9 @@ async fn competing_distinct_links_cannot_erase_the_original() {
         .await
         .unwrap();
     store.resume.notify_one();
-    assert!(matches!(
-        task.await.unwrap(),
-        Err(Error::Storage(StorageError::StateConflict { .. }))
-    ));
+    task.await.unwrap().unwrap();
+    // The delayed create conflicts, then its single ETag merge retains both
+    // native inputs before returning. Replay must preserve the complete set.
     second
         .retain_verified_link(root(8, 8), Some(root(1, 1)))
         .await
@@ -279,6 +278,12 @@ async fn corrupt_or_foreign_metadata_is_not_absence() {
         .await
         .unwrap();
     assert!(authority.root_lineage(child).await.is_err());
+    assert!(matches!(
+        authority
+            .retain_verified_link(child, Some(root(1, 1)))
+            .await,
+        Err(Error::Control(_))
+    ));
     let foreign = CellRootLineage {
         root: root(9, 9),
         predecessors: vec![],
@@ -288,4 +293,195 @@ async fn corrupt_or_foreign_metadata_is_not_absence() {
         .await
         .unwrap();
     assert!(authority.root_lineage(child).await.is_err());
+    assert!(matches!(
+        authority
+            .retain_verified_link(child, Some(root(1, 1)))
+            .await,
+        Err(Error::Control(_))
+    ));
+}
+
+#[tokio::test]
+async fn fresh_native_publications_do_not_read_absent_lineage() {
+    let store = Arc::new(FaultStore::default());
+    let authority = authority(store.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = cellule_ltx::Db::open(
+        &directory.path().join("fresh-publication.sqlite"),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    database
+        .transaction(|transaction| {
+            transaction.execute_batch(
+                "CREATE TABLE values_seen(value INTEGER); INSERT INTO values_seen VALUES(0)",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let cell = CellId::from_bytes([1; 32]);
+    let incarnation = IncarnationId::from_bytes([2; 16]);
+    let initial = Control::initial(
+        cell,
+        incarnation,
+        crate::control::Owner {
+            session: crate::identity::SessionId::from_bytes([4; 16]),
+            endpoint: "https://publisher.internal".into(),
+        },
+        crate::identity::Digest::from_bytes([5; 32]),
+        1,
+    )
+    .unwrap();
+    authority
+        .layout
+        .store()
+        .create_strict(
+            &authority.layout.control_path(cell.as_bytes()),
+            Bytes::from(initial.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+    let replica = CellReplica::new(
+        authority.layout.clone(),
+        *cell.as_bytes(),
+        *incarnation.as_bytes(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let mut publisher = crate::publication::CellPublisher::new(
+        replica.clone(),
+        authority.clone(),
+        authority.load(cell).await.unwrap().unwrap(),
+        directory.path().to_owned(),
+    );
+    let mut previous = None;
+    let mut original = None;
+    for sequence in 1..=16 {
+        database
+            .transaction(|transaction| {
+                transaction.execute("UPDATE values_seen SET value = value + 1", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let prepared = replica
+            .prepare(previous.as_ref(), &database.capture().unwrap(), sequence, 1)
+            .await
+            .unwrap();
+        publisher.publish_prepared(&prepared, None).await.unwrap();
+        original.get_or_insert(prepared.root());
+        previous = Some(prepared.root());
+    }
+    // This exercises the ordinary publisher with genuinely captured native
+    // roots. Fresh immutable identities need no absence GET before strict PUT.
+    assert_eq!(store.lineage_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(store.lineage_writes.load(Ordering::SeqCst), 16);
+    let latest = authority
+        .load(cell)
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    assert_eq!(Some(latest), previous);
+    authority
+        .verify_root_prefix(original.unwrap(), latest, &replica, 16)
+        .await
+        .unwrap();
+    assert!(store.lineage_reads.load(Ordering::SeqCst) > 0);
+    database.close().unwrap();
+}
+
+#[tokio::test]
+async fn failed_and_lost_conflict_merges_preserve_original_inputs_and_errors() {
+    for fault in [1, 2] {
+        let store = Arc::new(FaultStore::default());
+        let authority = authority(store.clone());
+        let child = root(8, 8);
+        authority
+            .retain_verified_link(child, Some(root(2, 2)))
+            .await
+            .unwrap();
+        store.lineage_update_fault.store(fault, Ordering::SeqCst);
+        let result = authority
+            .retain_verified_link(child, Some(root(1, 1)))
+            .await;
+        if fault == 1 {
+            assert!(matches!(
+                result,
+                Err(Error::Storage(StorageError::NotSupported { .. }))
+            ));
+            assert_eq!(
+                authority
+                    .root_lineage(child)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .predecessors(),
+                &[root(2, 2)]
+            );
+            authority
+                .retain_verified_link(child, Some(root(1, 1)))
+                .await
+                .unwrap();
+        } else {
+            result.unwrap();
+        }
+        assert_eq!(
+            authority
+                .root_lineage(child)
+                .await
+                .unwrap()
+                .unwrap()
+                .predecessors(),
+            &[root(1, 1), root(2, 2)]
+        );
+    }
+}
+
+#[tokio::test]
+async fn delayed_conflict_merge_cannot_erase_a_concurrent_extension() {
+    let store = Arc::new(FaultStore::default());
+    let first = authority(store.clone());
+    let second = authority(store.clone());
+    let child = root(8, 8);
+    first
+        .retain_verified_link(child, Some(root(2, 2)))
+        .await
+        .unwrap();
+    store.lineage_update_fault.store(3, Ordering::SeqCst);
+    let task =
+        tokio::spawn(async move { first.retain_verified_link(child, Some(root(1, 1))).await });
+    store.entered.notified().await;
+    second
+        .retain_verified_link(child, Some(root(3, 3)))
+        .await
+        .unwrap();
+    store.resume.notify_one();
+    assert!(matches!(
+        task.await.unwrap(),
+        Err(Error::Storage(StorageError::StateConflict { .. }))
+    ));
+    assert_eq!(
+        second
+            .root_lineage(child)
+            .await
+            .unwrap()
+            .unwrap()
+            .predecessors(),
+        &[root(2, 2), root(3, 3)]
+    );
+    second
+        .retain_verified_link(child, Some(root(1, 1)))
+        .await
+        .unwrap();
+    assert_eq!(
+        second
+            .root_lineage(child)
+            .await
+            .unwrap()
+            .unwrap()
+            .predecessors(),
+        &[root(1, 1), root(2, 2), root(3, 3)]
+    );
 }

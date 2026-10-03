@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 mod codec;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod preparation_tests;
 mod verify;
 pub use verify::VerifiedRootPrefix;
 
@@ -111,20 +114,54 @@ impl CellAuthority {
             .await
     }
 
-    // Private: only the opaque PreparedRoot factory supplies production links.
+    pub(crate) async fn retain_root_preparation(
+        &self,
+        preparation: cellule_ltx::RootPreparation,
+    ) -> Result<()> {
+        self.retain_verified_link(preparation.root(), preparation.predecessor())
+            .await
+    }
+
+    // Private: only opaque native preparation factories supply production links.
     async fn retain_verified_link(&self, root: RootRef, parent: Option<RootRef>) -> Result<()> {
         validate_root(&root)?;
         if parent == Some(root) {
             return Ok(());
         }
-        let previous = self.load_root_lineage(root).await?;
-        let mut record = previous.as_ref().map_or_else(
-            || CellRootLineage {
-                root,
-                predecessors: Vec::new(),
-            },
-            |(record, _)| record.clone(),
-        );
+        let proposed = CellRootLineage {
+            root,
+            predecessors: parent.into_iter().collect(),
+        };
+        let body = Bytes::from(proposed.encode()?);
+        let path = self
+            .layout
+            .root_lineage_path(&root.cell, &root.incarnation, &root.digest);
+        // Native fresh roots normally have fresh immutable metadata identities.
+        // Strict creation itself proves absence and publication atomically; an
+        // absence GET adds a round trip to every command without adding safety.
+        let conflict = match self
+            .layout
+            .store()
+            .create_strict_with_etag(&path, body)
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(source @ StorageError::StateConflict { .. }) => source,
+            Err(source) => {
+                // A lost create reply is adopted only after exact native input
+                // confirmation. Missing/corrupt/failed confirmation preserves
+                // the original publication error for its existing work owner.
+                if let Ok(Some(current)) = self.root_lineage(root).await
+                    && parent.is_none_or(|parent| current.predecessors.contains(&parent))
+                {
+                    return Ok(());
+                }
+                return Err(source.into());
+            }
+        };
+        let Some((mut record, token)) = self.load_root_lineage(root).await? else {
+            return Err(conflict.into());
+        };
         if let Some(parent) = parent {
             match record
                 .predecessors
@@ -134,22 +171,13 @@ impl CellAuthority {
                 Ok(_) => return Err(Error::Control("Cell root lineage digest changed position")),
                 Err(index) => record.predecessors.insert(index, parent),
             }
-        } else if previous.is_some() {
+        } else {
             return Ok(());
         }
+        // One bounded conflict merge belongs to this publication attempt. ETag
+        // CAS preserves every earlier verified input; no detached retry owner.
         let body = Bytes::from(record.encode()?);
-        let path = self
-            .layout
-            .root_lineage_path(&root.cell, &root.incarnation, &root.digest);
-        let written = match previous {
-            Some((_, token)) => self.layout.store().update(&path, body, token).await,
-            None => {
-                self.layout
-                    .store()
-                    .create_strict_with_etag(&path, body)
-                    .await
-            }
-        };
+        let written = self.layout.store().update(&path, body, token).await;
         match written {
             Ok(_) => Ok(()),
             Err(source) => {

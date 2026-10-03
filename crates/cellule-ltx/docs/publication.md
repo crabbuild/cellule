@@ -23,6 +23,7 @@ sequenceDiagram
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
 | `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
+| `with_root_metadata` | Joins caller-supplied verified derivation metadata with immutable uploads; both must succeed before `PreparedRoot` returns. |
 | Runtime CAS | Names the authoritative owner and exact root. |
 | `Db::prune_captured` | Removes only the successfully published batch. |
 
@@ -30,6 +31,16 @@ A failed CAS leaves unreachable content, never an acknowledged state. Provider
 retry pins and rechecks the selected capture bytes, so path replacement cannot
 change an in-flight proposal. The host owns request admission, deadlines, and
 reconciliation after ambiguous results.
+
+`RootPreparation` identifies a native verified derivation while uploads may still
+be running. Its construction is private and it grants no uploaded-root, restore,
+serving, authority or acknowledgement rights. A `RootPreparationMetadata` future
+runs inline under the enclosing preparation owner and shares its native origin
+I/O admission; cancellation drops it and releases its permit. It adds no task or
+scheduler. Its source error is retained as `RootPreparation`,
+classified Ambiguous for caller reconciliation. The runtime recovers its original
+typed storage error and uses the existing publisher retry policy. Failed work
+can leave proposal metadata or immutable objects; neither selects authority.
 
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the

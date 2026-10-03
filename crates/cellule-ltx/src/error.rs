@@ -179,6 +179,14 @@ pub enum LtxError {
     #[cfg(feature = "replica")]
     #[error("object-store replication failure: {0}")]
     Storage(#[from] cellule_store::StorageError),
+    /// Caller-owned preparation metadata failed; immutable data may be uploaded.
+    #[cfg(feature = "replica")]
+    #[error("root preparation metadata failed: {source}")]
+    RootPreparation {
+        /// Original caller/provider error; no preparation completion is granted.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     /// Replica metadata was not valid JSON.
     #[cfg(feature = "replica")]
     #[error("invalid replica metadata: {0}")]
@@ -246,7 +254,7 @@ impl LtxError {
             #[cfg(feature = "replica")]
             Self::Json(_) => FailureClass::Permanent,
             #[cfg(feature = "replica")]
-            Self::Task(_) => FailureClass::Ambiguous,
+            Self::Task(_) | Self::RootPreparation { .. } => FailureClass::Ambiguous,
             Self::ChecksumMismatch
             | Self::LTXCorrupted
             | Self::LTXMissing

@@ -4,6 +4,77 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 lineage publication I/O checkpoint
+
+The native publisher strictly creates fresh lineage without an absence GET.
+A create conflict reads and validates the existing record, then performs at most
+one additive ETag merge. Delayed merges cannot erase earlier inputs. Failed and
+lost create/update replies retain the original source error unless exact retained
+inputs are independently confirmed. The existing publisher owns retries.
+
+An opaque native `RootPreparation` allows this metadata write to overlap root
+and dependency uploads. All native graph checks precede that observation. Its
+construction is private; it supplies no uploaded-root, authority, restore,
+serving or acknowledgement rights. The same caller-owned preparation future
+joins uploads and metadata, using the shared native origin I/O permits. Only
+completion of both yields `PreparedRoot`. Cancellation drops inline work and
+releases its permit. A bounded private one-entry confirmation avoids repeating
+that exact metadata write before authority CAS. External and rebased compaction
+proposals retain their exact inputs through the canonical path before CAS.
+
+The runtime recovers its original typed metadata errors while preserving native
+LTX retry classes and hints. No detached task, second retry owner, authority,
+queue, scheduler, persisted codec or dependency is added. Native prepared views
+do not retain the callback. Minion remains canonical at
+`crates/cellule-host/minion`, with Cargo target `fleet_operations`.
+
+Ten new cases cover fresh publication I/O, competing/stale additive merges,
+failed/lost replies, ordering with paused native uploads and metadata, failed
+uploads, original source/retry preservation, exact native predecessor identity
+and single-permit cancellation cleanup. Existing foreground compaction and
+migration cases verify the original published prefix through the rebased path.
+
+### Verification and remaining qualification
+
+Final verification passed 1,626 workspace tests and all 218 minion cases:
+**1,844 distinct passes**, with 36 documented workspace cases ignored. Local LTX
+without default features passed 54 overlapping cases. Workspace all-target,
+all-feature check, Clippy and API documentation passed with warnings denied.
+Format, boundaries, layout, Rust fences, links, SQL/peer and diff gates pass.
+Both unchanged routing profiles are being collected against the same 754 frozen
+Rust/Cargo paths. Manifest SHA256:
+`317bd0207e4de67c040fd59bb9b38752a71611b389a6645c07f413059f219dd7`.
+Raw commands, source archives, errors and provider evidence remain under
+`/tmp/cellule-lineage-routing-evidence`. The isolated checkout and mounted target
+use suffix `cellule-reader-prelease-8698183`.
+
+Published parent `a2edbe5` is mergeable and passes follower/object capacity,
+workspace/MSRV, Compose smoke, contract, website, fuzz and enabled fast models.
+Both routing profiles and their aggregate fail: all eight command lanes measure
+79.5–88.1% of baseline against the unchanged 90% throughput gate, with
+1,024–1,025 extra reads per 1,024 commands. Downloaded original artifacts are
+retained. A failing native regression recorded 16 absence GETs for 16 roots;
+fresh strict creation removes those GETs. One diagnostic local pair then showed
+the remaining serial lineage PUT adding about 3 ms to the authority phase.
+That incomplete comparison is retained and does not qualify a fix.
+
+The final candidate overlaps that PUT under existing admission. The complete
+four-pair leased and object-only comparison and fresh CI must establish whether
+this closes the routing gate. Workload, pair count, thresholds and expected
+correctness evidence are unchanged. The initial diagnostic wrapper mistakenly
+compared one pair and was rejected by the unchanged four-repeat comparator; the
+final wrapper compares only complete profiles. A pre-admission verification
+snapshot passed but was superseded by the shared I/O-permit correction. Initial
+test compilation also caught a shadowed test helper. None qualifies final source.
+
+The [complete remaining streams](#ci-blocker-and-remaining-work-streams) still
+apply. Next after routing qualification: complete authenticated original writer,
+suffix, physical boot/process, reader/follower policy and accepted-work
+aggregation; then SettleRoles/Finalize and original action joining before drain.
+Cross-session failure adoption, Cron/Blob owners, maintenance/receiver-loss
+minion scenarios, W9 deployment campaigns and W10 exercised operations remain
+unfinished. Full W1–W10 remains active.
+
 ## October 3 2026 original sealed suffix checkpoint
 
 `VerifiedRecoveryPrefix` binds one exact original `PinnedRecoveryCell` to the
