@@ -400,6 +400,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cellule-cookbook-project-tracker"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "cellule-app",
+ "cellule-cookbook-support",
+ "cellule-runtime",
+ "cellule-store",
+ "object_store",
+ "prost",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cellule-cookbook-provisioning"
 version = "0.1.0"
 dependencies = [

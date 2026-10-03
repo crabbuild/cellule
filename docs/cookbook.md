@@ -42,8 +42,12 @@ immutable Blob artifacts, authenticated human approval, independently durable
 HTTP deployment, generation-fenced predecessor compensation, retained Workflow
 definition inventories, and signed SQL acknowledgments. Its persistent process
 driver verifies crash recovery through a real code rollout and interrupted-demo
-drain with the original request and exact bytes restored. Seventeen applications
-are qualified and runnable; 11 further applications are planned.
+drain with the original request and exact bytes restored.
+[Project tracker](../cookbook/apps/project-tracker/README.md) demonstrates project
+aggregate boundaries, immutable attachment reconciliation, revisioned signed
+dashboard delivery, exact native Effect reclamation, and interrupted-demo drain
+with cold restoration. Eighteen applications are qualified and runnable; ten
+further applications are planned.
 The five existing
 [primitive examples](../crates/cellule-app/docs/examples.md) remain runnable
 introductions. The cookbook adds complete application journeys alongside those
