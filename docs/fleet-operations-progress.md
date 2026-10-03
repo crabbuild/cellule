@@ -4,6 +4,71 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 recovered follower enrollment publication checkpoint
+
+`FleetRecoveredFollowerRetirement` binds a fresh canonically Retired epoch to
+its complete original member requests in the durable roster. The receiver-side
+runtime authorization now exposes the original physical leader from the exact
+tombstone; a session-derived NodeId cannot replace it. Capture requires the
+bootstrapped full journal barrier, exact leader/epoch/ensemble/manifest, uniform
+original source endpoint and one non-refused request per original member.
+Missing, duplicate, foreign or differently settled requests refuse the capsule.
+
+Publication uses the existing enrollment journal and deterministic events bound
+to immutable specs and first acceptance. It preserves establishment history and
+original retirement timestamps across fresh recapture after a lost reply. All
+member waiters settle with separate retained errors; the adapter continues to
+own accepted backend work after cancellation/deadline. Successful writes remain
+observable when a sibling or the final check fails. Confirmed closure requires
+the complete post-publication roster, unchanged original member records, fresh
+canonical authority and a non-regressing interval of at most thirty seconds.
+The API starts no native RPC, recovery path, task or second finite action bank.
+
+Seven public example cases use actual signed boot enrollment, a cold two-member
+native ensemble, canonical recovery/sealing/retirement and the SQLite journal.
+They cover Pending/Established originals, independent-client reconstruction after
+native collection, stable duplicate times/digests, lost publication reply and
+original I/O source/Arc retention, cancellation followed by backend joining,
+unretired authority, stale barriers, expired claimants, duplicate requests,
+clock regression and a delayed new request at the final roster barrier.
+The failed leader's boot remains an unresolved obligation after follower closure.
+These cold-lane fixtures establish no Cell suffix pinning or failed-process proof;
+the existing real lost-acknowledgement runtime recovery case remains in the
+qualified lifecycle suite.
+
+Initial compilation found fixture PathBuf ownership and an incorrect helper
+name. The first executable run also found a test that inspected facility display
+text instead of its original I/O source. Those fixtures now use the public
+journal API and check the actual source type/message. The lost-reply assertion
+tracks the actual member selected by concurrent completion. Earlier manifests
+and raw failure/focused logs remain separate from final qualification.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `db339147f7308ce11c3f599ccea0fbe4ddd6939a` |
+| Frozen source | 681 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `696bb5d9801515b1585c7ce7ff30bdc853b921a112b8ffee6fe384b65772aad8` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-recovered-enrollment-evidence` |
+
+Final all-feature qualification passed 524 runtime library, 144 runtime lifecycle,
+34 host library, 106 public node and 165 example tests: 973 passes, no failures.
+Seven existing provider cases remain ignored without their documented isolated
+RustFS environment and supply no evidence. Focused repeats are excluded from
+these counts. Runtime/host Clippy across all targets and API documentation passed
+with warnings denied. Format, boundaries, module layout, document links/Rust
+fences and SQL/peer gates passed. The complete active/isolated Rust/Cargo path
+sets and every byte match after qualification. All command arguments and exit
+statuses are retained in `verification.json`; the host guide contains the public
+publication recipe and the example guide supplies its focused command.
+
+Highest priorities for the next increment are failed-boot/process closure,
+persisted replacement-policy revalidation and consumption through complete role
+observation/maintenance actions. Affected-writer relocation, `SettleRoles`/
+`Finalize`, original-action joining before terminal drain handoff, remaining
+primitive faults and W8–W10 remain required. This closure covers only the
+original follower enrollment rows; the full implementation plan stays active.
+
 ## October 2 2026 recovered follower retirement checkpoint
 
 Recovered failed-owner tails now close through an explicit capability of the

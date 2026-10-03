@@ -10,6 +10,8 @@ mod follower_tests;
 mod observation;
 #[cfg(test)]
 mod reader_tests;
+#[cfg(test)]
+mod recovered_followers;
 mod startup;
 #[cfg(test)]
 mod successor_tests;

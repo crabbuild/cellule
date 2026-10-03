@@ -7,6 +7,7 @@ use crate::node::log_recovery::retirement::RecoveredNodeLogRetirementProof;
 /// receiver before requesting this proof. It supplies no lane deletion permission.
 pub struct RecoveredLogRetirementAuthorization {
     member: NodeId,
+    leader_node: NodeId,
     sealed: SealedNodeLog,
 }
 impl RecoveredLogRetirementAuthorization {
@@ -14,6 +15,11 @@ impl RecoveredLogRetirementAuthorization {
     #[must_use]
     pub const fn member(&self) -> NodeId {
         self.member
+    }
+    /// Original physical leader from the canonical failed-session tombstone.
+    #[must_use]
+    pub const fn leader_node(&self) -> NodeId {
+        self.leader_node
     }
     /// Canonical sealed/retired epoch and pinned recovery manifest identity.
     #[must_use]
@@ -93,6 +99,7 @@ impl NodeDirectory {
         }
         Ok(RecoveredLogRetirementAuthorization {
             member,
+            leader_node: current.node,
             sealed: SealedNodeLog {
                 session: leader,
                 log: log.clone(),

@@ -185,6 +185,67 @@ expired operation or incomplete enrollment produces no settlement evidence.
 Complete foreign/native inventory, Pending producers, failed-owner recovery and
 terminal action handoff remain required before physical-node shutdown.
 
+### Publish a recovered owner's follower retirement
+
+First finish canonical recovery pinning, every original member's native
+retirement and the Retired tombstone CAS through the
+[runtime recovery path](../../cellule-runtime/docs/failover-and-followers.md#contents).
+Then capture `FleetRecoveredFollowerRetirement` against the complete current
+`FleetRoster`. It binds the canonical physical leader, session, epoch, full
+ensemble and manifest to every original member request. Missing or duplicate
+requests, foreign scope, unretired authority and changed journal barriers refuse
+capture/publication. Pending establishment replies remain original obligations.
+
+```rust
+use cellule_host::fleet::{
+    FleetJournal, FleetRecoveredFollowerPublication,
+    FleetRecoveredFollowerRetirement, FleetRoster,
+};
+use cellule_runtime::{
+    fleet::operations::FleetScope,
+    identity::SessionId,
+    node::{NodeDirectory, SealedNodeLog},
+};
+use tokio::time::Instant;
+
+pub async fn publish_recovered_followers(
+    journal: &dyn FleetJournal,
+    directory: &NodeDirectory,
+    scope: FleetScope,
+    sealed: &SealedNodeLog,
+    authenticated_claimant: SessionId,
+    deadline: Instant,
+    mut clock: impl FnMut() -> cellule_runtime::Result<i64>,
+) -> Result<FleetRecoveredFollowerPublication, Box<dyn std::error::Error + Send + Sync>> {
+    let snapshot = journal.load_snapshot(scope).await?;
+    let roster = FleetRoster::collect(journal, &snapshot, deadline).await?;
+    let retirement = FleetRecoveredFollowerRetirement::capture(
+        journal, directory, &roster, sealed,
+        authenticated_claimant, deadline, &mut clock,
+    ).await?;
+    Ok(retirement.publish(
+        journal, directory, authenticated_claimant, deadline, &mut clock,
+    ).await?)
+}
+```
+
+Own the publication future in accepted finite work and account the copied
+collector/record buffers. The API starts no background worker or native retire
+RPC. The caller deadline bounds journal waiters; the adapter retains and joins
+accepted backend work after deadline or cancellation. `members()` preserves all
+returned responses and their separate original errors; `confirmed()`
+requires successful replies plus a complete post-publication roster and fresh
+canonical authority. Clock regression, stale barriers or an incomplete final
+scan preserve successful writes without granting closure.
+
+After a lost reply or controller restart, collect a fresh roster and recapture
+the exact canonical epoch. Deterministic events preserve each original spec,
+acceptance, establishment history and retirement time. Replay still works after
+native grace collection; it adopts canonical history without reconstructing
+missing member receipts. The closure covers these follower enrollment rows.
+Failed-boot/process closure, replacement policy, affected writers and terminal
+host shutdown remain required before maintenance completion.
+
 ## Journal bound fleet actions
 
 ### Fleet boot admission

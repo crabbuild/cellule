@@ -313,6 +313,24 @@ fault. Original Elapsed sources and all phase/permit assertions remain required.
 These cases measure protocol behavior; native/process latency qualification
 uses its real clocks and committed profiles.
 
+## Recovered follower enrollment evidence
+
+The test target drives canonical recovery of a cold two-member ensemble,
+native retirement and `FleetRecoveredFollowerRetirement` through this durable
+journal. It checks Pending/Established original rows, lost publication replies,
+independent-client reconstruction after native collection, unchanged replay
+timestamps, duplicate requests, stale barriers, expired claimants and regressed
+clocks. Cancellation joins accepted backend jobs before reconstruction; a delayed
+new epoch request blocks the final roster barrier. Successful sibling writes
+remain visible when complete closure fails.
+The failed leader's boot remains an obligation. These cold-lane cases do not
+qualify Cell suffix pinning, failed-process closure or complete maintenance.
+See the [host publication recipe](../../docs/lifecycle.md#publish-a-recovered-owners-follower-retirement).
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked recovered_publication
+```
+
 ## Managed reader producer evidence
 
 The example's test target also exercises `install_fleet_reader_enrollment` with
