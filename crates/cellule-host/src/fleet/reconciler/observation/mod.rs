@@ -9,6 +9,7 @@ use cellule_runtime::fleet::placement::PlacementObservation;
 use cellule_runtime::identity::{Digest, NodeId, SessionId};
 use cellule_runtime::node::NodeAdvertisement;
 use cellule_runtime::{Error, Result};
+use evacuations::RoleEvacuations;
 
 /// Generation-bound actor observation from an authenticated exact node boot.
 #[derive(Clone, Debug)]
@@ -42,6 +43,7 @@ pub struct FleetObservation {
     role_coverage: Option<FleetRoleCoverage>,
     original_writer_successors: Option<FleetOriginalWriterSuccessorInventory>,
     failed_boot_closures: Option<Vec<FleetFailedBootClosure>>,
+    role_evacuations: Option<RoleEvacuations>,
 }
 
 impl FleetObservation {
@@ -73,6 +75,7 @@ impl FleetObservation {
             role_coverage: None,
             original_writer_successors: None,
             failed_boot_closures: None,
+            role_evacuations: None,
         };
         observation.placements(capture_finished_at_ms)?;
         Ok(observation)
@@ -100,6 +103,7 @@ impl FleetObservation {
     fn validate_role_coverage(&self) -> Result<()> {
         self.validate_original_writer_successors()?;
         self.validate_failed_boot_closures()?;
+        self.validate_role_evacuations()?;
         if let Some(coverage) = &self.role_coverage {
             let (started, finished) = coverage.interval();
             if coverage.snapshot().head().scope() != self.scope
@@ -202,7 +206,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v7\0");
+        hash.update(b"cellule.fleet-planner-inputs.v8\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -256,6 +260,7 @@ impl FleetObservation {
                 }
             }
         }
+        self.hash_role_evacuations(&mut hash)?;
         hash.update(&(nodes.len() as u64).to_be_bytes());
         for node in nodes {
             hash.update(node.node.as_bytes());
@@ -350,6 +355,7 @@ impl FleetObservation {
     }
 }
 
+mod evacuations;
 mod failed_boots;
 mod original_writers;
 #[cfg(test)]

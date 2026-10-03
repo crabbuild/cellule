@@ -4,6 +4,67 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 retained replacement policy checkpoint
+
+`FleetObservation::with_role_evacuations` retains fresh reader/follower policy
+checks through the public controller. Each confirmation now preserves its full
+immutable durable record. Checks agree on one exact full head, registry, roster
+and original capture interval, and compare selected signed boots with their
+existing reader/follower producer identities. Duplicate original obligations,
+including overlapping retired ensembles, refuse. Matching current writer rows
+and follower epoch/ensemble cannot contradict the confirmed policy. Attachment
+order with other retained proof collections preserves the same checks.
+
+Planner digest v8 binds presence, canonical record order, full barriers, original
+fresh intervals, current authority, actual ready reader prefixes and retained
+native source/member inventories. Persisted history, enrollment/action and
+transport formats are unchanged. Partial input stays partial; supplying a subset
+does not establish complete policy, accepted-work joining or finalization.
+
+Five public minion cases use actual managed readers and follower rotation. Reader
+policy is reconstructed through an independent SQLite client and consumed by the
+public reconciler; stale full heads, duplicates, restamping and missing signed
+replacement boots refuse. Follower checks retain three source/member inventories
+beside a four-boot/four-physical-node graph in either attachment order, then pass
+through public reconciliation. An earlier full head with the same registry
+refuses in both orders. Both partial controller paths remain blocked and dispatch
+no effect or inspection. One host unit case binds collection presence in the
+planner digest and refuses replacement without upgrading coverage.
+
+### Verification and CI
+
+All six focused cases pass. Initial isolated Rust 1.99 verification completes
+with all 11 commands and nine static gates passing: 1,655 framework cases,
+269 minion cases and 256 cookbook cases pass; 36 documented framework cases
+remain ignored. Verification will repeat after merging the new `main` source.
+Commands, exact source archives, raw failures and results are retained under
+`/tmp/cellule-role-evacuation-observation-evidence`.
+
+Published `7ebc0c1` passes every required CI check, including both routing and
+capacity profiles. `main` advanced to `4c627d3`; the workflow conflict requires
+preserving both minion and the incoming Axum HTTP gates before qualification.
+The preceding `fe378b0` routing campaign fails only leased forwarded commands at
+concurrency 16 (88.92% of baseline) and object-only local commands at concurrency
+16 (86.19%), against the unchanged 90% throughput gate. All latency gates pass.
+Median publication preparation means are 7.90 → 8.98 ms and 9.17 → 11.12 ms,
+respectively; authority means are 4.80 → 4.89 ms and 4.64 → 4.97 ms. Provider
+counts retain about one extra PUT per command, while read counts match. These
+observations do not independently isolate required lineage publication from
+provider/runner variation. Frozen binaries, source manifests, all four pairs,
+stage TSVs, raw hashes and analysis are retained; no gate or proof is weakened.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Resolve routing qualification with controlled publication/provider evidence; qualify the new head and preserve any capacity unknown-result recurrence. |
+| 1 | Complete authenticated production observation with all required reader/follower policy, failed-owner successor coverage and every original native/external accepted-work barrier. Retaining individual checks cannot prove the complete aggregate. |
+| 2 | Implement SettleRoles/Finalize, joining original accepted actions before terminal drain handoff; confirm Stopped, withdrawal, boot retirement and committed completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider, mixed-binary and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The complete W1–W10 goal remains active.
+
 ## October 3 2026 committed process binding checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target

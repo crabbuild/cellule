@@ -306,6 +306,7 @@ impl FleetReaderEvacuationVerifier {
         Ok(FleetReaderEvacuationCheck {
             snapshot: snapshot.clone(),
             record: record.digest().map_err(operation)?,
+            history: record.clone(),
             roster_digest: roster.digest()?,
             authority,
             replacements,
@@ -319,6 +320,7 @@ impl FleetReaderEvacuationVerifier {
 pub struct FleetReaderEvacuationCheck {
     snapshot: FleetJournalSnapshot,
     record: Digest,
+    history: ReaderEvacuationRecord,
     roster_digest: Digest,
     authority: Control,
     replacements: Vec<ReaderReplacement>,
@@ -326,6 +328,12 @@ pub struct FleetReaderEvacuationCheck {
     finished_at_ms: i64,
 }
 impl FleetReaderEvacuationCheck {
+    /// Complete immutable history whose policy and replacements were rechecked.
+    /// Its original times are separate from this confirmation's fresh interval.
+    #[must_use]
+    pub fn record(&self) -> &ReaderEvacuationRecord {
+        &self.history
+    }
     /// Exact final journal barrier; compare it again before dependent actions.
     #[must_use]
     pub fn snapshot(&self) -> &FleetJournalSnapshot {

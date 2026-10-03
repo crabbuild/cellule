@@ -853,6 +853,41 @@ when the registry is unchanged. Attachment never upgrades the adapter's
 `complete` assertion. The reference observer retains successful graph checks
 through this path; partial pressure inputs retain their incomplete status.
 
+### Retain current reader and follower replacement checks
+
+Reload durable evacuation history with `FleetReaderEvacuationVerifier::recheck`
+and `FleetFollowerEvacuationVerifier::recheck`. Their owned confirmations retain
+the complete original record, current authority, selected/probed reader prefixes,
+or the follower source/member native graph. Construct the outer observation after
+these reads and signed boot discovery, using the original collection start and
+finish. Then attach both collections through one path:
+
+```rust
+fn retain_current_role_policy(
+    observation: cellule_host::fleet::FleetObservation,
+    readers: Vec<cellule_host::fleet::FleetReaderEvacuationCheck>,
+    followers: Vec<cellule_host::fleet::FleetFollowerEvacuationCheck>,
+) -> cellule_runtime::Result<cellule_host::fleet::FleetObservation> {
+    observation.with_role_evacuations(readers, followers)
+}
+```
+
+Every check must match the exact full head, registry, roster and outer interval.
+Original retired obligations cannot occur twice, including overlapping follower
+ensembles. Signed replacement boots must match the existing producer-specific
+identity; a changed writer row or follower epoch/ensemble invalidates the input.
+Attachment order with role coverage, writer successors or failed-boot closure
+does not change these checks. The reconciler repeats the roster comparison.
+Planner digest v8 binds collection presence, canonical record order, full
+barriers, fresh intervals, current authority, reader prefixes and retained native
+follower inventories. Persisted history, enrollment and transport codecs are unchanged.
+
+`reader_evacuations()` and `follower_evacuations()` expose the retained originals;
+each check's `record()` supplies its immutable durable history. A supplied subset
+does not establish complete policy coverage or upgrade an incomplete observation.
+All remaining roles, failed-owner recovery, original accepted native/external work
+and terminal drain handoff are still required before SettleRoles/Finalize.
+
 ## Caller driven fleet reconciliation
 
 ### Reader producer inventory

@@ -104,6 +104,23 @@ fn observation() -> FleetObservation {
 }
 
 #[test]
+fn planner_digest_binds_role_evacuation_presence_without_upgrading_coverage() {
+    let baseline = observation().digest(100).unwrap();
+    let retained = observation()
+        .with_role_evacuations(Vec::new(), Vec::new())
+        .unwrap();
+    assert!(!retained.complete);
+    assert!(retained.reader_evacuations().unwrap().is_empty());
+    assert!(retained.follower_evacuations().unwrap().is_empty());
+    assert_ne!(retained.digest(100).unwrap(), baseline);
+    assert!(
+        retained
+            .with_role_evacuations(Vec::new(), Vec::new())
+            .is_err()
+    );
+}
+
+#[test]
 fn planner_digest_binds_failed_boot_collection_presence_without_upgrading_coverage() {
     let initial = observation().digest(100).unwrap();
     let retained = observation().with_failed_boot_closures(Vec::new()).unwrap();

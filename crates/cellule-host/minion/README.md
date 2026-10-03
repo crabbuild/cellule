@@ -477,6 +477,25 @@ cargo test -p cellule-host --example fleet_operations --all-features --locked re
 cargo test -p cellule-host --example fleet_operations --all-features --locked combined_original_observation
 ```
 
+## Retained replacement policy observation
+
+The `evacuation_observation` cases retain real reader/follower policy confirmations
+inside the public observation and reconciler. Reader confirmation is reconstructed
+through an independent SQLite client and keeps the actual ready replacement prefix.
+Follower confirmation retains three native source/member inventories alongside a
+four-boot, four-physical-node role graph in either attachment order. The cases
+refuse duplicate original obligations, restamped intervals, missing signed boots
+and an earlier full head with the same registry. Both public reconciler paths keep
+partial coverage blocked and start no effect or inspection.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked evacuation_observation
+```
+
+These five cases prove retention of existing per-role checks. Complete authenticated
+policy coverage, failed-owner successor policy, accepted-work joining and full
+maintenance remain required; see the [host recipe](../docs/lifecycle.md#retain-current-reader-and-follower-replacement-checks).
+
 ## Failed reader lifetime evidence
 
 The `failed_reader_closure` cases use application-owned enrollments around two

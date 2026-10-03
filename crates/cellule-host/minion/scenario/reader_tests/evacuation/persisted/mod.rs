@@ -5,6 +5,7 @@ use cellule_host::fleet::{
 };
 use cellule_runtime::{fleet::operations::ReaderEvacuationRecord, read_policy::ReadPolicyStore};
 
+mod observation;
 mod races;
 mod tests;
 

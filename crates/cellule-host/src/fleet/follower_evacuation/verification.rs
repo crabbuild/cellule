@@ -222,6 +222,7 @@ impl FleetFollowerEvacuationVerifier {
         Ok(FleetFollowerEvacuationCheck {
             snapshot: snapshot.clone(),
             record: record.digest().map_err(operation)?,
+            history: record.clone(),
             roster_digest: roster.digest()?,
             authority: authority.ok_or(Error::Fenced)?,
             started_at_ms: started,
@@ -305,6 +306,7 @@ impl FleetFollowerEvacuationVerifier {
 pub struct FleetFollowerEvacuationCheck {
     snapshot: FleetJournalSnapshot,
     record: Digest,
+    history: FollowerEvacuationRecord,
     roster_digest: Digest,
     authority: NodeAdvertisement,
     started_at_ms: i64,
@@ -312,6 +314,12 @@ pub struct FleetFollowerEvacuationCheck {
     native: Vec<FleetNodeInventory>,
 }
 impl FleetFollowerEvacuationCheck {
+    /// Complete immutable ensemble history confirmed by this fresh capture.
+    /// It grants no recovery, deletion or physical-node finalization rights.
+    #[must_use]
+    pub fn record(&self) -> &FollowerEvacuationRecord {
+        &self.history
+    }
     /// Original complete source/member native traversals with all-category
     /// rechecks after authority discovery. Other physical roles remain separate.
     #[must_use]
