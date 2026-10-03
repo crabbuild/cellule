@@ -300,6 +300,12 @@ bounded part to the configured object store before committing its digest and
 size in SQLite. The manifest is the durable publication boundary; unreferenced
 content-addressed parts are safe to retry.
 
+`BlobNamespace::prepare_mutation` performs the same bounded staging and returns
+a typed prepared command before Cell dispatch. Retain its evidence before
+execution and resolve it after cancellation or an uncertain reply. Staging
+alone does not publish the object; the existing `mutate` convenience method
+uses this same preparation and execution path.
+
 The configured object-store lifecycle policy must reclaim abandoned parts. The
 `BlobArtifactStore::sweep_unreferenced` building block limits each pass to 128
 deletions but scans the unordered listing until that limit is reached.

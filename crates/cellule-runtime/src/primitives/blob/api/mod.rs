@@ -129,6 +129,26 @@ impl<M: BlobModule> BlobNamespace<M> {
         mutation: BlobMutation,
     ) -> std::result::Result<Committed<BlobMutationOutcome>, InvocationError<BlobMutationOutcome>>
     {
+        self.prepare_mutation(identity, mutation)
+            .await?
+            .execute()
+            .await
+    }
+
+    /// Stages part bytes and prepares exact mutation evidence before dispatch.
+    ///
+    /// Preparing a part may write an immutable artifact but does not commit its
+    /// manifest reference or make an object visible. Retain the returned
+    /// command's evidence before executing; resolve it after cancellation or
+    /// an uncertain reply before deciding whether to retry the same command.
+    pub async fn prepare_mutation(
+        &self,
+        identity: crate::cell::executor::MutationIdentity,
+        mutation: BlobMutation,
+    ) -> std::result::Result<
+        crate::client::PreparedCommand<BlobCommand<M>>,
+        InvocationError<BlobMutationOutcome>,
+    > {
         let target = self
             .target(mutation_key(&mutation))
             .map_err(InvocationError::NotStarted)?;
@@ -160,7 +180,7 @@ impl<M: BlobModule> BlobNamespace<M> {
             mutation => mutation,
         };
         self.client
-            .command::<BlobCommand<M>>(&target, identity, mutation)
+            .prepare_command::<BlobCommand<M>>(&target, identity, mutation)
             .await
     }
 
