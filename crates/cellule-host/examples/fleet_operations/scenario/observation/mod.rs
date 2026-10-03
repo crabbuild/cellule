@@ -4,8 +4,8 @@
 use super::*;
 use cellule_host::fleet::{
     FleetFollowerReferences, FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot,
-    FleetObservation, FleetOwnedCell, FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest,
-    FleetSnapshotSubject,
+    FleetObservation, FleetOwnedCell, FleetRoleCoverage, FleetRoster, FleetSnapshotNativePage,
+    FleetSnapshotRequest, FleetSnapshotSubject,
 };
 use cellule_runtime::control::{Control, ControlState};
 use cellule_runtime::fleet::operations::{EnrollmentRole, EnrollmentStatus, PublishedPosition};
@@ -280,6 +280,14 @@ async fn collect(
     let mut after = directory.advertised_sessions(clock()?, 128).await?;
     after.sort_by_key(|boot| *boot.as_bytes());
     complete &= after == advertised && roster.covers_advertisements(&nodes, clock()?)?;
+    if complete {
+        let native = inventories
+            .iter()
+            .filter_map(Option::as_ref)
+            .collect::<Vec<_>>();
+        let foreign = references.iter().collect::<Vec<_>>();
+        complete &= FleetRoleCoverage::check(roster, &native, &foreign, clock()?).is_ok();
+    }
     roster.confirm(fleet.journal.as_ref(), deadline).await?;
     Ok(Capture {
         started,

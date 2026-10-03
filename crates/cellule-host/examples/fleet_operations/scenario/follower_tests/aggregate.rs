@@ -6,7 +6,7 @@ use cellule_host::fleet::{
 };
 use cellule_runtime::follower::FollowerLaneState;
 
-async fn roster(fixture: &ManagedFixture) -> FleetRoster {
+pub(super) async fn roster(fixture: &ManagedFixture) -> FleetRoster {
     let snapshot = fixture.native.journal.load_snapshot(scope()).await.unwrap();
     FleetRoster::collect(
         fixture.native.journal.as_ref(),
@@ -17,7 +17,7 @@ async fn roster(fixture: &ManagedFixture) -> FleetRoster {
     .unwrap()
 }
 
-async fn page(
+pub(super) async fn page(
     fixture: &ManagedFixture,
     roster: &FleetRoster,
     index: usize,
@@ -44,7 +44,7 @@ async fn page(
     fixture.nodes[index].fleet_snapshot(request).await.unwrap()
 }
 
-async fn collect(
+pub(super) async fn collect(
     fixture: &ManagedFixture,
     roster: &FleetRoster,
     index: usize,
@@ -59,7 +59,7 @@ async fn collect(
     scan.finish().unwrap()
 }
 
-async fn references(
+pub(super) async fn references(
     fixture: &ManagedFixture,
     roster: &FleetRoster,
     index: usize,

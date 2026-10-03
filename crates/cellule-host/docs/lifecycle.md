@@ -453,6 +453,26 @@ roster returns an error and preserves the original interval. Reconfirm the full
 roster after both authority and native rechecks. A closed local lane can still
 have a foreign authority reference; zero local writers do not settle that tail.
 
+`FleetRoleCoverage::check(roster, native, foreign, now_ms)` matches the combined
+graph. Supply every required original boot and every retained physical node's
+reference scan. Complete all initial captures, all seven-category native
+rechecks, then every exact foreign recheck, in that order; reconfirm the full
+journal after the check. Missing or duplicate inputs, stale intervals and
+incomplete rechecks are refused. Starting another native or foreign recheck
+invalidates its earlier confirmation, including cancellation and failure.
+
+A follower can be Established before its first append creates a persisted lane.
+The combined check observes that obligation through the exact delivered managed
+source producer, installed binding, original member rows and current Open
+authority on every ensemble member. Local `validate_enrollments` remains strict
+without this cross-node witness. Failed or unobserved owners remain blockers.
+The returned digest binds the original roster, category fingerprints, exact
+foreign rows and collection/recheck times; it is an in-process input identifier.
+Authentication, unexpected advertisements, current Cell authority, replacement
+policy and failed-process closure remain separate adapter duties. Pending rows
+remain obligations. Coverage grants neither role settlement nor permission to
+stop a node.
+
 ## Caller driven fleet reconciliation
 
 ### Reader producer inventory

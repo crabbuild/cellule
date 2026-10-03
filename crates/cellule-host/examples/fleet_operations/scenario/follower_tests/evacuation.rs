@@ -5,7 +5,9 @@ use cellule_runtime::fleet::operations::{
     JournalTransition, MaintenanceEvent, MaintenanceOperation, OperationId,
 };
 
-async fn maintenance(fixture: &ManagedFixture) -> (EnrollmentRecord, MaintenanceOperation) {
+pub(super) async fn maintenance(
+    fixture: &ManagedFixture,
+) -> (EnrollmentRecord, MaintenanceOperation) {
     let original = fixture
         .native
         .rows()
@@ -77,7 +79,7 @@ async fn maintenance(fixture: &ManagedFixture) -> (EnrollmentRecord, Maintenance
     (original, snapshot.head().maintenance().unwrap().clone())
 }
 
-async fn spare(fixture: &ManagedFixture) {
+pub(super) async fn spare(fixture: &ManagedFixture) {
     fixture.boots[3]
         .refresh_capacity(
             3,
@@ -97,7 +99,7 @@ async fn spare(fixture: &ManagedFixture) {
     );
 }
 
-async fn rotated(fixture: &ManagedFixture) -> cellule_host::NodeLogRotationRequest {
+pub(super) async fn rotated(fixture: &ManagedFixture) -> cellule_host::NodeLogRotationRequest {
     // The actual actor publication barrier covers the acknowledged old tail.
     fixture.handle.drain().await.unwrap();
     let request = fixture.native.node.request_node_log_rotation(1).unwrap();

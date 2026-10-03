@@ -158,6 +158,8 @@ impl<'a> FleetNodeInventoryScan<'a> {
                 .started_at_ms
                 .ok_or(Error::Control("native inventory interval missing"))?,
             finished_at_ms: self.finished_at_ms,
+            collected_at_ms: self.finished_at_ms,
+            rechecked: None,
             host: self
                 .host
                 .ok_or(Error::Control("native inventory host missing"))?,

@@ -8,6 +8,7 @@
 mod actions;
 mod cells;
 mod controller;
+mod coverage;
 mod enrollment;
 mod inspection;
 mod inventory;
@@ -23,6 +24,7 @@ pub(crate) mod withdrawal;
 pub use actions::FleetActionCompletion;
 pub use cells::{FleetCellInputs, FleetCellProvider, FleetRecoveryInputs};
 pub use controller::{FleetJournal, FleetJournalSnapshot};
+pub use coverage::FleetRoleCoverage;
 pub use enrollment::{FleetBootObservation, FleetEnrollmentAcceptance, FleetEnrollmentJournal};
 pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInventoryScan};
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};

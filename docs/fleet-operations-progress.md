@@ -4,6 +4,53 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 2 2026 cross-node role coverage checkpoint
+
+`FleetRoleCoverage` checks every required original native boot and every
+retained physical node's complete follower reference scan. All initial captures
+precede the global native round; every exact foreign recheck follows that entire
+round. Missing or duplicate inputs, regressed/stale intervals and incomplete
+rechecks are refused. Beginning a new native or foreign recheck invalidates its
+earlier confirmation, even when the new attempt fails or is dropped.
+
+An Established follower can have no persisted lane until its first append.
+Coverage matches that obligation to the delivered original managed producer,
+installed source binding, original Established member records and matching
+current Open authority on every ensemble member. The local enrollment check
+remains strict without this combined witness. Failed/unobserved owners and
+quarantined receiver stores remain blockers. The canonical input digest binds
+the original roster, all native fingerprints, exact foreign rows and actual
+collection/recheck intervals. The reference writer observer consumes this check
+before its final full journal confirmation.
+
+Six public cases exercise ordered global rounds, missing/duplicate inputs,
+order-independent digests, dropped native rechecks, failed foreign rechecks,
+actual enrolled empty lanes after four-node rotation and changed full rosters.
+They retain original rows/timestamps and join real managed fixture shutdown
+with exact retirement counts. The earlier five-case focused run is retained
+separately from final-source qualification.
+
+| Final source and evidence | Recorded value |
+| --- | --- |
+| Parent revision | `7b6df307d6730826fd6609656a7d92372a7840c1` |
+| Frozen source | 672 Rust/Cargo paths, including nested qualification locks. |
+| Sorted JSON manifest SHA256 | `c75db3afe1fa91164b5d6e363030c37d0f713288d8410365a128382d99a277d7` |
+| Isolated checkout | `/tmp/cellule-reader-prelease-8698183` |
+| Evidence and source archive | `/tmp/cellule-role-coverage-evidence` |
+
+Final qualification passed 34 host library, 106 public node and 155 example
+cases: 295 distinct tests, no failures or ignores. Host Clippy and host/runtime
+API documentation passed with warnings denied. The complete active/isolated
+Rust/Cargo path sets and every byte match after qualification. Focused repeats
+are excluded from the final count.
+
+This supplies combined role coverage, not settled roles or shutdown permission.
+Authentication, unexpected advertisement discovery, current Cell authority,
+replacement-policy publication/revalidation and failed-process closure remain
+required. Pending work remains an obligation. Complete observer integration,
+dead-owner recovery, affected-writer relocation, `SettleRoles`/`Finalize`, terminal
+action handoff, remaining primitive faults and W8–W10 remain unfinished.
+
 ## October 2 2026 live-owner follower evacuation checkpoint
 
 `CellNode::follower_evacuation` checks the original requested rotation against

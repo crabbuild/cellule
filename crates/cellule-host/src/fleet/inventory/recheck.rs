@@ -10,14 +10,17 @@ pub struct FleetNodeInventoryRecheck<'a> {
     inventory: &'a mut FleetNodeInventory,
     stage: usize,
     poisoned: bool,
+    started_at_ms: Option<i64>,
 }
 
 impl<'a> FleetNodeInventoryRecheck<'a> {
     pub(super) fn new(inventory: &'a mut FleetNodeInventory) -> Self {
+        inventory.rechecked = None;
         Self {
             inventory,
             stage: 0,
             poisoned: false,
+            started_at_ms: None,
         }
     }
 
@@ -70,6 +73,7 @@ impl<'a> FleetNodeInventoryRecheck<'a> {
             return Err(Error::Node("native inventory category changed"));
         }
         original.finished_at_ms = response.finished_at_ms();
+        self.started_at_ms.get_or_insert(response.started_at_ms());
         self.stage += 1;
         self.poisoned = false;
         Ok(())
@@ -81,6 +85,10 @@ impl<'a> FleetNodeInventoryRecheck<'a> {
         if self.poisoned || self.stage != CATEGORIES {
             return Err(Error::Control("native inventory recheck incomplete"));
         }
+        self.inventory.rechecked = Some((
+            self.started_at_ms.ok_or(Error::Fenced)?,
+            self.inventory.finished_at_ms,
+        ));
         Ok(self.inventory.interval())
     }
 }

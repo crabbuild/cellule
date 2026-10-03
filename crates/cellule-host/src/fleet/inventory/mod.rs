@@ -43,6 +43,8 @@ pub struct FleetNodeInventory {
     nonces: HashSet<Digest>,
     started_at_ms: i64,
     finished_at_ms: i64,
+    collected_at_ms: i64,
+    rechecked: Option<(i64, i64)>,
     host: Host,
     headers: [Option<Header>; CATEGORIES],
     cells: Vec<FleetOwnedCell>,
@@ -75,6 +77,43 @@ impl FleetNodeInventory {
     #[must_use]
     pub const fn interval(&self) -> (i64, i64) {
         (self.started_at_ms, self.finished_at_ms)
+    }
+    pub(crate) fn coverage_checkpoint(&self) -> (i64, Option<(i64, i64)>) {
+        (self.collected_at_ms, self.rechecked)
+    }
+    pub(crate) fn coverage_digest(&self) -> Result<Digest> {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"cellule.fleet-native-coverage.v1\0");
+        hash.update(self.roster.as_bytes());
+        hash.update(self.node.as_bytes());
+        hash.update(self.session.as_bytes());
+        hash.update(&[self.host.state as u8, self.host.mode as u8]);
+        for bound in [
+            self.host.bindings.managed_startup,
+            self.host.bindings.readers,
+            self.host.bindings.follower_store,
+            self.host.bindings.follower_producer,
+            self.host.bindings.durability_supervisor,
+        ] {
+            hash.update(&[u8::from(bound)]);
+        }
+        hash.update(&[u8::from(self.host.node_log.is_some())]);
+        if let Some((session, node, epoch)) = self.host.node_log {
+            hash.update(session.as_bytes());
+            hash.update(node.as_bytes());
+            hash.update(&epoch.to_be_bytes());
+        }
+        for header in self.headers {
+            let header = header.ok_or(Error::Fenced)?;
+            hash.update(&[u8::from(header.bound)]);
+            hash.update(&(header.total as u64).to_be_bytes());
+            hash.update(header.extra.as_bytes());
+            hash.update(&[u8::from(header.topology.is_some())]);
+            if let Some(topology) = header.topology {
+                hash.update(topology.as_bytes());
+            }
+        }
+        Ok(Digest::from_bytes(*hash.finalize().as_bytes()))
     }
     /// Sealed host composition observed throughout this traversal.
     #[must_use]

@@ -10,6 +10,13 @@ impl FleetNodeInventory {
     /// producer preparation, replacement policy and finalization still require
     /// their own evidence. This performs no enrollment or settlement effect.
     pub fn validate_enrollments(&self, roster: &FleetRoster) -> Result<()> {
+        self.validate_enrollments_with(roster, |_| false)
+    }
+    pub(crate) fn validate_enrollments_with(
+        &self,
+        roster: &FleetRoster,
+        empty_enrolled_lane: impl Fn(&EnrollmentRecord) -> bool,
+    ) -> Result<()> {
         if roster.snapshot() != &self.snapshot || roster.digest()? != self.roster {
             return Err(Error::Fenced);
         }
@@ -160,6 +167,7 @@ impl FleetNodeInventory {
                             spec.source.is_some_and(|s| s.session == lane.leader)
                                 && lane.epoch == log_epoch
                         })
+                        && !empty_enrolled_lane(row)
                     {
                         return Err(Error::Control(
                             "Established follower has no persisted native lane",

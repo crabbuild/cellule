@@ -25,6 +25,8 @@ pub struct FleetFollowerReferences {
     topology: Digest,
     started_at_ms: i64,
     finished_at_ms: i64,
+    collected_at_ms: i64,
+    rechecked: Option<(i64, i64)>,
     entries: Vec<FollowerLogObservation>,
 }
 
@@ -78,6 +80,8 @@ impl FleetFollowerReferences {
             topology: scan.topology.ok_or(Error::Fenced)?,
             started_at_ms: scan.started_at_ms.ok_or(Error::Fenced)?,
             finished_at_ms: scan.finished_at_ms,
+            collected_at_ms: scan.finished_at_ms,
+            rechecked: None,
             entries: scan.entries,
         })
     }
@@ -92,6 +96,42 @@ impl FleetFollowerReferences {
     #[must_use]
     pub const fn interval(&self) -> (i64, i64) {
         (self.started_at_ms, self.finished_at_ms)
+    }
+    pub(crate) fn coverage_checkpoint(&self) -> (i64, Option<(i64, i64)>) {
+        (self.collected_at_ms, self.rechecked)
+    }
+    pub(crate) fn coverage_digest(&self) -> Digest {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"cellule.fleet-foreign-coverage.v1\0");
+        hash.update(self.member.as_bytes());
+        hash.update(self.roster.as_bytes());
+        hash.update(self.topology.as_bytes());
+        for row in &self.entries {
+            hash.update(row.leader.as_bytes());
+            hash.update(row.leader_node.as_bytes());
+            hash.update(&[
+                row.leader_state as u8,
+                row.log.phase() as u8,
+                u8::from(row.log.active()),
+            ]);
+            hash.update(&row.log.epoch().to_be_bytes());
+            hash.update(&row.log.tiered_through().to_be_bytes());
+            hash.update(&(row.log.members().len() as u64).to_be_bytes());
+            for member in row.log.members() {
+                hash.update(member.as_bytes());
+            }
+            hash.update(&[u8::from(row.log.recovery().is_some())]);
+            if let Some(claim) = row.log.recovery() {
+                hash.update(claim.claimant().as_bytes());
+                hash.update(&claim.generation().to_be_bytes());
+                hash.update(&claim.expires_at_ms().to_be_bytes());
+            }
+            hash.update(&[u8::from(row.log.recovery_manifest().is_some())]);
+            if let Some(manifest) = row.log.recovery_manifest() {
+                hash.update(manifest.as_bytes());
+            }
+        }
+        Digest::from_bytes(*hash.finalize().as_bytes())
     }
 
     /// Exact current authority observations in strict leader-session order.
@@ -140,6 +180,7 @@ impl FleetFollowerReferences {
         deadline: Instant,
         clock: impl FnMut() -> Result<i64>,
     ) -> Result<()> {
+        self.rechecked = None;
         if roster.snapshot() != &self.snapshot || roster.digest()? != self.roster {
             return Err(Error::Fenced);
         }
@@ -153,6 +194,7 @@ impl FleetFollowerReferences {
             return Err(Error::Node("authoritative follower inventory changed"));
         }
         self.finished_at_ms = fresh.finished_at_ms;
+        self.rechecked = Some((fresh.started_at_ms, fresh.finished_at_ms));
         Ok(())
     }
 }
