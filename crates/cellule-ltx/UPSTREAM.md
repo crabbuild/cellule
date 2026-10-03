@@ -226,8 +226,9 @@ policy.
   disk, and runtime-ledger admission.
 - Cancellation does not pretend to roll back dispatched work. Admission and
   scratch stay owned until that work actually finishes.
-- Each managed SQLite connection uses a 64 KiB page-cache target; one
-  `Db` retains three connections.
+- Each managed SQLite connection uses a 64 KiB page-cache target and an 8 KiB
+  lookaside arena; one `Db` retains three connections. Runtime admission charges
+  all three arenas in its 88 KiB native reservation per active Cell.
 
 <a id="compatibility-boundary"></a>
 ## Compatibility boundary

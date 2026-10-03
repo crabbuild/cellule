@@ -191,9 +191,10 @@ Measurements describe one service process under closed-loop load on the
 current machine; they do not qualify
 production capacity, distributed ownership, or fault recovery.
 
-See the [multicell comparison](performance/2026-10-03-rustfs-multicell.md)
-and [earlier single-Cell report](performance/2026-10-03-rustfs-http.md) for
-results and retained evidence. CI also runs a small 1/4-Cell × 1/4-client
+See the [steady-read optimization](performance/2026-10-03-rustfs-steady.md),
+[earlier multicell comparison](performance/2026-10-03-rustfs-multicell.md),
+and [single-Cell report](performance/2026-10-03-rustfs-http.md) for results
+and retained evidence. CI also runs a small 1/4-Cell × 1/4-client
 matrix with the same correctness checks, without performance thresholds.
 
 For steady-state reads, build both examples and add the Rust driver:
