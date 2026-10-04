@@ -10,10 +10,10 @@ Signed node transport uses the separate
 | Need | Route |
 | --- | --- |
 | Fixed tenant with application-written handlers | [`sql` example](../examples/sql.rs) |
-| Authorized request context, typed registration and OpenAPI | [`integration` example](../examples/integration.rs) |
+| Authorized request context, typed registration and OpenAPI | [`integration` example](../examples/integration/main.rs) |
 | Native application builder, tenant scopes, leased host startup and shutdown | [Standalone application service](../examples/application-builder-service/README.md) |
-| Atomic evidence storage | [Example journal](../examples/recovery/mod.rs) |
-| Local provider setup and cleanup on failure | [Example support](../examples/support/mod.rs) |
+| Atomic evidence storage | [Example journal](../examples/integration/recovery/mod.rs) |
+| Local provider setup and cleanup on failure | [Example support](../examples/integration/support/mod.rs) |
 | Durable runtime snapshot and resolution contracts | [Uncertain command guide](../../../docs/api.md#handle-an-uncertain-command) |
 
 ## Request scope in a multi-tenant service

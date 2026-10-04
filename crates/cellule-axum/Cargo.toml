@@ -35,5 +35,5 @@ tower = { version = "0.5", features = ["util"] }
 
 [[example]]
 name = "integration"
-path = "examples/integration.rs"
+path = "examples/integration/main.rs"
 required-features = ["openapi"]

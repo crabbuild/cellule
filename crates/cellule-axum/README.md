@@ -20,8 +20,24 @@ and receipts.
 | Runnable example | Focus | Default port |
 | --- | --- | --- |
 | [`sql`](examples/sql.rs) | Manual REST handlers and receipt-bound reads. | 3000 |
-| [`integration`](examples/integration.rs) | Typed routes, authorized context, OpenAPI, and recovery journal. | 3001 |
+| [`integration`](examples/integration/main.rs) | Typed routes, authorized context, OpenAPI, and recovery journal. | 3001 |
 | [`application-builder-service`](examples/application-builder-service/README.md) | Native module registration, shared scoped factory, two tenants, leased host startup, and ordered shutdown. | 3002 |
+
+The complete service examples have separate folders under `examples/`:
+
+```text
+examples/
+├── sql.rs                        # manual REST and performance service
+├── sql_metrics/                  # SQL service telemetry
+├── http_load.rs                  # HTTP read load driver
+├── integration/                  # original adapter integration
+│   ├── main.rs
+│   ├── support/mod.rs             # local module and runtime setup
+│   └── recovery/mod.rs            # command evidence journal
+└── application-builder-service/  # native builder and leased host integration
+    ├── Cargo.toml
+    └── src/
+```
 
 For the full application-to-host integration, run the standalone service from
 the workspace root:
@@ -43,7 +59,7 @@ Run this from the Cellule workspace:
 cargo run -p cellule-axum --example integration --features openapi --locked
 ```
 
-The [integration example](examples/integration.rs) binds `127.0.0.1:3001`.
+The [integration example](examples/integration/main.rs) binds `127.0.0.1:3001`.
 It includes an authorized extractor, a SQLite recovery journal, typed routes,
 and an OpenAPI document.
 
@@ -222,8 +238,8 @@ Implement `X` in your application:
    after both are durable; retention failure prevents dispatch. Identical
    evidence must be idempotent and conflicting bytes must be refused.
 
-The [example extractor](examples/integration.rs) and
-[SQLite journal](examples/recovery/mod.rs) implement these contracts. Authenticate
+The [example extractor](examples/integration/main.rs) and
+[SQLite journal](examples/integration/recovery/mod.rs) implement these contracts. Authenticate
 in the extractor, or read an authorized context installed by middleware.
 
 ```mermaid
