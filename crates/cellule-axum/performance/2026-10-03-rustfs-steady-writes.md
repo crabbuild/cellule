@@ -213,10 +213,10 @@ exclusive ownership, drained authority, new fences, and independent next writes
 all pass. This HTTP/object-proof coverage does not substitute for separate
 follower durability qualification.
 
-The next comparison isolates the recovery-admission change against the
-instrumentation-only commit. That change removes a reproduced dirty-capacity
-reservation by recovery waiters, while preserving resource ceilings and ledger
-charges. Its sustained throughput and latency effect remains unproven.
+The separate comparison below isolates the recovery-admission change against
+the instrumentation-only commit. It removes a reproduced dirty-capacity
+reservation by recovery waiters while preserving resource ceilings and ledger
+charges.
 
 ### Follow-up operation attribution
 
@@ -232,3 +232,54 @@ uploads. With 100 ms injected storage delays it reduced preparation from 200 ms
 to 100 ms, but violated the existing zero-upload contract when inherited metadata
 is missing. It was rejected. The production path still checks predecessor
 presence before any successor upload; the unchanged missing-origin test passes.
+
+## Isolated recovery-admission comparison
+
+[Completed admission comparison](https://github.com/crabbuild/cellule/actions/runs/37166813306)
+uses candidate `ec19f8c638ffb3840c50062947a72f1af7ff3875` against
+instrumentation-only `1b73491650462c38de8b4a34c07619f117b5d948`.
+The baseline observation diff is empty, both examples have identical observations,
+and the retained backport matches the tracked fixture and its SHA-256 manifest.
+[Full paired data](2026-10-04-rustfs-admission-paired-writes.json) retains every
+point, raw-client hashes, phase histograms, and provider CPU observations.
+
+| Cells | Baseline median TPS | Candidate median TPS | Paired TPS change | Paired p95 change | Paired p99 change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 57.16 | 58.20 | -0.3% | -6.7% | -7.2% |
+| 4 | 111.28 | 100.00 | +0.9% | -1.1% | -0.4% |
+| 16 | 103.83 | 102.34 | -0.9% | -24.3% | -6.2% |
+
+| Cells | Repeat | TPS change | p95 change | p99 change |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1 | -0.3% | -14.0% | -11.1% |
+| 1 | 2 | -1.6% | +4.5% | +11.9% |
+| 1 | 3 | +3.9% | -6.7% | -7.2% |
+| 4 | 1 | -15.0% | +21.6% | +20.4% |
+| 4 | 2 | +0.9% | -1.1% | -0.4% |
+| 4 | 3 | +2.8% | -4.3% | -6.6% |
+| 16 | 1 | +0.1% | -26.0% | -6.2% |
+| 16 | 2 | -0.9% | -10.6% | -6.5% |
+| 16 | 3 | -13.7% | -24.3% | +9.4% |
+
+All three sixteen-Cell pairs improve p95, with a paired median reduction of
+24.3%. Throughput remains essentially flat in the paired medians. Four-Cell
+repeat one regresses TPS by 15.0%; sixteen-Cell repeat three regresses TPS by
+13.7% and p99 by 9.4%. These pairs remain in the analysis, so this establishes a
+p95 improvement in this workload rather than consistent throughput and tail
+latency gains across the matrix.
+
+At sixteen Cells, median mean root admission remains about 84 ms and admitted
+preparation about 34 ms in both variants. Recovery semaphore acquisition drops
+from 11.769 ms to 1.226 ms, but the new cohort-gate wait is included only in total
+compaction time. Total compaction means are 209.459 ms and 223.080 ms; the
+semaphore timing must not be treated as total recovery queueing. RustFS consumes
+about three CPU cores in both variants on the four-CPU runner. The remaining
+bottleneck still includes shared publication admission and provider work.
+
+All eighteen points verify 202,186 acknowledged writes, including warmup,
+with 193,131 measured writes and zero measured errors. The independent raw
+audit checks 201,898 timed receipts; 288 manual warmup acknowledgments are
+covered by the harness. Live exact replay, conflicts and expiry, exclusive
+ownership, drained authority, fresh-SQLite recovery, and an independent next
+write under a new fence pass for every Cell. Separate object/follower
+qualification remains required. The broader performance objective remains open.
