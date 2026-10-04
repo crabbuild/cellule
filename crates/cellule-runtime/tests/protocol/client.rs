@@ -663,6 +663,7 @@ impl PeerRoundTrip for LoopbackRoundTrip {
     }
 }
 
+mod effect_maintenance;
 mod effects;
 mod mutation_context;
 mod publication;

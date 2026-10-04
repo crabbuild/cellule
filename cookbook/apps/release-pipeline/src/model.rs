@@ -53,7 +53,7 @@ impl std::str::FromStr for ReleaseId {
             return Err(Error::Identity("release identity requires 32 hex digits"));
         }
         let mut bytes = [0; 16];
-        for (position, pair) in text.as_bytes().chunks_exact(2).enumerate() {
+        for (position, pair) in text.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             bytes[position] = digit(pair[0])? * 16 + digit(pair[1])?;
         }
         Self::from_bytes(bytes)

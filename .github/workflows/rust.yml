@@ -68,7 +68,7 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
         run: |
           aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket cellule-ci
-      - name: Run balanced three-process storefront smoke
+      - name: Run balanced three-process storefront smoke and replica retry
         env:
           AWS_ACCESS_KEY_ID: cellule-ci
           AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
@@ -78,11 +78,18 @@ jobs:
           CELLULE_TEST_PREFIX: reference-smoke
           CELLULE_PERF_ITERATIONS: "1"
         run: |
-          smoke_test=process_performance::reference_balanced_three_process_fleet_end_to_end_performance
-          cargo test -p cellule-app --test integration "$smoke_test" \
-            --locked -- --ignored --exact --list | grep -Fx "$smoke_test: test"
-          cargo test -p cellule-app --test integration "$smoke_test" \
-            --locked -- --ignored --exact --nocapture
+          for smoke_test in \
+            process_performance::reference_balanced_three_process_fleet_end_to_end_performance \
+            process_performance::reference_replica_retry_three_process_fleet; do
+            cargo test -p cellule-app --test integration "$smoke_test" \
+              --locked -- --ignored --exact --list | grep -Fx "$smoke_test: test"
+            cargo test -p cellule-app --test integration "$smoke_test" \
+              --locked -- --ignored --exact --nocapture
+          done
+      - name: Test fleet journal and public controller models
+        # Each case runs concurrent native runtimes and SQL workers. Bound whole
+        # fixtures on the hosted runner; retain each case's deadlines and races.
+        run: cargo test -p cellule-host --example fleet_operations --all-features --locked -- --test-threads=2
       - name: Verify Axum HTTP publication, retries and cold recovery against RustFS
         env:
           AWS_ACCESS_KEY_ID: cellule-ci

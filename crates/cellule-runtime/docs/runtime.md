@@ -578,6 +578,13 @@ The node scheduler:
 
 **Release order.** A clean per-Cell drain closes SQLite before releasing control to `Idle`. Releasing control first would allow a successor to open while the previous writer still owns local mutable state.
 
+`release_idle_cell_at` returns the canonical final `PublishedPosition` for its
+exact source identity. `Error::CellReleaseRefused` preserves the original error
+and proves that this request stopped before canonical deactivation began.
+Errors from canonical close, publication or a lost response remain uncertain.
+Local pressure eviction may release the same Cell independently; neither its
+Idle root nor a missing actor supplies the fleet action's historical proof.
+
 Node shutdown follows this order:
 
 ```mermaid

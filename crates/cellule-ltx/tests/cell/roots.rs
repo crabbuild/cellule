@@ -35,5 +35,6 @@ mod compaction;
 mod compaction_transfers;
 mod directory;
 mod lifecycle;
+mod preparation;
 mod prepare_cost;
 mod sparse;

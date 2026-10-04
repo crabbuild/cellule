@@ -74,42 +74,83 @@ pub(in crate::cell::actor) fn start_background_inventory(
     tasks: &mut JoinSet<TaskResult>,
     node_lease: &RuntimeNodeLease,
 ) {
-    let candidates = cells
-        .iter_mut()
-        .filter_map(|(cell, active)| {
-            let decision = active.coordination.step(CoordinationInput::BeginInventory {
-                queue_empty: active.queue.is_empty(),
-                publication_idle: active.coordination.publication_count() == 0,
-                inventory_unknown: active.persisted_work.is_unknown(),
-                refreshing: active.inventory_refreshing,
-                lease_live: node_lease.check().is_ok(),
-            });
-            if matches!(decision, CoordinationDecision::Fence) {
-                fence_active(active);
-                return None;
-            }
-            if !matches!(decision, CoordinationDecision::Started) {
-                return None;
-            }
-            let effect_id = active.begin_task(CoordinationEffect::Inventory);
-            active.inventory_refreshing = true;
-            Some((*cell, active.generation, active.role, effect_id))
+    if node_lease.check().is_err() {
+        for active in cells.values_mut() {
+            fence_active(active);
+        }
+        return;
+    }
+    const MAX_INVENTORY_IN_FLIGHT: usize = 32;
+    let in_flight = cells
+        .values()
+        .filter(|active| active.inventory_refreshing)
+        .count();
+    let slots = MAX_INVENTORY_IN_FLIGHT.saturating_sub(in_flight);
+    if slots == 0 {
+        return;
+    }
+    let now_ms = unix_millis();
+    let mut candidates = cells
+        .iter()
+        .filter(|(_, active)| {
+            !active.busy()
+                && !active.draining()
+                && !active.inventory_refreshing
+                && active.queue.is_empty()
+                && active.coordination.publication_count() == 0
+                && active
+                    .demand
+                    .should_refresh(now_ms, active.persisted_work.is_unknown())
         })
+        .map(|(cell, active)| (active.demand.refresh_priority(), *cell.as_bytes()))
         .collect::<Vec<_>>();
-
-    for (cell, generation, role, effect_id) in candidates {
+    // Oldest attempted samples get the next slots; a hot or failing Cell cannot
+    // monopolize refresh. Shared SQL-job admission still bounds actual work.
+    candidates.sort_unstable();
+    candidates.truncate(slots);
+    for (_, cell_bytes) in candidates {
+        let cell = CellId::from_bytes(cell_bytes);
+        let Some(active) = cells.get_mut(&cell) else {
+            continue;
+        };
+        let decision = active.coordination.step(CoordinationInput::BeginInventory {
+            queue_empty: active.queue.is_empty(),
+            publication_idle: active.coordination.publication_count() == 0,
+            inventory_unknown: true,
+            refreshing: active.inventory_refreshing,
+            lease_live: node_lease.check().is_ok(),
+        });
+        if matches!(decision, CoordinationDecision::Fence) {
+            fence_active(active);
+            continue;
+        }
+        if !matches!(decision, CoordinationDecision::Started) {
+            continue;
+        }
+        let effect_id = active.begin_task(CoordinationEffect::Inventory);
+        active.inventory_refreshing = true;
+        let generation = active.generation;
+        let role = active.role;
+        let inventory_revision = active.inventory_revision;
         let pool = pool.clone();
         tasks.spawn(async move {
             let deadline = std::time::Instant::now() + SQL_WALL_DEADLINE;
-            let result =
-                tokio::time::timeout_at(deadline.into(), pool.persisted_work_inventory(cell, role))
-                    .await
-                    .map_err(|_| Error::Deadline)
-                    .and_then(|result| result);
+            let sql_deadline = SqlDeadline::new(deadline);
+            let result = tokio::time::timeout_at(
+                deadline.into(),
+                pool.fleet_inventory(cell, role, now_ms, sql_deadline.clone()),
+            )
+            .await
+            .map_err(|_| {
+                sql_deadline.cancel_queued();
+                Error::Deadline
+            })
+            .and_then(|result| result);
             TaskResult::InventoryRefreshed {
                 cell,
                 generation,
                 effect_id,
+                inventory_revision,
                 result,
             }
         });

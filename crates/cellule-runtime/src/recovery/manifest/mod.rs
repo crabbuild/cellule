@@ -15,6 +15,9 @@ use crate::{Error, Result};
 const MAX_MANIFEST_BYTES: u64 = 2 << 20;
 const MULTIPART_BYTES: usize = 8 << 20;
 
+mod inventory;
+pub use inventory::RecoveryManifestInventory;
+
 /// One control-ready pointer returned after bundle and manifest publication.
 pub struct PinnedRecoveryCell {
     /// Application the recovered Cell belongs to.
@@ -365,23 +368,13 @@ impl RecoveryManifestStore {
         Ok(PinnedRecoveryCells {
             cells: manifest
                 .cells
-                .into_iter()
-                .map(|cell| PinnedRecoveryCell {
-                    application: ApplicationId::from_bytes(cell.application),
-                    cell: CellId::from_bytes(cell.cell),
-                    incarnation: IncarnationId::from_bytes(cell.incarnation),
-                    cell_epoch: cell.cell_epoch,
-                    recovery: RecoveryOverlayRef {
+                .iter()
+                .map(|cell| {
+                    cell.pinned(
                         leader_session,
                         log_epoch,
-                        manifest_digest: Digest::from_bytes(manifest_digest),
-                        first_node_sequence: cell.first_node_sequence,
-                        last_node_sequence: cell.last_node_sequence,
-                        predecessor: runtime_root(cell.predecessor),
-                        final_txid: cell.final_position.txid,
-                        final_checksum: cell.final_position.checksum,
-                        final_commit_sequence: cell.final_commit_sequence,
-                    },
+                        Digest::from_bytes(manifest_digest),
+                    )
                 })
                 .collect(),
             summary,
@@ -395,25 +388,13 @@ impl RecoveryManifestStore {
         incarnation: IncarnationId,
         recovery: &RecoveryOverlayRef,
     ) -> Result<cellule_ltx::RecoveryOverlay> {
-        let path = self.layout.node_log_recovery_path(
-            recovery.leader_session.as_bytes(),
-            recovery.log_epoch,
-            recovery.manifest_digest.as_bytes(),
-        );
-        let (body, _) = self
-            .layout
-            .store()
-            .get_with_etag_bounded(&path, MAX_MANIFEST_BYTES)
+        let manifest = self
+            .load_manifest_body(
+                recovery.leader_session,
+                recovery.log_epoch,
+                recovery.manifest_digest,
+            )
             .await?;
-        if *blake3::hash(&body).as_bytes() != *recovery.manifest_digest.as_bytes() {
-            return Err(Error::Node("recovery manifest digest differs"));
-        }
-        let manifest = RecoveryManifest::decode(&body)?;
-        if manifest.leader_session != recovery.leader_session
-            || manifest.log_epoch != recovery.log_epoch
-        {
-            return Err(Error::Node("recovery manifest path scope differs"));
-        }
         let row = manifest
             .cells
             .into_iter()
@@ -423,17 +404,13 @@ impl RecoveryManifestStore {
                     && row.incarnation == *incarnation.as_bytes()
             })
             .ok_or(Error::Node("recovery manifest does not contain Cell"))?;
-        let expected = RecoveryOverlayRef {
-            leader_session: recovery.leader_session,
-            log_epoch: recovery.log_epoch,
-            manifest_digest: recovery.manifest_digest,
-            first_node_sequence: row.first_node_sequence,
-            last_node_sequence: row.last_node_sequence,
-            predecessor: runtime_root(row.predecessor),
-            final_txid: row.final_position.txid,
-            final_checksum: row.final_position.checksum,
-            final_commit_sequence: row.final_commit_sequence,
-        };
+        let expected = row
+            .pinned(
+                recovery.leader_session,
+                recovery.log_epoch,
+                recovery.manifest_digest,
+            )
+            .recovery;
         if &expected != recovery {
             return Err(Error::Node(
                 "recovery control pointer differs from manifest",
@@ -535,6 +512,42 @@ struct ManifestCell {
     final_position: cellule_ltx::Position,
     final_commit_sequence: u64,
     bundle_digest: [u8; 32],
+}
+
+impl ManifestCell {
+    fn scope(&self) -> ([u8; 16], [u8; 32], [u8; 16], u64) {
+        (
+            self.application,
+            self.cell,
+            self.incarnation,
+            self.cell_epoch,
+        )
+    }
+
+    fn pinned(
+        &self,
+        leader_session: SessionId,
+        log_epoch: u64,
+        manifest_digest: Digest,
+    ) -> PinnedRecoveryCell {
+        PinnedRecoveryCell {
+            application: ApplicationId::from_bytes(self.application),
+            cell: CellId::from_bytes(self.cell),
+            incarnation: IncarnationId::from_bytes(self.incarnation),
+            cell_epoch: self.cell_epoch,
+            recovery: RecoveryOverlayRef {
+                leader_session,
+                log_epoch,
+                manifest_digest,
+                first_node_sequence: self.first_node_sequence,
+                last_node_sequence: self.last_node_sequence,
+                predecessor: runtime_root(self.predecessor),
+                final_txid: self.final_position.txid,
+                final_checksum: self.final_position.checksum,
+                final_commit_sequence: self.final_commit_sequence,
+            },
+        }
+    }
 }
 
 impl RecoveryManifest {
@@ -662,6 +675,17 @@ impl TryFrom<RawManifest> for RecoveryManifest {
             log_epoch,
             cells,
         };
+        // Publication sorts the complete scope and rejects duplicates. Preserve
+        // that invariant on reads so no controller sees an ambiguous subset.
+        if manifest
+            .cells
+            .windows(2)
+            .any(|pair| pair[0].scope() >= pair[1].scope())
+        {
+            return Err(Error::Node(
+                "recovery manifest Cell scopes are not strictly ordered",
+            ));
+        }
         if leader_session.as_bytes().iter().all(|byte| *byte == 0)
             || log_epoch == 0
             || manifest.cells.iter().any(|cell| {

@@ -49,7 +49,10 @@ impl NodeLogAuthority for RecordingAuthority {
         })
     }
 
-    fn close<'a>(&'a self, _barrier: &'a NodeLogRotationBarrier) -> BoxFuture<'a, Result<()>> {
+    fn close<'a>(
+        &'a self,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { Ok(()) })
     }
 }
@@ -86,7 +89,10 @@ impl NodeLogAuthority for BlockingAuthority {
         })
     }
 
-    fn close<'a>(&'a self, _barrier: &'a NodeLogRotationBarrier) -> BoxFuture<'a, Result<()>> {
+    fn close<'a>(
+        &'a self,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { Ok(()) })
     }
 }

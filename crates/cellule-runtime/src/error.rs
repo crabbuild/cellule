@@ -13,6 +13,40 @@ pub enum Error {
     /// A control record or transition failed validation.
     #[error("invalid Cell control record: {0}")]
     Control(&'static str),
+    /// A closed owner epoch lacks the original retained control observation.
+    #[error("Cell owner history is incomplete at epoch {epoch}")]
+    OwnerHistoryIncomplete {
+        /// Cell whose history cannot exclude an original failed owner.
+        cell: crate::identity::CellId,
+        /// Current incarnation whose history was requested.
+        incarnation: crate::identity::IncarnationId,
+        /// First missing ownership epoch; absence supplies no closure proof.
+        epoch: u64,
+    },
+    /// A required canonical successful acquisition lacks its retained input.
+    #[error("Cell acquisition history is incomplete at epoch {epoch}")]
+    AcquisitionHistoryIncomplete {
+        /// Cell whose original recovery materialization must be proven.
+        cell: crate::identity::CellId,
+        /// Original incarnation, without substituting a new Cell lifetime.
+        incarnation: crate::identity::IncarnationId,
+        /// Exact missing successful acquisition epoch.
+        epoch: u64,
+    },
+    /// A required root lacks its canonical preparation links.
+    #[error("Cell root lineage is incomplete at {root:?}")]
+    RootLineageIncomplete {
+        /// Exact root whose absence cannot establish an acknowledged prefix.
+        root: cellule_ltx::RootRef,
+    },
+    /// Complete bounded preparation links did not reach the required root.
+    #[error("Cell root {root:?} has no verified preparation path from {prefix:?}")]
+    RootPrefixUnproven {
+        /// Required exact historical root.
+        prefix: Box<cellule_ltx::RootRef>,
+        /// Requested successor root, without any authority grant.
+        root: Box<cellule_ltx::RootRef>,
+    },
     /// A catalog record, scan, or head failed validation.
     #[error("invalid Cell catalog: {0}")]
     Catalog(&'static str),
@@ -77,6 +111,19 @@ pub enum Error {
     /// The peer is authenticated but not authorized for this operation.
     #[error("Cell peer authorization denied: {0}")]
     PeerAuthorization(&'static str),
+    /// A fleet receiver request failed its exact operation contract.
+    #[error("Cell fleet operation failed")]
+    FleetOperation(#[source] Box<crate::fleet::operations::OperationError>),
+    /// This exact source request stopped before canonical deactivation or
+    /// authority release began. It proves refusal, not another job's outcome.
+    #[error("Cell source release was refused before deactivation: {blocker:?}")]
+    CellReleaseRefused {
+        /// The condition which prevented this request's release.
+        blocker: crate::fleet::operations::DrainBlocker,
+        /// Original validation, admission, or inventory error.
+        #[source]
+        source: Box<Error>,
+    },
     /// A node advertisement or directory record failed validation.
     #[error("invalid Cell node advertisement: {0}")]
     Node(&'static str),

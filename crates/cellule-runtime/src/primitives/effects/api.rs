@@ -42,8 +42,8 @@ pub fn register_effect_delivery<M: EffectModule>(
 ) -> crate::Result<()> {
     registry.bind_effect_runner::<M>()?;
     registry.bind_command::<EffectClaimCommand<M>>()?;
-    registry.bind_command::<EffectLeaseCommand<M>>()?;
-    registry.bind_query::<EffectValidateClaimQuery<M>>()?;
+    registry.bind_lease_command::<EffectLeaseCommand<M>>()?;
+    registry.bind_lease_query::<EffectValidateClaimQuery<M>>()?;
     registry.bind_query::<EffectStatusQuery<M>>()
 }
 

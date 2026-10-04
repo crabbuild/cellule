@@ -278,9 +278,9 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
                 .as_ref()
                 .filter(|_| occurrence == 1)
                 .map(|held| held.session);
-            let started = std::time::Instant::now();
+            let started = tokio::time::Instant::now();
             let mut notified = std::collections::HashSet::new();
-            let completed = tokio::time::timeout(Duration::from_secs(2), async {
+            let received = tokio::time::timeout(Duration::from_secs(2), async {
                 for _ in 0..healthy.len() - usize::from(held_session.is_some()) {
                     let (cell, session) = hints.recv().await.unwrap();
                     assert_eq!(cell, target.cell_id());
@@ -293,15 +293,15 @@ async fn publication_hints_with_gate(readers: usize, stalled_reader: bool, hold_
             })
             .await;
             assert!(
-                completed.is_ok(),
-                "publication {occurrence} timed out after {:?}; recruitment elapsed: {:?}; directory age: {}ms; missing readers: {:?}; pending stalled hints: {}",
+                received.is_ok(),
+                "publication {occurrence} timed out after {:?}: received {} of {} healthy hints; missing {:?}; held {:?}; recruitment elapsed: {:?}; directory age: {}ms; pending transports {}",
                 started.elapsed(),
+                notified.len(),
+                healthy.len() - usize::from(held_session.is_some()),
+                healthy.difference(&notified).filter(|session| Some(**session) != held_session).collect::<Vec<_>>(),
+                held_session,
                 recruitment_started.elapsed(),
                 now_ms() - now,
-                healthy
-                    .difference(&notified)
-                    .filter(|session| Some(**session) != held_session)
-                    .collect::<Vec<_>>(),
                 pending.load(std::sync::atomic::Ordering::Relaxed),
             );
             if let Some(held) = held.as_ref().filter(|_| occurrence == 1) {

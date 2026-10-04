@@ -34,14 +34,14 @@ impl CellReplica {
                 "append requires a representation-only compaction",
             ));
         }
-        let mut successor = self
-            .prepare(Some(&root), cuts, commit_sequence, schema)
-            .await?;
         // The private compaction authenticates identical logical state. The
-        // final root replaces that original state directly, after every new
-        // dependency has uploaded through the normal preparation path.
-        successor.predecessor = Some(predecessor);
-        Ok(successor)
+        // native factory must name the final authority predecessor before
+        // exposing derivation metadata, not rebase it after retention.
+        let mut replica = self.clone();
+        replica.preparation_predecessor = Some(predecessor);
+        replica
+            .prepare(Some(&root), cuts, commit_sequence, schema)
+            .await
     }
 
     /// Verifies and uploads a new immutable root without changing authority.
@@ -650,9 +650,6 @@ impl CellReplica {
         let bytes = encode_root(&document)?;
         let digest = *blake3::hash(&bytes).as_bytes();
         root_objects.push((digest, bytes));
-        // The document and its immutable segment pages can be uploaded in
-        // parallel. The root digest remains private until all uploads finish.
-        self.put_objects(CellObjectKind::Root, root_objects).await?;
         let root = RootRef {
             cell: self.cell,
             incarnation: self.incarnation,
@@ -666,14 +663,36 @@ impl CellReplica {
             .without_recovery()
             .without_dirty()
             .without_scratch();
+        // Check the full native graph before exposing even its derivation. The
+        // verified view carries no preparation callback beyond this owned call.
+        let mut view_replica = self.clone().with_host(host);
+        view_replica.root_metadata = None;
+        view_replica.preparation_predecessor = None;
+        let verified = VerifiedRoot::from_graph(view_replica, root, &document, descriptors)?;
+        let predecessor = self.preparation_predecessor.or_else(|| base.copied());
+        let preparation = RootPreparation { root, predecessor };
+        let metadata = async {
+            if let Some(metadata) = &self.root_metadata {
+                // Metadata shares native origin admission. It owns no second
+                // queue and releases this permit on completion or cancellation.
+                let _permit = self.host.io_permit().await?;
+                metadata
+                    .retain(preparation)
+                    .await
+                    .map_err(|source| LtxError::RootPreparation { source })?;
+            }
+            Ok::<_, LtxError>(())
+        };
+        // Independent immutable objects and derivation metadata can overlap.
+        // Neither the complete proposal nor authority rights escape on failure.
+        futures_util::future::try_join(
+            self.put_objects(CellObjectKind::Root, root_objects),
+            metadata,
+        )
+        .await?;
         Ok(PreparedRoot {
-            predecessor: base.copied(),
-            verified: VerifiedRoot::from_graph(
-                self.clone().with_host(host),
-                root,
-                &document,
-                descriptors,
-            )?,
+            predecessor,
+            verified,
         })
     }
 

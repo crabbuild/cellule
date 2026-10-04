@@ -11,13 +11,16 @@ use cellule_runtime::read_policy::ReadPolicyStore;
 use std::{
     net::SocketAddr,
     path::Path,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::Mutex,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
 
 struct ReaderTransport {
     nodes: [SocketAddr; 3],
     successes: Arc<[AtomicUsize; 3]>,
+    attempts: Arc<Mutex<Vec<(usize, String)>>>,
+    refuse_first: Arc<AtomicBool>,
 }
 
 impl PeerRoundTrip for ReaderTransport {
@@ -40,12 +43,37 @@ impl PeerRoundTrip for ReaderTransport {
         let index = (1..3).find(|index| node.session() == node_session(*index));
         let nodes = self.nodes;
         let successes = Arc::clone(&self.successes);
+        let attempts = Arc::clone(&self.attempts);
+        let refuse_first = Arc::clone(&self.refuse_first);
         Box::pin(async move {
             let index = index.ok_or(Error::Peer(
                 "replica routing selected the owner or an unknown node",
             ))?;
             assert_eq!(node.node().as_bytes(), node_session(index).as_bytes());
-            let reply = super::fleet::send_tcp(nodes[index], request, remaining_ms).await?;
+            if refuse_first.swap(false, Ordering::Relaxed) {
+                attempts
+                    .lock()
+                    .unwrap()
+                    .push((index, "injected first refusal".into()));
+                return Err(Error::ReplicaUnavailable);
+            }
+            let reply = super::fleet::send_tcp(nodes[index], request, remaining_ms).await;
+            attempts.lock().unwrap().push((
+                index,
+                match &reply {
+                    Ok(reply) => match decode_peer_reply(reply)?.outcome {
+                        Some(wire::peer_reply::Outcome::Read(read)) => match read.result {
+                            Some(wire::read_reply::Result::CommandOutput(_)) => {
+                                format!("served@{}", read.receipt.unwrap().commit_sequence)
+                            }
+                            result => format!("{result:?}"),
+                        },
+                        outcome => format!("{outcome:?}"),
+                    },
+                    Err(error) => error.to_string(),
+                },
+            ));
+            let reply = reply?;
             if matches!(decode_peer_reply(&reply)?.outcome, Some(wire::peer_reply::Outcome::Read(read))
                 if matches!(read.result, Some(wire::read_reply::Result::CommandOutput(_))))
             {
@@ -66,6 +94,25 @@ async fn wait_for_readers(sync: &Path) {
 }
 
 pub(super) async fn verify(fixture: &PerfFixture, sync: &Path, root: &str, nodes: [SocketAddr; 3]) {
+    verify_inner(fixture, sync, root, nodes, false).await;
+}
+
+pub(super) async fn verify_with_first_refusal(
+    fixture: &PerfFixture,
+    sync: &Path,
+    root: &str,
+    nodes: [SocketAddr; 3],
+) {
+    verify_inner(fixture, sync, root, nodes, true).await;
+}
+
+async fn verify_inner(
+    fixture: &PerfFixture,
+    sync: &Path,
+    root: &str,
+    nodes: [SocketAddr; 3],
+    refuse_first: bool,
+) {
     let target = &fixture.sql_target;
     let layout = CellStorageLayout::new(
         rustfs_store(),
@@ -79,9 +126,12 @@ pub(super) async fn verify(fixture: &PerfFixture, sync: &Path, root: &str, nodes
         node_session(0)
     );
     let successes = Arc::new(std::array::from_fn(|_| AtomicUsize::new(0)));
+    let attempts = Arc::new(Mutex::new(Vec::new()));
     let transport = Arc::new(ReaderTransport {
         nodes,
         successes: Arc::clone(&successes),
+        attempts: Arc::clone(&attempts),
+        refuse_first: Arc::new(AtomicBool::new(refuse_first)),
     });
     let peer = ReplicaPeerClient::new(
         Arc::clone(&fixture.registry),
@@ -190,7 +240,21 @@ pub(super) async fn verify(fixture: &PerfFixture, sync: &Path, root: &str, nodes
         .map(|count| count.load(Ordering::Relaxed));
     assert_eq!(counts[0], 0);
     assert_eq!(counts[1] + counts[2], 12);
-    assert!(counts[1].abs_diff(counts[2]) <= 1);
+    assert_eq!(
+        attempts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, outcome)| outcome == "injected first refusal")
+            .count(),
+        usize::from(refuse_first),
+        "the requested refusal must actually run"
+    );
+    assert!(
+        counts[1].abs_diff(counts[2]) <= 1,
+        "replica successes={counts:?}, attempts={:?}",
+        attempts.lock().unwrap()
+    );
     println!(
         "PERF generated_replica_reads: successful_by_node={counts:?} unavailable_before_open=1 automatic_recruitment=2 automatic_refresh=2 evicted_readers=2 duplicate_effects=0"
     );

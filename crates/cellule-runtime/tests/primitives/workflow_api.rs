@@ -506,5 +506,6 @@ fn registry_rejects_workflow_effect_target_drift() {
 }
 
 mod activity;
+mod maintenance;
 mod namespace;
 mod retry;

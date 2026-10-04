@@ -3,6 +3,60 @@
 use super::*;
 
 #[tokio::test]
+async fn lifecycle_metadata_uses_shared_credit_without_opening_fenced_native_work() {
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        1_024,
+        SessionId::from_bytes([46; 16]),
+        ReplicaHost::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        runtime.try_reserve_node_metadata_bytes(0),
+        Err(cellule_runtime::Error::Capacity("node retained bytes"))
+    ));
+    let metadata = runtime.try_reserve_node_metadata_bytes(1_024).unwrap();
+    assert_eq!(runtime.stats().retained_bytes(), 1_024);
+    assert!(matches!(
+        runtime.try_reserve_node_metadata_bytes(1),
+        Err(cellule_runtime::Error::Capacity("node retained bytes"))
+    ));
+    assert!(matches!(
+        runtime.try_reserve_node_bytes(1),
+        Err(cellule_runtime::Error::Fenced)
+    ));
+    drop(metadata);
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let native = runtime.try_reserve_node_bytes(1_023).unwrap();
+    let metadata = runtime.try_reserve_node_metadata_bytes(1).unwrap();
+    assert_eq!(runtime.stats().retained_bytes(), 1_024);
+    assert!(matches!(
+        runtime.try_reserve_node_metadata_bytes(1),
+        Err(cellule_runtime::Error::Capacity("node retained bytes"))
+    ));
+    drop(native);
+    lease.fence();
+    let fenced_metadata = runtime.try_reserve_node_metadata_bytes(1_023).unwrap();
+    assert!(matches!(
+        runtime.try_reserve_node_bytes(1),
+        Err(cellule_runtime::Error::Fenced)
+    ));
+    runtime.shutdown().await.unwrap();
+    assert!(matches!(
+        runtime.try_reserve_node_metadata_bytes(1),
+        Err(cellule_runtime::Error::RuntimeClosed)
+    ));
+    assert!(matches!(
+        runtime.try_reserve_node_bytes(1),
+        Err(cellule_runtime::Error::RuntimeClosed)
+    ));
+    assert_eq!(runtime.stats().retained_bytes(), 1_024);
+    drop((metadata, fenced_metadata));
+    assert_eq!(runtime.stats().retained_bytes(), 0);
+}
+
+#[tokio::test]
 async fn fleet_runtime_stays_fenced_until_one_live_node_lease_is_installed() {
     let session = SessionId::from_bytes([41; 16]);
     let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(

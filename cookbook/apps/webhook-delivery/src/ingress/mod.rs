@@ -109,7 +109,7 @@ fn delivery_key(value: &str) -> Result<[u8; 32]> {
         return Err("delivery key must be 64 lowercase hex digits".into());
     }
     let mut key = [0; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         key[index] = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
     }
     Ok(key)

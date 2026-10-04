@@ -17,6 +17,7 @@ use crate::cell::catalog::CatalogProof;
 use crate::cell::catalog::CatalogRole;
 use crate::cell::executor::StoredOutcome;
 use crate::cell::executor::{MutationIdentity, Resolution};
+use crate::coordination::AdmissionKind;
 use crate::fleet::resource::{ResourceCost, ResourceReservation};
 use crate::identity::IncarnationId;
 use crate::identity::{CellId, Digest};
@@ -44,10 +45,20 @@ pub(super) struct CellAdmission {
     pub(super) requests: Arc<Semaphore>,
     pub(super) bytes: Arc<Semaphore>,
     pub(super) draining: AtomicBool,
+    pub(super) maintenance_quiescing: AtomicBool,
     pub(super) fenced: AtomicBool,
 }
 
+pub(crate) struct CommandWork {
+    pub(crate) identity: MutationIdentity,
+    pub(crate) operation_digest: Digest,
+    pub(crate) now_ms: i64,
+    pub(crate) operation_bytes: usize,
+    pub(crate) max_result_bytes: usize,
+}
+
 pub(super) struct WorkAdmission {
+    pub(super) kind: AdmissionKind,
     pub(super) _request: Option<OwnedSemaphorePermit>,
     pub(super) _cell_bytes: OwnedSemaphorePermit,
     pub(super) _node_bytes: ResourceReservation,
@@ -163,7 +174,47 @@ impl CellHandle {
             + Send
             + 'static,
     {
-        let admission = self.reserve_work(operation_bytes, max_result_bytes)?;
+        self.execute_registered(
+            false,
+            CommandWork {
+                identity,
+                operation_digest,
+                now_ms,
+                operation_bytes,
+                max_result_bytes,
+            },
+            handler,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_registered<F>(
+        &self,
+        lease_completion: bool,
+        request: CommandWork,
+        handler: F,
+    ) -> crate::Result<StoredOutcome>
+    where
+        F: for<'connection> FnOnce(
+                &cellule_ltx::rusqlite::Transaction<'connection>,
+            )
+                -> crate::Result<crate::cell::executor::HandlerOutcome>
+            + Send
+            + 'static,
+    {
+        let CommandWork {
+            identity,
+            operation_digest,
+            now_ms,
+            operation_bytes,
+            max_result_bytes,
+        } = request;
+        let kind = if lease_completion {
+            AdmissionKind::LeaseCommand
+        } else {
+            AdmissionKind::Command
+        };
+        let admission = self.reserve_work_kind(kind, operation_bytes, max_result_bytes)?;
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
@@ -263,7 +314,26 @@ impl CellHandle {
     where
         F: FnOnce(&cellule_ltx::rusqlite::Connection) -> crate::Result<Vec<u8>> + Send + 'static,
     {
-        let admission = self.reserve_work(operation_bytes, max_result_bytes)?;
+        self.query_registered(false, operation_bytes, max_result_bytes, handler)
+            .await
+    }
+
+    pub(crate) async fn query_registered<F>(
+        &self,
+        lease_validation: bool,
+        operation_bytes: usize,
+        max_result_bytes: usize,
+        handler: F,
+    ) -> crate::Result<Vec<u8>>
+    where
+        F: FnOnce(&cellule_ltx::rusqlite::Connection) -> crate::Result<Vec<u8>> + Send + 'static,
+    {
+        let kind = if lease_validation {
+            AdmissionKind::LeaseQuery
+        } else {
+            AdmissionKind::Query
+        };
+        let admission = self.reserve_work_kind(kind, operation_bytes, max_result_bytes)?;
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
@@ -312,7 +382,7 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Ok(Resolution::Unknown);
         }
-        let admission = match self.reserve_work(48, max_result_bytes) {
+        let admission = match self.reserve_work_kind(AdmissionKind::Resolve, 48, max_result_bytes) {
             Ok(admission) => admission,
             Err(Error::Fenced) => return Ok(Resolution::Unknown),
             Err(error) => return Err(error),
@@ -353,7 +423,7 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Ok(Resolution::Unknown);
         }
-        let admission = match self.reserve_work(72, max_result_bytes) {
+        let admission = match self.reserve_work_kind(AdmissionKind::Resolve, 72, max_result_bytes) {
             Ok(admission) => admission,
             Err(Error::Fenced) => return Ok(Resolution::Unknown),
             Err(error) => return Err(error),
@@ -457,6 +527,15 @@ impl CellHandle {
         operation_bytes: usize,
         max_result_bytes: usize,
     ) -> crate::Result<WorkAdmission> {
+        self.reserve_work_kind(AdmissionKind::Command, operation_bytes, max_result_bytes)
+    }
+
+    fn reserve_work_kind(
+        &self,
+        kind: AdmissionKind,
+        operation_bytes: usize,
+        max_result_bytes: usize,
+    ) -> crate::Result<WorkAdmission> {
         if self.inner.shutting_down.load(Ordering::Acquire) {
             return Err(Error::RuntimeClosed);
         }
@@ -471,10 +550,14 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Err(Error::Fenced);
         }
-        if self.admission.draining.load(Ordering::Acquire) {
+        if self.admission.draining.load(Ordering::Acquire)
+            || (self.admission.maintenance_quiescing.load(Ordering::Acquire)
+                && !kind.allowed_while_quiescing())
+        {
             return Err(Error::CellDraining);
         }
         let admission = WorkAdmission {
+            kind,
             _request: Some(try_one(
                 self.admission.requests.clone(),
                 "Cell mailbox requests",
@@ -496,7 +579,10 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Err(Error::Fenced);
         }
-        if self.admission.draining.load(Ordering::Acquire) {
+        if self.admission.draining.load(Ordering::Acquire)
+            || (self.admission.maintenance_quiescing.load(Ordering::Acquire)
+                && !kind.allowed_while_quiescing())
+        {
             return Err(Error::CellDraining);
         }
         self.inner.node_lease.check()?;

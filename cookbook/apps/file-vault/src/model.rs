@@ -62,7 +62,7 @@ impl<'de> Deserialize<'de> for Etag {
             ));
         }
         let mut bytes = [0; 32];
-        for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let digit = |b: u8| {
                 if b.is_ascii_digit() {
                     b - b'0'

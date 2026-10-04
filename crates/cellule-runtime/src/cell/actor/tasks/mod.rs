@@ -14,6 +14,7 @@ use super::admission::{
 use super::*;
 
 mod activation;
+mod maintenance_transfer;
 mod movement;
 mod publication;
 mod residency;
@@ -72,18 +73,10 @@ pub(super) fn handle_task(
             admission,
             reply,
             result,
-            persisted_work,
+            inventory,
         } => activation::handle_activated(
-            context,
-            cell,
-            generation,
-            role,
-            catalog,
-            publisher,
-            admission,
-            reply,
-            result,
-            persisted_work,
+            context, cell, generation, role, catalog, publisher, admission, reply, result,
+            inventory,
         ),
         TaskResult::Hydrated {
             cell,
@@ -170,6 +163,12 @@ pub(super) fn handle_task(
             effect_id,
             result,
         } => movement::handle_transfer_preflight(context, cell, generation, effect_id, result),
+        TaskResult::MaintenancePreflight {
+            cell,
+            generation,
+            effect_id,
+            result,
+        } => maintenance_transfer::handle(context, cell, generation, effect_id, result),
         TaskResult::Migrated {
             cell,
             generation,
@@ -196,8 +195,16 @@ pub(super) fn handle_task(
             cell,
             generation,
             effect_id,
+            inventory_revision,
             result,
-        } => residency::handle_inventory_refreshed(context, cell, generation, effect_id, result),
+        } => residency::handle_inventory_refreshed(
+            context,
+            cell,
+            generation,
+            effect_id,
+            inventory_revision,
+            result,
+        ),
         TaskResult::Renewed {
             cell,
             generation,
@@ -211,8 +218,15 @@ pub(super) fn handle_task(
             reply,
             shutdown_drain,
             result,
-        } => {
-            residency::handle_deactivated(context, cell, generation, reply, shutdown_drain, result)
-        }
+            released,
+        } => residency::handle_deactivated(
+            context,
+            cell,
+            generation,
+            reply,
+            shutdown_drain,
+            result,
+            released,
+        ),
     }
 }
