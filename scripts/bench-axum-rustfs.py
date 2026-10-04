@@ -240,6 +240,17 @@ def process_usage(pid):
     return {"cpu_seconds": seconds, "rss_bytes": int(fields[1]) * 1024}
 
 
+def provider_usage(container):
+    """Read the dedicated provider's cgroup v2 CPU counters, outside the load loop."""
+    raw = subprocess.check_output(
+        ["docker", "exec", container, "cat", "/sys/fs/cgroup/cpu.stat"],
+        text=True, timeout=30,
+    )
+    counters = {key: int(value) for key, value in (line.split() for line in raw.splitlines())}
+    require("usage_usec" in counters, "provider cgroup lacks CPU usage evidence")
+    return counters
+
+
 def steady_reads(args, directory, service, concurrency, acknowledged):
     config = {
         "address": service.address, "concurrency": concurrency,
@@ -323,6 +334,8 @@ def point(args, directory, repeat, concurrency, cells):
             return dict(reply, request=envelope)
 
         if args.write_seconds:
+            provider_before = provider_usage(args.provider_container) if args.provider_container else None
+            provider_started = time.perf_counter()
             before = process_usage(service.process.pid)
             driver_before = process_usage(os.getpid())
             warm, warm_elapsed = timed_writes(service.address, concurrency, args.write_warmup_seconds, args.warmup + 1, directory, "write-warmup")
@@ -342,6 +355,8 @@ def point(args, directory, repeat, concurrency, cells):
                     profiler.wait(timeout=30)
             after = process_usage(service.process.pid)
             driver_after = process_usage(os.getpid())
+            provider_after = provider_usage(args.provider_container) if args.provider_container else None
+            provider_wall = time.perf_counter() - provider_started
         else:
             writes, elapsed = parallel(service.address, concurrency, envelopes[args.warmup:], write)
         (directory / "writes.json").write_text(json.dumps(writes, indent=2) + "\n")
@@ -361,6 +376,14 @@ def point(args, directory, repeat, concurrency, cells):
                 ) for start in range(0, args.write_seconds, 10)],
                 completions_after_admission_deadline=sum(reply["completed_seconds"] >= args.write_seconds for reply in writes),
             )
+            if provider_before is not None:
+                provider_cpu = (provider_after["usage_usec"] - provider_before["usage_usec"]) / 1_000_000
+                require(provider_cpu >= 0, "provider cgroup reset during measurement")
+                write_summary["provider_resources"] = {
+                    "window_seconds_including_warmup": provider_wall,
+                    "cpu_seconds": provider_cpu, "cpu_cores": provider_cpu / provider_wall,
+                    "cgroup_before": provider_before, "cgroup_after": provider_after,
+                }
         # Persist every failure before refusing qualification. Never silently
         # retry an uncertain outcome or replace the request identity.
         require(write_summary["errors"] == 0, f"write errors: {write_summary}; see {directory}")
@@ -495,6 +518,7 @@ def main():
     parser.add_argument("--read-seconds", type=positive, help="steady-state read duration, up to 3600 seconds")
     parser.add_argument("--read-warmup-seconds", type=positive, default=5)
     parser.add_argument("--sample", action="store_true", help="capture a ten-second macOS server stack sample")
+    parser.add_argument("--provider-container", help="record dedicated RustFS container cgroup v2 CPU during timed writes")
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
     if args.baseline_binary:
@@ -503,6 +527,7 @@ def main():
         require(args.write_seconds <= 3600 and args.write_warmup_seconds <= 60, "write duration/warmup exceed bounds")
         require(max(args.concurrency) <= 128, "steady-state clients are bounded at 128")
         require(not args.read_seconds, "measure steady writes and reads in separate runs")
+    require(not args.provider_container or args.write_seconds, "provider CPU measurement requires timed writes")
     require(bool(args.read_driver) == bool(args.read_seconds), "read driver and duration must be supplied together")
     if args.read_driver:
         args.read_driver = args.read_driver.resolve(strict=True)
@@ -537,6 +562,7 @@ def main():
         "write_seconds": args.write_seconds, "write_warmup_seconds": args.write_warmup_seconds,
         "read_driver_sha256": driver_digest, "baseline_binary_sha256": baseline_digest,
         "http_tokio_workers": os.environ.get("TOKIO_WORKER_THREADS", "system_default"),
+        "provider_container": args.provider_container,
         "workload": "order_id mod active Cells; POST inserts then receipt-bound SELECT; GET owner-ordered SELECT; closed loop",
     }
     (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")

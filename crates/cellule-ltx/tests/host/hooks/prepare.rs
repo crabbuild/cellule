@@ -2,6 +2,118 @@
 
 use super::*;
 
+#[tokio::test]
+async fn root_preparation_separates_admission_wait_and_preserves_admission_errors() {
+    use cellule_ltx::{LtxPhase, LtxTelemetry, environment::Clock};
+    use std::time::Instant;
+
+    struct TestClock(Mutex<Instant>);
+    impl Clock for TestClock {
+        fn unix_millis(&self) -> i64 {
+            0
+        }
+        fn file_age(&self, _path: &Path) -> io::Result<Duration> {
+            Ok(Duration::ZERO)
+        }
+        fn monotonic(&self) -> Instant {
+            *self.0.lock().unwrap()
+        }
+    }
+    #[derive(Default)]
+    struct Phases(Mutex<Vec<(LtxPhase, Duration, bool)>>);
+    impl LtxTelemetry for Phases {
+        fn phase(&self, phase: LtxPhase, duration: Duration, succeeded: bool) {
+            self.0.lock().unwrap().push((phase, duration, succeeded));
+        }
+    }
+
+    let (directory, _faults, host, mut writer) = fixture();
+    let captured = writer.capture().unwrap();
+    let slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery_slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let clock = Arc::new(TestClock(Mutex::new(Instant::now())));
+    let phases = Arc::new(Phases::default());
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(Arc::new(InMemory::new())),
+            ObjectPath::from("root-admission-timing"),
+            [41; 16],
+        ),
+        [42; 32],
+        [43; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(
+        host.with_dirty_slots(Arc::clone(&slots))
+            .with_recovery_slots(recovery_slots.clone())
+            .with_clock(clock.clone())
+            .with_ltx_telemetry(phases.clone()),
+    );
+    let held = slots.clone().acquire_owned().await.unwrap();
+    let mut preparation = Box::pin(replica.prepare(None, &captured, 1, 1));
+    assert!(futures_util::poll!(&mut preparation).is_pending());
+    assert!(phases.0.lock().unwrap().is_empty());
+    *clock.0.lock().unwrap() += Duration::from_millis(100);
+    drop(held);
+    let prepared = preparation.await.unwrap();
+    assert_eq!(prepared.root().position, captured.position);
+    assert_eq!(prepared.root().commit_sequence, 1);
+    for (phase, elapsed) in [
+        (LtxPhase::DirtyAdmission, Duration::from_millis(100)),
+        (LtxPhase::RootAdmission, Duration::from_millis(100)),
+        (LtxPhase::RootPreparationWork, Duration::ZERO),
+        (LtxPhase::RootPreparation, Duration::from_millis(100)),
+    ] {
+        let observed = phases.0.lock().unwrap();
+        assert_eq!(observed.iter().filter(|entry| entry.0 == phase).count(), 1);
+        assert!(observed.contains(&(phase, elapsed, true)), "{observed:?}");
+    }
+    assert_eq!(slots.available_permits(), 1);
+
+    phases.0.lock().unwrap().clear();
+    let held_recovery = recovery_slots.clone().acquire_owned().await.unwrap();
+    let root = prepared.root();
+    let mut compaction = Box::pin(replica.prepare_compaction(&root, 0..1, 9, directory.path()));
+    assert!(futures_util::poll!(&mut compaction).is_pending());
+    assert_eq!(slots.available_permits(), 0);
+    assert_eq!(
+        *phases.0.lock().unwrap(),
+        vec![(LtxPhase::DirtyAdmission, Duration::ZERO, true)]
+    );
+    *clock.0.lock().unwrap() += Duration::from_millis(100);
+    drop(held_recovery);
+    let compacted = compaction.await.unwrap();
+    assert_eq!(compacted.root().position, root.position);
+    assert_eq!(compacted.root().commit_sequence, root.commit_sequence);
+    assert!(phases.0.lock().unwrap().contains(&(
+        LtxPhase::RecoveryAdmission,
+        Duration::from_millis(100),
+        true,
+    )));
+    assert_eq!(slots.available_permits(), 1);
+    assert_eq!(recovery_slots.available_permits(), 1);
+
+    phases.0.lock().unwrap().clear();
+    slots.close();
+    let error = replica.prepare(None, &captured, 1, 1).await.err().unwrap();
+    match error {
+        LtxError::Other(source) => {
+            assert!(source.downcast_ref::<tokio::sync::AcquireError>().is_some());
+        }
+        other => panic!("admission source was lost: {other}"),
+    }
+    assert_eq!(
+        *phases.0.lock().unwrap(),
+        vec![
+            (LtxPhase::DirtyAdmission, Duration::ZERO, false),
+            (LtxPhase::RootAdmission, Duration::ZERO, false),
+            (LtxPhase::RootPreparation, Duration::ZERO, false),
+        ]
+    );
+    writer.close().unwrap();
+}
+
 async fn verified_fixture(
     extra_bytes: i64,
 ) -> (tempfile::TempDir, Arc<Faults>, cellule_ltx::VerifiedRoot) {

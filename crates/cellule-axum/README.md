@@ -584,14 +584,26 @@ The closed-loop Python write driver is intended for storage-bound commands.
 Its per-client ledgers retain uncertain transport outcomes without retrying
 them; any error fails verification. Each phase retains at most 100,000 responses.
 The example reports lifetime publication, compaction, worker and queue timing
-histograms after drain, including warmup and correctness checks. Histogram
+histograms after drain, including warmup and correctness checks. Root preparation
+separates dirty-memory admission from admitted work; its total includes both.
+Dirty and recovery semaphore waits are also measured across replica operations.
+These phases overlap with preparation and compaction totals; do not add them.
+It also records effective host capacities and fixed provider-operation duration,
+outcome, and byte counters. Provider counts include startup, verification, and
+maintenance, so they are not steady-window write request counts. Histogram
 upper bounds have 100 µs resolution through two seconds; overflow percentiles
-are unknown. The paired write workflow instruments both servers identically.
+are unknown. The paired write workflow instruments both servers identically,
+retaining its observation-only baseline patch and complete baseline diff in the
+artifact. The patch changes no admission ceilings or publication barriers.
+The write workflow also records dedicated RustFS cgroup CPU counters before
+and after each load window, including warmup. For a local dedicated container,
+pass `--provider-container CONTAINER_ID`; this requires cgroup v2 and Docker.
 
 The [sustained-write report](performance/2026-10-03-rustfs-steady-writes.md)
 retains all paired results and durability evidence. The initial compaction
 comparison improves compaction time but does not establish consistent gains
-in HTTP write throughput or tail latency.
+in HTTP write throughput or tail latency. The current-main confirmation also
+retains mixed results; neither comparison establishes the optimization goal.
 
 ```sh
 cargo test -p cellule-axum --all-targets --locked

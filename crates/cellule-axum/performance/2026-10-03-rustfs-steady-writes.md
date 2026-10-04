@@ -1,8 +1,8 @@
 # Sustained RustFS HTTP writes
 
 The compaction pipeline is faster, but this comparison does **not** establish a
-consistent improvement in write throughput or HTTP tail latency. The current-main
-confirmation is still running. Keep the optimization goal open.
+consistent improvement in write throughput or HTTP tail latency. A second
+comparison against current main also has mixed results. Keep the optimization goal open.
 
 ## Scope
 
@@ -92,7 +92,47 @@ report records 199,473 independently checked timed receipts and client-file
 SHA-256 digests. The remaining 288 acknowledgments are the sixteen manual warmup
 writes per point, checked by the live and cold harness verification.
 
-[Current-main comparison](https://github.com/crabbuild/cellule/actions/runs/37160512080)
+## Current-main confirmation
+
+[Completed comparison](https://github.com/crabbuild/cellule/actions/runs/37160512080)
 uses candidate `f9995af7a584ce6c0da9d2f5567163df1af811db` against main
-`5724959a79be90df1ed8e85f6e123c109455d2f5`. Its results are pending. Production
-compaction is unchanged by the subsequent cancellation-test commit.
+`5724959a79be90df1ed8e85f6e123c109455d2f5`, with the same
+three-pair, 120-second protocol and correctness checks. Production compaction
+is unchanged by the subsequent cancellation-test commit.
+[Full current-main data](2026-10-03-rustfs-current-main-writes.json) retains
+every point and raw-client hash.
+
+| Cells | Baseline median TPS | Candidate median TPS | Paired TPS change | Paired p95 change | Paired p99 change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 57.15 | 61.15 | +5.7% | -13.0% | -12.8% |
+| 4 | 109.39 | 97.36 | -6.2% | +5.3% | +2.4% |
+| 16 | 101.32 | 102.99 | -4.7% | -7.0% | +5.0% |
+
+| Cells | Repeat | TPS change | p95 change | p99 change |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1 | +5.7% | -15.9% | -19.3% |
+| 1 | 2 | +0.4% | -1.8% | +4.3% |
+| 1 | 3 | +16.9% | -13.0% | -12.8% |
+| 4 | 1 | -11.0% | +5.3% | +2.4% |
+| 4 | 2 | -0.1% | -3.0% | -2.1% |
+| 4 | 3 | -6.2% | +7.5% | +7.5% |
+| 16 | 1 | +1.6% | -17.7% | -3.8% |
+| 16 | 2 | -4.7% | +23.3% | +5.0% |
+| 16 | 3 | -6.0% | -7.0% | +6.0% |
+
+The four-Cell median paired throughput regresses by 6.2%. At sixteen Cells,
+two pairs regress throughput despite the candidate having a higher independent
+median TPS. This is why the report uses paired ratios. All pairs remain in the
+analysis; this run does not establish a consistent performance improvement.
+
+Baseline preparation means are approximately 11, 22, and 131 ms at 1, 4, and
+16 Cells; authority means are approximately 5, 11, and 21 ms. Server CPU remains
+about 0.3 to 0.5 cores. These observations reinforce the publication-path
+bottleneck but still do not separate admission wait from admitted provider work.
+
+All eighteen points pass live and cold verification for 200,247 acknowledged
+writes, including warmup, with zero errors in the measured windows. Those windows
+complete 191,177 writes. The independent artifact audit checks 199,959 timed
+receipts; the remaining 288 manual warmup acknowledgments are covered by the
+harness. Source rows, exact replays, contiguous sequences, drained authority,
+new recovery fences, and independent next writes all pass.

@@ -33,7 +33,16 @@ pub enum LtxPhase {
     /// Checkpoint maintenance for the capture.
     Checkpoint,
     /// Preparing one immutable successor root from captured cuts.
+    /// Includes dirty-memory admission and admitted preparation work.
     RootPreparation,
+    /// Waiting for dirty-memory admission before preparing captured cuts.
+    RootAdmission,
+    /// Preparing captured cuts after dirty-memory admission succeeds.
+    RootPreparationWork,
+    /// Acquiring a new shared dirty-memory semaphore permit.
+    DirtyAdmission,
+    /// Acquiring a new recovery permit after dirty-memory admission.
+    RecoveryAdmission,
     /// Opening an exact root.
     RootOpen,
     /// Reading root directory pages.

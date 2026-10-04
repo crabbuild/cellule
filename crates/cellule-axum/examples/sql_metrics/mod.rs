@@ -1,7 +1,8 @@
-//! Finite, nonblocking read-path measurements for this example application.
+//! Finite, nonblocking runtime and provider measurements for this application.
 use cellule_runtime::fleet::telemetry::{
     CellTelemetry, PrimitiveOperationKind, PrimitiveOperationOutcome, PublicationTiming,
 };
+use cellule_store::{StorageObservation, StorageObserver, StorageOperation, StorageOutcome};
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -16,9 +17,11 @@ pub(super) struct QueryMetrics {
     primitives: AtomicU64,
     primitive_ns: AtomicU64,
     writes: WriteMetrics,
+    storage: [StorageMetrics; StorageOperation::ALL.len()],
+    host_capacity: serde_json::Value,
 }
 
-// Application-owned instrumentation: six fixed histograms, 100-us upper
+// Application-owned instrumentation: fixed histograms, 100-us upper
 // bounds through two seconds. No request or Cell labels and no actor locks.
 const WRITE_BUCKET_US: u64 = 100;
 const WRITE_BUCKETS: usize = 20_002;
@@ -83,9 +86,43 @@ struct WriteMetrics {
     authority: Histogram,
     publication: Histogram,
     compaction: Histogram,
+    root_admission: Histogram,
+    root_preparation: Histogram,
+    root_preparation_work: Histogram,
+    dirty_admission: Histogram,
+    recovery_admission: Histogram,
     publication_failures: AtomicU64,
     objects: AtomicU64,
     bytes: AtomicU64,
+}
+
+#[derive(Default)]
+struct StorageMetrics {
+    started: AtomicU64,
+    duration: Histogram,
+    outcomes: [AtomicU64; StorageOutcome::ALL.len()],
+    bytes_read: AtomicU64,
+    bytes_written: AtomicU64,
+}
+
+impl StorageObserver for QueryMetrics {
+    fn started(&self, operation: StorageOperation) {
+        self.storage[operation.index()]
+            .started
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn finished(&self, observation: StorageObservation) {
+        let metrics = &self.storage[observation.operation.index()];
+        metrics.duration.observe(observation.duration);
+        metrics.outcomes[observation.outcome.index()].fetch_add(1, Ordering::Relaxed);
+        metrics
+            .bytes_read
+            .fetch_add(observation.bytes_read, Ordering::Relaxed);
+        metrics
+            .bytes_written
+            .fetch_add(observation.bytes_written, Ordering::Relaxed);
+    }
 }
 
 fn nanos(elapsed: Duration) -> u64 {
@@ -110,8 +147,15 @@ impl CellTelemetry for QueryMetrics {
         self.writes.bytes.fetch_add(bytes, Ordering::Relaxed);
     }
     fn ltx_phase(&self, phase: cellule_ltx::LtxPhase, elapsed: Duration, _succeeded: bool) {
-        if phase == cellule_ltx::LtxPhase::Compaction {
-            self.writes.compaction.observe(elapsed);
+        use cellule_ltx::LtxPhase;
+        match phase {
+            LtxPhase::Compaction => self.writes.compaction.observe(elapsed),
+            LtxPhase::RootAdmission => self.writes.root_admission.observe(elapsed),
+            LtxPhase::RootPreparation => self.writes.root_preparation.observe(elapsed),
+            LtxPhase::RootPreparationWork => self.writes.root_preparation_work.observe(elapsed),
+            LtxPhase::DirtyAdmission => self.writes.dirty_admission.observe(elapsed),
+            LtxPhase::RecoveryAdmission => self.writes.recovery_admission.observe(elapsed),
+            _ => {}
         }
     }
     fn query_execution(&self, queue: Duration, worker: Duration, succeeded: bool) {
@@ -137,6 +181,18 @@ impl CellTelemetry for QueryMetrics {
 }
 
 impl QueryMetrics {
+    pub(super) fn new(host: &cellule_ltx::Host) -> Self {
+        Self {
+            host_capacity: serde_json::json!({
+                "io": host.io_capacity(), "jobs": host.job_capacity(),
+                "dirty": host.dirty_capacity(), "recovery": host.recovery_capacity(),
+                "scratch_mib": host.scratch_capacity(),
+                "local_disk_bytes": host.local_disk_capacity()
+            }),
+            ..Self::default()
+        }
+    }
+
     // Called after HTTP and runtime drain, when the totals are stable.
     pub(super) fn snapshot(&self) -> serde_json::Value {
         let queries = self.queries.load(Ordering::Relaxed);
@@ -148,7 +204,35 @@ impl QueryMetrics {
                 Some(total.load(Ordering::Relaxed) as f64 / count as f64 / 1000.0)
             }
         };
+        let storage: serde_json::Map<String, serde_json::Value> = StorageOperation::ALL
+            .iter()
+            .map(|operation| {
+                let metrics = &self.storage[operation.index()];
+                let outcomes: serde_json::Map<String, serde_json::Value> = StorageOutcome::ALL
+                    .iter()
+                    .map(|outcome| {
+                        (
+                            outcome.label().into(),
+                            metrics.outcomes[outcome.index()]
+                                .load(Ordering::Relaxed)
+                                .into(),
+                        )
+                    })
+                    .collect();
+                (
+                    operation.label().into(),
+                    serde_json::json!({
+                        "started": metrics.started.load(Ordering::Relaxed),
+                        "duration": metrics.duration.snapshot(), "outcomes": outcomes,
+                        "bytes_read": metrics.bytes_read.load(Ordering::Relaxed),
+                        "bytes_written": metrics.bytes_written.load(Ordering::Relaxed)
+                    }),
+                )
+            })
+            .collect();
         serde_json::json!({
+            "host_capacity": self.host_capacity,
+            "storage_operations": storage,
             "queries": queries,
             "failures": self.failures.load(Ordering::Relaxed),
             "mean_actor_queue_us": mean_us(&self.queue_ns, queries),
@@ -162,6 +246,11 @@ impl QueryMetrics {
                 "authority": self.writes.authority.snapshot(),
                 "publication": self.writes.publication.snapshot(),
                 "compaction": self.writes.compaction.snapshot(),
+                "root_admission": self.writes.root_admission.snapshot(),
+                "root_preparation": self.writes.root_preparation.snapshot(),
+                "root_preparation_work": self.writes.root_preparation_work.snapshot(),
+                "dirty_admission": self.writes.dirty_admission.snapshot(),
+                "recovery_admission": self.writes.recovery_admission.snapshot(),
                 "publication_failures": self.writes.publication_failures.load(Ordering::Relaxed),
                 "uploaded_objects": self.writes.objects.load(Ordering::Relaxed),
                 "uploaded_bytes": self.writes.bytes.load(Ordering::Relaxed)

@@ -553,12 +553,15 @@ impl Host {
     pub(crate) async fn for_dirty(&self) -> crate::Result<Self> {
         let mut host = self.clone();
         if host.dirty.is_none() {
+            let started = self.now_monotonic();
             let permit = self
                 .dirty_slots
                 .clone()
                 .acquire_owned()
                 .await
-                .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
+                .map_err(|e| crate::LtxError::Other(Box::new(e)));
+            self.observe_ltx_phase(LtxPhase::DirtyAdmission, started, permit.is_ok());
+            let permit = permit?;
             let resource = self.reserve_resource(HostResourceKind::Dirty, 1)?;
             host.dirty = Some(Arc::new(HostPermit {
                 _resource: resource,
@@ -572,12 +575,15 @@ impl Host {
     pub(crate) async fn for_recovery(&self) -> crate::Result<Self> {
         let mut host = self.for_dirty().await?;
         if host.recovery.is_none() {
+            let started = self.now_monotonic();
             let permit = self
                 .recovery_slots
                 .clone()
                 .acquire_owned()
                 .await
-                .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
+                .map_err(|e| crate::LtxError::Other(Box::new(e)));
+            self.observe_ltx_phase(LtxPhase::RecoveryAdmission, started, permit.is_ok());
+            let permit = permit?;
             let resource = self.reserve_resource(HostResourceKind::Recovery, 1)?;
             host.recovery = Some(Arc::new(HostPermit {
                 _resource: resource,

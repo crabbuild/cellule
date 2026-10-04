@@ -54,10 +54,23 @@ jobs:
           baseline_commit=$(git rev-parse --verify --end-of-options "$BASELINE_REF^{commit}")
           git worktree add --detach "$RUNNER_TEMP/axum-baseline-source" "$baseline_commit"
           if [ "$WORKLOAD" = writes ]; then
-            # Instrument both variants identically without changing the
-            # example's application source digest or any framework behavior.
+            # Backport only phase observations and the example observer wiring.
+            # Retain the exact diff so the baseline's instrumentation is auditable.
+            patch="$GITHUB_WORKSPACE/scripts/axum-write-telemetry.patch"
+            git apply --reverse --check "$patch"
+            if git -C "$RUNNER_TEMP/axum-baseline-source" apply --check "$patch"; then
+              git -C "$RUNNER_TEMP/axum-baseline-source" apply "$patch"
+            else
+              git -C "$RUNNER_TEMP/axum-baseline-source" apply --reverse --check "$patch"
+            fi
             cp crates/cellule-axum/examples/sql_metrics/mod.rs \
               "$RUNNER_TEMP/axum-baseline-source/crates/cellule-axum/examples/sql_metrics/mod.rs"
+            cp "$patch" "$RUNNER_TEMP/axum-evidence/telemetry-backport.patch"
+            git -C "$RUNNER_TEMP/axum-baseline-source" diff \
+              > "$RUNNER_TEMP/axum-evidence/baseline-instrumentation.diff"
+            sha256sum "$RUNNER_TEMP/axum-evidence/"*.patch \
+              "$RUNNER_TEMP/axum-evidence/baseline-instrumentation.diff" \
+              > "$RUNNER_TEMP/axum-evidence/instrumentation.sha256"
           fi
           printf '%s\n' "$baseline_commit" > "$RUNNER_TEMP/axum-evidence/baseline-revision.txt"
           git rev-parse HEAD > "$RUNNER_TEMP/axum-evidence/candidate-revision.txt"
@@ -76,6 +89,7 @@ jobs:
           WRITE_SECONDS: ${{ inputs.write_seconds }}
           WORKLOAD: ${{ inputs.workload }}
           TOKIO_WORKER_THREADS: "4"
+          RUSTFS_CONTAINER_ID: ${{ job.services.rustfs.id }}
           AWS_ACCESS_KEY_ID: cellule-ci
           AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
           AWS_DEFAULT_REGION: us-east-1
@@ -93,7 +107,8 @@ jobs:
               ;;
             writes)
               python3 -c 'import os; assert 60 <= int(os.environ["WRITE_SECONDS"]) <= 180'
-              load_args=(--write-warmup-seconds 5 --write-seconds "$WRITE_SECONDS")
+              load_args=(--write-warmup-seconds 5 --write-seconds "$WRITE_SECONDS"
+                --provider-container "$RUSTFS_CONTAINER_ID")
               ;;
             *) exit 1 ;;
           esac
