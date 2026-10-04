@@ -112,6 +112,10 @@ pub(super) fn send_command_reply(
     command: &mut QueuedCommand,
     result: crate::Result<StoredOutcome>,
 ) {
+    if command.group.is_some() {
+        super::group::reply(command, result.map(Some));
+        return;
+    }
     if let Some(reply) = command.reply.take() {
         let sequence = result.as_ref().ok().map(StoredOutcome::commit_sequence);
         if reply.send(result).is_ok()
@@ -152,6 +156,10 @@ pub(super) fn send_command_task_reply(
     result: crate::Result<CommandTaskResult>,
 ) {
     let result = match result {
+        Ok(CommandTaskResult::GroupRecorded) => {
+            super::group::reply(command, Ok(None));
+            return;
+        }
         Ok(CommandTaskResult::Recorded(outcome)) => Ok(outcome),
         Ok(CommandTaskResult::Pending { .. }) => Err(command.operation.unknown(Error::Fenced)),
         Err(error) => Err(error),

@@ -41,6 +41,23 @@ coalesces every queued commit into one root, so the control CAS and the shared
 directory, segment-page, and root uploads are paid once per range instead of
 once per commit.
 
+Without a node log, the actor groups up to four already-queued, consecutive
+native mutations into one SQLite transaction and WAL capture. Each member
+uses its own savepoint and request-ledger identity; successful and rejected
+outcomes retain separate logical commit sequences. One fenced object-root
+publication covers the complete group before any new outcome is returned.
+No batching timer delays an otherwise ready command. A query, resolve, effect,
+or migration ends the group at its FIFO position. The group cannot extend
+an existing pending head. Installing node durability during execution keeps
+that group object-gated; later commands use the ordinary follower path.
+
+Each member retains its ordinary request and byte admission, and the group
+uses the existing database, capture, and retained-publication ceilings. A
+command error rolls back that member's savepoint. A whole transaction abort,
+capture failure, or lost publication proof never releases a new success;
+ambiguous outcomes retain each request identity and the shared original cause.
+Caller cancellation does not remove accepted members or their drain obligations.
+
 One Cell actor serializes admission and publication. A bounded SQLite worker
 runs the application callback; the actor owns the result gate and lifecycle.
 This page defines the actor, transaction, timeout, takeover, and shutdown
@@ -76,6 +93,7 @@ proof. Either proof may release a command result.
 | Release | A result is released only by a proof covering its own commit: the exact published root, or a follower fsync for the same cut. |
 | Occupancy | The actor stays occupied until that proof lands, so no read observes a commit before its proof. |
 | Pipelining | With a node log the proof is the follower fsync, so SQL and capture for later commands run ahead of object publication, bounded by `MAX_PENDING_PUBLICATIONS` and the pending-bytes high water. |
+| Native grouping | At most four queued mutations share one transaction and capture in object-only mode; all new results wait for the root covering the group. |
 | Coalescing | When several commits are queued, one root covers all of them: the merged captures append oldest first, and the range confirmation releases exactly the covered outcomes. |
 
 If the owner dies first, takeover seals the failed node log and pins and

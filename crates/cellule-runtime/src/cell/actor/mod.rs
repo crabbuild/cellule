@@ -18,6 +18,7 @@ use state::*;
 use task::*;
 mod acquire;
 mod admission;
+mod group;
 mod lifecycle;
 mod requests;
 pub(crate) mod routes;
@@ -34,6 +35,7 @@ pub use handle::{CellHandle, DueResident};
 
 use crate::Error;
 use crate::cell::catalog::{CatalogEntry, CatalogProof, CatalogRole};
+use crate::cell::executor::{MAX_NATIVE_GROUP, NativeCommand, NativeGroupExecution};
 use crate::cell::executor::{MAX_PENDING_PUBLICATIONS, PENDING_PUBLICATION_HIGH_WATER_BYTES};
 use crate::cell::executor::{
     MigrationOutcome, MutationIdentity, PendingCommit, Resolution, StoredOutcome,

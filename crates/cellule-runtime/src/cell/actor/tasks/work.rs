@@ -47,6 +47,10 @@ pub(super) fn handle_executed(
         return;
     }
     match result {
+        Ok(CommandTaskResult::GroupRecorded) => {
+            finish_work(active, false);
+            super::super::group::reply(&mut command, Ok(None));
+        }
         Ok(CommandTaskResult::Recorded(outcome)) => {
             finish_work(active, false);
             send_command_reply(&mut command, Ok(outcome));

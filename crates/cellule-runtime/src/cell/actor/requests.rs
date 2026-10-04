@@ -146,6 +146,9 @@ pub(super) async fn execute_command(
     effect_id: u64,
 ) -> TaskResult {
     let execution_started = std::time::Instant::now();
+    if command.group.is_some() {
+        return super::group::execute(pool, command, interrupt, generation, effect_id).await;
+    }
     let queue_wait = command.queued_at.elapsed();
     tracing::debug!(
         target: "cellule_runtime::action",
@@ -246,16 +249,7 @@ pub(super) async fn execute_command(
     let (result, must_fence) = match execution {
         Ok(WorkerExecution::Recorded(outcome)) => (Ok(CommandTaskResult::Recorded(outcome)), false),
         Ok(WorkerExecution::Pending(pending)) => {
-            let retained_bytes = usize::try_from(pending.retained_bytes())
-                .map_err(|_| Error::Capacity("pending publication bytes"));
-            let result = retained_bytes.and_then(|retained_bytes| {
-                pool.resource_ledger()
-                    .try_reserve(ResourceCost::zero().with_retained_bytes(retained_bytes))
-                    .map_err(|error| match error {
-                        Error::Capacity(_) => Error::Capacity("pending publication bytes"),
-                        error => error,
-                    })
-            });
+            let result = reserve_pending_publication(&pool, &pending);
             let result = match result {
                 Ok(retained_reservation) => durability
                     .submit(pending.outcome().commit_sequence(), pending.cuts())
@@ -293,6 +287,20 @@ pub(super) async fn execute_command(
         result,
         fenced,
     }
+}
+
+pub(super) fn reserve_pending_publication(
+    pool: &SqlWorkerPool,
+    pending: &PendingCommit,
+) -> crate::Result<ResourceReservation> {
+    let bytes = usize::try_from(pending.retained_bytes())
+        .map_err(|_| Error::Capacity("pending publication bytes"))?;
+    pool.resource_ledger()
+        .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))
+        .map_err(|error| match error {
+            Error::Capacity(_) => Error::Capacity("pending publication bytes"),
+            error => error,
+        })
 }
 
 pub(super) async fn prove_command(
@@ -599,11 +607,24 @@ pub(super) fn start_publication(
             tracing::warn!(cell = ?cell, commit_sequence, error = ?error, "Cell publication fenced its owner");
         }
         // Every covered commit waits on this root, so each proof is answered.
+        // Keep the original failure available to every waiter; replacing it
+        // with Fenced would hide the storage or local confirmation failure.
+        let result = result.map_err(Arc::new);
         if let Some(proofs) = publication_proofs {
             for proof in proofs {
-                let _ = proof.send(if fenced { Err(Error::Fenced) } else { Ok(()) });
+                let proof_result = result.as_ref().copied().map_err(|source| {
+                    match source.as_ref() {
+                        Error::Fenced => Error::Fenced,
+                        _ => Error::Shared(Arc::clone(source)),
+                    }
+                });
+                let _ = proof.send(proof_result);
             }
         }
+        let result = result.map_err(|source| match Arc::try_unwrap(source) {
+            Ok(error) => error,
+            Err(source) => Error::Shared(source),
+        });
         if fenced {
             let _ = pool.fence(cell).await;
         }

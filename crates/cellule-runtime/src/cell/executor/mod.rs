@@ -10,6 +10,9 @@ use crate::primitives::maintenance::PersistedWorkInventory;
 use crate::primitives::maintenance::TransferWorkInventory;
 use crate::{Error, Result};
 
+mod group;
+pub(crate) use group::{MAX_NATIVE_GROUP, NativeCommand, NativeGroupExecution};
+
 const MAX_RESULT_BYTES: usize = crate::codec::MAX_WIRE_BYTES;
 const MAX_REQUEST_LIFETIME_MS: i64 = 24 * 60 * 60 * 1000;
 const MAX_ISSUED_FUTURE_MS: i64 = 5 * 60 * 1000;
@@ -458,87 +461,15 @@ impl CellExecutor {
         let cell = self.cell;
         let incarnation = self.incarnation;
         let schema = self.schema;
+        let command = NativeCommand {
+            identity,
+            operation_digest,
+            now_ms,
+            max_result_bytes,
+            handler,
+        };
         let transaction = self.db.transaction_with(|transaction| {
-            let (commit_sequence, prior_logical_time_ms) =
-                runtime_metadata(transaction, cell, incarnation, schema)?;
-
-            let existing = transaction
-                .query_row(
-                    "SELECT operation_digest, outcome, result, commit_sequence FROM sys_requests WHERE request_id = ?1",
-                    [identity.request_id.as_bytes().as_slice()],
-                    |row| {
-                        Ok((
-                            row.get::<_, Vec<u8>>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, Vec<u8>>(2)?,
-                            row.get::<_, i64>(3)?,
-                        ))
-                    },
-                )
-                .optional()?;
-            if let Some((digest, outcome, result, sequence)) = existing {
-                if digest.as_slice() != operation_digest.as_bytes() {
-                    return Err(Error::RequestConflict);
-                }
-                let outcome = stored_outcome(outcome, result, sequence)?;
-                if outcome.result().len() > max_result_bytes {
-                    return Err(Error::Command("stored result exceeds command limit"));
-                }
-                return Ok(TransactionResult::Recorded(outcome));
-            }
-
-            let sequence = commit_sequence
-                .checked_add(1)
-                .filter(|value| *value > 0)
-                .ok_or(Error::Command("commit sequence overflow"))?;
-            let logical_time_ms = now_ms.max(prior_logical_time_ms);
-            transaction.execute_batch("SAVEPOINT application")?;
-            let decision = handler(transaction)?;
-            let (outcome, result) = match decision {
-                HandlerOutcome::Success(result) => {
-                    transaction.execute_batch("RELEASE application")?;
-                    (1, result)
-                }
-                HandlerOutcome::Rejected(result) => {
-                    transaction.execute_batch(
-                        "ROLLBACK TO application; RELEASE application",
-                    )?;
-                    (2, result)
-                }
-            };
-            if result.len() > max_result_bytes {
-                return Err(Error::Command("handler result exceeds command limit"));
-            }
-            let retain_until_ms = identity
-                .expires_at_ms
-                .checked_add(REQUEST_RETENTION_MS)
-                .ok_or(Error::Command("request retention overflow"))?;
-            transaction.execute(
-                "INSERT INTO sys_requests(request_id, operation_digest, outcome, result, commit_sequence, expires_at_ms, retain_until_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                (
-                    identity.request_id.as_bytes().as_slice(),
-                    operation_digest.as_bytes().as_slice(),
-                    outcome,
-                    result.as_slice(),
-                    sequence,
-                    identity.expires_at_ms,
-                    retain_until_ms,
-                ),
-            )?;
-            if transaction.execute(
-                "UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1",
-                (sequence, logical_time_ms),
-            )? != 1
-            {
-                return Err(Error::Command("runtime metadata row missing"));
-            }
-            crate::primitives::capacity::validate(transaction)?;
-            let next_due_ms = crate::fleet::scheduler::scheduler_next_due_ms(transaction, logical_time_ms)?;
-            Ok(TransactionResult::Committed {
-                outcome: stored_outcome(outcome, result, sequence)?,
-                logical_time_ms,
-                next_due_ms,
-            })
+            apply_mutation(transaction, cell, incarnation, schema, command)
         });
 
         self.finish_transaction(transaction)
@@ -1284,23 +1215,30 @@ impl CellExecutor {
         self.pending.back().is_none_or(|pending| pending.durable)
     }
 
-    fn finish_transaction(
+    fn check_transaction<T>(
         &mut self,
-        transaction: std::result::Result<TransactionResult, TransactionError<Error>>,
-    ) -> Result<CommandExecution> {
+        transaction: std::result::Result<T, TransactionError<Error>>,
+    ) -> Result<T> {
         if let Some(error) = self.db.take_io_error() {
             self.fenced = true;
             return Err(ltx_error(error));
         }
-        let transaction = match transaction {
-            Ok(value) => value,
-            Err(TransactionError::Operation(error)) => return Err(error),
-            Err(TransactionError::Admission(error)) => return Err(admission_error(error)),
+        match transaction {
+            Ok(value) => Ok(value),
+            Err(TransactionError::Operation(error)) => Err(error),
+            Err(TransactionError::Admission(error)) => Err(admission_error(error)),
             Err(error) => {
                 self.fenced = true;
-                return Err(transaction_error(error));
+                Err(transaction_error(error))
             }
-        };
+        }
+    }
+
+    fn finish_transaction(
+        &mut self,
+        transaction: std::result::Result<TransactionResult, TransactionError<Error>>,
+    ) -> Result<CommandExecution> {
+        let transaction = self.check_transaction(transaction)?;
         match transaction {
             TransactionResult::Recorded(outcome) => Ok(CommandExecution::Recorded(outcome)),
             TransactionResult::Committed {
@@ -1334,6 +1272,107 @@ impl CellExecutor {
             }
         }
     }
+}
+
+fn apply_mutation<F>(
+    transaction: &cellule_ltx::rusqlite::Transaction<'_>,
+    cell: CellId,
+    incarnation: IncarnationId,
+    schema: u32,
+    command: NativeCommand<F>,
+) -> Result<TransactionResult>
+where
+    F: FnOnce(&cellule_ltx::rusqlite::Transaction<'_>) -> Result<HandlerOutcome>,
+{
+    let NativeCommand {
+        identity,
+        operation_digest,
+        now_ms,
+        max_result_bytes,
+        handler,
+    } = command;
+    if max_result_bytes > MAX_RESULT_BYTES {
+        return Err(Error::Command("result exceeds wire limit"));
+    }
+    identity.validate(now_ms)?;
+    let (commit_sequence, prior_logical_time_ms) =
+        runtime_metadata(transaction, cell, incarnation, schema)?;
+
+    let existing = transaction
+        .query_row(
+            "SELECT operation_digest, outcome, result, commit_sequence FROM sys_requests WHERE request_id = ?1",
+            [identity.request_id.as_bytes().as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((digest, outcome, result, sequence)) = existing {
+        if digest.as_slice() != operation_digest.as_bytes() {
+            return Err(Error::RequestConflict);
+        }
+        let outcome = stored_outcome(outcome, result, sequence)?;
+        if outcome.result().len() > max_result_bytes {
+            return Err(Error::Command("stored result exceeds command limit"));
+        }
+        return Ok(TransactionResult::Recorded(outcome));
+    }
+
+    let sequence = commit_sequence
+        .checked_add(1)
+        .filter(|value| *value > 0)
+        .ok_or(Error::Command("commit sequence overflow"))?;
+    let logical_time_ms = now_ms.max(prior_logical_time_ms);
+    transaction.execute_batch("SAVEPOINT application")?;
+    let decision = handler(transaction)?;
+    let (outcome, result) = match decision {
+        HandlerOutcome::Success(result) => {
+            transaction.execute_batch("RELEASE application")?;
+            (1, result)
+        }
+        HandlerOutcome::Rejected(result) => {
+            transaction.execute_batch("ROLLBACK TO application; RELEASE application")?;
+            (2, result)
+        }
+    };
+    if result.len() > max_result_bytes {
+        return Err(Error::Command("handler result exceeds command limit"));
+    }
+    let retain_until_ms = identity
+        .expires_at_ms
+        .checked_add(REQUEST_RETENTION_MS)
+        .ok_or(Error::Command("request retention overflow"))?;
+    transaction.execute(
+        "INSERT INTO sys_requests(request_id, operation_digest, outcome, result, commit_sequence, expires_at_ms, retain_until_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        (
+            identity.request_id.as_bytes().as_slice(),
+            operation_digest.as_bytes().as_slice(),
+            outcome,
+            result.as_slice(),
+            sequence,
+            identity.expires_at_ms,
+            retain_until_ms,
+        ),
+    )?;
+    if transaction.execute(
+        "UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1",
+        (sequence, logical_time_ms),
+    )? != 1
+    {
+        return Err(Error::Command("runtime metadata row missing"));
+    }
+    crate::primitives::capacity::validate(transaction)?;
+    let next_due_ms = crate::fleet::scheduler::scheduler_next_due_ms(transaction, logical_time_ms)?;
+    Ok(TransactionResult::Committed {
+        outcome: stored_outcome(outcome, result, sequence)?,
+        logical_time_ms,
+        next_due_ms,
+    })
 }
 
 fn runtime_metadata(
