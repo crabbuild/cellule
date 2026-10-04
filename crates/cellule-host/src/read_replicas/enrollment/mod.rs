@@ -15,6 +15,7 @@ mod inventory;
 mod jobs;
 mod maintenance;
 mod protocol;
+mod removal;
 pub use inventory::{
     ReaderEnrollmentInventoryCursor, ReaderEnrollmentInventoryPage, ReaderEnrollmentJobs,
 };

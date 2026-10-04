@@ -36,6 +36,8 @@ pub use enrollment::{
     ReaderEnrollmentJobs,
 };
 pub use maintenance::{ReaderEvacuation, ReaderReplacement};
+mod removal;
+pub use removal::ReaderEnrollmentRetirement;
 mod reconciliation;
 mod recruitment;
 pub use inventory::{ReaderInventoryCursor, ReaderInventoryPage};
@@ -526,14 +528,25 @@ impl ReadReplicaManager {
     }
 
     async fn remove_locked(&self, cell: CellId) -> Result<()> {
+        self.remove_locked_result(cell).await.map(|_| ())
+    }
+
+    async fn remove_locked_result(
+        &self,
+        cell: CellId,
+    ) -> Result<(
+        Option<Receipt>,
+        Option<cellule_runtime::fleet::operations::EnrollmentRecord>,
+    )> {
         let reader = self.active.read().await.views.get(&cell).cloned();
         let receipt = match &reader {
             Some(reader) => Some(reader.close_and_join().await),
             None => None,
         };
-        if let Some(enrollment) = self.bound_enrollment()? {
-            enrollment.retire(cell, receipt).await?;
-        }
+        let retired = match self.bound_enrollment()? {
+            Some(enrollment) => enrollment.retire_record(cell, receipt).await?,
+            None => None,
+        };
         if reader.is_some() {
             // Retain a fenced view and its enrollment until durable retirement.
             // Cancellation or publication failure cannot erase this obligation.
@@ -541,7 +554,7 @@ impl ReadReplicaManager {
             active.views.remove(&cell);
             active.topology = Uuid::now_v7();
         }
-        Ok(())
+        Ok((receipt, retired))
     }
 
     /// Permanently closes activation, joins owned enrollment jobs and retires views.

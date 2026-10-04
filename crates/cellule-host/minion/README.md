@@ -26,6 +26,9 @@ source handles are fenced. Exit joins all three runtimes and the journal and
 checks their resource ledgers are empty. Output separates release, activation,
 retirement, receipt checks, shared budget maxima and advisory blockers. It also
 reports three confirmed boot retirements after joined runtime shutdown.
+Preparation and movement failures retain their phase, pass, every affected
+attempt and original endpoint error through cleanup. The error source chain
+exposes the first original failure; sibling failures remain retained and reported.
 
 Each boot now registers its retained physical intent, builds with the shared
 startup hold, journals Pending, and creates its actual signed advertisement in
@@ -311,6 +314,26 @@ inserting zero; missing or corrupt pages retain their original errors. Newly
 accepted remote replacements after capture remain visible in the current roster
 and native graph. Complete policy/work coverage and terminal joining remain
 required; this historical set does not enable SettleRoles or Finalize.
+
+## Exact original reader joining
+
+The real reader cases exercise `ReadReplicaManager::remove_enrolled` through the
+same native activation/closure and enrollment publication owners. They cover
+original peer-clone joining, a real released/restored writer handoff with retained
+SQL readback, stale requests after a newer opening for the same Cell, foreign
+boots/substituted opening proof, unknown acceptance, lost retirement replies,
+cancelled waiters and deadlines. Retired rows retain their original timestamps
+and witnesses on replay; every fixture joins its native/backend work and ledgers.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::reader_tests::removal:: -- --test-threads=2
+```
+
+The local result retains native joining and the confirmed original terminal row.
+It does not certify current replacement policy, durable process exclusion or
+physical maintenance completion. Complete source/failed-owner policy and the
+production evidence/provider campaign remain required.
 
 ## Evidence and integration work
 

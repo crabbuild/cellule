@@ -316,6 +316,46 @@ missing member receipts. The closure covers these follower enrollment rows.
 Failed-boot/process closure, replacement policy, affected writers and terminal
 host shutdown remain required before maintenance completion.
 
+### Join one exact installed reader request
+
+`ReadReplicaManager::remove_enrolled(original, deadline)` binds removal to the
+original Established enrollment under the canonical activation lane. It checks
+both physical endpoints, acceptance, original native opening proof and the
+current journal row before closing. A delayed source-maintenance request cannot
+remove a newer reader for the same Cell. An Active remote receiver can join its
+old source role after writer handoff through this path.
+
+```rust
+use cellule_host::read_replicas::{ReadReplicaManager, ReaderEnrollmentRetirement};
+use cellule_runtime::fleet::operations::EnrollmentRecord;
+use tokio::time::Instant;
+
+pub async fn join_original_reader(
+    receiver: &ReadReplicaManager,
+    original: &EnrollmentRecord,
+    deadline: Instant,
+) -> cellule_runtime::Result<ReaderEnrollmentRetirement> {
+    receiver.remove_enrolled(original, deadline).await
+}
+```
+
+The returned local capsule retains the original request/source, confirmed Retired
+row, final joined prefix and original bounded interval. Its copied records stay
+charged to the shared node metadata ledger until dropped. The ordinary native
+closure joins accepted queries/refreshes and retained peer clones; publication
+uses the existing producer event and unchanged evidence format.
+
+Authorize both endpoints and establish writer succession/current reader policy
+before requesting source maintenance closure. Deadline/cancellation can retain a
+fenced original view and its same unpublished event; retry that exact request.
+Lost journal replies keep their source errors. Absent or unknown native owners
+supply no joining proof, even when a terminal row exists. Retain successful
+capsules through the application's durable authenticated accepted-work owner;
+process reconstruction requires independent lifetime evidence. This local result
+supplies no replacement policy, writer lineage, complete roster or fleet
+settlement/finalization permission. Source/failed-owner policy matching remains
+required before `SettleRoles` or `Finalize`.
+
 ### Publish an original failed receiver's reader closure
 
 `FleetFailedReaderRetirement` settles one original reader enrollment after

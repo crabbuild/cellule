@@ -5,6 +5,7 @@
 mod adapters;
 mod application;
 mod balance;
+mod failure;
 #[cfg(test)]
 mod follower_tests;
 mod observation;
@@ -503,8 +504,17 @@ async fn run(
     let prepared = driver
         .reconcile_once(clock, Instant::now() + Duration::from_secs(5))
         .await?;
-    if prepared.dispatched != 2 || !prepared.failures.is_empty() {
-        return Err(invalid("real receivers did not prepare"));
+    if !prepared.failures.is_empty() {
+        return Err(failure::endpoints(
+            "real receiver preparation",
+            0,
+            prepared.failures,
+        ));
+    }
+    if prepared.dispatched != 2 {
+        return Err(
+            std::io::Error::other(format!("real receivers did not prepare: {prepared:?}")).into(),
+        );
     }
     if restart {
         let lost = driver
@@ -618,7 +628,7 @@ async fn settle(
             .reconcile_once(clock, Instant::now() + Duration::from_secs(5))
             .await?;
         if !report.failures.is_empty() {
-            return Err(invalid("real movement endpoint failed"));
+            return Err(failure::endpoints("real movement", pass, report.failures));
         }
         summary.controller_epoch = report
             .snapshot

@@ -14,6 +14,7 @@ mod inventory;
 mod leases;
 pub(super) mod nonexecution;
 mod reconciliation;
+mod removal;
 
 struct ReaderFixture {
     root: tempfile::TempDir,

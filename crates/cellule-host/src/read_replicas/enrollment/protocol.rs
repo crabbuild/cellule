@@ -110,14 +110,14 @@ impl ReaderEnrollment {
         }
     }
 
-    async fn publish(&self, record: &Record) -> Result<()> {
+    async fn publish(&self, record: &Record) -> Result<Option<EnrollmentRecord>> {
         let (original, event) = {
             let progress = data(record)?;
             if progress.published {
-                return Ok(());
+                return Ok(None);
             }
             let Some(event) = progress.event else {
-                return Ok(());
+                return Ok(None);
             };
             let original = progress
                 .original
@@ -157,7 +157,7 @@ impl ReaderEnrollment {
             return Err(Error::Fenced);
         }
         progress.published = true;
-        Ok(())
+        Ok(Some(result))
     }
 
     pub(in crate::read_replicas) async fn established(&self, cell: CellId) -> Result<()> {
@@ -169,7 +169,7 @@ impl ReaderEnrollment {
         if !matches!(data(&record)?.event, Some(EnrollmentEvent::Established(_))) {
             return Err(Error::Control("reader enrollment remains unresolved"));
         }
-        self.publish(&record).await
+        self.publish(&record).await.map(|_| ())
     }
 
     pub(in crate::read_replicas) async fn retire(
@@ -177,9 +177,17 @@ impl ReaderEnrollment {
         cell: CellId,
         receipt: Option<Receipt>,
     ) -> Result<()> {
+        self.retire_record(cell, receipt).await.map(|_| ())
+    }
+
+    pub(in crate::read_replicas) async fn retire_record(
+        &self,
+        cell: CellId,
+        receipt: Option<Receipt>,
+    ) -> Result<Option<EnrollmentRecord>> {
         let record = self.records()?.get(&cell).cloned();
         let Some(record) = record else {
-            return Ok(());
+            return Ok(None);
         };
         let never_started = {
             let progress = data(&record)?;
@@ -233,7 +241,7 @@ impl ReaderEnrollment {
                 return Err(Error::Fenced);
             }
             self.records()?.remove(&cell);
-            return Ok(());
+            return Ok(Some(original));
         }
         {
             let mut progress = data(&record)?;
@@ -246,9 +254,36 @@ impl ReaderEnrollment {
                 progress.published = false;
             }
         }
-        self.publish(&record).await?;
+        let returned = match self.publish(&record).await? {
+            Some(returned) => returned,
+            None => {
+                // Cancellation may occur after the confirmed reply but before
+                // index removal. Reload the exact retained event; never reopen.
+                let (original, event) = {
+                    let progress = data(&record)?;
+                    (
+                        progress.original.clone().ok_or(Error::Fenced)?,
+                        progress.event,
+                    )
+                };
+                let returned = self
+                    .journal
+                    .load_enrollment(self.scope, original.spec().key().map_err(operation)?)
+                    .await
+                    .map_err(journal)?
+                    .ok_or(Error::Fenced)?;
+                if returned.spec() != original.spec()
+                    || returned.accepted_at_ms() != original.accepted_at_ms()
+                    || returned.status() != EnrollmentStatus::Retired
+                    || event != returned.settlement_evidence().map(EnrollmentEvent::Retired)
+                {
+                    return Err(Error::Fenced);
+                }
+                returned
+            }
+        };
         self.records()?.remove(&cell);
-        Ok(())
+        Ok(Some(returned))
     }
 }
 
@@ -257,17 +292,26 @@ fn evidence(record: &Responsibility, phase: &[u8], receipt: Option<Receipt>) -> 
         .original
         .as_ref()
         .ok_or(Error::Control("reader acceptance is unknown"))?;
+    evidence_input(original, &record.source, phase, receipt)
+}
+
+pub(super) fn evidence_input(
+    original: &EnrollmentRecord,
+    source: &ReadReplicaSource,
+    phase: &[u8],
+    receipt: Option<Receipt>,
+) -> Result<Digest> {
     let mut hash = blake3::Hasher::new();
     hash.update(b"cellule.fleet-reader-evidence.v1\0");
     hash.update(&original.to_bytes().map_err(operation)?);
     hash.update(phase);
-    let description = record.source.description();
+    let description = source.description();
     hash.update(description.code.as_bytes());
     hash.update(&description.schema.to_be_bytes());
-    hash.update(&(record.source.owner().endpoint.len() as u64).to_be_bytes());
-    hash.update(record.source.owner().endpoint.as_bytes());
+    hash.update(&(source.owner().endpoint.len() as u64).to_be_bytes());
+    hash.update(source.owner().endpoint.as_bytes());
     if let Some(receipt) = receipt {
-        let EnrollmentRole::Reader { target, position } = &record.spec.role else {
+        let EnrollmentRole::Reader { target, position } = &original.spec().role else {
             return Err(Error::Fenced);
         };
         if receipt.cell != target.cell_id()

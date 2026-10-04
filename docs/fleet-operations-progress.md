@@ -4,6 +4,103 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 exact original reader joining checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`.
+
+`ReadReplicaManager::remove_enrolled(original, deadline)` now binds native removal
+to the exact Established request under the existing activation lane. Both
+physical endpoints, acceptance and canonical native opening evidence must match
+the retained producer. The current journal row is checked before closure. A
+delayed source-maintenance request cannot remove a newer reader for the same Cell.
+Ordinary removal and exact removal share the same native join and producer
+retirement implementation; no task, scheduler, authority or admission lane is added.
+The producer returns the actual confirmed terminal response before discarding its
+local record. Existing evidence bytes and persisted codecs are unchanged.
+
+The local `ReaderEnrollmentRetirement` retains original request/source, final
+joined prefix, confirmed terminal row and a bounded original interval. Dynamic
+copies remain charged to the existing metadata ledger until dropped. Unknown or
+absent native ownership supplies no proof. Lost publication replies preserve their
+source errors and original closed view/event for same-request retry. Deadline or
+cancelled publication waiters cannot reopen the original view. A terminal row alone
+cannot recapture native joining after its owner was discarded.
+
+Nine new cases exercise original peer clones, a real writer release/restoration
+with retained SQL readback, a stale request after a newer reader opens for the
+same Cell, substituted opening evidence, foreign receiver boot, unknown acceptance,
+lost retirement replies, cancelled publication and deadlines. An Active receiver
+can join the old source request after actual handoff. Every successful fixture
+joins its native and backend owners and checks released ledgers. Bypassing only the
+original native input-binding call in the isolated snapshot causes the stale
+request regression to fail because the newer role is closed. The original binding
+is restored byte-identically; negative source and failed logs are retained.
+
+The first broad run passes the framework but fails one existing overload case:
+318 of 319 minion cases pass; the final movement loop reports only
+"real movement endpoint failed". The minion now retains every affected attempt
+and original endpoint error through cleanup, with a regression for boxed source
+identity and sibling errors. Ten unchanged isolated overload runs pass after
+this diagnostic correction; they do not reproduce or fix the original failure.
+The original failed run and preliminary diagnostic compile repair are retained.
+The final full minion run passes all 320 cases, including overload, with its
+ordinary two-case scheduling bound. Independent diagnosis of the original
+overload failure remains required; the diagnostic correction preserves its next
+failure's evidence rather than establishing a cause or performance fix.
+
+This is a source-succession prerequisite. Current reader replacement policy,
+original writer lineage, accepted producer/external work, full roster and durable
+process/provider retention remain separate requirements. Applications authenticate
+both endpoints and establish successor/current policy before source-maintenance
+removal. This local result grants no SettleRoles/Finalize or complete-observation
+upgrade. Failed receivers still require the independent original process path.
+
+### Verification and CI
+
+All 13 fresh Rust commands and nine static gates pass against the restored
+isolated source under
+`/Users/haipingfu/Workspace/crabbuild-target/cellule-exact-reader-removal-2a3726b`.
+The fresh full framework pass has 1,680 tests, zero failures and 36 documented
+ignores; minion passes all 320 cases. These are 2,000 distinct passes, excluding
+focused repeats, ten diagnostic overload runs and overlapping local LTX.
+Local LTX passes 54 tests, Axum without default features passes 16, and the fresh
+cookbook passes all 256 tests plus check, Clippy, warning-denied docs and binary
+builds. Workspace features/targets, Clippy, warning-denied API docs and the normal
+minion build pass. All 136 Rust snippets parse and 1,280 local links resolve.
+All 1,116 Rust/Cargo paths match manifest SHA256
+`da50d5e485b377d4040d1ab28dffabb89e3bf81c78a89e72a4ec8cac232ca8ff`.
+Frozen source, manifests, commands, original failed broad run, diagnostic repeats,
+preliminary repairs, negative regression and restored qualification logs are
+retained in that mounted directory's `evidence` subdirectory.
+
+Published parent `2a3726b` is MERGEABLE. Its hosted workspace, follower/object
+capacity, MSRV, contract, cookbook quality/scenarios, Compose smoke, model,
+website and fuzz checks pass. All checks are terminal: 32 successes, two failures
+and three documented skips. Leased local-command throughput fails at 89.38% of
+baseline against the unchanged 90% gate; latency gates pass. The routing aggregate
+also fails. Object-only routing passes, with its lowest gated throughput at
+92.29%. Replaying both original 178-file campaigns through the unchanged
+comparator reproduces their published results. All original binaries, manifests,
+stage rows, hashes and failed job logs are retained. Baseline and candidate
+binaries match their respective earlier campaigns byte-identically. This
+establishes the hosted minion scheduling
+control's workspace pass; it does not establish an independent performance
+correction or qualify this new source. No profile, gate, deadline or expected
+evidence is weakened.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Complete current-head CI, including ordinary leased and object-only routing and their aggregate. Independently diagnose/correct leased throughput and the original overload endpoint failure; retain failed evidence. |
+| 1 | Compose exact installed reader joining with fresh source/failed-owner successor policy and durable process/provider retention. Complete follower succession, durable unknown actions and native/external accepted-work coverage. |
+| 2 | Implement SettleRoles/Finalize with original action joining before terminal drain handoff, native Stopped, withdrawal, boot retirement and committed completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider faults, mixed binaries and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The full W1–W10 plan remains active and unfinished. SettleRoles/Finalize remain refused.
+
 ## October 3 2026 original nonexecution confirmation checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target
