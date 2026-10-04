@@ -208,7 +208,11 @@ impl ReplicaReadRouter {
     ) -> Result<(Observed<Q::Output>, NodeId)> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         let query = async {
-            let (expected, mut selected) = self.selected(target).await?;
+            let (expected, selected) = self.selected(target).await?;
+            let candidate_count = selected.len();
+            // Retries remove candidates, but their positions remain in the
+            // original placement so fallback cannot reset the next query's tie.
+            let mut selected = selected.into_iter().enumerate().collect::<Vec<_>>();
             super::local::validate_minimum(expected, minimum)?;
             let operation = peer.registry().query_contract::<Q>(target.namespace())?;
             super::validate_description(peer.registry(), Q::MODULE, expected, operation)?;
@@ -218,10 +222,13 @@ impl ReplicaReadRouter {
             while !selected.is_empty() {
                 // Selection and reservation are atomic across this ingress's
                 // Cells. The guard releases load on every exit, including timeout.
-                let (index, attempt) = self
-                    .load
-                    .reserve(selected.iter().map(NodeAdvertisement::node))?;
-                let node = selected.remove(index);
+                let (index, attempt) = self.load.reserve(
+                    selected
+                        .iter()
+                        .map(|(position, node)| (*position, node.node())),
+                    candidate_count,
+                )?;
+                let (_, node) = selected.remove(index);
                 let reader_node = attempt.node;
                 let query = EncodedQuery {
                     target: target.clone(),
@@ -325,10 +332,10 @@ struct ReplicaAttempt<'a> {
 impl ReplicaRouting {
     fn reserve(
         &self,
-        candidates: impl ExactSizeIterator<Item = NodeId>,
+        candidates: impl ExactSizeIterator<Item = (usize, NodeId)>,
+        count: usize,
     ) -> Result<(usize, ReplicaAttempt<'_>)> {
-        let count = candidates.len();
-        if count == 0 {
+        if count == 0 || candidates.len() == 0 {
             return Err(Error::ReplicaUnavailable);
         }
         let mut state = self
@@ -336,18 +343,18 @@ impl ReplicaRouting {
             .lock()
             .map_err(|_| Error::Control("replica routing load lock poisoned"))?;
         let start = state.cursor % count;
-        let (index, node) = candidates
+        let (index, (position, node)) = candidates
             .enumerate()
-            .min_by_key(|(index, node)| {
-                let distance = if *index >= start {
-                    *index - start
+            .min_by_key(|(_, (position, node))| {
+                let distance = if *position >= start {
+                    *position - start
                 } else {
-                    count - (start - *index)
+                    count - (start - *position)
                 };
                 (state.in_flight.get(node).copied().unwrap_or(0), distance)
             })
             .ok_or(Error::ReplicaUnavailable)?;
-        state.cursor = index + 1;
+        state.cursor = position + 1;
         *state.in_flight.entry(node).or_default() += 1;
         Ok((
             index,
@@ -384,21 +391,50 @@ mod tests {
     }
 
     #[test]
+    fn retry_preserves_the_original_candidate_position() {
+        for refused in 0..3 {
+            let routing = ReplicaRouting::default();
+            let nodes = nodes();
+            // Start at each possible position, including a wraparound retry.
+            for _ in 0..=refused {
+                let (_, attempt) = routing.reserve(nodes.into_iter().enumerate(), 3).unwrap();
+                drop(attempt);
+            }
+            let fallback = (refused + 1) % 3;
+            let candidates = [(fallback, nodes[fallback])];
+            let (index, attempt) = routing.reserve(candidates.into_iter(), 3).unwrap();
+            assert_eq!(index, 0, "removal uses the remaining list index");
+            assert_eq!(attempt.node, nodes[fallback]);
+            drop(attempt);
+            let (_, next) = routing.reserve(nodes.into_iter().enumerate(), 3).unwrap();
+            assert_eq!(next.node, nodes[(fallback + 1) % 3]);
+            drop(next);
+            assert!(routing.state.lock().unwrap().in_flight.is_empty());
+        }
+    }
+
+    #[test]
     fn idle_readers_share_ties_and_a_busy_reader_is_skipped() {
         let routing = ReplicaRouting::default();
         let nodes = nodes();
         let mut counts = [0; 3];
         for _ in 0..12 {
-            let (index, _attempt) = routing.reserve(nodes.into_iter()).unwrap();
+            let (index, _attempt) = routing
+                .reserve(nodes.into_iter().enumerate(), nodes.len())
+                .unwrap();
             counts[index] += 1;
         }
         assert_eq!(counts, [4, 4, 4]);
 
-        let (_, busy) = routing.reserve(nodes.into_iter()).unwrap();
+        let (_, busy) = routing
+            .reserve(nodes.into_iter().enumerate(), nodes.len())
+            .unwrap();
         assert_eq!(busy.node, nodes[0]);
         counts = [0; 3];
         for _ in 0..12 {
-            let (index, _attempt) = routing.reserve(nodes.into_iter()).unwrap();
+            let (index, _attempt) = routing
+                .reserve(nodes.into_iter().enumerate(), nodes.len())
+                .unwrap();
             counts[index] += 1;
         }
         assert_eq!(counts, [0, 6, 6]);
@@ -411,7 +447,9 @@ mod tests {
         let blocked_routing = Arc::clone(&routing);
         let (started, ready) = tokio::sync::oneshot::channel();
         let blocked = tokio::spawn(async move {
-            let (_, attempt) = blocked_routing.reserve(nodes.into_iter()).unwrap();
+            let (_, attempt) = blocked_routing
+                .reserve(nodes.into_iter().enumerate(), nodes.len())
+                .unwrap();
             started.send(attempt.node).unwrap();
             std::future::pending::<()>().await;
             drop(attempt);
@@ -419,7 +457,9 @@ mod tests {
         assert_eq!(ready.await.unwrap(), nodes[0]);
         // A different Cell can share the busy physical reader. Its local load
         // must carry across the two candidate sets without pinning membership.
-        let (index, attempt) = routing.reserve([nodes[0], nodes[2]].into_iter()).unwrap();
+        let (index, attempt) = routing
+            .reserve([nodes[0], nodes[2]].into_iter().enumerate(), 2)
+            .unwrap();
         assert_eq!(index, 1);
         drop(attempt);
         blocked.abort();
@@ -432,7 +472,9 @@ mod tests {
         let routing = ReplicaRouting::default();
         let nodes = nodes();
         let expired = tokio::time::timeout(Duration::from_millis(10), async {
-            let (_, _attempt) = routing.reserve(nodes.into_iter()).unwrap();
+            let (_, _attempt) = routing
+                .reserve(nodes.into_iter().enumerate(), nodes.len())
+                .unwrap();
             std::future::pending::<()>().await;
         })
         .await;

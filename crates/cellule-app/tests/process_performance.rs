@@ -251,16 +251,22 @@ pub(super) fn publish_address(marker: &Path, address: SocketAddr) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "manual three-process end-to-end performance run"]
 async fn reference_three_process_fleet_end_to_end_performance() {
-    run_three_process_fleet(false).await;
+    run_three_process_fleet(false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "manual load-balanced three-process end-to-end performance run"]
 async fn reference_balanced_three_process_fleet_end_to_end_performance() {
-    run_three_process_fleet(true).await;
+    run_three_process_fleet(true, false).await;
 }
 
-async fn run_three_process_fleet(balanced: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "three independent native hosts and RustFS with one replica refusal"]
+async fn reference_replica_retry_three_process_fleet() {
+    run_three_process_fleet(true, true).await;
+}
+
+async fn run_three_process_fleet(balanced: bool, refuse_first_replica: bool) {
     let directory = tempfile::TempDir::new().unwrap();
     let root = format!(
         "{}/process-{}-{}",
@@ -347,13 +353,12 @@ async fn run_three_process_fleet(balanced: bool) {
     };
     run_reference_primitive_performance(&fixture, true, label).await;
     generated_action(&fixture).await;
-    super::process_replica::verify(
-        &fixture,
-        &sync_dir,
-        &root,
-        [owners[0], owners[1], owners[2]],
-    )
-    .await;
+    let nodes = [owners[0], owners[1], owners[2]];
+    if refuse_first_replica {
+        super::process_replica::verify_with_first_refusal(&fixture, &sync_dir, &root, nodes).await;
+    } else {
+        super::process_replica::verify(&fixture, &sync_dir, &root, nodes).await;
+    }
     if let Some((_, server, stats)) = balancer {
         server.abort();
         let counts = stats.counts();

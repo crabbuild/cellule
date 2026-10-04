@@ -4,6 +4,82 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 4 2026 replica retry routing checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`, as confirmed by the user. The full W1–W10 scope remains active.
+
+Current-head `f0a15a6` Compose smoke fails the existing balance assertion after
+12 successful replica reads. The original hosted artifact and failed log are
+retained under
+`/Users/haipingfu/Workspace/crabbuild-target/cellule-smoke-f0a15a6/evidence`.
+A new three-process public-host regression injects one initial replica refusal
+and reproduces a 7/5 split with the original routing cursor. The fallback uses
+an index from the shorter retry list to advance the next full-list query.
+
+Routing now retains each candidate's original placement position across retries;
+removal still uses the current list index. Outstanding load remains the first
+selection criterion. The four focused routing cases pass, including wraparound,
+overlapping candidate sets, cancellation and deadlines. The corrected native
+three-process regression passes with a 6/6 split, receipt readback, automatic
+reader recruitment/refresh, eviction and all three joined hosts. CI explicitly
+selects this regression alongside the ordinary process smoke and checks that
+the exact selector exists. Qualification profiles, assertions and deadlines are
+unchanged. This reproduces and fixes the retry pattern; the original hosted
+artifact lacks an attempt trace, so it does not independently establish which
+transient refusal occurred there. Future balance failures retain concise attempt
+outcomes.
+
+The original unmodified native process run also passes; this does not by itself
+resolve the intermittent hosted failure. A preliminary run that began before
+the fixed build completed is retained and excluded from qualification. Fresh
+pre-merge restored-source qualification passes all 13 Rust commands and nine
+static gates: 1,683 framework passes with 37 documented ignores, all 320 minion
+cases, local LTX 54, Axum without default features 16, and cookbook 256 plus
+check, Clippy, docs and binary builds. The framework/minion total is 2,003 distinct
+passes; focused and process repeats are excluded. All 136 Rust snippets parse
+and 1,280 local links resolve. Exact source, command/results, manifests and
+original failures are retained in that mounted evidence directory.
+
+Parent `f0a15a6` also fails a separate minion follower-observation test with
+`fleet roster collection deadline elapsed`; its original log is retained and its
+cause remains unresolved despite that case passing locally. Its leased
+forwarded-command throughput at concurrency one fails at 88.40% of baseline
+against the unchanged 90% gate; latency gates pass. Object-only routing passes,
+with its minimum gated throughput at 94.21%. The unchanged comparator reproduces
+both original 178-file campaigns, whose binaries, raw rows and hashes are
+retained. The routing aggregate fails. These results do not qualify a later head.
+
+Merge commit `85f731e` integrates `main` at `4c1c982` and resolves both LTX document
+conflicts and the actor admission conflict. Fleet admission kinds coexist with
+main's optional request permits; the docs retain both prepared disk/origin
+contracts and compaction/cohort behavior. The merged tree passes all-target,
+all-feature workspace check, boundary/layout and documentation gates. The routing
+correction also passes both ordinary and one-refusal native three-process
+scenarios against this merged actor, with the same 6/6 read distribution,
+receipt checks and joined hosts. Full merged-head CI qualification remains
+required; the earlier broad pass qualifies only its frozen pre-merge source.
+
+### Highest remaining work
+
+1. Finish restored-source and current-head CI qualification. Diagnose the
+   follower-observation deadline, ordinary routing throughput and original
+   overload endpoint failure without weakening gates or deadlines.
+2. Compose exact native reader joining/final roots with fresh source/failed-owner
+   successor policy, full original/current requests and durable process/provider
+   retention. Complete follower succession and native/external accepted-work
+   coverage.
+3. Implement SettleRoles/Finalize through original action joining, native Stopped,
+   withdrawal, boot retirement and committed completion. Finish Cron/Blob owners
+   and primitive fault matrices.
+4. Complete receiver-session loss/recovery/adoption and sustained convergence;
+   deliver canonical minion maintenance and receiver-loss commands.
+5. Complete W9 physical process/provider faults, mixed binaries and load/soak
+   campaigns; W10 exercised runbooks and staged rollout/rollback.
+
+SettleRoles/Finalize remain refused; this routing correction does not complete
+the fleet implementation plan.
+
 ## October 3 2026 final reader root identity checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target
