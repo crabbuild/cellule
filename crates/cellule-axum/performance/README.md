@@ -22,6 +22,11 @@ Additional cost and qualification evidence:
 [compaction publication cost](2026-10-04-compaction-publication-cost.md), and
 [grouped routing](2026-10-04-rustfs-grouped-routing.md).
 
+The [composed compaction regression](2026-10-04-composed-compaction-regression.md)
+records reduced preparation operations with exact-root, recovery, failure, and
+cancellation checks. Sustained HTTP performance for that implementation remains
+unverified.
+
 Earlier measurements remain available for historical comparison:
 [initial HTTP](2026-10-03-rustfs-http.md),
 [multicell](2026-10-03-rustfs-multicell.md),
