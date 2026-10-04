@@ -381,9 +381,9 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
     // wave plus one overlapping immutable-upload wave, with no serial
     // metadata GETs or directory-before-root upload dependency.
     assert_eq!(started.elapsed(), delay * 2);
-    assert_eq!(counted.counts().heads, 2);
+    assert_eq!(counted.counts().heads, 1);
     assert_eq!(counted.counts().body_requests(), 0);
-    assert_eq!(counted.put_requests(), 5);
+    assert_eq!(counted.put_requests(), 4);
     assert_eq!(prepared.root().position, second.position);
     counted.reset();
     let compacted = replica

@@ -37,6 +37,8 @@ const ROOT_BYTES: u64 = 32 << 10;
 const SEGMENT_PAGE_BYTES: u64 = 64 << 10;
 const MAX_SEGMENTS: usize = 4096;
 const SEGMENTS_PER_PAGE: usize = 96;
+// A bounded tail fits with the maximum page-digest list inside ROOT_BYTES.
+const MAX_INLINE_SEGMENTS: usize = 32;
 const MAX_SEGMENT_PAGES: usize = 64;
 const COMPACTION_FANOUT: usize = 8;
 const MAX_COMPACTION_INPUTS: usize = 128;

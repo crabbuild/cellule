@@ -192,7 +192,7 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
     let objects = replica.reachable_objects(&root).await.unwrap();
     let metadata = objects
         .iter()
-        .find(|object| object.kind == CellObjectKind::Root && object.digest != root.digest)
+        .find(|object| object.kind == CellObjectKind::Root && object.digest == root.digest)
         .unwrap();
     let path = layout.incarnation_object_path(&cell, &incarnation, &metadata.digest, metadata.kind);
     let bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
@@ -262,6 +262,87 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
             .unwrap(),
         9
     );
+    writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn composed_append_checks_external_descriptor_origin_with_an_inline_capable_codec() {
+    let directory = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let mut writer = Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
+    writer
+        .transaction(|transaction| {
+            transaction.execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")
+        })
+        .unwrap();
+    let mut cuts = writer.capture_deferred().unwrap();
+    for _ in 1..33 {
+        writer
+            .transaction(|transaction| transaction.execute_batch("UPDATE counter SET v = v + 1"))
+            .unwrap();
+        let next = writer.capture_deferred().unwrap();
+        cuts.position = next.position;
+        cuts.segments.extend(next.segments);
+    }
+    let backend = Arc::new(InMemory::new());
+    let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+        backend.clone(),
+    ));
+    let layout = CellStorageLayout::new(
+        Store::new(counted.clone()),
+        Path::from("external-composed"),
+        [7; 16],
+    );
+    let cell = [213; 32];
+    let incarnation = [214; 16];
+    let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
+    let root = replica.prepare(None, &cuts, 1, 1).await.unwrap().root();
+    let objects = replica.reachable_objects(&root).await.unwrap();
+    let descriptor_page = objects
+        .iter()
+        .find(|object| object.kind == CellObjectKind::Root && object.digest != root.digest)
+        .unwrap();
+    let path = layout.incarnation_object_path(
+        &cell,
+        &incarnation,
+        &descriptor_page.digest,
+        descriptor_page.kind,
+    );
+    let bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
+    backend.delete(&path).await.unwrap();
+    writer
+        .transaction(|transaction| transaction.execute_batch("UPDATE counter SET v = v + 1"))
+        .unwrap();
+    let next = writer.capture_deferred().unwrap();
+    counted.reset();
+    assert!(
+        replica
+            .prepare_scheduled_compaction_append(&root, &next, 2, 1, 32, scratch.path())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "cached external metadata still needs origin presence before composition"
+    );
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    backend.put(&path, bytes.into()).await.unwrap();
+    let prepared = replica
+        .prepare_scheduled_compaction_append(&root, &next, 2, 1, 32, scratch.path())
+        .await
+        .unwrap()
+        .unwrap();
+    replica.reachable_objects(&prepared.root()).await.unwrap();
+    let restored = directory.path().join("restored.sqlite");
+    prepared.verified().restore(&restored).await.unwrap();
+    let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    let value: u64 = connection
+        .query_row("SELECT v FROM counter", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(value, 33);
+    drop(connection);
+    writer.durability_barrier().unwrap();
     writer.close().unwrap();
 }
 

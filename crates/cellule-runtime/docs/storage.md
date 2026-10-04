@@ -398,7 +398,7 @@ One root identifies the complete SQLite state at one transaction ID.
 ```mermaid
 flowchart TD
     Control[control.json<br/>mutable CAS]
-    Root[root object<br/>immutable]
+    Root[root object and bounded inline descriptors<br/>immutable]
     SegPages[segment descriptor pages]
     Bodies[LTX or bundle bodies]
     Indexes[LTX indexes]
@@ -406,6 +406,8 @@ flowchart TD
 
     Control -->|digest| Root
     Root --> SegPages
+    Root --> Bodies
+    Root --> Indexes
     SegPages --> Bodies
     SegPages --> Indexes
     Root --> Directory
@@ -413,9 +415,16 @@ flowchart TD
 
 | Element | Limit |
 | --- | --- |
-| Root | 32 KiB; names at most 64 segment-page digests |
+| Root | 32 KiB; at most 64 segment-page digests and 32 inline descriptors |
 | Segment page | 64 KiB; at most 96 descriptors |
 | Full graph | At most 4,096 segment descriptors |
+
+The final 96-entry descriptor group is embedded in the root when it contains
+at most 32 entries. Larger tails use an external page. Full page boundaries stay
+stable, so append preparation can reuse authenticated predecessor pages.
+Inline entries use the same descriptor schema and verification as external
+entries. This updates the one current development format atomically; development
+data may be recreated under the [format policy](#format-policy).
 
 **Graph checks.** The graph obeys these checks:
 

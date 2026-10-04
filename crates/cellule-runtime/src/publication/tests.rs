@@ -150,7 +150,7 @@ async fn pressure_append_avoids_intermediate_root_metadata() {
         database.close().unwrap();
         assert_eq!(
             requests,
-            (9, 2),
+            (8, 1),
             "only final root and lineage metadata is retained"
         );
     }

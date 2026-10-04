@@ -43,11 +43,21 @@ classified Ambiguous for caller reconciliation. The runtime recovers its origina
 typed storage error and uses the existing publisher retry policy. Failed work
 can leave proposal metadata or immutable objects; neither selects authority.
 
+The current development root format embeds a final descriptor group of at most
+32 entries directly in the authenticated root. Larger tails use descriptor
+pages of at most 96 entries; full page boundaries stay stable for reuse.
+The root's existing 32 KiB limit, 64 KiB page limit and 4,096-descriptor graph
+limit remain enforced. Inline descriptors undergo the same scope, range,
+checksum, extent and published-object validation as external descriptors.
+
 Preparation reuses byte-identical descriptor pages from the verified predecessor
 instead of uploading them again. Cached predecessor metadata still requires
-origin presence checks; a missing page fails preparation. New bodies, indexes,
+origin presence checks; a missing root or page fails preparation. Inline metadata
+is covered by the authenticated root and its origin check. New bodies, indexes,
 directory nodes, descriptor pages, and the root finish uploading before a
-proposal returns. Object formats and authority publication are unchanged.
+proposal returns. This is the one current development format, updated together
+with its readers and writers under the [format policy](../../cellule-runtime/docs/storage.md#format-policy).
+Authority publication is unchanged.
 
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the

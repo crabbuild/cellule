@@ -224,13 +224,14 @@ async fn cold_activation_reports_metadata_and_origin_reads() {
 
     // The window above is one cold route: catalog locator, control record, and
     // the root open that fetches origin objects. A resident route issues none
-    // of them, so these counts are the cold-start cost. Four of the seven
-    // object-store requests are metadata; changing them changes what a cold
-    // start costs, so a change here must be deliberate.
+    // of them, so these counts are the cold-start cost. Four of the six
+    // object-store requests are catalog/control metadata. The inline root tail
+    // avoids the separate descriptor-page origin check; root presence and body
+    // hydration still account for the two native origin requests.
     assert_eq!(recorder.catalog_reads(), 2);
     // The caller's decision read plus the acquisition's own confirmation.
     assert_eq!(recorder.control_reads(), 2);
-    assert_eq!(recorder.origin_requests(), 3);
+    assert_eq!(recorder.origin_requests(), 2);
     assert!(recorder.ltx_phases() >= 1);
     // The phases decompose the cold route: claim, verify the root, restore it
     // locally, then activate. A warm route would record none of them.

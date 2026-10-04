@@ -95,62 +95,77 @@ impl NativePreparation {
 
 #[tokio::test]
 async fn lineage_and_native_uploads_overlap_but_ready_and_authority_wait_for_both() {
-    let mut fixture = NativePreparation::new().await;
-    fixture.store.fault.store(3, Ordering::SeqCst);
-    let prepared = {
-        let preparation = fixture.publisher.prepare_initial(&fixture.cuts);
-        tokio::pin!(preparation);
-        tokio::time::timeout(Duration::from_secs(5), async {
+    // Both layouts must finish all native root objects while metadata is
+    // paused, and neither may expose readiness or advance authority early.
+    for (segments, native_root_objects) in [(1, 1), (33, 2)] {
+        let mut fixture = NativePreparation::new().await;
+        for _ in 1..segments {
+            fixture
+                .database
+                .transaction(|transaction| {
+                    transaction.execute_batch("INSERT INTO events VALUES(7)")
+                })
+                .unwrap();
+            let next = fixture.database.capture_deferred().unwrap();
+            fixture.cuts.position = next.position;
+            fixture.cuts.segments.extend(next.segments);
+        }
+        fixture.store.fault.store(3, Ordering::SeqCst);
+        let prepared = {
+            let preparation = fixture.publisher.prepare_initial(&fixture.cuts);
+            tokio::pin!(preparation);
+            tokio::time::timeout(Duration::from_secs(5), async {
         tokio::select! {
             result = &mut preparation => panic!("preparation escaped paused metadata: {}", result.is_ok()),
             _ = async {
                 fixture.store.entered.notified().await;
-                while fixture.store.root_writes.load(Ordering::SeqCst) < 2 {
+                while fixture.store.root_writes.load(Ordering::SeqCst) < native_root_objects {
                     fixture.store.root_written.notified().await;
                 }
             } => {}
         }
     }).await.unwrap();
-        assert!(
-            fixture
-                .authority
-                .load(CellId::from_bytes([1; 32]))
-                .await
-                .unwrap()
-                .unwrap()
-                .value()
-                .ltx_root()
-                .is_none()
+            assert!(
+                fixture
+                    .authority
+                    .load(CellId::from_bytes([1; 32]))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .ltx_root()
+                    .is_none()
+            );
+            fixture.store.resume.notify_one();
+            preparation.await.unwrap()
+        };
+        assert_eq!(fixture.store.lineage_writes.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.store.lineage_reads.load(Ordering::SeqCst), 0);
+        fixture
+            .publisher
+            .publish_prepared(&prepared, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            fixture.store.lineage_writes.load(Ordering::SeqCst),
+            1,
+            "publication must reuse its exact retained preparation"
         );
-        fixture.store.resume.notify_one();
-        preparation.await.unwrap()
-    };
-    assert_eq!(fixture.store.lineage_writes.load(Ordering::SeqCst), 1);
-    assert_eq!(fixture.store.lineage_reads.load(Ordering::SeqCst), 0);
-    fixture
-        .publisher
-        .publish_prepared(&prepared, None)
-        .await
+        assert_eq!(fixture.store.lineage_reads.load(Ordering::SeqCst), 0);
+        let replica = CellReplica::new(
+            fixture.authority.layout.clone(),
+            [1; 32],
+            [2; 16],
+            Limits::default(),
+        )
         .unwrap();
-    assert_eq!(
-        fixture.store.lineage_writes.load(Ordering::SeqCst),
-        1,
-        "publication must reuse its exact retained preparation"
-    );
-    assert_eq!(fixture.store.lineage_reads.load(Ordering::SeqCst), 0);
-    let replica = CellReplica::new(
-        fixture.authority.layout.clone(),
-        [1; 32],
-        [2; 16],
-        Limits::default(),
-    )
-    .unwrap();
-    fixture
-        .authority
-        .verify_root_prefix(prepared.root(), prepared.root(), &replica, 64)
-        .await
-        .unwrap();
-    fixture.database.close().unwrap();
+        fixture
+            .authority
+            .verify_root_prefix(prepared.root(), prepared.root(), &replica, 64)
+            .await
+            .unwrap();
+        fixture.database.close().unwrap();
+    }
 }
 
 #[tokio::test]

@@ -715,7 +715,12 @@ impl CellReplica {
 
         let mut segment_pages = Vec::new();
         let mut root_objects = Vec::new();
-        for page in descriptors.chunks(SEGMENTS_PER_PAGE) {
+        // Keep full page boundaries stable for reuse. A small final page lives
+        // in the authenticated root; larger tails retain the bounded page path.
+        let tail = descriptors.len() % SEGMENTS_PER_PAGE;
+        let inline_count = if tail <= MAX_INLINE_SEGMENTS { tail } else { 0 };
+        let external_count = descriptors.len() - inline_count;
+        for page in descriptors[..external_count].chunks(SEGMENTS_PER_PAGE) {
             let bytes = encode_segment_page(page)?;
             let digest = *blake3::hash(&bytes).as_bytes();
             // load_graph authenticated these exact predecessor pages and
@@ -740,6 +745,7 @@ impl CellReplica {
             page_size,
             schema,
             segment_pages,
+            segments: descriptors[external_count..].to_vec(),
             txid: target.txid,
         };
         let bytes = encode_root(&document)?;

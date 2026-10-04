@@ -28,6 +28,95 @@ const GET_MS: u64 = 2;
 const PUT_MS: u64 = 7;
 
 #[tokio::test]
+async fn small_roots_keep_descriptor_metadata_inline_and_check_origin() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut writer = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
+    writer
+        .transaction(|transaction| {
+            transaction.execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")
+        })
+        .unwrap();
+    let backend = Arc::new(InMemory::new());
+    let counted = Arc::new(CountingObjectStore::new(backend.clone()));
+    let layout = CellStorageLayout::new(Store::new(counted.clone()), Path::from("inline"), [5; 16]);
+    let cell = [153; 32];
+    let incarnation = [154; 16];
+    let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
+    let mut root = None;
+    for sequence in 1..=32 {
+        if sequence > 1 {
+            writer
+                .transaction(|transaction| {
+                    transaction.execute_batch("UPDATE counter SET v = v + 1")
+                })
+                .unwrap();
+        }
+        let cuts = writer.capture_deferred().unwrap();
+        counted.reset();
+        let next = replica
+            .prepare(root.as_ref(), &cuts, sequence, 1)
+            .await
+            .unwrap()
+            .root();
+        assert_eq!(
+            counted.put_requests(),
+            4,
+            "small roots upload body, index, directory and root without a separate descriptor page"
+        );
+        assert_eq!(counted.counts().full, 0);
+        assert_eq!(
+            counted.counts().heads,
+            usize::from(root.is_some()),
+            "the authenticated predecessor root must still exist at origin"
+        );
+        assert_eq!(replica.take_publication_cost().objects, 4);
+        writer.prune_captured(&cuts).unwrap();
+        root = Some(next);
+    }
+    let root = root.unwrap();
+    let objects = replica.reachable_objects(&root).await.unwrap();
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|object| object.kind == CellObjectKind::Root)
+            .count(),
+        1,
+        "the exact origin inventory has no external descriptor page"
+    );
+    let restored = directory.path().join("restored.sqlite");
+    replica
+        .open_root(&root)
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let connection = cellule_ltx::rusqlite::Connection::open(&restored).unwrap();
+    let value: u64 = connection
+        .query_row("SELECT v FROM counter", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(value, 31);
+    drop(connection);
+
+    let path =
+        layout.incarnation_object_path(&cell, &incarnation, &root.digest, CellObjectKind::Root);
+    backend.delete(&path).await.unwrap();
+    writer
+        .transaction(|transaction| transaction.execute_batch("UPDATE counter SET v = v + 1"))
+        .unwrap();
+    let cuts = writer.capture_deferred().unwrap();
+    counted.reset();
+    assert!(replica.prepare(Some(&root), &cuts, 33, 1).await.is_err());
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "missing origin root cannot justify an append"
+    );
+    writer.durability_barrier().unwrap();
+    writer.close().unwrap();
+}
+
+#[tokio::test]
 async fn append_reuses_verified_descriptor_pages_and_rejects_missing_origin() {
     let directory = tempfile::TempDir::new().unwrap();
     let mut writer = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
@@ -68,8 +157,8 @@ async fn append_reuses_verified_descriptor_pages_and_rejects_missing_origin() {
         .root();
     assert_eq!(
         counted.put_requests(),
-        5,
-        "only new body, index, directory, descriptor page and root"
+        4,
+        "only new body, index, directory and root with an inline tail"
     );
     assert_eq!(
         counted.counts().full,
@@ -81,7 +170,7 @@ async fn append_reuses_verified_descriptor_pages_and_rejects_missing_origin() {
         3,
         "predecessor root and both descriptor pages still checked"
     );
-    assert_eq!(replica.take_publication_cost().objects, 5);
+    assert_eq!(replica.take_publication_cost().objects, 4);
     writer.prune_captured(&next).unwrap();
 
     let restored = directory.path().join("restored.sqlite");
@@ -127,6 +216,104 @@ async fn append_reuses_verified_descriptor_pages_and_rejects_missing_origin() {
         0,
         "missing inherited metadata cannot publish a successor"
     );
+    writer.durability_barrier().unwrap();
+    writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn inline_tail_spills_and_returns_at_stable_page_boundaries() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut writer = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
+    let backend = Arc::new(InMemory::new());
+    let layout = CellStorageLayout::new(
+        Store::new(backend.clone()),
+        Path::from("boundaries"),
+        [6; 16],
+    );
+    let cell = [155; 32];
+    let incarnation = [156; 16];
+    let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
+    let mut root = None;
+    let mut segments = Vec::new();
+    for sequence in 1..=129 {
+        writer
+            .transaction(|transaction| {
+                if sequence == 1 {
+                    transaction
+                        .execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")?;
+                } else {
+                    transaction.execute_batch("UPDATE counter SET v = v + 1")?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let cuts = writer.capture_deferred().unwrap();
+        segments.extend(cuts.segments.clone());
+        let next = replica
+            .prepare(root.as_ref(), &cuts, sequence, 1)
+            .await
+            .unwrap()
+            .root();
+        root = Some(next);
+        let shape = match sequence {
+            32 => Some((0, 32)),
+            33 => Some((1, 0)),
+            96 => Some((1, 0)),
+            97 => Some((1, 1)),
+            128 => Some((1, 32)),
+            129 => Some((2, 0)),
+            _ => None,
+        };
+        if let Some((pages, inline)) = shape {
+            let path = layout.incarnation_object_path(
+                &cell,
+                &incarnation,
+                &next.digest,
+                CellObjectKind::Root,
+            );
+            let bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
+            let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(wire["segment_pages"].as_array().unwrap().len(), pages);
+            assert_eq!(wire["segments"].as_array().unwrap().len(), inline);
+            assert!(bytes.len() <= 32 << 10);
+
+            // A new Store identity excludes the metadata cache. The complete
+            // origin inventory and restored image must agree with local LTX.
+            let cold = CellReplica::new(
+                CellStorageLayout::new(
+                    Store::new(backend.clone()),
+                    Path::from("boundaries"),
+                    [6; 16],
+                ),
+                cell,
+                incarnation,
+                Limits::default(),
+            )
+            .unwrap();
+            let objects = cold.reachable_objects(&next).await.unwrap();
+            assert_eq!(
+                objects
+                    .iter()
+                    .filter(|object| object.kind == CellObjectKind::Root)
+                    .count(),
+                pages + 1
+            );
+            let restored = directory.path().join(format!("restored-{sequence}.sqlite"));
+            cold.open_root(&next)
+                .await
+                .unwrap()
+                .restore(&restored)
+                .await
+                .unwrap();
+            let expected = directory.path().join(format!("expected-{sequence}.sqlite"));
+            let plan = VerifiedPlan::new(&segments, cuts.position, Limits::default()).unwrap();
+            restore_exact(&plan, &expected).unwrap();
+            assert_eq!(
+                std::fs::read(restored).unwrap(),
+                std::fs::read(expected).unwrap()
+            );
+        }
+    }
     writer.durability_barrier().unwrap();
     writer.close().unwrap();
 }
