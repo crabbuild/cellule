@@ -1,6 +1,7 @@
 //! Source spooling for one compaction pass.
 
 use super::*;
+use futures_util::FutureExt as _;
 
 pub(super) async fn spool_selected_bodies(
     replica: &CellReplica,
@@ -18,10 +19,9 @@ pub(super) async fn spool_selected_bodies(
         planned.push((descriptor.clone(), start));
     }
 
-    let results = stream::iter(
-        planned
-            .into_iter()
-            .map(|(descriptor, output_start)| async move {
+    let results = stream::iter(planned.into_iter().enumerate().map(
+        |(order, (descriptor, output_start))| {
+            async move {
                 let mut file = scratch.open(destination).await?;
                 let source_start = descriptor.offset();
                 let source_end = source_start
@@ -69,12 +69,14 @@ pub(super) async fn spool_selected_bodies(
                     descriptor,
                     start: output_start,
                 })
-            }),
-    )
-    .buffered(SEGMENT_TRANSFER_CONCURRENCY)
+            }
+            .map(move |result| (order, result))
+        },
+    ))
+    .buffer_unordered(SEGMENT_TRANSFER_CONCURRENCY)
     .collect::<Vec<_>>()
     .await;
-    let spooled = results.into_iter().collect::<Result<Vec<_>>>()?;
+    let spooled = ordered_results(results)?;
     sync_spool(scratch, destination, total_bytes).await?;
     Ok(spooled)
 }
@@ -100,10 +102,9 @@ pub(super) async fn spool_indexes(
         planned.push((descriptor.clone(), start));
     }
 
-    let results = stream::iter(
-        planned
-            .into_iter()
-            .map(|(descriptor, output_start)| async move {
+    let results = stream::iter(planned.into_iter().enumerate().map(
+        |(order, (descriptor, output_start))| {
+            async move {
                 let mut file = scratch.open(destination).await?;
                 let path = replica.layout.incarnation_object_path(
                     &replica.cell,
@@ -153,14 +154,23 @@ pub(super) async fn spool_indexes(
                     start: output_start,
                     length,
                 })
-            }),
-    )
-    .buffered(SEGMENT_TRANSFER_CONCURRENCY)
+            }
+            .map(move |result| (order, result))
+        },
+    ))
+    .buffer_unordered(SEGMENT_TRANSFER_CONCURRENCY)
     .collect::<Vec<_>>()
     .await;
-    let inputs = results.into_iter().collect::<Result<Vec<_>>>()?;
+    let inputs = ordered_results(results)?;
     sync_spool(scratch, destination, total_bytes).await?;
     Ok(inputs)
+}
+
+// Finished transfers refill the same bounded window immediately. Restore
+// descriptor order, including first-error selection, before consuming results.
+fn ordered_results<T>(mut results: Vec<(usize, Result<T>)>) -> Result<Vec<T>> {
+    results.sort_unstable_by_key(|(order, _)| *order);
+    results.into_iter().map(|(_, result)| result).collect()
 }
 
 async fn sync_spool(scratch: &Arc<ScratchFiles>, path: &Path, expected_bytes: u64) -> Result<()> {

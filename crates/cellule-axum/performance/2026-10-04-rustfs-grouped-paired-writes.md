@@ -82,6 +82,16 @@ RustFS uses about three cores of the four-CPU runner. The shared publication
 and provider limits remain the next bottleneck to investigate. Those mean
 phase observations do not explain the individual p99 regressions.
 
+The retained phase distributions identify compaction as a separate tail-cost
+priority. Across the six sixteen-Cell points, publication p99 is 365–407 ms,
+ordinary root preparation p99 is 146–175 ms, and SQL worker p99 is below 7 ms.
+Compactions occur about once per twenty publications. Their total time divided
+by publication count is 10.3–11.1 ms, close to the 10.3–10.9 ms difference
+between total preparation and root-preparation time per publication. These
+totals include warmup and startup; independent percentiles cannot be added or
+matched to individual requests. This attribution does not establish the cause
+of the candidate's p99 regressions.
+
 ## Qualification and remaining work
 
 The group implementation passes [workspace CI](https://github.com/crabbuild/cellule/actions/runs/37172549353)

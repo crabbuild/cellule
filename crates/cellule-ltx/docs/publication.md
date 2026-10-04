@@ -50,3 +50,8 @@ upload. The verified local index also allows directory and root metadata to
 upload alongside the compacted body and index. Preparation waits for every
 branch, including errors and scratch cleanup, before returning a proposal;
 authority CAS remains the publication boundary.
+
+Compaction body and index transfers each retain a four-transfer window. A
+completed transfer immediately admits the next input even when an earlier
+source is slow. Results return to descriptor order before merging or selecting
+an error; source checksums, disjoint scratch offsets, and cleanup remain intact.
