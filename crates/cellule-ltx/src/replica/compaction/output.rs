@@ -77,10 +77,22 @@ pub(super) async fn write_compacted(
         body_source = returned.0;
         state = returned.1;
     }
-    replica
+    let (ltx, index) = replica
         .host
         .run(move || state.finish(post_checksum))
-        .await?
+        .await??;
+    // Independent files share no write ordering. Keep both scratch-owning
+    // handles through their admitted jobs, and await both barriers even when
+    // one fails; no uploadable artifact escapes before both have completed.
+    let (ltx, index) = futures_util::future::join(
+        replica.host.run(move || ltx.sync()),
+        replica.host.run(move || index.sync()),
+    )
+    .await;
+    Ok(CompactedArtifacts {
+        ltx: ltx??,
+        index: index??,
+    })
 }
 
 fn body_range(entries: &[DirectoryEntry], inputs: &[BodySpoolInput]) -> Result<LocalBodyRange> {
@@ -194,10 +206,10 @@ impl OutputState {
         Ok(self)
     }
 
-    fn finish(mut self, post_checksum: u64) -> Result<CompactedArtifacts> {
+    fn finish(mut self, post_checksum: u64) -> Result<(UnsyncedArtifact, UnsyncedArtifact)> {
         self.encoder.close(post_checksum)?;
-        // Flush both streams before DigestWriter checks the exact stored length
-        // and syncs; a partial buffered output must never become publishable.
+        // Flush both streams before checking exact stored lengths. The caller
+        // syncs both files before making either artifact available for upload.
         let ltx = self
             .encoder
             .into_writer()
@@ -209,7 +221,7 @@ impl OutputState {
             .into_inner()
             .map_err(|error| error.into_error())?
             .finish()?;
-        Ok(CompactedArtifacts { ltx, index })
+        Ok((ltx, index))
     }
 }
 
@@ -242,15 +254,29 @@ impl DigestWriter {
         }
     }
 
-    fn finish(mut self) -> Result<Artifact> {
+    fn finish(self) -> Result<UnsyncedArtifact> {
         if self.file.file_len()? != self.length {
             return Err(LtxError::LTXCorrupted);
         }
-        self.file.sync_all()?;
-        Ok(Artifact {
-            digest: *self.hasher.finalize().as_bytes(),
-            length: self.length,
+        Ok(UnsyncedArtifact {
+            file: self.file,
+            artifact: Artifact {
+                digest: *self.hasher.finalize().as_bytes(),
+                length: self.length,
+            },
         })
+    }
+}
+
+struct UnsyncedArtifact {
+    file: Box<dyn FileIo>,
+    artifact: Artifact,
+}
+
+impl UnsyncedArtifact {
+    fn sync(mut self) -> Result<Artifact> {
+        self.file.sync_all()?;
+        Ok(self.artifact)
     }
 }
 

@@ -19,6 +19,7 @@ use crate::cell::executor::{
     PendingMigration, StoredOutcome,
 };
 use crate::cell::executor::{MutationIdentity, Resolution};
+use crate::cell::executor::{NativeCommand, NativeGroupExecution};
 use crate::fleet::resource::ResourceCost;
 use crate::fleet::resource::{
     ACTIVE_CELL_NATIVE_BYTES, HYDRATION_JOB_CAPACITY, ResourceLedger, ResourceReservation,
@@ -379,6 +380,26 @@ impl SqlWorkerPool {
                 max_result_bytes,
                 deadline,
                 handler,
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
+    pub(crate) async fn execute_group(
+        &self,
+        cell: CellId,
+        commands: Vec<NativeCommand<Handler>>,
+        deadline: SqlDeadline,
+    ) -> Result<NativeGroupExecution> {
+        let (reply, response) = oneshot::channel();
+        self.send_worker_job(
+            cell,
+            WorkerCommand::ExecuteGroup {
+                cell,
+                commands,
+                deadline,
                 reply,
             },
         )
@@ -1108,6 +1129,12 @@ enum WorkerCommand {
         reply: oneshot::Sender<Result<()>>,
     },
     Bootstrap(Box<WorkerBootstrap>),
+    ExecuteGroup {
+        cell: CellId,
+        commands: Vec<NativeCommand<Handler>>,
+        deadline: SqlDeadline,
+        reply: oneshot::Sender<Result<NativeGroupExecution>>,
+    },
     Execute {
         trace: tracing::Span,
         queued_at: Instant,

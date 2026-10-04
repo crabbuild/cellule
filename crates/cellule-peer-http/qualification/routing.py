@@ -151,6 +151,36 @@ def measure_pair(mode, pair, binaries, evidence):
             for row in parse_measurement(version, mode, pair * 2 + offset, evidence)]
 
 
+def verify_publications(publications, first, last):
+    """Require actual root events to cover exactly the lane's logical commits."""
+    fields = {"first_sequence", "sequence", "queue_wait_ns", "preparation_ns",
+              "authority_ns", "total_ns"}
+    if not publications or not 0 < first <= last:
+        raise RuntimeError("Incomplete publication evidence: missing range")
+    next_sequence = first
+    for publication in publications:
+        if (set(publication) != fields
+                or any(not isinstance(value, int) or value < 0 for value in publication.values())
+                or publication["first_sequence"] != next_sequence
+                or not next_sequence <= publication["sequence"] <= last):
+            raise RuntimeError("Incomplete publication evidence: invalid root coverage")
+        next_sequence = publication["sequence"] + 1
+    if next_sequence != last + 1:
+        raise RuntimeError("Incomplete publication evidence: missing final root")
+
+
+def verify_publication_summary(summary, publications, calls):
+    fields = {"calls", "publications", "preparation_mean_ms", "authority_mean_ms", "total_mean_ms"}
+    if (set(summary) != fields or summary["calls"] != calls
+            or summary["publications"] != len(publications)
+            or any(not math.isfinite(value) or value < 0 for value in summary.values())):
+        raise RuntimeError("Publication summary does not match raw evidence")
+    for phase in ("preparation", "authority", "total"):
+        actual = sum(row[f"{phase}_ns"] for row in publications) / len(publications) / 1_000_000
+        if abs(actual - summary[f"{phase}_mean_ms"]) > 0.000001:
+            raise RuntimeError("Publication summary does not match raw phase means")
+
+
 def parse_measurement(version, mode, index, evidence):
     directory = evidence / f"{mode}-{index}-{version}"
     text = (directory / "run.log").read_text()
@@ -158,6 +188,18 @@ def parse_measurement(version, mode, index, evidence):
     if ("test result: ok. 1 passed; 0 failed;" not in text
             or f"correctness=passed commands={COMMANDS * 6} final_sequence={COMMANDS * 6}" not in text):
         raise RuntimeError(f"Benchmark or exact recovery failed: {directory.name}")
+    publication_summaries = {}
+    command_lanes = (("local_command", 1), ("local_command", 16),
+                     ("forwarded_command", 1), ("forwarded_command", 16))
+    for line in text.splitlines():
+        if line.startswith("RUSTFS publication lane="):
+            fields = dict(re.findall(r"(\w+)=(\S+)", line))
+            key = (fields.pop("lane"), int(fields.pop("concurrency")))
+            if key in publication_summaries:
+                raise RuntimeError("Duplicate publication summary")
+            publication_summaries[key] = {key: float(value) for key, value in fields.items()}
+    if set(publication_summaries) != set(command_lanes):
+        raise RuntimeError("Incomplete publication summaries")
     rows = []
     for line in text.splitlines():
         if not line.startswith("RUSTFS lane="):
@@ -184,11 +226,10 @@ def parse_measurement(version, mode, index, evidence):
             with path.open(newline="") as source:
                 publications = [{key: int(value) for key, value in item.items()}
                                 for item in csv.DictReader(source, delimiter="\t")]
-            sequences = [item["sequence"] for item in publications]
-            if (len(publications) != COMMANDS or not sequences
-                    or sequences != list(range(sequences[0], sequences[0] + COMMANDS))
-                    or any(value < 0 for item in publications for value in item.values())):
-                raise RuntimeError(f"Incomplete publication evidence: {lane}")
+            key = (lane, int(row["concurrency"]))
+            first = command_lanes.index(key) * COMMANDS + 1
+            verify_publications(publications, first, first + COMMANDS - 1)
+            verify_publication_summary(publication_summaries[key], publications, COMMANDS)
         samples = [int(value) for value in (directory / f"{lane}-c{int(row['concurrency'])}.ns").read_text().splitlines()]
         if len(samples) != row["calls"] or samples != sorted(samples):
             raise RuntimeError(f"Raw sample mismatch: {lane}")

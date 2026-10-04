@@ -70,7 +70,30 @@ pub(in crate::cell::actor) fn start_next(
     let pool = pool.clone();
     let interrupt = active.interrupt.clone();
     match work {
-        QueuedWork::Command(command) => {
+        QueuedWork::Command(mut command) => {
+            if active.coordination.publication_count() == 0
+                && active.durability_submitter.object_only()
+                && matches!(command.operation, QueuedOperation::Mutation { .. })
+            {
+                let mut members = Vec::new();
+                while members.len() + 1 < MAX_NATIVE_GROUP
+                    && active.queue.front().is_some_and(|work| {
+                        matches!(work, QueuedWork::Command(next)
+                            if matches!(next.operation, QueuedOperation::Mutation { .. }))
+                    })
+                {
+                    let Some(QueuedWork::Command(next)) = active.queue.pop_front() else {
+                        break;
+                    };
+                    members.push(*next);
+                }
+                if !members.is_empty() {
+                    command.group = Some(CommandGroup {
+                        members,
+                        execution: None,
+                    });
+                }
+            }
             let durability = active.durability_submitter.clone();
             let effect_id = active.begin_task(CoordinationEffect::Work(kind));
             tasks.spawn(async move {

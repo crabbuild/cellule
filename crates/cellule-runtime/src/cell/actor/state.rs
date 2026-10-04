@@ -157,6 +157,7 @@ pub(super) enum Message {
 }
 
 pub(super) struct QueuedCommand {
+    pub(super) group: Option<CommandGroup>,
     pub(super) trace: tracing::Span,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) queued_at: std::time::Instant,
@@ -169,6 +170,16 @@ pub(super) struct QueuedCommand {
     pub(super) handler: Option<Handler>,
     pub(super) reply: Option<oneshot::Sender<crate::Result<StoredOutcome>>>,
     pub(super) _work: WorkAdmission,
+}
+
+pub(super) struct CommandGroup {
+    pub(super) members: Vec<QueuedCommand>,
+    pub(super) execution: Option<GroupOutcomes>,
+}
+
+pub(super) struct GroupOutcomes {
+    pub(super) outcomes: Vec<crate::Result<StoredOutcome>>,
+    pub(super) base_sequence: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -537,6 +548,7 @@ pub(super) enum TaskResult {
 
 pub(super) enum CommandTaskResult {
     Recorded(StoredOutcome),
+    GroupRecorded,
     Pending {
         pending: Box<PendingCommit>,
         durability: Option<PendingDurability>,

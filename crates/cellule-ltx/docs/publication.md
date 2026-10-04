@@ -60,6 +60,18 @@ factory before derivation metadata runs. Metadata and the complete proposal name
 the same input. That private preparation context is removed from the immutable
 read view; subsequent preparations cannot inherit an earlier rebase.
 
+Compaction overlaps the independent LTX and index output flushes through the
+host's bounded job admission. Both barriers complete before either output can
+upload. The verified local index also allows directory and root metadata to
+upload alongside the compacted body and index. Preparation waits for every
+branch, including errors and scratch cleanup, before returning a proposal;
+authority CAS remains the publication boundary.
+
+Compaction body and index transfers each retain a four-transfer window. A
+completed transfer immediately admits the next input even when an earlier
+source is slow. Results return to descriptor order before merging or selecting
+an error; source checksums, disjoint scratch offsets, and cleanup remain intact.
+
 ## Verify current origin dependencies
 
 `CellReplica::reachable_objects` authenticates the exact root's complete current

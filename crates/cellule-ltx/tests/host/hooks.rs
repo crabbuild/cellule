@@ -107,6 +107,8 @@ struct Faults {
     create_pause: Arc<OnceLock<Arc<InstallPause>>>,
     forbidden_thread: Arc<Mutex<Option<std::thread::ThreadId>>>,
     pause: Arc<Mutex<Option<Arc<Pause>>>>,
+    output_sync_started: Arc<AtomicUsize>,
+    output_pause: Arc<Mutex<Option<Arc<Pause>>>>,
 }
 
 #[cfg(feature = "replica")]
@@ -164,6 +166,7 @@ struct File {
     faults: Faults,
     track: bool,
     checksum: bool,
+    output: Option<&'static str>,
 }
 
 impl FileIo for File {
@@ -211,6 +214,16 @@ impl FileIo for File {
         self.inner.read_exact_at(offset, len)
     }
     fn sync_all(&mut self) -> io::Result<()> {
+        if let Some(operation) = self.output {
+            self.faults
+                .output_sync_started
+                .fetch_add(1, Ordering::Relaxed);
+            self.faults.check(operation)?;
+            let pause = self.faults.output_pause.lock().unwrap().clone();
+            if let Some(pause) = pause {
+                pause.wait("compaction_output_sync");
+            }
+        }
         self.faults.check("sync_all")?;
         self.faults.file_syncs.fetch_add(1, Ordering::Relaxed);
         self.inner.sync_all()
@@ -236,10 +249,16 @@ macro_rules! filesystem_operation {
 impl FileSystem for Faults {
     fn open(&self, path: &Path) -> io::Result<Box<dyn FileIo>> {
         self.check("open")?;
+        match is_compaction_output(path) {
+            Some("compaction_ltx_sync") => self.check("compaction_ltx_read")?,
+            Some("compaction_index_sync") => self.check("compaction_index_read")?,
+            _ => {}
+        }
         Ok(Box::new(File {
             inner: DirectFileSystem.open(path)?,
             faults: self.clone(),
             checksum: path.to_string_lossy().ends_with(".cellule-ltx-checksums"),
+            output: is_compaction_output(path),
             track: self.track_all.load(Ordering::Relaxed)
                 || path.to_string_lossy().contains(".ltx"),
         }))
@@ -250,6 +269,7 @@ impl FileSystem for Faults {
             inner: DirectFileSystem.open_rw(path)?,
             faults: self.clone(),
             checksum: path.to_string_lossy().ends_with(".cellule-ltx-checksums"),
+            output: is_compaction_output(path),
             track: self.track_all.load(Ordering::Relaxed)
                 || path.to_string_lossy().contains(".ltx"),
         }))
@@ -266,6 +286,7 @@ impl FileSystem for Faults {
             inner,
             faults: self.clone(),
             checksum: path.to_string_lossy().ends_with(".cellule-ltx-checksums"),
+            output: is_compaction_output(path),
             track: self.track_all.load(Ordering::Relaxed)
                 || path.to_string_lossy().contains(".ltx"),
         }))
@@ -291,6 +312,17 @@ impl FileSystem for Faults {
         self.check("persist_file_new")?;
         DirectFileSystem.persist_file_new(source, destination)?;
         Ok(())
+    }
+}
+
+fn is_compaction_output(path: &Path) -> Option<&'static str> {
+    let name = path.to_string_lossy();
+    if name.ends_with("-compacted-ltx") {
+        Some("compaction_ltx_sync")
+    } else if name.ends_with("-compacted-index") {
+        Some("compaction_index_sync")
+    } else {
+        None
     }
 }
 

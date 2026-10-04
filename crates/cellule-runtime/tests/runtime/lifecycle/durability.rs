@@ -4,6 +4,7 @@ use super::*;
 use cellule_runtime::fleet::telemetry::{CellTelemetry, CommandResponseSource, PublicationTiming};
 
 mod admission;
+mod group;
 mod proofs;
 mod recovery;
 mod retirement;

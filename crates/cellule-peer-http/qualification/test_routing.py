@@ -14,6 +14,54 @@ def measurements(unleased_reads=4096):
 
 
 class GateTests(unittest.TestCase):
+    @staticmethod
+    def publication(first, last):
+        return dict(first_sequence=first, sequence=last, queue_wait_ns=0,
+                    preparation_ns=10, authority_ns=20, total_ns=30)
+
+    def test_grouped_and_single_command_roots_cover_the_same_workload(self):
+        for first in (1, 1025, 2049, 3073):
+            last = first + routing.COMMANDS - 1
+            for group in (1, 4):
+                with self.subTest(first=first, group=group):
+                    roots = [self.publication(start, min(start + group - 1, last))
+                             for start in range(first, last + 1, group)]
+                    routing.verify_publications(roots, first, last)
+
+    def test_publication_coverage_rejects_gaps_overlap_missing_tail_and_wrong_lane(self):
+        valid = [self.publication(1025, 1028), self.publication(1029, 1032)]
+        invalid = [[], valid[:-1], valid[::-1], valid + [valid[-1]],
+                   [self.publication(1025, 1028), self.publication(1030, 1032)],
+                   [self.publication(1025, 1028), self.publication(1028, 1032)],
+                   [self.publication(1025, 1033)], [self.publication(1024, 1032)],
+                   [self.publication(1025, 1024)]]
+        for roots in invalid:
+            with self.subTest(roots=roots), self.assertRaisesRegex(RuntimeError, "Incomplete publication evidence"):
+                routing.verify_publications(roots, 1025, 1032)
+
+    def test_publication_coverage_requires_every_nonnegative_phase(self):
+        valid = self.publication(1, 4)
+        for field in valid:
+            for change in ("missing", "negative", "non_integer"):
+                invalid = dict(valid)
+                if change == "missing":
+                    invalid.pop(field)
+                else:
+                    invalid[field] = -1 if change == "negative" else 1.5
+                with self.subTest(field=field, change=change), self.assertRaisesRegex(RuntimeError, "Incomplete publication evidence"):
+                    routing.verify_publications([invalid], 1, 4)
+
+    def test_publication_summary_retains_physical_counts_and_phase_means(self):
+        roots = [self.publication(1, 1), self.publication(2, 5)]
+        summary = dict(calls=5, publications=2, preparation_mean_ms=0.00001,
+                       authority_mean_ms=0.00002, total_mean_ms=0.00003)
+        routing.verify_publication_summary(summary, roots, 5)
+        for field in summary:
+            invalid = dict(summary)
+            invalid[field] += 1
+            with self.subTest(field=field), self.assertRaisesRegex(RuntimeError, "Publication summary"):
+                routing.verify_publication_summary(invalid, roots, 5)
+
     def test_identical_complete_comparison_passes(self):
         self.assertEqual(routing.compare(measurements())["failures"], [])
 

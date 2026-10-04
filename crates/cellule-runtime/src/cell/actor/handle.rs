@@ -59,9 +59,17 @@ pub(crate) struct CommandWork {
 
 pub(super) struct WorkAdmission {
     pub(super) kind: AdmissionKind,
-    pub(super) _request: OwnedSemaphorePermit,
+    pub(super) _request: Option<OwnedSemaphorePermit>,
     pub(super) _cell_bytes: OwnedSemaphorePermit,
     pub(super) _node_bytes: ResourceReservation,
+}
+
+impl WorkAdmission {
+    pub(super) fn release_request_slot(&mut self) {
+        // A finished request can hand its slot to the reply's next invocation.
+        // Retained completion data still owns both byte reservations until drop.
+        drop(self._request.take());
+    }
 }
 
 /// One resident Cell whose published due time has passed.
@@ -211,6 +219,7 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
+                group: None,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_execution",
@@ -265,6 +274,7 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
+                group: None,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_effect_execution",
@@ -548,7 +558,10 @@ impl CellHandle {
         }
         let admission = WorkAdmission {
             kind,
-            _request: try_one(self.admission.requests.clone(), "Cell mailbox requests")?,
+            _request: Some(try_one(
+                self.admission.requests.clone(),
+                "Cell mailbox requests",
+            )?),
             _cell_bytes: try_many(
                 self.admission.bytes.clone(),
                 reservation_bytes,

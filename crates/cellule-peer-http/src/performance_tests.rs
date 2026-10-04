@@ -29,7 +29,7 @@ use cellule_store::{
 };
 use object_store::path::Path;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     sync::{
         OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -195,42 +195,72 @@ impl PeerCellResolver for UncachedResident {
 }
 
 #[derive(Default)]
-struct PublicationSamples(Mutex<HashMap<u64, PublicationTiming>>);
+struct PublicationSamples(Mutex<BTreeMap<u64, PublicationTiming>>);
 impl CellTelemetry for PublicationSamples {
     fn publication_completed(&self, _: CellId, timing: PublicationTiming) {
-        self.0
-            .lock()
-            .unwrap()
-            .insert(timing.commit_sequence, timing);
+        assert!(
+            self.0
+                .lock()
+                .unwrap()
+                .insert(timing.commit_sequence, timing)
+                .is_none(),
+            "duplicate publication event"
+        );
     }
 }
 impl PublicationSamples {
-    fn report(&self, lane: &str, concurrency: usize, first: u64, last: u64) {
+    fn covered_publications(&self, first: u64, last: u64) -> Vec<(u64, PublicationTiming)> {
+        assert!(first > 0 && first <= last);
         let samples = self.0.lock().unwrap();
-        let timings = (first..=last)
-            .map(|sequence| samples[&sequence])
+        let timings = samples
+            .range(first..=last)
+            .map(|(_, timing)| *timing)
             .collect::<Vec<_>>();
         assert!(timings.iter().all(|timing| timing.succeeded));
+        assert_eq!(
+            timings.last().map(|timing| timing.commit_sequence),
+            Some(last),
+            "last publication must cover the final accepted command"
+        );
+        // This fixture uses one Cell and sequential, settled lanes. A root
+        // covers every logical sequence since the preceding root; retain the
+        // actual callback once, even when several commands share that root.
+        let mut next = first;
+        timings
+            .into_iter()
+            .map(|timing| {
+                let covered_first = next;
+                next = timing.commit_sequence.checked_add(1).unwrap();
+                (covered_first, timing)
+            })
+            .collect()
+    }
+
+    fn report(&self, lane: &str, concurrency: usize, first: u64, last: u64) {
+        let publications = self.covered_publications(first, last);
         let mean = |phase: fn(&PublicationTiming) -> Duration| {
-            timings
+            publications
                 .iter()
-                .map(|timing| phase(timing).as_secs_f64() * 1000.0)
+                .map(|(_, timing)| phase(timing).as_secs_f64() * 1000.0)
                 .sum::<f64>()
-                / timings.len() as f64
+                / publications.len() as f64
         };
         println!(
-            "RUSTFS publication lane={lane} concurrency={concurrency} calls={} preparation_mean_ms={:.6} authority_mean_ms={:.6} total_mean_ms={:.6}",
-            timings.len(),
+            "RUSTFS publication lane={lane} concurrency={concurrency} calls={} publications={} preparation_mean_ms={:.6} authority_mean_ms={:.6} total_mean_ms={:.6}",
+            last - first + 1,
+            publications.len(),
             mean(|t| t.preparation),
             mean(|t| t.authority),
             mean(|t| t.total)
         );
         if let Ok(directory) = std::env::var("CELLULE_PERF_EVIDENCE") {
-            let mut output =
-                String::from("sequence\tqueue_wait_ns\tpreparation_ns\tauthority_ns\ttotal_ns\n");
-            for timing in &timings {
+            let mut output = String::from(
+                "first_sequence\tsequence\tqueue_wait_ns\tpreparation_ns\tauthority_ns\ttotal_ns\n",
+            );
+            for (covered_first, timing) in &publications {
                 output.push_str(&format!(
-                    "{}\t{}\t{}\t{}\t{}\n",
+                    "{}\t{}\t{}\t{}\t{}\t{}\n",
+                    covered_first,
                     timing.commit_sequence,
                     timing.queue_wait.as_nanos(),
                     timing.preparation.as_nanos(),
@@ -246,6 +276,49 @@ impl PublicationSamples {
             .unwrap();
         }
     }
+}
+
+#[test]
+fn publication_samples_cover_grouped_commands_without_inventing_events() {
+    let publications = PublicationSamples::default();
+    for sequence in [1, 5] {
+        publications.publication_completed(
+            CellId::from_bytes([1; 32]),
+            PublicationTiming {
+                queue_wait: Duration::from_millis(sequence),
+                preparation: Duration::from_millis(sequence),
+                authority: Duration::from_millis(sequence),
+                total: Duration::from_millis(sequence * 3),
+                succeeded: true,
+                commit_sequence: sequence,
+            },
+        );
+    }
+    publications.report("grouped_fixture", 16, 1, 5);
+    let covered = publications.covered_publications(1, 5);
+    assert_eq!(covered.len(), 2);
+    assert_eq!((covered[0].0, covered[0].1.commit_sequence), (1, 1));
+    assert_eq!((covered[1].0, covered[1].1.commit_sequence), (2, 5));
+    assert_eq!(covered[0].1.total, Duration::from_millis(3));
+    assert_eq!(covered[1].1.total, Duration::from_millis(15));
+}
+
+#[test]
+#[should_panic(expected = "last publication must cover the final accepted command")]
+fn publication_samples_reject_missing_final_root() {
+    let publications = PublicationSamples::default();
+    publications.publication_completed(
+        CellId::from_bytes([1; 32]),
+        PublicationTiming {
+            queue_wait: Duration::ZERO,
+            preparation: Duration::ZERO,
+            authority: Duration::ZERO,
+            total: Duration::ZERO,
+            succeeded: true,
+            commit_sequence: 1,
+        },
+    );
+    publications.covered_publications(1, 5);
 }
 impl PeerAuthorizer for Authorizer {
     fn authorize(&self, request: &VerifiedPeerRequest) -> cellule_runtime::Result<()> {
@@ -879,6 +952,11 @@ async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
                 }
             }
             expected += commands as u64;
+            assert_eq!(sequences.len(), commands);
+            assert!(
+                (expected - commands as u64 + 1..=expected)
+                    .all(|sequence| sequences.contains(&sequence))
+            );
             assert_eq!(
                 client.query::<Read>(target, None, ()).await.unwrap().output,
                 expected

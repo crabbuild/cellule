@@ -251,10 +251,15 @@ The driver serializes adjacent measurement windows with pipe handshakes outside
 request timers. Paced bursts wait the full idle interval in both processes and
 alternate which version runs first. Identical-revision calibration reuses the
 same frozen binary. Artifacts retain the coordination trace, revisions,
-digests, every raw latency sample, per-command publication phases,
+digests, every raw latency sample, per-root publication phases,
 object-read/hop counts, and exact recovery results. CI uses 1,024 commands per
 write lane, verifies 6,144 unique durable mutations per run, and checks every
-publication phase record. The gate compares medians of all four runs: p95 must
+publication phase record. Each root event records its covered first and last
+logical sequences; these ranges must cover all 1,024 commands in that lane
+exactly, without gaps or overlaps. Grouped commands share one actual root
+event; raw event counts and phase means must match the reported summary.
+Phase means are per root, while latency and throughput remain per command.
+Both snapshots use the same observer. The gate compares medians of all four runs: p95 must
 be at most 150% of baseline, p99 at most 200%, and completed-call throughput
 at least 90%; paced throughput is excluded because it includes sleep.
 The manifest and comparison record these limits. Both latency percentiles

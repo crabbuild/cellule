@@ -264,6 +264,7 @@ pub(crate) fn error_reply(error: Error) -> wire::PeerReply {
             0,
         ),
         Error::Control(_)
+        | Error::Shared(_)
         | Error::Catalog(_)
         | Error::Node(_)
         | Error::FleetOperation(_)

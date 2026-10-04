@@ -111,6 +111,19 @@ fn run_worker_command(
             };
             let _ = reply.send(result);
         }
+        WorkerCommand::ExecuteGroup {
+            cell,
+            commands,
+            deadline,
+            reply,
+        } => {
+            let at = deadline.at();
+            let result = run_native_callback(cells, cell, deadline, move |active| {
+                active.executor.execute_group(commands, at)
+            });
+            drop(reservation.take());
+            let _ = reply.send(result);
+        }
         WorkerCommand::Execute {
             trace,
             queued_at,

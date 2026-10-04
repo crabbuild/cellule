@@ -115,6 +115,10 @@ pub(super) fn send_command_reply(
     command: &mut QueuedCommand,
     result: crate::Result<StoredOutcome>,
 ) {
+    if command.group.is_some() {
+        super::group::reply(command, result.map(Some));
+        return;
+    }
     if let Some(reply) = command.reply.take() {
         let sequence = result.as_ref().ok().map(StoredOutcome::commit_sequence);
         if reply.send(result).is_ok()
@@ -155,11 +159,56 @@ pub(super) fn send_command_task_reply(
     result: crate::Result<CommandTaskResult>,
 ) {
     let result = match result {
+        Ok(CommandTaskResult::GroupRecorded) => {
+            release_command_request_slots(command);
+            super::group::reply(command, Ok(None));
+            return;
+        }
         Ok(CommandTaskResult::Recorded(outcome)) => Ok(outcome),
         Ok(CommandTaskResult::Pending { .. }) => Err(command.operation.unknown(Error::Fenced)),
         Err(error) => Err(error),
     };
+    send_finished_command_reply(command, result);
+}
+
+pub(super) fn release_command_request_slots(command: &mut QueuedCommand) {
+    command._work.release_request_slot();
+    if let Some(group) = &mut command.group {
+        for member in &mut group.members {
+            member._work.release_request_slot();
+        }
+    }
+}
+
+/// Only completed SQL or proof tasks use these helpers. Early deadline replies
+/// use the ordinary send helpers and retain admission until their worker exits.
+pub(super) fn send_finished_command_reply(
+    command: &mut QueuedCommand,
+    result: crate::Result<StoredOutcome>,
+) {
+    release_command_request_slots(command);
     send_command_reply(command, result);
+}
+
+pub(super) fn send_finished_query_reply(query: &mut QueuedQuery, result: crate::Result<Vec<u8>>) {
+    query._work.release_request_slot();
+    send_query_reply(query, result);
+}
+
+pub(super) fn send_finished_resolve_reply(
+    resolve: &mut QueuedResolve,
+    result: crate::Result<Resolution>,
+) {
+    resolve._work.release_request_slot();
+    send_resolve_reply(resolve, result);
+}
+
+pub(super) fn send_finished_migration_reply(
+    migration: &mut QueuedMigration,
+    result: crate::Result<MigratedAdmission>,
+) {
+    migration._work.release_request_slot();
+    send_migration_reply(migration, result);
 }
 
 pub(super) fn send_query_reply(query: &mut QueuedQuery, result: crate::Result<Vec<u8>>) {

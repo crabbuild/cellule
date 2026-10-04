@@ -27,6 +27,19 @@ service authenticates the authority record that selects a root.
 admission bound local scratch, retained cuts, and remote I/O. The host owns
 scheduling and cancellation; see [cellule-host](../../cellule-host/docs/README.md).
 
+## Cohort admission
+
+New recovery and compaction jobs acquire dirty-memory and recovery capacity as
+one cohort. While either pool is busy, a new waiter retains neither permit;
+ordinary preparations can use the available dirty-memory capacity. A queue
+shared by the exact pair of pools prevents competing new cohorts from exchanging
+partial permits indefinitely. Existing charged scopes can finish or extend their
+work while that queue waits. Both permits and ledger charges follow dispatched
+work through completion or cancellation cleanup, with the same resource ceilings.
+
+Semaphore timing counts acquisitions, including retries during cohort admission.
+Compaction's total duration also includes time waiting in the cohort queue.
+
 ## Prepared disk credit
 
 An operation can reserve its conservative disk envelope before another node

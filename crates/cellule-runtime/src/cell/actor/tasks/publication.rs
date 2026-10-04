@@ -23,7 +23,7 @@ pub(super) fn handle_proven(
     let Some(active) = cells.get_mut(&cell) else {
         // The publication task may fence and remove the actor first; proof owns the
         // caller's final result and must not be rewritten as CellNotActive.
-        send_command_reply(&mut command, result);
+        send_finished_command_reply(&mut command, result);
         return;
     };
     if active.generation != generation
@@ -31,7 +31,7 @@ pub(super) fn handle_proven(
             .coordination
             .effect_matches(effect_id, CoordinationEffect::Proof)
     {
-        send_command_reply(&mut command, result);
+        send_finished_command_reply(&mut command, result);
         return;
     }
     active.finish_task(effect_id, CoordinationEffect::Proof);
@@ -40,7 +40,7 @@ pub(super) fn handle_proven(
         fenced = true;
     }
     finish_work(active, fenced);
-    send_command_reply(&mut command, result);
+    send_finished_command_reply(&mut command, result);
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
 }
 
