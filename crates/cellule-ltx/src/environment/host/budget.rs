@@ -19,6 +19,14 @@ pub(crate) struct DiskBudgetInner {
     used: AtomicU64,
     has_admissions: AtomicBool,
     admissions: Mutex<DiskAdmissions>,
+    scope: Option<Mutex<DiskScope>>,
+}
+
+struct DiskScope {
+    // The parent owns the real node charge. Child reservations divide that
+    // credit without charging the parent a second time during preparation.
+    backing: DiskReservation,
+    preparing: bool,
 }
 
 impl fmt::Debug for DiskBudget {
@@ -41,6 +49,7 @@ impl DiskBudget {
                 used: AtomicU64::new(0),
                 has_admissions: AtomicBool::new(false),
                 admissions: Mutex::new(Vec::new()),
+                scope: None,
             }),
         }
     }
@@ -51,6 +60,11 @@ impl DiskBudget {
     /// may observe the same process-wide budget; dead hooks are removed before
     /// the new hook is registered.
     pub fn install_admission(&self, admission: Arc<dyn DiskBudgetAdmission>) -> crate::Result<()> {
+        if self.inner.scope.is_some() {
+            return Err(crate::LtxError::InvalidState(
+                "reserved disk budget already inherits parent admission",
+            ));
+        }
         let mut current = self
             .inner
             .admissions
@@ -81,9 +95,9 @@ impl DiskBudget {
     /// Reserves bytes without waiting or overcommitting the configured capacity.
     pub fn try_reserve(&self, bytes: u64) -> crate::Result<DiskReservation> {
         self.add(bytes)?;
-        if let Err(error) = self.reconcile_admissions(self.used()) {
+        if let Err(error) = self.reconcile_admissions() {
             let _ = self.remove(bytes);
-            let _ = self.reconcile_admissions(self.used());
+            let _ = self.reconcile_admissions();
             return Err(error);
         }
         Ok(DiskReservation {
@@ -110,7 +124,46 @@ impl DiskBudget {
         self.capacity().saturating_sub(self.used())
     }
 
+    /// Releases unused preparation credit while retaining every child charge.
+    ///
+    /// This budget must come from [`DiskReservation::into_budget`]. Before this
+    /// call, its parent retains the full prepared envelope. Afterward the parent
+    /// tracks actual child bytes; later growth reserves additional parent bytes
+    /// through ordinary admission. The child's ceiling remains unchanged.
+    ///
+    /// Call only after the work relying on the prepared envelope has joined.
+    /// This operation is idempotent and does not cancel any child work.
+    pub fn finish_preparation(&self) -> crate::Result<()> {
+        let mut scope = self
+            .inner
+            .scope
+            .as_ref()
+            .ok_or(crate::LtxError::InvalidState(
+                "disk budget has no preparation credit",
+            ))?
+            .lock()
+            .map_err(|_| crate::LtxError::InvalidState("disk scope lock poisoned"))?;
+        scope.backing.resize(self.used())?;
+        scope.preparing = false;
+        Ok(())
+    }
+
     fn add(&self, bytes: u64) -> crate::Result<()> {
+        if let Some(scope) = &self.inner.scope {
+            let scope = scope
+                .lock()
+                .map_err(|_| crate::LtxError::InvalidState("disk scope lock poisoned"))?;
+            let next = self
+                .used()
+                .checked_add(bytes)
+                .filter(|next| *next <= self.capacity())
+                .ok_or(crate::LtxError::Limit(crate::LimitKind::LocalDiskBytes))?;
+            if !scope.preparing {
+                scope.backing.resize(next)?;
+            }
+            self.inner.used.store(next, Ordering::Release);
+            return Ok(());
+        }
         self.inner
             .used
             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
@@ -121,11 +174,13 @@ impl DiskBudget {
             .map_err(|_| crate::LtxError::Limit(crate::LimitKind::LocalDiskBytes))
     }
 
-    fn reconcile_admissions(&self, bytes: u64) -> crate::Result<()> {
+    fn reconcile_admissions(&self) -> crate::Result<()> {
         let Some(mut admissions) = self.live_admissions()? else {
             return Ok(());
         };
-        Self::reconcile_admissions_locked(&mut admissions, bytes)
+        // Capture usage after acquiring the hook lane: a delayed earlier
+        // caller must not overwrite a newer aggregate with a stale sample.
+        Self::reconcile_admissions_locked(&mut admissions, self.used())
     }
 
     fn live_admissions(&self) -> crate::Result<Option<MutexGuard<'_, DiskAdmissions>>> {
@@ -166,6 +221,22 @@ impl DiskBudget {
     }
 
     fn remove(&self, bytes: u64) -> crate::Result<()> {
+        if let Some(scope) = &self.inner.scope {
+            let scope = scope
+                .lock()
+                .map_err(|_| crate::LtxError::InvalidState("disk scope lock poisoned"))?;
+            let next = self
+                .used()
+                .checked_sub(bytes)
+                .ok_or(crate::LtxError::InvalidState(
+                    "local disk reservation underflow",
+                ))?;
+            if !scope.preparing {
+                scope.backing.resize(next)?;
+            }
+            self.inner.used.store(next, Ordering::Release);
+            return Ok(());
+        }
         self.inner
             .used
             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
@@ -192,6 +263,31 @@ impl fmt::Debug for DiskReservation {
 }
 
 impl DiskReservation {
+    /// Transfers this admitted envelope into a bounded budget for one operation.
+    ///
+    /// Its child reservations use the already charged bytes. All clones and
+    /// child tokens retain the parent credit until they close, including work
+    /// that outlives its initiating future. Parent capacity is never released
+    /// and reacquired during this conversion.
+    ///
+    /// Once preparation has joined, [`DiskBudget::finish_preparation`] returns
+    /// unused bytes and leaves lasting child charges on ordinary admission.
+    #[must_use]
+    pub fn into_budget(self) -> DiskBudget {
+        DiskBudget {
+            inner: Arc::new(DiskBudgetInner {
+                capacity: self.bytes(),
+                used: AtomicU64::new(0),
+                has_admissions: AtomicBool::new(false),
+                admissions: Mutex::new(Vec::new()),
+                scope: Some(Mutex::new(DiskScope {
+                    backing: self,
+                    preparing: true,
+                })),
+            }),
+        }
+    }
+
     /// Adds bytes to this reservation without exceeding the shared budget.
     pub fn try_grow(&self, bytes: u64) -> crate::Result<()> {
         let mut held = match self.bytes.lock() {
@@ -202,9 +298,9 @@ impl DiskReservation {
             .checked_add(bytes)
             .ok_or(crate::LtxError::Limit(crate::LimitKind::LocalDiskBytes))?;
         self.budget.add(bytes)?;
-        if let Err(error) = self.budget.reconcile_admissions(self.budget.used()) {
+        if let Err(error) = self.budget.reconcile_admissions() {
             let _ = self.budget.remove(bytes);
-            let _ = self.budget.reconcile_admissions(self.budget.used());
+            let _ = self.budget.reconcile_admissions();
             return Err(error);
         }
         *held = next;
@@ -221,9 +317,9 @@ impl DiskReservation {
         if bytes > current {
             let added = bytes - current;
             self.budget.add(added)?;
-            if let Err(error) = self.budget.reconcile_admissions(self.budget.used()) {
+            if let Err(error) = self.budget.reconcile_admissions() {
                 let _ = self.budget.remove(added);
-                let _ = self.budget.reconcile_admissions(self.budget.used());
+                let _ = self.budget.reconcile_admissions();
                 return Err(error);
             }
             *held = bytes;
@@ -235,10 +331,10 @@ impl DiskReservation {
             *held = current;
             return Err(error);
         }
-        if let Err(error) = self.budget.reconcile_admissions(self.budget.used()) {
+        if let Err(error) = self.budget.reconcile_admissions() {
             self.budget.add(released)?;
             *held = current;
-            let _ = self.budget.reconcile_admissions(self.budget.used());
+            let _ = self.budget.reconcile_admissions();
             return Err(error);
         }
         Ok(())
@@ -252,7 +348,7 @@ impl DiskReservation {
         let released = *held;
         *held = 0;
         let _ = self.budget.remove(released);
-        let _ = self.budget.reconcile_admissions(self.budget.used());
+        let _ = self.budget.reconcile_admissions();
     }
 
     /// Returns the bytes this reservation still holds.

@@ -7,6 +7,7 @@ pub mod cron;
 pub mod effects;
 pub mod kv;
 pub mod maintenance;
+pub mod maintenance_readiness;
 pub mod queue;
 pub mod sql;
 pub mod workflow;

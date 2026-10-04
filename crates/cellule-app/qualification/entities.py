@@ -330,6 +330,32 @@ def verify_root_coverage(roots: list[dict], positions: dict[int, list[int]],
         assert int(row["root_sequence"]) >= max(positions[entity]), "published root does not cover writes"
 
 
+def verify_root_barrier(control: Path, prefix: str, nodes: int, roots: list[dict],
+                        positions: dict[int, list[int]], windows: list[dict]) -> dict:
+    metadata, = rows(control / f"{prefix}-root-barrier-{nodes}.tsv")
+    cells = nodes * CELLS_PER_NODE
+    assert int(metadata["nodes"]) == nodes and int(metadata["cells"]) == cells, "root barrier roster changed"
+    assert int(metadata["limit_us"]) == CAPACITY_DRAIN_GRACE_US, "root barrier budget changed"
+    elapsed_us, reads = int(metadata["elapsed_us"]), int(metadata["reads"])
+    assert 0 <= elapsed_us < CAPACITY_DRAIN_GRACE_US, "root barrier exceeded original budget"
+    assert reads >= cells and reads % cells == 0, "root barrier did not traverse the complete roster"
+    started, ended = int(metadata["started_boot_ms"]), int(metadata["ended_boot_ms"])
+    last_window = max(window["ended_boot_ms"] for window in windows if window["nodes"] == nodes)
+    assert started >= last_window and ended >= started, "root barrier preceded accepted client work"
+    # /proc/uptime has 10ms resolution. Bound the difference by that bucket
+    # plus the measured clock reads enclosed by the driver's elapsed timer.
+    clock_read_us = int(metadata["clock_read_us"])
+    assert 0 <= clock_read_us <= elapsed_us, "invalid root barrier clock-read duration"
+    assert abs((ended - started) * 1000 - elapsed_us) <= 10_000 + clock_read_us, "root barrier clocks disagree"
+    assert [int(row["entity"]) for row in roots] == list(range(cells))
+    for row in roots:
+        entity = int(row["entity"])
+        assert int(row["minimum_sequence"]) == max(positions[entity]), "root barrier omitted an acknowledged sequence"
+    return dict(nodes=nodes, cells=cells, limit_us=CAPACITY_DRAIN_GRACE_US,
+                elapsed_us=elapsed_us, reads=reads, started_boot_ms=started, ended_boot_ms=ended,
+                clock_read_us=clock_read_us)
+
+
 def verify_follower_roots(control: Path, roots: list[dict], positions: dict[int, list[int]],
                           identity: dict[int, tuple], cells: int) -> dict:
     # A follower proof may precede object publication. Retain the serving
@@ -405,7 +431,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
         ingress = list(map(int, (control / f"{evidence_prefix}-ingress-{stage}.txt").read_text().split()))
         assert len(ingress) == stage and min(ingress) > 0 and max(ingress) - min(ingress) <= 1
     assert len({value[0] for value in identity.values()}) == stages[-1] * CELLS_PER_NODE, "entity targets collapsed"
-    windows, positions, root_recovery = [], {}, None
+    windows, positions, root_barriers, root_recovery = [], {}, [], None
     for nodes in stages:
         if capacity:
             windows.extend(verify_capacity_windows(control, positions))
@@ -414,10 +440,10 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
                 for rate, concurrency in POINTS:
                     windows.append(verify_window(control, nodes, shape, rate, concurrency, len(windows), positions))
         roots = rows(control / f"{evidence_prefix}-roots-{nodes}.tsv")
+        verify_root_coverage(roots, positions, identity, nodes * CELLS_PER_NODE)
+        root_barriers.append(verify_root_barrier(control, evidence_prefix, nodes, roots, positions, windows))
         if follower:
             root_recovery = verify_follower_roots(control, roots, positions, identity, nodes * CELLS_PER_NODE)
-        else:
-            verify_root_coverage(roots, positions, identity, nodes * CELLS_PER_NODE)
         for node in range(nodes):
             assert sum(window["acknowledged_writes_by_node"][node] for window in windows if window["nodes"] == nodes) > 0
     resources = {}
@@ -503,7 +529,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
                     node["published_roots_per_second"] for node in fully_served["node_durability"].values()),
             )
         extra["capacity_curves"] = capacity_curves
-    return dict(integrity_verified=True, windows=windows, resources=resources,
+    return dict(integrity_verified=True, windows=windows, resources=resources, root_barriers=root_barriers,
                 verified_cells=len(positions), acknowledged_writes=sum(map(len, positions.values())),
                 raw_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in sorted(control.glob("*.tsv"))}, **extra)

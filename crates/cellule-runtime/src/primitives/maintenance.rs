@@ -105,6 +105,19 @@ impl PersistedWorkInventory {
     }
 }
 
+/// Durable work class preventing an ordinary idle owner transfer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransferWorkClass {
+    /// A source Effect is due or already leased.
+    Effects,
+    /// A Queue message is ready or leased.
+    Queue,
+    /// A Workflow run, Activity, or timer remains executable.
+    Workflow,
+    /// A Cron schedule has a due tick.
+    Cron,
+}
+
 /// Transfer-only view of durable work that still needs the current owner.
 ///
 /// This deliberately has a separate contract from [`PersistedWorkInventory`]:
@@ -118,6 +131,20 @@ pub(crate) struct TransferWorkInventory {
 impl TransferWorkInventory {
     pub(crate) const fn is_settled(self) -> bool {
         self.bits == 0
+    }
+
+    pub(crate) const fn first_blocker(self) -> Option<TransferWorkClass> {
+        if self.bits & TRANSFER_EFFECTS != 0 {
+            Some(TransferWorkClass::Effects)
+        } else if self.bits & TRANSFER_QUEUE != 0 {
+            Some(TransferWorkClass::Queue)
+        } else if self.bits & TRANSFER_WORKFLOW != 0 {
+            Some(TransferWorkClass::Workflow)
+        } else if self.bits & TRANSFER_CRON != 0 {
+            Some(TransferWorkClass::Cron)
+        } else {
+            None
+        }
     }
 
     #[cfg(test)]
@@ -557,6 +584,14 @@ mod tests {
         let inventory = inspect_transfer_work(&connection, CatalogRole::Queue, 10).unwrap();
         assert_eq!(inventory.bits(), TRANSFER_EFFECTS | TRANSFER_QUEUE);
         assert!(!inventory.is_settled());
+        assert_eq!(inventory.first_blocker(), Some(TransferWorkClass::Effects));
+        connection.execute("DELETE FROM sys_effects", []).unwrap();
+        assert_eq!(
+            inspect_transfer_work(&connection, CatalogRole::Queue, 10)
+                .unwrap()
+                .first_blocker(),
+            Some(TransferWorkClass::Queue)
+        );
     }
 
     #[test]

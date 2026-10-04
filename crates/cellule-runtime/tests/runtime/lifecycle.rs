@@ -52,8 +52,11 @@ use crate::support::fixtures::{mutation_identity_window, now_ms};
 pub mod durability;
 pub mod execution;
 pub mod idle;
+pub mod inventory;
+pub mod maintenance;
 pub mod ownership;
 pub mod read_replica;
+pub mod receiver;
 pub mod residency;
 
 #[derive(Debug)]
@@ -64,6 +67,7 @@ pub(super) struct PausingStore {
     failing: AtomicBool,
     transient_put_failures: AtomicUsize,
     lost_update_response: AtomicBool,
+    acquisition_fault: AtomicUsize,
     failed: AtomicBool,
     blocked: AtomicBool,
     released: AtomicBool,
@@ -90,6 +94,7 @@ impl PausingStore {
             failing: AtomicBool::new(false),
             transient_put_failures: AtomicUsize::new(0),
             lost_update_response: AtomicBool::new(false),
+            acquisition_fault: AtomicUsize::new(0),
             failed: AtomicBool::new(false),
             blocked: AtomicBool::new(false),
             released: AtomicBool::new(false),
@@ -191,6 +196,20 @@ impl ObjectStore for PausingStore {
         payload: PutPayload,
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
+        let acquisition_fault = if location.as_ref().contains("/acquisitions/") {
+            self.acquisition_fault.swap(0, Ordering::AcqRel)
+        } else {
+            0
+        };
+        if acquisition_fault == 1 {
+            return Err(object_store::Error::PermissionDenied {
+                path: location.to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected acquisition metadata failure",
+                )),
+            });
+        }
         if self
             .transient_put_failures
             .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
@@ -230,6 +249,15 @@ impl ObjectStore for PausingStore {
             }
         }
         let result = self.inner.put_opts(location, payload, options).await?;
+        if acquisition_fault == 2 {
+            return Err(object_store::Error::PermissionDenied {
+                path: location.to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "acquisition metadata response lost after commit",
+                )),
+            });
+        }
         if update && self.lost_update_response.swap(false, Ordering::AcqRel) {
             return Err(object_store::Error::Generic {
                 store: "pausing-store",
@@ -355,8 +383,9 @@ impl NodeLogAuthority for TestNodeAuthority {
 
     fn close<'a>(
         &'a self,
-        barrier: &'a NodeLogRotationBarrier,
+        retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
     ) -> futures_util::future::BoxFuture<'a, cellule_runtime::Result<()>> {
+        let barrier = retirement.barrier();
         Box::pin(async move {
             self.closes.lock().unwrap().push(barrier.log_epoch());
             Ok(())
@@ -534,7 +563,7 @@ pub(super) async fn fence_log_session(
         .unwrap();
     directory
         .create(
-            signed(member, "https://follower.internal:8081", 10_000, 20_000),
+            signed(member, "https://follower.internal:8081", 1, 20_000),
             2,
         )
         .await
@@ -550,7 +579,7 @@ pub(super) async fn fence_log_session(
     if claimant != member {
         directory
             .create(
-                signed(claimant, "https://claimant.internal:8081", 10_000, 20_000),
+                signed(claimant, "https://claimant.internal:8081", 1, 20_000),
                 3,
             )
             .await

@@ -27,7 +27,9 @@ use crate::node::log::NodeLogRotationBarrier;
 use crate::node::log_state::{NodeLogPhase, NodeLogStatus, NodeRecoveryClaim};
 use crate::{Error, Result};
 
-const MAX_NODE_BYTES: u64 = 64 * 1024;
+/// Canonical byte bound shared by signed advertisements and session tombstones.
+/// Collectors can use it to admit their bounded retained node observations.
+pub const MAX_NODE_BYTES: u64 = 64 * 1024;
 const MAX_ENDPOINT_BYTES: usize = 512;
 const MAX_FAILURE_DOMAIN_BYTES: usize = 253;
 const MAX_MODULES: usize = 128;
@@ -44,6 +46,7 @@ const PLACEMENT_SIGNING_DOMAIN: &[u8] = b"crab.node-placement.v1\0";
 const NODE_LOG_SELECTION_DOMAIN: &[u8] = b"crab.node-log.member.v1\0";
 const RECOVERY_CANDIDATE_ROTATION_DOMAIN: &[u8] = b"crab.node-recovery-candidate.v1\0";
 const PLACEMENT_SCHEMA_VERSION: u32 = 2;
+const OPERATIONAL_PLACEMENT_SCHEMA_VERSION: u32 = 3;
 
 /// Current private follower-log wire and persistence protocol.
 pub const NODE_LOG_PROTOCOL_VERSION: u32 = 1;
@@ -51,8 +54,16 @@ pub use advertisement::{
     FencedNodeSession, NodeAdvertisement, NodeTakeoverProof, SealedNodeLog,
     VersionedNodeAdvertisement,
 };
-pub use capacity::{NodeCapacity, NodeFailureDomain, NodePlacementCapacity};
-pub use directory::{EnrolledPeerVerifier, NodeDirectory};
+pub use capacity::{
+    NodeCapacity, NodeFailureDomain, NodeMode, NodeOperationalSample, NodePlacementCapacity,
+    NodePressure,
+};
+pub use directory::{
+    EnrolledPeerVerifier, FollowerLogObservation, LogInventoryCursor, LogInventoryPage,
+    LogLeaderState, NodeDirectory, NodeLogEnrollmentAttempt, NodeLogEnrollmentProof,
+    NodeLogEnrollmentRefusalProof, NodeSessionClosure, NodeSessionFence, NodeSessionRecovery,
+    PreparedNodeLogEnrollment, RecoveredLogRetirementAuthorization,
+};
 mod advertisement;
 mod capacity;
 mod directory;

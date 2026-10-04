@@ -210,6 +210,11 @@ async fn http_command_publishes_receipt_replays_exact_retry_and_refuses_changed_
     fixture.runtime.shutdown().await.unwrap();
 }
 
+#[test]
+fn http_error_stays_small_for_handler_results() {
+    assert!(std::mem::size_of::<HttpError>() <= 4 * std::mem::size_of::<usize>());
+}
+
 #[tokio::test]
 async fn runtime_errors_have_safe_bodies_statuses_and_original_sources() {
     let cases = [

@@ -58,7 +58,9 @@ pub(super) fn fence_active(active: &mut ActiveCell) {
     active.coordination.step(CoordinationInput::Fence);
     fence_admission(&active.admission);
     if let Some(transfer) = active.transfer.take() {
-        let _ = transfer.reply.send(Err(Error::Fenced));
+        transfer
+            .reply
+            .refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
     }
     active.inventory_refreshing = false;
     while let Some(publication) = active.publications.pop_front() {
@@ -104,6 +106,7 @@ pub(super) fn new_cell_admission(owner_fence: crate::control::OwnerFence) -> Arc
         requests: Arc::new(Semaphore::new(CELL_REQUESTS)),
         bytes: Arc::new(Semaphore::new(CELL_BYTES)),
         draining: AtomicBool::new(false),
+        maintenance_quiescing: AtomicBool::new(false),
         fenced: AtomicBool::new(false),
     })
 }

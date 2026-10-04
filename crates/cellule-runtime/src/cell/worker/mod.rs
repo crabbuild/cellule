@@ -26,15 +26,16 @@ use crate::fleet::resource::{
 };
 use crate::identity::{CellId, Digest};
 use crate::primitives::effects::InboxDelivery;
-use crate::primitives::maintenance::PersistedWorkInventory;
 use crate::primitives::maintenance::TransferWorkInventory;
 use crate::registry::MigrationPlan;
 use crate::{Error, Result};
 
+mod inventory;
 mod run;
+pub(crate) use inventory::WorkerCellInventory;
 
 const MAX_WORKERS: usize = 16;
-const MAX_ACTIVE_CELLS: usize = 10_000;
+pub(crate) const MAX_ACTIVE_CELLS: usize = 10_000;
 const WORKER_QUEUE: usize = 256;
 const DEFAULT_PAGE_IO_DEADLINE: Duration = Duration::from_secs(30);
 
@@ -289,6 +290,10 @@ impl SqlWorkerPool {
     }
 
     /// Opens and verifies one exact immutable root on its assigned SQL worker.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "restore transfers both lasting Cell and optional prepaid job ownership"
+    )]
     pub(crate) async fn activate_restored(
         &self,
         cell: CellId,
@@ -298,22 +303,28 @@ impl SqlWorkerPool {
         schema: u32,
         root: cellule_ltx::RootRef,
         reservation: CellReservation,
+        job: Option<WorkerJobReservation>,
     ) -> Result<()> {
         let (reply, response) = oneshot::channel();
-        self.send(
+        let command = WorkerCommand::ActivateRestored {
             cell,
-            WorkerCommand::ActivateRestored {
-                cell,
-                database: Box::new(database),
-                destination,
-                incarnation,
-                schema,
-                root,
-                reservation,
-                reply,
-            },
-        )
-        .await?;
+            database: Box::new(database),
+            destination,
+            incarnation,
+            schema,
+            root,
+            reservation,
+            reply,
+        };
+        let reservation = match job {
+            Some(reservation) => reservation,
+            None => self.reserve_job(cell).await?,
+        };
+        let command = WorkerCommand::Reserved {
+            command: Box::new(command),
+            reservation,
+        };
+        self.send(cell, command).await?;
         receive(response).await
     }
 
@@ -570,17 +581,6 @@ impl SqlWorkerPool {
         receive(response).await
     }
 
-    pub(crate) async fn persisted_work_inventory(
-        &self,
-        cell: CellId,
-        role: CatalogRole,
-    ) -> Result<PersistedWorkInventory> {
-        let (reply, response) = oneshot::channel();
-        self.send_worker_job(cell, WorkerCommand::PersistedWork { cell, role, reply })
-            .await?;
-        receive(response).await
-    }
-
     pub(crate) async fn transfer_work_inventory(
         &self,
         cell: CellId,
@@ -594,6 +594,28 @@ impl SqlWorkerPool {
                 cell,
                 role,
                 now_ms,
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
+    pub(crate) async fn fleet_inventory(
+        &self,
+        cell: CellId,
+        role: CatalogRole,
+        now_ms: i64,
+        deadline: SqlDeadline,
+    ) -> Result<WorkerCellInventory> {
+        let (reply, response) = oneshot::channel();
+        self.send_worker_job(
+            cell,
+            WorkerCommand::FleetInventory {
+                cell,
+                role,
+                now_ms,
+                deadline,
                 reply,
             },
         )
@@ -934,6 +956,26 @@ impl SqlWorkerPool {
         self.job_reservation(permit.map_err(|_| Error::RuntimeClosed)?)
     }
 
+    /// Holds the incoming Cell's actual affine worker without waiting.
+    pub(crate) fn try_reserve_job(&self, cell: CellId) -> Result<WorkerJobReservation> {
+        let permits = {
+            let lifecycle = self
+                .inner
+                .lifecycle
+                .lock()
+                .map_err(|_| Error::RuntimeClosed)?;
+            if lifecycle.closing {
+                return Err(Error::RuntimeClosed);
+            }
+            Arc::clone(&self.inner.worker_permits[worker_index(cell, self.inner.worker_count)])
+        };
+        let permit = permits.try_acquire_owned().map_err(|error| match error {
+            tokio::sync::TryAcquireError::Closed => Error::RuntimeClosed,
+            tokio::sync::TryAcquireError::NoPermits => Error::Capacity("incoming Cell worker"),
+        })?;
+        self.job_reservation(permit)
+    }
+
     async fn reserve_job(&self, cell: CellId) -> Result<WorkerJobReservation> {
         let worker_permits = {
             let lifecycle = self
@@ -977,6 +1019,13 @@ impl SqlWorkerPool {
     }
 
     pub(crate) fn reserve_activation(&self) -> Result<CellReservation> {
+        self.reserve_activation_cost(ResourceCost::active_cell())
+    }
+
+    pub(crate) fn reserve_activation_cost(&self, cost: ResourceCost) -> Result<CellReservation> {
+        if cost.active_cells() != 1 {
+            return Err(Error::Capacity("activation must reserve exactly one Cell"));
+        }
         let lifecycle = self
             .inner
             .lifecycle
@@ -988,7 +1037,7 @@ impl SqlWorkerPool {
         let reservation = self
             .inner
             .resources
-            .try_reserve(ResourceCost::active_cell())
+            .try_reserve(cost)
             .map_err(|error| match error {
                 Error::Capacity(_) => Error::Capacity("active Cells per node"),
                 error => error,
@@ -1140,16 +1189,18 @@ enum WorkerCommand {
         cell: CellId,
         reply: oneshot::Sender<Result<Option<cellule_ltx::Hydration>>>,
     },
-    PersistedWork {
-        cell: CellId,
-        role: CatalogRole,
-        reply: oneshot::Sender<Result<PersistedWorkInventory>>,
-    },
     TransferWork {
         cell: CellId,
         role: CatalogRole,
         now_ms: i64,
         reply: oneshot::Sender<Result<TransferWorkInventory>>,
+    },
+    FleetInventory {
+        cell: CellId,
+        role: CatalogRole,
+        now_ms: i64,
+        deadline: SqlDeadline,
+        reply: oneshot::Sender<Result<WorkerCellInventory>>,
     },
     Resolve {
         cell: CellId,

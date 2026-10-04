@@ -56,9 +56,9 @@ pub fn register_workflow_activities<M: WorkflowActivityModule>(
     }
     registry.bind_activity_runner::<M>()?;
     registry.bind_command::<WorkflowActivityClaimCommand<M>>()?;
-    registry.bind_command::<WorkflowActivityCompleteCommand<M>>()?;
-    registry.bind_command::<WorkflowActivityExtendCommand<M>>()?;
-    registry.bind_query::<WorkflowActivityValidateQuery<M>>()
+    registry.bind_lease_command::<WorkflowActivityCompleteCommand<M>>()?;
+    registry.bind_lease_command::<WorkflowActivityExtendCommand<M>>()?;
+    registry.bind_lease_query::<WorkflowActivityValidateQuery<M>>()
 }
 
 /// Registers one native handler for a module definition and activity type.

@@ -181,11 +181,15 @@ def check_kernel(crate: Path) -> list[str]:
     if crate.name != "cellule-runtime":
         return []
     problems = []
-    for file in (crate / "src/coordination").rglob("*.rs"):
+    sources = [
+        *(crate / "src/coordination").rglob("*.rs"),
+        *(crate / "src/fleet/operations").rglob("*.rs"),
+    ]
+    for file in sources:
         text = COMMENT.sub("", file.read_text())
         for label, pattern in SANS_IO:
             if pattern.search(text):
-                problems.append(f"{file.relative_to(ROOT)}: pure coordination kernel uses {label}")
+                problems.append(f"{file.relative_to(ROOT)}: pure decision kernel uses {label}")
     return problems
 
 

@@ -2,15 +2,70 @@
 
 use super::*;
 
+use cellule_runtime::cell::actor::{AcquisitionObservation, AcquisitionObserver};
+
+#[derive(Default)]
+struct RecordedAcquisition {
+    before: std::sync::Mutex<Vec<cellule_runtime::control::Control>>,
+    restored: std::sync::Mutex<Vec<cellule_runtime::control::Control>>,
+    fail_at: u8,
+}
+impl AcquisitionObserver for RecordedAcquisition {
+    fn before_claim<'a>(
+        &'a self,
+        input: &'a cellule_runtime::control::Control,
+    ) -> AcquisitionObservation<'a> {
+        Box::pin(async move {
+            self.before.lock().unwrap().push(input.clone());
+            if self.fail_at == 1 {
+                return Err(cellule_runtime::Error::Peer(
+                    "injected lost recovery input recording reply",
+                ));
+            }
+            Ok(())
+        })
+    }
+    fn before_activation<'a>(
+        &'a self,
+        input: &'a cellule_runtime::control::Control,
+        restored: &'a cellule_runtime::control::Control,
+    ) -> AcquisitionObservation<'a> {
+        Box::pin(async move {
+            assert_eq!(self.before.lock().unwrap().last(), Some(input));
+            assert_eq!(restored.state, ControlState::Recovering);
+            assert!(restored.recovery.is_none());
+            self.restored.lock().unwrap().push(restored.clone());
+            if self.fail_at == 2 {
+                return Err(cellule_runtime::Error::Peer(
+                    "injected lost recovered position recording reply",
+                ));
+            }
+            Ok(())
+        })
+    }
+}
+
 #[tokio::test]
 async fn takeover_resumes_pinned_recovery_before_serving() {
-    recover_retained_tail(false).await;
+    recover_retained_tail(false, 0, false).await;
 }
 #[tokio::test]
 async fn recovery_seals_already_rooted_tail_without_an_empty_manifest() {
-    recover_retained_tail(true).await;
+    recover_retained_tail(true, 0, false).await;
 }
-async fn recover_retained_tail(rooted: bool) {
+#[tokio::test]
+async fn recovery_recording_failure_before_cas_preserves_attached_tail_and_owner() {
+    recover_retained_tail(false, 1, false).await;
+}
+#[tokio::test]
+async fn recovery_recording_failure_before_admission_keeps_materialized_root_recoverable() {
+    recover_retained_tail(false, 2, false).await;
+}
+#[tokio::test]
+async fn exact_suffix_survives_an_interrupted_claim_without_acquisition_metadata() {
+    recover_retained_tail(false, 0, true).await;
+}
+async fn recover_retained_tail(rooted: bool, fail_at: u8, interrupted: bool) {
     let fixture = fixture_for(b"recovered-takeover");
     let handle = activate(&fixture, 16 * 1024 * 1024).await;
     drop(handle);
@@ -222,30 +277,174 @@ async fn recover_retained_tail(rooted: bool) {
         .await
         .unwrap();
     assert_eq!(repeated.sealed, completed.sealed);
-    let attached = repeated.controls.into_iter().next().unwrap();
-    let takeover = repeated.takeover;
+    let manifest_digest = repeated.sealed.log().recovery_manifest().unwrap();
+    let original_inventory = manifests
+        .load_manifest(leader, repeated.sealed.log().epoch(), manifest_digest)
+        .await
+        .unwrap();
+    assert_eq!(original_inventory.cells().len(), 1);
+    assert_eq!(
+        original_inventory.cells()[0].application,
+        fixture.target.application()
+    );
+    assert_eq!(original_inventory.cells()[0].cell, fixture.target.cell_id());
+    assert_eq!(
+        original_inventory.cells()[0].recovery,
+        *repeated.controls[0].value().recovery.as_ref().unwrap()
+    );
+    let mut attached = repeated.controls.into_iter().next().unwrap();
+    let original_owner = attached.value().clone();
+    let mut takeover = repeated.takeover;
+    let mut successor = successor;
+    if interrupted {
+        // The real ownership CAS committed, then its acquisition was interrupted
+        // before metadata/materialization. Use the ordinary authority transition,
+        // never fabricate a successful acquisition record or prepared root.
+        attached = authority
+            .transition(
+                &attached,
+                attached
+                    .value()
+                    .takeover(Owner {
+                        session: successor,
+                        endpoint: "https://interrupted.internal".into(),
+                    })
+                    .unwrap(),
+                Transition::Takeover,
+            )
+            .await
+            .unwrap();
+        assert!(
+            authority
+                .acquisition_record(
+                    original_owner.cell,
+                    original_owner.incarnation,
+                    attached.value().epoch
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let next = SessionId::from_bytes([84; 16]);
+        directory
+            .create(
+                cellule_runtime::node::NodeAdvertisement::sign(
+                    NodeId::from_bytes(*next.as_bytes()),
+                    next,
+                    "https://later.internal".into(),
+                    Digest::from_bytes([90; 32]),
+                    Digest::from_bytes([94; 32]),
+                    Digest::from_bytes([91; 32]),
+                    Digest::from_bytes([92; 32]),
+                    &ed25519_dalek::SigningKey::from_bytes(&[93; 32]),
+                    1,
+                    20_000,
+                    40_000,
+                    vec![Digest::from_bytes([95; 32])],
+                    vec![1],
+                    cellule_runtime::node::NodeFailureDomain::default(),
+                    cellule_runtime::node::NodeCapacity {
+                        free_memory_bytes: 1,
+                        free_disk_bytes: 1,
+                        job_credits: 1,
+                        ..cellule_runtime::node::NodeCapacity::default()
+                    },
+                )
+                .unwrap(),
+                20_000,
+            )
+            .await
+            .unwrap();
+        takeover = directory
+            .claim_expired_for_takeover(successor, next, 20_000)
+            .await
+            .unwrap();
+        successor = next;
+    }
     let runtime = CellRuntime::new(
         SqlWorkerPool::new(1, 10).unwrap(),
         16 * 1024 * 1024,
         successor,
     )
     .unwrap();
+    let input = attached.value().clone();
+    let recorder = Arc::new(RecordedAcquisition {
+        fail_at,
+        ..RecordedAcquisition::default()
+    });
     let restored = runtime
-        .takeover_restored(
+        .takeover_restored_observed(
             proof,
             fixture.replica.clone(),
             authority.clone(),
             attached,
             takeover,
-            manifests,
+            manifests.clone(),
             fixture._directory.path().join("recovered-takeover.sqlite"),
             Owner {
                 session: successor,
                 endpoint: "https://recovered-successor.internal:8081".into(),
             },
+            Some(recorder.clone()),
         )
-        .await
-        .unwrap();
+        .await;
+    assert_eq!(
+        recorder.before.lock().unwrap().as_slice(),
+        std::slice::from_ref(&input)
+    );
+    if fail_at != 0 {
+        let error = restored.err().unwrap();
+        assert!(matches!(error, cellule_runtime::Error::Peer(message)
+            if message == if fail_at == 1 { "injected lost recovery input recording reply" }
+                else { "injected lost recovered position recording reply" }));
+        let current = authority
+            .load(fixture.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(runtime.stats().active_cells(), 0);
+        assert_eq!(runtime.stats().worker_jobs(), 0);
+        if fail_at == 1 {
+            assert_eq!(current.value(), &input);
+            assert!(current.value().recovery.is_some());
+            assert!(recorder.restored.lock().unwrap().is_empty());
+            assert!(
+                authority
+                    .acquisition_record(input.cell, input.incarnation, input.epoch + 1)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        } else {
+            let recorded = recorder.restored.lock().unwrap()[0].clone();
+            let retained = authority
+                .acquisition_record(input.cell, input.incarnation, recorded.epoch)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(retained.input(), &input);
+            assert_eq!(retained.materialized(), &recorded);
+            assert_eq!(current.value().state, ControlState::Idle);
+            assert!(current.value().recovery.is_none());
+            assert_eq!(current.value().root, recorded.root);
+            assert_eq!(
+                current.value().root.as_ref().unwrap().commit_sequence,
+                predecessor.commit_sequence + 1
+            );
+            let root = current.value().ltx_root().unwrap();
+            fixture.replica.open_root(&root).await.unwrap();
+        }
+        runtime.shutdown().await.unwrap();
+        return;
+    }
+    let restored = restored.unwrap();
+    let recorded = recorder.restored.lock().unwrap()[0].clone();
+    assert!(input.recovery.is_some() && recorded.recovery.is_none());
+    assert_eq!(recorded.epoch, input.epoch + 1);
+    assert_eq!(
+        recorded.root.as_ref().unwrap().commit_sequence,
+        predecessor.commit_sequence + 1
+    );
 
     assert_eq!(
         restored
@@ -265,6 +464,274 @@ async fn recover_retained_tail(rooted: bool) {
         .unwrap();
     assert_eq!(serving.value().state, ControlState::Serving);
     assert!(serving.value().recovery.is_none());
+    // The original owner remains discoverable after materialization erases
+    // its overlay and a successor serves the acknowledged recovered state.
+    let independent_authority = CellAuthority::new(fixture.layout.clone());
+    let owner_history = independent_authority
+        .owner_history(fixture.target.cell_id(), if interrupted { 3 } else { 2 })
+        .await
+        .unwrap();
+    assert_eq!(
+        owner_history.owners().len(),
+        if interrupted { 3 } else { 2 }
+    );
+    assert_eq!(owner_history.owners()[0], original_owner);
+    if interrupted {
+        assert_eq!(owner_history.owners()[1], input);
+    }
+    assert_eq!(owner_history.current(), serving.value());
+    let acquisition = independent_authority
+        .acquisition_record(input.cell, input.incarnation, recorded.epoch)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acquisition.input(), &input);
+    assert_eq!(acquisition.materialized(), &recorded);
+    let recovered_root = recorded.ltx_root().unwrap();
+    independent_authority
+        .verify_root_prefix(predecessor, recovered_root, &fixture.replica, 16)
+        .await
+        .unwrap();
+    let clock = now_ms();
+    restored
+        .execute(
+            mutation_identity_window(47, clock, clock + 60_000),
+            Digest::from_bytes([47; 32]),
+            clock,
+            64,
+            64,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .await
+        .unwrap();
+    let advanced = authority
+        .load(input.cell)
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    independent_authority
+        .verify_root_prefix(recovered_root, advanced, &fixture.replica, 16)
+        .await
+        .unwrap();
+
+    let required = &original_inventory.cells()[0];
+    let verifier = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        64 << 20,
+        SessionId::from_bytes([83; 16]),
+    )
+    .unwrap();
+    let native = verifier
+        .verify_recovered_prefix(
+            restored.catalog(),
+            &independent_authority,
+            fixture.replica.clone(),
+            required,
+            advanced,
+            16,
+        )
+        .await
+        .unwrap();
+    assert_eq!(native.required().recovery, required.recovery);
+    assert_eq!(native.acquisition_epoch(), recorded.epoch);
+    assert_eq!(native.proof().prefix(), recovered_root);
+    assert_eq!(native.proof().root(), advanced);
+    assert_eq!(verifier.stats().retained_bytes(), 0);
+    // Every original manifest boundary is compared against the canonical input;
+    // a currently valid advanced graph cannot certify a different sealed suffix.
+    for change in 0..16 {
+        let mut wrong = cellule_runtime::recovery::manifest::PinnedRecoveryCell {
+            application: required.application,
+            cell: required.cell,
+            incarnation: required.incarnation,
+            cell_epoch: required.cell_epoch,
+            recovery: required.recovery.clone(),
+        };
+        match change {
+            0 => wrong.application = ApplicationId::from_bytes([99; 16]),
+            1 => wrong.cell = cellule_runtime::identity::CellId::from_bytes([99; 32]),
+            2 => wrong.incarnation = IncarnationId::from_bytes([99; 16]),
+            3 => wrong.cell_epoch += 1,
+            4 => wrong.recovery.leader_session = SessionId::from_bytes([99; 16]),
+            5 => wrong.recovery.log_epoch += 1,
+            6 => wrong.recovery.manifest_digest = Digest::from_bytes([99; 32]),
+            7 => wrong.recovery.first_node_sequence += 1,
+            8 => wrong.recovery.last_node_sequence += 1,
+            9 => wrong.recovery.predecessor.digest = Digest::from_bytes([99; 32]),
+            10 => wrong.recovery.predecessor.txid += 1,
+            11 => wrong.recovery.predecessor.checksum ^= 1,
+            12 => wrong.recovery.predecessor.commit_sequence += 1,
+            13 => wrong.recovery.final_txid += 1,
+            14 => wrong.recovery.final_checksum ^= 1,
+            _ => wrong.recovery.final_commit_sequence += 1,
+        }
+        assert!(
+            verifier
+                .verify_recovered_prefix(
+                    restored.catalog(),
+                    &independent_authority,
+                    fixture.replica.clone(),
+                    &wrong,
+                    advanced,
+                    16,
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(verifier.stats().retained_bytes(), 0);
+    }
+    // Shared runtime admission refuses before origin I/O without lending the
+    // active writer's smaller node envelope to independent verification.
+    assert!(matches!(
+        runtime
+            .verify_recovered_prefix(
+                restored.catalog(),
+                &independent_authority,
+                fixture.replica.clone(),
+                required,
+                advanced,
+                16,
+            )
+            .await,
+        Err(cellule_runtime::Error::Capacity(_))
+    ));
+    let acquisition_path = fixture.layout.acquisition_record_path(
+        input.cell.as_bytes(),
+        input.incarnation.as_bytes(),
+        recorded.epoch,
+    );
+    let (acquisition_bytes, _) = fixture
+        .layout
+        .store()
+        .get_with_etag(&acquisition_path)
+        .await
+        .unwrap();
+    fixture
+        .layout
+        .store()
+        .delete(&acquisition_path)
+        .await
+        .unwrap();
+    assert!(matches!(
+        verifier
+            .verify_recovered_prefix(
+                restored.catalog(),
+                &independent_authority,
+                fixture.replica.clone(),
+                required,
+                advanced,
+                16,
+            )
+            .await,
+        Err(cellule_runtime::Error::AcquisitionHistoryIncomplete { .. })
+    ));
+    assert_eq!(verifier.stats().retained_bytes(), 0);
+    fixture
+        .layout
+        .store()
+        .create_strict(
+            &acquisition_path,
+            Bytes::from_static(b"corrupt-acquisition"),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        verifier
+            .verify_recovered_prefix(
+                restored.catalog(),
+                &independent_authority,
+                fixture.replica.clone(),
+                required,
+                advanced,
+                16,
+            )
+            .await,
+        Err(cellule_runtime::Error::Control(_))
+    ));
+    assert_eq!(verifier.stats().retained_bytes(), 0);
+    fixture
+        .layout
+        .store()
+        .delete(&acquisition_path)
+        .await
+        .unwrap();
+    fixture
+        .layout
+        .store()
+        .create_strict(&acquisition_path, acquisition_bytes)
+        .await
+        .unwrap();
+    let root_path = fixture.layout.incarnation_object_path(
+        &advanced.cell,
+        &advanced.incarnation,
+        &advanced.digest,
+        cellule_ltx::CellObjectKind::Root,
+    );
+    let (root_bytes, _) = fixture
+        .layout
+        .store()
+        .get_with_etag(&root_path)
+        .await
+        .unwrap();
+    fixture.layout.store().delete(&root_path).await.unwrap();
+    assert!(matches!(
+        verifier
+            .verify_recovered_prefix(
+                restored.catalog(),
+                &independent_authority,
+                fixture.replica.clone(),
+                required,
+                advanced,
+                16,
+            )
+            .await,
+        Err(cellule_runtime::Error::Ltx(_))
+    ));
+    assert_eq!(verifier.stats().retained_bytes(), 0);
+    fixture
+        .layout
+        .store()
+        .create_strict(&root_path, root_bytes)
+        .await
+        .unwrap();
+    verifier
+        .verify_recovered_prefix(
+            restored.catalog(),
+            &independent_authority,
+            fixture.replica.clone(),
+            required,
+            advanced,
+            16,
+        )
+        .await
+        .unwrap();
+    assert_eq!(verifier.stats().retained_bytes(), 0);
+    verifier.shutdown().await.unwrap();
+
+    // Materialization clears the control's overlay pointer. The canonical
+    // sealed manifest still retains the original scope after adapter restart.
+    let reconstructed = cellule_runtime::recovery::manifest::RecoveryManifestStore::new(
+        fixture.layout.clone(),
+        Limits::default(),
+    );
+    let retained_inventory = reconstructed
+        .load_manifest(leader, 1, manifest_digest)
+        .await
+        .unwrap();
+    assert_eq!(
+        retained_inventory.cells()[0].recovery,
+        original_inventory.cells()[0].recovery
+    );
+    assert_eq!(
+        retained_inventory.cells()[0].incarnation,
+        serving.value().incarnation
+    );
     assert_eq!(
         serving.value().root.as_ref().unwrap().commit_sequence,
         predecessor.commit_sequence + 1
@@ -317,6 +784,7 @@ async fn unchanged_unpublished_owner_is_taken_over_then_bootstrapped() {
         session,
     )
     .unwrap();
+    let original_input = stale.value().clone();
     let restored = runtime
         .takeover_unpublished(
             proof,
@@ -360,6 +828,23 @@ async fn unchanged_unpublished_owner_is_taken_over_then_bootstrapped() {
         .unwrap();
     assert_eq!(owned.value().epoch, 2);
     assert_eq!(owned.value().owner.as_ref().unwrap().session, session);
+    let independent_authority = CellAuthority::new(fixture.layout.clone());
+    let owner_history = independent_authority
+        .owner_history(fixture.target.cell_id(), 2)
+        .await
+        .unwrap();
+    assert_eq!(owner_history.owners()[0], original_input);
+    assert!(owner_history.owners()[0].root.is_none());
+    assert_eq!(owner_history.current(), owned.value());
+    let acquisition = independent_authority
+        .acquisition_record(original_input.cell, original_input.incarnation, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acquisition.input(), &original_input);
+    assert!(acquisition.materialized().root.is_none());
+    assert_eq!(acquisition.materialized().owner, owned.value().owner);
+
     restored.drain().await.unwrap();
 }
 #[tokio::test]

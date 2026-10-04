@@ -44,6 +44,7 @@ Query
 QueueModule
 QueueNamespace
 Receipt
+ReadReplicaSource
 Registry
 RegistryBuilder
 Resolution

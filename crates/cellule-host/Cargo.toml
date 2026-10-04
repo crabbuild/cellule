@@ -8,6 +8,7 @@ rust-version.workspace = true
 description = "Provider-neutral Cell node lifecycle facade"
 
 [dependencies]
+blake3.workspace = true
 cellule-app.workspace = true
 cellule-runtime.workspace = true
 futures-util.workspace = true
@@ -17,5 +18,14 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+bytes.workspace = true
+cellule-store.workspace = true
+ed25519-dalek.workspace = true
+object_store.workspace = true
+rusqlite.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+
+[[example]]
+name = "fleet_operations"
+path = "minion/main.rs"

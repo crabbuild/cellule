@@ -7,6 +7,7 @@ mod admission;
 mod group;
 mod proofs;
 mod recovery;
+mod retirement;
 
 #[derive(Default)]
 pub(super) struct RecordingResponses(

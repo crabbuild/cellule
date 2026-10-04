@@ -38,7 +38,7 @@ pub(crate) fn unhex<const N: usize>(text: &str) -> Result<[u8; N], Error> {
         }
     };
     let mut bytes = [0; N];
-    for (i, pair) in text.as_bytes().chunks_exact(2).enumerate() {
+    for (i, pair) in text.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         bytes[i] = digit(pair[0]) * 16 + digit(pair[1]);
     }
     Ok(bytes)

@@ -17,7 +17,9 @@ mod cache;
 mod compaction;
 pub(crate) mod directory;
 mod merge;
+mod preparation;
 mod prepare;
+pub use preparation::{RootPreparation, RootPreparationFuture, RootPreparationMetadata};
 mod read_only;
 mod restore;
 pub(crate) mod root;
@@ -211,6 +213,15 @@ impl RecoveryOverlay {
 }
 
 impl PreparedRoot {
+    /// Returns the exact native derivation after all immutable uploads completed.
+    #[must_use]
+    pub fn preparation(&self) -> RootPreparation {
+        RootPreparation {
+            root: self.root(),
+            predecessor: self.predecessor,
+        }
+    }
+
     /// Returns the exact root that was prepared.
     #[must_use]
     pub fn root(&self) -> RootRef {
@@ -695,6 +706,10 @@ pub struct CellReplica {
     limits: Limits,
     host: Host,
     cost: Arc<PublicationLedger>,
+    root_metadata: Option<Arc<dyn RootPreparationMetadata>>,
+    // Set only by verified representation-only compaction composition. It
+    // follows this one preparation and never survives in a prepared read view.
+    preparation_predecessor: Option<RootRef>,
 }
 
 impl CellReplica {
@@ -715,6 +730,8 @@ impl CellReplica {
             limits: limits.validate()?,
             host: Host::default(),
             cost: Arc::new(PublicationLedger::default()),
+            root_metadata: None,
+            preparation_predecessor: None,
         })
     }
 
@@ -722,6 +739,13 @@ impl CellReplica {
     #[must_use]
     pub const fn limits(&self) -> Limits {
         self.limits
+    }
+
+    /// Returns the fixed Cell and incarnation binding of every immutable operation.
+    /// This scope provides no authority or selected root.
+    #[must_use]
+    pub const fn scope(&self) -> ([u8; 32], [u8; 16]) {
+        (self.cell, self.incarnation)
     }
 
     /// Returns the cumulative immutable publication cost this replica paid.
@@ -743,6 +767,14 @@ impl CellReplica {
     #[must_use]
     pub fn take_publication_cost(&self) -> PublicationCost {
         self.cost.take()
+    }
+
+    /// Joins caller-owned verified-derivation metadata with root uploads.
+    /// This replaces the one metadata facility; it supplies no authority policy.
+    #[must_use]
+    pub fn with_root_metadata(mut self, metadata: Arc<dyn RootPreparationMetadata>) -> Self {
+        self.root_metadata = Some(metadata);
+        self
     }
 
     /// Selects the caller's bounded I/O and blocking execution facilities.

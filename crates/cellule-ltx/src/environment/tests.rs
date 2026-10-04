@@ -121,6 +121,231 @@ fn disk_budget_reservations_resize_and_release_exact_bytes() {
     assert_eq!(budget.available(), 10);
 }
 
+#[test]
+fn prepared_disk_budget_divides_parent_credit_without_double_charging() {
+    let parent = DiskBudget::new(10);
+    let child = parent.try_reserve(10).unwrap().into_budget();
+    assert_eq!(parent.used(), 10);
+    assert_eq!(child.capacity(), 10);
+    assert_eq!(child.used(), 0);
+    let first = child.try_reserve(6).unwrap();
+    let second = child.try_reserve(4).unwrap();
+    assert_eq!(parent.used(), 10);
+    assert_eq!(child.used(), 10);
+    assert!(child.try_reserve(1).is_err());
+    assert!(parent.try_reserve(1).is_err());
+    first.resize(3).unwrap();
+    assert_eq!(child.used(), 7);
+    assert_eq!(parent.used(), 10);
+    drop(second);
+    drop(child);
+    // The live child token retains the prepared envelope after its caller exits.
+    assert_eq!(parent.used(), 10);
+    drop(first);
+    assert_eq!(parent.used(), 0);
+}
+
+#[test]
+fn prepared_disk_budget_releases_unused_credit_and_accounts_later_growth() {
+    let parent = DiskBudget::new(10);
+    let child = parent.try_reserve(10).unwrap().into_budget();
+    let file = child.try_reserve(6).unwrap();
+    child.finish_preparation().unwrap();
+    assert_eq!(parent.used(), 6);
+    child.finish_preparation().unwrap();
+    let competing = parent.try_reserve(4).unwrap();
+    assert!(file.try_grow(1).is_err());
+    assert_eq!(file.bytes(), 6);
+    assert_eq!(child.used(), 6);
+    assert_eq!(parent.used(), 10);
+    drop(competing);
+    file.try_grow(4).unwrap();
+    assert_eq!(parent.used(), 10);
+    assert_eq!(child.used(), 10);
+    assert!(file.try_grow(1).is_err());
+    file.resize(2).unwrap();
+    assert_eq!(parent.used(), 2);
+    assert_eq!(child.used(), 2);
+    drop(file);
+    assert_eq!(parent.used(), 0);
+    assert_eq!(child.used(), 0);
+    assert!(parent.finish_preparation().is_err());
+}
+
+#[test]
+fn prepared_disk_budget_retains_parent_admission_and_refuses_rebinding() {
+    #[derive(Default)]
+    struct Recorded(std::sync::atomic::AtomicU64);
+    impl DiskBudgetAdmission for Recorded {
+        fn reconcile(&self, bytes: u64) -> crate::Result<()> {
+            self.0.store(bytes, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let parent = DiskBudget::new(10);
+    let admission = Arc::new(Recorded::default());
+    parent.install_admission(admission.clone()).unwrap();
+    let child = parent.try_reserve(10).unwrap().into_budget();
+    let file = child.try_reserve(3).unwrap();
+    assert_eq!(admission.0.load(Ordering::SeqCst), 10);
+    assert!(child.install_admission(admission.clone()).is_err());
+    child.finish_preparation().unwrap();
+    assert_eq!(admission.0.load(Ordering::SeqCst), 3);
+    file.resize(7).unwrap();
+    assert_eq!(admission.0.load(Ordering::SeqCst), 7);
+    drop(file);
+    assert_eq!(admission.0.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn prepared_disk_budget_nested_envelopes_keep_each_parent_bound() {
+    let parent = DiskBudget::new(12);
+    let child = parent.try_reserve(10).unwrap().into_budget();
+    let grandchild = child.try_reserve(8).unwrap().into_budget();
+    let file = grandchild.try_reserve(4).unwrap();
+    grandchild.finish_preparation().unwrap();
+    assert_eq!(grandchild.used(), 4);
+    assert_eq!(child.used(), 4);
+    assert_eq!(parent.used(), 10);
+    child.finish_preparation().unwrap();
+    assert_eq!(parent.used(), 4);
+    file.resize(8).unwrap();
+    assert_eq!(parent.used(), 8);
+    assert!(file.resize(9).is_err());
+    assert_eq!(parent.used(), 8);
+    drop(file);
+    assert_eq!(parent.used(), 0);
+}
+
+#[test]
+fn prepared_disk_budget_concurrent_children_keep_exact_parent_accounting() {
+    let parent = DiskBudget::new(16);
+    let child = parent.try_reserve(16).unwrap().into_budget();
+    let admitted = Arc::new(std::sync::Barrier::new(9));
+    let release = Arc::new(std::sync::Barrier::new(9));
+    std::thread::scope(|threads| {
+        for _ in 0..8 {
+            let child = child.clone();
+            let admitted = admitted.clone();
+            let release = release.clone();
+            threads.spawn(move || {
+                let file = child.try_reserve(1).unwrap();
+                admitted.wait();
+                release.wait();
+                file.resize(2).unwrap();
+            });
+        }
+        admitted.wait();
+        assert_eq!(child.used(), 8);
+        assert_eq!(parent.used(), 16);
+        child.finish_preparation().unwrap();
+        assert_eq!(parent.used(), 8);
+        release.wait();
+    });
+    assert_eq!(child.used(), 0);
+    assert_eq!(parent.used(), 0);
+}
+
+#[test]
+fn prepared_disk_budget_zero_credit_and_overflow_fail_without_parent_leaks() {
+    let parent = DiskBudget::new(u64::MAX);
+    let zero = parent.try_reserve(0).unwrap().into_budget();
+    assert!(zero.try_reserve(1).is_err());
+    zero.finish_preparation().unwrap();
+    assert_eq!(parent.used(), 0);
+    let child = parent.try_reserve(u64::MAX).unwrap().into_budget();
+    let file = child.try_reserve(u64::MAX).unwrap();
+    assert!(file.try_grow(1).is_err());
+    assert_eq!(parent.used(), u64::MAX);
+    child.finish_preparation().unwrap();
+    drop(file);
+    assert_eq!(parent.used(), 0);
+}
+
+#[test]
+fn prepared_disk_budget_failed_parent_hook_preserves_credit_and_source_error() {
+    struct Refusing(AtomicBool);
+    impl DiskBudgetAdmission for Refusing {
+        fn reconcile(&self, _bytes: u64) -> crate::Result<()> {
+            if self.0.load(Ordering::SeqCst) {
+                Err(crate::LtxError::Io(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "injected parent admission failure",
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let parent = DiskBudget::new(10);
+    let admission = Arc::new(Refusing(AtomicBool::new(false)));
+    parent.install_admission(admission.clone()).unwrap();
+    let child = parent.try_reserve(10).unwrap().into_budget();
+    let file = child.try_reserve(3).unwrap();
+    admission.0.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        child.finish_preparation(),
+        Err(crate::LtxError::Io(error)) if error.kind() == io::ErrorKind::StorageFull
+    ));
+    assert_eq!(parent.used(), 10);
+    assert_eq!(child.used(), 3);
+    assert_eq!(file.bytes(), 3);
+    admission.0.store(false, Ordering::SeqCst);
+    child.finish_preparation().unwrap();
+    assert_eq!(parent.used(), 3);
+    admission.0.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        file.resize(4),
+        Err(crate::LtxError::Io(error)) if error.kind() == io::ErrorKind::StorageFull
+    ));
+    assert_eq!(parent.used(), 3);
+    assert_eq!(child.used(), 3);
+    assert_eq!(file.bytes(), 3);
+    admission.0.store(false, Ordering::SeqCst);
+    drop(file);
+    assert_eq!(parent.used(), 0);
+}
+
+#[test]
+fn prepared_disk_budget_competing_scopes_reconcile_the_latest_parent_usage() {
+    #[derive(Default)]
+    struct Recorded(std::sync::atomic::AtomicU64);
+    impl DiskBudgetAdmission for Recorded {
+        fn reconcile(&self, bytes: u64) -> crate::Result<()> {
+            self.0.store(bytes, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let parent = DiskBudget::new(16);
+    let admission = Arc::new(Recorded::default());
+    parent.install_admission(admission.clone()).unwrap();
+    for _ in 0..32 {
+        let admitted = Arc::new(std::sync::Barrier::new(9));
+        let release = Arc::new(std::sync::Barrier::new(9));
+        std::thread::scope(|threads| {
+            for _ in 0..8 {
+                let parent = parent.clone();
+                let admitted = admitted.clone();
+                let release = release.clone();
+                threads.spawn(move || {
+                    let child = parent.try_reserve(2).unwrap().into_budget();
+                    let file = child.try_reserve(1).unwrap();
+                    child.finish_preparation().unwrap();
+                    admitted.wait();
+                    release.wait();
+                    drop(file);
+                });
+            }
+            admitted.wait();
+            assert_eq!(parent.used(), 8);
+            assert_eq!(admission.0.load(Ordering::SeqCst), 8);
+            release.wait();
+        });
+        assert_eq!(parent.used(), 0);
+        assert_eq!(admission.0.load(Ordering::SeqCst), 0);
+    }
+}
+
 #[cfg(feature = "replica")]
 #[test]
 fn directory_cache_survives_restart_and_evicts_by_bytes() {

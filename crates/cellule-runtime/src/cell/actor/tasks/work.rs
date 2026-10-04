@@ -30,12 +30,12 @@ pub(super) fn handle_executed(
     if active.generation != generation
         || !active
             .coordination
-            .effect_matches(effect_id, CoordinationEffect::Work(AdmissionKind::Command))
+            .effect_matches(effect_id, CoordinationEffect::Work(command._work.kind))
     {
         send_command_task_reply(&mut command, result);
         return;
     }
-    active.finish_task(effect_id, CoordinationEffect::Work(AdmissionKind::Command));
+    active.finish_task(effect_id, CoordinationEffect::Work(command._work.kind));
     if node_lease.check().is_err() {
         result = Err(command.operation.unknown(Error::Fenced));
         fenced = true;
@@ -155,12 +155,12 @@ pub(super) fn handle_queried(
     if active.generation != generation
         || !active
             .coordination
-            .effect_matches(effect_id, CoordinationEffect::Work(AdmissionKind::Query))
+            .effect_matches(effect_id, CoordinationEffect::Work(query._work.kind))
     {
         send_finished_query_reply(&mut query, result);
         return;
     }
-    active.finish_task(effect_id, CoordinationEffect::Work(AdmissionKind::Query));
+    active.finish_task(effect_id, CoordinationEffect::Work(query._work.kind));
     if node_lease.check().is_err() {
         result = Err(Error::Fenced);
         fenced = true;

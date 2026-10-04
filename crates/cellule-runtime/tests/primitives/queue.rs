@@ -327,5 +327,6 @@ fn send_request(producer: u8, payload: &[u8], available_at_ms: i64) -> QueueSend
 }
 
 mod lease;
+mod maintenance;
 mod namespace;
 mod send;

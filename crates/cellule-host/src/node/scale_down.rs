@@ -26,6 +26,29 @@ impl CellNode {
             .release_idle_cell(cell, source, generation)
             .await
     }
+    /// Releases one exact approved source identity and captures its final position.
+    ///
+    /// The application must authorize and durably accept its fleet action before
+    /// invoking this local mechanism. The runtime rechecks session, generation,
+    /// incarnation and epoch; its canonical close/release task supplies the root.
+    /// A subsequent authority observation is never substituted for that result.
+    /// [`Error::CellReleaseRefused`] proves this request stopped before canonical
+    /// close began. Other errors require outcome inspection or recovery.
+    pub async fn release_idle_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: cellule_runtime::identity::IncarnationId,
+        epoch: u64,
+    ) -> cellule_runtime::Result<cellule_runtime::fleet::operations::PublishedPosition> {
+        if !self.is_ready() {
+            return Err(Error::CellDraining);
+        }
+        self.runtime
+            .release_idle_cell_at(cell, source, generation, incarnation, epoch)
+            .await
+    }
     /// Stops new Cell acquisition while retaining the lease and current owners.
     pub fn begin_scale_down(&self) -> cellule_runtime::Result<()> {
         let mut state = self
@@ -48,8 +71,11 @@ impl CellNode {
         &self,
         deadline: Instant,
     ) -> cellule_runtime::Result<ScaleDownStatus> {
-        let _shutdown = self.shutdown_lock.lock().await;
+        let shutdown = Arc::clone(&self.shutdown_lock).lock_owned().await;
         if self.state() == NodeState::Stopped {
+            // A cancelled shutdown waiter may leave a returned host task whose
+            // epilogue still needs its original join before scale-down returns.
+            self.drain_until_locked(shutdown, Some(deadline)).await?;
             return Ok(ScaleDownStatus {
                 remaining_cells: 0,
                 settled_candidates: 0,
@@ -103,7 +129,7 @@ impl CellNode {
                 if Instant::now() >= deadline {
                     return Ok(status);
                 }
-                self.drain_until_locked(Some(deadline)).await?;
+                self.drain_until_locked(shutdown, Some(deadline)).await?;
                 return Ok(status);
             }
             if Instant::now() >= deadline {

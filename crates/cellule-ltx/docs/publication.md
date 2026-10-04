@@ -24,6 +24,7 @@ sequenceDiagram
 | `prepare_compaction` | Rewrites representation without changing logical state. |
 | `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
 | `prepare_scheduled_compaction_append` | Composes a bounded promotion and append without uploading intermediate root metadata. |
+| `with_root_metadata` | Joins caller-supplied verified derivation metadata with immutable uploads; both must succeed before `PreparedRoot` returns. |
 | Runtime CAS | Names the authoritative owner and exact root. |
 | `Db::prune_captured` | Removes only the successfully published batch. |
 
@@ -31,6 +32,16 @@ A failed CAS leaves unreachable content, never an acknowledged state. Provider
 retry pins and rechecks the selected capture bytes, so path replacement cannot
 change an in-flight proposal. The host owns request admission, deadlines, and
 reconciliation after ambiguous results.
+
+`RootPreparation` identifies a native verified derivation while uploads may still
+be running. Its construction is private and it grants no uploaded-root, restore,
+serving, authority or acknowledgement rights. A `RootPreparationMetadata` future
+runs inline under the enclosing preparation owner and shares its native origin
+I/O admission; cancellation drops it and releases its permit. It adds no task or
+scheduler. Its source error is retained as `RootPreparation`,
+classified Ambiguous for caller reconciliation. The runtime recovers its original
+typed storage error and uses the existing publisher retry policy. Failed work
+can leave proposal metadata or immutable objects; neither selects authority.
 
 Preparation reuses byte-identical descriptor pages from the verified predecessor
 instead of uploading them again. Cached predecessor metadata still requires
@@ -54,6 +65,11 @@ retains the original authority predecessor and the same persisted bytes as the
 two-step path. `None` leaves the caller's existing cascade policy in charge.
 No unuploaded intermediate state can be used as a `PreparedRoot`.
 
+The verified compaction composition sets the original predecessor in the native
+factory before derivation metadata runs. Metadata and the complete proposal name
+the same input. That private preparation context is removed from the immutable
+read view; subsequent preparations cannot inherit an earlier rebase.
+
 For this composed operation, root preparation admission includes recovery
 admission, and root work includes compaction and the final append. The compaction
 phase spans the composed attempt. These overlapping phase populations differ
@@ -71,3 +87,16 @@ Compaction body and index transfers each retain a four-transfer window. A
 completed transfer immediately admits the next input even when an earlier
 source is slow. Results return to descriptor order before merging or selecting
 an error; source checksums, disjoint scratch offsets, and cleanup remain intact.
+
+## Verify current origin dependencies
+
+`CellReplica::reachable_objects` authenticates the exact root's complete current
+origin graph, including root metadata, descriptor pages, directory coverage and
+all body/index bytes. A process cache cannot certify availability.
+`reachable_objects_bounded` uses the same walk with a caller-selected maximum
+inventory count. Zero or excess objects refuse with
+`LimitKind::RootInventoryObjects`; callers never receive a truncated inventory.
+Directory digests obey that bound while descriptor work keeps the existing fixed
+root/segment ceilings. The caller owns memory admission, bounded Store stream
+chunks and the enclosing deadline. This graph proof grants no selected authority,
+retention pin or current serving.

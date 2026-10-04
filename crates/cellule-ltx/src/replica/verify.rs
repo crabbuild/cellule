@@ -23,6 +23,31 @@ impl CellReplica {
     /// Callers may use this bounded inventory for backup pinning and reachability
     /// collection. A missing or corrupt dependency fails the traversal closed.
     pub async fn reachable_objects(&self, root: &RootRef) -> Result<Vec<RootObjectRef>> {
+        self.reachable_objects_inner(root, None).await
+    }
+
+    /// Verifies the same complete origin graph with an explicit inventory bound.
+    ///
+    /// Zero or excess objects refuse with `RootInventoryObjects`; no partial
+    /// inventory is returned. The bound covers retained directory digests and
+    /// the final distinct inventory. Descriptor work retains the existing fixed
+    /// root/segment limits. The caller owns memory admission and the deadline.
+    pub async fn reachable_objects_bounded(
+        &self,
+        root: &RootRef,
+        max_objects: usize,
+    ) -> Result<Vec<RootObjectRef>> {
+        if max_objects == 0 {
+            return Err(LtxError::Limit(crate::LimitKind::RootInventoryObjects));
+        }
+        self.reachable_objects_inner(root, Some(max_objects)).await
+    }
+
+    async fn reachable_objects_inner(
+        &self,
+        root: &RootRef,
+        max_objects: Option<usize>,
+    ) -> Result<Vec<RootObjectRef>> {
         // Inventory must prove origin presence even for metadata uploaded here.
         let graph = self.load_graph_with_cache(root, false).await?;
         let extents = object_extents(&graph.descriptors)?;
@@ -41,6 +66,7 @@ impl CellReplica {
             graph.document.directory_digest,
             graph.document.directory_height,
             graph.aggregate,
+            max_objects,
         )
         .await?;
 
@@ -100,6 +126,9 @@ impl CellReplica {
             digest,
             kind: CellObjectKind::Directory,
         }));
+        if max_objects.is_some_and(|limit| objects.len() > limit) {
+            return Err(LtxError::Limit(crate::LimitKind::RootInventoryObjects));
+        }
         Ok(objects.into_iter().collect())
     }
 

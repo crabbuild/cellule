@@ -143,6 +143,7 @@ cells/v1/apps/<app>/releases/<digest>.json
 cells/v1/apps/<app>/catalog/tenants/<tenant>/<00..ff>/head.json
 cells/v1/apps/<app>/catalog/objects/<digest>.json
 cells/v1/apps/<app>/cells/<cell>/control.json
+cells/v1/apps/<app>/cells/<cell>/owner-history/v1/<inc>/<epoch-hex16>.json
 cells/v1/apps/<app>/cells/<cell>/inc/<inc>/objects/<digest>.<kind>
 cells/v1/apps/<app>/pins/<pin-id>.json
 cells/v1/apps/<app>/pins/objects/<digest>.json
@@ -186,8 +187,211 @@ cells/v1/nodes/<session>.json
 - **Writes.** Every replacement validates the runtime transition table before
   calling conditional update.
 
+### Retain original owners before departure
+
+Before the ordinary release, takeover or tombstone CAS removes or replaces an
+owner, `CellAuthority::transition` retains its complete original control at the
+typed version 1 owner-history path. The body uses the same canonical 8 KiB control
+codec. It includes unpublished and recovering controls, exact roots, code/schema,
+and pinned recovery overlays. Same-owner publication and renewal write no history.
+The existing control CAS remains the only ownership authority.
+
+Several departure proposals can observe the same epoch at different revisions.
+History advances by ETag CAS; a delayed older proposal cannot overwrite a newer
+observation. A failed proposal may leave a retained observation, which supplies no
+departure proof. Ambiguous history replies require a confirmed equal or later
+original observation before control departure. Storage failures remain errors.
+
+`owner_observation` reads one exact original epoch. `owner_history` collects every
+closed ownership epoch in the current incarnation and appends its current owner,
+then rechecks exact current authority. The caller bounds rows and its enclosing
+deadline. Missing history returns `Error::OwnerHistoryIncomplete` with the original
+Cell, incarnation and first missing epoch. Concurrent authority changes refuse the
+read. Ordinary release closes the same epoch; tombstone consumes a final fence
+epoch without inventing another owner.
+
+```rust,no_run
+use cellule_runtime::{Result, identity::CellId};
+use cellule_runtime::control::authority::{CellAuthority, CellOwnerHistory};
+
+async fn original_owners(
+    authority: &CellAuthority,
+    cell: CellId,
+    row_limit: usize,
+) -> Result<CellOwnerHistory> {
+    authority.owner_history(cell, row_limit).await
+}
+```
+
+This is retained metadata for one Cell incarnation, not a complete physical-node
+inventory or a root retention pin. Fleet collection must traverse authenticated
+complete application/tenant catalogs, bind original boot/process joining and
+operation scope, durably retain the selected complete set, and freshly verify
+successor prefixes and serving. Include object-covered and unpublished writers.
+A current-owner filter or recovered-suffix manifest alone omits originals after
+takeover. Legacy departures, older binaries and restored controls may lack history;
+never interpret that absence as proof that an original boot owned no Cells.
+Mixed-binary qualification and a verified earlier inventory are required before
+fleet completion can use such scope. The existing immutable-object collector
+does not delete these metadata records or pin their historical root graphs.
+
+### Retain the successful acquisition input
+
+The canonical Idle acquisition, published takeover and rootless takeover paths
+retain a `CellAcquisitionRecord` after the ownership CAS and any recovery-root
+publication, before actor admission. It keeps the exact successful CAS input,
+including a pinned recovery overlay, and the exact claimed/materialized Control.
+Later renewal, publication, release and compaction do not replace this record.
+
+| Boundary | Contract |
+| --- | --- |
+| Path | `cells/v1/apps/<app>/cells/<cell>/acquisitions/v1/<incarnation>/<epoch>.bin`; epoch is fixed-width 16-digit hex. |
+| Codec | Version 1 domain, two big-endian length-prefixed canonical Controls, at most 8 KiB each; the complete envelope is bounded to 20 KiB. |
+| Validation | Rebuild the ordinary Takeover from its input and require exact equality, or validate its one canonical PublishRecovery transition. Reject changed scope, owner, epoch, root, code or schema. |
+| Publication | Strict immutable creation. Identical committed bytes can resolve an ambiguous reply; conflicting metadata cannot be overwritten. |
+| Admission failure | No actor admission before confirmed retention. Published acquisition follows ordinary rollback. A rootless failure retains the claimed Recovering Control for ordinary bootstrap/takeover recovery. |
+| Reader | `CellAuthority::acquisition_record` performs a bounded origin read and verifies Cell, incarnation and epoch. Storage and malformed-record failures remain errors. |
+
+The record may survive failed activation and proves no restore completion,
+current serving, root retention, full acknowledged-prefix coverage or maintenance
+settlement. Missing metadata remains `None`: initial bootstrap, direct activation
+of an already-claimed Control, older binaries and cancellation before retention
+can supply no record. Never infer successful acquisition or an empty writer set
+from that absence. The existing object collector neither deletes these records
+nor pins their referenced roots. Prefix verification must combine complete
+original scope with independently checked ownership lineage, exact dependencies
+and current native serving.
+
+```rust,no_run
+use cellule_runtime::{Result, identity::{CellId, IncarnationId}};
+use cellule_runtime::control::authority::{CellAuthority, CellAcquisitionRecord};
+
+async fn retained_claim(
+    authority: &CellAuthority,
+    cell: CellId,
+    incarnation: IncarnationId,
+    epoch: u64,
+) -> Result<Option<CellAcquisitionRecord>> {
+    authority.acquisition_record(cell, incarnation, epoch).await
+}
+```
+
 <a id="immutable-roots"></a>
 ## Store roots as bounded immutable graphs
+
+### Prove an exact root prefix after compaction
+
+Canonical publication retains verified `PreparedRoot` inputs before the root CAS,
+including ordinary append, quiet/foreground compaction, migration and recovery
+overlay publication. The version 1 runtime metadata path is
+`cells/v1/apps/<app>/cells/<cell>/root-lineage/v1/<incarnation>/<root-digest>.bin`.
+It adds no field to control JSON or LTX roots. Only native opaque preparations
+produce links; failed root CAS leaves a verified proposal, never ownership.
+
+| Boundary | Contract |
+| --- | --- |
+| Codec | Fixed-width scoped root references, sorted distinct predecessors and a BLAKE3 envelope checksum; at most 64 predecessors and 8 KiB. |
+| Byte-equivalent roots | Several valid preparations may produce identical root bytes. ETag CAS accumulates their original links; a delayed writer cannot erase an earlier input. |
+| Publication | Confirm the required link before selecting its root. Lost replies require a confirmed equal/superset record. Existing publisher retry and acquisition rollback own failures; no new task or retry owner. |
+| Fresh publication I/O | Strictly create the verified record first; its successful conditional write needs no preceding absence read. On a create conflict, read the verified existing record and perform at most one additive ETag merge. A stale merge cannot erase an earlier input; unresolved errors return to the existing publisher. |
+| Preparation ordering | Retention overlaps immutable native uploads under the existing publisher; both finish before a complete proposal escapes. An exact private preparation confirmation avoids a second write before authority CAS. External and rebased proposals use the same canonical retention path before CAS. |
+| Identity compaction | Preparing the same exact root introduces no self-link. Traversal also detects repeated roots, so representation cycles cannot loop indefinitely. |
+| Prefix | `verify_root_prefix` must reach the exact requested digest, scope, TXID, checksum and sequence. Higher counters alone are insufficient. |
+| Bounds | The caller permits at most 10,000 expanded/queued lineage roots. Complete origin inventory also caps at 10,000 objects. One enclosing deadline bounds the work; excess refuses without truncating evidence. |
+| Availability | After finding a verified derivation path, authenticate the successor's complete current origin graph through the canonical `reachable_objects_bounded` walk, including every body/extent; metadata caches cannot substitute. |
+| Missing data | Missing legacy/manual-publication links yield `RootLineageIncomplete`; a complete path search that cannot reach the prefix yields `RootPrefixUnproven`. Storage, corrupt metadata and missing/corrupt graph dependencies preserve their errors. |
+
+The runtime wrapper reserves transient metadata in the existing node retained-byte
+ledger before I/O: 16 MiB for bounded graph/cache/fetch/decode work, plus 1 KiB
+per permitted lineage root and each of 10,000 origin objects. Vector growth and
+map overhead are included conservatively. The token spans awaited work and drops
+on success, error or caller cancellation. Origin body bytes stream through the
+configured shared LTX I/O host; application Store adapters supply bounded chunks.
+Direct authority callers own equivalent admission. No new task or scheduler is
+created; the existing finite fleet action owner retains accepted work.
+
+`VerifiedRootPrefix` is an opaque point observation of native verified derivation
+and complete successor dependency availability. It is not selected authority,
+current actor serving, an immutable-root pin, a complete original physical-boot
+inventory, recovered-suffix scope or maintenance settlement. Applications
+authenticate canonical backend mappings and protect these runtime metadata writes
+with the same storage authorization as authority. Old root objects may be collected
+after valid compaction; the retained preparation links remain metadata, and the
+verified successor graph must still contain the current state. The existing
+immutable-object collector does not delete these lineage metadata records.
+
+Use `CellRuntime::verify_root_prefix` for the runtime's shared configured LTX I/O
+host; standalone callers can use `CellAuthority::verify_root_prefix`. Neither path
+starts a scheduler, changes Cell authority or invents a legacy link.
+
+```rust,no_run
+use cellule_runtime::{Result, cell::{actor::CellRuntime, catalog::CatalogProof}};
+use cellule_runtime::control::authority::{CellAuthority, VerifiedRootPrefix};
+use cellule_runtime::ltx::{CellReplica, RootRef};
+
+async fn verify_prefix(
+    runtime: &CellRuntime,
+    catalog: &CatalogProof,
+    authority: &CellAuthority,
+    replica: CellReplica,
+    original: RootRef,
+    successor: RootRef,
+) -> Result<VerifiedRootPrefix> {
+    runtime.verify_root_prefix(catalog, authority, replica, original, successor, 10_000).await
+}
+```
+
+### Prove an original sealed recovery suffix
+
+`CellRuntime::verify_recovered_prefix` consumes one exact `PinnedRecoveryCell`
+from the original digest-verified manifest. It binds that row to the retained
+closed owner, then checks bounded canonical acquisitions through the selected
+Serving epoch. An interrupted claim can leave no acquisition record; a later
+materialization must retain the identical original overlay. Its original Cell
+epoch remains the manifest epoch, rather than the later acquisition input epoch.
+All leader/log/manifest, node-sequence, predecessor and final boundaries compare
+exactly. A matching endpoint without the original overlay is insufficient.
+
+| Boundary | Contract |
+| --- | --- |
+| Materialization | Select the last canonical acquisition with the exact original overlay; require its exact final TXID, checksum and sequence, then verify native derivation to the current successor and every current origin dependency. |
+| Bounds | The same caller limit caps both acquisition epochs and lineage traversal, at most 10,000. Excess refuses; storage/corrupt-record errors remain errors. |
+| Missing metadata | An absent original owner yields `OwnerHistoryIncomplete`. Without a matching materialization, missing acquisition records yield `AcquisitionHistoryIncomplete`; different recovery inputs refuse. No legacy rows are fabricated. |
+| Selected authority | Require Serving at the selected root and recheck owner, incarnation, epoch, state and exact root after origin verification. Lease renewal may continue. |
+| Resource ownership | Reuse the root verifier's shared memory reservation and configured LTX I/O host before metadata/origin I/O. The caller supplies the finite deadline; cancellation drops the reservation. |
+| Proof scope | `VerifiedRecoveryPrefix` retains the exact required row, materialization epoch and opaque root-prefix proof. It grants no native serving, root pin, authenticated physical boot/backend scope or aggregate settlement. |
+
+```rust,no_run
+use cellule_runtime::{Result, cell::{actor::CellRuntime, catalog::CatalogProof}};
+use cellule_runtime::control::authority::{CellAuthority, VerifiedRecoveryPrefix};
+use cellule_runtime::ltx::{CellReplica, RootRef};
+use cellule_runtime::recovery::manifest::PinnedRecoveryCell;
+
+async fn verify_suffix(
+    runtime: &CellRuntime,
+    catalog: &CatalogProof,
+    authority: &CellAuthority,
+    replica: CellReplica,
+    original: &PinnedRecoveryCell,
+    successor: RootRef,
+) -> Result<VerifiedRecoveryPrefix> {
+    runtime.verify_recovered_prefix(catalog, authority, replica, original, successor, 10_000).await
+}
+```
+
+Fleet movement requires the exact released root or retained recovery
+materialization as its prefix. Recovered serving first compares the entire
+journal recovery input/result with canonical acquisition metadata. With a pinned
+overlay, it repeats the existing read-only provider lookup, loads the original
+manifest and verifies the exact original row through `verify_recovered_prefix`.
+The host charges an additional 8-MiB transient acquisition/manifest envelope
+before I/O and holds it through verification. After complete origin verification, it rechecks
+the same native actor through ordinary FIFO admission, selected root/owner/epoch
+and native ownership inventory before returning fresh serving evidence. Durable
+historical results remain historical; their replay does not refresh this proof.
+Complete original-writer/suffix aggregation, physical boot/process scope, reader
+and follower replacement policy, and terminal action joining remain separate
+requirements before role settlement or finalization.
 
 One root identifies the complete SQLite state at one transaction ID.
 
@@ -476,6 +680,41 @@ absence.
 - A crash may leave an unused catalog entry, but never an unproven mutable Cell.
 - `CellAuthority::create_initial` requires a verified `CatalogProof`.
 - Readers recompute every Cell ID and enforce ordering across page boundaries.
+
+**Complete operation traversal.** `CellCatalog::scan_all(limit)` captures every
+head before returning the first page. It streams through the same verified shard
+reader and enforces a nonzero cumulative row bound. A partial, failed or cancelled
+scan supplies no receipt. `finish()` requires observed end-of-stream and rechecks
+all 256 original heads, including absence, revision, locators and ETag. Changes
+fail rather than silently replacing the captured set. The receipt exposes tenant,
+application, entry count and each original revision/page-digest list; `revalidate()`
+reads the same original adapter again.
+
+```rust
+use cellule_runtime::cell::catalog::{CellCatalog, CatalogScanReceipt};
+use cellule_runtime::identity::CellId;
+
+async fn collect_cells(
+    catalog: &CellCatalog,
+    row_limit: usize,
+) -> cellule_runtime::Result<(Vec<CellId>, CatalogScanReceipt)> {
+    let mut scan = catalog.scan_all(row_limit).await?;
+    let mut cells = Vec::new();
+    while let Some(page) = scan.next_page().await? {
+        cells.extend(page.entries().iter().map(|proof| proof.entry().cell()));
+    }
+    let receipt = scan.finish().await?;
+    Ok((cells, receipt))
+}
+```
+
+The scan retains at most 256 heads of 256 locators and returns at most 256
+entries per page. Callers account for their retained output. The heads and final
+checks are sequential observations; they are not a global catalog transaction.
+Application authentication, complete application/tenant enumeration, original
+process and accepted-work joining, authority/history collection and durable
+operation binding remain separate required barriers. A receipt pins no objects,
+proves no successor serving and does not establish continuing page availability.
 
 **Tenant scope and retention**
 

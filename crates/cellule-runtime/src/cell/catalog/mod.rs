@@ -157,6 +157,7 @@ pub struct CatalogShardScan {
     pages: Vec<CatalogPageRef>,
     next_page: usize,
     previous: Option<CellId>,
+    token: Option<ETag>,
 }
 
 impl CatalogShardScan {
@@ -283,6 +284,12 @@ impl CellCatalog {
         self.application
     }
 
+    /// Returns the tenant every entry is scoped to.
+    #[must_use]
+    pub const fn tenant(&self) -> TenantId {
+        self.tenant
+    }
+
     pub(crate) fn matches_identity(
         &self,
         identity: crate::cell::application::ApplicationIdentity,
@@ -384,8 +391,14 @@ impl CellCatalog {
     /// Pins one shard head for bounded immutable-page iteration.
     pub async fn scan_shard(&self, shard: u8) -> Result<CatalogShardScan> {
         let observed = self.load_head(shard).await?;
-        let (revision, pages) = observed
-            .map(|observed| (observed.head.revision, observed.head.pages))
+        let (revision, pages, token) = observed
+            .map(|observed| {
+                (
+                    observed.head.revision,
+                    observed.head.pages,
+                    Some(observed.token),
+                )
+            })
             .unwrap_or_default();
         Ok(CatalogShardScan {
             catalog: self.clone(),
@@ -394,6 +407,7 @@ impl CellCatalog {
             pages,
             next_page: 0,
             previous: None,
+            token,
         })
     }
 
@@ -734,5 +748,8 @@ impl CellCatalog {
 }
 
 mod codec;
+mod scan;
+
+pub use scan::{CatalogScan, CatalogScanReceipt};
 
 use codec::*;

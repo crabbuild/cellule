@@ -6,7 +6,6 @@ use cellule_ltx::{CaptureBatch, Db, TransactionError, rusqlite::OptionalExtensio
 use crate::cell::catalog::CatalogRole;
 use crate::identity::{CellId, Digest};
 use crate::identity::{IncarnationId, RequestId};
-use crate::primitives::maintenance::PersistedWorkInventory;
 use crate::primitives::maintenance::TransferWorkInventory;
 use crate::{Error, Result};
 
@@ -630,16 +629,16 @@ impl CellExecutor {
         self.db.hydration().map_err(Into::into)
     }
 
-    /// Reads the durable work classes that can block safe owner release.
-    pub(crate) fn persisted_work_inventory(
+    pub(crate) fn transfer_work_inventory(
         &mut self,
         role: CatalogRole,
-    ) -> Result<PersistedWorkInventory> {
+        now_ms: i64,
+    ) -> Result<TransferWorkInventory> {
         if self.fenced {
             return Err(Error::Fenced);
         }
         let result = self.db.query_with(|connection| {
-            crate::primitives::maintenance::inspect_persisted_work(connection, role)
+            crate::primitives::maintenance::inspect_transfer_work(connection, role, now_ms)
         });
         if let Some(error) = self.db.take_io_error() {
             self.fenced = true;
@@ -659,16 +658,41 @@ impl CellExecutor {
         }
     }
 
-    pub(crate) fn transfer_work_inventory(
+    /// Captures bounded worker diagnostics without scanning application rows.
+    pub(crate) fn fleet_inventory(
         &mut self,
         role: CatalogRole,
         now_ms: i64,
-    ) -> Result<TransferWorkInventory> {
+    ) -> Result<crate::cell::worker::WorkerCellInventory> {
         if self.fenced {
             return Err(Error::Fenced);
         }
         let result = self.db.query_with(|connection| {
-            crate::primitives::maintenance::inspect_transfer_work(connection, role, now_ms)
+            let persisted_work =
+                crate::primitives::maintenance::inspect_persisted_work(connection, role)?;
+            let transfer_work =
+                crate::primitives::maintenance::inspect_transfer_work(connection, role, now_ms)?;
+            let maintenance_work =
+                crate::primitives::maintenance_readiness::inspect(connection, role, now_ms)?;
+            let pages: u64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+            let page_size: u64 = connection.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+            let commit_sequence: u64 = connection.query_row(
+                "SELECT commit_sequence FROM sys_meta WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )?;
+            let database_bytes = pages
+                .checked_mul(page_size)
+                .filter(|bytes| *bytes > 0)
+                .ok_or(Error::Capacity("invalid measured Cell database size"))?;
+            Ok(crate::cell::worker::WorkerCellInventory {
+                persisted_work,
+                transfer_work,
+                maintenance_work,
+                database_bytes,
+                commit_sequence,
+                observed_at_ms: now_ms,
+            })
         });
         if let Some(error) = self.db.take_io_error() {
             self.fenced = true;

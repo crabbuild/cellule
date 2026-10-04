@@ -268,9 +268,15 @@ dependencies = [
 name = "cellule-host"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "bytes",
  "cellule-app",
  "cellule-runtime",
+ "cellule-store",
+ "ed25519-dalek",
  "futures-util",
+ "object_store",
+ "rusqlite",
  "tempfile",
  "tokio",
  "tokio-util",
