@@ -389,6 +389,23 @@ impl CellPublisher {
         commit_sequence: u64,
         schema: u32,
     ) -> Result<cellule_ltx::PreparedRoot> {
+        if let Some(root) = self.compaction_pressure(cuts.segments.len()).await? {
+            match self
+                .prepare_compaction_append(&root, cuts, commit_sequence, schema)
+                .await
+            {
+                Ok(Some(prepared)) => {
+                    self.appends_since_compaction_check = 0;
+                    self.note_append(&prepared);
+                    return Ok(prepared);
+                }
+                Ok(None) => {}
+                // Preserve the established cascade/full-compaction fallback
+                // when the combined prospective representation cannot fit.
+                Err(Error::Ltx(error)) if error.is_cell_graph_limit() => {}
+                Err(error) => return Err(error),
+            }
+        }
         let base = self.compact_before_append(cuts.segments.len()).await?;
         let prepared = match self
             .prepare_cuts(&base, cuts, commit_sequence, schema)
@@ -429,9 +446,12 @@ impl CellPublisher {
         );
     }
 
-    async fn compact_before_append(&mut self, incoming_segments: usize) -> Result<AppendBase> {
-        let Some(mut base) = self.observed.value().ltx_root() else {
-            return Ok(AppendBase::Published(None));
+    async fn compaction_pressure(
+        &mut self,
+        incoming_segments: usize,
+    ) -> Result<Option<cellule_ltx::RootRef>> {
+        let Some(base) = self.observed.value().ltx_root() else {
+            return Ok(None);
         };
         let segment_count = match self.segment_count {
             Some(count) => count,
@@ -441,18 +461,66 @@ impl CellPublisher {
                 count
             }
         };
-        let segment_limit = self.replica.limits().max_segments.min(4_096);
-        let projected = segment_count.saturating_add(incoming_segments);
-        let debt_limit = COMPACTION_DEBT_SEGMENTS.min(segment_limit);
-        let under_pressure = projected >= debt_limit;
-        if !under_pressure {
-            return Ok(AppendBase::Published(Some(base)));
+        let debt_limit =
+            COMPACTION_DEBT_SEGMENTS.min(self.replica.limits().max_segments.min(4_096));
+        if segment_count.saturating_add(incoming_segments) < debt_limit {
+            return Ok(None);
         }
         tracing::debug!(
             segments = segment_count,
             incoming_segments,
             "Cell LTX compaction pressure"
         );
+        Ok(Some(base))
+    }
+
+    async fn prepare_compaction_append(
+        &mut self,
+        base: &cellule_ltx::RootRef,
+        cuts: &cellule_ltx::CaptureBatch,
+        commit_sequence: u64,
+        schema: u32,
+    ) -> Result<Option<cellule_ltx::PreparedRoot>> {
+        let mut backoff = Backoff::default();
+        let ceiling = COMPACTION_DEBT_SEGMENTS.min(self.replica.limits().max_segments.min(4_096));
+        loop {
+            self.check_node_lease()?;
+            let replica = self.replica.clone();
+            let scratch_directory = self.scratch_directory.clone();
+            let attempt = replica.prepare_scheduled_compaction_append(
+                base,
+                cuts,
+                commit_sequence,
+                schema,
+                ceiling,
+                &scratch_directory,
+            );
+            tokio::pin!(attempt);
+            let result = loop {
+                tokio::select! {
+                    result = &mut attempt => break result,
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                        self.renew().await?;
+                    }
+                }
+            };
+            self.record_publication_cost();
+            match result {
+                Ok(prepared) => return Ok(prepared),
+                Err(error) if retryable_ltx_error(&error) => {
+                    backoff.wait(ltx_retry_hint(&error)).await
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    async fn compact_before_append(&mut self, incoming_segments: usize) -> Result<AppendBase> {
+        let Some(mut base) = self.compaction_pressure(incoming_segments).await? else {
+            return Ok(AppendBase::Published(self.observed.value().ltx_root()));
+        };
+        let debt_limit =
+            COMPACTION_DEBT_SEGMENTS.min(self.replica.limits().max_segments.min(4_096));
 
         for _ in 0..MAX_COMPACTION_CASCADE {
             let Some(prepared) = self.prepare_scheduled_compaction(&base).await? else {

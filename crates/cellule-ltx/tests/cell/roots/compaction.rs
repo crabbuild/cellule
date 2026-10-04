@@ -86,6 +86,290 @@ async fn private_compaction_append_retains_original_predecessor_and_exact_root()
     writer.close().unwrap();
 }
 
+#[tokio::test]
+async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
+    let directory = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let mut writer = Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
+    let backend = Arc::new(InMemory::new());
+    let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+        backend.clone(),
+    ));
+    let store = Store::new(counted.clone());
+    let layout = CellStorageLayout::new(store.clone(), Path::from("composed"), [3; 16]);
+    let cell = [211; 32];
+    let incarnation = [212; 16];
+    let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
+    let mut root = None;
+    let mut first_body = None;
+    for sequence in 1..=8 {
+        writer
+            .transaction(|transaction| {
+                if sequence == 1 {
+                    transaction
+                        .execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")?;
+                }
+                transaction.execute("UPDATE counter SET v = ?1", [sequence])?;
+                Ok(())
+            })
+            .unwrap();
+        let cuts = writer.capture().unwrap();
+        if sequence == 1 {
+            first_body = Some(cuts.segments[0].info().blake3);
+        }
+        root = Some(
+            replica
+                .prepare(root.as_ref(), &cuts, sequence, 1)
+                .await
+                .unwrap()
+                .root(),
+        );
+        if sequence == 1 {
+            counted.reset();
+            assert!(
+                replica
+                    .prepare_scheduled_compaction_append(
+                        root.as_ref().unwrap(),
+                        &cuts,
+                        2,
+                        1,
+                        32,
+                        scratch.path()
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(counted.put_requests(), 0);
+        }
+    }
+    let root = root.unwrap();
+    writer
+        .transaction(|transaction| transaction.execute_batch("UPDATE counter SET v = 9"))
+        .unwrap();
+    let cuts = writer.capture().unwrap();
+    counted.reset();
+    assert!(
+        replica
+            .prepare_scheduled_compaction_append(&root, &cuts, 9, 1, 2, scratch.path())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "the unchanged cascade handles a chain at its ceiling"
+    );
+    for (sequence, schema, ceiling) in [(8, 1, 32), (9, 0, 32), (9, 1, 0)] {
+        counted.reset();
+        assert!(matches!(
+            replica
+                .prepare_scheduled_compaction_append(
+                    &root,
+                    &cuts,
+                    sequence,
+                    schema,
+                    ceiling,
+                    scratch.path()
+                )
+                .await,
+            Err(LtxError::InvalidState(_))
+        ));
+        assert_eq!(counted.put_requests(), 0);
+    }
+    let foreign =
+        CellReplica::new(layout.clone(), [210; 32], incarnation, Limits::default()).unwrap();
+    counted.reset();
+    assert!(
+        foreign
+            .prepare_scheduled_compaction_append(&root, &cuts, 9, 1, 32, scratch.path())
+            .await
+            .is_err()
+    );
+    assert_eq!(counted.put_requests(), 0);
+
+    let objects = replica.reachable_objects(&root).await.unwrap();
+    let metadata = objects
+        .iter()
+        .find(|object| object.kind == CellObjectKind::Root && object.digest != root.digest)
+        .unwrap();
+    let path = layout.incarnation_object_path(&cell, &incarnation, &metadata.digest, metadata.kind);
+    let bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
+    backend.delete(&path).await.unwrap();
+    counted.reset();
+    assert!(
+        replica
+            .prepare_scheduled_compaction_append(&root, &cuts, 9, 1, 32, scratch.path())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "cached original metadata still requires origin presence"
+    );
+    backend.put(&path, bytes.into()).await.unwrap();
+
+    let body_path = layout.incarnation_object_path(
+        &cell,
+        &incarnation,
+        &first_body.unwrap(),
+        CellObjectKind::Ltx,
+    );
+    let original = backend
+        .get(&body_path)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let mut corrupted = original.to_vec();
+    corrupted[0] ^= 1;
+    backend
+        .put(&body_path, Bytes::from(corrupted).into())
+        .await
+        .unwrap();
+    counted.reset();
+    assert!(matches!(
+        replica
+            .prepare_scheduled_compaction_append(&root, &cuts, 9, 1, 32, scratch.path())
+            .await,
+        Err(LtxError::ChecksumMismatch)
+    ));
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "the complete selected LTX body must verify before any upload"
+    );
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    backend.put(&body_path, original.into()).await.unwrap();
+
+    let prepared = replica
+        .prepare_scheduled_compaction_append(&root, &cuts, 9, 2, 32, scratch.path())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(prepared.predecessor(), Some(root));
+    assert_eq!(prepared.verified().schema(), 2);
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    let destination = directory.path().join("restored.sqlite");
+    prepared.verified().restore(&destination).await.unwrap();
+    let restored = cellule_ltx::rusqlite::Connection::open(destination).unwrap();
+    assert_eq!(
+        restored
+            .query_row("SELECT v FROM counter", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        9
+    );
+    writer.close().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scheduled_compaction_append_retains_unchanged_directory_nodes() {
+    let source = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let mut writer = Db::open(&source.path().join("writer.sqlite"), Limits::default()).unwrap();
+    let store = Store::new(Arc::new(InMemory::new()));
+    let cell = replica(store.clone(), [213; 32], [214; 16]);
+    writer
+        .transaction(|tx| {
+            tx.execute_batch(
+                "CREATE TABLE payload(k INTEGER PRIMARY KEY, v BLOB NOT NULL); \
+                 WITH RECURSIVE n(k) AS (VALUES(1) UNION ALL SELECT k+1 FROM n WHERE k<1024) \
+                 INSERT INTO payload SELECT k, zeroblob(3000) FROM n; \
+                 CREATE TABLE counter(v); INSERT INTO counter VALUES(1)",
+            )
+        })
+        .unwrap();
+    let mut root = cell
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    for sequence in 2..=8 {
+        writer
+            .transaction(|tx| {
+                tx.execute("UPDATE counter SET v=?1", [sequence])?;
+                Ok(())
+            })
+            .unwrap();
+        root = cell
+            .prepare(Some(&root), &writer.capture().unwrap(), sequence, 1)
+            .await
+            .unwrap()
+            .root();
+    }
+    assert!(cell.open_root(&root).await.unwrap().directory_height() > 0);
+    writer
+        .transaction(|tx| {
+            tx.execute("UPDATE payload SET v=?1 WHERE k=1", [vec![0xab; 3000]])?;
+            tx.execute_batch("UPDATE counter SET v=9")
+        })
+        .unwrap();
+    let cuts = writer.capture().unwrap();
+    let prepared = cell
+        .prepare_scheduled_compaction_append(&root, &cuts, 9, 1, 32, scratch.path())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(prepared.predecessor(), Some(root));
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+
+    // Use a cold cache before the reference path can upload missing objects.
+    let cold = replica(store, [213; 32], [214; 16]);
+    let final_objects = cold.reachable_objects(&prepared.root()).await.unwrap();
+    let restored = source.path().join("restored.sqlite");
+    cold.open_root(&prepared.root())
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT v FROM counter", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        9
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT v FROM payload WHERE k=1", [], |row| row
+                .get::<_, Vec<u8>>(0))
+            .unwrap(),
+        vec![0xab; 3000]
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT count(*) FROM payload WHERE k>1 AND v=zeroblob(3000)",
+                [],
+                |row| row.get::<_, u64>(0)
+            )
+            .unwrap(),
+        1023
+    );
+    let compacted = cell
+        .prepare_scheduled_compaction(&root, scratch.path())
+        .await
+        .unwrap()
+        .unwrap();
+    let compacted_objects = cell.reachable_objects(&compacted.root()).await.unwrap();
+    assert!(
+        final_objects.iter().any(|object| {
+            object.kind == CellObjectKind::Directory && compacted_objects.contains(object)
+        }),
+        "a partial append must retain relocated directory nodes for unchanged pages"
+    );
+    let reference = cell
+        .prepare_after_compaction(&compacted, &cuts, 9, 1)
+        .await
+        .unwrap();
+    assert_eq!(reference.root(), prepared.root());
+    writer.close().unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn range_compaction_reads_and_reserves_only_the_selected_data() {
     verify_range_compaction(Arc::new(InMemory::new()), Path::from("runtime")).await;

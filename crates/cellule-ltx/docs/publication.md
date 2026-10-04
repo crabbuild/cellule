@@ -23,6 +23,7 @@ sequenceDiagram
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
 | `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
+| `prepare_scheduled_compaction_append` | Composes a bounded promotion and append without uploading intermediate root metadata. |
 | Runtime CAS | Names the authoritative owner and exact root. |
 | `Db::prune_captured` | Removes only the successfully published batch. |
 
@@ -43,6 +44,21 @@ predecessor's position, commit sequence, Cell and incarnation. The runtime selec
 the append's schema and can choose the final root with one CAS
 against the original authority record. Every immutable dependency still finishes
 uploading before the successor proposal is returned.
+
+When one scheduled promotion plus the incoming captures fits the caller's
+existing segment ceiling, `prepare_scheduled_compaction_append` prepares the
+final append directly from the verified compaction state. It keeps directory
+relocation bounded and uploads every directory node the final root may need.
+Only final descriptor pages and root metadata are constructed; the proposal
+retains the original authority predecessor and the same persisted bytes as the
+two-step path. `None` leaves the caller's existing cascade policy in charge.
+No unuploaded intermediate state can be used as a `PreparedRoot`.
+
+For this composed operation, root preparation admission includes recovery
+admission, and root work includes compaction and the final append. The compaction
+phase spans the composed attempt. These overlapping phase populations differ
+from standalone append timing; compare HTTP latency and provider operations
+rather than adding phase values.
 
 Compaction overlaps the independent LTX and index output flushes through the
 host's bounded job admission. Both barriers complete before either output can

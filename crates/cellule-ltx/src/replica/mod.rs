@@ -821,6 +821,39 @@ fn scheduled_compaction_range(
     None
 }
 
+/// Authenticated directory and descriptors, without claiming that root metadata
+/// has been uploaded. Compaction may supply this state directly to an append.
+struct AppendBaseState {
+    aggregate: directory::Aggregate,
+    directory_digest: [u8; 32],
+    directory_height: u32,
+    page_size: u32,
+    database_pages: u32,
+    inherited_segment_pages: Vec<[u8; 32]>,
+    descriptors: Vec<SegmentDescriptor>,
+}
+
+impl From<LoadedGraph> for AppendBaseState {
+    fn from(graph: LoadedGraph) -> Self {
+        Self {
+            aggregate: graph.aggregate,
+            directory_digest: graph.document.directory_digest,
+            directory_height: graph.document.directory_height,
+            page_size: graph.document.page_size,
+            database_pages: graph.document.database_pages,
+            inherited_segment_pages: graph.document.segment_pages,
+            descriptors: graph.descriptors,
+        }
+    }
+}
+
+struct CompactionAppend {
+    inputs: Vec<AppendInput>,
+    position: Position,
+    commit_sequence: u64,
+    schema: u32,
+}
+
 struct LoadedGraph {
     aggregate: directory::Aggregate,
     document: RootDocument,

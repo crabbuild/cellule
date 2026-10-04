@@ -410,6 +410,11 @@ destination.
   authority CAS used by commands.
 - A retryable preparation failure retains the debt for a bounded retry;
   ambiguous CAS is reconciled against the exact root.
+- When one scheduled promotion plus the append fits the existing segment-debt
+  ceiling, preparation constructs the final root directly from the verified
+  compaction state. It uploads no intermediate root metadata and still selects
+  the original authority predecessor with one fenced CAS. Directory streaming,
+  dependency checks, scratch cleanup, and resource ceilings remain unchanged.
 - Admission pressure may run the compaction cascade or force a full level-nine
   replacement before the next append.
 
