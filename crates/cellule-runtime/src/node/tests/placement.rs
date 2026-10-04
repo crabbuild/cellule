@@ -303,7 +303,7 @@ fn placement_schema_is_mixed_version_safe_and_fail_closed() {
     );
 
     let mut future = current;
-    future.placement_version = 3;
+    future.placement_version = 4;
     future.placement_signature = [0; 64];
     let decoded_future = NodeAdvertisement::decode_canonical(&future.encode().unwrap()).unwrap();
     assert!(!decoded_future.has_signed_placement());

@@ -9,7 +9,6 @@ use cellule_runtime::follower::{FollowerReceipt, FollowerStore, FollowerTailPage
 use cellule_runtime::identity::NodeId;
 use cellule_runtime::node::durability::{NodeDurabilityConfig, NodeLogAuthority};
 use cellule_runtime::node::lease::NodeLeaseGuard;
-use cellule_runtime::node::log::NodeLogRotationBarrier;
 use cellule_runtime::node::log_transport::{
     AppendRequest, NodeLogTransport, RetireRequest, SealRequest, TailRequest,
 };
@@ -727,7 +726,11 @@ impl NodeLogAuthority for ProcessEnrollment {
         })
     }
 
-    fn close<'a>(&'a self, barrier: &'a NodeLogRotationBarrier) -> BoxFuture<'a, Result<()>> {
+    fn close<'a>(
+        &'a self,
+        retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
+    ) -> BoxFuture<'a, Result<()>> {
+        let barrier = retirement.barrier();
         Box::pin(async move {
             let mut observed = self.observed.lock().await;
             if observed

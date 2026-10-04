@@ -4,6 +4,7 @@
 //! so the runtime re-exports the exact LTX types its own API uses.
 
 pub use cellule_ltx::{
-    CaptureTiming, CellObjectKind, CellReplica, CellStorageLayout, DiskBudget, DiskReservation,
-    Host, Limits, LtxPhase, LtxReadOrigin, LtxRequestOutcome, ScratchMonitor,
+    CaptureTiming, CellObjectKind, CellReplica, CellStorageLayout, Db, DiskBudget, DiskReservation,
+    Host, Limits, LtxPhase, LtxReadOrigin, LtxRequestOutcome, NodeFrameScope, RootRef,
+    ScratchMonitor, encode_node_frame,
 };

@@ -328,6 +328,23 @@ impl NodeLogStatus {
         )
     }
 
+    pub(crate) fn retire_recovered(&self, leader: NodeId) -> Result<Self> {
+        self.validate(leader)?;
+        if !matches!(self.phase, NodeLogPhase::Sealed | NodeLogPhase::Retired) {
+            return Err(Error::Fenced);
+        }
+        Self::from_parts(
+            leader,
+            NodeLogPhase::Retired,
+            self.epoch,
+            self.members.clone(),
+            self.active,
+            self.tiered_through,
+            None,
+            self.recovery_manifest,
+        )
+    }
+
     pub(crate) fn permits_append(&self, leader: NodeId, member: NodeId, epoch: u64) -> Result<()> {
         self.validate(leader)?;
         if self.phase != NodeLogPhase::Open

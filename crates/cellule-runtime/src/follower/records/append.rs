@@ -208,7 +208,7 @@ pub(in crate::follower) fn seal_sync(
 pub(in crate::follower) fn retire_sync(
     root: &Path,
     lane: Lane,
-    covered_through: u64,
+    watermark: RetirementWatermark,
     limits: cellule_ltx::Limits,
     scan_counter: &ScanCounter,
 ) -> Result<FollowerReceipt> {
@@ -218,6 +218,33 @@ pub(in crate::follower) fn retire_sync(
     let chunks = directory.join("chunks");
     let retained = scan_lane_counted(&chunks, lane, limits, scan_counter)?;
     let durable_through = retained.keys().next_back().copied().unwrap_or(0);
+    let covered_through = match watermark {
+        RetirementWatermark::Covered(value) => value,
+        RetirementWatermark::Recovered { active } => {
+            if !active && durable_through != 0 {
+                return Err(Error::Node("follower lane has uncovered records"));
+            }
+            if directory.join("retired").exists() {
+                read_watermark(
+                    &directory.join("retired"),
+                    "follower retire marker is invalid",
+                )?
+            } else if directory.join("sealed").exists() {
+                let sealed =
+                    read_watermark(&directory.join("sealed"), "follower seal marker is invalid")?;
+                if sealed != durable_through {
+                    return Err(Error::Node("follower seal watermark differs"));
+                }
+                sealed
+            } else if !active {
+                // Inactive enrollment cannot acknowledge a tail. The shared
+                // coverage check still refuses unexpected native records.
+                0
+            } else {
+                return Err(Error::Node("recovered follower lane has no native seal"));
+            }
+        }
+    };
     if durable_through > covered_through {
         return Err(Error::Node("follower lane has uncovered records"));
     }

@@ -223,6 +223,92 @@ async fn writable_activation_dispatches_filesystem_work_with_one_job_slot() {
 }
 
 #[tokio::test]
+async fn prepared_disk_credit_reaches_real_sparse_activation_and_sqlite() {
+    let (directory, _, host, mut writer) = fixture();
+    let expected: Vec<u8> = writer
+        .query_with(|connection| connection.query_row("SELECT v FROM t", [], |row| row.get(0)))
+        .unwrap();
+    let parent = cellule_ltx::DiskBudget::new(3 << 30);
+    let prepared = parent.try_reserve(parent.capacity()).unwrap().into_budget();
+    let host = host.with_local_disk_budget(prepared.clone());
+    let paged = prepared_root(host, &mut writer, Store::new(Arc::new(InMemory::new()))).await;
+    let destination = directory.path().join("prepared-credit.sqlite");
+    let writable = paged.prepare_writable(&destination).await.unwrap();
+    assert_eq!(parent.available(), 0);
+    let task_parent = parent.clone();
+    let task_prepared = prepared.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut restored = writable.open_writable(&destination).unwrap();
+        let count: i64 = restored
+            .query_with(|connection| {
+                connection.query_row("SELECT count(*) FROM t", [], |row| row.get(0))
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        let actual: Vec<u8> = restored
+            .query_with(|connection| connection.query_row("SELECT v FROM t", [], |row| row.get(0)))
+            .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(task_parent.used(), task_parent.capacity());
+        // Sparse pages acquire lasting disk tokens when SQLite hydrates them.
+        assert!(task_prepared.used() > 0);
+        task_prepared.finish_preparation().unwrap();
+        assert_eq!(task_parent.used(), task_prepared.used());
+        assert!(task_parent.available() > 0);
+        restored
+            .transaction(|transaction| transaction.execute("INSERT INTO t VALUES(2)", []))
+            .unwrap();
+        let captured = restored.capture().unwrap();
+        assert!(!captured.segments.is_empty());
+        assert_eq!(task_parent.used(), task_prepared.used());
+        restored.close().unwrap();
+    })
+    .await
+    .unwrap();
+    writer.close().unwrap();
+    assert_eq!(prepared.used(), 0);
+    assert_eq!(parent.used(), 0);
+}
+
+#[tokio::test]
+async fn canceled_sparse_activation_retains_prepared_disk_credit_until_job_closes() {
+    let (directory, faults, host, mut writer) = fixture();
+    let parent = cellule_ltx::DiskBudget::new(3 << 30);
+    let prepared = parent.try_reserve(parent.capacity()).unwrap().into_budget();
+    let host = host.with_local_disk_budget(prepared.clone());
+    let paged = prepared_root(host, &mut writer, Store::new(Arc::new(InMemory::new()))).await;
+    let destination = directory.path().join("cancel-prepared-credit.sqlite");
+    let pause = Arc::new(Pause {
+        operation: "create",
+        entered: tokio::sync::Notify::new(),
+        released: Mutex::new(false),
+        wake: std::sync::Condvar::new(),
+    });
+    let release = Release(pause.clone());
+    *faults.pause.lock().unwrap() = Some(pause.clone());
+    let task = tokio::spawn(async move { paged.prepare_writable(&destination).await });
+    tokio::time::timeout(Duration::from_secs(5), pause.entered.notified())
+        .await
+        .unwrap();
+    task.abort();
+    assert!(task.await.err().unwrap().is_cancelled());
+    drop(prepared);
+    assert_eq!(parent.used(), parent.capacity());
+    assert!(parent.try_reserve(1).is_err());
+    *faults.pause.lock().unwrap() = None;
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while parent.used() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(parent.available(), parent.capacity());
+    writer.close().unwrap();
+}
+
+#[tokio::test]
 async fn canceled_activation_retains_admission_until_file_cleanup_finishes() {
     for operation in ["create", "write_all", "file_len"] {
         let (directory, faults, host, mut writer) = fixture();

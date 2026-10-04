@@ -72,6 +72,13 @@ impl RecoveryArtifactStore for MemoryArtifactStore {
 async fn recovery_fixture_with_store(
     artifacts: Option<Arc<dyn RecoveryArtifactStore>>,
 ) -> RecoveryFixture {
+    recovery_fixture_with_scopes(artifacts, false).await
+}
+
+async fn recovery_fixture_with_scopes(
+    artifacts: Option<Arc<dyn RecoveryArtifactStore>>,
+    multiple: bool,
+) -> RecoveryFixture {
     let limits = cellule_ltx::Limits::default();
     let directory = tempfile::TempDir::new().unwrap();
     let mut database =
@@ -112,7 +119,7 @@ async fn recovery_fixture_with_store(
         limits,
     )
     .unwrap();
-    let recovered = build_recovery_overlays(
+    let mut recovered = build_recovery_overlays(
         vec![frame],
         &[RecoveryBase {
             application,
@@ -122,6 +129,45 @@ async fn recovery_fixture_with_store(
         limits,
     )
     .unwrap();
+    if multiple {
+        for (application, cell, incarnation, sequence) in [
+            ([3; 16], [7; 32], [8; 16], 2),
+            ([9; 16], [10; 32], [11; 16], 3),
+        ] {
+            let layout =
+                CellStorageLayout::new(layout.store().clone(), Path::from("root"), application);
+            let replica = cellule_ltx::CellReplica::new(layout, cell, incarnation, limits).unwrap();
+            let root = replica.prepare(None, &first, 1, 1).await.unwrap().root();
+            let frame = cellule_ltx::encode_node_frame(
+                cellule_ltx::NodeFrameScope {
+                    leader_session: [1; 16],
+                    log_epoch: 2,
+                    node_sequence: sequence,
+                    application,
+                    cell,
+                    incarnation,
+                    cell_epoch: 6,
+                    commit_sequence: 2,
+                },
+                segment.info().clone(),
+                Bytes::from(std::fs::read(segment.path()).unwrap()),
+                limits,
+            )
+            .unwrap();
+            recovered.extend(
+                build_recovery_overlays(
+                    vec![frame],
+                    &[RecoveryBase {
+                        application,
+                        cell_epoch: 6,
+                        root,
+                    }],
+                    limits,
+                )
+                .unwrap(),
+            );
+        }
+    }
     let manifests = RecoveryManifestStore::new(layout.clone(), limits);
     let manifests = artifacts.map_or(manifests.clone(), |store| {
         manifests.with_recovery_artifacts(store)
@@ -138,7 +184,7 @@ async fn recovery_fixture_with_store(
         layout,
         replica,
         manifests,
-        pinned: pinned.pop().unwrap(),
+        pinned: pinned.remove(0),
         publication,
         base,
         final_position: tail.position,
@@ -403,5 +449,271 @@ async fn load_overlay_rejects_corrupt_bundle_bytes() {
     assert!(matches!(
         error,
         Error::Node("recovery bundle digest differs")
+    ));
+}
+
+async fn raw_manifest(fixture: &RecoveryFixture) -> RawManifest {
+    let recovery = &fixture.pinned.recovery;
+    let path = fixture.layout.node_log_recovery_path(
+        recovery.leader_session.as_bytes(),
+        recovery.log_epoch,
+        recovery.manifest_digest.as_bytes(),
+    );
+    let (body, _) = fixture
+        .layout
+        .store()
+        .get_with_etag_bounded(&path, MAX_MANIFEST_BYTES)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+async fn install_manifest_bytes(fixture: &RecoveryFixture, body: Vec<u8>) -> Digest {
+    let digest = Digest::from_bytes(*blake3::hash(&body).as_bytes());
+    let recovery = &fixture.pinned.recovery;
+    let path = fixture.layout.node_log_recovery_path(
+        recovery.leader_session.as_bytes(),
+        recovery.log_epoch,
+        digest.as_bytes(),
+    );
+    fixture
+        .layout
+        .store()
+        .put(&path, Bytes::from(body))
+        .await
+        .unwrap();
+    digest
+}
+
+#[tokio::test]
+async fn manifest_inventory_reconstructs_every_scope_across_applications() {
+    let fixture = recovery_fixture_with_scopes(None, true).await;
+    // A newly constructed adapter has no local pinning result or artifact cache.
+    let manifests =
+        RecoveryManifestStore::new(fixture.layout.clone(), cellule_ltx::Limits::default());
+    let original = &fixture.pinned.recovery;
+    let inventory = manifests
+        .load_manifest(
+            original.leader_session,
+            original.log_epoch,
+            original.manifest_digest,
+        )
+        .await
+        .unwrap();
+    assert_eq!(inventory.leader_session(), original.leader_session);
+    assert_eq!(inventory.log_epoch(), original.log_epoch);
+    assert_eq!(inventory.manifest_digest(), original.manifest_digest);
+    assert_eq!(inventory.cells().len(), 3);
+    assert_eq!(inventory.cells()[0].cell, fixture.pinned.cell);
+    assert_eq!(inventory.cells()[0].recovery, fixture.pinned.recovery);
+    assert_eq!(inventory.cells()[1].cell, CellId::from_bytes([7; 32]));
+    assert_eq!(
+        inventory.cells()[2].application,
+        ApplicationId::from_bytes([9; 16])
+    );
+    for row in inventory.cells() {
+        let layout = CellStorageLayout::new(
+            fixture.layout.store().clone(),
+            Path::from("root"),
+            *row.application.as_bytes(),
+        );
+        let store = RecoveryManifestStore::new(layout, cellule_ltx::Limits::default());
+        let overlay = store
+            .load_overlay(row.cell, row.incarnation, &row.recovery)
+            .await
+            .unwrap();
+        assert_eq!(overlay.final_position(), fixture.final_position);
+        assert_eq!(row.cell_epoch, 6);
+        assert_eq!(row.recovery.manifest_digest, inventory.manifest_digest());
+    }
+}
+
+#[tokio::test]
+async fn manifest_inventory_is_metadata_and_does_not_certify_bundle_availability() {
+    let fixture = recovery_fixture().await;
+    let recovery = &fixture.pinned.recovery;
+    let raw = raw_manifest(&fixture).await;
+    let bundle_digest: [u8; 32] = unhex(&raw.cells[0].bundle_digest).unwrap();
+    let path = fixture.layout.node_log_bundle_path(
+        recovery.leader_session.as_bytes(),
+        recovery.log_epoch,
+        &bundle_digest,
+    );
+    fixture.inner.delete(&path).await.unwrap();
+    let inventory = fixture
+        .manifests
+        .load_manifest(
+            recovery.leader_session,
+            recovery.log_epoch,
+            recovery.manifest_digest,
+        )
+        .await
+        .unwrap();
+    assert_eq!(inventory.cells().len(), 1);
+    assert!(matches!(
+        load_error(&fixture, recovery).await,
+        Error::Storage(StorageError::NotFound { .. })
+    ));
+}
+
+#[tokio::test]
+async fn manifest_inventory_rejects_invalid_scope_and_preserves_missing_object_error() {
+    let fixture = recovery_fixture().await;
+    let recovery = &fixture.pinned.recovery;
+    for (leader, epoch) in [
+        (SessionId::from_bytes([0; 16]), 2),
+        (recovery.leader_session, 0),
+    ] {
+        assert!(matches!(
+            fixture
+                .manifests
+                .load_manifest(leader, epoch, recovery.manifest_digest)
+                .await,
+            Err(Error::Node("invalid recovery manifest scope"))
+        ));
+    }
+    assert!(matches!(
+        fixture
+            .manifests
+            .load_manifest(
+                recovery.leader_session,
+                recovery.log_epoch,
+                Digest::from_bytes([99; 32])
+            )
+            .await,
+        Err(Error::Storage(StorageError::NotFound { .. }))
+    ));
+}
+
+#[tokio::test]
+async fn manifest_inventory_rejects_corrupt_digest_and_wrong_path_scope() {
+    let fixture = recovery_fixture().await;
+    let recovery = &fixture.pinned.recovery;
+    let path = fixture.layout.node_log_recovery_path(
+        recovery.leader_session.as_bytes(),
+        recovery.log_epoch,
+        recovery.manifest_digest.as_bytes(),
+    );
+    let raw = raw_manifest(&fixture).await;
+    fixture
+        .inner
+        .put(&path, Bytes::from_static(b"corrupt").into())
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .manifests
+            .load_manifest(
+                recovery.leader_session,
+                recovery.log_epoch,
+                recovery.manifest_digest
+            )
+            .await,
+        Err(Error::Node("recovery manifest digest differs"))
+    ));
+    for (leader, epoch) in [([88; 16], "2"), ([1; 16], "3")] {
+        let mut changed: RawManifest =
+            serde_json::from_slice(&serde_json::to_vec(&raw).unwrap()).unwrap();
+        changed.leader_session = encode_hex(&leader);
+        changed.log_epoch = epoch.into();
+        let digest = install_manifest_bytes(&fixture, serde_json::to_vec(&changed).unwrap()).await;
+        assert!(matches!(
+            fixture
+                .manifests
+                .load_manifest(recovery.leader_session, recovery.log_epoch, digest)
+                .await,
+            Err(Error::Node("recovery manifest path scope differs"))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn manifest_inventory_and_overlay_reject_duplicate_and_reordered_scopes() {
+    let fixture = recovery_fixture_with_scopes(None, true).await;
+    for duplicate in [true, false] {
+        let mut raw = raw_manifest(&fixture).await;
+        if duplicate {
+            let copy = serde_json::from_slice(&serde_json::to_vec(&raw.cells[0]).unwrap()).unwrap();
+            raw.cells.insert(1, copy);
+        } else {
+            raw.cells.swap(0, 1);
+        }
+        let digest = install_manifest_bytes(&fixture, serde_json::to_vec(&raw).unwrap()).await;
+        let mut recovery = fixture.pinned.recovery.clone();
+        recovery.manifest_digest = digest;
+        assert!(matches!(
+            fixture
+                .manifests
+                .load_manifest(recovery.leader_session, recovery.log_epoch, digest)
+                .await,
+            Err(Error::Node(
+                "recovery manifest Cell scopes are not strictly ordered"
+            ))
+        ));
+        assert!(matches!(
+            load_error(&fixture, &recovery).await,
+            Error::Node("recovery manifest Cell scopes are not strictly ordered")
+        ));
+    }
+}
+
+#[tokio::test]
+async fn manifest_inventory_rejects_self_consistent_noncanonical_or_invalid_shapes() {
+    let fixture = recovery_fixture().await;
+    let raw = raw_manifest(&fixture).await;
+    let valid = serde_json::to_value(&raw).unwrap();
+    let mut bodies = vec![serde_json::to_vec_pretty(&raw).unwrap()];
+    for variant in 0..7 {
+        let mut changed = valid.clone();
+        match variant {
+            0 => {
+                changed["unknown"] = serde_json::json!(true);
+            }
+            1 => {
+                changed["version"] = serde_json::json!(2);
+            }
+            2 => {
+                changed["cells"] = serde_json::json!([]);
+            }
+            3 => {
+                changed["cells"] = serde_json::json!(vec![valid["cells"][0].clone(); 1_025]);
+            }
+            4 => {
+                changed["cells"][0]["first_node_sequence"] = serde_json::json!("0");
+            }
+            5 => {
+                changed["cells"][0]["cell_epoch"] = serde_json::json!("06");
+            }
+            _ => {
+                changed["cells"][0]["final_txid"] = changed["cells"][0]["predecessor_txid"].clone();
+            }
+        }
+        bodies.push(serde_json::to_vec(&changed).unwrap());
+    }
+    for body in bodies {
+        let digest = install_manifest_bytes(&fixture, body).await;
+        let recovery = &fixture.pinned.recovery;
+        assert!(
+            fixture
+                .manifests
+                .load_manifest(recovery.leader_session, recovery.log_epoch, digest)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn manifest_inventory_rejects_oversized_object_before_decode() {
+    let fixture = recovery_fixture().await;
+    let digest =
+        install_manifest_bytes(&fixture, vec![b' '; MAX_MANIFEST_BYTES as usize + 1]).await;
+    let recovery = &fixture.pinned.recovery;
+    assert!(matches!(
+        fixture
+            .manifests
+            .load_manifest(recovery.leader_session, recovery.log_epoch, digest)
+            .await,
+        Err(Error::Storage(_))
     ));
 }

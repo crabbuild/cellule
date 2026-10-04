@@ -55,7 +55,7 @@ mod routing;
 mod runtime;
 mod snapshot;
 
-pub use replica::CellReadReplica;
+pub use replica::{CellReadReplica, ReadReplicaLifecycleObservation, ReadReplicaSource};
 pub use routing::ReplicaReadRouter;
 pub use snapshot::PreparedCommandSnapshot;
 

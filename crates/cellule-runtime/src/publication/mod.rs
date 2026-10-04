@@ -10,6 +10,8 @@ use crate::node::log_shipper::NodeLogSubmission;
 use crate::retry::{Backoff, retry_hint, retryable_storage_error};
 use crate::{Error, Result};
 
+mod lineage;
+
 const COMPACTION_CHECK_INTERVAL: u8 = 8;
 const COMPACTION_DEBT_SEGMENTS: usize = 32;
 const MAX_COMPACTION_CASCADE: usize = 9;
@@ -46,6 +48,7 @@ pub struct CellPublisher {
     node_lease: Option<crate::NodeLeaseGuard>,
     node_durability: Option<NodeDurabilitySlot>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
+    lineage_confirmed: Option<cellule_ltx::RootPreparation>,
 }
 
 enum AppendBase {
@@ -84,6 +87,7 @@ impl CellPublisher {
             node_lease: None,
             node_durability: None,
             telemetry: crate::fleet::telemetry::CellTelemetryHandle::default(),
+            lineage_confirmed: None,
         }
     }
 
@@ -140,6 +144,10 @@ impl CellPublisher {
     #[must_use]
     pub fn control(&self) -> &VersionedControl {
         &self.observed
+    }
+
+    pub(crate) fn resource_limits(&self) -> cellule_ltx::Limits {
+        self.replica.limits()
     }
 
     /// Returns the Cell storage layout this publisher writes through.
@@ -559,7 +567,7 @@ impl CellPublisher {
     ) -> Result<cellule_ltx::PreparedRoot> {
         let mut backoff = Backoff::default();
         loop {
-            let replica = self.replica.clone();
+            let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
             let attempt = async {
                 match base {
                     AppendBase::Published(root) => {
@@ -584,11 +592,20 @@ impl CellPublisher {
                 }
             };
             match result {
-                Ok(prepared) => return Ok(prepared),
-                Err(error) if retryable_ltx_error(&error) => {
-                    backoff.wait(ltx_retry_hint(&error)).await;
+                Ok(prepared) => {
+                    self.lineage_confirmed = *confirmation
+                        .lock()
+                        .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+                    return Ok(prepared);
                 }
-                Err(error) => return Err(error.into()),
+                Err(source) => {
+                    let error = lineage::error(source);
+                    if retryable_publication_error(&error) {
+                        backoff.wait(runtime_retry_hint(&error)).await;
+                    } else {
+                        return Err(error);
+                    }
+                }
             }
         }
     }
@@ -637,11 +654,22 @@ impl CellPublisher {
                     Transition::Publish,
                 ),
             };
-            match self
-                .authority
-                .transition(&self.observed, successor.clone(), transition)
-                .await
-            {
+            // Retain verified preparation inputs before the authority can
+            // select this root. A failed CAS leaves only a private proposal;
+            // the same retry/adoption owner handles metadata ambiguity.
+            let publication = async {
+                if self.lineage_confirmed != Some(prepared.preparation()) {
+                    // External preparations and rebased compaction inputs use
+                    // the same canonical metadata path before authority CAS.
+                    self.authority.retain_root_lineage(prepared).await?;
+                    self.lineage_confirmed = Some(prepared.preparation());
+                }
+                self.authority
+                    .transition(&self.observed, successor.clone(), transition)
+                    .await
+            }
+            .await;
+            match publication {
                 Ok(published) => {
                     self.check_node_lease()?;
                     self.observed = published;
@@ -904,10 +932,11 @@ impl CellDurabilitySubmitter {
 }
 
 fn retryable_publication_error(error: &Error) -> bool {
-    let Error::Storage(error) = error else {
-        return false;
-    };
-    retryable_storage_error(error)
+    match error {
+        Error::Storage(error) => retryable_storage_error(error),
+        Error::Ltx(error) => retryable_ltx_error(error),
+        _ => false,
+    }
 }
 
 fn retryable_ltx_error(error: &cellule_ltx::LtxError) -> bool {
@@ -917,10 +946,11 @@ fn retryable_ltx_error(error: &cellule_ltx::LtxError) -> bool {
 }
 
 fn runtime_retry_hint(error: &Error) -> Option<std::time::Duration> {
-    let Error::Storage(error) = error else {
-        return None;
-    };
-    retry_hint(error)
+    match error {
+        Error::Storage(error) => retry_hint(error),
+        Error::Ltx(error) => ltx_retry_hint(error),
+        _ => None,
+    }
 }
 
 fn ltx_retry_hint(error: &cellule_ltx::LtxError) -> Option<std::time::Duration> {

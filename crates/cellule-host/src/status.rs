@@ -2,6 +2,33 @@
 
 use super::*;
 
+/// Local lifecycle of the original retained host drain task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeDrainPhase {
+    /// The canonical facility/runtime/withdrawal sequence is still running.
+    Running,
+    /// The sequence returned; its task epilogue has not been joined yet.
+    Returned,
+    /// The original task was joined, successfully or with its original failure.
+    Joined,
+}
+
+/// Bounded local closing diagnostics, independent of fleet authorization.
+/// Neither a joined task nor an empty error establishes role or relocation proof.
+#[derive(Clone, Debug)]
+pub struct NodeDrainObservation {
+    /// Monotonic identity of this node's retained closing attempt.
+    pub serial: u64,
+    /// Actual return/join progress of that original task.
+    pub phase: NodeDrainPhase,
+    /// Original resource-sequence or task result, absent while still running.
+    pub result: Option<Result<(), Arc<Error>>>,
+    /// Earliest original failure across retained closing attempts.
+    pub first_failure: Option<Arc<Error>>,
+    /// Most recent original failure; successful retries do not erase history.
+    pub latest_failure: Option<Arc<Error>>,
+}
+
 /// Node lifecycle state visible to readiness and shutdown adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeState {
@@ -9,6 +36,9 @@ pub enum NodeState {
     Starting,
     /// The node serves Cells and may take new ownership.
     Ready,
+    /// A confirmed fleet boot exposes management/recovery while retained
+    /// cordon/drain intent keeps serving and new role admission closed.
+    Maintenance,
     /// Scale-down started: the node still serves but takes no new ownership.
     ScalingDown,
     /// The node is releasing its Cells and refuses new work.

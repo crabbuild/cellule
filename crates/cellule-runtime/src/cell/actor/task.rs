@@ -13,6 +13,7 @@ pub(super) async fn run(
     unpublished_node_log_bytes: Arc<AtomicU64>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     publications: broadcast::Sender<CatalogEntry>,
+    admission: NodeAdmission,
 ) {
     let mut cells = HashMap::<CellId, ActiveCell>::new();
     let mut transitioning = HashSet::<CellId>::new();
@@ -41,6 +42,17 @@ pub(super) async fn run(
     pressure_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pressure_tick.tick().await;
     loop {
+        if !shutdown.draining {
+            maintenance::drive(
+                &pool,
+                &mut cells,
+                &mut transitioning,
+                &mut tasks,
+                &node_lease,
+                &mut movement,
+                &mut movement_permits,
+            );
+        }
         if shutdown.draining {
             if tasks.is_empty() {
                 if !cells.is_empty() || !transitioning.is_empty() {
@@ -93,7 +105,7 @@ pub(super) async fn run(
                         }
                         break;
                     };
-                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &mut movement, &mut movement_permits, &mut next_generation);
+                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &admission, &mut movement, &mut movement_permits, &mut next_generation);
                 }
                 _ = renewal_tick.tick() => {
                     renewals.scan_due(&cells);
@@ -114,6 +126,7 @@ pub(super) async fn run(
                         &pool,
                         &telemetry,
                         &mut pressure,
+                        &admission,
                         &mut cells,
                         &mut transitioning,
                         &mut tasks,
@@ -148,7 +161,7 @@ pub(super) async fn run(
                     }
                     break;
                 };
-                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &mut movement, &mut movement_permits, &mut next_generation);
+                    handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &admission, &mut movement, &mut movement_permits, &mut next_generation);
             }
             result = tasks.join_next() => {
                 let Some(Ok(result)) = result else {
@@ -182,6 +195,7 @@ pub(super) async fn run(
                     &pool,
                     &telemetry,
                     &mut pressure,
+                    &admission,
                     &mut cells,
                     &mut transitioning,
                     &mut tasks,
@@ -197,10 +211,15 @@ pub(super) async fn run(
 ///
 /// A ledger that cannot be read, or a node without configured limits, yields no
 /// sample: pressure policy must never stop the actor loop.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the sample shares the actor ledger, classifier, admission gate, and movement state"
+)]
 fn sample_node_pressure(
     pool: &SqlWorkerPool,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
     pressure: &mut PressureClassifier,
+    admission: &NodeAdmission,
     cells: &mut HashMap<CellId, ActiveCell>,
     transitioning: &mut HashSet<CellId>,
     tasks: &mut JoinSet<TaskResult>,
@@ -217,6 +236,7 @@ fn sample_node_pressure(
         sample,
         telemetry,
         pressure,
+        admission,
         pool,
         cells,
         transitioning,
@@ -238,6 +258,7 @@ fn classify_pressure_sample(
     sample: PressureSample,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
     pressure: &mut PressureClassifier,
+    admission: &NodeAdmission,
     pool: &SqlWorkerPool,
     cells: &mut HashMap<CellId, ActiveCell>,
     transitioning: &mut HashSet<CellId>,
@@ -246,6 +267,7 @@ fn classify_pressure_sample(
     movement_permits: &mut HashMap<CellId, MovementPermit>,
 ) -> crate::Result<PressureState> {
     let state = pressure.observe(sample)?;
+    admission.observe(state, sample.at_ms)?;
     telemetry.pressure_state(state);
     if matches!(state, PressureState::Shedding | PressureState::Critical)
         && movement.in_flight() < 2
@@ -280,7 +302,9 @@ pub(super) fn start_shutdown_drain(
     for (cell, active) in cells.iter_mut() {
         if let Some(transfer) = active.transfer.take() {
             active.coordination.step(CoordinationInput::AbortTransfer);
-            let _ = transfer.reply.send(Err(Error::CellDraining));
+            transfer
+                .reply
+                .refuse(DrainBlocker::BusyExecution, Error::CellDraining);
         }
         active.inventory_refreshing = false;
         active.coordination.step(CoordinationInput::BeginShutdown);
@@ -325,6 +349,7 @@ pub(super) fn handle_message(
     node_lease: &RuntimeNodeLease,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
     pressure: &mut PressureClassifier,
+    admission: &NodeAdmission,
     movement: &mut MovementBudget,
     movement_permits: &mut HashMap<CellId, MovementPermit>,
     next_generation: &mut u64,
@@ -365,26 +390,33 @@ pub(super) fn handle_message(
                         bootstrap_and_publish(cell, &pool, &mut publisher, *activation).await
                     }
                 };
-                let (result, persisted_work) = match result {
-                    Ok(hydration) => {
-                        match pool.interrupt_handle(cell).await {
-                            Ok(interrupt) => {
-                                let persisted_work =
-                                    pool.persisted_work_inventory(cell, role).await;
-                                (Ok((Arc::new(interrupt), hydration)), persisted_work)
-                            }
-                            Err(error) => {
-                                let result =
-                                    match cleanup_failed_activation(cell, &pool, &mut publisher)
-                                        .await
-                                    {
-                                        Ok(()) => error,
-                                        Err(cleanup) => cleanup,
-                                    };
-                                (Err(result), Err(Error::CellNotActive))
-                            }
+                let (result, inventory) = match result {
+                    Ok(hydration) => match pool.interrupt_handle(cell).await {
+                        Ok(interrupt) => {
+                            let inventory = pool
+                                .fleet_inventory(
+                                    cell,
+                                    role,
+                                    unix_millis(),
+                                    SqlDeadline::new(std::time::Instant::now() + SQL_WALL_DEADLINE),
+                                )
+                                .await;
+                            (Ok((Arc::new(interrupt), hydration)), inventory)
                         }
-                    }
+                        Err(error) => {
+                            let result = match cleanup_failed_activation(
+                                cell,
+                                &pool,
+                                &mut publisher,
+                            )
+                            .await
+                            {
+                                Ok(()) => error,
+                                Err(cleanup) => cleanup,
+                            };
+                            (Err(result), Err(Error::CellNotActive))
+                        }
+                    },
                     Err(error) => {
                         let result =
                             match cleanup_failed_activation(cell, &pool, &mut publisher).await {
@@ -403,7 +435,7 @@ pub(super) fn handle_message(
                     admission,
                     reply,
                     result,
-                    persisted_work,
+                    inventory,
                 }
             });
         }
@@ -412,12 +444,16 @@ pub(super) fn handle_message(
                 send_command_reply(&mut command, Err(Error::CellNotActive));
                 return;
             };
-            if active.transfer.is_some() {
+            if active
+                .transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.maintenance.is_none())
+            {
                 send_command_reply(&mut command, Err(Error::CellDraining));
                 return;
             }
             match active.coordination.step(CoordinationInput::Admit {
-                kind: AdmissionKind::Command,
+                kind: command._work.kind,
                 admission_matches: Arc::ptr_eq(&active.admission, &command.admission),
             }) {
                 CoordinationDecision::Admit => {
@@ -435,12 +471,16 @@ pub(super) fn handle_message(
                 send_query_reply(&mut query, Err(Error::CellNotActive));
                 return;
             };
-            if active.transfer.is_some() {
+            if active
+                .transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.maintenance.is_none())
+            {
                 send_query_reply(&mut query, Err(Error::CellDraining));
                 return;
             }
             match active.coordination.step(CoordinationInput::Admit {
-                kind: AdmissionKind::Query,
+                kind: query._work.kind,
                 admission_matches: Arc::ptr_eq(&active.admission, &query.admission),
             }) {
                 CoordinationDecision::Admit => {
@@ -458,7 +498,11 @@ pub(super) fn handle_message(
                 send_resolve_reply(&mut resolve, Err(Error::CellNotActive));
                 return;
             };
-            if active.transfer.is_some() {
+            if active
+                .transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.maintenance.is_none())
+            {
                 send_resolve_reply(&mut resolve, Ok(Resolution::Unknown));
                 return;
             }
@@ -602,14 +646,16 @@ pub(super) fn handle_message(
             if active.transfer.is_some() {
                 if let Some(transfer) = active.transfer.take() {
                     active.coordination.step(CoordinationInput::AbortTransfer);
-                    let _ = transfer.reply.send(Err(Error::CellDraining));
+                    transfer
+                        .reply
+                        .refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                 }
                 let decision = active.coordination.step(CoordinationInput::BeginDrain);
                 if let CoordinationDecision::Reject(reason) = decision {
                     let _ = reply.send(Err(rejection_error(reason)));
                     return;
                 }
-                active.drain = Some(reply);
+                active.drain = Some(DrainReply::Unit(reply));
                 if matches!(
                     schedule(active, node_lease.check().is_ok()),
                     CoordinationDecision::ReadyToDeactivate
@@ -623,7 +669,7 @@ pub(super) fn handle_message(
                 let _ = reply.send(Err(rejection_error(reason)));
                 return;
             }
-            active.drain = Some(reply);
+            active.drain = Some(DrainReply::Unit(reply));
             match schedule(active, node_lease.check().is_ok()) {
                 CoordinationDecision::ReadyToDeactivate => {
                     start_deactivate(cell, pool, cells, transitioning, tasks);
@@ -662,6 +708,24 @@ pub(super) fn handle_message(
                 .collect();
             let _ = reply.send(Ok(candidates));
         }
+        Message::FleetCellsPage {
+            session,
+            cursor,
+            limit,
+            retained,
+            reply,
+        } => {
+            let result = inventory::collect_page(
+                cells,
+                transitioning,
+                *next_generation,
+                session,
+                cursor,
+                limit,
+                retained,
+            );
+            let _ = reply.send(result);
+        }
         Message::ActiveCatalogEntries { reply } => {
             if node_lease.check().is_err() {
                 let _ = reply.send(Err(Error::Fenced));
@@ -687,35 +751,97 @@ pub(super) fn handle_message(
         Message::UnreleasedCellCount { reply } => {
             let _ = reply.send(Ok(cells.len().saturating_add(transitioning.len())));
         }
+        Message::QuiesceCell {
+            cell,
+            generation,
+            incarnation,
+            epoch,
+            reply,
+        } => {
+            let result = (|| {
+                let active = cells.get_mut(&cell).ok_or(Error::CellNotActive)?;
+                if active.generation != generation || active.incarnation != incarnation {
+                    return Err(Error::Fenced);
+                }
+                let publisher = active.publisher.as_ref().ok_or(Error::CellDraining)?;
+                if publisher.control().value().epoch != epoch {
+                    return Err(Error::Fenced);
+                }
+                match active
+                    .coordination
+                    .step(CoordinationInput::BeginMaintenanceQuiescence)
+                {
+                    CoordinationDecision::Started => {
+                        // Keep the same bounded request/byte permits and exact
+                        // completion capability. Ordinary work checks both this
+                        // shared flag and the actor's ordered kernel admission.
+                        active
+                            .admission
+                            .maintenance_quiescing
+                            .store(true, Ordering::Release);
+                        Ok(())
+                    }
+                    CoordinationDecision::Reject(reason) => Err(rejection_error(reason)),
+                    _ => Err(Error::CellDraining),
+                }
+            })();
+            let _ = reply.send(result);
+        }
+        Message::ReleaseMaintenanceCell(request) => {
+            if let Some(cell) = maintenance::begin(request, cells, movement, movement_permits) {
+                continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+            }
+        }
         Message::ReleaseIdleCell {
             cell,
             generation,
+            expected,
             reply,
         } => {
             if node_lease.check().is_err() {
-                let _ = reply.send(Err(Error::Fenced));
+                reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
                 return;
             }
             let Some(active) = cells.get(&cell) else {
-                let _ = reply.send(Err(Error::CellNotActive));
+                reply.refuse(DrainBlocker::IncompleteObservation, Error::CellNotActive);
                 return;
             };
+            if let Some((incarnation, epoch)) = expected {
+                if active.incarnation != incarnation || active.generation != generation {
+                    reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
+                    return;
+                }
+                match active.publisher.as_ref() {
+                    Some(publisher) if publisher.control().value().epoch != epoch => {
+                        reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
+                        return;
+                    }
+                    None => {
+                        reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
+                        return;
+                    }
+                    Some(_) => {}
+                }
+            }
             if active.generation != generation
                 || active.draining()
                 || active.transfer.is_some()
                 || active.inventory_refreshing
             {
-                let _ = reply.send(Err(Error::CellDraining));
+                reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                 return;
             }
             let Ok(mut permit) = movement.try_start_requested(unix_millis()) else {
-                let _ = reply.send(Err(Error::Capacity("movement budget")));
+                reply.refuse(
+                    DrainBlocker::MovementBudget,
+                    Error::Capacity("movement budget"),
+                );
                 return;
             };
             {
                 let Some(active) = cells.get_mut(&cell) else {
                     movement.complete(&mut permit);
-                    let _ = reply.send(Err(Error::CellNotActive));
+                    reply.refuse(DrainBlocker::IncompleteObservation, Error::CellNotActive);
                     return;
                 };
                 if active.transfer.is_some()
@@ -723,7 +849,7 @@ pub(super) fn handle_message(
                     || active.inventory_refreshing
                 {
                     movement.complete(&mut permit);
-                    let _ = reply.send(Err(Error::CellDraining));
+                    reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                     return;
                 }
                 let decision =
@@ -739,22 +865,22 @@ pub(super) fn handle_message(
                     CoordinationDecision::Fence => {
                         fence_active(active);
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(Error::Fenced));
+                        reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
                         return;
                     }
                     CoordinationDecision::Reject(reason) => {
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(rejection_error(reason)));
+                        reply.refuse(DrainBlocker::BusyExecution, rejection_error(reason));
                         return;
                     }
                     CoordinationDecision::Ignored => {
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(Error::CellDraining));
+                        reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                         return;
                     }
                     _ => {
                         movement.complete(&mut permit);
-                        let _ = reply.send(Err(Error::CellDraining));
+                        reply.refuse(DrainBlocker::BusyExecution, Error::CellDraining);
                         return;
                     }
                 }
@@ -762,7 +888,10 @@ pub(super) fn handle_message(
                 active.admission.requests.close();
                 active.admission.bytes.close();
                 active.admission = new_cell_admission(active.admission.owner_fence);
-                active.transfer = Some(TransferPreflight { reply });
+                active.transfer = Some(TransferPreflight {
+                    reply,
+                    maintenance: None,
+                });
             };
             movement_permits.insert(cell, permit);
             continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
@@ -772,6 +901,7 @@ pub(super) fn handle_message(
                 sample,
                 telemetry,
                 pressure,
+                admission,
                 pool,
                 cells,
                 transitioning,
@@ -826,6 +956,9 @@ pub(super) fn reject_fenced_message(message: Message) {
         Message::IdleTransferCandidates { reply } => {
             let _ = reply.send(Err(Error::Fenced));
         }
+        Message::FleetCellsPage { reply, .. } => {
+            let _ = reply.send(Err(Error::Fenced));
+        }
         Message::ActiveCatalogEntries { reply } => {
             let _ = reply.send(Err(Error::Fenced));
         }
@@ -835,8 +968,14 @@ pub(super) fn reject_fenced_message(message: Message) {
         Message::UnreleasedCellCount { reply } => {
             let _ = reply.send(Err(Error::Fenced));
         }
-        Message::ReleaseIdleCell { reply, .. } => {
+        Message::QuiesceCell { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));
+        }
+        Message::ReleaseMaintenanceCell(request) => {
+            let _ = request.reply.send(Err(Error::Fenced));
+        }
+        Message::ReleaseIdleCell { reply, .. } => {
+            reply.refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
         }
         Message::ObservePressure { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));

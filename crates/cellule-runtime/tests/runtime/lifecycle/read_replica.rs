@@ -23,6 +23,7 @@ use cellule_runtime::registry::{
     OperationDescriptor, Query, QueryContext, Registry, RegistryBuilder, RetainedCodeDescriptor,
 };
 
+mod closing;
 mod lifecycle;
 
 const MODULE: &str = "replica-counter";

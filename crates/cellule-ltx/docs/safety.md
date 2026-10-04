@@ -27,6 +27,35 @@ service authenticates the authority record that selects a root.
 admission bound local scratch, retained cuts, and remote I/O. The host owns
 scheduling and cancellation; see [cellule-host](../../cellule-host/docs/README.md).
 
+## Prepared disk credit
+
+An operation can reserve its conservative disk envelope before another node
+releases ownership. Convert that `DiskReservation` with `into_budget`, then
+give the resulting budget to the operation's normal `Host`. Restore, checksum,
+SQLite, and capture reservations consume the already admitted envelope. The
+parent node budget remains charged for the full envelope during preparation.
+
+```rust
+fn prepared_host(
+    host: cellule_ltx::Host,
+    node_budget: &cellule_ltx::DiskBudget,
+    bytes: u64,
+) -> cellule_ltx::Result<(cellule_ltx::Host, cellule_ltx::DiskBudget)> {
+    let credit = node_budget.try_reserve(bytes)?.into_budget();
+    Ok((host.with_local_disk_budget(credit.clone()), credit))
+}
+```
+
+After preparation work has joined, call `finish_preparation` to return unused
+credit. Live child reservations stay charged; future growth uses ordinary
+parent admission and the original operation ceiling. Dropping the initiating
+future or budget clone does not release credit held by accepted work. Scope
+budgets inherit parent admission and reject installation of another aggregate
+hook, which could count the same bytes twice or overwrite node accounting.
+
+This is a local resource token. It supplies no ownership, controller permit,
+authentication, or proof that remote work was cancelled.
+
 ```sh
 cargo test -p cellule-ltx --no-default-features --locked
 cargo test -p cellule-ltx --features replica --locked

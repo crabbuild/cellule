@@ -1,0 +1,236 @@
+# Retain the original failed-boot writer set
+
+Use `FleetOriginalWriterCapture` to retain every original ownership observation
+before starting effects that depend on a failed physical boot's complete writer
+set. The application authenticates the process and catalog providers. The host
+uses the existing authority, catalog readers, fleet registry and finite journal
+work owner.
+
+## Integration order
+
+1. Capture and retain the original `FleetFailedBootProcessRequest` with
+   `capture_fenced`, before recovering or retiring its leader log. Preserve its
+   identity across controller reconstruction.
+2. Publish the maintenance operation and its Draining intent in the existing
+   journal. Confirm a live controller and recovery claimant.
+3. Supply `FleetOriginalCatalogs` with every canonical application/tenant storage
+   source the original boot could write. Its durable witness binds authenticated
+   original configuration and canonical backend mappings. An empty set requires
+   explicit authenticated no-writer configuration.
+4. Capture and publish the original set using the same journal transaction
+   domain. Confirm publication before dependent effects. On an ambiguous reply,
+   use `FleetOriginalWriterInventory::load` to reconstruct the committed manifest
+   and every exact page; preserve their original bytes and capture interval.
+5. Independently verify every original acknowledged prefix, exact dependency
+   availability and current successor serving. Combine complete writer, reader,
+   follower and accepted-work evidence before role settlement or node finalization.
+
+The caller accounts bounded metadata work through its existing finite owner and
+uses one absolute deadline. Application providers own credentials, authorization,
+accepted external jobs and durable process joining. A PID, expired lease, filtered
+resident list or successful reconstruction cannot establish a complete set.
+
+```rust
+use cellule_host::fleet::{
+    FleetFailedBootProcessRequest, FleetFailedBootProcesses,
+    FleetOriginalCatalogs, FleetOriginalWriterCapture, FleetOriginalWriterJournal,
+};
+use cellule_runtime::{Result, identity::SessionId, node::NodeDirectory};
+use cellule_runtime::fleet::operations::OriginalWriterInventoryRecord;
+use tokio::time::Instant;
+
+async fn retain_original_writers(
+    journal: &dyn FleetOriginalWriterJournal,
+    directory: &NodeDirectory,
+    processes: &dyn FleetFailedBootProcesses,
+    catalogs: &dyn FleetOriginalCatalogs,
+    original: &FleetFailedBootProcessRequest,
+    claimant: SessionId,
+    deadline: Instant,
+    mut clock: impl FnMut() -> Result<i64>,
+) -> Result<OriginalWriterInventoryRecord> {
+    let capture = FleetOriginalWriterCapture::capture(
+        journal, directory, processes, catalogs, original,
+        claimant, deadline, &mut clock,
+    ).await?;
+    capture.publish(
+        journal, directory, processes, catalogs,
+        claimant, deadline, &mut clock,
+    ).await
+}
+```
+
+After controller restart, load the current complete journal snapshot and supply
+the retained operation ID and original process-request digest. The loader checks
+the committed pointer and all ordered pages before exposing an inventory. `None`
+means no committed set at that read; only a returned manifest with zero owners
+establishes retained empty input. Neither result proves accepted capture work
+cannot still publish.
+
+```rust
+use cellule_host::fleet::{
+    FleetJournalSnapshot, FleetOriginalWriterInventory, FleetOriginalWriterJournal,
+};
+use cellule_runtime::{Result, identity::Digest};
+use cellule_runtime::fleet::operations::OperationId;
+use tokio::time::Instant;
+
+async fn reload_original_writers(
+    journal: &dyn FleetOriginalWriterJournal,
+    current: &FleetJournalSnapshot,
+    operation: OperationId,
+    original_process_request: Digest,
+    deadline: Instant,
+) -> Result<Option<FleetOriginalWriterInventory>> {
+    FleetOriginalWriterInventory::load(
+        journal, current, operation, original_process_request, deadline,
+    ).await
+}
+```
+
+The inventory remains immutable historical input. Its `writers()` iterator spans
+every validated page. It does not refresh the collection interval or confirm
+current native roles. Aggregate collectors must independently recheck current
+authority, every successor prefix, process closure and the complete operation
+barrier before acting.
+
+## Collect the original boot's complete sealed suffixes
+
+After publishing the original writer set and canonically sealing recovery, use
+`FleetOriginalBootSuffixInventory::collect`. Supply the retained original process
+request and the application-authenticated manifest store for that original log.
+The collector reads `NodeDirectory::recovered_session`, follows its exact manifest
+digest, and includes rows from every application. Every row must match a retained
+original owner epoch and exact predecessor. It repeats the original process,
+canonical log and full journal checks after manifest I/O.
+
+Open/Recovering logs, uncommitted writers, omitted owners, changed predecessors,
+missing/corrupt manifest bytes and changed process evidence refuse. A canonical
+log with no manifest still retains all object-covered and rootless writers.
+The application accounts the bounded copied writer index and manifest buffers;
+the manifest read is bounded to 2 MiB. One absolute deadline spans collection.
+
+This supplies complete metadata inputs for that original log. It does not verify
+referenced bundles or current successors. Original Controls also retain inherited
+recovery overlays from earlier boots; those must receive their own exact manifest
+and successor proofs. Verify every original root and suffix through native prefix
+verification, then recheck current native serving and the complete role/work
+barrier before settlement. Sealed log recovery permits no log retirement or node
+finalization by itself.
+
+## Verify every original writer against its native successor
+
+`FleetOriginalWriterSuccessorInventory::collect` composes the complete original
+writer/suffix inventory with actual current native writers. Supply a read-only
+`FleetOriginalWriterSuccessors` provider that resolves each original target to
+its existing `Arc<CellNode>`, physical node, canonical catalog and authority,
+exact Cell/incarnation replica, and authenticated historical manifest store.
+Authenticate these mappings across every original application/tenant. The
+provider retains accepted lookup work through its existing finite owner.
+
+The collector checks the host's retained managed startup against the complete
+roster, its live signed boot/endpoint/release, and the compiled Cell contract.
+The shared runtime `observe_serving` joins ordinary FIFO admission and captures
+the current authority root plus native actor generation at a strictly later
+ownership epoch. Native prefix verification checks every original root and
+sealed suffix against that exact current root. Rootless originals still require
+complete current origin verification. An inherited overlay is selected from its
+digest-verified historical manifest with its original Cell epoch preserved.
+
+After all prefix reads, the collector rechecks every retained native host and
+writer position, then repeats the original process/log/full-journal checks and
+confirms the roster. Missing targets, wrong physical boots, changed publication,
+missing origin dependencies and provider errors refuse the complete set. One
+absolute deadline spans collection; native origin memory and I/O use existing
+runtime admission. Applications account the bounded copied result buffers.
+
+This is a point observation. Reader/follower replacement policy, original
+accepted work, operation barriers and finalization remain separate requirements.
+The provider currently accepts actual host references; remote management
+transport and process/provider qualification still need integration.
+
+## Retain the proofs in the reconciler observation
+
+An authenticated `FleetObserver` can attach the complete collection with
+`FleetObservation::with_original_writer_successors`. Start the observation
+before collection and finish it after collecting its signed boots and native
+rows. Preserve the inventory's original interval and every application; only
+the planner rows are scoped to the observation's application.
+
+Attachment checks the scope, registry and interval, actual signed destination
+node/session/endpoint/compiled release, and matching native writer rows. A
+complete observation must include every scoped successor row. The public
+reconciler additionally compares the inventory's full journal snapshot with its
+retained roster, so a changed head refuses even when the registry is unchanged.
+Attaching role coverage requires the same full snapshot. The planner input
+digest binds the complete original proof set, including exact roots, suffixes,
+current native generations and process/log barriers; this is a local producer
+identity, with no new persisted or transport codec.
+
+Attachment cannot upgrade a partial observation or settle roles. The adapter
+still needs complete native/foreign role coverage, current replacement policy,
+all original accepted work and authenticated provider mappings. The six public
+minion observation cases exercise this boundary with real native successors and
+a partial scan; they do not qualify a complete production observer.
+
+## Checks and limits
+
+| Boundary | Required behavior |
+| --- | --- |
+| Original lifetime | Join the exact original process and every accepted native/external owner through the existing provider; recheck canonical fence, claimant and full roster. |
+| Complete sources | At most 128 unique sorted application/tenant scopes; reread the same request-bound source set and durable witness. Providers attest the actual canonical backend, including independent adapters. |
+| Catalog traversal | Capture all 256 original heads before pages; ordinary verified page reads and final head/ETag revalidation must complete. |
+| Authority history | Inspect every catalog entry, including unused bootstrap absence and owners outside the original boot. Missing legacy/restored history is `OwnerHistoryIncomplete`, never empty. |
+| Retained owners | Preserve full original Controls and targets for every matching ownership epoch, including rootless, recovering and object-covered writers. |
+| Bounds | At most 10,000 total catalog entries and 10,000 inspected ownership epochs; at most 10,000 retained observations, 64 per page. Record is at most 64 KiB; page is at most 1 MiB. Excess refuses without truncation. |
+| First publication | Within the original monotonic 30-second interval and operation/controller deadlines, compare full head/registry, boot and intent; atomically publish all pages, the original pointer and one registry advance. |
+| Replay | Exact committed bytes return as historical retention, even after the original deadline. A different original set conflicts. No refreshed timestamp or latest-set replacement. |
+| Reconstruction | `FleetOriginalWriterInventory::load` checks the full pointer barrier and validates every immutable page before returning. Missing/corrupt pages refuse the entire set; source errors are preserved. |
+
+Catalog heads are sequential observations. These metadata records provide no
+atomic global snapshot, root-retention pin, authority grant or successor proof.
+The original boot must already be joined; accepted original work cannot mutate
+its catalog after that barrier. Other boots may continue ordinary authority work.
+
+## Reference evidence
+
+The canonical [minion](../minion/README.md) SQLite adapter commits manifest/pages
+in the existing accepted blocking-job owner. Its public capture tests traverse
+two independently configured application/tenant catalogs and retain writers
+removed by actual canonical takeover. They exercise exact replay, reconstruction,
+provider errors, missing history, competing clients and canceled/lost replies.
+Reload cases distinguish absent and authenticated empty sets, refuse a stale
+snapshot or missing/corrupt final page, and preserve the original SQL error.
+The suffix fixture publishes real SQLite roots, captures later mutations and
+fsyncs their encoded node frames to two follower stores. Ordinary recovery pins
+and seals one complete two-application manifest. The collector checks its complete
+scope after independent journal reconstruction. Fault cases omit an original,
+change a predecessor, remove/corrupt manifest bytes and change or fail the final
+process read. These are input-boundary cases, not complete maintenance evidence.
+Their joined child is a lifetime stand-in; OS-crashed CellNode, accepted external
+jobs and provider fault qualification remain required.
+
+Seven successor cases activate four original writers across two applications
+through ordinary native takeover, including two rootless originals and two
+sealed suffixes. They check complete proof coverage, omitted/error mappings,
+changed publication during another lookup, wrong physical node, removed current
+origin bytes despite a warm actor, cancellation cleanup and expired deadlines.
+Six inherited aggregate cases use an earlier boot's two-application sealed log.
+Removing its actual canonical manifest makes two intermediate native acquisitions
+commit their ownership CAS and then fail. Both retain the exact original overlay
+without a successful acquisition record. After joining and fencing that native
+node, restoring the exact manifest bytes and renewing the later destination
+through canonical heartbeat CAS, ordinary takeover materializes both tails.
+The collector preserves manifest Cell epoch 1, original owner epoch 2 and
+materializing acquisition epoch 3. Missing/corrupt historical manifests,
+substituted storage, missing earlier owner history and missing materialization
+history refuse the complete collection even while the current actors can query.
+A later acknowledged publication retains the exact materialized prefix.
+
+These are in-process native acquisition and collector cases. The original
+process evidence still uses the joined lifetime stand-in; full physical process,
+external work, role replacement policy and provider qualification remain required.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked writer_tests
+```

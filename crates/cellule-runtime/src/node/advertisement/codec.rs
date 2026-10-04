@@ -111,6 +111,8 @@ pub(in crate::node) struct RawAdvertisement {
     pub(in crate::node) placement_version: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::node) placement_signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::node) operational_sample: Option<RawOperationalSample>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -157,8 +159,23 @@ impl From<&NodeAdvertisement> for RawAdvertisement {
                 .iter()
                 .any(|byte| *byte != 0)
                 .then(|| encode_hex(&value.placement_signature)),
+            operational_sample: value.operational_sample.map(|sample| RawOperationalSample {
+                mode: sample.mode,
+                pressure: sample.pressure,
+                sequence: sample.sequence.to_string(),
+                observed_at_ms: sample.observed_at_ms.to_string(),
+            }),
         }
     }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::node) struct RawOperationalSample {
+    pub(in crate::node) mode: NodeMode,
+    pub(in crate::node) pressure: NodePressure,
+    pub(in crate::node) sequence: String,
+    pub(in crate::node) observed_at_ms: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -306,6 +323,18 @@ impl TryFrom<RawAdvertisement> for NodeAdvertisement {
                 .map(|signature| decode_hex(&signature))
                 .transpose()?
                 .unwrap_or([0; 64]),
+            operational_sample: value
+                .operational_sample
+                .map(|sample| {
+                    NodeOperationalSample {
+                        mode: sample.mode,
+                        pressure: sample.pressure,
+                        sequence: canonical_u64(&sample.sequence)?,
+                        observed_at_ms: canonical_i64(&sample.observed_at_ms)?,
+                    }
+                    .validated()
+                })
+                .transpose()?,
         })
     }
 }

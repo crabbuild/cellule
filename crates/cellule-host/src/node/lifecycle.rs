@@ -26,10 +26,43 @@ impl CellNode {
             .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
         if *state == NodeState::Starting {
             self.require_components_present()?;
-            *state = NodeState::Ready;
+            let startup = self
+                .fleet_startup
+                .lock()
+                .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?;
+            if let Some(startup) = startup.as_ref() {
+                if self.runtime.node_durability().is_some()
+                    && self
+                        .owned_component::<crate::durability::enrollment::FleetFollowerEnrollment>(
+                            NODE_DURABILITY_PROVIDER_COMPONENT,
+                        )
+                        .is_none()
+                {
+                    return Err(Error::Control(
+                        "configured fleet durability requires managed follower enrollment",
+                    ));
+                }
+                if startup.boot.is_none() {
+                    return Err(Error::Control(
+                        "CellNode fleet boot enrollment is unconfirmed",
+                    ));
+                }
+                self.runtime
+                    .node_admission()
+                    .confirm_startup(startup.intent.mode())?;
+                *state = if self.runtime.node_admission().mode()?
+                    == cellule_runtime::node::NodeMode::Active
+                {
+                    NodeState::Ready
+                } else {
+                    NodeState::Maintenance
+                };
+            } else {
+                *state = NodeState::Ready;
+            }
             return Ok(());
         }
-        if *state == NodeState::Ready {
+        if matches!(*state, NodeState::Ready | NodeState::Maintenance) {
             return Ok(());
         }
         Err(Error::Control(
@@ -65,129 +98,23 @@ impl CellNode {
     }
     /// Stops admission and completes every owned drain phase by `deadline`.
     pub async fn drain_until(&self, deadline: Option<Instant>) -> cellule_runtime::Result<()> {
-        let _shutdown = self.shutdown_lock.lock().await;
-        self.drain_until_locked(deadline).await
+        let shutdown = Arc::clone(&self.shutdown_lock).lock_owned().await;
+        self.drain_until_locked(shutdown, deadline).await
     }
     pub(super) async fn drain_until_locked(
         &self,
+        shutdown: tokio::sync::OwnedMutexGuard<()>,
         deadline: Option<Instant>,
     ) -> cellule_runtime::Result<()> {
-        {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?;
-            if *state == NodeState::Stopped {
-                return Ok(());
-            }
-            *state = NodeState::Draining;
-        }
-        let task_group = self
-            .task_group
-            .lock()
-            .map(|task_group| task_group.clone())
-            .map_err(|_| Error::Control("CellNode task group lock poisoned"));
-        let facilities = self
-            .facilities
-            .lock()
-            .map(|facilities| {
-                facilities
-                    .iter()
-                    .rev()
-                    .map(|facility| (facility.name, Arc::clone(&facility.drain)))
-                    .collect::<Vec<_>>()
-            })
-            .map_err(|_| Error::Control("CellNode facility lock poisoned"));
-        let mut first_error = None;
-        if let Some(error) = task_group.as_ref().err().map(|error| match error {
-            Error::Control(message) => Error::Control(message),
-            _ => Error::Control("CellNode task group unavailable during drain"),
-        }) {
-            first_error = Some(error);
-        }
-        if let Ok(Some(task_group)) = task_group.as_ref() {
-            task_group.cancel_work();
-        }
-        match facilities {
-            Err(error) if first_error.is_none() => first_error = Some(error),
-            Err(_) => {}
-            Ok(facilities) => {
-                for (name, drain) in facilities {
-                    let result = if name == "cell-coordination-tasks" {
-                        // The task group is a retained owner, so its join must share the
-                        // node deadline; an unbounded callback could strand shutdown.
-                        match task_group.as_ref() {
-                            Ok(Some(task_group)) => task_group.drain_work_until(deadline).await,
-                            _ => drain().await,
-                        }
-                    } else {
-                        match deadline {
-                            Some(deadline) => {
-                                match tokio::time::timeout_at(deadline.into(), drain()).await {
-                                    Ok(result) => result,
-                                    Err(_) => Err(Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::TimedOut,
-                                        "CellNode facility drain deadline exceeded",
-                                    ))
-                                        as Box<dyn std::error::Error + Send + Sync>),
-                                }
-                            }
-                            None => drain().await,
-                        }
-                    };
-                    if let Err(source) = result
-                        && first_error.is_none()
-                    {
-                        first_error = Some(Error::Facility { name, source });
-                    }
-                }
-            }
-        }
-        let runtime_result = match deadline {
-            Some(deadline) => {
-                match tokio::time::timeout_at(deadline.into(), self.runtime.shutdown()).await {
-                    Ok(result) => result,
-                    Err(_) => Err(Error::Control("CellNode runtime drain deadline exceeded")),
-                }
-            }
-            None => self.runtime.shutdown().await,
-        };
-        if first_error.is_none() {
-            first_error = runtime_result.err();
-        }
-        // Session withdrawal fences the log authority. Keep its heartbeat live
-        // until runtime publication and the durable log-close barrier finish.
-        if let Ok(Some(task_group)) = task_group
-            && let Err(source) = task_group.drain_until(deadline).await
-            && first_error.is_none()
-        {
-            first_error = Some(Error::Facility {
-                name: "cell-coordination-tasks",
-                source,
-            });
-        }
-        let result = match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        };
-        let result = if result.is_ok() {
-            match self.facilities.lock() {
-                Ok(mut facilities) => {
-                    facilities.clear();
-                    Ok(())
-                }
-                Err(_) => Err(Error::Control("CellNode facility lock poisoned")),
-            }
-        } else {
-            result
-        };
-        if result.is_ok()
-            && let Ok(mut state) = self.state.lock()
-        {
-            *state = NodeState::Stopped;
-        }
-        result
+        self.drain_owner.drain(shutdown, deadline).await
     }
+
+    /// Captures the retained original host closing attempt and failure history.
+    /// This local diagnostic proves neither fleet relocation nor role settlement.
+    pub fn drain_observation(&self) -> cellule_runtime::Result<Option<NodeDrainObservation>> {
+        self.drain_owner.observe()
+    }
+
     /// Idempotent alias for graceful drain used by process shutdown hooks.
     pub async fn shutdown(&self) -> cellule_runtime::Result<()> {
         self.drain().await

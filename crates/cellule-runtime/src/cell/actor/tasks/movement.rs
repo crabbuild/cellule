@@ -100,7 +100,9 @@ pub(super) fn handle_transfer_preflight(
             }
         }
     } else {
-        let _ = transfer.reply.send(transfer_result);
+        if let Err(error) = transfer_result {
+            transfer.reply.refuse(DrainBlocker::UnknownInventory, error);
+        }
         if let Some(mut permit) = movement_permits.remove(&cell) {
             movement.complete(&mut permit);
         }

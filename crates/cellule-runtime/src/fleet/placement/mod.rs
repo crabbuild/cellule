@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::identity::NodeId;
 use crate::identity::{CellId, SessionId};
-use crate::node::{NodeAdvertisement, NodePlacementCapacity};
+use crate::node::{NodeAdvertisement, NodeMode, NodePlacementCapacity, NodePressure};
 use crate::{Error, Result};
 
 const MAX_OBSERVATION_AGE_MS: i64 = 30_000;
@@ -21,9 +21,8 @@ const BALANCE_DEADBAND_PERCENT: u128 = 2;
 
 /// Pressure class supplied by the signed node observation.
 ///
-/// The signed placement block carries measured counters rather than the node's
-/// hysteretic tier, so derivation currently reaches only the critical class;
-/// soft and hard pressure remain local until the tier is signed.
+/// Schema 3 carries the stable local tier explicitly. Schema 2 bridge readers
+/// retain the original zero-headroom derivation until the producer rollout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PlacementPressure {
     /// No pressure: the node accepts placements.
@@ -89,6 +88,7 @@ impl PlacementObservation {
         now_ms: i64,
         current_owner: bool,
     ) -> Result<Self> {
+        advertisement.verify_placement()?;
         let placement = advertisement
             .placement_capacity()
             .ok_or(Error::Node("placement snapshot is missing"))?;
@@ -118,7 +118,9 @@ impl PlacementObservation {
         Self {
             node: advertisement.node(),
             session: advertisement.session(),
-            observed_at_ms: advertisement.issued_at_ms(),
+            observed_at_ms: advertisement
+                .operational_sample()
+                .map_or(advertisement.issued_at_ms(), |sample| sample.observed_at_ms),
             memory_capacity_bytes: placement.memory_capacity_bytes,
             free_memory_bytes: capacity.free_memory_bytes,
             disk_capacity_bytes: placement.disk_capacity_bytes,
@@ -130,14 +132,25 @@ impl PlacementObservation {
             publication_backlog: placement.publication_backlog,
             hydration_backlog: placement.hydration_backlog,
             primitive_backlog: placement.primitive_backlog,
-            // Only an empty ledger is visible to a peer while the hysteretic
-            // tier stays local.
-            pressure: if capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0 {
-                PlacementPressure::Critical
-            } else {
-                PlacementPressure::Normal
-            },
-            draining: capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0,
+            pressure: advertisement.operational_sample().map_or_else(
+                || {
+                    if capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0 {
+                        PlacementPressure::Critical
+                    } else {
+                        PlacementPressure::Normal
+                    }
+                },
+                |sample| match sample.pressure {
+                    NodePressure::Normal => PlacementPressure::Normal,
+                    NodePressure::Constrained => PlacementPressure::Constrained,
+                    NodePressure::Shedding => PlacementPressure::Shedding,
+                    NodePressure::Critical => PlacementPressure::Critical,
+                },
+            ),
+            draining: advertisement.operational_sample().map_or_else(
+                || capacity.free_memory_bytes == 0 || capacity.free_disk_bytes == 0,
+                |sample| sample.mode != NodeMode::Active,
+            ),
             authenticated: true,
             current_owner,
         }
@@ -157,6 +170,8 @@ pub enum PlacementEligibility {
     Draining,
     /// The node reports critical pressure.
     CriticalPressure,
+    /// The stable node tier pauses proactive receive before critical pressure.
+    Pressure,
     /// Free memory is below the placement reserve.
     NoMemoryHeadroom,
     /// Free disk is below the placement reserve.
@@ -180,8 +195,9 @@ pub struct PlacementScore {
     pub eligibility: PlacementEligibility,
 }
 
-/// Actor-sampled demand for one locally owned Cell. A missing or unsettled
-/// sample cannot be used as a transfer hint; the actor must recheck on release.
+/// Advisory demand for one locally owned Cell. Ordinary movement requires a
+/// settled worker sample. Explicit maintenance can use the configured peak
+/// envelope on a draining donor; the actor must quiesce and recheck on release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellTransferDemand {
     /// Cell the sample describes.
@@ -198,12 +214,20 @@ pub struct CellTransferDemand {
     pub job_credits: u32,
     /// Logical time the Cell became resident.
     pub resident_since_ms: i64,
+    /// Actor-observed logical time of the most recent use. Pressure movement
+    /// prefers recently used settled Cells while local eviction closes the
+    /// oldest idle Cells. This observation conveys no source reservation.
+    pub last_used_ms: i64,
     /// Logical time the Cell last moved, when it has.
     pub last_moved_at_ms: Option<i64>,
     /// Consecutive settled samples observed for this Cell.
     pub stable_observations: u8,
     /// Whether the sample is settled enough to act on.
     pub settled: bool,
+    /// Select busy maintenance eligibility under an exact retained intent. The
+    /// planner also requires a draining source. This flag is advisory; journal
+    /// authorization and canonical runtime release remain separate barriers.
+    pub maintenance: bool,
 }
 
 /// Advisory transfer proposal. It conveys neither release nor receiver admission.
@@ -386,9 +410,14 @@ impl PlacementPlanner {
         }))
     }
 
-    /// Plans at most two settled transfers and 8 GiB of projected restore
+    /// Plans at most two transfers and 8 GiB of projected restore
     /// bytes from one authenticated fleet snapshot. Receiver capacity is
     /// projected across selected intents, then rechecked during activation.
+    /// Ordinary movement requires settled samples; explicit maintenance uses
+    /// configured peak costs and requires a draining donor.
+    /// Pressure on an active donor prefers recently used settled Cells, leaving
+    /// oldest idle Cells to independent local eviction. This reduces contention
+    /// but reserves no actor; exact release must still reject a racing close.
     ///
     /// `balance` is the ownership balance of the same snapshot. When it elects
     /// one of the demands' sources as the donor, its receivers may absorb that
@@ -454,6 +483,21 @@ impl PlacementPlanner {
             };
             priority(right)
                 .cmp(&priority(left))
+                .then_with(|| {
+                    let recency = |demand: &CellTransferDemand| {
+                        observations
+                            .iter()
+                            .find(|node| node.session == demand.source)
+                            .filter(|node| {
+                                !node.draining && node.pressure >= PlacementPressure::Shedding
+                            })
+                            .map_or(0, |_| demand.last_used_ms)
+                    };
+                    // The actor's emergency eviction is oldest-first. Advisory
+                    // fleet movement preserves recently used settled actors on
+                    // another node instead of preparing those same cold victims.
+                    recency(right).cmp(&recency(left))
+                })
                 .then_with(|| left.cell.as_bytes().cmp(right.cell.as_bytes()))
         });
         let mut intents = Vec::new();
@@ -469,13 +513,16 @@ impl PlacementPlanner {
             else {
                 continue;
             };
-            if !demand.settled
+            if (demand.maintenance && !source.draining)
+                || (!demand.settled && !demand.maintenance)
                 || demand.generation == 0
                 || demand.memory_bytes == 0
                 || demand.disk_bytes == 0
                 || demand.job_credits == 0
                 || demand.resident_since_ms < 0
                 || demand.resident_since_ms > now_ms
+                || demand.last_used_ms < 0
+                || demand.last_used_ms > now_ms
                 || demand
                     .last_moved_at_ms
                     .is_some_and(|at| at < 0 || at > now_ms)
@@ -643,6 +690,9 @@ impl PlacementPlanner {
         }
         if observation.pressure >= PlacementPressure::Critical {
             return PlacementEligibility::CriticalPressure;
+        }
+        if observation.pressure != PlacementPressure::Normal {
+            return PlacementEligibility::Pressure;
         }
         if observation.memory_capacity_bytes == 0 || observation.free_memory_bytes == 0 {
             return PlacementEligibility::NoMemoryHeadroom;

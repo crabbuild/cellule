@@ -201,14 +201,7 @@ impl NodeLogShipper {
         interval: Duration,
     ) -> Result<Self> {
         let (leader, log_epoch, members) = gate.shipping_scope()?;
-        let batch_bytes = limits
-            .max_capture_bytes
-            .checked_add((MAX_BATCH_FRAMES as u64) * NODE_FRAME_HEADER_BYTES)
-            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
-        let permits = usize::try_from(batch_bytes)
-            .ok()
-            .filter(|bytes| *bytes <= Semaphore::MAX_PERMITS && *bytes <= u32::MAX as usize)
-            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        let (batch_bytes, permits) = Self::validate_limits(limits)?;
         let runtime = tokio::runtime::Handle::try_current().map_err(Error::RuntimeStart)?;
         let (sender, receiver) = mpsc::channel(MAX_QUEUED_SUBMISSIONS);
         let bytes = Arc::new(Semaphore::new(permits));
@@ -234,6 +227,18 @@ impl NodeLogShipper {
             gate,
             limits,
         })
+    }
+
+    pub(crate) fn validate_limits(limits: cellule_ltx::Limits) -> Result<(u64, usize)> {
+        let batch_bytes = limits
+            .max_capture_bytes
+            .checked_add((MAX_BATCH_FRAMES as u64) * NODE_FRAME_HEADER_BYTES)
+            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        let permits = usize::try_from(batch_bytes)
+            .ok()
+            .filter(|bytes| *bytes <= Semaphore::MAX_PERMITS && *bytes <= u32::MAX as usize)
+            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        Ok((batch_bytes, permits))
     }
 
     /// Assigns a consecutive ticket and retains the encoded frames for shipping.

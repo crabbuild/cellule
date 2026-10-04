@@ -290,7 +290,7 @@ async fn runtime_replaces_node_durability_binding_for_a_new_epoch() {
     let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
     runtime.install_node_lease(lease.clone()).unwrap();
     let transport: Arc<dyn NodeLogTransport> = Arc::new(TestNodeTransport(None));
-    let make_durability = |log_epoch| {
+    let make_binding = |session, leader, log_epoch| {
         let gate = DurabilityGate::new(session, leader, log_epoch, [follower]).unwrap();
         let shipper =
             NodeLogShipper::new(gate.clone(), Arc::clone(&transport), Limits::default()).unwrap();
@@ -303,6 +303,16 @@ async fn runtime_replaces_node_durability_binding_for_a_new_epoch() {
             lease.clone(),
         ))
     };
+    let make_durability = |epoch| make_binding(session, leader, epoch);
+    let foreign_boot = make_binding(SessionId::from_bytes([63; 16]), leader, 1);
+    assert!(matches!(
+        runtime.install_node_durability(fixture.target.application(), foreign_boot.clone()),
+        Err(cellule_runtime::Error::Control(
+            "Cell runtime node durability boot differs"
+        ))
+    ));
+    assert!(runtime.node_durability().is_none());
+    foreign_boot.shutdown().await.unwrap();
     let first = make_durability(1);
     runtime
         .install_node_durability(fixture.target.application(), Arc::clone(&first))
@@ -310,13 +320,46 @@ async fn runtime_replaces_node_durability_binding_for_a_new_epoch() {
     let second = make_durability(2);
 
     let previous = runtime
-        .replace_node_durability(fixture.target.application(), Arc::clone(&second))
+        .replace_node_durability(fixture.target.application(), &first, Arc::clone(&second))
         .unwrap();
 
     assert!(Arc::ptr_eq(&previous, &first));
     let (application, current) = runtime.node_durability().unwrap();
     assert_eq!(application, fixture.target.application());
     assert!(Arc::ptr_eq(&current, &second));
+    let rejected = make_durability(3);
+    assert!(matches!(
+        runtime.replace_node_durability(
+            fixture.target.application(),
+            &first,
+            Arc::clone(&rejected)
+        ),
+        Err(cellule_runtime::Error::Control(
+            "Cell runtime node durability binding changed"
+        ))
+    ));
+    assert!(Arc::ptr_eq(&runtime.node_durability().unwrap().1, &second));
+    rejected.shutdown().await.unwrap();
+    for (candidate, refusal) in [
+        (
+            make_binding(SessionId::from_bytes([63; 16]), leader, 3),
+            "Cell runtime node durability identity changed",
+        ),
+        (
+            make_binding(session, NodeId::from_bytes([64; 16]), 3),
+            "Cell runtime node durability identity changed",
+        ),
+        (
+            make_durability(2),
+            "Cell runtime node durability epoch did not advance",
+        ),
+    ] {
+        assert!(
+            matches!(runtime.replace_node_durability(fixture.target.application(), &second, candidate.clone()), Err(cellule_runtime::Error::Control(message)) if message == refusal)
+        );
+        assert!(Arc::ptr_eq(&runtime.node_durability().unwrap().1, &second));
+        candidate.shutdown().await.unwrap();
+    }
     runtime.shutdown().await.unwrap();
 }
 #[tokio::test(flavor = "multi_thread")]

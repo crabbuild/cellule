@@ -68,6 +68,7 @@ async fn verify_compaction_append(schema: u32) {
         observed,
         directory.path().to_owned(),
     );
+    let mut prefix = None;
     for sequence in 1..=8_u64 {
         database
             .transaction(|transaction| {
@@ -82,6 +83,9 @@ async fn verify_compaction_append(schema: u32) {
         let cuts = database.capture_deferred().unwrap();
         let prepared = publisher.prepare_append(&cuts, sequence, 1).await.unwrap();
         publisher.publish_prepared(&prepared, None).await.unwrap();
+        if sequence == 1 {
+            prefix = Some(prepared.root());
+        }
     }
     assert!(publisher.compaction_due());
     let before = publisher.control().value().ltx_root().unwrap();
@@ -91,6 +95,15 @@ async fn verify_compaction_append(schema: u32) {
     assert_eq!(after.position, before.position);
     assert_eq!(after.commit_sequence, before.commit_sequence);
     assert_eq!(replica.open_root(&after).await.unwrap().segment_count(), 1);
+    let prefix = prefix.unwrap();
+    let proof = publisher
+        .authority
+        .verify_root_prefix(prefix, after, &replica, 64)
+        .await
+        .unwrap();
+    assert_eq!(proof.prefix(), prefix);
+    assert_eq!(proof.root(), after);
+    assert!(proof.inspected_roots() >= 8 && proof.dependency_count() > 0);
     assert_eq!(publisher.compact_one_quiet().await.unwrap(), Some(false));
     assert!(!publisher.compaction_due());
 
@@ -192,6 +205,20 @@ async fn verify_compaction_append(schema: u32) {
     assert_eq!(publisher.control().value().revision, before_revision + 1);
     let forced = publisher.control().value().ltx_root().unwrap();
     assert!(replica.open_root(&forced).await.unwrap().segment_count() < 32);
+    let proof = publisher
+        .authority
+        .verify_root_prefix(prefix, forced, &replica, 64)
+        .await
+        .unwrap();
+    assert_eq!(proof.root(), forced);
+    assert!(proof.inspected_roots() > 30);
+    assert!(matches!(
+        publisher
+            .authority
+            .verify_root_prefix(prefix, forced, &replica, 2)
+            .await,
+        Err(Error::Capacity(_))
+    ));
     database.close().unwrap();
 }
 
@@ -302,7 +329,7 @@ impl crate::node::durability::NodeLogAuthority for RefusingAuthority {
 
     fn close<'a>(
         &'a self,
-        _barrier: &'a crate::node::log::NodeLogRotationBarrier,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
     ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
         Box::pin(async { Err(Error::Node("test authority refuses closing")) })
     }

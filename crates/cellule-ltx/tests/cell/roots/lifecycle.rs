@@ -379,6 +379,21 @@ async fn exact_root_inventory_verifies_every_remote_dependency() {
     writer.close().unwrap();
 
     let objects = replica.reachable_objects(&root).await.unwrap();
+    assert_eq!(
+        replica
+            .reachable_objects_bounded(&root, objects.len())
+            .await
+            .unwrap(),
+        objects
+    );
+    for limit in [0, 1, objects.len() - 1] {
+        assert!(matches!(
+            replica.reachable_objects_bounded(&root, limit).await,
+            Err(cellule_ltx::LtxError::Limit(
+                cellule_ltx::LimitKind::RootInventoryObjects
+            ))
+        ));
+    }
     assert!(objects.windows(2).all(|pair| pair[0] < pair[1]));
     for kind in [
         CellObjectKind::Ltx,

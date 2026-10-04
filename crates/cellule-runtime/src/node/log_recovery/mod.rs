@@ -27,6 +27,7 @@ const MAX_RECOVERY_CATALOG_HEAD_READS: usize = 32;
 const MAX_RECOVERY_PAGE_BYTES: u64 = 1 << 20;
 const MAX_RECOVERY_PAGE_FRAMES: usize = 4_096;
 
+pub mod retirement;
 mod tail;
 mod witness;
 

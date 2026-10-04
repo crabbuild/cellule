@@ -120,7 +120,7 @@ pub(in crate::cell::actor) fn begin_idle_cell_eviction(
     active.admission.draining.store(true, Ordering::Release);
     active.admission.requests.close();
     active.admission.bytes.close();
-    active.drain = reply;
+    active.drain = reply.map(DrainReply::Unit);
     if matches!(
         schedule(active, true),
         CoordinationDecision::ReadyToDeactivate

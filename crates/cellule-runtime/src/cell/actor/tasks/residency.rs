@@ -8,7 +8,8 @@ pub(super) fn handle_inventory_refreshed(
     cell: CellId,
     generation: u64,
     effect_id: u64,
-    result: crate::Result<crate::primitives::maintenance::PersistedWorkInventory>,
+    inventory_revision: u64,
+    result: crate::Result<crate::cell::worker::WorkerCellInventory>,
 ) {
     let TaskContext {
         pool,
@@ -30,8 +31,33 @@ pub(super) fn handle_inventory_refreshed(
     }
     active.finish_task(effect_id, CoordinationEffect::Inventory);
     active.inventory_refreshing = false;
-    if let Ok(inventory) = result {
-        active.persisted_work = inventory;
+    // An inventory effect can finish after another foreground mutation starts.
+    // Finish its effect, but do not let its older rows clear that mutation's
+    // unknown-work marker or recreate obsolete demand.
+    if active.inventory_revision != inventory_revision {
+        continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+        return;
+    }
+    match result {
+        Ok(sample) => {
+            if let Err(error) =
+                active
+                    .demand
+                    .record(sample, active.resource_limits, active.published_sequence)
+            {
+                active.persisted_work =
+                    crate::primitives::maintenance::PersistedWorkInventory::unknown();
+                tracing::debug!(cell = ?cell, error = ?error, "Cell demand remains unknown after inventory");
+            } else {
+                active.persisted_work = sample.persisted_work;
+            }
+        }
+        Err(error) => {
+            active.persisted_work =
+                crate::primitives::maintenance::PersistedWorkInventory::unknown();
+            active.demand.failed(unix_millis());
+            tracing::debug!(cell = ?cell, error = ?error, "Cell demand inspection failed");
+        }
     }
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
 }
@@ -85,9 +111,10 @@ pub(super) fn handle_deactivated(
     context: TaskContext<'_>,
     cell: CellId,
     generation: u64,
-    reply: Option<oneshot::Sender<crate::Result<()>>>,
+    reply: Option<DrainReply>,
     shutdown_drain: bool,
     result: crate::Result<()>,
+    released: Option<crate::fleet::operations::PublishedPosition>,
 ) {
     let TaskContext {
         cells,
@@ -111,7 +138,7 @@ pub(super) fn handle_deactivated(
     match reply {
         Some(reply) => {
             let failed = result.is_err();
-            match reply.send(result) {
+            match reply.send_released(result, released) {
                 Err(Err(error)) => fail_shutdown(shutdown, error),
                 _ if runtime_waiting && failed => fail_shutdown(
                     shutdown,

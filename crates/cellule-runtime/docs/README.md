@@ -61,6 +61,32 @@ flowchart LR
 Cell view. Its view and replacement refresh are charged to the node runtime's
 memory, descriptor, and disk ledgers.
 
+**Native serving observation.** `CellRuntime::observe_serving` joins the existing
+actor FIFO and captures the exact current authority root and native generation
+at an epoch strictly after the caller's original epoch. Repeat it after prefix
+or origin I/O and compare `CellServingObservation::same_writer`; demand samples
+remain advisory. Movement and the host's
+[original-writer collector](../../cellule-host/docs/original-writers.md) share
+this path. It starts no acquisition and grants no retention or maintenance rights.
+
+`close()` fences new reader work. `close_and_join()` also detaches snapshots
+from every peer clone and joins accepted query/refresh work, including native
+jobs whose waiters were cancelled. Its receipt preserves the last installed
+position; it does not establish current authority or fleet retirement. See the
+[host reader lifecycle](../../cellule-host/docs/read-replicas.md).
+
+`lifecycle_observation()` reads the same irreversible admission word and shared
+snapshot state. It exposes accepted native lifetimes after caller cancellation
+and detachment. Local joining requires closed admission, detached state and zero
+lifetimes; this supplies no remote authority, enrollment or replacement-policy
+proof. The host's bounded reader pages include these original observations.
+
+`prepare_source()` observes an opaque exact root, owner/epoch, code/schema and
+signed physical boot scope without reserving a view. `open_source()` opens that
+pinned root through the same admitted native path, even if the owner publishes
+a newer root meanwhile. Installation still checks current authority and the
+original signed boot identity. Source metadata grants no admission or readiness.
+
 Those charges are provisional: product routing and measured capacity
 qualification remain open under
 [Plan 036](https://github.com/crabbuild/crab/blob/beb439039cb37e750afe6625a2358101c70d1191/advisor-plans/036-cell-read-replicas-and-fenced-promotion.md).

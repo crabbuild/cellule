@@ -37,6 +37,9 @@ ReadOnlyRoot
 RecoveryOverlay
 Result
 RootObjectRef
+RootPreparation
+RootPreparationFuture
+RootPreparationMetadata
 RootRef
 ScratchMonitor
 SegmentInfo

@@ -450,7 +450,7 @@ The follow-up recovery audit reproduced a qualification gap shared with the
 compared main snapshot. The first-fault collector and both receipt selection
 checks used the startup log's members even though the receipt already contains
 the active log observed after the follower-only acknowledgement. The
-[durability supervisor](../../cellule-host/src/durability.rs) can retire a
+[durability supervisor](../../cellule-host/src/durability/mod.rs) can retire a
 fully covered log and recruit different members before that write. Two public
 receipt regressions demonstrated rejection of a valid later cohort and
 acceptance of an inactive acknowledging log. Selection now uses the active
@@ -2868,7 +2868,7 @@ router, then [`ReplicaReadRouter::query`](../src/client/routing.rs).
 
 `selected` reads control and desired-reader policy concurrently on every
 selection. `NodeDirectory::select_readers` shares a signed membership scan for
-at most one second. The selected [`CellReadReplica`](../src/client/replica.rs)
+at most one second. The selected [`CellReadReplica`](../src/client/replica/mod.rs)
 executes SQL, then reads control and the owner's live enrollment before
 releasing output. A remote attempt also performs peer authentication. The
 ordinary owner query remains a sibling with different authority and lifecycle
@@ -2975,7 +2975,7 @@ decoding had already occurred. The measured excess is origin traffic; neither
 **Evidence map.** The public entry is
 [`VerifiedRoot::open_read_only`](../../cellule-ltx/src/replica/mod.rs), with connection
 ownership in [`ReadOnlyRoot`](../../cellule-ltx/src/replica/read_only.rs).
-[`CellReadReplica::refresh`](../src/client/replica.rs) creates such replacement
+[`CellReadReplica::refresh`](../src/client/replica/mod.rs) creates such replacement
 views after an exact root advances. This diagnostic exercises that LTX opening
 and SQL path directly; it excludes runtime routing and authority confirmation.
 

@@ -203,7 +203,26 @@ pub(crate) fn error_reply(error: Error) -> wire::PeerReply {
             "Cell read replica is unavailable",
             100,
         ),
+        Error::OwnerHistoryIncomplete { .. } => (
+            wire::error::Code::Unavailable,
+            wire::error::Outcome::NotStarted,
+            "original Cell owner history is incomplete",
+            100,
+        ),
+        Error::AcquisitionHistoryIncomplete { .. } => (
+            wire::error::Code::Unavailable,
+            wire::error::Outcome::NotStarted,
+            "Cell acquisition history is incomplete",
+            100,
+        ),
+        Error::RootLineageIncomplete { .. } | Error::RootPrefixUnproven { .. } => (
+            wire::error::Code::Unavailable,
+            wire::error::Outcome::NotStarted,
+            "Cell root prefix is unproven",
+            100,
+        ),
         Error::Fenced
+        | Error::CellReleaseRefused { .. }
         | Error::CellNotActive
         | Error::CellDraining
         | Error::RuntimeClosed
@@ -247,6 +266,7 @@ pub(crate) fn error_reply(error: Error) -> wire::PeerReply {
         Error::Control(_)
         | Error::Catalog(_)
         | Error::Node(_)
+        | Error::FleetOperation(_)
         | Error::Release(_)
         | Error::Backup(_)
         | Error::Retention(_)
