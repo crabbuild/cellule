@@ -611,6 +611,10 @@ comparison improves compaction time but does not establish consistent gains
 in HTTP write throughput or tail latency. The current-main confirmation also
 retains mixed results; neither comparison establishes the optimization goal.
 
+The later [group-commit report](performance/2026-10-04-rustfs-grouped-paired-writes.md)
+records sustained throughput and latency gains at one and four Cells, together
+with every sixteen-Cell regression and the failed 64-client baseline warmup.
+
 ```sh
 cargo test -p cellule-axum --all-targets --locked
 ```

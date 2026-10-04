@@ -1,5 +1,9 @@
 # Sustained RustFS HTTP writes
 
+This report retains the comparisons before native command grouping. The later
+[group-commit comparison](2026-10-04-rustfs-grouped-paired-writes.md) establishes
+gains at one and four Cells, with unresolved sixteen-Cell tail regressions.
+
 The compaction pipeline is faster, but this comparison does **not** establish a
 consistent improvement in write throughput or HTTP tail latency. A second
 comparison against current main and a third instrumented comparison also have
