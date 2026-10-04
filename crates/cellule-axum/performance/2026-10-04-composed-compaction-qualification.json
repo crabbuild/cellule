@@ -1,0 +1,135 @@
+{
+  "candidate": "ce93119794182c01c5d876568799cdb4dbe94628",
+  "source": "1ca9759282fb5b1d5a15059b8b235bf34c819f2e",
+  "source_tree": "8cfad7e150ed12e1b22731f1933aa4a3c0cb1ad9",
+  "source_tree_matches_candidate": true,
+  "workspace_msrv": {
+    "head": "ce93119794182c01c5d876568799cdb4dbe94628",
+    "base": "fa548bb2cc1993bbf77dc7f4fbef499a0de3f5a4",
+    "pr_merge": "1ca9759282fb5b1d5a15059b8b235bf34c819f2e",
+    "tree": "8cfad7e150ed12e1b22731f1933aa4a3c0cb1ad9",
+    "tree_matches_candidate": true,
+    "qualification_runs": [
+      37187645547,
+      37187645453
+    ],
+    "rust_run": 37187645416,
+    "note": "Terminal workspace/MSRV steps and both actual merge checkouts confirmed in completed CI logs; independent provider/reference build and role-binary audits confirm the same candidate tree.",
+    "rust_terminal_status": "success",
+    "workspace_required_steps_verified": [
+      "Format",
+      "Architecture boundaries",
+      "Check",
+      "Documentation links",
+      "Test",
+      "Test local LTX without replica",
+      "Test replica feature",
+      "Lint",
+      "Validate SQL and peer contracts",
+      "Test fleet journal and public controller models",
+      "Verify Axum HTTP publication, retries and cold recovery against RustFS"
+    ],
+    "msrv_verified": true,
+    "actual_checkout_confirmed_in_both_job_logs": true,
+    "workspace_log_sha256": "14fe20e24baa6dd5dde5c51e7d774a63c186ea7082eaeb33925c88e4bdc7cfa3"
+  },
+  "provider_qualification": {
+    "ci_run": "https://github.com/crabbuild/cellule/actions/runs/37187645547",
+    "candidate": "ce93119794182c01c5d876568799cdb4dbe94628",
+    "source": "1ca9759282fb5b1d5a15059b8b235bf34c819f2e",
+    "source_tree": "8cfad7e150ed12e1b22731f1933aa4a3c0cb1ad9",
+    "repeats": [
+      {
+        "lane": "follower",
+        "repeat": "cell-follower-capacity-run-1",
+        "acknowledged_writes": 5348,
+        "raw_files_checked": 95,
+        "binary_sha256": "203b7bcfcbc840a2e1cb378956dd1b92c310e54bffe7ee344bec4958cf73e4cf"
+      },
+      {
+        "lane": "follower",
+        "repeat": "cell-follower-capacity-run-2",
+        "acknowledged_writes": 7057,
+        "raw_files_checked": 101,
+        "binary_sha256": "203b7bcfcbc840a2e1cb378956dd1b92c310e54bffe7ee344bec4958cf73e4cf"
+      },
+      {
+        "lane": "follower",
+        "repeat": "cell-follower-capacity-run-3",
+        "acknowledged_writes": 6706,
+        "raw_files_checked": 95,
+        "binary_sha256": "203b7bcfcbc840a2e1cb378956dd1b92c310e54bffe7ee344bec4958cf73e4cf"
+      },
+      {
+        "lane": "object",
+        "repeat": "cell-write-capacity-run-1",
+        "acknowledged_writes": 7488,
+        "raw_files_checked": 100,
+        "binary_sha256": "203b7bcfcbc840a2e1cb378956dd1b92c310e54bffe7ee344bec4958cf73e4cf"
+      },
+      {
+        "lane": "object",
+        "repeat": "cell-write-capacity-run-2",
+        "acknowledged_writes": 8916,
+        "raw_files_checked": 103,
+        "binary_sha256": "203b7bcfcbc840a2e1cb378956dd1b92c310e54bffe7ee344bec4958cf73e4cf"
+      },
+      {
+        "lane": "object",
+        "repeat": "cell-write-capacity-run-3",
+        "acknowledged_writes": 8894,
+        "raw_files_checked": 103,
+        "binary_sha256": "203b7bcfcbc840a2e1cb378956dd1b92c310e54bffe7ee344bec4958cf73e4cf"
+      }
+    ],
+    "acknowledged_writes": 44409,
+    "raw_files_checked": 597,
+    "source_tree_matches_candidate": true,
+    "all_six_repeats_independently_reverified": true,
+    "budget_proof": "Every driver/node role: cpu.max=100000/100000, memory.max=1GiB, swap.max=0, no OOM, clean exit; node sessions withdrawn.",
+    "audit_log_sha256": "954f9d0c7c881224009fcf0dec5f39250be83e3963d568500afc9bf3e87deb82"
+  },
+  "reference_qualification": {
+    "run_id": 37187645453,
+    "head": "ce93119794182c01c5d876568799cdb4dbe94628",
+    "actual_source": "1ca9759282fb5b1d5a15059b8b235bf34c819f2e",
+    "source_tree": "8cfad7e150ed12e1b22731f1933aa4a3c0cb1ad9",
+    "workloads": {
+      "entity-scaling": {
+        "verified_cells": 80,
+        "acknowledged_writes": 12310,
+        "windows": 36,
+        "raw_hashes": 377,
+        "roles_verified": 21,
+        "unique_scratch_volumes": 21,
+        "binary_sha256": "250b5360ae81e09e60d5a095760465134ff31fd2174d5e97de035bde3be065dd"
+      },
+      "scaling": {
+        "mixed_windows": 4,
+        "reader_loss_verified": true,
+        "raw_hashes": 46,
+        "acknowledged_writes": 1500,
+        "successful_reads": 281737,
+        "roles_verified": 21,
+        "unique_scratch_volumes": 21,
+        "binary_sha256": "250b5360ae81e09e60d5a095760465134ff31fd2174d5e97de035bde3be065dd"
+      }
+    }
+  },
+  "reference_ci_run": "https://github.com/crabbuild/cellule/actions/runs/37187645453",
+  "limitations": [
+    "Counts are correctness evidence, not paired performance gains.",
+    "Reader/entity scaling uses independent constrained processes with one shared fixed provider.",
+    "Raw evidence remains in CI artifacts; source, binary and audit hashes are retained here."
+  ],
+  "evidence_hashes": {
+    "qualification-ce93119-summary.json": "f6af536d232e89891be0b9c84d0b451dbe983d443b6cef88257265b2296410ed",
+    "reference-ce93119-audit-summary.json": "46e3531c94cccd58a1a3c52d5d1610cdd38da87531541bd14f200abcd4a49a4c",
+    "composed-ce93119-ci-source-audit.json": "19ba4bea8b0ad4edfb0be9f28c809308262b5f332b0622f8798aacad6cc7d96c",
+    "audit-ce93119-qualification.py": "1f92d2881e7d6a888fb923f8c7ed8f189f14d8083301260f98a839a998e14a47",
+    "audit-ce93119-reference.py": "59087a7d97b983cfce7c75be48b2181411a57415c677a26e3b8a508b8c88102c",
+    "reference-ce93119-audit.log": "d66f5e5b5f1f73fe6fc9ccbf0197ba7853284ca9285a41ea3d5325800c5daea0",
+    "qualification-ce93119-audit.log": "954f9d0c7c881224009fcf0dec5f39250be83e3963d568500afc9bf3e87deb82",
+    "composed-ce93119-workspace-ci.log": "14fe20e24baa6dd5dde5c51e7d774a63c186ea7082eaeb33925c88e4bdc7cfa3"
+  }
+}

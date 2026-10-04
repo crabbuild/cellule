@@ -430,11 +430,20 @@ async fn warm_root_cache_does_not_mask_missing_metadata() {
     let layout =
         CellStorageLayout::new(Store::new(backend.clone()), Path::from("runtime"), [3; 16]);
     let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
-    let root = replica
-        .prepare(None, &writer.capture().unwrap(), 1, 1)
-        .await
-        .unwrap()
-        .root();
+    // An external tail exercises descriptor-page origin checks independently
+    // of the small-root inline representation.
+    let mut cuts = writer.capture_deferred().unwrap();
+    for value in 0..32 {
+        writer
+            .transaction(|transaction| {
+                transaction.execute("INSERT INTO values_ VALUES(?1)", [value])
+            })
+            .unwrap();
+        let next = writer.capture_deferred().unwrap();
+        cuts.position = next.position;
+        cuts.segments.extend(next.segments);
+    }
+    let root = replica.prepare(None, &cuts, 1, 1).await.unwrap().root();
     let path =
         layout.incarnation_object_path(&cell, &incarnation, &root.digest, CellObjectKind::Root);
     let root_bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
@@ -462,6 +471,7 @@ async fn warm_root_cache_does_not_mask_missing_metadata() {
     );
     backend.delete(&segment_path).await.unwrap();
     assert!(replica.prepare(Some(&root), &next, 2, 1).await.is_err());
+    writer.durability_barrier().unwrap();
     writer.close().unwrap();
 }
 #[tokio::test]
@@ -481,6 +491,76 @@ async fn root_scope_and_commit_sequence_are_fenced() {
         ..root
     };
     assert!(replica.open_root(&wrong).await.is_err());
+    writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn invalid_inline_descriptors_cannot_justify_a_successor_upload() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut writer = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
+    writer
+        .transaction(|transaction| {
+            transaction.execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")
+        })
+        .unwrap();
+    let backend = Arc::new(InMemory::new());
+    let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+        backend.clone(),
+    ));
+    let layout = CellStorageLayout::new(
+        Store::new(counted.clone()),
+        Path::from("invalid-inline"),
+        [8; 16],
+    );
+    let cell = [157; 32];
+    let incarnation = [158; 16];
+    let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
+    let root = replica
+        .prepare(None, &writer.capture_deferred().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    let path =
+        layout.incarnation_object_path(&cell, &incarnation, &root.digest, CellObjectKind::Root);
+    let bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
+    let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&original).unwrap(), bytes.as_ref());
+    assert_eq!(original["segments"].as_array().unwrap().len(), 1);
+    writer
+        .transaction(|transaction| transaction.execute_batch("UPDATE counter SET v = v + 1"))
+        .unwrap();
+    let cuts = writer.capture_deferred().unwrap();
+    for (field, value) in [
+        ("level", serde_json::json!(10)),
+        ("index_length", serde_json::json!("0")),
+        ("offset", serde_json::json!("1")),
+        ("max_txid", serde_json::json!("2")),
+        ("database_pages", serde_json::json!(0)),
+    ] {
+        let mut wire = original.clone();
+        wire["segments"][0][field] = value;
+        let bytes = serde_json::to_vec(&wire).unwrap();
+        let bad = RootRef {
+            digest: *blake3::hash(&bytes).as_bytes(),
+            ..root
+        };
+        let path =
+            layout.incarnation_object_path(&cell, &incarnation, &bad.digest, CellObjectKind::Root);
+        backend.put(&path, Bytes::from(bytes).into()).await.unwrap();
+        assert!(replica.open_root(&bad).await.is_err(), "{field}");
+        assert!(replica.reachable_objects(&bad).await.is_err(), "{field}");
+        counted.reset();
+        assert!(
+            replica.prepare(Some(&bad), &cuts, 2, 1).await.is_err(),
+            "{field}"
+        );
+        assert_eq!(
+            counted.put_requests(),
+            0,
+            "invalid {field} must fail before immutable uploads"
+        );
+    }
+    writer.durability_barrier().unwrap();
     writer.close().unwrap();
 }
 #[tokio::test(flavor = "multi_thread")]

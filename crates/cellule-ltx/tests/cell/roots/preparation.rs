@@ -132,6 +132,71 @@ impl RootPreparationMetadata for FailedMetadata {
 }
 
 #[tokio::test]
+async fn composed_metadata_has_only_final_derivation_and_preserves_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let mut database =
+        Db::open(&directory.path().join("composed.sqlite"), Limits::default()).unwrap();
+    let metadata = Arc::new(Metadata::default());
+    let replica = replica(Store::new(Arc::new(InMemory::new())), [5; 32], [6; 16]);
+    let mut root = None;
+    for sequence in 1..=8 {
+        database
+            .transaction(|tx| {
+                if sequence == 1 {
+                    tx.execute_batch("CREATE TABLE counter(value); INSERT INTO counter VALUES(0)")?;
+                }
+                tx.execute("UPDATE counter SET value=?1", [sequence])?;
+                Ok(())
+            })
+            .unwrap();
+        root = Some(
+            replica
+                .prepare(root.as_ref(), &database.capture().unwrap(), sequence, 1)
+                .await
+                .unwrap()
+                .root(),
+        );
+    }
+    let root = root.unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("UPDATE counter SET value=9"))
+        .unwrap();
+    let cuts = database.capture().unwrap();
+    let failed = replica.clone().with_root_metadata(Arc::new(FailedMetadata));
+    let error = match failed
+        .prepare_scheduled_compaction_append(&root, &cuts, 9, 1, 32, scratch.path())
+        .await
+    {
+        Ok(_) => panic!("failed composed metadata returned a proposal"),
+        Err(error) => error,
+    };
+    let LtxError::RootPreparation { source } = error else {
+        panic!("lost composed metadata source")
+    };
+    assert_eq!(
+        source.downcast::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    let prepared = replica
+        .with_root_metadata(metadata.clone())
+        .prepare_scheduled_compaction_append(&root, &cuts, 9, 1, 32, scratch.path())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(prepared.predecessor(), Some(root));
+    assert_eq!(
+        *metadata.observed.lock().unwrap(),
+        [prepared.preparation()],
+        "no intermediate compaction derivation may be retained"
+    );
+    assert_eq!(metadata.active.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    database.close().unwrap();
+}
+
+#[tokio::test]
 async fn metadata_error_preserves_source_and_refuses_ready_root() {
     let directory = tempfile::tempdir().unwrap();
     let mut database =

@@ -212,7 +212,9 @@ impl CellReplica {
         {
             return Err(LtxError::InvalidState("Cell root reference mismatch"));
         }
-        if document.segment_pages.is_empty() || document.segment_pages.len() > MAX_SEGMENT_PAGES {
+        if (document.segment_pages.is_empty() && document.segments.is_empty())
+            || document.segment_pages.len() > MAX_SEGMENT_PAGES
+        {
             return Err(LtxError::LTXCorrupted);
         }
         let pages = stream::iter(
@@ -246,6 +248,9 @@ impl CellReplica {
             descriptors.extend(page);
             cached_metadata.extend(cached);
         }
+        // These descriptors are authenticated by the root digest itself. Its
+        // cached bytes still require the same origin-presence check below.
+        descriptors.extend(document.segments.iter().cloned());
         // A cached predecessor cannot justify a new root if its metadata has
         // disappeared from origin. Check all cached objects in one bounded wave.
         self.verify_cached_metadata(&cached_metadata).await?;

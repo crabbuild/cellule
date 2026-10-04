@@ -3,7 +3,8 @@ use super::*;
 use crate::control::authority::MAX_LINEAGE_ROOTS;
 
 // Conservative transient metadata envelope, independent of database body size:
-// 64 descriptor pages (at most 96 decoded descriptors each), bounded concurrent
+// 64 descriptor pages (at most 96 decoded descriptors each) plus the bounded
+// 32-descriptor root tail, bounded concurrent
 // 64 KiB root fetch/decode buffers, extents and body/index maps fit the fixed
 // 16 MiB portion. Each of at most 10,000 inventory objects and `limit + 1` lineage
 // roots receives 1 KiB for maps, vector growth and allocator overhead. Root bodies

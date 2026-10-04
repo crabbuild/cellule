@@ -13,7 +13,26 @@ mod retirement;
 pub(super) struct RecordingResponses(
     pub(super) Mutex<Vec<CommandResponseSource>>,
     pub(super) Mutex<Vec<PublicationTiming>>,
+    tokio::sync::Notify,
 );
+
+impl RecordingResponses {
+    pub(super) async fn wait_for_responses(&self, count: usize) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let changed = self.2.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if self.0.lock().unwrap().len() >= count {
+                    break;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+}
 
 impl CellTelemetry for RecordingResponses {
     fn command_response(
@@ -27,6 +46,7 @@ impl CellTelemetry for RecordingResponses {
             assert!(confirmation.is_zero());
         }
         self.0.lock().unwrap().push(source);
+        self.2.notify_waiters();
     }
 
     fn publication_completed(&self, _cell: cellule_runtime::CellId, timing: PublicationTiming) {

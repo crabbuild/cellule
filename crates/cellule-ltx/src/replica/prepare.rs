@@ -84,23 +84,7 @@ impl CellReplica {
         schema: u32,
     ) -> Result<PreparedRoot> {
         self.validate_metadata(commit_sequence, schema)?;
-        if cuts.segments.is_empty() {
-            return Err(LtxError::InvalidState("empty Cell append"));
-        }
-        let captured_bytes = cuts.segments.iter().try_fold(0_u64, |total, segment| {
-            // A full database image may legitimately exceed the incremental
-            // bound; the per-representation check below rejects an oversized
-            // delta after its index proves the coverage.
-            if segment.info().size_bytes > self.limits.max_file_bytes {
-                return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
-            }
-            total
-                .checked_add(segment.info().size_bytes)
-                .ok_or(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes))
-        })?;
-        if captured_bytes > self.limits.max_plan_bytes {
-            return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
-        }
+        self.admit_capture_batch(cuts)?;
         let load_base = async {
             match base {
                 Some(root) => self.load_graph(root).await.map(Some),
@@ -132,7 +116,7 @@ impl CellReplica {
         // digest still rejects in-place mutation before authority may publish.
         self.prepare_append(
             base,
-            base_graph,
+            base_graph.map(AppendBaseState::from),
             inputs,
             cuts.position,
             commit_sequence,
@@ -140,6 +124,27 @@ impl CellReplica {
             None,
         )
         .await
+    }
+
+    fn admit_capture_batch(&self, cuts: &CaptureBatch) -> Result<()> {
+        if cuts.segments.is_empty() {
+            return Err(LtxError::InvalidState("empty Cell append"));
+        }
+        let captured_bytes = cuts.segments.iter().try_fold(0_u64, |total, segment| {
+            // A full database image may legitimately exceed the incremental
+            // bound; the per-representation check below rejects an oversized
+            // delta after its index proves the coverage.
+            if segment.info().size_bytes > self.limits.max_file_bytes {
+                return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
+            }
+            total
+                .checked_add(segment.info().size_bytes)
+                .ok_or(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes))
+        })?;
+        if captured_bytes > self.limits.max_plan_bytes {
+            return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
+        }
+        Ok(())
     }
 
     async fn prepare_captured_inputs(
@@ -325,7 +330,7 @@ impl CellReplica {
         self.validate_chain(&prospective, target)?;
         self.prepare_append(
             base,
-            base_graph,
+            base_graph.map(AppendBaseState::from),
             inputs,
             target,
             commit_sequence,
@@ -356,7 +361,7 @@ impl CellReplica {
             let graph = replica.load_graph(base).await?;
             let scratch_bytes = compaction_scratch_bytes(&graph, range.clone())?;
             replica.host = replica.host.for_scratch(scratch_bytes).await?;
-            compaction::prepare(&replica, base, graph, range, level, scratch_directory).await
+            compaction::prepare(&replica, base, graph, range, level, scratch_directory, None).await
         }
         .await;
         self.host
@@ -376,10 +381,46 @@ impl CellReplica {
     ) -> Result<Option<PreparedRoot>> {
         let started = self.host.now_monotonic();
         let result = self
-            .prepare_scheduled_compaction_inner(base, scratch_directory)
+            .prepare_scheduled_compaction_inner(base, scratch_directory, None)
             .await;
         self.host
             .observe_ltx_phase(crate::LtxPhase::Compaction, started, result.is_ok());
+        result
+    }
+
+    /// Compacts a pinned predecessor and appends captures with one final root.
+    ///
+    /// Returns `None` without uploading objects when no scheduled compaction
+    /// puts the final chain strictly below `segment_ceiling`. The caller can
+    /// continue its existing compaction cascade. This ceiling does not change
+    /// storage limits. Every dependency is verified and uploaded before a
+    /// proposal escapes; only the original predecessor is named for authority CAS.
+    pub async fn prepare_scheduled_compaction_append(
+        &self,
+        base: &RootRef,
+        cuts: &CaptureBatch,
+        commit_sequence: u64,
+        schema: u32,
+        segment_ceiling: usize,
+        scratch_directory: &Path,
+    ) -> Result<Option<PreparedRoot>> {
+        self.validate_metadata(commit_sequence, schema)?;
+        self.admit_capture_batch(cuts)?;
+        if segment_ceiling == 0 || segment_ceiling > MAX_SEGMENTS.min(self.limits.max_segments) {
+            return Err(LtxError::InvalidState("invalid compaction append ceiling"));
+        }
+        let started = self.host.now_monotonic();
+        let result = self
+            .prepare_scheduled_compaction_inner(
+                base,
+                scratch_directory,
+                Some((cuts, commit_sequence, schema, segment_ceiling)),
+            )
+            .await;
+        self.host
+            .observe_ltx_phase(crate::LtxPhase::Compaction, started, result.is_ok());
+        self.host
+            .observe_ltx_phase(crate::LtxPhase::RootPreparation, started, result.is_ok());
         result
     }
 
@@ -387,9 +428,38 @@ impl CellReplica {
         &self,
         base: &RootRef,
         scratch_directory: &Path,
+        append: Option<(&CaptureBatch, u64, u32, usize)>,
+    ) -> Result<Option<PreparedRoot>> {
+        let composed = append.is_some();
+        let started = self.host.now_monotonic();
+        let mut replica = self.clone();
+        let admitted = self.host.for_recovery().await;
+        if composed {
+            self.host
+                .observe_ltx_phase(crate::LtxPhase::RootAdmission, started, admitted.is_ok());
+        }
+        replica.host = admitted?;
+        let work_started = self.host.now_monotonic();
+        let result = replica
+            .prepare_scheduled_compaction_admitted(base, scratch_directory, append)
+            .await;
+        if composed {
+            self.host.observe_ltx_phase(
+                crate::LtxPhase::RootPreparationWork,
+                work_started,
+                result.is_ok(),
+            );
+        }
+        result
+    }
+
+    async fn prepare_scheduled_compaction_admitted(
+        &self,
+        base: &RootRef,
+        scratch_directory: &Path,
+        append: Option<(&CaptureBatch, u64, u32, usize)>,
     ) -> Result<Option<PreparedRoot>> {
         let mut replica = self.clone();
-        replica.host = self.host.for_recovery().await?;
         let graph = replica.load_graph(base).await?;
         let segment_limit = MAX_SEGMENTS.min(replica.limits.max_segments);
         let stored_bytes = graph
@@ -424,17 +494,42 @@ impl CellReplica {
         let Some((range, level)) = selected else {
             return Ok(None);
         };
+        let append = match append {
+            Some((cuts, commit_sequence, schema, ceiling)) => {
+                if graph.descriptors.len() - range.len() + 1 + cuts.segments.len() >= ceiling {
+                    return Ok(None);
+                }
+                if commit_sequence <= graph.document.commit_sequence {
+                    return Err(LtxError::InvalidState("commit sequence did not advance"));
+                }
+                Some(CompactionAppend {
+                    inputs: replica.prepare_captured_inputs(&cuts.segments).await?,
+                    position: cuts.position,
+                    commit_sequence,
+                    schema,
+                })
+            }
+            None => None,
+        };
         let scratch_bytes = compaction_scratch_bytes(&graph, range.clone())?;
         replica.host = replica.host.for_scratch(scratch_bytes).await?;
-        compaction::prepare(&replica, base, graph, range, level, scratch_directory)
-            .await
-            .map(Some)
+        compaction::prepare(
+            &replica,
+            base,
+            graph,
+            range,
+            level,
+            scratch_directory,
+            append,
+        )
+        .await
+        .map(Some)
     }
 
-    async fn prepare_append(
+    pub(super) async fn prepare_append(
         &self,
         base: Option<&RootRef>,
-        base_graph: Option<LoadedGraph>,
+        base_graph: Option<AppendBaseState>,
         inputs: Vec<AppendInput>,
         target: Position,
         commit_sequence: u64,
@@ -512,7 +607,7 @@ impl CellReplica {
     async fn finish_preparation(
         &self,
         base: Option<&RootRef>,
-        base_graph: Option<LoadedGraph>,
+        base_graph: Option<AppendBaseState>,
         descriptors: Vec<SegmentDescriptor>,
         directory_inputs: &[DirectoryInput],
         target: Position,
@@ -528,21 +623,21 @@ impl CellReplica {
         let extents = object_extents(&descriptors)?;
         let directory = if let Some(graph) = &base_graph {
             let (changes, retain_through) =
-                directory_changes(directory_inputs, graph.document.database_pages)?;
+                directory_changes(directory_inputs, graph.database_pages)?;
             let base_extents = object_extents(&graph.descriptors)?;
             DirectoryTree::update(
                 directory::Verification {
                     layout: &self.layout,
                     cell: &self.cell,
                     incarnation: &self.incarnation,
-                    page_size: graph.document.page_size,
-                    database_pages: graph.document.database_pages,
+                    page_size: graph.page_size,
+                    database_pages: graph.database_pages,
                     extents: &base_extents,
                     host: &self.host,
                     origin: crate::LtxReadOrigin::Cold,
                 },
-                graph.document.directory_digest,
-                graph.document.directory_height,
+                graph.directory_digest,
+                graph.directory_height,
                 graph.aggregate,
                 changes,
                 retain_through,
@@ -585,7 +680,7 @@ impl CellReplica {
             base,
             base_graph
                 .as_ref()
-                .map(|graph| graph.document.segment_pages.as_slice())
+                .map(|graph| graph.inherited_segment_pages.as_slice())
                 .unwrap_or_default(),
             descriptors,
             target,
@@ -620,7 +715,12 @@ impl CellReplica {
 
         let mut segment_pages = Vec::new();
         let mut root_objects = Vec::new();
-        for page in descriptors.chunks(SEGMENTS_PER_PAGE) {
+        // Keep full page boundaries stable for reuse. A small final page lives
+        // in the authenticated root; larger tails retain the bounded page path.
+        let tail = descriptors.len() % SEGMENTS_PER_PAGE;
+        let inline_count = if tail <= MAX_INLINE_SEGMENTS { tail } else { 0 };
+        let external_count = descriptors.len() - inline_count;
+        for page in descriptors[..external_count].chunks(SEGMENTS_PER_PAGE) {
             let bytes = encode_segment_page(page)?;
             let digest = *blake3::hash(&bytes).as_bytes();
             // load_graph authenticated these exact predecessor pages and
@@ -645,6 +745,7 @@ impl CellReplica {
             page_size,
             schema,
             segment_pages,
+            segments: descriptors[external_count..].to_vec(),
             txid: target.txid,
         };
         let bytes = encode_root(&document)?;

@@ -1,0 +1,2668 @@
+{
+  "run": 37192886934,
+  "candidate_implementation": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+  "actual_source": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+  "source_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+  "aggregate": {
+    "comparisons": [
+      {
+        "mode": "leased",
+        "lane": "forwarded_command",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 55.507000000000005,
+            "p50_ms": 16.201147,
+            "p95_ms": 38.592274,
+            "p99_ms": 47.368466999999995,
+            "reads": 2176.0
+          },
+          "candidate": {
+            "throughput": 61.11,
+            "p50_ms": 14.943353,
+            "p95_ms": 31.413725999999997,
+            "p99_ms": 39.506758,
+            "reads": 2176.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.100942223503342,
+          "p50_ms": 0.9223638918898768,
+          "p95_ms": 0.8139900229771377,
+          "p99_ms": 0.8340307487679515
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "forwarded_command",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 162.4375,
+            "p50_ms": 59.4909155,
+            "p95_ms": 111.5449,
+            "p99_ms": 124.094663,
+            "reads": 670.0
+          },
+          "candidate": {
+            "throughput": 181.506,
+            "p50_ms": 52.26285,
+            "p95_ms": 95.62548899999999,
+            "p99_ms": 105.9765985,
+            "reads": 670.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.117389765294344,
+          "p50_ms": 0.8785013570685427,
+          "p95_ms": 0.8572824844524491,
+          "p99_ms": 0.8539980361605075
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "forwarded_query",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 2405.422,
+            "p50_ms": 0.40714700000000004,
+            "p95_ms": 0.4666795,
+            "p99_ms": 0.5387569999999999,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 2375.73,
+            "p50_ms": 0.4111945,
+            "p95_ms": 0.472568,
+            "p99_ms": 0.5550525,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.9876562199896733,
+          "p50_ms": 1.0099411269148488,
+          "p95_ms": 1.0126178672943635,
+          "p99_ms": 1.0302464747557805
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "forwarded_query",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 3869.0855,
+            "p50_ms": 2.2617494999999996,
+            "p95_ms": 3.929837,
+            "p99_ms": 4.943186000000001,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 3975.703,
+            "p50_ms": 2.179512,
+            "p95_ms": 3.6630955,
+            "p99_ms": 4.3942245,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0275562532800062,
+          "p50_ms": 0.9636398725853593,
+          "p95_ms": 0.9321240295717099,
+          "p99_ms": 0.8889458134895185
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "forwarded_query_cold",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 21.9515,
+            "p50_ms": 45.5549355,
+            "p95_ms": 45.5549355,
+            "p99_ms": 45.5549355,
+            "reads": 2.0
+          },
+          "candidate": {
+            "throughput": 23.4635,
+            "p50_ms": 42.620495500000004,
+            "p95_ms": 42.620495500000004,
+            "p99_ms": 42.620495500000004,
+            "reads": 2.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0688791198779126,
+          "p50_ms": 0.9355845866580144,
+          "p95_ms": 0.9355845866580144,
+          "p99_ms": 0.9355845866580144
+        },
+        "latency_gate": false
+      },
+      {
+        "mode": "leased",
+        "lane": "forwarded_query_expired_bursts",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 7.551,
+            "p50_ms": 2.586927,
+            "p95_ms": 4.8747745,
+            "p99_ms": 6.1539845,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 7.551,
+            "p50_ms": 2.6023075,
+            "p95_ms": 4.9935875,
+            "p99_ms": 5.9983059999999995,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0,
+          "p50_ms": 1.0059454712096632,
+          "p95_ms": 1.024373024844534,
+          "p99_ms": 0.9747028124623972
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "forwarded_query_uncached_route",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 2654.408,
+            "p50_ms": 4.15264,
+            "p95_ms": 5.665534,
+            "p99_ms": 5.847035999999999,
+            "reads": 8.0
+          },
+          "candidate": {
+            "throughput": 2553.1144999999997,
+            "p50_ms": 4.3507235,
+            "p95_ms": 6.808878999999999,
+            "p99_ms": 7.169099,
+            "reads": 8.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.9618395137446842,
+          "p50_ms": 1.0477006193650304,
+          "p95_ms": 1.201807102384347,
+          "p99_ms": 1.2261082367202802
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "local_command",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 65.382,
+            "p50_ms": 13.4912425,
+            "p95_ms": 31.130879999999998,
+            "p99_ms": 41.394498999999996,
+            "reads": 2130.0
+          },
+          "candidate": {
+            "throughput": 72.7895,
+            "p50_ms": 12.4222665,
+            "p95_ms": 25.2330465,
+            "p99_ms": 35.15127,
+            "reads": 2130.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.11329570829892,
+          "p50_ms": 0.9207651926796215,
+          "p95_ms": 0.8105471641020107,
+          "p99_ms": 0.8491773266781173
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "local_command",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 205.00850000000003,
+            "p50_ms": 43.9117835,
+            "p95_ms": 91.05615800000001,
+            "p99_ms": 103.032901,
+            "reads": 644.0
+          },
+          "candidate": {
+            "throughput": 223.04649999999998,
+            "p50_ms": 40.899671,
+            "p95_ms": 79.347149,
+            "p99_ms": 89.4402305,
+            "reads": 644.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.08798659567774,
+          "p50_ms": 0.9314053709524233,
+          "p95_ms": 0.8714089276641783,
+          "p99_ms": 0.8680744658446529
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "local_query",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 7668.3135,
+            "p50_ms": 0.131359,
+            "p95_ms": 0.1435065,
+            "p99_ms": 0.1649065,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 7645.2675,
+            "p50_ms": 0.130638,
+            "p95_ms": 0.146282,
+            "p99_ms": 0.179606,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.9969946455631997,
+          "p50_ms": 0.9945112249636492,
+          "p95_ms": 1.0193405873601544,
+          "p99_ms": 1.0891383905425194
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "local_query",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 11557.1855,
+            "p50_ms": 0.7209605,
+            "p95_ms": 1.3026710000000001,
+            "p99_ms": 1.4264825,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 12011.4015,
+            "p50_ms": 0.6894165000000001,
+            "p95_ms": 1.273037,
+            "p99_ms": 1.3943215,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0393016102406594,
+          "p50_ms": 0.9562472562643863,
+          "p95_ms": 0.9772513551004052,
+          "p99_ms": 0.9774543325978411
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "local_query_cold",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 3322.3595,
+            "p50_ms": 0.305864,
+            "p95_ms": 0.305864,
+            "p99_ms": 0.305864,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 4157.8730000000005,
+            "p50_ms": 0.2406215,
+            "p95_ms": 0.2406215,
+            "p99_ms": 0.2406215,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.2514819663555374,
+          "p50_ms": 0.7866944132032536,
+          "p95_ms": 0.7866944132032536,
+          "p99_ms": 0.7866944132032536
+        },
+        "latency_gate": false
+      },
+      {
+        "mode": "leased",
+        "lane": "local_query_expired_bursts",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 7.5975,
+            "p50_ms": 0.8758085,
+            "p95_ms": 1.48508,
+            "p99_ms": 1.7244804999999999,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 7.597,
+            "p50_ms": 0.878633,
+            "p95_ms": 1.4669020000000002,
+            "p99_ms": 1.6299495,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.9999341888779204,
+          "p50_ms": 1.0032250200814448,
+          "p95_ms": 0.9877595819753819,
+          "p99_ms": 0.9451829116072928
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "local_query_fresh_client",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 5684.242,
+            "p50_ms": 0.17451,
+            "p95_ms": 0.191922,
+            "p99_ms": 0.2151545,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 5646.744500000001,
+            "p50_ms": 0.17517100000000002,
+            "p95_ms": 0.1928935,
+            "p99_ms": 0.2107375,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.993403254119019,
+          "p50_ms": 1.0037877485530917,
+          "p95_ms": 1.0050619522514355,
+          "p99_ms": 0.9794705664998873
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "leased",
+        "lane": "local_query_fresh_client",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 10889.3345,
+            "p50_ms": 0.7929634999999999,
+            "p95_ms": 1.4021919999999999,
+            "p99_ms": 1.557236,
+            "reads": 0.0
+          },
+          "candidate": {
+            "throughput": 11343.698,
+            "p50_ms": 0.7621169999999999,
+            "p95_ms": 1.3649365,
+            "p99_ms": 1.5356545000000001,
+            "reads": 0.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0417255526497051,
+          "p50_ms": 0.9610997227489033,
+          "p95_ms": 0.973430528772094,
+          "p99_ms": 0.9861411500890039
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "forwarded_command",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 92.9735,
+            "p50_ms": 9.742953,
+            "p95_ms": 22.7073165,
+            "p99_ms": 27.3724845,
+            "reads": 3200.0
+          },
+          "candidate": {
+            "throughput": 108.06,
+            "p50_ms": 8.4518925,
+            "p95_ms": 16.979044000000002,
+            "p99_ms": 21.5794045,
+            "reads": 3201.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.162266667383717,
+          "p50_ms": 0.8674877626937131,
+          "p95_ms": 0.747734502225307,
+          "p99_ms": 0.7883611916923361
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "forwarded_command",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 285.40700000000004,
+            "p50_ms": 36.082721,
+            "p95_ms": 64.1891065,
+            "p99_ms": 69.962942,
+            "reads": 1695.0
+          },
+          "candidate": {
+            "throughput": 306.5085,
+            "p50_ms": 32.351813,
+            "p95_ms": 56.9425525,
+            "p99_ms": 63.120194999999995,
+            "reads": 1695.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0739347668417383,
+          "p50_ms": 0.8966012568730612,
+          "p95_ms": 0.8871061712005603,
+          "p99_ms": 0.902194693299204
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "forwarded_query",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 1890.9205000000002,
+            "p50_ms": 0.5148109999999999,
+            "p95_ms": 0.5850474999999999,
+            "p99_ms": 0.689235,
+            "reads": 4096.0
+          },
+          "candidate": {
+            "throughput": 1930.028,
+            "p50_ms": 0.5091985,
+            "p95_ms": 0.5829245000000001,
+            "p99_ms": 0.6883735,
+            "reads": 4096.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0206817261751617,
+          "p50_ms": 0.989097940797691,
+          "p95_ms": 0.9963712348142675,
+          "p99_ms": 0.9987500634761728
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "forwarded_query",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 3702.498,
+            "p50_ms": 2.739394,
+            "p95_ms": 4.234357,
+            "p99_ms": 5.042141,
+            "reads": 4096.0
+          },
+          "candidate": {
+            "throughput": 3674.8385,
+            "p50_ms": 2.8116325,
+            "p95_ms": 4.2389305,
+            "p99_ms": 5.5016905000000005,
+            "reads": 4096.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.9925295030544243,
+          "p50_ms": 1.0263702483103927,
+          "p95_ms": 1.0010800931522779,
+          "p99_ms": 1.0911417391937275
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "forwarded_query_cold",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 39.854,
+            "p50_ms": 25.092180499999998,
+            "p95_ms": 25.092180499999998,
+            "p99_ms": 25.092180499999998,
+            "reads": 4.0
+          },
+          "candidate": {
+            "throughput": 42.1265,
+            "p50_ms": 23.74399,
+            "p95_ms": 23.74399,
+            "p99_ms": 23.74399,
+            "reads": 4.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0570206252822802,
+          "p50_ms": 0.9462704925145904,
+          "p95_ms": 0.9462704925145904,
+          "p99_ms": 0.9462704925145904
+        },
+        "latency_gate": false
+      },
+      {
+        "mode": "object_only",
+        "lane": "forwarded_query_expired_bursts",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 7.5615000000000006,
+            "p50_ms": 3.165532,
+            "p95_ms": 4.6012125,
+            "p99_ms": 5.411517,
+            "reads": 768.0
+          },
+          "candidate": {
+            "throughput": 7.5615000000000006,
+            "p50_ms": 3.304347,
+            "p95_ms": 4.7122155,
+            "p99_ms": 5.41109,
+            "reads": 768.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0,
+          "p50_ms": 1.0438520286637445,
+          "p95_ms": 1.0241247279928931,
+          "p99_ms": 0.9999210942144319
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "forwarded_query_uncached_route",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 3131.645,
+            "p50_ms": 3.835866,
+            "p95_ms": 5.6148050000000005,
+            "p99_ms": 5.725713,
+            "reads": 72.0
+          },
+          "candidate": {
+            "throughput": 3259.2,
+            "p50_ms": 3.6400245,
+            "p95_ms": 5.09317,
+            "p99_ms": 5.332299,
+            "reads": 72.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0407309896236643,
+          "p50_ms": 0.9489446450944845,
+          "p95_ms": 0.9070965064681675,
+          "p99_ms": 0.9312899546309779
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_command",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 108.9645,
+            "p50_ms": 8.217246,
+            "p95_ms": 19.1654185,
+            "p99_ms": 25.5751425,
+            "reads": 3156.0
+          },
+          "candidate": {
+            "throughput": 117.812,
+            "p50_ms": 7.733126,
+            "p95_ms": 15.475413,
+            "p99_ms": 21.2188895,
+            "reads": 3156.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0811961693946193,
+          "p50_ms": 0.9410848841570523,
+          "p95_ms": 0.8074654357273753,
+          "p99_ms": 0.8296684759429982
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_command",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 330.8675,
+            "p50_ms": 28.702433,
+            "p95_ms": 54.9231985,
+            "p99_ms": 60.3591545,
+            "reads": 1669.0
+          },
+          "candidate": {
+            "throughput": 360.8775,
+            "p50_ms": 26.0780035,
+            "p95_ms": 48.7228295,
+            "p99_ms": 55.639129999999994,
+            "reads": 1669.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0907009603542204,
+          "p50_ms": 0.9085642147479276,
+          "p95_ms": 0.887108377346232,
+          "p99_ms": 0.921801016944331
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_query",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 2848.357,
+            "p50_ms": 0.339778,
+            "p95_ms": 0.4197735,
+            "p99_ms": 0.484954,
+            "reads": 4096.0
+          },
+          "candidate": {
+            "throughput": 2902.8875,
+            "p50_ms": 0.329552,
+            "p95_ms": 0.414215,
+            "p99_ms": 0.4581865,
+            "reads": 4096.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.019144545434438,
+          "p50_ms": 0.9699038784147296,
+          "p95_ms": 0.9867583351497891,
+          "p99_ms": 0.9448040432700834
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_query",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 9053.443,
+            "p50_ms": 1.2420434999999999,
+            "p95_ms": 1.629098,
+            "p99_ms": 1.9088735,
+            "reads": 4096.0
+          },
+          "candidate": {
+            "throughput": 8708.061,
+            "p50_ms": 1.262334,
+            "p95_ms": 1.785008,
+            "p99_ms": 2.3397769999999998,
+            "reads": 4096.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.9618507566679328,
+          "p50_ms": 1.0163363843536883,
+          "p95_ms": 1.0957032664701571,
+          "p99_ms": 1.2257370642947267
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_query_cold",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 572.939,
+            "p50_ms": 1.7735215,
+            "p95_ms": 1.7735215,
+            "p99_ms": 1.7735215,
+            "reads": 2.0
+          },
+          "candidate": {
+            "throughput": 715.3900000000001,
+            "p50_ms": 1.3991505,
+            "p95_ms": 1.3991505,
+            "p99_ms": 1.3991505,
+            "reads": 2.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.2486320533250488,
+          "p50_ms": 0.7889109322892336,
+          "p95_ms": 0.7889109322892336,
+          "p99_ms": 0.7889109322892336
+        },
+        "latency_gate": false
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_query_expired_bursts",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 7.5915,
+            "p50_ms": 1.9402565,
+            "p95_ms": 2.6693895000000003,
+            "p99_ms": 3.0301264999999997,
+            "reads": 768.0
+          },
+          "candidate": {
+            "throughput": 7.5915,
+            "p50_ms": 1.889879,
+            "p95_ms": 2.6837285,
+            "p99_ms": 2.939847,
+            "reads": 768.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0,
+          "p50_ms": 0.9740356494102713,
+          "p95_ms": 1.0053716402196082,
+          "p99_ms": 0.97020602935224
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_query_fresh_client",
+        "concurrency": 1.0,
+        "medians": {
+          "baseline": {
+            "throughput": 1512.3185,
+            "p50_ms": 0.6238115,
+            "p95_ms": 0.769421,
+            "p99_ms": 1.0993535,
+            "reads": 8192.0
+          },
+          "candidate": {
+            "throughput": 1535.9855,
+            "p50_ms": 0.6194,
+            "p95_ms": 0.7503875,
+            "p99_ms": 0.843205,
+            "reads": 8192.0
+          }
+        },
+        "ratios": {
+          "throughput": 1.0156494812435344,
+          "p50_ms": 0.9929281521741744,
+          "p95_ms": 0.9752625675670407,
+          "p99_ms": 0.7670007872808882
+        },
+        "latency_gate": true
+      },
+      {
+        "mode": "object_only",
+        "lane": "local_query_fresh_client",
+        "concurrency": 16.0,
+        "medians": {
+          "baseline": {
+            "throughput": 5155.6385,
+            "p50_ms": 2.6410400000000003,
+            "p95_ms": 3.3372925,
+            "p99_ms": 4.070127,
+            "reads": 8192.0
+          },
+          "candidate": {
+            "throughput": 5061.7575,
+            "p50_ms": 2.714271,
+            "p95_ms": 3.639092,
+            "p99_ms": 4.4803715,
+            "reads": 8192.0
+          }
+        },
+        "ratios": {
+          "throughput": 0.9817906162350211,
+          "p50_ms": 1.0277280919637717,
+          "p95_ms": 1.0904324388707314,
+          "p99_ms": 1.1007940292772191
+        },
+        "latency_gate": true
+      }
+    ],
+    "failures": [],
+    "gate_limits": {
+      "p95_max_ratio": 1.5,
+      "p99_max_ratio": 2.0,
+      "throughput_min_ratio": 0.9
+    },
+    "latency_alert_ratio": 1.1,
+    "latency_alerts": [
+      "leased/forwarded_query_uncached_route/c16",
+      "object_only/local_query/c16",
+      "object_only/local_query_fresh_client/c16"
+    ],
+    "threshold": "median of all four runs: p95 <= 150%, p99 <= 200%, throughput >= 90%"
+  },
+  "verification": "Unchanged routing parser and gates rerun; raw quantiles and exact root-event coverage, phase summaries, all 113 coordinated stages per pair, frozen binaries, build logs, exact source archives, harness and merge tree verified.",
+  "ci_run": "https://github.com/crabbuild/cellule/actions/runs/37192886934",
+  "baseline_revision": "fa548bb2cc1993bbf77dc7f4fbef499a0de3f5a4",
+  "write_pairs": [
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0115860966839791,
+        "p50_ms": 1.0123163546061411,
+        "p95_ms": 0.8411198329483921,
+        "p99_ms": 0.9634124626226709
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.2354739555790586,
+        "p50_ms": 0.8011192711461488,
+        "p95_ms": 0.7569549639366754,
+        "p99_ms": 0.7503968028940576
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.036320533832826,
+        "p50_ms": 0.9530047979612637,
+        "p95_ms": 0.8330671472321112,
+        "p99_ms": 0.8801823875268552
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.1388271473373321,
+        "p50_ms": 0.910767540831809,
+        "p95_ms": 0.7586474049081392,
+        "p99_ms": 0.8246456656928409
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.080518136796954,
+        "p50_ms": 0.9399668621309745,
+        "p95_ms": 0.8825560690406803,
+        "p99_ms": 0.8241672557334209
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.20602082675923,
+        "p50_ms": 0.7629965036230925,
+        "p95_ms": 0.7914758433426146,
+        "p99_ms": 0.7158470135478422
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.092849081284266,
+        "p50_ms": 0.9223840272334218,
+        "p95_ms": 0.8597283030029783,
+        "p99_ms": 0.9022204101738399
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0950364831997117,
+        "p50_ms": 0.9133640756976488,
+        "p95_ms": 0.8575192334087335,
+        "p99_ms": 0.9186162657984991
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0758218866978873,
+        "p50_ms": 0.9414290187371258,
+        "p95_ms": 0.8382313378650648,
+        "p99_ms": 0.851360559875337
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0820195569746558,
+        "p50_ms": 0.9304144741791373,
+        "p95_ms": 0.8357137607739047,
+        "p99_ms": 0.8706833597739587
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.105073911306432,
+        "p50_ms": 0.9193278941086164,
+        "p95_ms": 0.8069281107337875,
+        "p99_ms": 0.8427992145093832
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.097955021201224,
+        "p50_ms": 0.925268525576212,
+        "p95_ms": 0.8173988948064581,
+        "p99_ms": 0.825366058012603
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0783548375438217,
+        "p50_ms": 0.8900943936312082,
+        "p95_ms": 0.900346362433941,
+        "p99_ms": 0.8755089276499022
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.180798349149602,
+        "p50_ms": 0.8170372061655269,
+        "p95_ms": 0.8326940519075123,
+        "p99_ms": 0.7775910986690304
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.1594139710832558,
+        "p50_ms": 0.8242267591038223,
+        "p95_ms": 0.8349317295960539,
+        "p99_ms": 0.8084457365438409
+      }
+    },
+    {
+      "mode": "leased",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0785862293529098,
+        "p50_ms": 0.9401174137251681,
+        "p95_ms": 0.881409631348097,
+        "p99_ms": 0.9158261820961159
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0308658936454727,
+        "p50_ms": 0.991473384028086,
+        "p95_ms": 0.8195402311914286,
+        "p99_ms": 0.8434689113713848
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.1041523662203316,
+        "p50_ms": 0.9176791904964884,
+        "p95_ms": 0.8013217072548048,
+        "p99_ms": 0.8492972371925217
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.1164997655107727,
+        "p50_ms": 0.9141992684322173,
+        "p95_ms": 0.7951468678722778,
+        "p99_ms": 0.8097364237746755
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 1,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.1085807568815613,
+        "p50_ms": 0.9126240023567502,
+        "p95_ms": 0.8013595191328484,
+        "p99_ms": 0.8419240497634892
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.183019619314117,
+        "p50_ms": 0.9065364839855685,
+        "p95_ms": 0.8145657820661073,
+        "p99_ms": 1.1140355678941145
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.124469146180048,
+        "p50_ms": 0.8765269570415659,
+        "p95_ms": 0.8627212323782072,
+        "p99_ms": 0.82789091188568
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0593043635483468,
+        "p50_ms": 0.9430262986140716,
+        "p95_ms": 0.9126137616209369,
+        "p99_ms": 1.0274564578554888
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "local_command",
+      "concurrency": 16,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0439928799574127,
+        "p50_ms": 1.0040444224686524,
+        "p95_ms": 0.936050736194719,
+        "p99_ms": 0.9368172225385133
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0688433456652378,
+        "p50_ms": 0.959273351285047,
+        "p95_ms": 0.843916916707277,
+        "p99_ms": 0.8546258219206957
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.3220498686736628,
+        "p50_ms": 0.7401744010830592,
+        "p95_ms": 0.6748841879832653,
+        "p99_ms": 0.7321581781955341
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0121274910110305,
+        "p50_ms": 0.967812194613393,
+        "p95_ms": 0.8549299332807482,
+        "p99_ms": 0.9952106357324836
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 1,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0580737104627689,
+        "p50_ms": 0.9748727615841178,
+        "p95_ms": 0.8241682766549675,
+        "p99_ms": 0.8539900735446244
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 1,
+      "candidate_baseline_ratios": {
+        "throughput": 1.051035056627983,
+        "p50_ms": 0.8740576525675767,
+        "p95_ms": 0.9127843108099711,
+        "p99_ms": 0.9379518235717228
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 2,
+      "candidate_baseline_ratios": {
+        "throughput": 1.102105082202913,
+        "p50_ms": 0.926942706853138,
+        "p95_ms": 0.8502675023558853,
+        "p99_ms": 0.7618624311661552
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 3,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0727620777532894,
+        "p50_ms": 0.8075852934030363,
+        "p95_ms": 0.8953085434051307,
+        "p99_ms": 0.8945026042014164
+      }
+    },
+    {
+      "mode": "object_only",
+      "lane": "forwarded_command",
+      "concurrency": 16,
+      "pair": 4,
+      "candidate_baseline_ratios": {
+        "throughput": 1.0482495860259962,
+        "p50_ms": 0.9338708542510906,
+        "p95_ms": 0.9528573041083841,
+        "p99_ms": 0.91619573535703
+      }
+    }
+  ],
+  "ratio_definition": "Derived from all audited raw routing rows; four coordinated pairs per lane/mode/concurrency. Separate from sustained HTTP results.",
+  "modes": {
+    "leased": {
+      "logical_commands_including_recovery_proof": 49152,
+      "raw_hashes": {
+        "leased-1-baseline/local_command-c1.ns": "df37b0b4590b335175ef3e86dc2c79c68d77a1d7143a06e4acafc157e52d87e5",
+        "leased-1-baseline/local_query_expired_bursts-c16.ns": "85cf6f38fe480e0556fc72bc5e6dfb17f03c4e19c02132068556510b24825917",
+        "leased-1-baseline/forwarded_query-c16.ns": "00e806fa49eac6f10f0fb64015da0960bb9718a2868e1832f956945452291c3d",
+        "leased-1-baseline/local_query_fresh_client-c1.ns": "2f9a7bea1b1e46ead5647f5e715ddd30e0bcaf10f6442ea2948d1e743d30e259",
+        "leased-1-baseline/local_query-c1.ns": "883802214d5ead20a10760901670c74bbd0bf39f133a7caa3e7b4e3172453657",
+        "leased-1-baseline/forwarded_query_expired_bursts-c16.ns": "6abb3fb9a20237b91f89e0b364367bba8367a12bba2eba77e266d327e21f85c4",
+        "leased-1-baseline/forwarded_command-c16.ns": "a9e3d657becfb577bfbc124ff02d791a349e827045e8ec1687464d0dd2141117",
+        "leased-1-baseline/forwarded_command-c1.ns": "4129dc6398277cde4437ab6355cb75f979c965a7824e250be9dad00b2096c0ed",
+        "leased-1-baseline/forwarded_query-c1.ns": "81842d4186c446bdd0a85c1d5fb02e35742ca12b11fc85b4e862a6c0eae1fb25",
+        "leased-1-baseline/local_command-c16.ns": "829de5588f6641cbf93eff8c91f58ab6dae82dde3e73325d6d071b0cc95265e3",
+        "leased-1-baseline/forwarded_query_uncached_route-c16.ns": "773fe358b8ff76c2023a98dbd13f5e10e1fffed9d60455d9dd288a834e200064",
+        "leased-1-baseline/local_query-c16.ns": "d0539f6d1d8a5c4b4e818d520500d1b4f5825b8020ad6a217fb73119edd70fa1",
+        "leased-1-baseline/local_query_cold-c1.ns": "98142a33ac81d440dc41d97ccf2a873914986828123586d4cd371a49efeada2c",
+        "leased-1-baseline/local_query_fresh_client-c16.ns": "a51aa9996a5255b8e7bcb8dd84692684d5f8ce5f43a6cf313be2f2dbbb072cd7",
+        "leased-1-baseline/forwarded_query_cold-c1.ns": "a3c932a4e4fdf70899ed56b97bb5344e5463a5b26597f8d771c51b633e2f0c9b",
+        "leased-1-baseline/forwarded_command-c1.publication.tsv": "f1ca6112311a10bf3e37816c325309d42b9a0db8df43030dc08d99af036ff157",
+        "leased-1-baseline/local_command-c1.publication.tsv": "7802644b9936396b3819dcb518e5aa38c9266332238803a895d799d16dd8989d",
+        "leased-1-baseline/local_command-c16.publication.tsv": "98081cf9d6a520130e22af77aed3b681847594e51e6b44a9d9c930be556df044",
+        "leased-1-baseline/forwarded_command-c16.publication.tsv": "6d08599e993636808e783785700d0182e6d371e8c450c2fa7f04b65b111db06a",
+        "leased-2-candidate/local_command-c1.ns": "3d20e8d6096804a75985bf6ae25b1baf318a44b6bc95271c0df3b79df261dd88",
+        "leased-2-candidate/local_query_expired_bursts-c16.ns": "7be0d66b9a5a3aaaecd6549d86cee2b50643440a7de715f2c437fa629b74be15",
+        "leased-2-candidate/forwarded_query-c16.ns": "847a920c38e32223338b0c852093117245477fb547a2c43223517617c2f7a687",
+        "leased-2-candidate/local_query_fresh_client-c1.ns": "d1369259a2938f9132c1793af7a4ddd6b78ea002e5e40cc1040ebb5c2332e806",
+        "leased-2-candidate/local_query-c1.ns": "debe3eec119755175213314dded09d7883bf533c413d1876a0677162c3f52ac2",
+        "leased-2-candidate/forwarded_query_expired_bursts-c16.ns": "f39bfbb87acbe2587c446a24aeafb3d56a4b67964caea8ec3eae676be2299bcf",
+        "leased-2-candidate/forwarded_command-c16.ns": "12a6120f885b062f601381f0a169bd040b8aab17adc58cac06588c99211847f8",
+        "leased-2-candidate/forwarded_command-c1.ns": "c54f201b239edc99f9722f7e96d38f55bf894cce42a7bdcc5fb2cdd88a6593df",
+        "leased-2-candidate/forwarded_query-c1.ns": "d310e1b20b2486d5ae403a21ea609a36db05e93e82e24217d9d418d4db5e5a43",
+        "leased-2-candidate/local_command-c16.ns": "8b7a683a3fda1d97ad2f80689a5c1d7cd5748d9c792f2fb4eb7bd55dc0ade54c",
+        "leased-2-candidate/forwarded_query_uncached_route-c16.ns": "dac7e8024c81662fa3b697010f7ff40fdc1951ed7582b2f78ee7538abc223369",
+        "leased-2-candidate/local_query-c16.ns": "6f86d4ac4dcd6d03268cb96bfadc59a03579ab2fd9f86dfa4a7eae02dee4ca6a",
+        "leased-2-candidate/local_query_cold-c1.ns": "42952442d857d99ff1f0322f23788842988ec1018117910184366818eb51387c",
+        "leased-2-candidate/local_query_fresh_client-c16.ns": "c0bdd1e3f6e57a274bab1180f254ccb5773e88d82328155fdd1b107ac6663ceb",
+        "leased-2-candidate/forwarded_query_cold-c1.ns": "8bb390b0734ae7c4b7b8cc498c30a15f229bf65967abaa1b800e2f2846dcda53",
+        "leased-2-candidate/forwarded_command-c1.publication.tsv": "ced87e0ef6a7ade7d8242e51a7065fafdc8905b1c79fa3f1442bcb38c3d74c4d",
+        "leased-2-candidate/local_command-c1.publication.tsv": "19b700904e64c2e4f928a1137dd964c62b612b7a71179bf1c8b300a02574850d",
+        "leased-2-candidate/local_command-c16.publication.tsv": "5bfdd24fa79502f98a6a9f45f8e630f19f080de6b02d146645883e0106002b67",
+        "leased-2-candidate/forwarded_command-c16.publication.tsv": "0103ff21f568d6e464baac7be413039c88ebc092001370018c4495cda9ebfbbb",
+        "leased-3-candidate/local_command-c1.ns": "35856efbe6bdc5c0685238768cf372581ecc26f86ab77fc2c19643b36c383bfb",
+        "leased-3-candidate/local_query_expired_bursts-c16.ns": "3c00b22384ef6de90494f7a82f1ed5bd3fcc87c935c7e5eb1bc1035fc0cd1e0c",
+        "leased-3-candidate/forwarded_query-c16.ns": "d0a24e18fe628d0ca730449622277f2b133603b3922ab54ee9eb27f3883047c9",
+        "leased-3-candidate/local_query_fresh_client-c1.ns": "26f95d8bf962f640d6ce40840fbb6b9d71dd8881f4115e6047ca55ffb90e8f53",
+        "leased-3-candidate/local_query-c1.ns": "89b96eab9716dffdd932b8e83c933594c077ef90e02267d4b40485e4f9143797",
+        "leased-3-candidate/forwarded_query_expired_bursts-c16.ns": "9b9765dcb9bf5bd24ba7c37041a4582aebc09b3ae9e46a8cc0fed2fe4a2357f6",
+        "leased-3-candidate/forwarded_command-c16.ns": "fbb607dcf1cbc8fc1d4d1c5a246082db299b7c926241a573ca65867a874b8f57",
+        "leased-3-candidate/forwarded_command-c1.ns": "3f3ccf1a1a165d39ead26eebf5abe66ebf482b26bc80e92dc2b1eed8a8430569",
+        "leased-3-candidate/forwarded_query-c1.ns": "e6b32b680626720900ddbe70527a0ecefb077ffc048099edf8d7f825f098bb62",
+        "leased-3-candidate/local_command-c16.ns": "bedc7796a6b61ed3030f5b7da9adb6320632ce2e5254090c508673e0e7f203de",
+        "leased-3-candidate/forwarded_query_uncached_route-c16.ns": "c8ad5eb6f66053da480c35b1437b11d80a9a527ac87b3cf4de209de9985b5176",
+        "leased-3-candidate/local_query-c16.ns": "25526a8c090e7df4caf86b35b547f79a1d1787f2ccd77846a3f2a19bfa0bc90c",
+        "leased-3-candidate/local_query_cold-c1.ns": "b673ee125c3b18e8038a3f5f24a20faa621c9c8fd331832640afe787e1f235b3",
+        "leased-3-candidate/local_query_fresh_client-c16.ns": "353cb49ea41e9d829eab5514a10ba0beef19dcaa81a322cc911f5d1e6a12ae13",
+        "leased-3-candidate/forwarded_query_cold-c1.ns": "9bc6ebfa0d825bd7ef216434ae5ba1e419fd8c554394b6cf01c6124cb34a7d88",
+        "leased-3-candidate/forwarded_command-c1.publication.tsv": "900c8848e08f9fc6db62acfb37ae67fcc2b1e3f37d0f242da1bf7c5bda82dd25",
+        "leased-3-candidate/local_command-c1.publication.tsv": "f16f1a71664f4ad21074d1cb33bfb7ab1203f8464ffbd8543ce5f5adc4a85b8f",
+        "leased-3-candidate/local_command-c16.publication.tsv": "0251b8f388264eaa9051ed2dd054a698b114d1f16147ee4aa30e8657f897e8d8",
+        "leased-3-candidate/forwarded_command-c16.publication.tsv": "70e8c76208c541d3a496479f19f8e2d894407e06b302d1857cdd36dd3d9da6d7",
+        "leased-4-baseline/local_command-c1.ns": "422f08bca560e8a77085f717d0f4d533a0b54f97a7a982b3876b83de7dc54b77",
+        "leased-4-baseline/local_query_expired_bursts-c16.ns": "2f9f27ad73cc0cf18590d76d9bcde3dc02771621f445cb46ceabde749a27d134",
+        "leased-4-baseline/forwarded_query-c16.ns": "6c9e84818a06c67ada6d47a4aee094f8fee9e731be6662ea0d0626d48e8134a5",
+        "leased-4-baseline/local_query_fresh_client-c1.ns": "cca6b94de7a4a489f2b4b3a8b34af46031b95e0a64f9f02c006ae4a153f79215",
+        "leased-4-baseline/local_query-c1.ns": "45e4e087fa35afa5b0994e865b00b5583d64d5271fc9929f5946ec57e7050361",
+        "leased-4-baseline/forwarded_query_expired_bursts-c16.ns": "da645b49e650ace2af130098fd85f9da4ab9ddbf4083088b56cf7dd78bea3307",
+        "leased-4-baseline/forwarded_command-c16.ns": "619b2cb755addf920b2c5fac9a4ee5606a71d350bdc6ba50598891ee42d03b50",
+        "leased-4-baseline/forwarded_command-c1.ns": "48492e57124bc5a641bf30a3350ca2d0215a62bab809ccf948df398b8ace3f6b",
+        "leased-4-baseline/forwarded_query-c1.ns": "dea24aec069e8497d1ab6825c2393997d39aa7a6d402114b658453043946b7b4",
+        "leased-4-baseline/local_command-c16.ns": "7d8102a4524d1930d6cc2bf8d4ebe75b63f0f6bfe5b1e1f535edfd77d6f9b324",
+        "leased-4-baseline/forwarded_query_uncached_route-c16.ns": "b66b43266b5006a4dee87ab5ac6d2c5310c7c4fcf7ca7edfd0fc17e3010500f5",
+        "leased-4-baseline/local_query-c16.ns": "55f3b75abd891d6623faac9df154f978540f58261c27c6394898ef5f01ec0232",
+        "leased-4-baseline/local_query_cold-c1.ns": "4792a948301a5dae337fdf84cc014ed52257877a6e2daa10d8c501fcaac33e5a",
+        "leased-4-baseline/local_query_fresh_client-c16.ns": "fcddcb0d7bd5c097fa8c05abdc504c5857d5e8b26012a42567d92d32e9416a07",
+        "leased-4-baseline/forwarded_query_cold-c1.ns": "1f8a2f58ad0929b149122f5d8f25116f6e8bfb04ee10d642f63de5fa06e6278b",
+        "leased-4-baseline/forwarded_command-c1.publication.tsv": "5d8bfc43842e31cd689da4c8335d99d51cdeaa592b89b582785dd71669852a42",
+        "leased-4-baseline/local_command-c1.publication.tsv": "488beaac7c833075738ed24acf2317bb3da3ca2391b36ffb9f5450f25419c692",
+        "leased-4-baseline/local_command-c16.publication.tsv": "95a981bf2f7386ed112de5f34c48646ed0fb97650cb24d7cdbfbc3d4fd8e2761",
+        "leased-4-baseline/forwarded_command-c16.publication.tsv": "c8e5200e6aa407e46d55f0b094db50a105fc6da713104af3133a123506b549f7",
+        "leased-5-candidate/local_command-c1.ns": "02cfa7a6042530546b0951a3d8ae6acf36b79b3041630de9c758f9f2fcc28ee5",
+        "leased-5-candidate/local_query_expired_bursts-c16.ns": "8f4772f378e068ac7d7c033587a513b99aee17fa82d101bb4ad2faad2ee55789",
+        "leased-5-candidate/forwarded_query-c16.ns": "6ccb308f2dcebf5182f07005abb3ea6a1a7d8305c5d2052c283ef941a161d8fc",
+        "leased-5-candidate/local_query_fresh_client-c1.ns": "fbff06ec0bbb220b655ab092b26d5db39533c551c4e360217a2c89063c9cffb1",
+        "leased-5-candidate/local_query-c1.ns": "294339e7c30b11127767f2d289a283eb485367fde9c41c1c71d37a280dead06b",
+        "leased-5-candidate/forwarded_query_expired_bursts-c16.ns": "d4205456c887a72caf1ddb626df3ce3354b8d2b20d9115629b48027f92b9df28",
+        "leased-5-candidate/forwarded_command-c16.ns": "488d4c0026825d0e095f725afdcc0b80e1c61929db97d50a411d829ea3f65685",
+        "leased-5-candidate/forwarded_command-c1.ns": "dcdf1b9df05c264672f8fcd6ee924f3ebcc71b390a23d8d65ff91197b3908bce",
+        "leased-5-candidate/forwarded_query-c1.ns": "7e771dd190023a00a2e72dd22723aad88f5efd2a528a833e348b5c5afac45380",
+        "leased-5-candidate/local_command-c16.ns": "903022e635fe4ee98df87db3e6e5ef7ea3ea8b2ab61dfc4a48a0170cf85cfe44",
+        "leased-5-candidate/forwarded_query_uncached_route-c16.ns": "c3c2460e377052be60a08b83d27fa7c85e52bdf7e583163c807f712612966e6e",
+        "leased-5-candidate/local_query-c16.ns": "728fb71a4f461796bcecf172e6ffe808c0f751c4bd70b2257939b25335d92d7f",
+        "leased-5-candidate/local_query_cold-c1.ns": "c4f96394ea8d7de3ad04a3d1d0a109834eb0c8b521cdfa3c220bf7fab96c2ab9",
+        "leased-5-candidate/local_query_fresh_client-c16.ns": "cd0e25f50e0718e7a5341e4b05331e5230e8dd61e0f5b5f9913016d57e4df534",
+        "leased-5-candidate/forwarded_query_cold-c1.ns": "0570e1ec12e8c92cd474f43fdcd69d51d1aada840e87af631d8229371c090b2a",
+        "leased-5-candidate/forwarded_command-c1.publication.tsv": "edc9a0a4bc53d777f69c5fc12ab0a6e1a2439c99d709a2738f58b46a70f4df04",
+        "leased-5-candidate/local_command-c1.publication.tsv": "ddd97234c134d6c59873676558c3991b016c380c19b3acd386a4fff6edfdcea0",
+        "leased-5-candidate/local_command-c16.publication.tsv": "5508b5dbd1832bf7b87441337c2544926b45a7533c6193070c9724f5a5824fd8",
+        "leased-5-candidate/forwarded_command-c16.publication.tsv": "21fbe859add9ae6823c9550d8f2a08d4d92e34d2743784c8c6e2ffb33803ddc8",
+        "leased-6-baseline/local_command-c1.ns": "9d517188857059e72698afd979b4546cf81bb469c2942465ab905379f0747e2f",
+        "leased-6-baseline/local_query_expired_bursts-c16.ns": "0f032233dc613aada879960c7d3a2544481ec4355ad4c65fd44b35c9232c32e3",
+        "leased-6-baseline/forwarded_query-c16.ns": "9ba51251b30e713b430012a98bd4fd46802cee225ed4b0d46634683aa85984a4",
+        "leased-6-baseline/local_query_fresh_client-c1.ns": "e3235b06820dc1932a64516b87c1ee7e3ba6799c03be999109eb174d72ac712e",
+        "leased-6-baseline/local_query-c1.ns": "756b427568dff23358e3294da41b5455e4a4830c8b252604132ee560b92480f0",
+        "leased-6-baseline/forwarded_query_expired_bursts-c16.ns": "257c6f8486175e2fbe84500edab490ce4112dca248b7c591ace3e4ecd2ae794f",
+        "leased-6-baseline/forwarded_command-c16.ns": "0a6aac7beec09a8a3bdc108f9632a17a158a1a7079d32c5edf1719598eeb4bce",
+        "leased-6-baseline/forwarded_command-c1.ns": "30c7da463e0fe711e6d2a729597ccae396e5d2635036f8815cb5f65fabaeac43",
+        "leased-6-baseline/forwarded_query-c1.ns": "7206a511ba55457ad508c9e8545bd838299c1dca7dba1b93b88372d4db8b47cd",
+        "leased-6-baseline/local_command-c16.ns": "37acf2926a57ab3f1d2255d54b4c5ae620e6fd05957f1b4d12f701bfa34b6d32",
+        "leased-6-baseline/forwarded_query_uncached_route-c16.ns": "397550585c3afe328558cf88533ecd2b29f42d019ad88440b2d86f172b9a4778",
+        "leased-6-baseline/local_query-c16.ns": "13709e9174df2674110e773cded3594464bc58f9a4e00ccca320e8e53e4941bd",
+        "leased-6-baseline/local_query_cold-c1.ns": "aa98b66f050700b4f6b910bcd4cfb46554eea7f8ad675f08cc8bac826a43f35e",
+        "leased-6-baseline/local_query_fresh_client-c16.ns": "59507db6309a6fa9f1b79ca065431872c4c3ab27a5697aca8ea5dad0676f48aa",
+        "leased-6-baseline/forwarded_query_cold-c1.ns": "cc375dff54095f1cef7f1de0a96a4ceb05a21b7a73db5ed83cbd16373b96c6d1",
+        "leased-6-baseline/forwarded_command-c1.publication.tsv": "eaf4e99f318f90aec91a59c34bd7d6f2a141754268906ff29ec501753c8878dc",
+        "leased-6-baseline/local_command-c1.publication.tsv": "4deba3248fe7fa2e3e44ab6e8c462a112fe12a354822bed94aa425b7ad992c90",
+        "leased-6-baseline/local_command-c16.publication.tsv": "e79abc2e98df3726b7db834da6569b1a3e7fd81d8fa1d29faef7a3fe09f455b5",
+        "leased-6-baseline/forwarded_command-c16.publication.tsv": "893d36fcfebc8749d21aac4f6a5c372dd1aa16788cd6f06cf0387e54871c93d1",
+        "leased-7-baseline/local_command-c1.ns": "4838fedf189ddb4c99f923fa731575451236b7619b778534d48adab550def161",
+        "leased-7-baseline/local_query_expired_bursts-c16.ns": "00c559857a9fcd2d605b73da2c4678ed89ed7ba09e776f19057ea672e3915054",
+        "leased-7-baseline/forwarded_query-c16.ns": "18a0dc48e8423b4ebe6198f4ba739a13188d971b9e77db23cd1a83042d2ce47b",
+        "leased-7-baseline/local_query_fresh_client-c1.ns": "e34b77a789960509a8faa852a0b0da5f74695eaa2c044f3bea6089501063ccd3",
+        "leased-7-baseline/local_query-c1.ns": "164ae21a986fb41c199d264f809510fd5424373b937146449f1cc83b9f6efafc",
+        "leased-7-baseline/forwarded_query_expired_bursts-c16.ns": "d3740ca4076297e9947fc260290823c98a1a98e9794a0788598cf010b2fd8016",
+        "leased-7-baseline/forwarded_command-c16.ns": "0413f45a6442f690d80e36d03c8c2c2e89bbe58e3d045e4eaee023b0c6d80663",
+        "leased-7-baseline/forwarded_command-c1.ns": "4366bcee37cb266dd49acba04556d51362c2b3f56024648deb979f92a7640026",
+        "leased-7-baseline/forwarded_query-c1.ns": "c963f18436818f630a747101a424a0f7ac17a9c801582b93097616b50f12ab31",
+        "leased-7-baseline/local_command-c16.ns": "0365d0e24ede1c3eaf1077cce855cf12594c5d66420a66b626143a78e778ec98",
+        "leased-7-baseline/forwarded_query_uncached_route-c16.ns": "697a94b8d61b88dfefe0a2811983c0f5546dba108b8a14bbec27f9a2d7caa7a0",
+        "leased-7-baseline/local_query-c16.ns": "cbd84bd69da1a092de6fd12a2debe213d57c387e4eb0ab4b6182270fff0bd22d",
+        "leased-7-baseline/local_query_cold-c1.ns": "d9858c5ece4e2cf954446f03970fee328b1f6eeebee4fc0171a7e0f574ec3202",
+        "leased-7-baseline/local_query_fresh_client-c16.ns": "db6847f72fa526b7b53e8b5160221cac4d472ec68962e7ffefadf390ffab363b",
+        "leased-7-baseline/forwarded_query_cold-c1.ns": "d9675e48fe0c155c21d7a36d0553db8d3c3745396634bb539d4a301f5d61d321",
+        "leased-7-baseline/forwarded_command-c1.publication.tsv": "57e7d2d10dfef5144bf8d400df01e28321091b35b3d5a180d13a71d5175dfafa",
+        "leased-7-baseline/local_command-c1.publication.tsv": "adf908117a4cc28efc707bc820246d0fb12194af79a569d4bae12e51c55d3757",
+        "leased-7-baseline/local_command-c16.publication.tsv": "d3ee4548b6163b498d89158c9ae445638647634d6f4907bf629c47a3400a02e8",
+        "leased-7-baseline/forwarded_command-c16.publication.tsv": "f399f9c3b6dae56e18acec6500ab9cf60f557536d64f0ebca4dea8a5f17a9685",
+        "leased-8-candidate/local_command-c1.ns": "055e2accfb96b6b3734437dd191725036b432e37e5c0fd168ca65663ff46bb6f",
+        "leased-8-candidate/local_query_expired_bursts-c16.ns": "8af4b0099ca89662d14dfe181cdd37906d7b6e3c6ef9ee7ff27d74f02c96481a",
+        "leased-8-candidate/forwarded_query-c16.ns": "f1f804d8f6a6062a6540d4d06b44bd8c30bcaf750183cc47fac4c298e52eb4aa",
+        "leased-8-candidate/local_query_fresh_client-c1.ns": "b5e1c70819e77c54feaa0d7bc1c086f4409161a8ab06c169f7058b9a577d30b2",
+        "leased-8-candidate/local_query-c1.ns": "1e2c84bcb047e24c5c32987f5242db42e33ab82a34ba5f9fb4142418b332e74d",
+        "leased-8-candidate/forwarded_query_expired_bursts-c16.ns": "fa62727338a6afc947fef319dd86030c2efd75ab2d13da73164d4cabedad908e",
+        "leased-8-candidate/forwarded_command-c16.ns": "d73b882dce1c7fe0c9836f151c1ae73c03d8692491795d728351a0a3ad418965",
+        "leased-8-candidate/forwarded_command-c1.ns": "103e11d31be296c17868443c1b52a51456c8a3ab1cfe1bbdf1791b7ba780b2e0",
+        "leased-8-candidate/forwarded_query-c1.ns": "2ddb4d686b4bab47b85122993778a48feced6b804f1996753ae50eb807f0610d",
+        "leased-8-candidate/local_command-c16.ns": "cae11b13eceb4a75efcf0ac61be732a53b012fccb4d2a02ad5cc4570e605410a",
+        "leased-8-candidate/forwarded_query_uncached_route-c16.ns": "0ff99e1e39594eb5b4bcd3ea0af822a96fbc12b5329cdfcdcc85b748145a102a",
+        "leased-8-candidate/local_query-c16.ns": "d92c690d5408923d2eef4f77e9e082729621969113c738b3e34906684e547b49",
+        "leased-8-candidate/local_query_cold-c1.ns": "b661926b7f652758c5cca9abfa9776f12cc8f86036c2b55d20b7f8f4e911e9ea",
+        "leased-8-candidate/local_query_fresh_client-c16.ns": "cb0c974c76370277b44516bd6f5d3da75a73a7a76f736b3114ff552bcd586bc0",
+        "leased-8-candidate/forwarded_query_cold-c1.ns": "d076f727296ef5be163a545f49ff508a1628f40582865902db71630fe3424f36",
+        "leased-8-candidate/forwarded_command-c1.publication.tsv": "915faeb562ef8d1b13c77dadcb4401e9cbeee621b34fdf6b21043dbb4f91c0cc",
+        "leased-8-candidate/local_command-c1.publication.tsv": "a47cd68816953bce4ca228a7d7500820105614536838ce884fc4f0259a7feffd",
+        "leased-8-candidate/local_command-c16.publication.tsv": "4f53a9e6b9ea0898f33afec56373eb2bdde4216924328dfe021feffa1ed5492e",
+        "leased-8-candidate/forwarded_command-c16.publication.tsv": "090bc662f1932b91e718387e78ae71f798947c538f6b18be63112d77527b0990"
+      },
+      "source_archive_audit": {
+        "baseline": {
+          "revision": "fa548bb2cc1993bbf77dc7f4fbef499a0de3f5a4",
+          "binary_sha256": "f6b3e5b741da329634d24cb7d1f8cca5ace5cecb161795a9444e49c5cc8c5ffe",
+          "source_archive_sha256": "13528e1cbeb7e1f65dab8b33606f68870f4b3af543d29262a7c30b8d45df9b0a",
+          "harness_sha256": "d405e13452a32414086ad1363b53550a5f653e54f3d4e6b3b5ee76e1b3b04ed3",
+          "build_log_sha256": "bd495eb63353a6d0fbd5b8c0ee0bdaf0c09444a87d876ea5ba9f7d4759217a44"
+        },
+        "candidate": {
+          "revision": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+          "binary_sha256": "4680b5b12dc810e614f5c1fb6ba657362bd02b6eb5abacaa65b03b529a8144c7",
+          "source_archive_sha256": "f6049d3703206d1018281c801b0d4fbaf4fea7f2ebc3ba1e4c8f2137bc31cd85",
+          "harness_sha256": "d405e13452a32414086ad1363b53550a5f653e54f3d4e6b3b5ee76e1b3b04ed3",
+          "build_log_sha256": "67646b0ff758981a2da080ee6aba4928d45a7f701fab14229c56dd0d7b98d6a0"
+        }
+      },
+      "coordinator_hashes": {
+        "leased-pair-1.json": "474182620d56a943f533b69d2681fd1d6f8e6955c3a23c2b5cd45c3b86c62a86",
+        "leased-pair-2.json": "63c4c621bc85e3d9271d69786e74225907a3c97c2105993594ca78be98826977",
+        "leased-pair-3.json": "c1407e9cf18e14554bfa019f87ad46a9ee19d46e589a2f3a3ac8b353377dafc7",
+        "leased-pair-4.json": "c5e5fee2d616af1e80a04d3034d29bd4bbc5115216e2cfa860ec03b91f533258"
+      },
+      "run_log_hashes": {
+        "leased-1-baseline/run.log": "2d79d9deff49c191d7523831f6f772a3c9408c1d10d0744524b99323e4763b44",
+        "leased-2-candidate/run.log": "0eb3de81880009abfd688f646e81fc9eb90d61873f6f7380f2e36f13ceca40fe",
+        "leased-3-candidate/run.log": "577d52b856d329e9c40cd00aa81d947cdb0b8c34f5f3e0adcd33470cc2be86f7",
+        "leased-4-baseline/run.log": "3be59366c503ad0e7d53c83779d802d4e79a131e298c967fa35ee485b67cbe99",
+        "leased-5-candidate/run.log": "b157966e32aa93ddac7ff0223d37d28d0b8177c9a8053358c1e024e1b0104884",
+        "leased-6-baseline/run.log": "3b2d5ebe8760fbfe8d409ff7ac831ff5f699bcfe0c085d2404f7444bd4bd285a",
+        "leased-7-baseline/run.log": "065247c79202efe14725f9226e082b9e9692d8026d63732a60f118e89b797d03",
+        "leased-8-candidate/run.log": "f6785039986ca7eb761c4408a22cbad70e0394a3ab66eb0b8d96691566f08027"
+      },
+      "point_count": 8,
+      "write_rows": [
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 15.734965,
+          "throughput": 65.078,
+          "p50_ms": 13.532738,
+          "p95_ms": 31.241124,
+          "p99_ms": 41.389394,
+          "reads": 2130.0,
+          "puts": 7446.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 5.143197,
+          "throughput": 199.098,
+          "p50_ms": 45.06023,
+          "p95_ms": 93.184134,
+          "p99_ms": 110.270468,
+          "reads": 644.0,
+          "puts": 2340.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 16.038322,
+          "throughput": 63.847,
+          "p50_ms": 13.886228,
+          "p95_ms": 32.79247,
+          "p99_ms": 41.448084,
+          "reads": 2175.0,
+          "puts": 7491.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 5.286994,
+          "throughput": 193.683,
+          "p50_ms": 51.075056,
+          "p95_ms": 93.490797,
+          "p99_ms": 102.653835,
+          "reads": 670.0,
+          "puts": 2345.0,
+          "hops": 1041.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 15.554816,
+          "throughput": 65.832,
+          "p50_ms": 13.699412,
+          "p95_ms": 26.277529,
+          "p99_ms": 39.875058,
+          "reads": 2130.0,
+          "puts": 6316.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.759944,
+          "throughput": 215.129,
+          "p50_ms": 42.355123,
+          "p95_ms": 82.240223,
+          "p99_ms": 90.881309,
+          "reads": 644.0,
+          "puts": 1982.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 14.907967,
+          "throughput": 68.688,
+          "p50_ms": 13.072898,
+          "p95_ms": 27.487676,
+          "p99_ms": 35.287264,
+          "reads": 2177.0,
+          "puts": 6343.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.902835,
+          "throughput": 208.859,
+          "p50_ms": 45.461621,
+          "p95_ms": 84.174099,
+          "p99_ms": 89.874349,
+          "reads": 670.0,
+          "puts": 1985.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 13.696955,
+          "throughput": 74.761,
+          "p50_ms": 12.207417,
+          "p95_ms": 25.035667,
+          "p99_ms": 34.709854,
+          "reads": 2130.0,
+          "puts": 6316.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 5.358621,
+          "throughput": 191.094,
+          "p50_ms": 47.987001,
+          "p95_ms": 93.016424,
+          "p99_ms": 102.462108,
+          "reads": 644.0,
+          "puts": 1982.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 17.169172,
+          "throughput": 59.642,
+          "p50_ms": 15.162907,
+          "p95_ms": 32.454394,
+          "p99_ms": 41.589185,
+          "reads": 2175.0,
+          "puts": 6343.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 5.69919,
+          "throughput": 179.675,
+          "p50_ms": 52.928408,
+          "p95_ms": 98.369863,
+          "p99_ms": 105.70415,
+          "reads": 670.0,
+          "puts": 1985.0,
+          "hops": 1041.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 16.92228,
+          "throughput": 60.512,
+          "p50_ms": 15.237952,
+          "p95_ms": 33.074183,
+          "p99_ms": 46.255333,
+          "reads": 2130.0,
+          "puts": 7446.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 6.462608,
+          "throughput": 158.45,
+          "p50_ms": 62.892819,
+          "p95_ms": 117.522758,
+          "p99_ms": 143.134086,
+          "reads": 644.0,
+          "puts": 2340.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 18.577403,
+          "throughput": 55.121,
+          "p50_ms": 16.296938,
+          "p95_ms": 38.834342,
+          "p99_ms": 47.766142,
+          "reads": 2177.0,
+          "puts": 7492.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 6.729588,
+          "throughput": 152.164,
+          "p50_ms": 64.780903,
+          "p95_ms": 118.134461,
+          "p99_ms": 135.937963,
+          "reads": 670.0,
+          "puts": 2345.0,
+          "hops": 1041.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 14.459598,
+          "throughput": 70.818,
+          "p50_ms": 12.59494,
+          "p95_ms": 25.430426,
+          "p99_ms": 35.592686,
+          "reads": 2130.0,
+          "puts": 6316.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.424755,
+          "throughput": 231.425,
+          "p50_ms": 39.444219,
+          "p95_ms": 76.454075,
+          "p99_ms": 84.1209,
+          "reads": 644.0,
+          "puts": 1982.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 16.827653,
+          "throughput": 60.852,
+          "p50_ms": 14.984927,
+          "p95_ms": 31.480036,
+          "p99_ms": 39.684461,
+          "reads": 2175.0,
+          "puts": 6344.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 5.662833,
+          "throughput": 180.828,
+          "p50_ms": 52.140218,
+          "p95_ms": 96.691909,
+          "p99_ms": 106.856236,
+          "reads": 670.0,
+          "puts": 1985.0,
+          "hops": 1041.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 14.984724,
+          "throughput": 68.336,
+          "p50_ms": 13.21603,
+          "p95_ms": 30.526262,
+          "p99_ms": 40.437853,
+          "reads": 2130.0,
+          "puts": 7446.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.835596,
+          "throughput": 211.763,
+          "p50_ms": 42.763337,
+          "p95_ms": 88.928182,
+          "p99_ms": 93.237638,
+          "reads": 644.0,
+          "puts": 2340.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 18.595754,
+          "throughput": 55.066,
+          "p50_ms": 16.299872,
+          "p95_ms": 39.012194,
+          "p99_ms": 47.086495,
+          "reads": 2177.0,
+          "puts": 7492.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 6.565564,
+          "throughput": 155.965,
+          "p50_ms": 63.259555,
+          "p95_ms": 115.808162,
+          "p99_ms": 132.174902,
+          "reads": 670.0,
+          "puts": 2345.0,
+          "hops": 1041.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 15.589346,
+          "throughput": 65.686,
+          "p50_ms": 13.449747,
+          "p95_ms": 31.020636,
+          "p99_ms": 41.399604,
+          "reads": 2130.0,
+          "puts": 7446.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.854934,
+          "throughput": 210.919,
+          "p50_ms": 42.608087,
+          "p95_ms": 88.900778,
+          "p99_ms": 95.795334,
+          "reads": 644.0,
+          "puts": 2340.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 18.320581,
+          "throughput": 55.893,
+          "p50_ms": 16.105356,
+          "p95_ms": 38.350206,
+          "p99_ms": 47.650439,
+          "reads": 2175.0,
+          "puts": 7492.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 6.062414,
+          "throughput": 168.91,
+          "p50_ms": 55.722276,
+          "p95_ms": 107.281638,
+          "p99_ms": 116.014424,
+          "reads": 670.0,
+          "puts": 2346.0,
+          "hops": 1041.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 13.688858,
+          "throughput": 74.805,
+          "p50_ms": 12.249593,
+          "p95_ms": 23.533725,
+          "p99_ms": 34.140004,
+          "reads": 2130.0,
+          "puts": 6316.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 8
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.433597,
+          "throughput": 230.964,
+          "p50_ms": 38.916696,
+          "p95_ms": 76.234127,
+          "p99_ms": 87.999152,
+          "reads": 644.0,
+          "puts": 1982.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 8
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 16.686163,
+          "throughput": 61.368,
+          "p50_ms": 14.901779,
+          "p95_ms": 31.347416,
+          "p99_ms": 39.329055,
+          "reads": 2177.0,
+          "puts": 6343.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 8
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 5.620691,
+          "throughput": 182.184,
+          "p50_ms": 52.385482,
+          "p95_ms": 94.559069,
+          "p99_ms": 106.249047,
+          "reads": 670.0,
+          "puts": 1985.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "leased",
+          "version": "candidate",
+          "run": 8
+        }
+      ]
+    },
+    "object_only": {
+      "logical_commands_including_recovery_proof": 49152,
+      "raw_hashes": {
+        "object_only-1-baseline/local_command-c1.ns": "c8dfc5baeedc44ad5b21d5705ebf20197c361a5a8a81d4c8ac76e8d645971829",
+        "object_only-1-baseline/local_query_expired_bursts-c16.ns": "1c5475a00101a09631b908031e09c6ccbfea2d0ad9dd9d7a0f99eb1401a06565",
+        "object_only-1-baseline/forwarded_query-c16.ns": "455055f24eecfcd6d4606b6b43a03d71022ea54a9793c458dbf986fbdf3bc534",
+        "object_only-1-baseline/local_query_fresh_client-c1.ns": "9b8fc32319bf3b03e5f32b8201769d258a0740a77c6ed6a8333e713b3ef3a54c",
+        "object_only-1-baseline/local_query-c1.ns": "3cac2b97848614d017310cda3598cd27548b276aaad72bd462da9b239df8b217",
+        "object_only-1-baseline/forwarded_query_expired_bursts-c16.ns": "e48e0e39bb29ca2fcbac1ca0657de762785b33eb047b351957b05a8a33fb5b27",
+        "object_only-1-baseline/forwarded_command-c16.ns": "7d2b5a8e55b5738c72eae053aba4021625474ea2c96746c2d80ce9bd1776ea77",
+        "object_only-1-baseline/forwarded_command-c1.ns": "bbc42571e29f11ed57a9ad68909d7b3aa707d3d51a1a0618394c81d3924081e0",
+        "object_only-1-baseline/forwarded_query-c1.ns": "af9c6ce5872adb2b5a07d15e61142946e388d3d6768f7dce5d02a9177f871081",
+        "object_only-1-baseline/local_command-c16.ns": "a20c478b5eb5feb90603faabc41b0fe3c05088ebaea441b6f63131b91f110434",
+        "object_only-1-baseline/forwarded_query_uncached_route-c16.ns": "dcc75c1e5c200b80497643732fa5b565ee2780440d7653dfbb29e4f6b8ba84a2",
+        "object_only-1-baseline/local_query-c16.ns": "80ba7fa7eaf2b9735a5b2a718e81d55edb0954a9b1b8dd9156d37df295041aff",
+        "object_only-1-baseline/local_query_cold-c1.ns": "970a1d304a79211198bcabf46353ec6b72e7e63a48bcd7fbf7f1601362ace765",
+        "object_only-1-baseline/local_query_fresh_client-c16.ns": "0a3bd80b269e8ae6a3d4fdec774961a7fb5313ae11b299c986995e5ca777a1d1",
+        "object_only-1-baseline/forwarded_query_cold-c1.ns": "06f37a2492a96d09ef369e818a6ad480de9db1d74b5980d0af6426184de1f39c",
+        "object_only-1-baseline/forwarded_command-c1.publication.tsv": "638b58b8e5061ba5a489101393fd0ff1ba852df5a4d143a6ed03c5e633f4b262",
+        "object_only-1-baseline/local_command-c1.publication.tsv": "196d4c91ad8cca9787fdc61929a93dc5d8967701e5773872cc6b04f600717e03",
+        "object_only-1-baseline/local_command-c16.publication.tsv": "829b818b8fad7013074867ab77f00c61a0ad7dd37035497cf44f0e8c25a7cfeb",
+        "object_only-1-baseline/forwarded_command-c16.publication.tsv": "0742d5017e952f55b15d67e1c9bfa055bb76c3ae9933fda3c10f021921fc86ac",
+        "object_only-2-candidate/local_command-c1.ns": "5a73b65c0cdbcd92eaeaae820c3bd292a249783b53a6ef4566f8157c9f99e3fc",
+        "object_only-2-candidate/local_query_expired_bursts-c16.ns": "7c1bcd7f3efd9ed14aaaf3b33ff9f7879ba57a8ffb319c053fdcab8232e72381",
+        "object_only-2-candidate/forwarded_query-c16.ns": "77b6d6463400341bd900c029b63e2a64db9e8bcbeef0994567dc7c3404ed37d9",
+        "object_only-2-candidate/local_query_fresh_client-c1.ns": "a2093599c3c8226f2134a953ba38753b6802d1bf547cabaa0fa0a4be0b45022a",
+        "object_only-2-candidate/local_query-c1.ns": "a945cbbf4054682a664caecf2ece1ae43069e56d48a580c0a4748b15426abaa3",
+        "object_only-2-candidate/forwarded_query_expired_bursts-c16.ns": "19c4a6e3c32e16e1e888f7360f1e3ff4784e78a8d4dd29731f0f4da6d2c74b2c",
+        "object_only-2-candidate/forwarded_command-c16.ns": "a27ade9817f1d6a70203622ea5fe56cddf52c2251ca6262f8b092ce69cca879a",
+        "object_only-2-candidate/forwarded_command-c1.ns": "4d575e6df5d23b024fc331a7f943027e21f086646f3709837e4d6d8f36ad61ad",
+        "object_only-2-candidate/forwarded_query-c1.ns": "30aeaa29400c0d71c73091e92d887d8da8670fbb8d5a160750f1fcf323b87132",
+        "object_only-2-candidate/local_command-c16.ns": "cdb7b67d36b50dff9c014317e22bbb73661da34f414a5fd73b782a8e8e1403c8",
+        "object_only-2-candidate/forwarded_query_uncached_route-c16.ns": "49a617a9cf0d50a92e902d53682a78c051b6627126461466d1bb68c30326c724",
+        "object_only-2-candidate/local_query-c16.ns": "130fb828f83cd9840d37468f4281d39de803bc51be5b3d22a017a15a089b9dd3",
+        "object_only-2-candidate/local_query_cold-c1.ns": "fa78cf42edc8bc56aad71d3d247cdcfb72fb9e1a4b814385c498b17c32b66580",
+        "object_only-2-candidate/local_query_fresh_client-c16.ns": "199a6c78174651e1afe5067e6500c70280fd0dc227c4c532c6b6a2983742a428",
+        "object_only-2-candidate/forwarded_query_cold-c1.ns": "b05e660fa9bf4eb5a0c2e45bef4831cf643eded814be9624408e751a845778c4",
+        "object_only-2-candidate/forwarded_command-c1.publication.tsv": "7496ab8a817c1195f870f3eff51f4be0e17e3a6d1ed50a12a3940fde2fd01de5",
+        "object_only-2-candidate/local_command-c1.publication.tsv": "f805958477b0fd2fd2ab043a658be3dea18af0b3ef5c5ee2faeafef6f8c7cfb4",
+        "object_only-2-candidate/local_command-c16.publication.tsv": "15cd90634185191cc6493cc651a4a5593ccaa114cddac8c9220e8f0265d65eeb",
+        "object_only-2-candidate/forwarded_command-c16.publication.tsv": "82dd9b3ca7e6ab6158e636b11d9c61ff8a25d75032bf78ecc29bc0f5c2e7903e",
+        "object_only-3-candidate/local_command-c1.ns": "0262e31e27dfccef65decdb85aa16d61007b650d9d49ff4ae1ccd46e9ff773f6",
+        "object_only-3-candidate/local_query_expired_bursts-c16.ns": "c98ce5f41e7bce2cd25fdefd81b8d8c2b889d0adb1e99355b5fe4fc0cfe0c973",
+        "object_only-3-candidate/forwarded_query-c16.ns": "8353d3e2e9d8d3f3983949e89358d7bcde4f9909531419ee93c14d693035f6d8",
+        "object_only-3-candidate/local_query_fresh_client-c1.ns": "d98f9059c9d9f12827e4728e01effea7b689cf4fbc37b3d898949e7e7a3fedff",
+        "object_only-3-candidate/local_query-c1.ns": "b752b8c4dbd865ebcbef8873e4739d37b2e118561e90c743a0d96887b47177f8",
+        "object_only-3-candidate/forwarded_query_expired_bursts-c16.ns": "6be6e805935a2d0686c6defaff43d6eb3da1c80e07c63a535b043f25a3dbf621",
+        "object_only-3-candidate/forwarded_command-c16.ns": "45ff412e808be0de5706f7f67ce785495e9608e2f5cbd065001252ef504aad93",
+        "object_only-3-candidate/forwarded_command-c1.ns": "d82110ee7771537b7f6b4368fd4a1631b304b475cff77121a3ec09270c101d77",
+        "object_only-3-candidate/forwarded_query-c1.ns": "0655fb11a4bd2ffbda9f8b334d0589f34a1645fb7e2e8b4ce3708a9fd9d75b42",
+        "object_only-3-candidate/local_command-c16.ns": "a471efcbad544bd89419dbbfdc4000d1ddb2e417207ce0ff884e64508d5a29db",
+        "object_only-3-candidate/forwarded_query_uncached_route-c16.ns": "cc3139628cf9c60b82db39dbe561da84da10bb7490800083ebdcfbefd3015599",
+        "object_only-3-candidate/local_query-c16.ns": "02b4c174c90dd42fa9eaf897b94dcc361379ac3e8da4f259455517cb53188d24",
+        "object_only-3-candidate/local_query_cold-c1.ns": "f84b41f9d011d947b2d6364314326f3700e82a9aec27db9b6d32a52b10dba875",
+        "object_only-3-candidate/local_query_fresh_client-c16.ns": "5cc4117f072d54c4c245e7abb65399e111d8d07f1cb8998b35ba4d9a371e7503",
+        "object_only-3-candidate/forwarded_query_cold-c1.ns": "5f688725cb8712fcc5e7896dd486703ff96aa0fc0d039c0a2344e3af509bd3cf",
+        "object_only-3-candidate/forwarded_command-c1.publication.tsv": "32350482bdc9bb358ba3acf2ea11f993ba4c8143bf70be691d315e410743d7c6",
+        "object_only-3-candidate/local_command-c1.publication.tsv": "5a6e4e9f1a07240be9d12ba5cb06eb7e2b79abea41c8ec0c477622adce1095c3",
+        "object_only-3-candidate/local_command-c16.publication.tsv": "3efc61a1b53675b74ed6194940b54fb32d8d5580e2f29ca922ab5fb03f75f4c3",
+        "object_only-3-candidate/forwarded_command-c16.publication.tsv": "1c89677a1120929c927eae7e3427926e1fa478ebecb89a6b81dd12f8b7e36413",
+        "object_only-4-baseline/local_command-c1.ns": "0c78dce0a4a5fb2009aba0cb11db2475d9b0b3ee875a47bc46306a9606307fb1",
+        "object_only-4-baseline/local_query_expired_bursts-c16.ns": "e6060d3067a036b9f51d4ddfc4bbf6c60321dba5997525ea41df382c0cd80a33",
+        "object_only-4-baseline/forwarded_query-c16.ns": "d2210b9927e34b823d977f050b47278c7acecaf8609f0cd6d562672d261287b1",
+        "object_only-4-baseline/local_query_fresh_client-c1.ns": "464f4a4e7798169820a0f79b0cab6ea0d165acc623ff339719c316a3b1f5da41",
+        "object_only-4-baseline/local_query-c1.ns": "4204a5f49acf49f0adbc44cef22ea15dcb4af62974f68d11ca9be79608320c19",
+        "object_only-4-baseline/forwarded_query_expired_bursts-c16.ns": "17afdc4bcd61312b508c06cf704772c9421b45d9e6820d0470a15b4f3ba717fa",
+        "object_only-4-baseline/forwarded_command-c16.ns": "d10fd250a727af08f0dbb9a94152c5fb27d2b1978cf36d350fa5e1d6f38e53f0",
+        "object_only-4-baseline/forwarded_command-c1.ns": "34d860867539eff122ce301f39c6c5696171d54953cca2da90b45bfe2ca8ab3e",
+        "object_only-4-baseline/forwarded_query-c1.ns": "5b9e488e4daa8eefbdad0eb09568b001b1421d920714ae2db72452c22f4821e2",
+        "object_only-4-baseline/local_command-c16.ns": "1779e20b89a067b1e50f99ab1baae84561a60912ac9063886584da42e857561f",
+        "object_only-4-baseline/forwarded_query_uncached_route-c16.ns": "35b76b66bb1cc4aa83adac96a51b87753a962f2d5c54adb8260de09a35792481",
+        "object_only-4-baseline/local_query-c16.ns": "9da5e988d3042d0bc7aecc6522859c9b7e116df382bb12ea88a35fcb15cf9d3a",
+        "object_only-4-baseline/local_query_cold-c1.ns": "5e34890e59d3dc872e286a2e35cc531b7eed08f9bdfe983f33e5d9c00b9881ef",
+        "object_only-4-baseline/local_query_fresh_client-c16.ns": "5e6da9d2469c70a9ebd82b4262ba3a1ab2eee6883f1adbac189b0d5a17eff6cc",
+        "object_only-4-baseline/forwarded_query_cold-c1.ns": "46ec82a1129029511b503e5533eaf8eb7b035bf662110366ee6f43e671c45285",
+        "object_only-4-baseline/forwarded_command-c1.publication.tsv": "7805868502a2f57d5c2c0a973897786f189dc42a514099705d28c838b279fc63",
+        "object_only-4-baseline/local_command-c1.publication.tsv": "b15c87b9855acf953d083f7f139ddc0ae02bcfffccd595e7b958a0d0c42b6eed",
+        "object_only-4-baseline/local_command-c16.publication.tsv": "19fc057e123b317818ff49597a735396e86c351b4045987243cf612e19904a54",
+        "object_only-4-baseline/forwarded_command-c16.publication.tsv": "3ed33aefcfce3a290be19b3bc255d1b2bb67eda43851d057078a0a212f5b4304",
+        "object_only-5-candidate/local_command-c1.ns": "db053acf35e2098efe734dbf89ac0a6b6e9cda972e24e2b7888ac477d9d83efe",
+        "object_only-5-candidate/local_query_expired_bursts-c16.ns": "161c5eeec882d6e0dc66918abb1a88a5a5ed97ca2567ccb45d89669ba000c5c8",
+        "object_only-5-candidate/forwarded_query-c16.ns": "ccfeedc46e1c5360447a0611a7408dca1a987a65c0cca1e6c4ae621ef963b74a",
+        "object_only-5-candidate/local_query_fresh_client-c1.ns": "64accb1c5f7ee97d7d71fe2f75f596dc9fc6bdae5cf16a5c07685969da46580a",
+        "object_only-5-candidate/local_query-c1.ns": "36cd74e2c314dc1cdec188b557927f5b04d98039c6b339c9adf1face6ef1c769",
+        "object_only-5-candidate/forwarded_query_expired_bursts-c16.ns": "1cd98595c2c88568001793141b8f320027dcfc481a586d27e9fd1bc86287e5f5",
+        "object_only-5-candidate/forwarded_command-c16.ns": "94c8f64fefae979d5549db72ec392299128446b0b608f117721bb3b544462c87",
+        "object_only-5-candidate/forwarded_command-c1.ns": "39061f10fb2d74396b4b88c9767d25459e4965773a49a064da36514cfa491c2a",
+        "object_only-5-candidate/forwarded_query-c1.ns": "cf426b2aea93b19a00508a9e1a6b387b7f1781dccdc1e045351fe47257976446",
+        "object_only-5-candidate/local_command-c16.ns": "9c8ccec6a846b6bedc52eb62b84260e2613f552aab43e5140c1dff583f860725",
+        "object_only-5-candidate/forwarded_query_uncached_route-c16.ns": "2873f8b5e705c6be6f064067cb3bca0a81e385ef4a9dedb358932b1329c5cfe2",
+        "object_only-5-candidate/local_query-c16.ns": "e8feafd1e1a9545ad15f1f79979c67a16602e1b84d9251351fa33f37f95cb329",
+        "object_only-5-candidate/local_query_cold-c1.ns": "9ffefe62be76f734aed162c203257b056f5ebf1dd0d8d4c544469a9929a8f354",
+        "object_only-5-candidate/local_query_fresh_client-c16.ns": "84ffedf2499d01a6803c769316526b9ee2b683dbec46aa293a2f6abf7ed379bd",
+        "object_only-5-candidate/forwarded_query_cold-c1.ns": "2e01a76e31fcebf691388eb60d5f99aa6cd15b52fbbf3bd000ce9f565d0488e2",
+        "object_only-5-candidate/forwarded_command-c1.publication.tsv": "94302bab3b45dd0a582178050173a44de3e2d868ef83b19e007b1793d972037a",
+        "object_only-5-candidate/local_command-c1.publication.tsv": "37db925ba8d294cdbcfdd5255bd735d78f2d2337109dc8288626d2ae0c3b496c",
+        "object_only-5-candidate/local_command-c16.publication.tsv": "1c096f048fc8bdbc6aedfdb315418e1199137af8ecc5edd63373909e18684c89",
+        "object_only-5-candidate/forwarded_command-c16.publication.tsv": "7d7fa0febf381292d5c2a3ac43a1023f60b903a1b12f0d647cf867d02552fca3",
+        "object_only-6-baseline/local_command-c1.ns": "8623443d3ca3c8cb6499e6239de74e3ebf890403ab67c0286b0978e1309d13a0",
+        "object_only-6-baseline/local_query_expired_bursts-c16.ns": "02b7978c3b22d4039726158dfee1b556d6e9f5ea342326fb7a654df10160c9a8",
+        "object_only-6-baseline/forwarded_query-c16.ns": "4fdb38f7428af72d1b102d887c44a3eb14d0cb3acf6b1a296fc50e700c80e1b2",
+        "object_only-6-baseline/local_query_fresh_client-c1.ns": "661983d6c5b2f11f982f187374b9bf9e2c6f802b8159de8f05b22bfd0077910a",
+        "object_only-6-baseline/local_query-c1.ns": "2c07ba4bac31eb00765511698565303f033c086d714016d280524266d4966c99",
+        "object_only-6-baseline/forwarded_query_expired_bursts-c16.ns": "327b92941773401bdffd5971a4b6f0c72756319a035a9ff799f1a4c487dc49c4",
+        "object_only-6-baseline/forwarded_command-c16.ns": "8320bd03412cde541a8ab22574d6dcf214407d4f29d6a98f043a0b467975d25d",
+        "object_only-6-baseline/forwarded_command-c1.ns": "66785cd817a8a38e6bc5299e008443a106b72585ce4b45e6ac70e27c37a65f15",
+        "object_only-6-baseline/forwarded_query-c1.ns": "77aaecf89a3884e2558776a59316809f7fc1b8e2c2f29db45a935fc5fab7a51d",
+        "object_only-6-baseline/local_command-c16.ns": "93facb22ae4adf8e8c272af1c04bd566b2d3540261e4f1ddafce274e0bb2e5bb",
+        "object_only-6-baseline/forwarded_query_uncached_route-c16.ns": "c856458b4a585426f2ca97b8bc0076341a339d40cd5772b57582e46d5389d7cb",
+        "object_only-6-baseline/local_query-c16.ns": "3c00b6fd6c7802af857c53c4029d33f5a5ae31a95c4fedc8568a4b5b39bd96c2",
+        "object_only-6-baseline/local_query_cold-c1.ns": "6284a872b3ed212ba949a67e93e433f5b0ad4ed4b615bfb08ccfe0ac48b50150",
+        "object_only-6-baseline/local_query_fresh_client-c16.ns": "9678134a3e8ebc5a34aed34f20fe0875c2d622041315afc6bd2ed2329d593bc5",
+        "object_only-6-baseline/forwarded_query_cold-c1.ns": "e8a28daa1f5b7492e093442eb7f6047d60bf76a808bc320499baa587b5d35d9e",
+        "object_only-6-baseline/forwarded_command-c1.publication.tsv": "cc8f18c077843f3273d073e521806861ada8b3a32f6c71e18e392fe9a482f207",
+        "object_only-6-baseline/local_command-c1.publication.tsv": "160d831e527167ac25ffef893c1f96872e4c1b59e77b24a466cabd5db257ab9f",
+        "object_only-6-baseline/local_command-c16.publication.tsv": "bee4dff87825c17023210f85a46c32360557e40872ef5776809687a9862e496b",
+        "object_only-6-baseline/forwarded_command-c16.publication.tsv": "e270e0a530b3fc7f5b00d1de532a4c22e0f146730a7a54ad3a3e198c214820fd",
+        "object_only-7-baseline/local_command-c1.ns": "0b02aae43e0d990ccf787fc09e73cdadfe1242ee3a9af5f85b1ae938a2b8fbdf",
+        "object_only-7-baseline/local_query_expired_bursts-c16.ns": "23dadbbf274e51e5a79686856813c8bc12aaadc25278827fd4e7dac4ff8c5d2f",
+        "object_only-7-baseline/forwarded_query-c16.ns": "c56a078545a36fe4c918098eb90fda44c0cb811989fbb17c0215cf8833f77974",
+        "object_only-7-baseline/local_query_fresh_client-c1.ns": "3c009fff84c0c637ed3cb0976d84b6ebcff77df4defdadb57f5dc36c1fa29fcb",
+        "object_only-7-baseline/local_query-c1.ns": "2c5a4c2b6534dcb6677404f98d1f061b72d5511145cd4b9d79fa79c57fc0b180",
+        "object_only-7-baseline/forwarded_query_expired_bursts-c16.ns": "f5d87f0c9687264e01932a8dbc492df412127005a8982a74ceabec6c42676b67",
+        "object_only-7-baseline/forwarded_command-c16.ns": "b06030cb3e6754d965c30cd461eb7b8219d97c56bd30fadb5519cced5559e02a",
+        "object_only-7-baseline/forwarded_command-c1.ns": "cb0c926cf5ec841d5f5a53801850acfb6631d810cfc7ca35877c535e1198cc73",
+        "object_only-7-baseline/forwarded_query-c1.ns": "d3bc753f44025cf0654dd8221c6eb9194ee410c87a5abcccbb10b70502fcbf58",
+        "object_only-7-baseline/local_command-c16.ns": "20d476aeb6aa47a7da58596a483d28df39fa50ceb17338acce8d9ee9a9ad1076",
+        "object_only-7-baseline/forwarded_query_uncached_route-c16.ns": "11f4a131bb0cece013844ed819dc0706d87952a54eb81a28090784149a1a90b9",
+        "object_only-7-baseline/local_query-c16.ns": "14ebf413d4d99e81bceeb70eb8fd3dbc19ac3c2720293feacecbd76c8cc51602",
+        "object_only-7-baseline/local_query_cold-c1.ns": "804374b20df2665c00219634a30d83ef2e154c8d0be69e69772589b447941f66",
+        "object_only-7-baseline/local_query_fresh_client-c16.ns": "c887d65a3b89ccb074d414f390f938925e0217697fff6c56e443080a5d3b378a",
+        "object_only-7-baseline/forwarded_query_cold-c1.ns": "3f8c0b338e268486f3b13ab288c309958eb54ca148ca68c92d2efc7b3b27f807",
+        "object_only-7-baseline/forwarded_command-c1.publication.tsv": "018ffc1504b11c38775da5a3eadba5b9b8b561c4ffa85fe9c1c4b71a16c22627",
+        "object_only-7-baseline/local_command-c1.publication.tsv": "0fe7b0dce967a1cfe9e704139c03971c2ac9056a95683f4d6c69fefdd9dcf5f8",
+        "object_only-7-baseline/local_command-c16.publication.tsv": "59c0a110bbd3c75785e976f895dc2abb2ebe8fd094b33e77a09555a2461f2bb9",
+        "object_only-7-baseline/forwarded_command-c16.publication.tsv": "b759a2150153af7905825f88225564927069bb4de74a752cbb6eab6e6ca86576",
+        "object_only-8-candidate/local_command-c1.ns": "0510ebb4e2892e1f658e1dd0d2f4ad91c3853ee8e0681bd35c6236cd40b22e88",
+        "object_only-8-candidate/local_query_expired_bursts-c16.ns": "835bdaefba06407b0777eb8d53bbd00e680e781056279148b80c4c2f9f10e481",
+        "object_only-8-candidate/forwarded_query-c16.ns": "cb20578aef2b8e0e58cf5ccae4ee4e4aa0a2ed177c5c2f0eda5e77a4c2192463",
+        "object_only-8-candidate/local_query_fresh_client-c1.ns": "2aa601a0b8c99d0f2466f46b8be19cb321bf8f65788a9091c1bd945538ac81b5",
+        "object_only-8-candidate/local_query-c1.ns": "88fb8101084bbe1f2f30ea3226e82f7189808fe6a5a2ceb424384f5b6ee116cb",
+        "object_only-8-candidate/forwarded_query_expired_bursts-c16.ns": "c45d6e2b3fa3ccc3dfb66e74fcf913825a316dd3909b6d69b78d0f949c30898f",
+        "object_only-8-candidate/forwarded_command-c16.ns": "5a2e65e9c951e462b23a74c81697045b9436df471d1180d5add1e8523eb5370b",
+        "object_only-8-candidate/forwarded_command-c1.ns": "4b666ffd7f049b6bc50855e716790ae9c62e7532f2a5ab1ebb303134fcca9028",
+        "object_only-8-candidate/forwarded_query-c1.ns": "a04f3414e309961f8cd1fdbb48240137f224c51b712ea1988b2223038a096acf",
+        "object_only-8-candidate/local_command-c16.ns": "8fee83ffc02006d549417c629442589055e47ae93692e033f2435bc94cd586e1",
+        "object_only-8-candidate/forwarded_query_uncached_route-c16.ns": "34a8e92b6293d9f89e85d1c39b9e0faa662180db74182f0faae5ed04d5addc56",
+        "object_only-8-candidate/local_query-c16.ns": "0fbd9600a4323ca69bda7764bf67afc5392a067b0a39db3915da473c40190268",
+        "object_only-8-candidate/local_query_cold-c1.ns": "97bd4014b93c78ea7f0719fa8d1cc454b6b4b3bfa8ea63f93c2f40a172749dea",
+        "object_only-8-candidate/local_query_fresh_client-c16.ns": "5e365b66a7bbad6140bdb4634a40c44c8ce2f2bc456b8267dc406fd425b626e8",
+        "object_only-8-candidate/forwarded_query_cold-c1.ns": "44a7d3a8dda58d2659a64b2436cd9007945d9ff3119adae370fa64ae8a451562",
+        "object_only-8-candidate/forwarded_command-c1.publication.tsv": "17b1de7c350a541f05e9d7ea4cd762e34145a5bb8fde43a448d59c81d51c7564",
+        "object_only-8-candidate/local_command-c1.publication.tsv": "67d9322cdf64635aa8a181712b5496071ee5a85239f4382ad8214a76dc06dfb6",
+        "object_only-8-candidate/local_command-c16.publication.tsv": "c3bb3613c57cb550c0c3fc8e59ebc8fee643f52669fdf0b61ef6e69dcc0d3a6f",
+        "object_only-8-candidate/forwarded_command-c16.publication.tsv": "903976f48903d1407f324b7c47702521d82669522c0e678d4db55d762d5b7976"
+      },
+      "source_archive_audit": {
+        "baseline": {
+          "revision": "fa548bb2cc1993bbf77dc7f4fbef499a0de3f5a4",
+          "binary_sha256": "f6b3e5b741da329634d24cb7d1f8cca5ace5cecb161795a9444e49c5cc8c5ffe",
+          "source_archive_sha256": "13528e1cbeb7e1f65dab8b33606f68870f4b3af543d29262a7c30b8d45df9b0a",
+          "harness_sha256": "d405e13452a32414086ad1363b53550a5f653e54f3d4e6b3b5ee76e1b3b04ed3",
+          "build_log_sha256": "2531e6970a91a8a2aafa7b06082ee9424d5974a64424c8746c397ca771938827"
+        },
+        "candidate": {
+          "revision": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+          "binary_sha256": "4680b5b12dc810e614f5c1fb6ba657362bd02b6eb5abacaa65b03b529a8144c7",
+          "source_archive_sha256": "f6049d3703206d1018281c801b0d4fbaf4fea7f2ebc3ba1e4c8f2137bc31cd85",
+          "harness_sha256": "d405e13452a32414086ad1363b53550a5f653e54f3d4e6b3b5ee76e1b3b04ed3",
+          "build_log_sha256": "f97a15e44e2eccdf8d77213f271e419a9b4a4329419326cbbfdd27a8dd69ace1"
+        }
+      },
+      "coordinator_hashes": {
+        "object_only-pair-1.json": "6966d5181443ad6d5911b2e329c629a3254f3df9328e9486e7a77294f696c010",
+        "object_only-pair-2.json": "e49b3e494bf8697e2da38c9895f9dc73c1fcaef5a6fae4cc4309cca7c34f3eea",
+        "object_only-pair-3.json": "3883d471e927a1cb0a8c1c813cc5cd9dc07786b4e7291fd03be6eea9541c8de1",
+        "object_only-pair-4.json": "8e2d089a0eb98b4add6b8a53396509b9d27dbab785dc540c9575ccb6c12a32e2"
+      },
+      "run_log_hashes": {
+        "object_only-1-baseline/run.log": "7dc509f774b956efaa139518f094d726ee9fa189e3ce2c86659db060d01915e2",
+        "object_only-2-candidate/run.log": "421bd54fe0cbf4777c3358f14cc3fe7f7bcd8caff3610f1aca7adaef2a8d9bc8",
+        "object_only-3-candidate/run.log": "f1c72659a61ff1f2d56e79233fbb86acbb12be19a3a9119c72e79518442c6a7c",
+        "object_only-4-baseline/run.log": "8bcefc0f5dabb34c79d7bb7a9923c1f82a84e9518e69210b4b760e5b705d2778",
+        "object_only-5-candidate/run.log": "d4fc52da016010fef2c3cc6b81417b44ed5a001a1bc1b82b18e5db0f59070240",
+        "object_only-6-baseline/run.log": "d0a36fc5806d47859b3cc23d843462e1dbca330013797c328f1b5d227231a99f",
+        "object_only-7-baseline/run.log": "01fe4d36c3a80ac8598e45f4d0e0398f3f27c5ed4c11bea9da72883b99533263",
+        "object_only-8-candidate/run.log": "f0be215dad050aa6efb37691198be400cce67e898eae0bdab67e57dbff347398"
+      },
+      "point_count": 8,
+      "write_rows": [
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.378799,
+          "throughput": 109.182,
+          "p50_ms": 8.151534,
+          "p95_ms": 19.356946,
+          "p99_ms": 26.542229,
+          "reads": 3156.0,
+          "puts": 7445.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.608802,
+          "throughput": 283.751,
+          "p50_ms": 33.011662,
+          "p95_ms": 65.104036,
+          "p99_ms": 71.97671,
+          "reads": 1669.0,
+          "puts": 2340.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 10.022141,
+          "throughput": 102.174,
+          "p50_ms": 8.643186,
+          "p95_ms": 19.777454,
+          "p99_ms": 25.025985,
+          "reads": 3199.0,
+          "puts": 7490.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.252217,
+          "throughput": 314.862,
+          "p50_ms": 33.945548,
+          "p95_ms": 58.214503,
+          "p99_ms": 62.737154,
+          "reads": 1695.0,
+          "puts": 2338.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 1
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.097981,
+          "throughput": 112.552,
+          "p50_ms": 8.082029,
+          "p95_ms": 15.863796,
+          "p99_ms": 22.387545,
+          "reads": 3156.0,
+          "puts": 6316.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.050493,
+          "throughput": 335.683,
+          "p50_ms": 29.926276,
+          "p95_ms": 53.03152,
+          "p99_ms": 80.184615,
+          "reads": 1669.0,
+          "puts": 1981.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.376609,
+          "throughput": 109.208,
+          "p50_ms": 8.291178,
+          "p95_ms": 16.690528,
+          "p99_ms": 21.387853,
+          "reads": 3201.0,
+          "puts": 6342.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.0943,
+          "throughput": 330.931,
+          "p50_ms": 29.670366,
+          "p95_ms": 53.137285,
+          "p99_ms": 58.844428,
+          "reads": 1695.0,
+          "puts": 1984.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 2
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 8.966089,
+          "throughput": 114.208,
+          "p50_ms": 7.9269,
+          "p95_ms": 16.290077,
+          "p99_ms": 21.88742,
+          "reads": 3156.0,
+          "puts": 6314.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 2.856268,
+          "throughput": 358.51,
+          "p50_ms": 26.075832,
+          "p95_ms": 48.445412,
+          "p99_ms": 52.911803,
+          "reads": 1669.0,
+          "puts": 1982.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.12283,
+          "throughput": 112.246,
+          "p50_ms": 7.883827,
+          "p95_ms": 16.509783,
+          "p99_ms": 21.591516,
+          "reads": 3199.0,
+          "puts": 6341.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.630103,
+          "throughput": 282.086,
+          "p50_ms": 35.427652,
+          "p95_ms": 60.74782,
+          "p99_ms": 67.395962,
+          "reads": 1695.0,
+          "puts": 1985.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 3
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.89995,
+          "throughput": 103.435,
+          "p50_ms": 8.637986,
+          "p95_ms": 20.32901,
+          "p99_ms": 25.771213,
+          "reads": 3156.0,
+          "puts": 7445.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.211788,
+          "throughput": 318.826,
+          "p50_ms": 29.749036,
+          "p95_ms": 56.15419,
+          "p99_ms": 63.911564,
+          "reads": 1669.0,
+          "puts": 2340.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 12.060805,
+          "throughput": 84.903,
+          "p50_ms": 10.65131,
+          "p95_ms": 24.463135,
+          "p99_ms": 29.490234,
+          "reads": 3201.0,
+          "puts": 7491.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.000757,
+          "throughput": 255.952,
+          "p50_ms": 38.219894,
+          "p95_ms": 71.445539,
+          "p99_ms": 88.462115,
+          "reads": 1695.0,
+          "puts": 2337.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 4
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 8.433825,
+          "throughput": 121.416,
+          "p50_ms": 7.539352,
+          "p95_ms": 15.08703,
+          "p99_ms": 20.550359,
+          "reads": 3156.0,
+          "puts": 6314.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 2.819036,
+          "throughput": 363.245,
+          "p50_ms": 26.080175,
+          "p95_ms": 49.000247,
+          "p99_ms": 58.366457,
+          "reads": 1669.0,
+          "puts": 1982.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 12.33139,
+          "throughput": 83.04,
+          "p50_ms": 10.610669,
+          "p95_ms": 21.587351,
+          "p99_ms": 30.953289,
+          "reads": 3201.0,
+          "puts": 6343.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.736738,
+          "throughput": 274.036,
+          "p50_ms": 35.03326,
+          "p95_ms": 62.818169,
+          "p99_ms": 69.04552,
+          "reads": 1695.0,
+          "puts": 1985.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 5
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.416391,
+          "throughput": 108.747,
+          "p50_ms": 8.246946,
+          "p95_ms": 18.973891,
+          "p99_ms": 25.379072,
+          "reads": 3156.0,
+          "puts": 7445.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 2.986214,
+          "throughput": 342.909,
+          "p50_ms": 27.65583,
+          "p95_ms": 53.692207,
+          "p99_ms": 56.806745,
+          "reads": 1669.0,
+          "puts": 2339.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 12.481003,
+          "throughput": 82.045,
+          "p50_ms": 10.963562,
+          "p95_ms": 25.250433,
+          "p99_ms": 31.102249,
+          "reads": 3201.0,
+          "puts": 7490.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 4.008635,
+          "throughput": 255.449,
+          "p50_ms": 43.38026,
+          "p95_ms": 70.16371,
+          "p99_ms": 77.18873,
+          "reads": 1698.0,
+          "puts": 2338.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 6
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.235533,
+          "throughput": 110.876,
+          "p50_ms": 8.187546,
+          "p95_ms": 18.60805,
+          "p99_ms": 23.877345,
+          "reads": 3156.0,
+          "puts": 7445.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 2.839148,
+          "throughput": 360.672,
+          "p50_ms": 25.21967,
+          "p95_ms": 50.960227,
+          "p99_ms": 54.919523,
+          "reads": 1669.0,
+          "puts": 2340.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 10.134179,
+          "throughput": 101.044,
+          "p50_ms": 8.834596,
+          "p95_ms": 20.951498,
+          "p99_ms": 25.254735,
+          "reads": 3199.0,
+          "puts": 7490.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 3.001128,
+          "throughput": 341.205,
+          "p50_ms": 29.432529,
+          "p95_ms": 52.083763,
+          "p99_ms": 58.201871,
+          "reads": 1695.0,
+          "puts": 2345.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "baseline",
+          "run": 7
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 8.330958,
+          "throughput": 122.915,
+          "p50_ms": 7.472151,
+          "p95_ms": 14.911738,
+          "p99_ms": 20.102911,
+          "reads": 3156.0,
+          "puts": 6315.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 8
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 2.719508,
+          "throughput": 376.539,
+          "p50_ms": 25.321669,
+          "p95_ms": 47.701358,
+          "p99_ms": 51.449555,
+          "reads": 1669.0,
+          "puts": 1981.0,
+          "hops": 0.0,
+          "lane": "local_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 8
+        },
+        {
+          "concurrency": 1.0,
+          "calls": 1024.0,
+          "elapsed_s": 9.577934,
+          "throughput": 106.912,
+          "p50_ms": 8.612607,
+          "p95_ms": 17.26756,
+          "p99_ms": 21.567293,
+          "reads": 3201.0,
+          "puts": 6342.0,
+          "hops": 1026.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 8
+        },
+        {
+          "concurrency": 16.0,
+          "calls": 1024.0,
+          "elapsed_s": 2.862986,
+          "throughput": 357.668,
+          "p50_ms": 27.486181,
+          "p95_ms": 49.628394,
+          "p99_ms": 53.324306,
+          "reads": 1695.0,
+          "puts": 1985.0,
+          "hops": 1025.0,
+          "lane": "forwarded_command",
+          "mode": "object_only",
+          "version": "candidate",
+          "run": 8
+        }
+      ]
+    }
+  },
+  "audit_sha256": {
+    "audit-inline-root-routing.py": "ac6604569d497b969002d552148bb3816db359adcaed8f11273b83b7e73a6e6d",
+    "inline-root-routing-audit.log": "2670b0c47f8513bbf4692294b0941673ac52b7d35a1524bd9247050849530fc7",
+    "inline-root-reference-ci.log": "1932db5248c7d967bdc9a3e34204829676f2787d3131b6a69e26d50b59167a4b"
+  }
+}
