@@ -282,9 +282,16 @@ impl FleetActionExecutor {
         if request.node() != self.node || request.session() != self.session {
             return Err(Arc::new(Error::Fenced));
         }
-        if !matches!(request.action().kind(), FleetActionKind::Movement { .. }) {
+        if !matches!(
+            request.action().kind(),
+            FleetActionKind::Movement { .. }
+                | FleetActionKind::Maintenance {
+                    action: MaintenanceAction::Inspect,
+                    ..
+                }
+        ) {
             return Err(Arc::new(Error::Control(
-                "fleet maintenance inspection requires its host inventory barrier",
+                "fleet inspection requires an Inspect action",
             )));
         }
         let completion = self.submit(JobRequest::Inspection(request)).await?;

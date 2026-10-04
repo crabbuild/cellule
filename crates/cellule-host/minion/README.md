@@ -435,6 +435,10 @@ Fresh inspection records bind a nonce and original capture interval. Use the
 host's `inspect_fleet_action` and validate its response against the complete
 request and a finite age bound. Legacy retained Inspect results are historical.
 The journal authorizes a capture; it does not supply current actor evidence.
+Movement inspection checks current actor/authority serving. Maintenance
+inspection checks only whether the exact local admission gate is Draining, so
+it can recover a lost Cordon reply. It does not prove role settlement, Stopped,
+or withdrawal.
 
 Before enabling fleet execution, the embedding application must provide the
 controlled bootstrap/import barrier, wire every enrollment producer, authenticate

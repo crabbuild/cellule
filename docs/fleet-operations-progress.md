@@ -6533,3 +6533,31 @@ evacuation, receiver adoption, Cron/Blob owner handling, broad fault and load
 qualification, and the W9–W10 rollout/runbooks. PR #37 is already merged;
 the continuation PR #56 was mergeable at this checkpoint, before these local
 changes were committed or pushed.
+
+## October 4 2026 maintenance inspection checkpoint
+
+`CellNode::inspect_fleet_action` now accepts fresh maintenance `Inspect`
+requests through the existing owned finite-action lane. It authorizes the exact
+head, registry and endpoint, reads the live local admission gate, and returns
+`Cordoned` only for `Draining`; `Active` and `Cordoned` return the explicit
+`IncompleteObservation` blocker. The read performs no action acceptance,
+release, role settlement or shutdown. A dropped Cordon result can therefore be
+recovered from local state without treating a historical result as current.
+
+Public node tests cover the active and draining responses, a lost durable
+Cordon-result reply, preservation of the existing Cell owner, and the rule that
+maintenance inspection never reports `RolesSettled` or `Stopped`.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --all-features --locked --test node fleet_maintenance::` | 6 passed; 109 filtered out. |
+
+The full `node` integration target also passed (115 tests). Workspace check,
+warning-denied Clippy, and warning-denied API docs passed. Format, boundary,
+module-layout, Rust-fence, Markdown-link, SQL/peer-contract, and whitespace
+gates passed: 137 Rust snippets, 1307 Markdown links, and 28 schema/protocol
+assertions with 570 validator links.
+
+The remaining maintenance inspection gap is the full role, accepted-work,
+facility, Stopped, and withdrawal barrier. This local check is only a Cordon
+recovery step and cannot move the operation into Closing or Completed.

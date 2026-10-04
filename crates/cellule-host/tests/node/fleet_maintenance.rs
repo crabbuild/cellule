@@ -254,6 +254,20 @@ fn cordon(fixture: &Fixture) -> FleetAction {
     )
 }
 
+fn maintenance_inspection(fixture: &Fixture, nonce: u8) -> FleetInspectionRequest {
+    FleetInspectionRequest::new(
+        fixture
+            .journal
+            .maintenance_action(MaintenanceAction::Inspect),
+        fixture.journal.registry(),
+        Digest::from_bytes([nonce; 32]),
+        NodeId::from_bytes([201; 16]),
+        SessionId::from_bytes([201; 16]),
+        clock() + 30_000,
+    )
+    .unwrap()
+}
+
 async fn check_existing_owner(fixture: &Fixture) {
     let value = fixture
         .handle
@@ -297,6 +311,53 @@ async fn committed_cordon_closes_shared_role_gate_keeps_owner_and_is_idempotent(
     gate.cordon().unwrap();
     assert_eq!(gate.mode().unwrap(), NodeMode::Draining);
     assert!(fixture.node.is_ready());
+    check_existing_owner(&fixture).await;
+    close(fixture).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_maintenance_inspection_confirms_cordon_but_never_claims_role_settlement() {
+    let fixture = fixture().await;
+    let _cordon = cordon(&fixture);
+
+    let before = fixture
+        .node
+        .inspect_fleet_action(maintenance_inspection(&fixture, 211))
+        .await
+        .unwrap();
+    assert_eq!(
+        before.outcome().outcome,
+        FleetOutcome::Blocked(DrainBlocker::IncompleteObservation)
+    );
+    assert_eq!(fixture.journal.accepted_count(), 0);
+    assert_eq!(
+        fixture.node.runtime().node_admission().mode().unwrap(),
+        NodeMode::Active
+    );
+
+    let action = fixture
+        .journal
+        .maintenance_action(MaintenanceAction::Cordon);
+    fixture.journal.lose_next_result_reply();
+    let lost = fixture
+        .node
+        .apply_fleet_action(action, clock())
+        .await
+        .unwrap();
+    assert!(!lost.committed);
+    assert!(lost.journal_error.is_some());
+
+    let after = fixture
+        .node
+        .inspect_fleet_action(maintenance_inspection(&fixture, 212))
+        .await
+        .unwrap();
+    assert_eq!(after.outcome().outcome, FleetOutcome::Cordoned);
+    assert_eq!(fixture.journal.accepted_count(), 1);
+    assert_eq!(
+        fixture.node.runtime().node_admission().mode().unwrap(),
+        NodeMode::Draining
+    );
     check_existing_owner(&fixture).await;
     close(fixture).await;
 }
@@ -394,18 +455,15 @@ async fn wrong_boot_stale_intent_and_unsupported_roles_do_not_accept_effects() {
             .await
             .is_err()
     );
-    let inspection = FleetInspectionRequest::new(
-        fixture
-            .journal
-            .maintenance_action(MaintenanceAction::Inspect),
-        fixture.journal.registry(),
-        Digest::from_bytes([211; 32]),
-        NodeId::from_bytes([201; 16]),
-        SessionId::from_bytes([201; 16]),
-        clock() + 30_000,
-    )
-    .unwrap();
-    assert!(fixture.node.inspect_fleet_action(inspection).await.is_err());
+    let inspection = fixture
+        .node
+        .inspect_fleet_action(maintenance_inspection(&fixture, 213))
+        .await
+        .unwrap();
+    assert_eq!(
+        inspection.outcome().outcome,
+        FleetOutcome::Blocked(DrainBlocker::IncompleteObservation)
+    );
     assert_eq!(fixture.journal.accepted_count(), 0);
     assert_eq!(
         fixture.node.runtime().node_admission().mode().unwrap(),
