@@ -78,7 +78,7 @@ them by configuration.
 | [FleetReconciler](../crates/cellule-host/src/fleet/reconciler/mod.rs) | One bounded reconciliation pass; adapter interfaces and progress report. | Complete observation and maintenance barriers from the fleet plan. |
 | [FleetJournal](../crates/cellule-host/src/fleet/controller.rs) | Controller claims, revision checks, permits, intents, scheduling, history. | Production adapter and atomic application request/policy transactions. |
 | [FleetRoster](../crates/cellule-host/src/fleet/roster/mod.rs) | Traverse retained intents and enrollments, including failed boots and Pending work. | Match complete native writer, reader, producer, and follower evidence. |
-| [Fleet action contracts](../crates/cellule-host/src/fleet/actions.rs) | Journal exact node effects and preserve original accepted inputs/results. | Full maintenance actions and finalization qualification. |
+| [Fleet action contracts](../crates/cellule-host/src/fleet/actions/mod.rs) | Journal exact node effects and preserve original accepted inputs/results. | Full maintenance actions and finalization qualification. |
 | [Pressure classifier](../crates/cellule-runtime/src/fleet/pressure.rs) | Use actual locally classified, signed pressure. | Application telemetry and independent health/slowness evaluation. |
 | [Fleet operations example](../crates/cellule-host/minion/README.md) | Journal contracts and real movement/restart scenario patterns. | Remote HTTP, multiple processes, sustained convergence, production authentication and providers. |
 

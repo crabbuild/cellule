@@ -55,6 +55,7 @@ impl<'a> FleetNodeInventoryRecheck<'a> {
             return Err(Error::Fenced);
         }
         let host = Host {
+            action_work: response.action_work().digest(),
             state: response.state_before(),
             mode: response.mode(),
             bindings: response.bindings(),

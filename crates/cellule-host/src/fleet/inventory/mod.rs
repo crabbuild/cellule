@@ -46,6 +46,7 @@ pub struct FleetNodeInventory {
     collected_at_ms: i64,
     rechecked: Option<(i64, i64)>,
     host: Host,
+    action_work: super::FleetActionWorkSnapshot,
     headers: [Option<Header>; CATEGORIES],
     cells: Vec<FleetOwnedCell>,
     transitioning: Vec<CellId>,
@@ -58,6 +59,12 @@ pub struct FleetNodeInventory {
 }
 
 impl FleetNodeInventory {
+    /// Original accepted finite fleet work retained through all native rechecks.
+    /// Empty metadata alone cannot authorize durable role settlement.
+    #[must_use]
+    pub fn action_work(&self) -> &super::FleetActionWorkSnapshot {
+        &self.action_work
+    }
     /// Exact authenticated physical endpoint selected by the collector.
     #[must_use]
     pub const fn node(&self) -> NodeId {
@@ -83,7 +90,8 @@ impl FleetNodeInventory {
     }
     pub(crate) fn coverage_digest(&self) -> Result<Digest> {
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-native-coverage.v1\0");
+        hash.update(b"cellule.fleet-native-coverage.v2\0");
+        hash.update(self.host.action_work.as_bytes());
         hash.update(self.roster.as_bytes());
         hash.update(self.node.as_bytes());
         hash.update(self.session.as_bytes());
@@ -195,6 +203,7 @@ impl FleetNodeInventory {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Host {
+    action_work: Digest,
     state: NodeState,
     mode: NodeMode,
     bindings: FleetSnapshotBindings,
@@ -235,6 +244,7 @@ pub struct FleetNodeInventoryScan<'a> {
     counts: [usize; CATEGORIES],
     nonces: HashSet<Digest>,
     host: Option<Host>,
+    action_work: Option<super::FleetActionWorkSnapshot>,
     started_at_ms: Option<i64>,
     finished_at_ms: i64,
     poisoned: bool,

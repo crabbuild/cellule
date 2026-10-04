@@ -73,6 +73,13 @@ async fn full_role_coverage_requires_global_rechecks_and_is_order_independent() 
     let fixture = ManagedFixture::new().await;
     let roster = aggregate::roster(&fixture).await;
     let (mut native, mut foreign, mut sequence) = captures(&fixture, &roster).await;
+    for inventory in &native {
+        assert!(inventory.action_work().entries().is_empty());
+        assert!(!inventory.action_work().admission_closed());
+        assert_eq!(inventory.action_work().node(), inventory.node());
+        assert_eq!(inventory.action_work().session(), inventory.session());
+        assert_eq!(inventory.action_work().work_revision(), 0);
+    }
     assert!(check(&roster, &native, &foreign).is_err());
     tokio::time::sleep(Duration::from_millis(2)).await;
     native_rechecks(&fixture, &roster, &mut native, &mut sequence).await;
@@ -118,6 +125,109 @@ async fn full_role_coverage_requires_global_rechecks_and_is_order_independent() 
         .is_err()
     );
     drop((native, foreign, coverage));
+    fixture.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn original_accepted_inspection_turnover_invalidates_global_native_recheck() {
+    use cellule_runtime::fleet::operations::{
+        AttemptId, FleetInspectionRequest, JournalTransition, MoveAttemptSpec, MovementAction,
+        OperationId, TransferCost,
+    };
+    let fixture = ManagedFixture::new().await;
+    let roster = aggregate::roster(&fixture).await;
+    let mut sequence = 0;
+    let mut inventory = aggregate::collect(&fixture, &roster, 0, &mut sequence).await;
+    let original = inventory.action_work().digest();
+    assert!(inventory.action_work().entries().is_empty());
+    let page = fixture.nodes[0]
+        .runtime()
+        .fleet_cells_page(None, 1)
+        .await
+        .unwrap();
+    let CellInventoryEntry::Owned(writer) = &page.entries()[0] else {
+        panic!("original writer");
+    };
+    let now = clock().unwrap();
+    let spec = MoveAttemptSpec {
+        id: AttemptId {
+            operation: OperationId::from_bytes([238; 16]).unwrap(),
+            sequence: 1,
+        },
+        target: writer.target.clone(),
+        incarnation: writer.incarnation,
+        source_node: node_id(0),
+        source: session(0),
+        generation: writer.generation,
+        source_epoch: writer.position.as_ref().unwrap().epoch,
+        destination_node: node_id(1),
+        destination: session(1),
+        cost: TransferCost {
+            memory_bytes: 1,
+            disk_bytes: 1,
+            file_descriptors: 1,
+            job_credits: 1,
+        },
+        snapshot_digest: Digest::from_bytes([239; 32]),
+        deadline_ms: now + 5_000,
+    };
+    // This future envelope is never committed. The native executor accepts a
+    // finite inspection task, then the unchanged journal refuses its authority.
+    // Local accepted work must still invalidate the earlier empty observation.
+    let head = roster.snapshot().head();
+    let future = head
+        .transition(
+            FleetProfile::default(),
+            head.revision(),
+            head.controller().unwrap().epoch,
+            now,
+            JournalTransition::Allocate(spec.clone()),
+        )
+        .unwrap();
+    let request = FleetInspectionRequest::new(
+        future
+            .movement_action(spec.id, MovementAction::Inspect, now)
+            .unwrap(),
+        roster.snapshot().registry(),
+        Digest::from_bytes([240; 32]),
+        node_id(0),
+        session(0),
+        now + 5_000,
+    )
+    .unwrap();
+    assert!(
+        fixture.nodes[0]
+            .inspect_fleet_action(request)
+            .await
+            .is_err()
+    );
+    drop(page);
+    roster
+        .confirm(
+            fixture.native.journal.as_ref(),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    let response = aggregate::page(
+        &fixture,
+        &roster,
+        0,
+        cellule_host::fleet::FleetSnapshotSubject::Host,
+        &mut sequence,
+    )
+    .await;
+    assert!(response.action_work().entries().is_empty());
+    assert_eq!(response.action_work().work_revision(), 2);
+    assert_ne!(original, response.action_work().digest());
+    let mut recheck = inventory.recheck();
+    assert!(matches!(
+        recheck.accept(response.request(), &response, clock().unwrap()),
+        Err(Error::Node("native inventory host binding changed"))
+    ));
+    assert!(recheck.finish().is_err());
+    assert_eq!(inventory.action_work().digest(), original);
+    drop((inventory, response));
     fixture.finish().await;
 }
 

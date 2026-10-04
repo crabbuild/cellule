@@ -7,6 +7,18 @@ use cellule_runtime::fleet::operations::{FleetAction, FleetScope};
 use cellule_runtime::identity::NodeId;
 
 impl CellNode {
+    /// Reads the original finite fleet bank without submitting, reaping, joining,
+    /// or executing work. None means unbound, never empty coverage. Authenticate
+    /// callers in the application. Capture during drain requires available native
+    /// metadata admission; a closed runtime returns an error, never empty work.
+    /// Clones retain the original bounded metadata charge until their last drop.
+    pub fn fleet_action_work(
+        &self,
+    ) -> cellule_runtime::Result<Option<crate::fleet::FleetActionWorkSnapshot>> {
+        self.try_owned_component::<FleetActionExecutor>(FLEET_ACTION_COMPONENT)?
+            .map(|executor| executor.observe_current_work())
+            .transpose()
+    }
     /// Binds canonical directory withdrawal and durable boot retirement to the
     /// existing host drain. Install after managed boot confirmation and before
     /// readiness, using the original canonical version and journal record.

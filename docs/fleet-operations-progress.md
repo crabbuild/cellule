@@ -4,6 +4,86 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 original accepted fleet work checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`.
+
+Native observations now include the original finite fleet executor alongside
+actors and reader/follower owners. `CellNode::fleet_action_work()` reads that bank
+without submitting, reaping, joining or executing work. It retains exact effect,
+inspection and capture keys, independent response/task lifecycle, canonical result
+digests, publication and known-outcome flags, and original response, execution,
+publication, join and bank failures. The two-job bound is unchanged.
+
+Every `FleetNodeSnapshot` excludes only its exact originally retained capture;
+other accepted captures remain visible. No job handle or recursive snapshot body
+is retained, preventing result-bank cycles. Native responses share their admitted
+4-KiB metadata charge; encoding scratch is separately admitted before copying.
+Full inventories copy this bounded metadata into application-accounted buffers
+and keep its original interval and errors after native pages drop.
+
+Effect/inspection admission and removal advance a checked revision, detecting
+turnover between empty reads. A separate all-job revision detects concurrent
+capture turnover inside one native interval. Fresh read-only captures leave the
+cross-capture fingerprint stable. Native before/after reads, every traversal page,
+and all global native rechecks compare the original work fingerprint. Coverage
+digest v2 binds this metadata. Persisted and transport codecs are unchanged.
+
+Public cases cover lost capture/inspection waiters, retained allocation sharing,
+exact self-exclusion, sibling acceptance during native capture, stable successive
+read-only captures, and original fatal join evidence while drain still owns a
+paused inspection. Closed-runtime capture errors supply no empty proof. A real
+managed minion graph retains this barrier; accepted inspection turnover under the
+same full journal/roster invalidates its original global native recheck.
+
+### Verification and CI
+
+All 13 fresh Rust commands pass on the isolated Rust 1.99 snapshot with its
+mounted checkout-specific target. All nine static gates pass: format,
+boundaries/layout, document syntax/links, SQL/peer contracts, cookbook format/layout
+and diff. The documentation gates cover 132 Rust snippets and 1,278 local links.
+Qualification gates are unchanged.
+
+| Verification | Result |
+| --- | --- |
+| Full framework, all features, locked | 1,673 passed; zero failures; 36 documented ignored cases. |
+| Complete canonical minion | 270 passed; zero failures or ignores. |
+| Distinct framework/minion passes | 1,943; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | All 54 passed. |
+| Framework check, Clippy and API docs | All targets/features pass; lint/docs deny warnings. |
+| Normal executable and Axum without default features | Build and tests/docs pass. |
+| Fresh cookbook | All 256 tests, check, Clippy, warning-denied docs and binary builds pass. |
+
+All 1,091 Rust/Cargo paths match the qualified source manifest, SHA256
+`eb6271a7ebdc507b4ab51b9c118fafda3948d8fe8bf0dfa74b13fff53019742b`.
+Commands, frozen source, source manifests, original failures, raw qualification
+artifacts and analyses are retained under `/tmp/cellule-action-work-evidence`.
+
+Published parent `9037a04` is mergeable. Follower/object capacity, workspace,
+MSRV, contract, cookbook quality/scenarios and Compose smoke pass. Its leased
+routing campaign fails local command c1 (88.72%) and uncached forwarded query c16
+(89.40%) against the unchanged 90% throughput gate; all latency gates pass.
+Object-only local command c16 also fails at 89.74%. Local command c1 preparation
+means are 8.68 → 10.28 ms, authority means 4.47 → 4.61 ms; object-only c16
+preparation means are 9.53 → 11.02 ms, authority means 4.59 → 4.89 ms.
+These results do not independently isolate a cause. The original four pairs, frozen binaries, source identities, stage TSVs
+and job log are retained. A pinned same-source comparison is a separate diagnostic
+control at `9037a04` ([run 37163481429](https://github.com/crabbuild/cellule/actions/runs/37163481429))
+and cannot replace the PR's ordinary baseline qualification.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Diagnose the retained routing failures with controlled provider/publication evidence and qualify the new head without weakening gates. |
+| 1 | Complete authenticated aggregate observation: all reader/follower policies, failed-owner successor policy, durable unknown actions, remaining native primitives and external accepted work. The finite executor barrier alone cannot prove settlement. |
+| 2 | Implement SettleRoles/Finalize, joining the original accepted action before terminal drain handoff; confirm native Stopped, directory withdrawal, boot retirement and committed operation completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider, mixed-binary and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The complete W1–W10 goal remains active.
+
 ## October 3 2026 retained replacement policy checkpoint
 
 `FleetObservation::with_role_evacuations` retains fresh reader/follower policy

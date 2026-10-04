@@ -761,7 +761,7 @@ blocking follower inventory reads. Shutdown joins that work.
 
 | Subject | Original native source |
 | --- | --- |
-| Host | Lifecycle, installed owner bindings, mode and local node-log identity. |
+| Host | Lifecycle, installed owner bindings, mode, local node-log identity and original finite fleet work. |
 | Cells | Generation-bound live and transitioning actor inventory. |
 | Readers / ReaderEnrollments | Managed native views and original producer requests/jobs. |
 | FollowerLanes / FollowerEnrollments | Persisted inbound lanes and original managed leader enrollment progress. |
@@ -775,6 +775,34 @@ coverage. Local bindings, counts and log identity remain advisory. Complete
 observation still requires stable traversal, durable roster confirmation,
 current remote authority and replacement policy. This in-process API defines
 no persisted or wire format; applications own authenticated transport encoding.
+
+Every response retains `action_work()`: original effect, inspection and capture
+keys, task ownership, response state, canonical result digest, publication and
+known-outcome flags, and separate original errors. Only its exact executing
+capture is excluded; other captures remain work. Changed work during the native
+read refuses the response. No task handle or recursive snapshot body is retained.
+
+`CellNode::fleet_action_work()` reads the same original bank without submitting,
+reaping, joining or executing work. It admits 4 KiB for retained metadata plus
+bounded codec scratch through the native ledger. Native clones share the charge;
+drop the last clone to release it. Capture during drain requires available native
+metadata admission; a closed runtime or failed capture supplies no empty proof.
+An uninstalled owner returns `None`.
+
+| Work state | Required interpretation |
+| --- | --- |
+| Running / FinishedUnobserved | The original task still needs its join; a finished handle supplies no success. |
+| Returned | A response exists, but the original task is still retained. |
+| Joining | Another caller owns the original join lane; its result remains unknown. |
+| Joined | The original join completed; missing responses, unknown outcomes and publication errors remain independent obligations. |
+
+The work revision advances on effect/inspection admission and removal, including
+turnover between empty reads. A separate capture revision detects any job
+admission/removal within one capture. Ordinary fresh read-only captures leave
+cross-capture work fingerprints stable. The first original bank failure remains
+visible after its failed job is removed while metadata capture is available.
+These observations cannot close durable unknown actions, external application
+tasks, native roles or the maintenance operation.
 
 ### Full native traversal and revalidation
 
@@ -792,6 +820,7 @@ Applications account the collector's bounded copied buffers.
 | Reader views and producer records/jobs | Preserve original requests, accepted timestamps, publication state and shared errors. Preparation with no Pending row remains visible through job state. |
 | Persisted lanes and follower producer state | Include cold/retired lanes, quarantined files and unknown preparation. An idle producer does not prove a joined supervisor. |
 | Supervisor observation | Preserve the original lifecycle, rotation barriers, completion and failures. |
+| Finite fleet work | Copy original metadata and shared errors into the application-accounted collector buffer. Every page and global recheck must match its full fingerprint, including effect/inspection turnover and admission closure. |
 | Missing bindings | Retain None/Unbound identity. Absence requires the application's bootstrapped closed composition proof. |
 
 `inventory.validate_enrollments(&roster)` matches the retained native inputs to

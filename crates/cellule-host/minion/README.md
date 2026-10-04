@@ -74,6 +74,13 @@ authority. It uses `FleetNodeInventoryScan` for every native category and contin
 rereads authority, rechecks all seven complete category fingerprints after the
 fleet-wide authority scan, and confirms the full journal barrier. Complete coverage is supported for this private constructor's bounded
 writer-only profile: twelve catalog-backed SQL Cells and three managed boots.
+Each native response and full recheck also binds the original finite fleet job
+owner: response receipt differs from original task joining, errors remain owned,
+and effect/inspection turnover invalidates an earlier empty observation. Fresh
+read-only captures exclude only themselves and keep ordinary traversal stable.
+The collector copies this bounded metadata into its application-accounted buffers.
+This barrier still requires complete durable unknown-action, external-work and
+native-role settlement before maintenance can finish.
 Foreign log discovery uses `FleetFollowerReferences` to traverse every page and
 recheck exact coverage/liveness after native capture, including expired or fenced
 owners. Its complete listing supplies no permission to discard a required tail.

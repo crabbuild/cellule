@@ -1362,12 +1362,30 @@ async fn action_task_failure_retains_its_original_error_across_repeated_shutdown
         .unwrap_err();
     let original = original_task_failure(failed.as_ref());
     assert!(original.is_panic());
+    {
+        let work = movement.receiver.fleet_action_work().unwrap().unwrap();
+        assert_eq!(work.entries().len(), 1);
+        let entry = &work.entries()[0];
+        assert_eq!(
+            entry.state(),
+            cellule_host::fleet::FleetActionWorkState::Joined
+        );
+        assert!(!entry.response_received());
+        assert_eq!(
+            original_task_failure(entry.task_error().unwrap().as_ref()).id(),
+            original.id()
+        );
+    }
     assert!(
         original
             .to_string()
             .contains("injected acquisition-basis panic")
     );
     let first = movement.receiver.shutdown().await.unwrap_err();
+    assert!(matches!(
+        movement.receiver.fleet_action_work(),
+        Err(Error::RuntimeClosed)
+    ));
     let second = movement.receiver.shutdown().await.unwrap_err();
     let first_source = original_task_failure(&first);
     let second_source = original_task_failure(&second);
@@ -1446,6 +1464,23 @@ async fn fatal_action_drain_joins_a_sibling_inspection_before_returning_original
             .is_err()
     );
     assert!(!shutdown.is_finished());
+    {
+        let work = movement.receiver.fleet_action_work().unwrap().unwrap();
+        assert!(work.admission_closed());
+        assert_eq!(work.entries().len(), 1);
+        assert_eq!(
+            work.entries()[0].kind(),
+            cellule_host::fleet::FleetActionWorkKind::Inspection
+        );
+        assert_eq!(
+            work.entries()[0].state(),
+            cellule_host::fleet::FleetActionWorkState::Joining
+        );
+        assert_eq!(
+            original_task_failure(work.failure().unwrap().as_ref()).id(),
+            original
+        );
+    }
     journal.block_inspections.store(false, Ordering::SeqCst);
     journal.inspection_resume.add_permits(1);
     let failure = shutdown.await.unwrap().unwrap_err();

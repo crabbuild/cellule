@@ -253,6 +253,7 @@ fn response_replay_cannot_restamp_its_original_interval_or_claim_unbound_absence
             follower_producer: false,
         },
         node_log: None,
+        action_work: super::super::FleetActionWorkSnapshot::for_request(&original, 101),
         page: FleetSnapshotNativePage::Unbound,
     };
     response.validate(&original, 102).unwrap();

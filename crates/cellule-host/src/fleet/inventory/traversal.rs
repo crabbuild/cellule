@@ -31,6 +31,7 @@ impl<'a> FleetNodeInventoryScan<'a> {
             counts: [0; CATEGORIES],
             nonces: HashSet::new(),
             host: None,
+            action_work: None,
             started_at_ms: None,
             finished_at_ms: 0,
             poisoned: false,
@@ -82,6 +83,7 @@ impl<'a> FleetNodeInventoryScan<'a> {
             return Err(Error::Fenced);
         }
         let host = Host {
+            action_work: response.action_work().digest(),
             state: response.state_before(),
             mode: response.mode(),
             bindings: response.bindings(),
@@ -101,6 +103,8 @@ impl<'a> FleetNodeInventoryScan<'a> {
             return Err(Error::Node("native inventory capture interval exceeded"));
         }
         self.host = Some(host);
+        self.action_work
+            .get_or_insert_with(|| response.action_work().collector_copy());
         self.finished_at_ms = response.finished_at_ms();
         let index = self.stage % CATEGORIES;
         let (header, next, count) = pages::header(response.page())?;
@@ -163,6 +167,9 @@ impl<'a> FleetNodeInventoryScan<'a> {
             host: self
                 .host
                 .ok_or(Error::Control("native inventory host missing"))?,
+            action_work: self
+                .action_work
+                .ok_or(Error::Control("native inventory accepted work missing"))?,
             headers: self.headers,
             cells: self.cells,
             transitioning: self.transitioning,

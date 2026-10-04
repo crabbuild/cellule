@@ -20,6 +20,7 @@ impl FleetActionExecutor {
             )));
         }
         let state_before = owners.state().map_err(Arc::new)?;
+        let action_work = self.observe_work(Some(&request)).map_err(Arc::new)?;
         let page = match request.subject() {
             FleetSnapshotSubject::Host => FleetSnapshotNativePage::Host,
             FleetSnapshotSubject::Cells(cursor) => FleetSnapshotNativePage::Cells(
@@ -94,6 +95,12 @@ impl FleetActionExecutor {
             .map_err(Arc::new)?;
         let state_after = owners.state().map_err(Arc::new)?;
         let mode = self.runtime.node_admission().mode().map_err(Arc::new)?;
+        let checked_work = self.observe_work(Some(&request)).map_err(Arc::new)?;
+        if !action_work.same_interval_work(&checked_work) {
+            return Err(Arc::new(Error::Node(
+                "native snapshot accepted fleet work changed",
+            )));
+        }
         let finished = wall_time_ms().map_err(Arc::new)?;
         let result = FleetNodeSnapshot {
             request,
@@ -104,6 +111,7 @@ impl FleetActionExecutor {
             mode,
             bindings: owners.bindings(),
             node_log,
+            action_work,
             page,
         };
         result

@@ -13,6 +13,11 @@ use tokio::{sync::watch, task::JoinHandle};
 use super::snapshot::{FleetNodeSnapshot, FleetSnapshotRequest, SnapshotOwners};
 use super::{FleetActionAcceptance, FleetActionJournal, FleetCellProvider};
 
+mod work;
+pub use work::{
+    FleetActionWorkEntry, FleetActionWorkKind, FleetActionWorkSnapshot, FleetActionWorkState,
+};
+
 /// Retained completion of one accepted canonical effect and journal write.
 #[derive(Debug)]
 pub struct FleetActionCompletion {
@@ -131,6 +136,12 @@ pub(crate) struct FleetActionExecutor {
 #[derive(Default)]
 struct ActionBank {
     draining: bool,
+    // Read-only snapshots do not advance this counter; other accepted jobs and
+    // their removal must remain visible even between two empty observations.
+    work_revision: u64,
+    // Includes captures for the before/after check within one native interval;
+    // it is excluded from cross-capture fingerprints so fresh reads converge.
+    capture_revision: u64,
     jobs: Vec<Arc<ActionJob>>,
     failure: Option<Arc<Error>>,
 }
@@ -334,6 +345,20 @@ impl FleetActionExecutor {
                 if bank.jobs.len() >= MAX_ACTIVE_ATTEMPTS {
                     return Err(Arc::new(Error::Capacity("fleet action receipt bound")));
                 }
+                let revision = bank.next_work_revision(&request).map_err(Arc::new)?;
+                let capture_revision = bank.next_capture_revision().map_err(Arc::new)?;
+                // Leave room to remove every accepted sibling, including this
+                // job. Counter exhaustion must refuse before spawning work.
+                bank.work_revision
+                    .checked_add(MAX_ACTIVE_ATTEMPTS as u64 + 1)
+                    .ok_or_else(|| {
+                        Arc::new(Error::Capacity("fleet action work revision exhausted"))
+                    })?;
+                bank.capture_revision
+                    .checked_add(MAX_ACTIVE_ATTEMPTS as u64 + 1)
+                    .ok_or_else(|| {
+                        Arc::new(Error::Capacity("fleet action capture revision exhausted"))
+                    })?;
                 // Both the accepted envelope and its checked result remain owned
                 // after an RPC waiter disappears, using the shared node ledger.
                 let retained = self
@@ -372,6 +397,8 @@ impl FleetActionExecutor {
                     _retained: retained,
                 });
                 bank.jobs.push(Arc::clone(&job));
+                bank.work_revision = revision;
+                bank.capture_revision = capture_revision;
                 (response, job)
             }
         };
@@ -586,11 +613,17 @@ impl FleetActionExecutor {
     }
 
     fn remove_job(&self, job: &Arc<ActionJob>) -> cellule_runtime::Result<()> {
-        self.bank
+        let mut bank = self
+            .bank
             .lock()
-            .map_err(|_| Error::Control("fleet action bank poisoned"))?
-            .jobs
-            .retain(|entry| !Arc::ptr_eq(entry, job));
+            .map_err(|_| Error::Control("fleet action bank poisoned"))?;
+        if bank.jobs.iter().any(|entry| Arc::ptr_eq(entry, job)) {
+            let revision = bank.next_work_revision(&job.request)?;
+            let capture_revision = bank.next_capture_revision()?;
+            bank.jobs.retain(|entry| !Arc::ptr_eq(entry, job));
+            bank.work_revision = revision;
+            bank.capture_revision = capture_revision;
+        }
         Ok(())
     }
 
@@ -611,6 +644,22 @@ impl FleetActionExecutor {
         }
         self.remove_job(job)?;
         Ok(())
+    }
+}
+
+impl ActionBank {
+    fn next_capture_revision(&self) -> cellule_runtime::Result<u64> {
+        self.capture_revision
+            .checked_add(1)
+            .ok_or(Error::Capacity("fleet action capture revision exhausted"))
+    }
+    fn next_work_revision(&self, request: &JobRequest) -> cellule_runtime::Result<u64> {
+        if matches!(request, JobRequest::Snapshot { .. }) {
+            return Ok(self.work_revision);
+        }
+        self.work_revision
+            .checked_add(1)
+            .ok_or(Error::Capacity("fleet action work revision exhausted"))
     }
 }
 

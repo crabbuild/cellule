@@ -73,9 +73,16 @@ pub struct FleetNodeSnapshot {
     mode: NodeMode,
     bindings: FleetSnapshotBindings,
     node_log: Option<(SessionId, NodeId, u64)>,
+    action_work: super::FleetActionWorkSnapshot,
     page: FleetSnapshotNativePage,
 }
 impl FleetNodeSnapshot {
+    /// Original accepted executor work, excluding only this exact native request.
+    /// A returned response does not replace its original task join.
+    #[must_use]
+    pub fn action_work(&self) -> &super::FleetActionWorkSnapshot {
+        &self.action_work
+    }
     /// Returns the exact original request and journal barrier.
     #[must_use]
     pub fn request(&self) -> &FleetSnapshotRequest {
@@ -138,6 +145,15 @@ impl FleetNodeSnapshot {
             return Err(Error::Node("native snapshot request or interval differs"));
         }
         let scope = request.expected().head().scope();
+        if self.action_work.scope() != scope
+            || self.action_work.node() != request.node()
+            || self.action_work.session() != request.session()
+            || self.action_work.excluded_capture() != Some(request.key().map_err(super::operation)?)
+            || self.action_work.observed_at_ms() < self.started_at_ms
+            || self.action_work.observed_at_ms() > self.finished_at_ms
+        {
+            return Err(Error::Node("native snapshot accepted work binding differs"));
+        }
         let (tag, observed, identity) = match &self.page {
             FleetSnapshotNativePage::Host => (1, self.started_at_ms, true),
             FleetSnapshotNativePage::Cells(page) => (
