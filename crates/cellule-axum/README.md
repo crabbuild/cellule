@@ -560,3 +560,61 @@ gh workflow run write-capacity.yml --ref YOUR_BRANCH \
   -f baseline_ref=a277e5282badab55ceb58433fdddf0dee4dc8542 \
   -f read_seconds=60
 ```
+
+For sustained writes, use timed POST admission after five seconds of write
+warmup. Every issued identity and response is retained, and every acknowledged
+row and exact retry is checked live and after a fresh-file cold restore:
+
+```sh
+python3 "$task_dir/source/scripts/bench-axum-rustfs.py" \
+  --binary "$CARGO_TARGET_DIR/release/examples/sql" \
+  --output "$task_dir/write-results" \
+  --repeats 3 --cells 1 4 16 --workers 4 --concurrency 16 \
+  --warmup 16 --writes 32 --reads 64 \
+  --write-warmup-seconds 5 --write-seconds 120
+
+gh workflow run write-capacity.yml --ref YOUR_BRANCH \
+  -f mode=axum-writes -f baseline_ref=BASELINE_COMMIT -f write_seconds=120
+```
+
+The workflow defaults to sixteen write clients. Run an additional comparison
+with `-f write_concurrency=64` to exercise per-Cell queues at sixteen Cells.
+Keep its results separate from the sixteen-client series: concurrency changes
+the workload. Both profiles retain three alternating pairs per Cell count,
+the same resource ceilings, and every durability and cold-recovery check.
+
+Timed writes replace the fixed `--writes` count. Clients stop admitting POSTs
+at the deadline and wait for every in-flight request; throughput includes that
+drain time. JSON response-body throughput excludes headers and transport.
+The closed-loop Python write driver is intended for storage-bound commands.
+Its per-client ledgers retain uncertain transport outcomes without retrying
+them; any error fails verification. Each phase retains at most 100,000 responses.
+The example reports lifetime publication, compaction, worker and queue timing
+histograms after drain, including warmup and correctness checks. Root preparation
+separates dirty-memory admission from admitted work; its total includes both.
+Dirty and recovery semaphore waits are also measured across replica operations.
+These phases overlap with preparation and compaction totals; do not add them.
+It also records effective host capacities and fixed provider-operation duration,
+outcome, and byte counters. Provider counts include startup, verification, and
+maintenance, so they are not steady-window write request counts. Histogram
+upper bounds have 100 µs resolution through two seconds; overflow percentiles
+are unknown. The paired write workflow instruments both servers identically,
+retaining its observation-only baseline patch and complete baseline diff in the
+artifact. The patch changes no admission ceilings or publication barriers.
+The write workflow also records dedicated RustFS cgroup CPU counters before
+and after each load window, including warmup. For a local dedicated container,
+pass `--provider-container CONTAINER_ID`; this requires cgroup v2 and Docker.
+
+The [sustained-write report](performance/2026-10-03-rustfs-steady-writes.md)
+retains all paired results and durability evidence. The initial compaction
+comparison improves compaction time but does not establish consistent gains
+in HTTP write throughput or tail latency. The current-main confirmation also
+retains mixed results; neither comparison establishes the optimization goal.
+
+The later [group-commit report](performance/2026-10-04-rustfs-grouped-paired-writes.md)
+records sustained throughput and latency gains at one and four Cells, together
+with every sixteen-Cell regression and the failed 64-client baseline warmup.
+
+```sh
+cargo test -p cellule-axum --all-targets --locked
+```

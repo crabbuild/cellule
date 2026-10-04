@@ -340,7 +340,13 @@ async fn main() -> ExampleResult<()> {
         .map(|shard| CellTarget::new(tenant, application_id, ORDERS, &partition_for_shard(shard)))
         .collect::<cellule_runtime::Result<_>>()?;
     let (store, prefix) = example_storage().await?;
-    let layout = CellStorageLayout::new(store, prefix, *application_id.as_bytes());
+    let host = Host::default().with_local_disk_budget(DiskBudget::new(1 << 30));
+    let query_metrics = Arc::new(sql_metrics::QueryMetrics::new(&host));
+    let layout = CellStorageLayout::new(
+        store.with_storage_observer(query_metrics.clone()),
+        prefix,
+        *application_id.as_bytes(),
+    );
     let registry = application.registry();
     let code = registry
         .module_code(Orders::NAME)
@@ -357,9 +363,8 @@ async fn main() -> ExampleResult<()> {
         SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(MAX_CELLS)?)?,
         16 * 1024 * 1024,
         session,
-        Host::default().with_local_disk_budget(DiskBudget::new(1 << 30)),
+        host,
     )?;
-    let query_metrics = Arc::new(sql_metrics::QueryMetrics::default());
     let result: ExampleResult<()> = async {
         runtime.install_telemetry(query_metrics.clone())?;
         let mut handles = Vec::with_capacity(targets.len());

@@ -55,10 +55,20 @@ impl CellReplica {
         let started = self.host.now_monotonic();
         let result = async {
             let mut replica = self.clone();
-            replica.host = self.host.for_dirty().await?;
-            replica
+            let admitted = self.host.for_dirty().await;
+            self.host
+                .observe_ltx_phase(crate::LtxPhase::RootAdmission, started, admitted.is_ok());
+            replica.host = admitted?;
+            let work_started = self.host.now_monotonic();
+            let prepared = replica
                 .prepare_captured(base, cuts, commit_sequence, schema)
-                .await
+                .await;
+            self.host.observe_ltx_phase(
+                crate::LtxPhase::RootPreparationWork,
+                work_started,
+                prepared.is_ok(),
+            );
+            prepared
         }
         .await;
         self.host

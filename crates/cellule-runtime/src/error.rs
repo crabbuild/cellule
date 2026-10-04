@@ -4,6 +4,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Identity, control-codec and schema failures with original causes retained.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Original failure shared by commands covered by one durability operation.
+    #[error("{0}")]
+    Shared(#[source] std::sync::Arc<Error>),
     /// An identity, digest, or partition argument violates its encoding rules.
     #[error("invalid Cell identity: {0}")]
     Identity(&'static str),

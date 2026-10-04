@@ -32,6 +32,7 @@ fn replica(store: Store, cell: [u8; 32], incarnation: [u8; 16]) -> CellReplica {
 }
 
 mod compaction;
+mod compaction_transfers;
 mod directory;
 mod lifecycle;
 mod prepare_cost;

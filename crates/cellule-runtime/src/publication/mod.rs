@@ -841,6 +841,12 @@ impl PendingDurability {
 }
 
 impl CellDurabilitySubmitter {
+    pub(crate) fn object_only(&self) -> bool {
+        self.node_durability
+            .as_ref()
+            .is_none_or(|slot| slot.read().is_ok_and(|binding| binding.is_none()))
+    }
+
     pub(crate) async fn submit(
         &self,
         commit_sequence: u64,

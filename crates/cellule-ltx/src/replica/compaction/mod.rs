@@ -122,66 +122,75 @@ async fn prepare_root(
             .with_level(level);
     descriptor.validate_published(replica.limits)?;
 
-    // These immutable objects are unreachable until the final root is returned,
-    // so either upload may finish first without publishing a partial compaction.
-    let (body_upload, index_upload) = futures_util::future::join(
-        upload(
-            replica,
-            &files.scratch,
-            &files.compacted_ltx,
-            artifacts.ltx.length,
-            &descriptor.info.blake3,
-            CellObjectKind::Ltx,
-        ),
-        upload(
-            replica,
-            &files.scratch,
-            &files.compacted_index,
-            artifacts.index.length,
-            &descriptor.index_digest,
-            CellObjectKind::Index,
-        ),
-    )
-    .await;
-    body_upload?;
-    index_upload?;
-
     let mut descriptors = graph.descriptors.clone();
     descriptors.splice(range.clone(), [descriptor.clone()]);
     replica.validate_chain(&descriptors, base.position)?;
-
-    let compacted_source = files.scratch.open(&files.compacted_index).await?;
-    let compacted_input = SpoolInput {
-        descriptor,
-        start: 0,
-        length: artifacts.index.length,
-    };
-    let entries =
-        MergedEntries::open(&replica.host, compacted_source, vec![compacted_input]).await?;
-    let endpoint = descriptors.last().ok_or(LtxError::LTXCorrupted)?;
-    let page_size = endpoint.info.page_size;
-    let database_pages = endpoint.info.database_pages;
-    let directory = directory::relocate_and_upload(
-        replica,
-        &graph,
-        &descriptors,
-        selected,
-        entries.stream(replica.host.clone()),
-    )
-    .await?;
-    replica
-        .finish_root(
-            Some(base),
-            &graph.document.segment_pages,
-            descriptors,
-            base.position,
-            base.commit_sequence,
-            graph.document.schema,
-            page_size,
-            database_pages,
-            directory,
+    let dependency_uploads = async {
+        let (body, index) = futures_util::future::join(
+            upload(
+                replica,
+                &files.scratch,
+                &files.compacted_ltx,
+                artifacts.ltx.length,
+                &artifacts.ltx.digest,
+                CellObjectKind::Ltx,
+            ),
+            upload(
+                replica,
+                &files.scratch,
+                &files.compacted_index,
+                artifacts.index.length,
+                &artifacts.index.digest,
+                CellObjectKind::Index,
+            ),
         )
-        .await
+        .await;
+        body?;
+        index?;
+        Ok::<_, LtxError>(())
+    };
+    let root_preparation = async {
+        let compacted_source = files.scratch.open(&files.compacted_index).await?;
+        let compacted_input = SpoolInput {
+            descriptor,
+            start: 0,
+            length: artifacts.index.length,
+        };
+        let entries =
+            MergedEntries::open(&replica.host, compacted_source, vec![compacted_input]).await?;
+        let endpoint = descriptors.last().ok_or(LtxError::LTXCorrupted)?;
+        let page_size = endpoint.info.page_size;
+        let database_pages = endpoint.info.database_pages;
+        let directory = directory::relocate_and_upload(
+            replica,
+            &graph,
+            &descriptors,
+            selected,
+            entries.stream(replica.host.clone()),
+        )
+        .await?;
+        replica
+            .finish_root(
+                Some(base),
+                &graph.document.segment_pages,
+                descriptors,
+                base.position,
+                base.commit_sequence,
+                graph.document.schema,
+                page_size,
+                database_pages,
+                directory,
+            )
+            .await
+    };
+    // The directory consumes the verified local index, not the uploaded body.
+    // Immutable dependencies and metadata may therefore upload together. Wait
+    // for both branches, including dispatched scratch jobs on either failure,
+    // before returning a proposal or releasing scratch admission.
+    let (dependencies, prepared) =
+        futures_util::future::join(dependency_uploads, root_preparation).await;
+    dependencies?;
+    prepared
 }
 
 struct CompactedArtifacts {
