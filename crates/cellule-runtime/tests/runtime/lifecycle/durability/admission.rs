@@ -17,14 +17,17 @@ impl CellTelemetry for ReplyHandoffGate {
         _confirmation: Duration,
     ) {
         assert_eq!(source, CommandResponseSource::Object);
-        if self
-            .skip
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .is_ok()
-        {
-            return;
+        let mut remaining = self.skip.load(Ordering::Acquire);
+        while remaining > 0 {
+            match self.skip.compare_exchange_weak(
+                remaining,
+                remaining - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(observed) => remaining = observed,
+            }
         }
         if let Some(entered) = self.entered.lock().unwrap().take() {
             entered.send(()).unwrap();
