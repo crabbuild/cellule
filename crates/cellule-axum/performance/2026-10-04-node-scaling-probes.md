@@ -5,6 +5,9 @@ and 50,000 owner-ordered reads/sec on an 8-vCPU, 16-GiB node. **Not established.
 These probes isolate provider capacity and activation limits; they are not
 framework optimization results or maximum-throughput measurements.
 
+Follow-up: the [matched write publication-slot probe](2026-10-04-write-publication-slots.md)
+tests whether additional preparation concurrency improves aggregate write TPS.
+
 Framework revision: `80c4fd99c10fc7e91ab34c628ea61fcd488e0cea`. The fixture
 adds bounded offered load, exact receipt validation, streamed journals,
 resource sampling and full acknowledged-write cold replay. Frozen source and
