@@ -787,6 +787,9 @@ async fn binding_a_node_log_during_a_group_keeps_its_members_object_gated() {
     resume.send(()).unwrap();
     assert_eq!(second.await.unwrap().commit_sequence(), 2);
     assert_eq!(third.await.unwrap().commit_sequence(), 3);
+    // Sending the final reply wakes its waiter before response telemetry runs.
+    // Wait for observation without draining admission for the next log-backed command.
+    responses.wait_for_responses(3).await;
     assert_eq!(
         gate.issued_through(),
         0,

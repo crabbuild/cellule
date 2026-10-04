@@ -5,6 +5,10 @@ verification, and limitations. Companion JSON files retain every measured pair,
 critical publication phases, receipt hashes and source/binary provenance. CI links retain
 raw artifacts. Do not combine gains from separate runs.
 
+Reports identify frozen measured revisions. The later CI fix preserves reader
+rotation across discovery changes and synchronizes a durability test with its
+telemetry callback; those changes are outside the reported benchmark comparisons.
+
 | Comparison | Clients | Cells | Measured duration | Report and dataset |
 | --- | ---: | --- | --- | --- |
 | Full change versus main | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-inline-root-main-writes.md) · [JSON](2026-10-04-rustfs-inline-root-main-writes.json) |

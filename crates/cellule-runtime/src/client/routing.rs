@@ -24,6 +24,8 @@ const LOCAL_ATTEMPT_BUDGET: Duration = Duration::from_millis(500);
 ///
 /// Clone this router across callers to share outstanding-attempt counts. These
 /// counts describe this ingress only, not execution load from other ingresses.
+/// Least-loaded selection rotates ties after the previous physical reader,
+/// including when discovery changes the number of eligible readers.
 ///
 /// Placement is deliberately not cached: an administrative policy withdrawal
 /// and a control-state change must take effect on the next query, which the
@@ -321,6 +323,7 @@ struct ReplicaRouting {
 #[derive(Default)]
 struct ReplicaRoutingState {
     cursor: usize,
+    last_node: Option<NodeId>,
     in_flight: HashMap<NodeId, usize>,
 }
 
@@ -332,7 +335,7 @@ struct ReplicaAttempt<'a> {
 impl ReplicaRouting {
     fn reserve(
         &self,
-        candidates: impl ExactSizeIterator<Item = (usize, NodeId)>,
+        candidates: impl ExactSizeIterator<Item = (usize, NodeId)> + Clone,
         count: usize,
     ) -> Result<(usize, ReplicaAttempt<'_>)> {
         if count == 0 || candidates.len() == 0 {
@@ -342,7 +345,15 @@ impl ReplicaRouting {
             .state
             .lock()
             .map_err(|_| Error::Control("replica routing load lock poisoned"))?;
-        let start = state.cursor % count;
+        // Discovery can temporarily return one reader while another signed
+        // advertisement is renewed. Resume after the actual last reader when
+        // it returns, rather than reusing a position from the shorter list.
+        // A retry has removed that reader, so its original cursor still applies.
+        let start = state
+            .last_node
+            .and_then(|last| candidates.clone().find(|(_, node)| *node == last))
+            .map_or(state.cursor, |(position, _)| position + 1)
+            % count;
         let (index, (position, node)) = candidates
             .enumerate()
             .min_by_key(|(_, (position, node))| {
@@ -355,6 +366,7 @@ impl ReplicaRouting {
             })
             .ok_or(Error::ReplicaUnavailable)?;
         state.cursor = position + 1;
+        state.last_node = Some(node);
         *state.in_flight.entry(node).or_default() += 1;
         Ok((
             index,
@@ -438,6 +450,25 @@ mod tests {
             counts[index] += 1;
         }
         assert_eq!(counts, [0, 6, 6]);
+    }
+
+    #[test]
+    fn newly_eligible_reader_keeps_rotation_after_single_reader_discovery() {
+        let routing = ReplicaRouting::default();
+        let [first, second, _] = nodes();
+        let (_, attempt) = routing.reserve([(0, second)].into_iter(), 1).unwrap();
+        assert_eq!(attempt.node, second);
+        drop(attempt);
+        let mut counts = [0, 1];
+        for _ in 0..11 {
+            let (index, attempt) = routing
+                .reserve([first, second].into_iter().enumerate(), 2)
+                .unwrap();
+            counts[index] += 1;
+            drop(attempt);
+        }
+        assert_eq!(counts, [6, 6]);
+        assert!(routing.state.lock().unwrap().in_flight.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]
