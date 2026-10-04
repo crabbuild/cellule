@@ -275,6 +275,7 @@ the host library remains provider neutral.
 | --- | --- |
 | Controller and permits | `BEGIN IMMEDIATE` compares the complete head and registry version, then invokes the pure reducer and current intent allocation gate. |
 | Maintenance | Publish the physical-node intent and retained operation with the head. Keep the original request separately from later deadline and boot changes. Earlier cordons survive later operations. |
+| Original maintenance roles | The first BeginEvacuation transaction freezes every unresolved reader/follower acceptance at either physical endpoint, including earlier boots. Commit the immutable manifest and every page with the phase CAS; rollback removes all of them. Retirement, deadline changes and boot adoption retain the first set. |
 | Enrollment | Check exact source/target intent rows and the source's retained maintenance operation, then publish Pending in one transaction. Closing/Completed fence new reader/follower source requests. Full input comparison precedes current checks on replay. Pending remains an obligation after expiry. |
 | Boot confirmation | Read current physical intent and the exact Established node enrollment in one transaction; reject pending/settled/foreign records. No cached older intent can open readiness. |
 | Action acceptance | Check current head, permit, endpoint and intents before inserting the immutable acceptance. Key includes action digest, physical node and boot; source and receiver inspections remain distinct. |
@@ -299,6 +300,17 @@ different node becomes the current maintenance target. Missing or corrupt record
 retain their original errors and insert no enrollment. Full replay and canonical
 completion/retirement of accepted requests remain available. Node boot enrollment
 continues to honor its retained mode without granting role readiness.
+
+The observer consumes `FleetMaintenanceEnrollments` during Evacuating and Closing.
+It retains exact original acceptances after their current rows retire and requires
+all immutable pages plus a fresh full roster. An explicitly committed empty set
+is distinct from absent history. The original BeginMaintenance CAS initializes a one-way capture anchor; the first
+BeginEvacuation binds it to the manifest. Session adoption cannot erase that
+anchor, and a missing anchor refuses capture. Phase replay cannot repair a missing manifest by
+inserting zero; missing or corrupt pages retain their original errors. Newly
+accepted remote replacements after capture remain visible in the current roster
+and native graph. Complete policy/work coverage and terminal joining remain
+required; this historical set does not enable SettleRoles or Finalize.
 
 ## Evidence and integration work
 

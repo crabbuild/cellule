@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::fleet::{
-    FleetFailedBootClosure, FleetOriginalWriterSuccessorInventory, FleetRoleCoverage, FleetRoster,
+    FleetFailedBootClosure, FleetMaintenanceEnrollments, FleetOriginalWriterSuccessorInventory,
+    FleetRoleCoverage, FleetRoster,
 };
 use cellule_runtime::cell::actor::OwnedCellObservation;
 use cellule_runtime::fleet::operations::{FleetScope, RegistryVersion};
@@ -44,6 +45,7 @@ pub struct FleetObservation {
     original_writer_successors: Option<FleetOriginalWriterSuccessorInventory>,
     failed_boot_closures: Option<Vec<FleetFailedBootClosure>>,
     role_evacuations: Option<RoleEvacuations>,
+    maintenance_enrollments: Option<FleetMaintenanceEnrollments>,
 }
 
 impl FleetObservation {
@@ -76,6 +78,7 @@ impl FleetObservation {
             original_writer_successors: None,
             failed_boot_closures: None,
             role_evacuations: None,
+            maintenance_enrollments: None,
         };
         observation.placements(capture_finished_at_ms)?;
         Ok(observation)
@@ -101,6 +104,7 @@ impl FleetObservation {
     }
 
     fn validate_role_coverage(&self) -> Result<()> {
+        self.validate_maintenance_enrollments()?;
         self.validate_original_writer_successors()?;
         self.validate_failed_boot_closures()?;
         self.validate_role_evacuations()?;
@@ -206,7 +210,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v8\0");
+        hash.update(b"cellule.fleet-planner-inputs.v9\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -261,6 +265,10 @@ impl FleetObservation {
             }
         }
         self.hash_role_evacuations(&mut hash)?;
+        hash.update(&[u8::from(self.maintenance_enrollments.is_some())]);
+        if let Some(original) = &self.maintenance_enrollments {
+            hash.update(original.digest()?.as_bytes());
+        }
         hash.update(&(nodes.len() as u64).to_be_bytes());
         for node in nodes {
             hash.update(node.node.as_bytes());
@@ -357,6 +365,7 @@ impl FleetObservation {
 
 mod evacuations;
 mod failed_boots;
+mod maintenance_enrollments;
 mod original_writers;
 #[cfg(test)]
 mod tests;

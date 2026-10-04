@@ -3,9 +3,9 @@
 
 use super::*;
 use cellule_host::fleet::{
-    FleetFollowerReferences, FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot,
-    FleetObservation, FleetOwnedCell, FleetRoleCoverage, FleetRoster, FleetSnapshotNativePage,
-    FleetSnapshotRequest, FleetSnapshotSubject,
+    FleetFollowerReferences, FleetMaintenanceEnrollments, FleetNodeInventory,
+    FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation, FleetOwnedCell, FleetRoleCoverage,
+    FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest, FleetSnapshotSubject,
 };
 use cellule_runtime::control::{Control, ControlState};
 use cellule_runtime::fleet::operations::{EnrollmentRole, EnrollmentStatus, PublishedPosition};
@@ -20,6 +20,7 @@ struct Capture {
     nodes: Vec<NodeAdvertisement>,
     cells: Vec<FleetOwnedCell>,
     role_coverage: Option<FleetRoleCoverage>,
+    maintenance_enrollments: Option<FleetMaintenanceEnrollments>,
 }
 
 pub(super) async fn complete_counts(
@@ -57,8 +58,12 @@ pub(super) async fn observe(
         capture.nodes,
         capture.cells,
     )?;
-    Ok(match capture.role_coverage {
+    let observation = match capture.role_coverage {
         Some(coverage) => observation.with_role_coverage(coverage)?,
+        None => observation,
+    };
+    Ok(match capture.maintenance_enrollments {
+        Some(original) => observation.with_maintenance_enrollments(original)?,
         None => observation,
     })
 }
@@ -118,6 +123,31 @@ async fn collect(
     deadline: Instant,
 ) -> JournalResult<Capture> {
     let started = clock()?;
+    let maintenance_enrollments =
+        if roster
+            .snapshot()
+            .head()
+            .maintenance()
+            .is_some_and(|operation| {
+                matches!(
+                    operation.phase(),
+                    cellule_runtime::fleet::operations::MaintenancePhase::Evacuating
+                        | cellule_runtime::fleet::operations::MaintenancePhase::Closing
+                )
+            })
+        {
+            Some(
+                FleetMaintenanceEnrollments::collect(
+                    fleet.journal.as_ref(),
+                    roster,
+                    deadline,
+                    clock,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
     if fleet.nodes.len() != 3 || fleet.boots.len() != 3 || fleet.records.len() != CELL_COUNT {
         return Err(invalid("example construction profile differs"));
     }
@@ -309,6 +339,7 @@ async fn collect(
         nodes,
         cells,
         role_coverage,
+        maintenance_enrollments,
     })
 }
 

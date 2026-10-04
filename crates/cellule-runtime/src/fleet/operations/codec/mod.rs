@@ -13,6 +13,7 @@ mod acquisition;
 mod attempt;
 mod follower_evacuation;
 mod inspection;
+mod maintenance_enrollments;
 mod reader_evacuation;
 mod recovery;
 mod registry;
@@ -49,6 +50,9 @@ const FOLLOWER_EVACUATION: u8 = 23;
 const WRITER_INVENTORY: u8 = 24;
 const WRITER_INVENTORY_PAGE: u8 = 25;
 const WRITER_INVENTORY_BASIS: u8 = 26;
+const MAINTENANCE_ENROLLMENTS: u8 = 27;
+const MAINTENANCE_ENROLLMENTS_PAGE: u8 = 28;
+const MAINTENANCE_ENROLLMENTS_BASIS: u8 = 29;
 
 fn encoder(kind: u8) -> Result<BoundedEncoder> {
     encoder_limited(kind, MAX_RECORD_BYTES)

@@ -4,6 +4,107 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 original maintenance enrollment checkpoint
+
+The canonical executable is `crates/cellule-host/minion`, Cargo target
+`fleet_operations`, as confirmed by the user.
+
+The first Cordoned-to-Evacuating CAS now commits a complete immutable manifest
+and every page of original unresolved reader/follower acceptances. Both physical
+endpoints and earlier boots are included; node boot closure remains separate.
+The same SQLite transaction scans the entire retained enrollment table, validates
+scope and canonical keys, and refuses over 10,000 rows. Each page contains at most
+128 full original records. The manifest retains the pretransition full head,
+bootstrapped registry, original Cordoned operation and capture time. Additive
+codec tags and tables preserve all existing persisted record encodings.
+
+Retirement, deadline extension and successor session adoption retain the first
+set. Lost commit replies replay the same bytes. A failed phase CAS rolls back the
+manifest and every page. A missing manifest or page stays unknown, including old
+already Evacuating operations; phase replay cannot backfill zero from the current
+roster. A committed empty manifest is an explicit historical statement. The minion initializes a one-way capture
+anchor in the original BeginMaintenance transaction and binds it to the manifest
+with BeginEvacuation. Missing history after boot adoption cannot become a new
+first capture. Missing anchors, including operations predating this contract,
+remain unknown and refuse capture; no current-roster migration is supplied.
+
+`FleetMaintenanceEnrollments::collect` traverses every immutable page, matches
+original acceptance times and establishment evidence against a fresh complete
+roster, and reconfirms the exact full head and registry. The observer retains this
+capture inside its outer interval. Attachment compares full snapshot and roster
+with the existing policy, native graph, writer successor and failed-boot checks,
+in either order. Planner digest v9 binds presence and the full retained digest.
+The minion observer consumes it during Evacuating and Closing.
+
+Four pure cases exercise canonical multipage history, missing/reordered/duplicate
+pages, both physical endpoints, earlier boots, empty/invalid bases and bounds.
+Seven journal cases exercise rollback, restart, lost replies, independent source
+acceptance versus phase CAS, session/deadline changes and original corruption
+errors. Public actual-reader cases preserve Established originals after Retired,
+validate both attachment orders, refuse restamping/duplicates and reject an older
+full head with an unchanged registry. Reconciliation remains incomplete and starts
+no effects merely because original history or individual policy checks exist.
+The isolated adoption/history-loss regression fails before the capture anchor:
+the earlier implementation commits a new evacuation capture from retired rows.
+The correction refuses both missing original history and missing anchors, without
+advancing the phase or creating replacement rows.
+
+### Verification and CI
+
+All 13 fresh Rust commands and nine static gates pass on the isolated Rust 1.99
+snapshot `/tmp/cellule-maintenance-enrollments-617819a`, using its mounted
+checkout-specific target. All 132 documented Rust snippets parse and all 1,278
+local Markdown links resolve. Qualification gates are unchanged.
+
+| Verification | Result |
+| --- | --- |
+| Framework, all features, locked | 1,679 passed; zero failures; 36 documented ignored cases. |
+| Canonical minion | 283 passed; zero failures or ignores. |
+| Distinct framework/minion passes | 1,962; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | 54 passed. |
+| Features/targets, Clippy and API docs | Pass; lint/docs deny warnings. |
+| Normal executable and Axum without default features | Build and 16 tests/docs pass. |
+| Fresh cookbook | 256 tests, check, Clippy, warning-denied docs and binary builds pass. |
+
+All 1,099 Rust/Cargo paths match the qualified manifest, SHA256
+`2f42dbb660a550003d9a9bb2f159a525fc217a333b853b69f38d50fdc00fa1ae`.
+Frozen source, committed archive, commands, failed regression and repair logs are
+retained in `/tmp/cellule-maintenance-enrollments-evidence`.
+
+The first broad run failed two unchanged reader-discovery tests while cookbook
+compilation ran concurrently: an empty cached selection and ten reads against
+five expected reads. That original log is retained. The final full command runs
+with suites sequenced, and both tests pass without assertion or cache-limit
+changes. The adoption/history-loss regression and its original unguarded source
+are retained separately; all seven corrected journal cases pass.
+
+Published `617819a` passes follower/object capacity, workspace, MSRV, contract,
+cookbook quality and all cookbook scenarios, Compose smoke, model, website and
+fuzz checks. Both ordinary routing profiles and aggregate routing pass: the lowest gated
+throughput ratios are 91.16% leased and 93.57% object-only. All 34 reported
+checks pass, with three documented skips; PR merge state is CLEAN and MERGEABLE.
+The original routing campaigns and hash manifests are retained. Parent `b1390b2`
+passes leased routing but its object-only campaign fails concurrent local-query
+throughput at 84.45% of baseline, below the unchanged 90% gate. Latency gates pass.
+The original 178-file campaign, frozen binaries/source, stage TSVs, manifest and
+job log are retained in the current evidence directory. The same-source control
+previously passed both profiles; it does not qualify the baseline comparison or
+isolate the cause of these failures. No qualification profile was weakened.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Qualify the new head, including both ordinary routing profiles; retain and diagnose failures without weakening gates. |
+| 1 | Match every original and current reader/follower obligation to authenticated replacement policy or failed-owner successor evidence. Complete durable unknown action and native/external accepted-work coverage. |
+| 2 | Implement SettleRoles/Finalize with original action joining before terminal drain handoff, native Stopped, withdrawal, boot retirement and committed completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider faults, mixed binaries and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+New source-side replacements accepted after capture remain visible in the current
+roster and native graph. This original set grants no aggregate settlement or
+finalization rights. SettleRoles/Finalize remain refused; W1–W10 remains active.
+
 ## October 3 2026 source enrollment closure checkpoint
 
 The canonical executable is `crates/cellule-host/minion`, Cargo target

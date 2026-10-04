@@ -11,6 +11,17 @@ CREATE TABLE IF NOT EXISTS intents (key BLOB PRIMARY KEY CHECK (length(key)=16),
 CREATE TABLE IF NOT EXISTS operations (key BLOB PRIMARY KEY CHECK (length(key)=16), request BLOB NOT NULL CHECK (length(request)<=65536), body BLOB NOT NULL CHECK (length(body)<=65536));
 CREATE TABLE IF NOT EXISTS progress (key BLOB PRIMARY KEY CHECK (length(key)=32), body BLOB NOT NULL CHECK (length(body)<=1048576));
 CREATE TABLE IF NOT EXISTS enrollments (key BLOB PRIMARY KEY CHECK (length(key)=32), body BLOB NOT NULL CHECK (length(body)<=65536));
+-- Original unresolved role set and all its pages commit with first evacuation.
+-- A missing pointer stays unknown; later retirement cannot manufacture zero.
+CREATE TABLE IF NOT EXISTS maintenance_enrollments (
+    operation BLOB PRIMARY KEY CHECK(length(operation)=16),
+    key BLOB NOT NULL UNIQUE CHECK(length(key)=32),
+    body BLOB NOT NULL CHECK(length(body)<=65536)
+);
+CREATE TABLE IF NOT EXISTS maintenance_enrollment_pages (
+    key BLOB PRIMARY KEY CHECK(length(key)=32),
+    body BLOB NOT NULL CHECK(length(body)<=1048576)
+);
 CREATE TABLE IF NOT EXISTS actions (
     key BLOB NOT NULL CHECK (length(key)=32), node BLOB NOT NULL CHECK (length(node)=16), session BLOB NOT NULL CHECK (length(session)=16),
     operation BLOB NOT NULL CHECK (length(operation)=16), sequence BLOB NOT NULL CHECK (length(sequence) IN (0,8)), effect INTEGER NOT NULL,
@@ -61,4 +72,12 @@ CREATE TABLE IF NOT EXISTS original_writers (
 CREATE TABLE IF NOT EXISTS original_writer_pages (
     key BLOB PRIMARY KEY CHECK(length(key)=32),
     body BLOB NOT NULL CHECK(length(body)<=1048576)
+);
+
+-- NULL means the operation has never frozen its original role set. The anchor
+-- is initialized with BeginMaintenance and advances once with BeginEvacuation;
+-- missing history after session adoption cannot be reconstructed as empty.
+CREATE TABLE IF NOT EXISTS maintenance_enrollment_anchors (
+    operation BLOB PRIMARY KEY CHECK(length(operation)=16),
+    key BLOB CHECK(key IS NULL OR length(key)=32)
 );

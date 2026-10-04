@@ -63,6 +63,9 @@ impl FleetJournal for SqliteJournal {
             }
             let head = current.head().transition(db.profile, current.head().revision(), epoch, now_ms, transition.clone())?;
             if head == *current.head() { return Ok(current); }
+            if matches!(transition, JournalTransition::Maintenance(MaintenanceEvent::BeginEvacuation)) {
+                db.freeze_maintenance_enrollments(&current, now_ms)?;
+            }
             if head.maintenance() != current.head().maintenance() && let Some(operation) = head.maintenance() {
                 let old = db.required_intent(operation.node())?;
                 let next = old.advance_maintenance(operation)?;
@@ -70,6 +73,9 @@ impl FleetJournal for SqliteJournal {
                 let request = if let JournalTransition::BeginMaintenance(request) = &transition { request.to_bytes()? }
                     else { db.tx.query_row("SELECT request FROM operations WHERE key=?1", [operation.id().as_bytes().as_slice()], |row| blob(row, 0, MAX_RECORD_BYTES))? };
                 db.tx.execute("INSERT INTO operations(key,request,body) VALUES (?1,?2,?3) ON CONFLICT(key) DO UPDATE SET body=excluded.body", params![operation.id().as_bytes().as_slice(), request, operation.to_bytes()?])?;
+                if matches!(transition, JournalTransition::BeginMaintenance(_)) {
+                    db.tx.execute("INSERT INTO maintenance_enrollment_anchors(operation,key) VALUES (?1,NULL)", [operation.id().as_bytes().as_slice()])?;
+                }
             }
             if let JournalTransition::Retire { progress } = &transition {
                 db.tx.execute("INSERT INTO progress(key,body) VALUES (?1,?2)", params![progress.digest()?.as_bytes().as_slice(), progress.to_bytes()?])?;
@@ -86,6 +92,30 @@ impl FleetJournal for SqliteJournal {
         Box::pin(self.run(move |db| {
             db.check_scope(scope)?;
             db.operation(operation)
+        }))
+    }
+    fn maintenance_enrollments<'a>(
+        &'a self,
+        expected: &'a FleetJournalSnapshot,
+        operation: OperationId,
+    ) -> FleetAdapterFuture<'a, Option<MaintenanceEnrollmentInventory>> {
+        let expected = expected.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(expected.head().scope())?;
+            if db.snapshot()? != expected {
+                return Err(OperationError::Conflict.into());
+            }
+            db.maintenance_enrollments(operation)
+        }))
+    }
+    fn maintenance_enrollment_page(
+        &self,
+        scope: FleetScope,
+        digest: Digest,
+    ) -> FleetAdapterFuture<'_, Option<MaintenanceEnrollmentPage>> {
+        Box::pin(self.run(move |db| {
+            db.check_scope(scope)?;
+            db.maintenance_enrollment_page(digest)
         }))
     }
     fn load_progress(

@@ -923,7 +923,7 @@ ensembles. Signed replacement boots must match the existing producer-specific
 identity; a changed writer row or follower epoch/ensemble invalidates the input.
 Attachment order with role coverage, writer successors or failed-boot closure
 does not change these checks. The reconciler repeats the roster comparison.
-Planner digest v8 binds collection presence, canonical record order, full
+Planner digest v9 binds collection presence, canonical record order, full
 barriers, fresh intervals, current authority, reader prefixes and retained native
 follower inventories. Persisted history, enrollment and transport codecs are unchanged.
 
@@ -932,6 +932,36 @@ each check's `record()` supplies its immutable durable history. A supplied subse
 does not establish complete policy coverage or upgrade an incomplete observation.
 All remaining roles, failed-owner recovery, original accepted native/external work
 and terminal drain handoff are still required before SettleRoles/Finalize.
+
+### Retain the complete original maintenance role set
+
+The first Cordoned-to-Evacuating CAS must commit every unresolved reader/follower
+enrollment involving the physical node at either endpoint, including earlier
+boots. `MaintenanceEnrollmentInventory` binds the original Cordoned operation,
+full head digest, bootstrapped registry, capture time and every immutable page.
+Pages contain at most 128 complete original acceptances; the full retained roster
+is bounded to 10,000 rows. A malformed or oversized scan fails before phase commit.
+
+`FleetMaintenanceEnrollments::collect` reads the committed manifest and every
+page, matches original requests, timestamps and establishment evidence against a
+fresh complete roster, and reconfirms the full journal snapshot. Retiring rows,
+extending a deadline or adopting a successor boot preserves the first set.
+`FleetObservation::with_maintenance_enrollments` retains this evidence inside the
+outer interval and compares the exact head, registry and roster with other checks,
+in either attachment order. Planner digest v9 binds its presence and full digest.
+
+A missing manifest or page remains unknown. A committed empty manifest proves
+only that the original unresolved role set was empty at the phase transaction.
+Already Evacuating operations with missing history cannot be backfilled from the
+current roster. The minion initializes a one-way capture
+anchor in the original BeginMaintenance transaction and binds it to the manifest
+with BeginEvacuation. Missing history after boot adoption cannot become a new
+first capture. Missing anchors, including operations predating this contract,
+remain unknown and refuse capture; no current-roster migration is supplied. New source-side replacement requests after capture remain current
+obligations in the full roster and native graph. Neither this metadata nor a
+supplied subset of evacuation checks grants complete policy/work coverage,
+SettleRoles or Finalize. Failed-owner successor policy, durable unknown actions
+and native/external accepted work must still be collected and settled.
 
 ## Caller driven fleet reconciliation
 

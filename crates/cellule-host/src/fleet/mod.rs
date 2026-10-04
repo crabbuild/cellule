@@ -20,6 +20,8 @@ mod inspection;
 mod inventory;
 mod journal;
 mod maintenance;
+mod maintenance_enrollments;
+pub use maintenance_enrollments::FleetMaintenanceEnrollments;
 mod movement;
 mod reader_evacuation;
 mod reconciler;

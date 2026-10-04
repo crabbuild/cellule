@@ -16,6 +16,7 @@ mod actions;
 mod controller;
 mod enrollment;
 mod follower_evacuation;
+mod maintenance_enrollments;
 mod reader_evacuation;
 mod records;
 mod writer_inventory;

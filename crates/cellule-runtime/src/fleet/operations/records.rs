@@ -251,6 +251,16 @@ impl MaintenanceOperation {
     pub const fn id(&self) -> OperationId {
         self.id
     }
+    /// Returns the immutable original request identity across progress/adoption.
+    #[must_use]
+    pub const fn request_digest(&self) -> Digest {
+        self.request_digest
+    }
+    /// Returns the original request time, independent of later deadlines.
+    #[must_use]
+    pub const fn created_at_ms(&self) -> i64 {
+        self.created_at_ms
+    }
     /// Returns the physical node to keep cordoned across sessions.
     #[must_use]
     pub const fn node(&self) -> NodeId {

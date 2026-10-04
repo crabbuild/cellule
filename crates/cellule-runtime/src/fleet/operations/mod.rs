@@ -18,6 +18,10 @@ pub use follower_evacuation::{
 mod history;
 mod inspection;
 mod intent;
+mod maintenance_enrollments;
+pub use maintenance_enrollments::{
+    MAX_MAINTENANCE_ENROLLMENTS, MaintenanceEnrollmentInventory, MaintenanceEnrollmentPage,
+};
 mod journal;
 mod reader_evacuation;
 mod records;

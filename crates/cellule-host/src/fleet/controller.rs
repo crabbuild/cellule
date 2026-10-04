@@ -1,5 +1,6 @@
 use cellule_runtime::fleet::operations::{
-    EnrollmentPage, FleetHead, FleetScope, IntentPage, JournalTransition, MaintenanceOperation,
+    EnrollmentPage, FleetHead, FleetScope, IntentPage, JournalTransition,
+    MaintenanceEnrollmentInventory, MaintenanceEnrollmentPage, MaintenanceOperation,
     OperationError, OperationId, ProgressPage, RegistryVersion,
 };
 use cellule_runtime::identity::{CellId, Digest, IncarnationId, NodeId, SessionId};
@@ -59,6 +60,13 @@ pub trait FleetJournal: FleetActionJournal + FleetEnrollmentJournal {
     /// `authorize_allocation` inside this transaction before the head transition.
     /// For maintenance, advance and retain that physical node's intent in the
     /// same commit. Retain all prior operations for return-to-service proofs.
+    /// The first BeginEvacuation must atomically retain every unresolved reader/
+    /// follower enrollment involving that physical node at either endpoint,
+    /// including earlier boots. Publish the bounded original manifest and every
+    /// page with this CAS, before any evacuation effect. Replay, session adoption
+    /// and deadline changes preserve that original set; missing history is unknown.
+    /// Retain a one-way capture anchor initialized with the original operation;
+    /// loss of history after session adoption cannot become another first capture.
     /// For Retire, publish the exact progress page with permit retirement; a
     /// failed CAS cannot expose committed history or release either budget.
     /// Finalization must compare the observed registry version again here.
@@ -80,6 +88,24 @@ pub trait FleetJournal: FleetActionJournal + FleetEnrollmentJournal {
         scope: FleetScope,
         operation: OperationId,
     ) -> FleetAdapterFuture<'_, Option<MaintenanceOperation>>;
+
+    /// Loads the immutable original role set committed with first BeginEvacuation.
+    /// Compare the full current snapshot in the same read transaction. Absence
+    /// is unknown, including operations created before this contract was wired;
+    /// never construct an empty replacement from the current retired roster.
+    fn maintenance_enrollments<'a>(
+        &'a self,
+        expected: &'a FleetJournalSnapshot,
+        operation: OperationId,
+    ) -> FleetAdapterFuture<'a, Option<MaintenanceEnrollmentInventory>>;
+
+    /// Loads a content-addressed original acceptance page; verify scope and its
+    /// exact canonical digest. Pages alone cannot establish committed coverage.
+    fn maintenance_enrollment_page(
+        &self,
+        scope: FleetScope,
+        digest: Digest,
+    ) -> FleetAdapterFuture<'_, Option<MaintenanceEnrollmentPage>>;
 
     /// Loads an immutable progress page. Verify scope and canonical page digest
     /// against the requested digest; a successful orphan PUT is not committed.
