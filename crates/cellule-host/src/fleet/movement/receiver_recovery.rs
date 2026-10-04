@@ -81,6 +81,59 @@ impl FleetActionExecutor {
         inputs: &FleetCellInputs,
         observed: VersionedControl,
     ) -> cellule_runtime::Result<ActionResult> {
+        if let Some(basis) = self
+            .journal
+            .load_receiver_recovery_basis(accepted)
+            .await
+            .map_err(journal_error)?
+            && observed
+                .value()
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.session == self.session)
+        {
+            if basis.accepted() != accepted {
+                return Err(Error::Fenced);
+            }
+            let released = attempt.released().ok_or(Error::Fenced)?;
+            self.verify_serving_prefix(
+                attempt,
+                inputs,
+                ServingPrefix::Released(&released.root),
+                observed.value().ltx_root().ok_or(Error::Fenced)?,
+            )
+            .await?;
+            let recovery = self
+                .cells
+                .receiver_recovery_inputs(accepted, basis.control())
+                .await
+                .map_err(|source| Error::Facility {
+                    name: "fleet-receiver-recovery-provider",
+                    source,
+                })?
+                .ok_or(Error::Peer("receiver recovery prerequisites unavailable"))?;
+            let recorder: Arc<dyn AcquisitionObserver> = Arc::new(ReceiverRecoveryRecorder {
+                accepted: accepted.clone(),
+                takeover: recovery.takeover,
+                journal: self.journal.clone(),
+            });
+            self.runtime
+                .resume_takeover_restored_observed(
+                    inputs.catalog.clone(),
+                    inputs.replica.clone(),
+                    inputs.authority.clone(),
+                    basis.control().clone(),
+                    observed,
+                    recovery.takeover,
+                    recovery.manifests,
+                    inputs.destination.clone(),
+                    recorder,
+                )
+                .await?;
+            return self
+                .receiver_recovered_serving(accepted, attempt, inputs)
+                .await;
+        }
         let Some(recovery) = self
             .cells
             .receiver_recovery_inputs(accepted, observed.value())

@@ -2,6 +2,74 @@ use super::*;
 use continuation::evidence_failure;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn routed_original_basis_resumes_its_exact_claim_without_another_epoch() {
+    let fixture = FaultFixture::paused(
+        RecoveryWrite::Basis,
+        RecoveryWriteBoundary::AfterCommit,
+        true,
+    )
+    .await
+    .release(false)
+    .await;
+    let basis = fixture
+        .native
+        .journal
+        .load_receiver_recovery_basis(&fixture.accepted)
+        .await
+        .unwrap()
+        .unwrap();
+    let record = &fixture.native.records[&fixture.native.spec.target.cell_id()];
+    let before = fixture.current().await;
+    assert_eq!(before.value(), basis.control());
+    // A real canonical CAS models the interruption window after independently
+    // confirming the retained basis and before materialization/actor admission.
+    // No native acquisition or serving evidence is synthesized.
+    let claimed = record
+        .authority
+        .transition(
+            &before,
+            before.value().takeover(owner(2)).unwrap(),
+            Transition::Takeover,
+        )
+        .await
+        .unwrap();
+    assert_eq!(claimed.value().epoch, fixture.original.epoch + 1);
+    assert_eq!(fixture.native.nodes[2].stats().active_cells(), 0);
+    assert!(
+        record
+            .authority
+            .acquisition_record(
+                record.target.cell_id(),
+                record.incarnation,
+                claimed.value().epoch
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let completion = fixture.replay().await;
+    assert!(
+        completion.committed && completion.execution_error.is_none(),
+        "{completion:?}"
+    );
+    assert!(matches!(
+        completion.outcome.outcome,
+        FleetOutcome::Activated(_)
+    ));
+    assert_eq!(fixture.current().await.value().epoch, claimed.value().epoch);
+    assert_eq!(
+        fixture
+            .native
+            .journal
+            .load_receiver_recovery_basis(&fixture.accepted)
+            .await
+            .unwrap(),
+        Some(basis)
+    );
+    fixture.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lost_receiver_evidence_reply_keeps_idle_root_and_retained_proof_until_native_serving() {
     evidence_failure(RecoveryWriteBoundary::AfterCommit, None, false).await;
 }

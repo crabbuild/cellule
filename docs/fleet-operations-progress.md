@@ -7037,3 +7037,74 @@ Highest next priorities:
 
 This remains a focused W4/W5 increment. In-process process-closure providers
 and selected test success do not establish completion of W4–W10.
+
+## October 4 2026 interrupted native takeover continuation checkpoint
+
+Source: parent `8e11aca`; implementation diff SHA-256
+`18f546f8f5c515376c4d3873610556912bf7b7c5be665e98e21170cd1e536f28`.
+Reproduce from this checkpoint commit with
+`git diff --binary 8e11aca HEAD -- crates/cellule-runtime/src/cell/actor crates/cellule-host/src/fleet/movement crates/cellule-host/tests/node/fleet_receivers crates/cellule-host/minion ':(exclude)*.md' | shasum -a 256`.
+
+A failed overlay materialization can retain the target's own Recovering control
+and inherited suffix. Asking for another failed-owner takeover cannot resume
+that same accepted claim. The native runtime now exposes
+`resume_takeover_restored_observed`: validate the original fenced input and
+current claim, reconfirm the original recorder, then finish without another
+ownership CAS. A current materialized claim must equal the complete canonical
+result derived from the original pinned manifest. Changed scope, epoch, owner
+or publication is refused. It retains immutable native acquisition input/result
+before the recorder's pre-admission confirmation. Initial takeover and resume
+share one materialization/activation/rollback owner and the existing resource
+admission path. No persisted record format or action key changes.
+
+Failed-source Recover and routed receiver Activate now use this native
+continuation for their own interrupted claims. Routed resumption verifies the
+clean release prefix before native effects and obtains the failed predecessor's
+proof from the original basis. Fresh inspection remains read-only.
+
+Two new public host cases use an actual sealed follower suffix. One removes the
+manifest, dispatches and replays failed recovery, and confirms the exact owned
+Recovering claim/overlay with no actor or acquisition metadata. Restoring the
+manifest allows a cancelled replay waiter to join the same accepted native work.
+The other pauses a direct native embedding owner after real materialization and
+durable recording, interrupts that owner, refuses a changed original control,
+then resumes through the host. Both retain the original epoch in the suffix,
+activate one writer at the already claimed epoch, and resolve an acknowledged
+source command receipt. A historical manifest substitution remains a blocker
+while the live actor can still read its acknowledged state.
+
+The added minion routed case models the post-CAS interruption window with a
+real canonical authority transition after durable basis confirmation. Replay
+creates actual native acquisition/materialization history and activates without
+another epoch; independent journal readback and resource joining use the existing
+fixture. This model does not represent an OS crash or a complete routed overlay
+and controller succession campaign.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --test node fleet_receivers:: --all-features --locked -- --test-threads=2` | 31 passed; 0 failed, including both new public overlay cases. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | 17 passed; 0 failed, including the new exact routed-claim replay. |
+| `cargo test -p cellule-runtime --test runtime lifecycle::ownership::recovery:: --all-features --locked -- --test-threads=2` | 8 passed; 0 failed; 1 provider case remains explicitly ignored without its documented isolated RustFS environment. |
+| `cargo check -p cellule-host --all-targets --all-features --locked` | Passed. |
+| Runtime/host all-target/all-feature Clippy with `-D warnings`, format, boundaries, module ownership, whitespace, Rust fences and Markdown links | Passed; 137 snippets and 1,348 local links/anchors checked. |
+
+The previous checkpoint's hosted Rust run `37242017429` completed with failure:
+360 of 361 minion cases passed, and the follower-only maintenance observer again
+timed out in `fleet-follower-evacuation-deadline`. Serial harness scheduling did
+not resolve that failure. MSRV, workspace feature/target checks, API
+documentation, workspace unit/integration tests and the balanced three-process
+smoke steps passed on `8e11aca`. Those results do not qualify this newer native
+implementation. Reproduce and diagnose the observer timeout without changing
+its deadlines or required completion evidence; this checkpoint also requires
+its own broad CI after publication.
+
+Highest next priorities:
+
+1. Verify hosted CI and combine inherited overlays with routed boot/controller
+   succession, historical suffix/lineage faults and provider outages. Complete
+   missing-evidence continuation of safely rolled-back failed-source recovery.
+2. Complete maintenance controller/role/primitive fault combinations and actual
+   accepted external-job/process closure, including Cron/Blob obligations.
+3. Deliver the W9 versioned measured fleet profile/runner and provider/process,
+   mixed-binary and load/resource evidence; exercise W10 staged operations,
+   rollback and runbooks. These remain required for full plan completion.

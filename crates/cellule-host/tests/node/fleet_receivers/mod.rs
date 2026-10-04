@@ -16,6 +16,7 @@ use cellule_runtime::ltx::CellReplica;
 mod prefix;
 mod successor;
 mod suffix;
+mod suffix_resume;
 
 struct Cells(FleetCellInputs, Arc<Mutex<Option<FleetRecoveryInputs>>>);
 

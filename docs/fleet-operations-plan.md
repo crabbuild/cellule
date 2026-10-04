@@ -787,6 +787,17 @@ capture times and charged permit remain unchanged. A same-session ordinary
 acquisition winner must pass those same current-serving checks. Missing or
 substituted history remains Unknown; inspection cannot repair records or acquire.
 
+An interrupted target may instead retain its own Recovering claim and attached
+overlay. Effect replay reconfirms the original fenced input and uses the shared
+native takeover continuation without another ownership CAS. The current control
+must be the exact original claim or canonical materialized successor. Pinned
+suffixes retain their manifest's original Cell epoch, even after takeover
+advances the current epoch. Selected public host cases cover repeated manifest
+failure, replay waiter cancellation, committed materialization before admission,
+changed-input refusal, receipt readback and later historical manifest corruption.
+The routed integration/fault campaign still must combine these overlay cases
+with boot and controller succession.
+
 Tests must kill the original receiver after confirmed release, preserve the
 acknowledged root, recover on a different live receiver, and verify current
 actor/authority, exact action replay, one writer, one charged attempt, resource

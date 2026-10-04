@@ -21,6 +21,7 @@ pub use inventory::{
 use state::*;
 use task::*;
 mod acquire;
+mod acquire_resume;
 mod acquisition_observer;
 mod prefix;
 mod serving;

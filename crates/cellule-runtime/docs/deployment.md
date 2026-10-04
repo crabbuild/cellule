@@ -829,6 +829,17 @@ trusted callbacks grant no authority and authenticate no caller. Their caller
 must own acquisition independently of transport cancellation; the host fleet
 executor provides that finite-task ownership.
 
+`resume_takeover_restored_observed` resumes this boot's original interrupted
+claim without another ownership CAS. It requires the exact original fenced
+control, current Recovering control and takeover proof. The current control must
+be that original takeover or its exact pinned-overlay materialization; a changed
+generation, scope, owner or publication is refused. A committed materialization
+is derived again from the original manifest and compared in full before it can
+be retained as native acquisition history. The recorder reconfirms the original
+input, then records the actual materialized position before actor admission.
+Fresh takeover and resumption share the same materialization, activation,
+admission credits and rollback owner. Inspection does not call this method.
+
 `RecoveryBasis` binds an accepted recovery action to its exact failed source,
 canonical control, and original capture time. Construction requires existing
 `NodeTakeoverProof`. `RecoveryEvidence` checks the exact takeover and optional

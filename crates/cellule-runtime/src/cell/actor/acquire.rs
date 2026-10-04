@@ -4,6 +4,7 @@
 //! takeover proof into a running local handle, and refuses when the
 //! authority, capacity ledger, or node lease does not agree.
 
+use super::acquire_resume::TakeoverActivation;
 use super::*;
 
 impl CellRuntime {
@@ -485,8 +486,6 @@ impl CellRuntime {
             .replica_with_directory_cache(replica, &destination)
             .await?;
         let rollback_node_lease = self.inner.node_lease.guard()?;
-        let rollback_authority = authority.clone();
-        let rollback_replica = replica.clone();
         let cell = self.claiming_cell(&catalog, &observed, &owner)?;
         if owner.session != takeover.claimant() {
             return Err(Error::Fenced);
@@ -540,68 +539,24 @@ impl CellRuntime {
                     }
                 }
             };
-            let recovery_rollback_claim = claimed.clone();
-            let claimed = match self
-                .publish_attached_recovery(&replica, &authority, claimed, &recovery_store)
-                .await
-            {
-                Ok(claimed) => claimed,
-                Err(error) => {
-                    match rollback_failed_acquisition(
-                        &rollback_authority,
-                        &recovery_rollback_claim,
-                        &rollback_replica,
-                        rollback_node_lease.clone(),
-                    )
-                    .await
-                    {
-                        Ok(()) => return Err(error),
-                        Err(cleanup) => return Err(cleanup),
-                    }
-                }
-            };
-            let rollback_claim = claimed.clone();
-            let activation = async {
-                authority
-                    .retain_acquisition(current.value(), claimed.value())
-                    .await?;
-                if let Some(observer) = &observer {
-                    observer
-                        .before_activation(current.value(), claimed.value())
-                        .await?;
-                }
-                self.activate_restored_reserved(
+            return self
+                .finish_takeover_restored(TakeoverActivation {
                     catalog,
                     replica,
                     authority,
+                    input: current.value().clone(),
                     claimed,
+                    recovery_store,
                     destination,
                     reservation,
-                    None,
-                )
-                .await
-            }
-            .await;
-            return match activation {
-                Ok(handle) => Ok(handle),
-                Err(error) => {
-                    match rollback_failed_acquisition(
-                        &rollback_authority,
-                        &rollback_claim,
-                        &rollback_replica,
-                        rollback_node_lease,
-                    )
-                    .await
-                    {
-                        Ok(()) => Err(error),
-                        Err(cleanup) => Err(cleanup),
-                    }
-                }
-            };
+                    node_lease: rollback_node_lease,
+                    observer,
+                })
+                .await;
         }
     }
 
-    async fn publish_attached_recovery(
+    pub(super) async fn publish_attached_recovery(
         &self,
         replica: &cellule_ltx::CellReplica,
         authority: &CellAuthority,
@@ -645,7 +600,7 @@ impl CellRuntime {
         }
     }
 
-    async fn activate_restored_reserved(
+    pub(super) async fn activate_restored_reserved(
         &self,
         catalog: CatalogProof,
         replica: cellule_ltx::CellReplica,
@@ -799,7 +754,7 @@ impl CellRuntime {
         Ok(())
     }
 
-    fn activation_cell(
+    pub(super) fn activation_cell(
         &self,
         catalog: &CatalogProof,
         observed: &VersionedControl,
@@ -880,7 +835,7 @@ impl CellRuntime {
         })
     }
 
-    async fn replica_with_directory_cache(
+    pub(super) async fn replica_with_directory_cache(
         &self,
         replica: cellule_ltx::CellReplica,
         destination: &Path,

@@ -746,6 +746,14 @@ them. If ordinary acquisition already won, replay verifies the current actor
 against the same history. Missing, corrupt, or substituted history leaves Unknown
 and the full charge. Fresh inspection performs no evidence writes or acquisition.
 
+If an interrupted takeover still owns a Recovering control with its pinned
+overlay, replay supplies the original retained control and failed-session proof
+to `resume_takeover_restored_observed`. That shared native path reconfirms the
+original basis, materializes the same suffix and records the result before actor
+admission, without another ownership epoch. Failed-source Recover and routed
+receiver Activate use this continuation. A current claim that does not derive
+exactly from the original checked input remains unresolved.
+
 The application authenticates management requests. The journal atomically
 checks the current controller epoch, head, permit, intent, endpoint, and
 deadline when first accepting an action. `AcceptedFleetAction` validates its
