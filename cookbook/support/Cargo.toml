@@ -1,4 +1,5 @@
 [package]
+workspace = ".."
 name = "cellule-cookbook-support"
 version.workspace = true
 edition.workspace = true
