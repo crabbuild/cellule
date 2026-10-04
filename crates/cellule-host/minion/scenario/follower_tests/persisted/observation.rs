@@ -2,8 +2,9 @@
 use super::super::{aggregate, coverage};
 use super::*;
 use cellule_host::fleet::{
-    FleetActionCompletion, FleetAdapterFuture, FleetFollowerEvacuationCheck, FleetObservation,
-    FleetObserver, FleetRoleCoverage, FleetRoster, FleetTransport,
+    FleetActionCompletion, FleetAdapterFuture, FleetFollowerEvacuationCheck,
+    FleetMaintenanceEnrollments, FleetObservation, FleetObserver, FleetRoleCoverage, FleetRoster,
+    FleetTransport,
 };
 use cellule_runtime::fleet::operations::{
     FleetAction, FleetInspectionObservation, FleetInspectionRequest,
@@ -64,7 +65,7 @@ struct Observer {
 impl FleetObserver for Observer {
     fn observe<'a>(
         &'a self,
-        _: &'a FleetRoster,
+        roster: &'a FleetRoster,
         _: i64,
         end: Instant,
     ) -> FleetAdapterFuture<'a, FleetObservation> {
@@ -79,11 +80,25 @@ impl FleetObserver for Observer {
                 )
                 .await?;
             let graph = graph(&self.fixture).await;
-            Ok(
-                observation(&check, &graph, advertisements(&self.fixture).await)
-                    .with_role_coverage(graph)?
-                    .with_role_evacuations(Vec::new(), vec![check])?,
+            let original = FleetMaintenanceEnrollments::collect(
+                self.fixture.native.journal.as_ref(),
+                roster,
+                end,
+                clock,
             )
+            .await?;
+            let observation = observation(&check, &graph, advertisements(&self.fixture).await)
+                .with_role_coverage(graph)?
+                .with_role_evacuations(Vec::new(), vec![check])?
+                .with_maintenance_enrollments(original)?
+                .check_maintenance_policies(roster, clock()?)?;
+            assert!(
+                observation
+                    .maintenance_policy_coverage()
+                    .unwrap()
+                    .is_complete()
+            );
+            Ok(observation)
         })
     }
 }
@@ -121,6 +136,15 @@ async fn follower_evacuation_observation_retains_native_policy_and_role_graph_in
         assert_eq!(graph.native_boots(), 4);
         assert_eq!(graph.physical_nodes(), 4);
         let interval = check.interval();
+        let roster = aggregate::roster(&fixture).await;
+        let original = FleetMaintenanceEnrollments::collect(
+            fixture.native.journal.as_ref(),
+            &roster,
+            deadline(),
+            clock,
+        )
+        .await
+        .unwrap();
         let base = observation(&check, &graph, advertisements(&fixture).await);
         let retained = if policy_first {
             base.with_role_evacuations(Vec::new(), vec![check])
@@ -133,6 +157,18 @@ async fn follower_evacuation_observation_retains_native_policy_and_role_graph_in
                 .with_role_evacuations(Vec::new(), vec![check])
                 .unwrap()
         };
+        let retained = retained
+            .with_maintenance_enrollments(original)
+            .unwrap()
+            .check_maintenance_policies(&roster, clock().unwrap())
+            .unwrap();
+        let policy = retained.maintenance_policy_coverage().unwrap();
+        assert!(policy.is_complete());
+        assert_eq!(policy.obligations().len(), 1);
+        assert_eq!(
+            policy.obligations()[0].status(),
+            cellule_host::fleet::FleetMaintenancePolicyStatus::Follower(record.digest().unwrap())
+        );
         let proof = &retained.follower_evacuations().unwrap()[0];
         assert_eq!(proof.record(), &record);
         assert_eq!(proof.record_digest(), record.digest().unwrap());
@@ -175,6 +211,18 @@ async fn follower_evacuation_observation_retains_native_policy_and_role_graph_in
     assert_eq!(observer.observations.load(Ordering::Acquire), 1);
     assert_eq!(observer.effects.load(Ordering::Acquire), 0);
     assert_eq!(report.allocated, 0);
+    let policy = report.maintenance_policy.unwrap();
+    assert_eq!(policy.required, 1);
+    assert_eq!(policy.checked, 1);
+    assert_eq!(
+        policy.pending
+            + policy.established
+            + policy.missing_policy
+            + policy.source_successors
+            + policy.unproven_nonexecution,
+        0
+    );
+    assert_eq!(policy.registry, report.snapshot.registry());
     assert!(
         report
             .blockers

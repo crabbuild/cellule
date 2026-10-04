@@ -63,7 +63,9 @@ pub(super) async fn observe(
         None => observation,
     };
     Ok(match capture.maintenance_enrollments {
-        Some(original) => observation.with_maintenance_enrollments(original)?,
+        Some(original) => observation
+            .with_maintenance_enrollments(original)?
+            .check_maintenance_policies(roster, capture.finished)?,
         None => observation,
     })
 }

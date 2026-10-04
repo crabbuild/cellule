@@ -524,6 +524,32 @@ These five cases prove retention of existing per-role checks. Complete authentic
 policy coverage, failed-owner successor policy, accepted-work joining and full
 maintenance remain required; see the [host recipe](../docs/lifecycle.md#retain-current-reader-and-follower-replacement-checks).
 
+## Complete maintenance request-policy matching
+
+The observer checks the frozen original manifest against the full current roster
+and every attached native reader/follower policy. Terminal original rows stay
+required. New unresolved source requests after capture stay required. An exact
+Established original acceptance digest is checked against the donor history;
+self-consistent substituted history is refused. Matching preserves original
+intervals and exposes advisory progress at its own head/registry barrier.
+
+The journal cases cover absent history, committed zero, terminal policy gaps,
+source succession, unproven nonexecution, new Pending/Established requests and an
+older head with an unchanged registry. Actual reader cases expose omitted policy
+and reject substituted original history; actual follower cases consume rotated
+native ensembles through the public reconciler. Both remain incomplete node
+observations and start no effects merely because policy matching succeeds.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked maintenance_policies
+cargo test -p cellule-host --example fleet_operations --all-features --locked scenario::reader_tests::evacuation::persisted::observation
+cargo test -p cellule-host --example fleet_operations --all-features --locked scenario::follower_tests::persisted::observation
+```
+
+Complete authenticated lookup, source/failed-owner successor policy, checked
+nonexecution, accepted-work joining and SettleRoles/Finalize remain delivery
+requirements. See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
+
 ## Failed reader lifetime evidence
 
 The `failed_reader_closure` cases use application-owned enrollments around two

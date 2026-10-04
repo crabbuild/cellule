@@ -21,7 +21,12 @@ mod inventory;
 mod journal;
 mod maintenance;
 mod maintenance_enrollments;
+mod maintenance_policies;
 pub use maintenance_enrollments::FleetMaintenanceEnrollments;
+pub use maintenance_policies::{
+    FleetMaintenancePolicyCoverage, FleetMaintenancePolicyObligation,
+    FleetMaintenancePolicyProgress, FleetMaintenancePolicyStatus,
+};
 mod movement;
 mod reader_evacuation;
 mod reconciler;

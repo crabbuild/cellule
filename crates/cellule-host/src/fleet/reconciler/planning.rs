@@ -43,6 +43,9 @@ impl FleetReconciler {
         });
         let observation = observation.with_roster(roster)?;
         let mut placements = observation.placements(now)?;
+        report.maintenance_policy = observation
+            .maintenance_policy_coverage()
+            .map(|coverage| coverage.progress());
         let inventory_complete = observation.complete
             && boot_complete
             && enrollment_settled

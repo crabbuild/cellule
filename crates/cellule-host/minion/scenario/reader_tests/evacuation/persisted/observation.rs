@@ -105,11 +105,17 @@ impl FleetObserver for Observer {
                 .recheck(self.journal.as_ref(), &self.record, end, clock)
                 .await?;
             assert_eq!(check.record(), &self.record);
-            Ok(
-                observation(&check, start, advertisements(&self.directory).await)
-                    .with_role_evacuations(vec![check], Vec::new())?
-                    .with_maintenance_enrollments(original)?,
-            )
+            let observation = observation(&check, start, advertisements(&self.directory).await)
+                .with_role_evacuations(vec![check], Vec::new())?
+                .with_maintenance_enrollments(original)?
+                .check_maintenance_policies(roster, clock()?)?;
+            assert!(
+                observation
+                    .maintenance_policy_coverage()
+                    .unwrap()
+                    .is_complete()
+            );
+            Ok(observation)
         })
     }
 }
@@ -176,6 +182,18 @@ async fn reader_evacuation_observation_retains_reconstructed_policy_through_publ
     assert_eq!(observer.observations.load(Ordering::Acquire), 1);
     assert_eq!(observer.effects.load(Ordering::Acquire), 0);
     assert_eq!(report.allocated, 0);
+    let policy = report.maintenance_policy.unwrap();
+    assert_eq!(policy.required, 1);
+    assert_eq!(policy.checked, 1);
+    assert_eq!(
+        policy.pending
+            + policy.established
+            + policy.missing_policy
+            + policy.source_successors
+            + policy.unproven_nonexecution,
+        0
+    );
+    assert_eq!(policy.registry, report.snapshot.registry());
     assert!(
         report
             .blockers
@@ -409,5 +427,151 @@ async fn original_reader_set_refuses_same_registry_with_an_earlier_head_in_publi
     assert_eq!(observer.observations.load(Ordering::Acquire), 1);
     assert_eq!(observer.effects.load(Ordering::Acquire), 0);
     drop((driver, observer, capture));
+    fixture.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actual_retired_reader_cannot_be_hidden_by_a_subset_of_policy_checks() {
+    let fixture = Fixture::new().await;
+    fixture.spare().await;
+    let capture = fixture.evacuate().await.unwrap();
+    let publication = fixture.publish(&capture).await;
+    let record = publication.record().unwrap();
+    let mut digests = Vec::new();
+    for attach_policy in [false, true] {
+        let start = clock().unwrap();
+        let original = original_set(&fixture).await;
+        let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+        let roster = FleetRoster::collect(fixture.journal.as_ref(), &snapshot, deadline())
+            .await
+            .unwrap();
+        let check = fixture
+            .verifier()
+            .recheck(fixture.journal.as_ref(), record, deadline(), clock)
+            .await
+            .unwrap();
+        let base = observation(&check, start, advertisements(&fixture.directory).await);
+        let base = if attach_policy {
+            base.with_role_evacuations(vec![check], Vec::new()).unwrap()
+        } else {
+            base
+        };
+        let checked = base
+            .with_maintenance_enrollments(original)
+            .unwrap()
+            .check_maintenance_policies(&roster, clock().unwrap())
+            .unwrap();
+        let coverage = checked.maintenance_policy_coverage().unwrap();
+        assert_eq!(coverage.is_complete(), attach_policy);
+        assert_eq!(coverage.obligations().len(), 1);
+        let row = &coverage.obligations()[0];
+        assert_eq!(row.original(), Some(&fixture.original));
+        assert_eq!(row.current(), record.retired());
+        assert_eq!(
+            row.status(),
+            if attach_policy {
+                cellule_host::fleet::FleetMaintenancePolicyStatus::Reader(record.digest().unwrap())
+            } else {
+                cellule_host::fleet::FleetMaintenancePolicyStatus::MissingPolicy
+            }
+        );
+        digests.push(coverage.digest());
+    }
+    assert_ne!(digests[0], digests[1]);
+    drop(capture);
+    fixture.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checked_reader_policy_cannot_substitute_a_different_original_acceptance_digest() {
+    let fixture = Fixture::new().await;
+    fixture.spare().await;
+    let capture = fixture.evacuate().await.unwrap();
+    let publication = fixture.publish(&capture).await;
+    let record = publication.record().unwrap();
+    let mut replacements = Vec::new();
+    for digest in record.pages() {
+        replacements.extend(
+            fixture
+                .journal
+                .load_reader_evacuation_page(scope(), *digest)
+                .await
+                .unwrap()
+                .unwrap()
+                .entries()
+                .iter()
+                .cloned(),
+        );
+    }
+    let (changed, pages) = ReaderEvacuationRecord::new(
+        record.operation().clone(),
+        (record.head_digest(), record.registry()),
+        record.retired().clone(),
+        Digest::from_bytes([222; 32]),
+        record.authority().clone(),
+        record.policy_revision(),
+        record.desired_readers(),
+        record.minimum_sequence(),
+        record.interval(),
+        replacements,
+    )
+    .unwrap();
+    let replacement = changed.clone();
+    let database = fixture.root.path().join("evacuation.sqlite");
+    tokio::task::spawn_blocking(move || {
+        let mut connection = rusqlite::Connection::open(database).unwrap();
+        let tx = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        // Inject self-consistent damaged historical metadata. Current authority,
+        // native reader readiness, request identity and the original set stay intact.
+        for page in pages {
+            tx.execute(
+                "INSERT INTO reader_evacuation_pages(key,body) VALUES(?1,?2)",
+                rusqlite::params![page.digest()?.as_bytes().as_slice(), page.to_bytes()?],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO reader_evacuations(key,body) VALUES(?1,?2)",
+            rusqlite::params![
+                replacement.digest()?.as_bytes().as_slice(),
+                replacement.to_bytes()?
+            ],
+        )?;
+        tx.execute(
+            "UPDATE latest_reader_evacuations SET witness=?1 WHERE operation=?2 AND original=?3",
+            rusqlite::params![
+                replacement.digest()?.as_bytes().as_slice(),
+                replacement.operation().id().as_bytes().as_slice(),
+                replacement.retired().spec().key()?.as_bytes().as_slice()
+            ],
+        )?;
+        tx.commit()?;
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    let start = clock().unwrap();
+    let original = original_set(&fixture).await;
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let roster = FleetRoster::collect(fixture.journal.as_ref(), &snapshot, deadline())
+        .await
+        .unwrap();
+    let check = fixture
+        .verifier()
+        .recheck(fixture.journal.as_ref(), &changed, deadline(), clock)
+        .await
+        .unwrap();
+    let base = observation(&check, start, advertisements(&fixture.directory).await)
+        .with_role_evacuations(vec![check], Vec::new())
+        .unwrap()
+        .with_maintenance_enrollments(original)
+        .unwrap();
+    assert!(matches!(
+        base.check_maintenance_policies(&roster, clock().unwrap()),
+        Err(Error::Fenced)
+    ));
+    drop(capture);
     fixture.finish().await;
 }

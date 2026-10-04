@@ -13,7 +13,8 @@ use tokio::time::{Instant, timeout_at};
 
 use super::actions::operation;
 use super::{
-    FleetActionCompletion, FleetAdapterFuture, FleetJournal, FleetJournalSnapshot, FleetRoster,
+    FleetActionCompletion, FleetAdapterFuture, FleetJournal, FleetJournalSnapshot,
+    FleetMaintenancePolicyProgress, FleetRoster,
 };
 
 mod maintenance;
@@ -100,6 +101,10 @@ pub struct FleetReconcileReport {
     /// Original maintenance endpoint error, independent of movement failures.
     /// Its durable intent and phase remain retained for a later pass.
     pub maintenance_failure: Option<Arc<Error>>,
+    /// Advisory policy request counts at their original head/registry/interval.
+    /// None means no complete request matching was retained, never zero gaps.
+    /// Later movement may advance `snapshot`; these counts grant no drain rights.
+    pub maintenance_policy: Option<FleetMaintenancePolicyProgress>,
     /// Suggested logical wake time; an application event may wake sooner.
     pub next_wake_at_ms: i64,
 }
@@ -201,6 +206,7 @@ impl FleetReconciler {
             blockers: Vec::new(),
             failures: Vec::new(),
             maintenance_failure: None,
+            maintenance_policy: None,
             next_wake_at_ms: now_ms
                 .checked_add(self.profile.reconcile_interval_ms)
                 .ok_or(Error::Control("fleet wake time overflow"))?,

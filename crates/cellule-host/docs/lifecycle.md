@@ -923,7 +923,7 @@ ensembles. Signed replacement boots must match the existing producer-specific
 identity; a changed writer row or follower epoch/ensemble invalidates the input.
 Attachment order with role coverage, writer successors or failed-boot closure
 does not change these checks. The reconciler repeats the roster comparison.
-Planner digest v9 binds collection presence, canonical record order, full
+Planner digest v10 binds collection presence, canonical record order, full
 barriers, fresh intervals, current authority, reader prefixes and retained native
 follower inventories. Persisted history, enrollment and transport codecs are unchanged.
 
@@ -948,7 +948,7 @@ fresh complete roster, and reconfirms the full journal snapshot. Retiring rows,
 extending a deadline or adopting a successor boot preserves the first set.
 `FleetObservation::with_maintenance_enrollments` retains this evidence inside the
 outer interval and compares the exact head, registry and roster with other checks,
-in either attachment order. Planner digest v9 binds its presence and full digest.
+in either attachment order. Planner digest v10 binds its presence and full digest.
 
 A missing manifest or page remains unknown. A committed empty manifest proves
 only that the original unresolved role set was empty at the phase transaction.
@@ -962,6 +962,51 @@ obligations in the full roster and native graph. Neither this metadata nor a
 supplied subset of evacuation checks grants complete policy/work coverage,
 SettleRoles or Finalize. Failed-owner successor policy, durable unknown actions
 and native/external accepted work must still be collected and settled.
+
+### Match every required maintenance policy
+
+After collecting the immutable original set and all available current native
+policy checks, match them against the same complete `FleetRoster`:
+
+```rust
+fn match_maintenance_policy(
+    observation: cellule_host::fleet::FleetObservation,
+    roster: &cellule_host::fleet::FleetRoster,
+    now_ms: i64,
+) -> cellule_runtime::Result<cellule_host::fleet::FleetObservation> {
+    observation.check_maintenance_policies(roster, now_ms)
+}
+```
+
+Attach `with_maintenance_enrollments` and `with_role_evacuations` before this call.
+The matcher retains every original acceptance, including terminal current rows,
+plus every currently unresolved related reader/follower request. Each supplied
+check must match the entire current row; an originally Established donor also
+requires its exact original acceptance digest. Original Pending history remains
+Pending history when the current row advances. A caller-selected subset cannot
+supply complete request coverage.
+
+| Result | Meaning |
+| --- | --- |
+| `Reader` / `Follower` | Exact current role and fresh native replacement policy checked. |
+| `Pending` / `Established` | Accepted native outcome or installed role still unresolved. |
+| `MissingPolicy` | Retired donor lacks current replacement policy evidence. |
+| `SourceSuccessor` | Source-side or failed-owner policy still needs separate evidence. |
+| `UnprovenNonexecution` | Closed unknown acceptance lacks checked nonexecution or policy evidence. |
+
+Missing original history refuses matching. Explicit zero requires a committed
+empty original manifest and no currently unresolved related requests.
+`maintenance_policy_coverage()` exposes the exact original/current obligations;
+`FleetReconcileReport::maintenance_policy` supplies bounded advisory counts with
+their own head revision, registry and original interval. `None` means unknown.
+Later allocations cannot restamp these counts to the report's newer snapshot.
+Planner digest v10 binds the coverage digest and source inputs; changing the
+attached policy collections after matching is refused.
+
+`is_complete()` describes only enumerated request-policy coverage. It does not
+prove unjournaled native-role absence, source/failed-owner succession, accepted
+work joining, host Stopped or withdrawal. Full node observation and those barriers
+remain required; matching grants no SettleRoles/Finalize rights.
 
 ## Caller driven fleet reconciliation
 

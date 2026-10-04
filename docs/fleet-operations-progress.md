@@ -4,6 +4,87 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 maintenance policy matching checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`, as confirmed by the user.
+
+`FleetObservation::check_maintenance_policies` now matches the complete immutable
+original capture and every currently unresolved related reader/follower request
+against all attached current native policy checks. Original terminal rows cannot
+disappear behind an empty current unresolved set. New source requests after
+capture stay required. Missing original history refuses matching; explicit zero
+requires a committed empty original manifest and no current unresolved requests.
+
+Every checked policy must name the exact full current row. An originally
+Established donor also requires its exact original acceptance digest; a
+self-consistent substituted historical digest is refused. Originally Pending
+acceptance remains retained separately when current progress advances. Full head,
+registry, roster and original fresh intervals are compared with other evidence.
+Changing the policy collections after matching is refused. Planner digest v10
+binds the canonical coverage and source inputs; persisted codecs are unchanged.
+
+Each obligation exposes checked Reader/Follower policy or an explicit Pending,
+Established, MissingPolicy, SourceSuccessor or UnprovenNonexecution gap. The public
+reconciler reports advisory counts with their own full head revision, registry
+and interval; later allocations cannot restamp them to a newer report snapshot.
+Absent coverage remains unknown. Request matching never upgrades complete node
+observation, joins accepted work or grants SettleRoles/Finalize rights.
+
+Four new journal cases cover absent history/explicit zero, retained terminal
+originals, source and unknown-nonexecution gaps, new Pending/Established source
+requests, duplicate matching, changed evidence inputs and an older full head
+with an unchanged registry. Two new actual-reader cases expose a supplied subset
+and reject substituted original acceptance history. Existing public reader and
+follower cases consume coverage and its counts, retaining actual ready readers
+and rotated native ensembles in both attachment orders. Incomplete observations
+still start no effects. Removing only the original-digest guard in the isolated
+snapshot makes the damaged-history regression fail; the qualified guard is restored.
+
+### Verification and CI
+
+All 13 fresh Rust commands and nine static gates pass on the isolated Rust 1.99
+snapshot `/tmp/cellule-maintenance-policies-8c49a81`, using its mounted target.
+The framework passes 1,679 tests with zero failures and 36 documented ignores;
+minion passes all 289 cases. These are **1,968 distinct passes**, excluding focused
+repeats and overlapping local LTX. Local LTX passes 54 tests, Axum without default
+features passes 16, and the fresh cookbook passes 256 plus check, Clippy,
+warning-denied docs and binary builds. All 133 Rust snippets parse and 1,279 local
+links resolve. All 1,102 Rust/Cargo paths match manifest SHA256
+`d908574b3211444144f0e5d0e0b0ece8596467a54d53443499668a2038420d3d`.
+Frozen source, commands, preliminary compile repairs, original negative regression,
+restored verification and original routing artifacts are retained under
+`/tmp/cellule-maintenance-policies-evidence`.
+
+Published parent `8c49a81` is MERGEABLE and has 31 successful checks, three failed
+routing checks and three documented skips. Follower/object capacity, workspace,
+MSRV, contract, cookbook quality/scenarios, Compose smoke, model, website and fuzz
+pass. Both ordinary routing profiles fail, so their aggregate fails. Leased
+local-command throughput is 88.52% of baseline; leased expired-query p99 is
+2.03 times baseline. Object-only forwarded-command throughput is 87.41%.
+
+Both original 178-file campaigns, frozen binaries/source, stage TSVs, job log,
+manifests and hashes are retained. Replaying every original measurement through
+the unchanged comparator reproduces all three gates. Candidate preparation means
+are higher in all four failing command pairs, with varying margins. The leased
+expired-query candidate p99 is also higher in all four pairs. Publication cost,
+runner/service variation and execution order remain hypotheses; no independent
+cause is established. The earlier same-source control and passing `617819a`
+campaigns remain retained and do not qualify this failed head. No gate, profile,
+expected evidence or deadline was weakened. The new head requires fresh CI.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Diagnose and fix ordinary routing qualification, then qualify the new head through both profiles and their aggregate. Keep all failed evidence. |
+| 1 | Complete authenticated policy lookup, source/failed-owner successor policy and checked nonexecution for every enumerated request. Complete durable unknown actions and native/external accepted-work coverage. |
+| 2 | Implement SettleRoles/Finalize with original action joining before terminal drain handoff, native Stopped, withdrawal, boot retirement and committed completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider faults, mixed binaries and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The full W1–W10 plan remains active and unfinished. SettleRoles/Finalize remain refused.
+
 ## October 3 2026 original maintenance enrollment checkpoint
 
 The canonical executable is `crates/cellule-host/minion`, Cargo target
