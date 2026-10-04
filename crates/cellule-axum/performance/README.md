@@ -17,6 +17,11 @@ a consistent multicell gain. These are single-host RustFS measurements with
 fixed budgets, not evidence of horizontal scaling. Each Cell has an independent
 SQLite database; SQL workers and provider capacity are shared.
 
+Additional cost and qualification evidence:
+[root phase calibration](2026-10-04-rustfs-root-phase-calibration.md),
+[compaction publication cost](2026-10-04-compaction-publication-cost.md), and
+[grouped routing](2026-10-04-rustfs-grouped-routing.md).
+
 Earlier measurements remain available for historical comparison:
 [initial HTTP](2026-10-03-rustfs-http.md),
 [multicell](2026-10-03-rustfs-multicell.md),
