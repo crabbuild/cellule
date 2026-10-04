@@ -61,8 +61,17 @@ jobs:
             # backports observations, never candidate scheduling changes.
             if git -C "$RUNNER_TEMP/axum-baseline-source" apply --check "$patch"; then
               git -C "$RUNNER_TEMP/axum-baseline-source" apply "$patch"
+            elif git -C "$RUNNER_TEMP/axum-baseline-source" apply --reverse --check "$patch"; then
+              :
             else
-              git -C "$RUNNER_TEMP/axum-baseline-source" apply --reverse --check "$patch"
+              # An instrumented baseline may have reorganized these files.
+              # Accept it only when every patch target already matches the
+              # candidate byte for byte; never copy candidate policy into it.
+              git apply --numstat "$patch" > "$RUNNER_TEMP/axum-evidence/telemetry-targets.tsv"
+              test -s "$RUNNER_TEMP/axum-evidence/telemetry-targets.tsv"
+              while IFS=$'\t' read -r added removed target; do
+                cmp "$GITHUB_WORKSPACE/$target" "$RUNNER_TEMP/axum-baseline-source/$target"
+              done < "$RUNNER_TEMP/axum-evidence/telemetry-targets.tsv"
             fi
             cp crates/cellule-axum/examples/sql_metrics/mod.rs \
               "$RUNNER_TEMP/axum-baseline-source/crates/cellule-axum/examples/sql_metrics/mod.rs"
