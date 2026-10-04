@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use cellule_app::{ApplicationHandle, CellApplication, CompiledApplication};
+use cellule_app::{ApplicationBinding, ApplicationHandle, CellApplication, CompiledApplication};
 use cellule_host::{CellNode, CellNodeBuilder, CellNodeTaskGroup};
 use cellule_ltx::{CellReplica, DiskBudget, Host, Limits};
 use cellule_runtime::{
@@ -297,15 +297,13 @@ impl LocalNode {
         &self,
         tenant: TenantId,
     ) -> Result<ApplicationHandle<A>> {
-        Ok(self.node.application_handle(
-            CellClient::local_runtime(
-                self.node.application().registry(),
-                self.node.runtime(),
-                self.layout.clone(),
-            ),
-            tenant,
-            self.application_id,
-        )?)
+        Ok(self.application_binding::<A>()?.scope(tenant))
+    }
+
+    /// Binds a reusable typed application factory to this node's existing resources.
+    /// Authorize each tenant before creating a scoped capability from the binding.
+    pub fn application_binding<A: CellApplication>(&self) -> Result<ApplicationBinding<A>> {
+        Ok(self.node.bind_local_application(self.layout.clone())?)
     }
 
     /// Provisions or restores a declared Cell, serializing concurrent local acquisition.

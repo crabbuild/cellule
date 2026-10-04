@@ -1,8 +1,8 @@
 mod application;
 mod auth;
 mod journal;
-mod proposal;
 mod recovery;
+mod service;
 
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ use utoipa::OpenApi as _;
 use application::{ORDERS, OrdersApp, ReadTotal, SetTotal};
 use auth::{ALPHA, BETA, ReadOrders, WriteOrders};
 use journal::Journal;
-use proposal::ServiceNode;
+use service::ServiceNode;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
 

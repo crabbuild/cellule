@@ -72,10 +72,7 @@ impl<const WRITE: bool> FromRequestParts<Arc<ServiceState>> for Authorized<WRITE
             return Err(StatusCode::SERVICE_UNAVAILABLE.into_response());
         }
         // Client headers/body cannot replace the authenticated tenant or target.
-        let app = state
-            .node
-            .scope::<OrdersApp>(principal.tenant)
-            .map_err(|error| HttpError::internal(error).into_response())?;
+        let app = state.node.scope(principal.tenant);
         let target = app
             .target_for_scope(ORDERS, b"orders")
             .map_err(|error| HttpError::from(error).into_response())?;

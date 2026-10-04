@@ -1,16 +1,24 @@
 # Topology and descriptors
 
-```mermaid
-flowchart TD
-    Namespace[Stable namespace ID] --> CellType[CellType]
-    Role[Catalog role] --> CellType
-    Partition[Fixed shard or entity key] --> CellType
-    CellType --> Descriptor[Compiled descriptor digest]
-    Descriptor --> Routing[Typed client routing]
+```text
+Module descriptor                  CellBinding
+role + shards + schema range       stable namespace + name + partition + limits
+                 │                        │
+                 └──────────┬─────────────┘
+                            ▼
+                  ApplicationBuilder::module
+                            │
+                            ▼
+                  canonical CellType descriptor
+                            │
+                            ▼
+                      typed client routing
 ```
 
 | Surface | Contract |
 | --- | --- |
+| `CellBinding` | Explicit namespace, Cell name, partition mode and optional limits; role, shards and schema range come from the module. |
+| `ApplicationBuilder::module` | Registers a module and all namespace bindings together; validates topology before invoking registration hooks. |
 | `CellType::new` | Declares module, name, namespace, role, and shard count. |
 | Fixed shards | Scope hashes to one declared shard. |
 | `with_entity_partitions` | One declared shard; canonical entity key derives a 33-byte partition. |
@@ -21,6 +29,10 @@ flowchart TD
 
 Changing a stable namespace, role, partition scheme, or descriptor changes
 routing and persisted identity. Treat it as a versioned application change.
+`CellBinding::sharded`, `entity`, and `entity_uuid` preserve the existing
+partition versions and canonical descriptor encoding. The final compiler still
+checks the module registry against every topology declaration. Keep the explicit
+`register`/`cell_type` path when composing declarations independently.
 Fixed shards use partition version 1, hashed entity keys use version 2, and
 direct UUID partitions use version 3. These schemes have distinct descriptor
 bytes. UUID keys must be 16 bytes with a recognized version (1 through 8)

@@ -1,9 +1,11 @@
 # Application builder → Axum service
 
-A complete embedding application illustrating the proposed builder ergonomics.
-Run it against the current Cellule checkout; no framework API implementation is
-assumed. The conveniences are implemented locally in [proposal.rs](src/proposal.rs)
-and delegate to the existing application compiler and cookbook host assembly.
+A complete embedding application using native Cellule registration and scoped
+handle factories. `CellBinding`, `ApplicationBuilder::module`, and
+`ApplicationBinding` belong to [cellule-app](../../crates/cellule-app/README.md);
+the local binding method belongs to [cellule-host](../../crates/cellule-host/README.md).
+Application-owned startup and tenant provisioning remain in
+[service.rs](src/service.rs), using the existing cookbook host assembly.
 
 ```text
 Orders module + Cell binding
@@ -27,7 +29,7 @@ Shutdown: stop HTTP → finish requests → drain node → withdraw enrollment
 | File | Responsibility |
 | --- | --- |
 | [application.rs](src/application.rs) | Declare the SQL module, migration, command/query contracts, and application binding. |
-| [proposal.rs](src/proposal.rs) | Prototype `builder.module`, explicit fixed-shard `CellBinding`, node startup, handle factory, and shutdown. |
+| [service.rs](src/service.rs) | Application startup and provisioning policy; retain one native `ApplicationBinding` for all authorized requests. |
 | [auth.rs](src/auth.rs) | Authenticate a credential, authorize read/write access, then derive a scoped handle and target. |
 | [journal.rs](src/journal.rs) | Atomically retain the prepared snapshot and exact encoded input before dispatch. |
 | [recovery.rs](src/recovery.rs) | Resolve original evidence; replay only after authoritative absence. |
@@ -37,7 +39,7 @@ Shutdown: stop HTTP → finish requests → drain node → withdraw enrollment
 descriptor. Namespace identity, Cell name, limits, and fixed-shard partition
 selection remain explicit. `ApplicationBuilder::finish` still performs the
 canonical whole-application validation. Treat any registration error as a
-failed compilation; this helper does not roll back a partially mutated builder.
+failed compilation; typed registration hooks are not rolled back.
 
 `ServiceNode` wraps the cookbook's `LocalNode`, which owns one `CellNode` and
 one runtime. The host owns directory enrollment, lease renewal, supervision,
@@ -64,8 +66,9 @@ publication here is relative to that provider's lifetime. For persistent
 service state, supply a durable, successfully probed `Store`, stable application
 identity, persistent state/journal directories, and the service's actual
 identity and authorization implementation. The cookbook host is a single-node
-recipe supporting schema version one; this prototype is not the general
-production host startup API proposed for `cellule-host`.
+recipe supporting schema version one. Managed host startup and general Cell
+activation/recovery remain a later framework stage; the registration and
+scoped-binding building blocks used here are framework APIs.
 
 ## Call the service
 

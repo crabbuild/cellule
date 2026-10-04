@@ -1,14 +1,12 @@
 use std::sync::OnceLock;
 
-use cellule_app::{ApplicationBuilder, CellApplication};
+use cellule_app::{ApplicationBuilder, CellApplication, CellBinding};
 use cellule_runtime::{
     CatalogRole, CellModule, Command, Digest, MigrationDescriptor, ModuleDescriptor,
     NamespaceDescriptor, NamespaceId, Query, RegistryBuilder,
     primitives::sql::{SqlBatch, SqlStatement, SqlValue},
     registry::{CommandContext, CommandResult, OperationDescriptor, QueryContext},
 };
-
-use crate::proposal::{ApplicationBuilderExt, CellBinding};
 
 pub const ORDERS: NamespaceId = NamespaceId::from_bytes([23; 16]);
 const SCHEMA: &str = "CREATE TABLE totals (id INTEGER PRIMARY KEY, cents INTEGER NOT NULL)";

@@ -3,13 +3,24 @@
 `CellNode` owns one runtime, its admission ledger, facilities, and task group.
 An application supplies identity, provider, ingress, and authorization.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Starting
-    Starting --> Ready: lease and required components installed
-    Ready --> Draining: stop admission and producers
-    Draining --> Closing: accepted work drained
-    Closing --> Stopped: close log and withdraw session
+Use `node.bind_local_application::<A>(layout)` once during composition to get an
+`ApplicationBinding<A>` over the node's existing runtime. The supplied layout
+determines the installation ID. Keep the factory in trusted service state and
+call `binding.scope(tenant)` after authorizing the caller. It creates no runtime,
+acquires no Cell, and leaves readiness and drain with the original node.
+
+`bind_application` accepts an already configured client, including an
+application-owned remote transport. Both paths reject mismatched application
+types and client registries. See the
+[complete embedding service](../../examples/application-builder-service/README.md)
+for scoped Axum routes and OpenAPI using these bindings.
+
+```text
+Starting → Ready → Draining → Closing → Stopped
+           │         │          │         │
+       lease and     stop      accepted  close log;
+       components  admission     work    withdraw
+       installed  + producers  drained    session
 ```
 
 | Guide | Topic |

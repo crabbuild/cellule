@@ -128,10 +128,11 @@ impl CellNode {
         tenant: TenantId,
         application: ApplicationId,
     ) -> cellule_runtime::Result<ApplicationHandle<A>> {
-        ApplicationHandle::new(client, Arc::clone(&self.application), tenant, application)
+        Ok(self.bind_application(client, application)?.scope(tenant))
     }
 }
 
+mod application;
 mod components;
 mod drain;
 mod fleet;

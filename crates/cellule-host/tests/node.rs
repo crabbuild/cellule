@@ -101,6 +101,7 @@ mod node {
         Arc::new(builder.finish().unwrap())
     }
 
+    pub mod application;
     pub mod builder;
     pub mod components;
     pub mod durability;
