@@ -194,6 +194,7 @@ async fn joined_close_detaches_native_snapshots_from_retained_peer_clones() {
     let fixture = opened(fixture_for(b"reader-close-retained-clones")).await;
     let peer = fixture.reader.clone();
     let receipt = fixture.reader.receipt().await;
+    let root = fixture.reader.lifecycle_observation().await.root();
     assert!(fixture.original.exists());
     let (first, duplicate) = tokio::join!(fixture.reader.close_and_join(), peer.close_and_join(),);
     assert_eq!((first, duplicate), (receipt, receipt));
@@ -201,6 +202,7 @@ async fn joined_close_detaches_native_snapshots_from_retained_peer_clones() {
     let joined = peer.lifecycle_observation().await;
     assert!(joined.locally_joined());
     assert_eq!(joined.receipt(), receipt);
+    assert_eq!(joined.root(), root);
     assert!(!fixture.original.exists());
     empty(&fixture.runtime);
     assert!(matches!(
@@ -255,6 +257,7 @@ async fn joined_close_keeps_old_native_query_owned_after_query_or_close_waiter_c
             .unwrap();
         let replacement = fixture.fixture._directory.path().join("new-reader.sqlite");
         let receipt = fixture.reader.refresh(&replacement).await.unwrap();
+        let root = fixture.reader.lifecycle_observation().await.root();
         let peer = fixture.reader.clone();
         let mut closing = Box::pin(fixture.reader.close_and_join());
         let first_pending = futures_util::poll!(closing.as_mut()).is_pending();
@@ -286,6 +289,7 @@ async fn joined_close_keeps_old_native_query_owned_after_query_or_close_waiter_c
         assert!(joining.admission_closed() && !joining.snapshot_attached());
         assert!(joining.retained_lifetimes() > 0 && !joining.locally_joined());
         assert_eq!(joining.receipt(), receipt);
+        assert_eq!(joining.root(), root);
         assert!(peer.lifecycle_observation().await.locally_joined());
         assert!(first_pending && second_pending && old_retained && new_detached);
         assert_eq!(retained.worker_jobs(), 1);
@@ -294,7 +298,78 @@ async fn joined_close_keeps_old_native_query_owned_after_query_or_close_waiter_c
         empty(&fixture.runtime);
         finish(fixture).await;
         assert_eq!(peer.receipt().await, receipt);
+        assert_eq!(peer.lifecycle_observation().await.root(), root);
     }
+}
+
+#[tokio::test]
+async fn reader_lifecycle_retains_exact_installed_root_across_failed_refresh_and_join() {
+    let fixture = opened(fixture_for(b"reader-closed-root-identity")).await;
+    let peer = fixture.reader.clone();
+    let authority = CellAuthority::new(fixture.fixture.layout.clone());
+    let initial = authority
+        .load(fixture.fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let initial = initial.value().ltx_root().unwrap();
+    assert_eq!(peer.lifecycle_observation().await.root(), initial);
+    let committed = fixture
+        .handle
+        .execute(
+            crate::support::fixtures::mutation_identity(59),
+            Digest::from_bytes([60; 32]),
+            now_ms(),
+            64,
+            64,
+            |tx| {
+                tx.execute("UPDATE counter SET value = 19", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .await
+        .unwrap();
+    let fresh = authority
+        .load(fixture.fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let fresh = fresh.value().ltx_root().unwrap();
+    assert_ne!(fresh, initial);
+    assert_eq!(fresh.commit_sequence, committed.commit_sequence());
+    // A published source root does not change this view's exact installed root.
+    assert_eq!(peer.lifecycle_observation().await.root(), initial);
+    let destination = fixture
+        .fixture
+        ._directory
+        .path()
+        .join("root-refresh.sqlite");
+    std::fs::write(&destination, b"occupied").unwrap();
+    assert!(fixture.reader.refresh(&destination).await.is_err());
+    assert_eq!(peer.lifecycle_observation().await.root(), initial);
+    std::fs::remove_file(&destination).unwrap();
+    let receipt = fixture.reader.refresh(&destination).await.unwrap();
+    let refreshed = peer.lifecycle_observation().await;
+    assert_eq!(refreshed.root(), fresh);
+    assert_eq!(refreshed.receipt(), receipt);
+    assert_eq!(refreshed.root().commit_sequence, receipt.commit_sequence);
+    assert_eq!(
+        fixture
+            .reader
+            .query::<ReadCounter>(None, 0)
+            .await
+            .unwrap()
+            .output,
+        19
+    );
+    assert_eq!(peer.close_and_join().await, receipt);
+    assert!(!destination.exists());
+    let closed = fixture.reader.lifecycle_observation().await;
+    assert!(closed.locally_joined());
+    assert_eq!(closed.root(), fresh);
+    empty(&fixture.runtime);
+    finish(fixture).await;
+    assert_eq!(peer.lifecycle_observation().await, closed);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

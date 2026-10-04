@@ -340,7 +340,12 @@ pub async fn join_original_reader(
 ```
 
 The returned local capsule retains the original request/source, confirmed Retired
-row, final joined prefix and original bounded interval. Its copied records stay
+row, exact final installed root, final joined receipt and original bounded interval.
+The root survives snapshot detachment and includes its Cell/incarnation, digest,
+transaction position and commit sequence. Use the successor runtime's canonical
+`verify_root_prefix` path to prove derivation and current origin availability;
+matching or higher sequence counters alone do not prove that prefix.
+Its copied records stay
 charged to the shared node metadata ledger until dropped. The ordinary native
 closure joins accepted queries/refreshes and retained peer clones; publication
 uses the existing producer event and unchanged evidence format.

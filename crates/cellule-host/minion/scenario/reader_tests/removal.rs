@@ -51,6 +51,7 @@ async fn exact_reader_removal_joins_original_peer_clones_and_retains_confirmed_p
         .unwrap();
     let clone = reader.clone();
     let before = reader.receipt().await;
+    let root = reader.lifecycle_observation().await.root();
     fixture.read().await;
     let capture = fixture
         .manager
@@ -60,6 +61,7 @@ async fn exact_reader_removal_joins_original_peer_clones_and_retains_confirmed_p
     assert_eq!(capture.original(), &original);
     assert_eq!(capture.source().owner().session, session(0));
     assert_eq!(capture.receipt(), before);
+    assert_eq!(capture.root(), root);
     assert_eq!(capture.retired(), &fixture.rows().await[0]);
     assert_eq!(
         capture.retired().accepted_at_ms(),
@@ -354,12 +356,38 @@ async fn exact_reader_removal_joins_the_original_source_role_after_real_writer_h
         .resolve(fixture.target.clone())
         .await
         .unwrap();
-    let generation = fixture.source.idle_transfer_candidates().await.unwrap()[0].1;
+    let opened_root = reader.lifecycle_observation().await.root();
+    let now = clock().unwrap();
     fixture
-        .source
-        .release_idle_cell(fixture.target.cell_id(), session(0), generation)
+        .handle
+        .execute(
+            MutationIdentity {
+                request_id: RequestId::from_bytes([220; 16]),
+                issued_at_ms: now,
+                expires_at_ms: now + 30_000,
+            },
+            Digest::from_bytes([221; 32]),
+            now,
+            64,
+            64,
+            |tx| {
+                tx.execute("UPDATE counter SET value = 17", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
         .await
         .unwrap();
+    reader
+        .refresh(&fixture.root.path().join("handoff-reader-refresh.sqlite"))
+        .await
+        .unwrap();
+    let final_root = reader.lifecycle_observation().await.root();
+    assert_ne!(final_root, opened_root);
+    assert!(final_root.commit_sequence > opened_root.commit_sequence);
+    // This source has just accepted a command, so the ordinary idle-transfer
+    // grace correctly excludes it. Join and release this exact busy handle
+    // through canonical drain; do not shorten or bypass idle eligibility.
+    fixture.handle.drain().await.unwrap();
     let authority = CellAuthority::new(fixture.layout.clone());
     let idle = authority
         .load(fixture.target.cell_id())
@@ -384,15 +412,17 @@ async fn exact_reader_removal_joins_the_original_source_role_after_real_writer_h
     .unwrap();
     let successor = CellRuntime::new_with_replica_host(
         SqlWorkerPool::new(2, 8).unwrap(),
-        16 << 20,
+        // The newly exercised origin verifier reserves its ordinary bounded
+        // metadata envelope through this runtime, in addition to the writer.
+        64 << 20,
         session(2),
         Host::default().with_local_disk_budget(DiskBudget::new(8 << 30)),
     )
     .unwrap();
     let next = successor
         .acquire_idle_restored(
-            catalog,
-            replica,
+            catalog.clone(),
+            replica.clone(),
             authority.clone(),
             idle,
             fixture.root.path().join("successor.sqlite"),
@@ -425,6 +455,43 @@ async fn exact_reader_removal_joins_the_original_source_role_after_real_writer_h
     );
     assert_eq!(capture.source().owner().session, session(0));
     assert_eq!(capture.retired().status(), EnrollmentStatus::Retired);
+    assert_eq!(capture.root(), reader.lifecycle_observation().await.root());
+    assert_eq!(capture.root(), final_root);
+    assert_eq!(
+        capture.root().commit_sequence,
+        capture.receipt().commit_sequence
+    );
+    // Verify the retained exact native root through the successor's canonical
+    // origin path, rather than treating equal/higher counters as derivation.
+    let descendant = current.value().ltx_root().unwrap();
+    successor
+        .verify_root_prefix(
+            &catalog,
+            &authority,
+            replica.clone(),
+            capture.root(),
+            descendant,
+            10_000,
+        )
+        .await
+        .unwrap();
+    let substituted = cellule_runtime::ltx::RootRef {
+        digest: [219; 32],
+        ..capture.root()
+    };
+    assert!(
+        successor
+            .verify_root_prefix(
+                &catalog,
+                &authority,
+                replica,
+                substituted,
+                descendant,
+                10_000,
+            )
+            .await
+            .is_err()
+    );
     assert_joined(&fixture, &reader).await;
     // The local closure cannot erase the separately serving writer or report
     // any reader redundancy/physical maintenance completion.

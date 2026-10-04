@@ -331,6 +331,11 @@ cargo test -p cellule-host --example fleet_operations --all-features --locked \
 ```
 
 The local result retains native joining and the confirmed original terminal row.
+It also retains the exact last installed root after a real refresh and detachment.
+The handoff case verifies that final root through the successor's canonical origin
+path and rejects a substituted digest with unchanged scope and counters. Native
+reader inventory fingerprints bind every exact root field, including when the
+view is fenced or its snapshot has been detached.
 It does not certify current replacement policy, durable process exclusion or
 physical maintenance completion. Complete source/failed-owner policy and the
 production evidence/provider campaign remain required.

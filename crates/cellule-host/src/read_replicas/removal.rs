@@ -18,6 +18,7 @@ pub struct ReaderEnrollmentRetirement {
     source: ReadReplicaSource,
     retired: EnrollmentRecord,
     receipt: Receipt,
+    root: cellule_runtime::ltx::RootRef,
     interval: (i64, i64),
     _memory: NodeByteReservation,
 }
@@ -41,6 +42,13 @@ impl ReaderEnrollmentRetirement {
     #[must_use]
     pub const fn receipt(&self) -> Receipt {
         self.receipt
+    }
+    /// Exact final installed root retained through native joining and detachment.
+    /// Verify this immutable prefix against the actual successor; counters alone
+    /// cannot establish derivation. This grants no object retention pin.
+    #[must_use]
+    pub const fn root(&self) -> cellule_runtime::ltx::RootRef {
+        self.root
     }
     /// Original bounded interval, including activation-lane waiting and publication.
     #[must_use]
@@ -146,6 +154,7 @@ impl ReadReplicaManager {
                 source,
                 retired,
                 receipt,
+                root: closed.root(),
                 interval: (started, finished),
                 _memory: memory,
             })

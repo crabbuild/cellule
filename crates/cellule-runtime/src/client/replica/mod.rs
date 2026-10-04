@@ -46,7 +46,9 @@ pub struct CellReadReplica {
 }
 
 struct ReplicaState {
-    receipt: Receipt,
+    // Preserve the exact last installed root after snapshots are detached. A
+    // receipt alone cannot prove a successor derived this reader's final prefix.
+    root: cellule_ltx::RootRef,
     snapshot: Option<Arc<ReplicaSnapshot>>,
 }
 
@@ -344,7 +346,7 @@ impl CellReadReplica {
             },
         )
         .await?;
-        let position = receipt(expected, snapshot.view.root().commit_sequence);
+        let root = snapshot.view.root();
         let opened = Self {
             runtime,
             registry,
@@ -354,7 +356,7 @@ impl CellReadReplica {
             target,
             expected,
             snapshot: Arc::new(RwLock::new(ReplicaState {
-                receipt: position,
+                root,
                 snapshot: Some(snapshot.clone()),
             })),
             lifetime,
@@ -368,7 +370,10 @@ impl CellReadReplica {
     /// Returns the last installed exact snapshot position, including after close.
     #[must_use]
     pub async fn receipt(&self) -> Receipt {
-        self.snapshot.read().await.receipt
+        receipt(
+            self.expected,
+            self.snapshot.read().await.root.commit_sequence,
+        )
     }
 
     /// Returns the verified position and whether the original owner is still live.
@@ -414,7 +419,7 @@ impl CellReadReplica {
             let _refresh = self.refresh_gate.lock().await;
             let mut state = self.snapshot.write().await;
             state.snapshot.take();
-            state.receipt
+            receipt(self.expected, state.root.commit_sequence)
         };
         self.lifetime.join().await;
         receipt
@@ -482,7 +487,7 @@ impl CellReadReplica {
         if self.query_gate.is_closed() {
             return Err(Error::Fenced);
         }
-        state.receipt = receipt;
+        state.root = replacement.view.root();
         state.snapshot = Some(replacement);
         Ok(receipt)
     }

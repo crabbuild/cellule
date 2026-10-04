@@ -72,7 +72,9 @@ this path. It starts no acquisition and grants no retention or maintenance right
 `close()` fences new reader work. `close_and_join()` also detaches snapshots
 from every peer clone and joins accepted query/refresh work, including native
 jobs whose waiters were cancelled. Its receipt preserves the last installed
-position; it does not establish current authority or fleet retirement. See the
+position; its shared lifecycle state also preserves the exact last installed
+root after detachment. Failed or uninstalled refreshes cannot replace that root.
+It does not establish current authority or fleet retirement. See the
 [host reader lifecycle](../../cellule-host/docs/read-replicas.md).
 
 `lifecycle_observation()` reads the same irreversible admission word and shared

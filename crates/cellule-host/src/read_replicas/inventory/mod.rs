@@ -131,7 +131,7 @@ impl ReadReplicaManager {
         let mode = self.runtime.node_admission().mode()?;
         let closed = self.closed.is_cancelled();
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.reader-native-inventory.v1\0");
+        hash.update(b"cellule.reader-native-inventory.v2\0");
         hash.update(self.session.as_bytes());
         hash.update(active.topology.as_bytes());
         hash.update(&[mode as u8, u8::from(closed)]);
@@ -161,6 +161,7 @@ impl ReadReplicaManager {
             hash.update(receipt.cell.as_bytes());
             hash.update(receipt.incarnation.as_bytes());
             hash.update(&receipt.commit_sequence.to_be_bytes());
+            hash_root(&mut hash, observation.root());
             hash.update(&[
                 u8::from(observation.admission_closed()),
                 u8::from(observation.snapshot_attached()),
@@ -202,3 +203,15 @@ impl ReadReplicaManager {
         })
     }
 }
+
+fn hash_root(hash: &mut blake3::Hasher, root: cellule_runtime::ltx::RootRef) {
+    hash.update(&root.cell);
+    hash.update(&root.incarnation);
+    hash.update(&root.digest);
+    hash.update(&root.position.txid.to_be_bytes());
+    hash.update(&root.position.checksum.to_be_bytes());
+    hash.update(&root.commit_sequence.to_be_bytes());
+}
+
+#[cfg(test)]
+mod tests;

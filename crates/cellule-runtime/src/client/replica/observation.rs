@@ -9,6 +9,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadReplicaLifecycleObservation {
     receipt: Receipt,
+    root: cellule_ltx::RootRef,
     admission_closed: bool,
     snapshot_attached: bool,
     retained_lifetimes: usize,
@@ -19,6 +20,15 @@ impl ReadReplicaLifecycleObservation {
     #[must_use]
     pub const fn receipt(&self) -> Receipt {
         self.receipt
+    }
+
+    /// Exact last installed immutable root, retained after native detachment.
+    ///
+    /// Receipt and root come from the same shared snapshot-state lock. This is
+    /// historical prefix identity, not current authority or a retention pin.
+    #[must_use]
+    pub const fn root(&self) -> cellule_ltx::RootRef {
+        self.root
     }
 
     /// Reports the canonical irreversible closure of new reader operations.
@@ -65,7 +75,8 @@ impl CellReadReplica {
         let snapshot = self.snapshot.read().await;
         let lifetime = self.lifetime.state.load(Ordering::Acquire);
         ReadReplicaLifecycleObservation {
-            receipt: snapshot.receipt,
+            receipt: receipt(self.expected, snapshot.root.commit_sequence),
+            root: snapshot.root,
             admission_closed: lifetime & CLOSED != 0,
             snapshot_attached: snapshot.snapshot.is_some(),
             retained_lifetimes: lifetime & !CLOSED,

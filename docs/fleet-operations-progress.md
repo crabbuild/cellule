@@ -4,6 +4,90 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 final reader root identity checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`. The full W1–W10 scope remains unfinished.
+
+Source succession needs the exact last installed reader prefix. The native
+shared reader state now retains its immutable Cell/incarnation-scoped root
+through snapshot detachment, deriving receipts from that same root. Refresh
+installs root and view under the existing lock only after admission and authority
+checks; failed, cancelled or uninstalled refreshes cannot substitute a published
+source root. The lifecycle observation and exact retirement capsule expose this
+historical root without adding work, a retention pin or authority rights.
+
+Native reader inventory fingerprint v2 binds every root field, including digest,
+transaction position and commit sequence. This changes only ephemeral scan
+identity; prior continuations fail their normal topology check. Persisted
+enrollment/evidence bytes and signed peer contracts are unchanged.
+
+A new real native case checks old publication versus installed state, failed and
+successful refresh, peer clones, detachment, original ledger release and shutdown.
+Existing cancelled-query/close cases also retain the same final root. A new
+fingerprint regression distinguishes every root field, including a substituted
+digest at identical counters. The real host handoff case refreshes after its
+original opening, moves the writer, joins the exact original reader and verifies
+the final root through the successor's canonical lineage/origin path. A forged
+digest with unchanged scope and counters refuses. SQL readback remains intact.
+
+### Verification and remaining work
+
+All three focused commands pass: six native runtime closure cases, the exact-root
+fingerprint regression and all nine exact-removal cases. Two isolated one-variable
+negative controls fail the intended regression: keeping the previous installed
+root after refresh, and omitting the root digest from the native inventory hash.
+Both production files are restored byte-identically before broad qualification.
+Original negative sources and failed logs are retained.
+
+Preliminary failures correct a test-only LTX position construction, an invalid
+idle-transfer assumption immediately after the new command, and the fixture's
+insufficient retained-byte capacity for the newly exercised canonical origin
+verifier. The exact busy handle now joins/releases through ordinary drain, and
+the receiver is provisioned for the verifier's existing metadata envelope. Idle
+graces, production admission, qualification profiles and evidence remain unchanged.
+All original failed logs and source snapshots are retained.
+
+All 13 fresh Rust commands and nine static gates pass on the isolated Rust 1.99
+snapshot under
+`/Users/haipingfu/Workspace/crabbuild-target/cellule-reader-final-root-bd381d6`.
+The framework passes 1,682 tests with zero failures and 36 documented ignores;
+minion passes all 320 cases. These are 2,002 distinct passes, excluding focused
+repeats, negative controls and overlapping local LTX. Local LTX passes 54 tests,
+Axum without default features passes 16, and the fresh cookbook passes all 256
+tests plus check, Clippy, warning-denied docs and binary builds. Workspace
+features/targets, Clippy, warning-denied API docs and the minion build pass.
+All 136 Rust snippets parse and 1,280 local links resolve. All 1,117 Rust/Cargo
+paths match manifest SHA256
+`42c25e30a926cabb324f48d3f9ea632b1ce47ffb1ab9418e634843b6949dd104`.
+Exact source archives, manifests, commands, preliminary failures, negative
+controls and restored qualification logs are retained in its `evidence` directory.
+
+Parent `bd381d6` remains MERGEABLE. All hosted checks are terminal: 32 successes,
+two failures and three documented skips. Workspace, follower/object capacity,
+MSRV, contracts, cookbook quality/scenarios, Compose smoke, model, website and
+fuzz checks pass. Leased routing passes, with its lowest gated throughput at
+92.68% of baseline. Object-only forwarded-command and local-command throughput
+at concurrency 16 fail at 89.83% and 88.60% against the unchanged 90% gate;
+latency gates pass. The routing aggregate also fails. The unchanged comparator
+reproduces both original 178-file campaigns. Original binaries, manifests, stage
+rows, file hashes and the failed job log are retained. Baseline and candidate
+binaries are byte-identical to their respective earlier campaigns, whose failing
+lanes differed; this does not independently isolate publication cost, provider/
+runner variation or execution order. These parent results do not qualify this
+new source or establish an independent performance correction. No gate, expected
+evidence, profile, production admission or deadline is weakened.
+
+The next delivery is source/failed-owner reader and follower succession policy:
+bind exact native joining and final-root derivation to fresh current replacement
+policy, durable provider/process retention and the complete original/current
+request set. `SourceSuccessor` remains blocking until that composition is checked.
+Then complete SettleRoles/Finalize and accepted native/external work, including
+Cron/Blob owners; receiver-session recovery/adoption and maintenance/receiver-loss
+commands; W9 process/provider/mixed-binary/load campaigns; and W10 exercised
+runbooks and rollout/rollback. Ordinary routing throughput and the original overload
+failure still require independent diagnosis and current-head CI qualification.
+
 ## October 3 2026 exact original reader joining checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target
