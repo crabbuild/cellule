@@ -1,10 +1,51 @@
 //! Original acknowledged prefixes and stopped-boot proof share one full barrier.
 //! The scoped planner remains partial: this is no replacement/finalization grant.
 use super::*;
-use cellule_host::fleet::{FleetFailedBootClosure, FleetFailedBootRetirement};
+use cellule_host::fleet::{
+    FleetFailedBootClosure, FleetFailedBootRetirement, FleetMaintenanceEnrollments,
+    FleetMaintenancePolicyStatus, FleetRecoveredFollowerClosure, FleetRecoveredFollowerRetirement,
+};
+use cellule_runtime::fleet::operations::MaintenanceEvent;
 
 impl SuccessorFixture {
     async fn retire_original(&self) {
+        self.retire_original_base().await;
+    }
+
+    async fn retire_original_evidence(
+        &self,
+    ) -> (FleetRecoveredFollowerClosure, FleetFailedBootClosure) {
+        self.retire_original_base().await;
+        let boot = self.original_closure().await;
+        let base = &self.original.base;
+        let recovered = FleetRecoveredFollowerRetirement::capture(
+            base.journal.as_ref(),
+            &base.directory,
+            &base.roster().await,
+            &base.sealed,
+            session(1),
+            deadline(),
+            crate::scenario::clock,
+        )
+        .await
+        .unwrap()
+        .publish(
+            base.journal.as_ref(),
+            &base.directory,
+            session(1),
+            deadline(),
+            crate::scenario::clock,
+        )
+        .await
+        .unwrap()
+        .confirmed()
+        .unwrap()
+        .clone();
+        assert_eq!(boot.snapshot(), recovered.snapshot());
+        (recovered, boot)
+    }
+
+    async fn retire_original_base(&self) {
         let base = &self.original.base;
         let proof = retire_recovered_members(base.transport.clone(), &base.sealed)
             .await
@@ -52,6 +93,31 @@ impl SuccessorFixture {
             .confirmed()
             .unwrap();
         assert_eq!(base.failed_boot().await.status(), EnrollmentStatus::Retired);
+    }
+
+    async fn begin_maintenance_evacuation(&self) {
+        let journal = &self.original.base.journal;
+        let mut snapshot = journal.load_snapshot(scope()).await.unwrap();
+        let epoch = snapshot.head().controller().unwrap().epoch;
+        snapshot = journal
+            .compare_exchange(
+                &snapshot,
+                epoch,
+                crate::scenario::clock().unwrap(),
+                &JournalTransition::Maintenance(MaintenanceEvent::Cordoned),
+            )
+            .await
+            .unwrap();
+        let epoch = snapshot.head().controller().unwrap().epoch;
+        journal
+            .compare_exchange(
+                &snapshot,
+                epoch,
+                crate::scenario::clock().unwrap(),
+                &JournalTransition::Maintenance(MaintenanceEvent::BeginEvacuation),
+            )
+            .await
+            .unwrap();
     }
 
     async fn original_retirement(&self) -> FleetFailedBootRetirement {
@@ -219,6 +285,113 @@ async fn combined_original_observation_reconciles_both_attachment_orders_without
         drop(observer);
         Arc::try_unwrap(fixture).ok().unwrap().close().await;
     }
+}
+
+#[tokio::test]
+async fn failed_owner_follower_maintenance_matches_recovered_epoch_and_joined_process() {
+    let fixture = fixture().await;
+    fixture.begin_maintenance_evacuation().await;
+    let (recovered, boot) = fixture.retire_original_evidence().await;
+    let recovered_members = recovered.members().len();
+    let inventory = fixture.collect_current().await.unwrap();
+    assert_eq!(recovered.snapshot(), inventory.original().snapshot());
+    let (nodes, cells) = fixture.observation_parts(&inventory).await;
+    let snapshot = fixture
+        .original
+        .base
+        .journal
+        .load_snapshot(scope())
+        .await
+        .unwrap();
+    let roster = FleetRoster::collect(
+        fixture.original.base.journal.as_ref(),
+        &snapshot,
+        deadline(),
+    )
+    .await
+    .unwrap();
+    let original = FleetMaintenanceEnrollments::collect(
+        fixture.original.base.journal.as_ref(),
+        &roster,
+        deadline(),
+        crate::scenario::clock,
+    )
+    .await
+    .unwrap();
+    let observation = fixture
+        .combined_observation(&inventory, &boot, nodes, cells)
+        .with_failed_boot_closures(vec![boot])
+        .unwrap()
+        .with_recovered_follower_closures(vec![recovered])
+        .unwrap()
+        .with_original_writer_successors(inventory)
+        .unwrap()
+        .with_maintenance_enrollments(original)
+        .unwrap()
+        .check_maintenance_policies(&roster, crate::scenario::clock().unwrap())
+        .unwrap();
+    let coverage = observation.maintenance_policy_coverage().unwrap();
+    let progress = coverage.progress();
+    assert!(coverage.is_complete());
+    assert_eq!(progress.required, recovered_members);
+    assert_eq!(progress.checked, recovered_members);
+    assert_eq!(progress.recovered_followers, recovered_members);
+    assert_eq!(progress.source_successors, 0);
+    assert!(coverage.obligations().iter().all(|obligation| matches!(
+        obligation.status(),
+        FleetMaintenancePolicyStatus::RecoveredFollower(_)
+    )));
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn recovered_follower_alone_does_not_close_failed_owner_policy_obligations() {
+    let fixture = fixture().await;
+    fixture.begin_maintenance_evacuation().await;
+    let (recovered, boot) = fixture.retire_original_evidence().await;
+    let recovered_members = recovered.members().len();
+    let inventory = fixture.collect_current().await.unwrap();
+    let (nodes, cells) = fixture.observation_parts(&inventory).await;
+    let snapshot = fixture
+        .original
+        .base
+        .journal
+        .load_snapshot(scope())
+        .await
+        .unwrap();
+    let roster = FleetRoster::collect(
+        fixture.original.base.journal.as_ref(),
+        &snapshot,
+        deadline(),
+    )
+    .await
+    .unwrap();
+    let original = FleetMaintenanceEnrollments::collect(
+        fixture.original.base.journal.as_ref(),
+        &roster,
+        deadline(),
+        crate::scenario::clock,
+    )
+    .await
+    .unwrap();
+    let observation = fixture
+        .combined_observation(&inventory, &boot, nodes, cells)
+        .with_recovered_follower_closures(vec![recovered])
+        .unwrap()
+        .with_original_writer_successors(inventory)
+        .unwrap()
+        .with_maintenance_enrollments(original)
+        .unwrap()
+        .check_maintenance_policies(&roster, crate::scenario::clock().unwrap())
+        .unwrap();
+    let coverage = observation.maintenance_policy_coverage().unwrap();
+    let progress = coverage.progress();
+    assert!(!coverage.is_complete());
+    assert_eq!(progress.required, recovered_members);
+    assert_eq!(progress.checked, 0);
+    assert_eq!(progress.recovered_followers, 0);
+    assert_eq!(progress.source_successors, recovered_members);
+    fixture.close().await;
 }
 
 #[tokio::test]

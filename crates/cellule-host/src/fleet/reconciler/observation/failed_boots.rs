@@ -45,6 +45,12 @@ impl FleetObservation {
                     .as_ref()
                     .map(|inventory| inventory.original().snapshot())
             })
+            .or_else(|| {
+                self.recovered_follower_closures
+                    .as_ref()
+                    .and_then(|proofs| proofs.first())
+                    .map(FleetRecoveredFollowerClosure::snapshot)
+            })
             .or_else(|| closures.first().map(FleetFailedBootClosure::snapshot));
         for closure in closures {
             let snapshot = closure.snapshot();
@@ -64,6 +70,10 @@ impl FleetObservation {
                     .cells
                     .iter()
                     .any(|owned| owned.session == endpoint.session)
+                || self
+                    .recovered_follower_closures
+                    .as_ref()
+                    .is_some_and(|proofs| proofs.iter().any(|proof| proof.snapshot() != snapshot))
             {
                 return Err(Error::Node("failed boot observation barrier differs"));
             }

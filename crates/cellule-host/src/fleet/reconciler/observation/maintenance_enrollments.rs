@@ -50,6 +50,14 @@ impl FleetObservation {
                     .any(|closure| closure.snapshot() != snapshot)
             })
             || self
+                .recovered_follower_closures
+                .as_ref()
+                .is_some_and(|closures| {
+                    closures
+                        .iter()
+                        .any(|closure| closure.snapshot() != snapshot)
+                })
+            || self
                 .reader_evacuations()
                 .is_some_and(|checks| checks.iter().any(|check| check.snapshot() != snapshot))
             || self

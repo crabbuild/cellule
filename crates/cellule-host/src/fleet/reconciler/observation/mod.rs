@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::fleet::{
     FleetFailedBootClosure, FleetMaintenanceEnrollments, FleetMaintenanceNonexecution,
-    FleetMaintenancePolicyCoverage, FleetOriginalWriterSuccessorInventory, FleetRoleCoverage,
-    FleetRoster, FleetSourceReaderPolicies,
+    FleetMaintenancePolicyCoverage, FleetOriginalWriterSuccessorInventory,
+    FleetRecoveredFollowerClosure, FleetRoleCoverage, FleetRoster, FleetSourceReaderPolicies,
 };
 use cellule_runtime::cell::actor::OwnedCellObservation;
 use cellule_runtime::fleet::operations::{FleetScope, RegistryVersion};
@@ -45,6 +45,7 @@ pub struct FleetObservation {
     role_coverage: Option<FleetRoleCoverage>,
     original_writer_successors: Option<FleetOriginalWriterSuccessorInventory>,
     failed_boot_closures: Option<Vec<FleetFailedBootClosure>>,
+    recovered_follower_closures: Option<Vec<FleetRecoveredFollowerClosure>>,
     role_evacuations: Option<RoleEvacuations>,
     maintenance_enrollments: Option<FleetMaintenanceEnrollments>,
     maintenance_policies: Option<FleetMaintenancePolicyCoverage>,
@@ -81,6 +82,7 @@ impl FleetObservation {
             role_coverage: None,
             original_writer_successors: None,
             failed_boot_closures: None,
+            recovered_follower_closures: None,
             role_evacuations: None,
             maintenance_enrollments: None,
             maintenance_policies: None,
@@ -117,6 +119,7 @@ impl FleetObservation {
         self.validate_source_reader_policies()?;
         self.validate_original_writer_successors()?;
         self.validate_failed_boot_closures()?;
+        self.validate_recovered_follower_closures()?;
         self.validate_role_evacuations()?;
         if let Some(coverage) = &self.role_coverage {
             let (started, finished) = coverage.interval();
@@ -220,7 +223,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v13\0");
+        hash.update(b"cellule.fleet-planner-inputs.v14\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -274,6 +277,7 @@ impl FleetObservation {
                 }
             }
         }
+        self.hash_recovered_follower_closures(&mut hash)?;
         self.hash_role_evacuations(&mut hash)?;
         self.hash_source_reader_policies(&mut hash)?;
         hash.update(&[u8::from(self.maintenance_nonexecution.is_some())]);
@@ -388,6 +392,7 @@ mod maintenance_enrollments;
 mod maintenance_policies;
 mod nonexecution;
 mod original_writers;
+mod recovered_followers;
 mod source_readers;
 #[cfg(test)]
 mod tests;

@@ -46,6 +46,14 @@ impl FleetObservation {
                 .role_coverage
                 .as_ref()
                 .is_some_and(|coverage| coverage.snapshot() != original.snapshot())
+            || self
+                .recovered_follower_closures
+                .as_ref()
+                .is_some_and(|closures| {
+                    closures
+                        .iter()
+                        .any(|closure| closure.snapshot() != original.snapshot())
+                })
         {
             return Err(Error::Node("original writer observation barrier differs"));
         }

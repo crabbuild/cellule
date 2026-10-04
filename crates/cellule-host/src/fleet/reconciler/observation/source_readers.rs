@@ -58,6 +58,10 @@ impl FleetObservation {
                 .failed_boot_closures
                 .as_ref()
                 .is_some_and(|rows| rows.iter().any(|row| row.snapshot() != snapshot))
+            || self
+                .recovered_follower_closures
+                .as_ref()
+                .is_some_and(|rows| rows.iter().any(|row| row.snapshot() != snapshot))
             || self.maintenance_nonexecution.as_ref().is_some_and(|proof| {
                 snapshot != proof.snapshot() || checks.roster_digest() != proof.roster_digest()
             })

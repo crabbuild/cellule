@@ -21,8 +21,12 @@ impl FleetObservation {
             roster,
             self.reader_evacuations().unwrap_or(&[]),
             self.follower_evacuations().unwrap_or(&[]),
-            self.maintenance_nonexecution.as_ref(),
-            self.source_reader_policies.as_ref(),
+            super::super::super::maintenance_policies::FleetMaintenancePolicyEvidence {
+                nonexecution: self.maintenance_nonexecution.as_ref(),
+                source_readers: self.source_reader_policies.as_ref(),
+                failed_boots: self.failed_boot_closures.as_deref().unwrap_or(&[]),
+                recovered_followers: self.recovered_follower_closures.as_deref().unwrap_or(&[]),
+            },
             self.maintenance_policy_inputs()?,
         )?;
         self.maintenance_policies = Some(coverage);
@@ -52,10 +56,23 @@ impl FleetObservation {
     fn maintenance_policy_inputs(&self) -> Result<Digest> {
         let original = self.maintenance_enrollments.as_ref().ok_or(Error::Fenced)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-maintenance-policy-inputs.v3\0");
+        hash.update(b"cellule.fleet-maintenance-policy-inputs.v4\0");
         hash.update(original.digest()?.as_bytes());
         self.hash_role_evacuations(&mut hash)?;
         self.hash_source_reader_policies(&mut hash)?;
+        hash.update(&[u8::from(self.failed_boot_closures.is_some())]);
+        if let Some(closures) = &self.failed_boot_closures {
+            let mut ordered = closures.iter().collect::<Vec<_>>();
+            ordered.sort_by_key(|closure| {
+                let target = closure.boot().spec().target;
+                (*target.node.as_bytes(), *target.session.as_bytes())
+            });
+            hash.update(&(ordered.len() as u64).to_be_bytes());
+            for closure in ordered {
+                hash.update(closure.digest().as_bytes());
+            }
+        }
+        self.hash_recovered_follower_closures(&mut hash)?;
         hash.update(&[u8::from(self.maintenance_nonexecution.is_some())]);
         if let Some(nonexecution) = &self.maintenance_nonexecution {
             hash.update(nonexecution.digest().as_bytes());

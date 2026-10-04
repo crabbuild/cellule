@@ -6493,3 +6493,43 @@ checked source release and acquisition/recovery evidence, and adopt unknown
 outcomes across controller replacement. Complete host shutdown/role barriers
 and concurrent ordinary activation/reader admission scenarios. W5–W10 and the
 plan's full acceptance matrix remain pending.
+
+## October 4 2026 failed-owner follower maintenance checkpoint
+
+The public maintenance-policy matcher now consumes an exact canonical
+recovered-follower closure together with the matching failed-boot process
+closure. At one full snapshot and capture barrier, it verifies the recovered
+log was retired, every original member row is present in the current roster,
+and the old source process is confirmed retired against that same log. Only
+those exact failed-owner source-side follower requests move from
+`SourceSuccessor` to `RecoveredFollower`. A recovered log without the process
+closure remains unchecked. Planner inputs bind these closures; the new policy
+status has its own versioned coverage digest.
+
+The runnable minion scenario exercises successful composition and the
+negative case where canonical log retirement alone leaves the maintenance
+obligations open. Both preserve the original maintenance capture and do not
+grant settlement or finalization.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --all-features --locked --example fleet_operations scenario::recovered_followers::failed_boot::writer_tests::successors::observation::combined::` | 4 passed; 330 filtered out. |
+| `cargo test -p cellule-host --all-features --locked --example fleet_operations` | 334 passed; 0 failed; 69.81 seconds. |
+
+The final source shape also passed workspace all-target/all-feature `cargo
+check`, warning-denied workspace Clippy, and warning-denied workspace API docs.
+Format, boundary, module-layout, Rust-fence, Markdown-link, SQL/peer-contract,
+and whitespace gates passed: 137 Rust snippets, 1307 Markdown links, and 28
+schema/protocol assertions with 570 validator links. Hosted CI has not yet run
+for these uncommitted changes.
+
+### Remaining work at the failed-owner follower checkpoint
+
+This closes one source-side policy gap only. Complete the aggregate
+authenticated observation and connect role policy, native/external accepted
+work and provider/process retention to `SettleRoles`/`Finalize`. Implement the
+host action executor beyond Cordon, remaining live-owner/failed-owner role
+evacuation, receiver adoption, Cron/Blob owner handling, broad fault and load
+qualification, and the W9–W10 rollout/runbooks. PR #37 is already merged;
+the continuation PR #56 was mergeable at this checkpoint, before these local
+changes were committed or pushed.

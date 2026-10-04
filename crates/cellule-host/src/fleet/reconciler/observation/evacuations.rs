@@ -83,6 +83,12 @@ impl FleetObservation {
                     .and_then(|proofs| proofs.first())
                     .map(FleetFailedBootClosure::snapshot)
             })
+            .or_else(|| {
+                self.recovered_follower_closures
+                    .as_ref()
+                    .and_then(|proofs| proofs.first())
+                    .map(FleetRecoveredFollowerClosure::snapshot)
+            })
             .or_else(|| first.map(|(snapshot, _)| snapshot));
         let roster = match &self.roster {
             Some(roster) => Some(roster.digest()?),
