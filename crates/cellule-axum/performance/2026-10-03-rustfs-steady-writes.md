@@ -217,3 +217,18 @@ The next comparison isolates the recovery-admission change against the
 instrumentation-only commit. That change removes a reproduced dirty-capacity
 reservation by recovery waiters, while preserving resource ceilings and ledger
 charges. Its sustained throughput and latency effect remains unproven.
+
+### Follow-up operation attribution
+
+The controlled warm-append test records two predecessor-metadata HEADs and five
+successor PUTs, with no full-body or range reads. Compacting its two segments
+then records four range reads: one LTX body and one index per segment. These are
+test-path counts, not an attribution of every request in the sustained run.
+They direct further work toward compaction traffic and publication amplification
+rather than warming SQLite pages on the ordinary append path.
+
+A prototype overlapped cached predecessor presence checks with successor
+uploads. With 100 ms injected storage delays it reduced preparation from 200 ms
+to 100 ms, but violated the existing zero-upload contract when inherited metadata
+is missing. It was rejected. The production path still checks predecessor
+presence before any successor upload; the unchanged missing-origin test passes.

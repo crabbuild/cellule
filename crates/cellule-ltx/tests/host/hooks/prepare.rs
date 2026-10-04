@@ -341,20 +341,23 @@ async fn prepare_overlaps_independent_immutable_uploads() {
 #[cfg(feature = "replica")]
 #[tokio::test(start_paused = true)]
 async fn warm_append_reuses_its_authenticated_root_metadata() {
-    let (_directory, _faults, _host, mut writer) = fixture();
+    use cellule_store::test_support::{CountingObjectStore, ObjectReadKind};
+
+    let (directory, _faults, _host, mut writer) = fixture();
     let first = writer.capture_deferred().unwrap();
     let delay = Duration::from_millis(100);
     let backend = InMemory::new();
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(ThrottledStore::new(
+        backend.clone(),
+        ThrottleConfig {
+            wait_get_per_call: delay,
+            wait_put_per_call: delay,
+            ..ThrottleConfig::default()
+        },
+    ))));
     let replica = CellReplica::new(
         CellStorageLayout::new(
-            Store::new(Arc::new(ThrottledStore::new(
-                backend.clone(),
-                ThrottleConfig {
-                    wait_get_per_call: delay,
-                    wait_put_per_call: delay,
-                    ..ThrottleConfig::default()
-                },
-            ))),
+            Store::new(counted.clone()),
             ObjectPath::from("cached-root-metadata"),
             [74; 16],
         ),
@@ -369,6 +372,7 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
         .transaction(|transaction| transaction.execute_batch("INSERT INTO t VALUES(2)"))
         .unwrap();
     let second = writer.capture_deferred().unwrap();
+    counted.reset();
     let started = tokio::time::Instant::now();
 
     let prepared = replica.prepare(Some(&root), &second, 2, 1).await.unwrap();
@@ -377,7 +381,35 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
     // wave plus one overlapping immutable-upload wave, with no serial
     // metadata GETs or directory-before-root upload dependency.
     assert_eq!(started.elapsed(), delay * 2);
+    assert_eq!(counted.counts().heads, 2);
+    assert_eq!(counted.counts().body_requests(), 0);
+    assert_eq!(counted.put_requests(), 5);
     assert_eq!(prepared.root().position, second.position);
+    counted.reset();
+    let compacted = replica
+        .prepare_compaction(&prepared.root(), 0..2, 9, directory.path())
+        .await
+        .unwrap();
+    assert_eq!(compacted.root().position, prepared.root().position);
+    assert_eq!(
+        compacted.root().commit_sequence,
+        prepared.root().commit_sequence
+    );
+    // Remote range reads belong to compaction's authenticated body/index
+    // spools, rather than ordinary warm-write SQLite page faults.
+    assert_eq!(counted.counts().ranges, 4);
+    for extension in [".ltx", ".index"] {
+        assert_eq!(
+            counted
+                .requests()
+                .iter()
+                .filter(|request| {
+                    request.kind == ObjectReadKind::Range && request.location.ends_with(extension)
+                })
+                .count(),
+            2
+        );
+    }
     let independent = CellReplica::new(
         CellStorageLayout::new(
             Store::new(Arc::new(ThrottledStore::new(
