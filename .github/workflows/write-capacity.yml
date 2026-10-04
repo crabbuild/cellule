@@ -31,6 +31,11 @@ on:
         description: Seconds per steady-state write phase (60 to 180)
         type: number
         default: 120
+      write_concurrency:
+        description: Write clients; 64 additionally exercises per-Cell queueing
+        type: choice
+        default: "16"
+        options: ["16", "64"]
 
 permissions:
   contents: read
@@ -115,6 +120,7 @@ jobs:
       baseline_ref: ${{ inputs.baseline_ref }}
       workload: writes
       write_seconds: ${{ fromJSON(format('{0}', inputs.write_seconds || 120)) }}
+      write_concurrency: ${{ fromJSON(format('{0}', inputs.write_concurrency || 16)) }}
 
   follower-proof:
     if: github.event_name != 'workflow_dispatch' || inputs.mode == 'qualification'

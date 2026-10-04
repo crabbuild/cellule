@@ -577,6 +577,12 @@ gh workflow run write-capacity.yml --ref YOUR_BRANCH \
   -f mode=axum-writes -f baseline_ref=BASELINE_COMMIT -f write_seconds=120
 ```
 
+The workflow defaults to sixteen write clients. Run an additional comparison
+with `-f write_concurrency=64` to exercise per-Cell queues at sixteen Cells.
+Keep its results separate from the sixteen-client series: concurrency changes
+the workload. Both profiles retain three alternating pairs per Cell count,
+the same resource ceilings, and every durability and cold-recovery check.
+
 Timed writes replace the fixed `--writes` count. Clients stop admitting POSTs
 at the deadline and wait for every in-flight request; throughput includes that
 drain time. JSON response-body throughput excludes headers and transport.

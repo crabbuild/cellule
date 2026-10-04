@@ -15,6 +15,9 @@ on:
       write_seconds:
         type: number
         default: 120
+      write_concurrency:
+        type: number
+        default: 16
 
 permissions:
   contents: read
@@ -97,6 +100,7 @@ jobs:
         env:
           READ_SECONDS: ${{ inputs.read_seconds }}
           WRITE_SECONDS: ${{ inputs.write_seconds }}
+          WRITE_CONCURRENCY: ${{ inputs.write_concurrency }}
           WORKLOAD: ${{ inputs.workload }}
           TOKIO_WORKER_THREADS: "4"
           RUSTFS_CONTAINER_ID: ${{ job.services.rustfs.id }}
@@ -109,6 +113,7 @@ jobs:
           CELLULE_TEST_PREFIX: paired-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          concurrency=16
           case "$WORKLOAD" in
             reads)
               python3 -c 'import os; assert 30 <= int(os.environ["READ_SECONDS"]) <= 120'
@@ -117,6 +122,8 @@ jobs:
               ;;
             writes)
               python3 -c 'import os; assert 60 <= int(os.environ["WRITE_SECONDS"]) <= 180'
+              python3 -c 'import os; assert int(os.environ["WRITE_CONCURRENCY"]) in (16, 64)'
+              concurrency="$WRITE_CONCURRENCY"
               load_args=(--write-warmup-seconds 5 --write-seconds "$WRITE_SECONDS"
                 --provider-container "$RUSTFS_CONTAINER_ID")
               ;;
@@ -127,7 +134,7 @@ jobs:
             --binary "$RUNNER_TEMP/axum-candidate-target/release/examples/sql" \
             --baseline-binary "$RUNNER_TEMP/axum-baseline-target/release/examples/sql" \
             --output "$RUNNER_TEMP/axum-evidence/results" \
-            --repeats 3 --cells 1 4 16 --workers 4 --concurrency 16 \
+            --repeats 3 --cells 1 4 16 --workers 4 --concurrency "$concurrency" \
             --warmup 16 --writes 32 --reads 64 \
             "${load_args[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
