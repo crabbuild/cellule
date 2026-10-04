@@ -6908,3 +6908,63 @@ and provider-fault coverage; and the remaining maintenance role/fault matrix.
 Production process/transport adapters, W9 measured provider and mixed-version
 qualification, and W10 rollout/runbook evidence remain required. PR #57 remains
 a draft while hosted CI verifies the updated implementation.
+
+## October 4 2026 standalone receiver-loss checkpoint
+
+Source: parent `b92b038`; implementation/CI diff SHA-256 `a3efc37e199cfd54b227cf322358848ac720c1dc19cab843bdeb470ef14b4954`.
+Reproduce this fingerprint from the checkpoint commit with
+`git diff --binary b92b038 HEAD -- .github/workflows/rust.yml crates/cellule-host/minion ':(exclude)*.md' | shasum -a 256`.
+
+Minion now exposes `receiver-loss` through the same finite owner used by the
+other commands. It reserves one native receiver, proves clean source release,
+joins the failed receiver, and publishes typed closure of the exact enrolled
+boot. Shared reference adapters supply that closure and lose one committed
+routed activation reply. The exported reconciler selects the replacement and
+uses ordinary host execution. The command replays the exact retained action,
+waits for controller lease expiry, reopens an independent SQLite client, and
+settles the unchanged release with controller epoch 2. The former controller
+returns Fenced and cannot change the successor journal.
+
+The command checks all twelve original receipts and SQL values, the moved
+source handle's fencing, one destination actor, final placement `[11, 0, 1]`,
+and unchanged release root/epoch progression. Both journal clients close on
+every exit; the outer owner joins all nodes, retires all boots and checks empty
+resource ledgers. The closure is joined in-process evidence, not OS crash or
+external-job supervision qualification. Other focused successor cases retain
+the separate failed Serving/Recovering receiver takeover coverage.
+
+The normal-stack focused test exposed excessive stack use when CLI future
+construction was nested with complete receiver observation. Scenario and
+continuation factories now construct heap-owned futures before polling them.
+The executable and ordinary two-worker tests pass without increasing the stack
+or changing deadlines. Hosted workspace CI on the preceding `b92b038` head also
+aborted during the overload command and failed an outdated observation-count
+assertion. That model now asserts the exact planning, activation and cleanup
+capture counts at each phase while retaining all movement assertions. CI now
+prints assertion details immediately so a later abort cannot hide them.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo run -p cellule-host --example fleet_operations --all-features --locked -- receiver-loss` | Exit 0; one release/activation/retirement, twelve receipt checks, epoch 2, one lost activation reply and replay, three joined nodes/retired boots. |
+| Same command with `overload` | Exit 0; two releases/activations/retirements, two receipt checks, three joined nodes/retired boots. |
+| Same command with `controller-restart` | Exit 0; two lost release replies, epoch 2, two receiver-credit cleanups, two receipt checks, three joined nodes/retired boots. |
+| Same command with `maintenance` | Exit 0; twelve releases/activations/retirements and receipt checks, final counts `[0, 6, 6]`, Completed and exact withdrawal, three joined nodes/retired boots. |
+| `cargo test -p cellule-host --example fleet_operations receiver_loss_command_preserves_every_receipt_and_joins_all_owners --locked -- --nocapture` | 1 passed; 0 failed. |
+| Same test command with `reconciler_tests:: --all-features` | 27 passed; 0 failed. |
+| Same test command with `successor_tests:: --all-features` | 7 passed; 0 failed. |
+| Same test command with `scenario::tests:: --all-features` | 3 passed; 0 failed. |
+| Host example/all-target/all-feature warning-denied Clippy, format, boundaries, module ownership, whitespace, documented Rust and local Markdown links | Passed; 137 snippets and 1,348 links/anchors checked. |
+
+The preceding hosted follower-only maintenance case failed before the abort;
+its two focused local reruns pass without changing its deadline, pass limit or
+required Completed/withdrawal/follower assertions. Its diagnostic assertion now
+retains the complete reconcile report. The broader hosted result remains
+unverified until CI runs this updated head. Focused success does not establish
+W4–W10 completion.
+
+Highest remaining priorities: explain any current-head CI failures; interrupted
+receiver basis/evidence persistence, inherited overlays and stale generations;
+the maintenance role/controller/fault matrix; production process/transport
+adapters and measured W9 fault/mixed-version qualification; and W10 rollout and
+runbook evidence. The four required CLI scenarios are available, while W8's
+complete application integration and qualification obligations remain open.

@@ -249,80 +249,9 @@ impl Fixture {
     }
 
     pub(super) async fn close_receiver(&self) -> Arc<ClosedBootObserver> {
-        let boots = &self.boots;
-        let nodes = &self.nodes;
-        let journal = &self.journal;
-        let fleet = &self.fleet;
-        // This node has no host shutdown withdrawal binding in this failure
-        // fixture: the test first joins runtime work, then publishes the typed
-        // host closure so the controller can prove exactly what it is routing.
-        boots[1].guard.as_ref().unwrap().fence();
-        nodes[1].shutdown().await.unwrap();
-        assert_eq!(nodes[1].state(), NodeState::Stopped);
-        let now = clock().unwrap();
-        let observed = boots[1]
-            .directory
-            .load_if_live(session(1), now)
+        crate::scenario::receiver_loss::adapters::close_receiver(self.fleet.clone())
             .await
             .unwrap()
-            .unwrap();
-        boots[1]
-            .directory
-            .withdraw_after_drain(&observed, now)
-            .await
-            .unwrap();
-        let snapshot = journal.load_snapshot(scope()).await.unwrap();
-        let roster = FleetRoster::collect(
-            journal.as_ref(),
-            &snapshot,
-            Instant::now() + Duration::from_secs(5),
-        )
-        .await
-        .unwrap();
-        let original = roster
-            .enrollments()
-            .iter()
-            .find(|row| {
-                row.spec().target.node == node_id(1)
-                    && row.spec().target.session == session(1)
-                    && row.status() == EnrollmentStatus::Established
-            })
-            .unwrap()
-            .clone();
-        let processes = StoppedNodeProcesses {
-            node: nodes[1].clone(),
-        };
-        let retirement = FleetFailedBootRetirement::capture(
-            journal.as_ref(),
-            &boots[1].directory,
-            &roster,
-            &original,
-            session(0),
-            Instant::now() + Duration::from_secs(5),
-            clock,
-        )
-        .await
-        .unwrap();
-        let request = retirement.request().clone();
-        retirement
-            .publish(
-                journal.as_ref(),
-                &boots[1].directory,
-                &processes,
-                session(0),
-                Instant::now() + Duration::from_secs(5),
-                clock,
-            )
-            .await
-            .unwrap()
-            .confirmed()
-            .unwrap();
-
-        Arc::new(ClosedBootObserver {
-            fleet: Arc::clone(fleet),
-            request,
-            processes,
-        })
     }
 
     pub(super) async fn shutdown(&self) {

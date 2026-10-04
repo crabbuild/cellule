@@ -11,6 +11,7 @@ mod follower_tests;
 mod observation;
 #[cfg(test)]
 mod reader_tests;
+mod receiver_loss;
 #[cfg(test)]
 mod recovered_followers;
 mod startup;
@@ -20,7 +21,9 @@ mod successor_tests;
 mod tests;
 
 use super::journal::{JournalError, JournalResult, SqliteJournal};
-use cellule_host::fleet::{FleetEnrollmentJournal, FleetJournal, FleetReconciler};
+use cellule_host::fleet::{
+    FleetAdapterFuture, FleetEnrollmentJournal, FleetJournal, FleetReconciler,
+};
 use cellule_host::{CellNode, CellNodeBuilder, NodeState};
 use cellule_runtime::{
     cell::{
@@ -126,33 +129,47 @@ pub(super) struct ScenarioSummary {
     pub final_counts: [usize; 3],
     pub maintenance_completed: bool,
     pub maintenance_boot_withdrawn: bool,
+    pub receiver_process_closures: usize,
+    pub lost_activation_replies: usize,
+    pub routed_activation_replays: usize,
 }
 
 /// Owns the private directory until all runtime and journal jobs are joined.
 pub(super) async fn overload() -> JournalResult<ScenarioSummary> {
-    execute(false, false, false).await
+    execute(Scenario::Overload).await
 }
 
 pub(super) async fn controller_restart() -> JournalResult<ScenarioSummary> {
-    execute(true, false, false).await
+    execute(Scenario::ControllerRestart).await
 }
 
 pub(super) async fn count_balance() -> JournalResult<ScenarioSummary> {
-    execute(false, true, false).await
+    execute(Scenario::CountBalance).await
 }
 
 pub(super) async fn maintenance() -> JournalResult<ScenarioSummary> {
-    execute(false, false, true).await
+    execute(Scenario::Maintenance).await
 }
 
-async fn execute(
-    restart: bool,
-    count_balance: bool,
-    maintenance: bool,
-) -> JournalResult<ScenarioSummary> {
+pub(super) async fn receiver_loss() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::ReceiverLoss).await
+}
+
+enum Scenario {
+    Overload,
+    ControllerRestart,
+    CountBalance,
+    Maintenance,
+    ReceiverLoss,
+}
+
+async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
     let root = tempfile::tempdir()?;
     let path = root.path().join("fleet-journal.sqlite");
-    let profile = if restart {
+    let profile = if matches!(
+        scenario,
+        Scenario::ControllerRestart | Scenario::ReceiverLoss
+    ) {
         FleetProfile {
             controller_lease_ms: 3_000,
             reconcile_interval_ms: 500,
@@ -164,22 +181,15 @@ async fn execute(
     let journal = Arc::new(SqliteJournal::open(path.clone(), scope(), profile, clock()?).await?);
     let mut nodes = Vec::new();
     let mut boots = Vec::new();
-    let result = if count_balance {
-        balance::run(&root, journal.clone(), &mut nodes, &mut boots, profile).await
-    } else if maintenance {
-        run_maintenance(&root, journal.clone(), &mut nodes, &mut boots, profile).await
-    } else {
-        run(
-            &root,
-            path,
-            journal.clone(),
-            &mut nodes,
-            &mut boots,
-            profile,
-            restart,
-        )
-        .await
-    };
+    let result = run_scenario(
+        scenario,
+        &root,
+        journal.clone(),
+        &mut nodes,
+        &mut boots,
+        profile,
+    )
+    .await;
     let mut cleanup_error = None;
     for node in &nodes {
         if let Err(error) = node.shutdown().await
@@ -256,6 +266,33 @@ async fn execute(
     summary.joined_nodes = nodes.len();
     summary.boot_retirements = boots.len();
     Ok(summary)
+}
+
+// Construct the selected future before polling it. Native recovery and complete
+// observation must not share the stack with construction of every CLI variant;
+// execute retains the owners and joins cleanup regardless of the result.
+fn run_scenario<'a>(
+    scenario: Scenario,
+    root: &'a tempfile::TempDir,
+    journal: Arc<SqliteJournal>,
+    nodes: &'a mut Vec<Arc<CellNode>>,
+    boots: &'a mut Vec<startup::BootOwner>,
+    profile: FleetProfile,
+) -> FleetAdapterFuture<'a, ScenarioSummary> {
+    match scenario {
+        Scenario::CountBalance => Box::pin(balance::run(root, journal, nodes, boots, profile)),
+        Scenario::Maintenance => Box::pin(run_maintenance(root, journal, nodes, boots, profile)),
+        Scenario::ReceiverLoss => receiver_loss::run(root, journal, nodes, boots, profile),
+        other => Box::pin(run(
+            root,
+            root.path().join("fleet-journal.sqlite"),
+            journal,
+            nodes,
+            boots,
+            profile,
+            matches!(other, Scenario::ControllerRestart),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -763,6 +800,9 @@ async fn run_maintenance(
         final_counts: [0; 3],
         maintenance_completed: false,
         maintenance_boot_withdrawn: false,
+        receiver_process_closures: 0,
+        lost_activation_replies: 0,
+        routed_activation_replays: 0,
     };
     let wall_deadline = Instant::now() + Duration::from_secs(180);
     let mut specs = HashMap::new();
@@ -948,6 +988,9 @@ async fn settle(
         final_counts: [0; 3],
         maintenance_completed: false,
         maintenance_boot_withdrawn: false,
+        receiver_process_closures: 0,
+        lost_activation_replies: 0,
+        routed_activation_replays: 0,
     };
     let mut passes = Vec::new();
     for pass in 0..12 {

@@ -1,8 +1,8 @@
 # Minion fleet operations reference
 
 Status: durable journal and public-driver models, plus finite real three-node
-overload, maintenance, controller-restart, and count-balance scenarios with
-receipt readback. Receiver-loss, role-enabled production observations, and
+overload, maintenance, controller-restart, receiver-loss, and count-balance
+scenarios with receipt readback. Role-enabled production observations and
 qualification remain required by the [fleet plan](../../../docs/fleet-operations-plan.md).
 
 ## Run
@@ -17,9 +17,26 @@ cargo test -p cellule-host --example fleet_operations successor_tests:: --locked
 They use real nodes, canonical directory takeover proof, immutable receiver
 recovery records, lost reply replay and an independently reopened journal after
 controller lease expiry. No configured takeover proof keeps the failed claim
-unresolved. The stopped-process witness is an explicit in-process test provider;
-the standalone receiver-loss command and process/provider qualification remain
-required.
+unresolved. The stopped-process witness is an explicit in-process reference
+provider; process/provider qualification remains required.
+
+Run receiver loss after clean source release through the public reconciler:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- receiver-loss
+```
+
+This reserves a receiver, releases one Cell, joins the receiver's runtime, and
+publishes typed closure of its exact enrolled boot. The reconciler retains the
+original release and routes activation and cleanup to the third node. The
+command loses a committed activation reply, replays the exact accepted action,
+reopens an independent journal client after controller lease expiry, and checks
+that the previous controller is fenced. It verifies all twelve command receipts
+and SQL values, fences the moved source handle, and checks final Cell counts
+`[11, 0, 1]`. Exit joins all three nodes, retires their boots, closes both journal
+clients, and checks empty resource ledgers. Failures preserve their original
+error through the same cleanup. This finite command uses joined in-process
+lifecycle evidence; it does not qualify OS crash or external-job supervision.
 
 Run the real-node scenario from the workspace root:
 

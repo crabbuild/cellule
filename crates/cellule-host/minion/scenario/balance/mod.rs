@@ -51,6 +51,9 @@ pub(super) async fn run(
         final_counts: [0; 3],
         maintenance_completed: false,
         maintenance_boot_withdrawn: false,
+        receiver_process_closures: 0,
+        lost_activation_replies: 0,
+        routed_activation_replays: 0,
     };
     let mut specs = HashMap::new();
     let deadline = Instant::now() + Duration::from_secs(120);

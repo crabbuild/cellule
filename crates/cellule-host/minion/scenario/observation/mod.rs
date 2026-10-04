@@ -52,7 +52,6 @@ pub(super) async fn observe(
     observe_inner(fleet, roster, deadline, None).await
 }
 
-#[cfg(test)]
 pub(super) async fn observe_with_failed_boot_closure(
     fleet: &adapters::LocalFleet,
     roster: &FleetRoster,

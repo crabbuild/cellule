@@ -90,7 +90,8 @@ jobs:
       - name: Test fleet journal and public controller models
         # Each case runs concurrent native runtimes and SQL workers. Bound whole
         # fixtures on the hosted runner; retain each case's deadlines and races.
-        run: cargo test -p cellule-host --example fleet_operations --all-features --locked -- --test-threads=2
+        # Preserve earlier assertion details even if a later native case aborts.
+        run: cargo test -p cellule-host --example fleet_operations --all-features --locked -- --test-threads=2 --nocapture
       - name: Verify Axum HTTP publication, retries and cold recovery against RustFS
         env:
           AWS_ACCESS_KEY_ID: cellule-ci

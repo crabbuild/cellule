@@ -322,7 +322,8 @@ async fn reference_observer_reconciles_follower_only_maintenance_to_completion()
     let report = report.unwrap();
     assert_eq!(
         report.snapshot.head().maintenance().unwrap().phase(),
-        cellule_runtime::fleet::operations::MaintenancePhase::Completed
+        cellule_runtime::fleet::operations::MaintenancePhase::Completed,
+        "follower-only maintenance failed to settle: {report:?}"
     );
     let progress = policy_progress.unwrap();
     assert_eq!(progress.required, 1);

@@ -1038,16 +1038,21 @@ async fn public_reconciler_drives_durable_phases_fresh_activation_cleanup_and_re
     assert_eq!(first.dispatched, 0);
     assert!(first.next_wake_at_ms < NOW + 100);
     assert_eq!(first.snapshot.head().reserved_restore_bytes(), 8192);
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 1);
     fixture.stop().await;
     assert_eq!(fixture.step(&driver, 1).await.dispatched, 2); // prepare
     let released = fixture.step(&driver, 2).await;
     assert_eq!(released.dispatched, 2);
     assert_eq!(released.released, 2);
     assert_eq!(released.activated, 0);
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 1);
     let activated = fixture.step(&driver, 3).await;
     assert_eq!(activated.inspected, 2);
     assert_eq!(activated.activated, 2);
     assert_eq!(activated.released, 0);
+    // Stop-new-moves suppresses planning, but each receiver effect still needs
+    // a fresh complete observation to decide whether its boot has closed.
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 3);
     assert!(
         activated
             .snapshot
@@ -1057,6 +1062,7 @@ async fn public_reconciler_drives_durable_phases_fresh_activation_cleanup_and_re
             .all(|a| a.phase() == AttemptPhase::Activated)
     );
     assert_eq!(fixture.step(&driver, 4).await.dispatched, 2); // independent resource proof
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 5);
     let retired = fixture.step(&fixture.driver(206), 5).await;
     assert_eq!(retired.retired, 2);
     assert_eq!(retired.inspected, 2);
@@ -1089,7 +1095,7 @@ async fn public_reconciler_drives_durable_phases_fresh_activation_cleanup_and_re
             entry.completed_at_ms()
         );
     }
-    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 5);
     fixture.journal.close().await.unwrap();
 }
 
