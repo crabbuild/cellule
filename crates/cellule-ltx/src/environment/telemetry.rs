@@ -41,7 +41,7 @@ pub enum LtxPhase {
     RootPreparationWork,
     /// Acquiring a new shared dirty-memory semaphore permit.
     DirtyAdmission,
-    /// Acquiring a new recovery permit after dirty-memory admission.
+    /// Acquiring a new recovery semaphore permit.
     RecoveryAdmission,
     /// Opening an exact root.
     RootOpen,

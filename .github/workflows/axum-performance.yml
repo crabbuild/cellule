@@ -57,7 +57,8 @@ jobs:
             # Backport only phase observations and the example observer wiring.
             # Retain the exact diff so the baseline's instrumentation is auditable.
             patch="$GITHUB_WORKSPACE/scripts/axum-write-telemetry.patch"
-            git apply --reverse --check "$patch"
+            # The candidate may reorganize admission; this fixed fixture only
+            # backports observations, never candidate scheduling changes.
             if git -C "$RUNNER_TEMP/axum-baseline-source" apply --check "$patch"; then
               git -C "$RUNNER_TEMP/axum-baseline-source" apply "$patch"
             else

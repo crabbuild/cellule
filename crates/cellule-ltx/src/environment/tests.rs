@@ -574,6 +574,239 @@ async fn cancelled_waiters_do_not_release_running_job_or_recovery_admission() {
 
 #[cfg(feature = "replica")]
 #[tokio::test]
+async fn waiting_recovery_does_not_occupy_ordinary_dirty_admission() {
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let host = Host::default()
+        .with_dirty_slots(dirty.clone())
+        .with_recovery_slots(recovery.clone());
+    let occupied = recovery.clone().acquire_owned().await.unwrap();
+    let mut waiting = Box::pin(host.for_recovery());
+    assert!(futures_util::poll!(&mut waiting).is_pending());
+    assert_eq!(
+        dirty.available_permits(),
+        1,
+        "a recovery waiter must leave dirty capacity available for ordinary prepares"
+    );
+    let mut ordinary = Box::pin(host.for_dirty());
+    let std::task::Poll::Ready(Ok(admitted)) = futures_util::poll!(&mut ordinary) else {
+        panic!("ordinary preparation queued behind a recovery waiter");
+    };
+    drop(admitted);
+    drop(occupied);
+    let admitted = waiting.await.unwrap();
+    assert_eq!(dirty.available_permits(), 0);
+    assert_eq!(recovery.available_permits(), 0);
+    drop(admitted);
+    assert_eq!(dirty.available_permits(), 1);
+    assert_eq!(recovery.available_permits(), 1);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
+async fn recovery_waiting_for_dirty_does_not_block_an_existing_dirty_scope() {
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let host = Host::default()
+        .with_dirty_slots(dirty.clone())
+        .with_recovery_slots(recovery.clone());
+    let existing = host.for_dirty().await.unwrap();
+    let mut new_recovery = Box::pin(host.for_recovery());
+    assert!(futures_util::poll!(&mut new_recovery).is_pending());
+    assert_eq!(recovery.available_permits(), 1);
+    let mut nested_admission = Box::pin(existing.for_recovery());
+    let std::task::Poll::Ready(Ok(nested)) = futures_util::poll!(&mut nested_admission) else {
+        panic!("recovery admission inverted an existing dirty scope");
+    };
+    drop(nested_admission);
+    drop(nested);
+    drop(existing);
+    let admitted = new_recovery.await.unwrap();
+    drop(admitted);
+    assert_eq!(dirty.available_permits(), 1);
+    assert_eq!(recovery.available_permits(), 1);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
+async fn canceled_pair_waiters_release_the_queue_without_holding_half_a_pair() {
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let host = Host::default()
+        .with_dirty_slots(dirty.clone())
+        .with_recovery_slots(recovery.clone());
+    let peer = Host::default()
+        .with_recovery_slots(recovery.clone())
+        .with_dirty_slots(dirty.clone());
+    let occupied = recovery.clone().acquire_owned().await.unwrap();
+    let mut first = Box::pin(host.for_recovery());
+    let mut second = Box::pin(peer.for_recovery());
+    assert!(futures_util::poll!(&mut first).is_pending());
+    assert!(futures_util::poll!(&mut second).is_pending());
+    assert_eq!(dirty.available_permits(), 1);
+
+    let independent = Host::default()
+        .with_dirty_slots(Arc::new(tokio::sync::Semaphore::new(1)))
+        .with_recovery_slots(Arc::new(tokio::sync::Semaphore::new(1)));
+    let mut other = Box::pin(independent.for_recovery());
+    assert!(matches!(
+        futures_util::poll!(&mut other),
+        std::task::Poll::Ready(Ok(_))
+    ));
+
+    drop(first);
+    assert!(futures_util::poll!(&mut second).is_pending());
+    assert_eq!(dirty.available_permits(), 1);
+    drop(second);
+    drop(occupied);
+    let admitted = peer.for_recovery().await.unwrap();
+    drop(admitted);
+    assert_eq!(dirty.available_permits(), 1);
+    assert_eq!(recovery.available_permits(), 1);
+
+    let occupied = dirty.clone().acquire_owned().await.unwrap();
+    let mut waiting = Box::pin(host.for_recovery());
+    assert!(futures_util::poll!(&mut waiting).is_pending());
+    assert_eq!(recovery.available_permits(), 1);
+    drop(waiting);
+    drop(occupied);
+    let admitted = host.for_recovery().await.unwrap();
+    drop(admitted);
+    assert_eq!(dirty.available_permits(), 1);
+    assert_eq!(recovery.available_permits(), 1);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mixed_memory_admission_progresses_with_one_slot_per_pool() {
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let host = Host::default()
+        .with_dirty_slots(dirty.clone())
+        .with_recovery_slots(recovery.clone());
+    let peer = Host::default()
+        .with_dirty_slots(dirty.clone())
+        .with_recovery_slots(recovery.clone());
+    let mut jobs = tokio::task::JoinSet::new();
+    for index in 0..32 {
+        let host = if index % 2 == 0 {
+            host.clone()
+        } else {
+            peer.clone()
+        };
+        jobs.spawn(async move {
+            for _ in 0..16 {
+                let scope = if index % 3 == 0 {
+                    host.for_recovery().await.unwrap()
+                } else {
+                    let dirty = host.for_dirty().await.unwrap();
+                    tokio::task::yield_now().await;
+                    if index % 3 == 1 {
+                        dirty.for_recovery().await.unwrap()
+                    } else {
+                        dirty
+                    }
+                };
+                tokio::task::yield_now().await;
+                drop(scope);
+            }
+        });
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(result) = jobs.join_next().await {
+            result.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(dirty.available_permits(), 1);
+    assert_eq!(recovery.available_permits(), 1);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
+async fn rejected_memory_pairs_preserve_errors_and_release_both_slots_and_charges() {
+    struct Charge(Arc<AtomicUsize>);
+    impl HostResourcePermit for Charge {}
+    impl Drop for Charge {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    struct Admission {
+        reject: HostResourceKind,
+        enabled: AtomicBool,
+        charges: Arc<AtomicUsize>,
+    }
+    impl HostResourceAdmission for Admission {
+        fn reserve(
+            &self,
+            kind: HostResourceKind,
+            _units: u32,
+        ) -> crate::Result<Box<dyn HostResourcePermit>> {
+            if kind == self.reject && self.enabled.load(Ordering::SeqCst) {
+                return Err(crate::LtxError::Io(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "memory admission rejected",
+                )));
+            }
+            self.charges.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Charge(self.charges.clone())))
+        }
+    }
+    for reject in [HostResourceKind::Dirty, HostResourceKind::Recovery] {
+        let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+        let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+        let admission = Arc::new(Admission {
+            reject,
+            enabled: AtomicBool::new(true),
+            charges: Arc::new(AtomicUsize::new(0)),
+        });
+        let mut host = Host::default()
+            .with_dirty_slots(dirty.clone())
+            .with_recovery_slots(recovery.clone());
+        host.install_resource_admission(admission.clone());
+        assert!(
+            matches!(host.for_recovery().await, Err(crate::LtxError::Io(source)) if source.kind() == io::ErrorKind::StorageFull && source.to_string() == "memory admission rejected")
+        );
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+        assert_eq!(admission.charges.load(Ordering::SeqCst), 0);
+        admission.enabled.store(false, Ordering::SeqCst);
+        let admitted = host.for_recovery().await.unwrap();
+        assert_eq!(admission.charges.load(Ordering::SeqCst), 2);
+        drop(admitted);
+        assert_eq!(admission.charges.load(Ordering::SeqCst), 0);
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+    }
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
+async fn closed_memory_pairs_preserve_acquire_error_sources() {
+    for close_dirty in [true, false] {
+        let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+        let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+        if close_dirty {
+            dirty.close();
+        } else {
+            recovery.close();
+        }
+        let host = Host::default()
+            .with_dirty_slots(dirty.clone())
+            .with_recovery_slots(recovery.clone());
+        let error = host.for_recovery().await.err().unwrap();
+        assert!(
+            matches!(error, crate::LtxError::Other(source) if source.downcast_ref::<tokio::sync::AcquireError>().is_some())
+        );
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+    }
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
 async fn closed_admission_returns_errors_instead_of_panicking() {
     let slots = Arc::new(tokio::sync::Semaphore::new(1));
     slots.close();

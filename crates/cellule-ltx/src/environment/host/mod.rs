@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(feature = "replica")]
+mod admission;
 mod budget;
 
 pub use budget::{DiskBudget, DiskReservation};
@@ -168,6 +170,8 @@ pub struct Host {
     job_slots: Arc<tokio::sync::Semaphore>,
     #[cfg(feature = "replica")]
     job_capacity: usize,
+    #[cfg(feature = "replica")]
+    memory_pair_gate: Arc<admission::PairGate>,
     #[cfg(feature = "replica")]
     recovery_slots: Arc<tokio::sync::Semaphore>,
     #[cfg(feature = "replica")]
@@ -502,6 +506,8 @@ impl Host {
     pub fn with_recovery_slots(mut self, slots: Arc<tokio::sync::Semaphore>) -> Self {
         self.recovery_capacity = slots.available_permits();
         self.recovery_slots = slots;
+        self.memory_pair_gate =
+            admission::shared_pair_gate(&self.dirty_slots, &self.recovery_slots);
         self
     }
 
@@ -514,6 +520,8 @@ impl Host {
     pub fn with_dirty_slots(mut self, slots: Arc<tokio::sync::Semaphore>) -> Self {
         self.dirty_capacity = slots.available_permits();
         self.dirty_slots = slots;
+        self.memory_pair_gate =
+            admission::shared_pair_gate(&self.dirty_slots, &self.recovery_slots);
         self
     }
 
@@ -547,50 +555,6 @@ impl Host {
             .as_ref()
             .map(|admission| admission.reserve(kind, units).map(Arc::from))
             .transpose()
-    }
-
-    #[cfg(feature = "replica")]
-    pub(crate) async fn for_dirty(&self) -> crate::Result<Self> {
-        let mut host = self.clone();
-        if host.dirty.is_none() {
-            let started = self.now_monotonic();
-            let permit = self
-                .dirty_slots
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| crate::LtxError::Other(Box::new(e)));
-            self.observe_ltx_phase(LtxPhase::DirtyAdmission, started, permit.is_ok());
-            let permit = permit?;
-            let resource = self.reserve_resource(HostResourceKind::Dirty, 1)?;
-            host.dirty = Some(Arc::new(HostPermit {
-                _resource: resource,
-                semaphore: permit,
-            }));
-        }
-        Ok(host)
-    }
-
-    #[cfg(feature = "replica")]
-    pub(crate) async fn for_recovery(&self) -> crate::Result<Self> {
-        let mut host = self.for_dirty().await?;
-        if host.recovery.is_none() {
-            let started = self.now_monotonic();
-            let permit = self
-                .recovery_slots
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| crate::LtxError::Other(Box::new(e)));
-            self.observe_ltx_phase(LtxPhase::RecoveryAdmission, started, permit.is_ok());
-            let permit = permit?;
-            let resource = self.reserve_resource(HostResourceKind::Recovery, 1)?;
-            host.recovery = Some(Arc::new(HostPermit {
-                _resource: resource,
-                semaphore: permit,
-            }));
-        }
-        Ok(host)
     }
 
     #[cfg(feature = "replica")]
@@ -803,6 +767,18 @@ impl Default for Host {
         static SCRATCH: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
             std::sync::OnceLock::new();
         static LOCAL_DISK: std::sync::OnceLock<DiskBudget> = std::sync::OnceLock::new();
+        #[cfg(feature = "replica")]
+        let recovery_slots = RECOVERY
+            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
+            .clone();
+        #[cfg(feature = "replica")]
+        let dirty_slots = DIRTY
+            .get_or_init(|| {
+                Arc::new(tokio::sync::Semaphore::new(
+                    std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
+                ))
+            })
+            .clone();
         Self {
             filesystem: Arc::new(DirectFileSystem),
             clock: Arc::new(SystemClock),
@@ -831,19 +807,13 @@ impl Default for Host {
             #[cfg(feature = "replica")]
             job_capacity: std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
             #[cfg(feature = "replica")]
-            recovery_slots: RECOVERY
-                .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
-                .clone(),
+            memory_pair_gate: admission::shared_pair_gate(&dirty_slots, &recovery_slots),
+            #[cfg(feature = "replica")]
+            recovery_slots,
             #[cfg(feature = "replica")]
             recovery_capacity: 2,
             #[cfg(feature = "replica")]
-            dirty_slots: DIRTY
-                .get_or_init(|| {
-                    Arc::new(tokio::sync::Semaphore::new(
-                        std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
-                    ))
-                })
-                .clone(),
+            dirty_slots,
             #[cfg(feature = "replica")]
             dirty_capacity: std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
             #[cfg(feature = "replica")]

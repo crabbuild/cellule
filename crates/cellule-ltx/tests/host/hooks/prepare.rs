@@ -76,11 +76,8 @@ async fn root_preparation_separates_admission_wait_and_preserves_admission_error
     let root = prepared.root();
     let mut compaction = Box::pin(replica.prepare_compaction(&root, 0..1, 9, directory.path()));
     assert!(futures_util::poll!(&mut compaction).is_pending());
-    assert_eq!(slots.available_permits(), 0);
-    assert_eq!(
-        *phases.0.lock().unwrap(),
-        vec![(LtxPhase::DirtyAdmission, Duration::ZERO, true)]
-    );
+    assert_eq!(slots.available_permits(), 1);
+    assert!(phases.0.lock().unwrap().is_empty());
     *clock.0.lock().unwrap() += Duration::from_millis(100);
     drop(held_recovery);
     let compacted = compaction.await.unwrap();
