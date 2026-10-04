@@ -29,7 +29,9 @@ only the original authority predecessor before CAS. The integrated runtime/LTX
 suite passes 1,271 tests; metadata failure preserves its source and cannot return
 a proposal. Both comparisons remain separately identified in the dataset.
 
-These are operation counts. Sustained HTTP TPS and latency gains remain unverified.
+These are operation counts. The [integrated steady-write comparison](2026-10-04-rustfs-composed-lineage-writes.md)
+does not establish a throughput gain, although 16-Cell p99 improves. The
+[earlier comparison](2026-10-04-rustfs-composed-original-writes.md) remains separate.
 Ordinary append costs are unchanged; larger representations may retain descriptor
 pages or relocated directory nodes. Composed work/admission phases include
 compaction/recovery: their overlapping populations differ from standalone append.

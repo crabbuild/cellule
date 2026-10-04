@@ -10,6 +10,8 @@ raw artifacts. Do not combine gains from separate runs.
 | Grouped writes | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-grouped-paired-writes.md) · [JSON](2026-10-04-rustfs-grouped-paired-writes.json) |
 | Grouped writes with corrected request-slot handoff | 64 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-grouped-c64-writes.md) · [JSON](2026-10-04-rustfs-grouped-c64-writes.json) |
 | Compaction transfer refill | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-compaction-paired-writes.md) · [JSON](2026-10-04-rustfs-compaction-paired-writes.json) |
+| Composed compaction, before lineage integration | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-composed-original-writes.md) · [JSON](2026-10-04-rustfs-composed-original-writes.json) |
+| Composed compaction, with required lineage | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-composed-lineage-writes.md) · [JSON](2026-10-04-rustfs-composed-lineage-writes.json) |
 
 The grouped-write comparisons improve queued workloads. The 16-client,
 16-Cell profile regresses tail latency; compaction refill does not establish
@@ -24,8 +26,11 @@ Additional cost and qualification evidence:
 
 The [composed compaction regression](2026-10-04-composed-compaction-regression.md)
 records reduced preparation operations with exact-root, recovery, failure, and
-cancellation checks. Sustained HTTP performance for that implementation remains
-unverified.
+cancellation checks. The integrated sustained comparison improves 16-Cell p99
+but loses paired median TPS at every Cell count. The original comparison and
+its gains remain separate evidence. [Composed routing](2026-10-04-rustfs-composed-routing.md)
+also retains forwarded-write latency regressions. [Correctness qualification](2026-10-04-composed-compaction-qualification.md)
+records independent workspace, provider, recovery, and resource-limit proofs.
 
 Earlier measurements remain available for historical comparison:
 [initial HTTP](2026-10-03-rustfs-http.md),

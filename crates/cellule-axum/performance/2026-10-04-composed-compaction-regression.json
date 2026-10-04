@@ -154,5 +154,10 @@
       "metadata_failure_retains_original_source_and_no_proposal": true,
       "same_canonical_runtime_metadata_and_retry_owner": true
     }
+  },
+  "steady_write_evidence": {
+    "original": "2026-10-04-rustfs-composed-original-writes.json",
+    "with_required_lineage": "2026-10-04-rustfs-composed-lineage-writes.json",
+    "finding": "Integrated comparison does not establish throughput gain; paired median TPS decreases at all Cell counts, with improved 16-Cell p99."
   }
 }
