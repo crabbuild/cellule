@@ -21,6 +21,14 @@ scratch cleanup. Runtime/LTX tests, targeted Clippy, local LTX without replicati
 API docs, architecture, and document/SQL/peer checks pass. The dataset retains
 source and local log hashes; committed tests provide reproducible CI checks.
 
+After integration with main's required root-lineage retention (`fa548bb`,
+implementation `2ffe5bd`), the same fixture measures **11 PUTs / 4 HEADs**
+on the baseline and **9 PUTs / 2 HEADs** on the candidate for both schemas.
+These counts include the required lineage PUT. The lineage is confirmed with
+only the original authority predecessor before CAS. The integrated runtime/LTX
+suite passes 1,271 tests; metadata failure preserves its source and cannot return
+a proposal. Both comparisons remain separately identified in the dataset.
+
 These are operation counts. Sustained HTTP TPS and latency gains remain unverified.
 Ordinary append costs are unchanged; larger representations may retain descriptor
 pages or relocated directory nodes. Composed work/admission phases include

@@ -87,5 +87,72 @@
     "Do not extrapolate two saved descriptor/root PUTs to every representation or append. Relocated directory nodes can remain final dependencies.",
     "Composed RootPreparationWork includes compaction plus append; RootAdmission includes recovery admission. Overlapping phase populations differ from standalone append."
   ],
-  "reproduce_candidate": "cargo test -p cellule-runtime --features test-support --lib pressure_append_avoids_intermediate_root_metadata --locked"
+  "reproduce_candidate": "cargo test -p cellule-runtime --features test-support --lib pressure_append_avoids_intermediate_root_metadata --locked",
+  "lineage_integration": {
+    "baseline_revision": "fa548bb2cc1993bbf77dc7f4fbef499a0de3f5a4",
+    "implementation_revision": "2ffe5bd2c9d1088827f14e049e4857948986fadf",
+    "profile": "Same 32-command fixture with required native root-lineage retention; both schemas verify confirmation and exact original predecessor before authority CAS. Baseline expectation is (11,4), candidate (9,2).",
+    "results": [
+      {
+        "schema": 1,
+        "baseline": {
+          "puts_including_lineage": 11,
+          "metadata_heads": 4
+        },
+        "candidate": {
+          "puts_including_lineage": 9,
+          "metadata_heads": 2
+        },
+        "lineage_confirmed_before_cas": true,
+        "lineage_predecessors_are_original_authority_root_only": true,
+        "restored_ordered_rows": 32
+      },
+      {
+        "schema": 2,
+        "baseline": {
+          "puts_including_lineage": 11,
+          "metadata_heads": 4
+        },
+        "candidate": {
+          "puts_including_lineage": 9,
+          "metadata_heads": 2
+        },
+        "lineage_confirmed_before_cas": true,
+        "lineage_predecessors_are_original_authority_root_only": true,
+        "restored_ordered_rows": 32
+      }
+    ],
+    "source_sha256": {
+      "crates/cellule-ltx/src/replica/mod.rs": {
+        "baseline": "be50c7b1e624d6af64306f7241cedec28d2cf3534ea77e9d9f4ee3e4d4cab112",
+        "candidate": "946f54a362809f0412428ad47e163b8908b810ebcc822ce3dd7a805600698f4c"
+      },
+      "crates/cellule-ltx/src/replica/prepare.rs": {
+        "baseline": "8656b03e7f45395f38f69744d0bb30575f34031c0979312b6baf9b0f502780a8",
+        "candidate": "bb894a029fbbbc1041854e19c1a5520feb4751001a8ebc601468df5a55a7b98a"
+      },
+      "crates/cellule-ltx/src/replica/compaction/mod.rs": {
+        "baseline": "617ce79855ab3418761892c9f8249b1eaba8ecf05e10c80bb0d61d072364bc11",
+        "candidate": "4f8b712422a4131b79cbce831a3d51cbaf142116c7148c78bbac0b6b9296a4e2"
+      },
+      "crates/cellule-runtime/src/publication/mod.rs": {
+        "baseline": "eb634aa1011d2e89ea699ee5279c038fe389d7b25597eef29a18987c2753ba46",
+        "candidate": "5f98270c861faebcbf6aae4db6ba9e800adb01c58df72cb46c5d70a827ded332"
+      }
+    },
+    "local_log_sha256": {
+      "composed-fa-runtime-ltx-tests.log": "4ade55b30b4507e050addb76eacc3d4c7e58319e79a8f3a881bb590d06510e41",
+      "composed-fa-baseline.log": "19bb1423035ba0fee70d63d27a6e0db3bb190605fc9d8e5b621cf1d9d300a5f3",
+      "composed-fa-clippy.log": "273ce1258f466e1455632286aef430bbd079324422657b0693d43302a0edf482",
+      "composed-fa-api-docs.log": "a1861ca9171c5cd61de98b9b89e265e3d7a478b8e8755a06b5579fa1b9216c45"
+    },
+    "verification": {
+      "runtime_ltx_passed": 1271,
+      "runtime_ltx_failed": 0,
+      "documented_ignored": 16,
+      "composed_metadata_observes_only_final_derivation": true,
+      "metadata_failure_retains_original_source_and_no_proposal": true,
+      "same_canonical_runtime_metadata_and_retry_owner": true
+    }
+  }
 }
