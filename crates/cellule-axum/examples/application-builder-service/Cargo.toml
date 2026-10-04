@@ -12,11 +12,11 @@ resolver = "3"
 [dependencies]
 axum = { version = "0.8.9", features = ["json", "http1", "tokio"] }
 blake3 = "1.8"
-cellule-app = { path = "../../crates/cellule-app" }
-cellule-axum = { path = "../../crates/cellule-axum", features = ["openapi"] }
-cellule-cookbook-support = { path = "../../cookbook/support" }
-cellule-runtime = { path = "../../crates/cellule-runtime" }
-cellule-store = { path = "../../crates/cellule-store" }
+cellule-app = { path = "../../../cellule-app" }
+cellule-axum = { path = "../..", features = ["openapi"] }
+cellule-cookbook-support = { path = "../../../../cookbook/support" }
+cellule-runtime = { path = "../../../cellule-runtime" }
+cellule-store = { path = "../../../cellule-store" }
 object_store = { version = "0.14.1", default-features = false }
 rusqlite = { version = "0.34", features = ["bundled"] }
 serde_json = "1"

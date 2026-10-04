@@ -52,8 +52,8 @@ jobs:
         run: cargo check --workspace --all-targets --all-features --locked
       - name: Verify application builder embedding example
         run: |
-          cargo fmt --manifest-path examples/application-builder-service/Cargo.toml --check
-          cargo clippy --manifest-path examples/application-builder-service/Cargo.toml --all-targets --locked -- -D warnings
+          cargo fmt --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --check
+          cargo clippy --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --all-targets --locked -- -D warnings
       - name: Documentation links
         run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
       - name: Test
@@ -142,4 +142,4 @@ jobs:
       - name: Check Rust 1.97 minimum
         run: |
           cargo check --workspace --all-targets --all-features --locked
-          cargo check --manifest-path examples/application-builder-service/Cargo.toml --all-targets --locked
+          cargo check --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --all-targets --locked

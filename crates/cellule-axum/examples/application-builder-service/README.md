@@ -1,11 +1,21 @@
-# Application builder → Axum service
+# Application builder → Axum/OpenAPI service
 
 A complete embedding application using native Cellule registration and scoped
 handle factories. `CellBinding`, `ApplicationBuilder::module`, and
-`ApplicationBinding` belong to [cellule-app](../../crates/cellule-app/README.md);
-the local binding method belongs to [cellule-host](../../crates/cellule-host/README.md).
+`ApplicationBinding` belong to [cellule-app](../../../cellule-app/README.md);
+the local binding method belongs to [cellule-host](../../../cellule-host/README.md).
 Application-owned startup and tenant provisioning remain in
 [service.rs](src/service.rs), using the existing cookbook host assembly.
+
+The HTTP service is specific to Axum/OpenAPI. Module declaration, application
+compilation, `ApplicationBinding::scope`, and host binding are framework APIs
+that other HTTP adapters, workers, or command-line applications can use. The
+Axum-specific pieces are the request extractors, `CellApi` routes, OpenAPI
+annotations, and HTTP listener/shutdown wiring.
+
+This example keeps its own `Cargo.toml` and lockfile as an embedding application.
+Run it with `--manifest-path`; the adapter's `sql` and `integration` examples
+remain ordinary `cargo run -p cellule-axum --example ...` targets.
 
 ```text
 Orders module + Cell binding
@@ -51,7 +61,7 @@ application identity, authorization, HTTP routes, listener, and evidence journal
 From the repository root:
 
 ```sh
-cargo run --manifest-path examples/application-builder-service/Cargo.toml --locked
+cargo run --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --locked
 ```
 
 The server binds `127.0.0.1:3002`. Set `CELLULE_EXAMPLE_BIND=127.0.0.1:0`

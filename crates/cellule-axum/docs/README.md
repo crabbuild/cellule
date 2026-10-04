@@ -11,6 +11,7 @@ Signed node transport uses the separate
 | --- | --- |
 | Fixed tenant with application-written handlers | [`sql` example](../examples/sql.rs) |
 | Authorized request context, typed registration and OpenAPI | [`integration` example](../examples/integration.rs) |
+| Native application builder, tenant scopes, leased host startup and shutdown | [Standalone application service](../examples/application-builder-service/README.md) |
 | Atomic evidence storage | [Example journal](../examples/recovery/mod.rs) |
 | Local provider setup and cleanup on failure | [Example support](../examples/support/mod.rs) |
 | Durable runtime snapshot and resolution contracts | [Uncertain command guide](../../../docs/api.md#handle-an-uncertain-command) |
@@ -20,7 +21,9 @@ Signed node transport uses the separate
 1. Authenticate the session/token using application middleware.
 2. Look up its permitted tenant and application. Authorize the route's action
    and resource; derive its Cell target using the compiled topology.
-3. Construct/select the corresponding `ApplicationHandle<MyApp>` and install
+3. Create the corresponding `ApplicationHandle<MyApp>` with a trusted
+   `ApplicationBinding<MyApp>::scope(authorized_tenant)`, or select an existing
+   scoped handle, and install
    it into request extensions. Keep any authorized actor/resource context
    alongside it; a handle is a capability, not a principal.
 4. Extract `RequestCellule<MyApp>` in a manual handler, or implement

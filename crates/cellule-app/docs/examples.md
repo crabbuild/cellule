@@ -19,8 +19,8 @@ modules + Cell types -> compiled descriptor -> catalog + fenced owner
 | `cargo run -p cellule-app --example schedules --locked` | Cron, Effects | Register a fixed-interval schedule, drive one due maintenance tick, deliver its effect through a signed local peer loopback, and count the destination row. |
 
 For a complete HTTP service, run
-`cargo run --manifest-path examples/application-builder-service/Cargo.toml --locked`.
-The [service guide](../../../examples/application-builder-service/README.md)
+`cargo run --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --locked`.
+The [service guide](../../cellule-axum/examples/application-builder-service/README.md)
 uses native module registration and scoped factories, authorized Axum routes,
 OpenAPI, retained command evidence, and ordered host shutdown.
 

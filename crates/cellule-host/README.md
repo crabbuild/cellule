@@ -12,7 +12,7 @@ acquires no Cell, and leaves readiness and drain with the original node.
 `bind_application` accepts an already configured client, including an
 application-owned remote transport. Both paths reject mismatched application
 types and client registries. See the
-[complete embedding service](../../examples/application-builder-service/README.md)
+[complete embedding service](../cellule-axum/examples/application-builder-service/README.md)
 for scoped Axum routes and OpenAPI using these bindings.
 
 ```text

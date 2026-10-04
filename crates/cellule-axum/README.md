@@ -17,6 +17,24 @@ tenant/resource authorization, providers, listener, and shutdown. The adapter
 uses that handle; the runtime owns command execution, durable publication,
 and receipts.
 
+| Runnable example | Focus | Default port |
+| --- | --- | --- |
+| [`sql`](examples/sql.rs) | Manual REST handlers and receipt-bound reads. | 3000 |
+| [`integration`](examples/integration.rs) | Typed routes, authorized context, OpenAPI, and recovery journal. | 3001 |
+| [`application-builder-service`](examples/application-builder-service/README.md) | Native module registration, shared scoped factory, two tenants, leased host startup, and ordered shutdown. | 3002 |
+
+For the full application-to-host integration, run the standalone service from
+the workspace root:
+
+```sh
+cargo run --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --locked
+```
+
+Its HTTP layer uses Axum/OpenAPI; the `CellBinding`, compilation, and
+`ApplicationBinding` APIs are reusable with other adapters and workers. It keeps
+an independent manifest and lockfile so application-owned cookbook startup
+dependencies stay outside the adapter crate.
+
 ## Try the complete integration
 
 Run this from the Cellule workspace:

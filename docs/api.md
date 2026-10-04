@@ -117,7 +117,7 @@ still rejects targets outside its tenant, application, namespace, or declared
 partition scheme. `ApplicationHandle::new` remains available for directly binding
 one tenant through the same validation path. Binding alone does not activate
 Cells; the host must provision the catalog and establish an owner before calls.
-The [embedding service](../examples/application-builder-service/README.md) uses
+The [embedding service](../crates/cellule-axum/examples/application-builder-service/README.md) uses
 this flow with Axum/OpenAPI and ordered shutdown.
 
 Use `target_for_scope(namespace, scope)` to derive a target from the declared

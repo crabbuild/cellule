@@ -62,7 +62,7 @@ with `ApplicationBinding::<A>::new`. Authorize each tenant before calling
 `binding.scope(tenant)`. `cellule-host` provides
 `CellNode::bind_local_application` to create this factory from its existing
 runtime and a supplied storage layout. The same artifact can feed Axum/OpenAPI;
-the [complete service example](../../examples/application-builder-service/README.md)
+the [complete service example](../cellule-axum/examples/application-builder-service/README.md)
 uses these framework building blocks.
 
 | Guide | Topic |
