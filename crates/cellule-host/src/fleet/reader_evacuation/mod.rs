@@ -5,6 +5,7 @@ use cellule_runtime::{
     identity::Digest,
 };
 
+mod maintenance;
 mod publication;
 mod refresh;
 pub use refresh::FleetReaderEvacuationCandidate;

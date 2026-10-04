@@ -3,12 +3,12 @@ use super::{
     FleetFollowerEvacuationCheck, FleetJournalSnapshot, FleetMaintenanceEnrollments,
     FleetReaderEvacuationCheck, FleetRoster, operation,
 };
-use cellule_runtime::fleet::operations::{
-    EnrollmentRecord, EnrollmentStatus, MaintenanceEnrollmentInventory, RegistryVersion,
-};
+use cellule_runtime::fleet::operations::{EnrollmentRecord, EnrollmentStatus, RegistryVersion};
 use cellule_runtime::identity::Digest;
 use cellule_runtime::{Error, Result};
 use std::collections::BTreeMap;
+
+pub(in crate::fleet) mod requests;
 
 /// Policy result for one exact retained request. Unchecked states remain blockers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,28 +108,8 @@ impl FleetMaintenancePolicyCoverage {
         followers: &[FleetFollowerEvacuationCheck],
         inputs: Digest,
     ) -> Result<Self> {
-        if original.snapshot() != roster.snapshot()
-            || original.roster_digest() != roster.digest()?
-        {
-            return Err(Error::Fenced);
-        }
+        let requests = requests::required(original, roster)?;
         let node = original.original().operation().node();
-        let mut requests = BTreeMap::new();
-        for row in original.entries() {
-            requests.insert(*row.spec().key().map_err(operation)?.as_bytes(), Some(row));
-        }
-        for row in roster.enrollments() {
-            if MaintenanceEnrollmentInventory::includes(node, row) {
-                requests
-                    .entry(*row.spec().key().map_err(operation)?.as_bytes())
-                    .or_insert(None);
-            }
-        }
-        let current = roster
-            .enrollments()
-            .iter()
-            .map(|row| Ok((*row.spec().key().map_err(operation)?.as_bytes(), row)))
-            .collect::<Result<BTreeMap<_, _>>>()?;
         let mut witnesses = BTreeMap::new();
         for check in readers {
             witness_optional(
@@ -155,14 +135,10 @@ impl FleetMaintenancePolicyCoverage {
             }
         }
         let mut obligations = Vec::with_capacity(requests.len());
-        for (key, accepted) in requests {
-            let row = *current.get(&key).ok_or(Error::Fenced)?;
-            if let Some(accepted) = accepted {
-                accepted.validate_replay(row.spec()).map_err(operation)?;
-                if accepted.accepted_at_ms() != row.accepted_at_ms() {
-                    return Err(Error::Fenced);
-                }
-            }
+        for request in requests {
+            let accepted = request.original;
+            let row = request.current;
+            let key = *row.spec().key().map_err(operation)?.as_bytes();
             let status = match row.status() {
                 EnrollmentStatus::Pending => FleetMaintenancePolicyStatus::Pending,
                 EnrollmentStatus::Established => FleetMaintenancePolicyStatus::Established,
@@ -177,12 +153,7 @@ impl FleetMaintenancePolicyCoverage {
                         if row != *retired {
                             return Err(Error::Fenced);
                         }
-                        if let Some(accepted) = accepted
-                            && accepted.status() == EnrollmentStatus::Established
-                            && Some(enrollment_digest(accepted)?) != *digest
-                        {
-                            return Err(Error::Fenced);
-                        }
+                        requests::validate_original(accepted, *digest)?;
                         *status
                     }
                     None => FleetMaintenancePolicyStatus::MissingPolicy,

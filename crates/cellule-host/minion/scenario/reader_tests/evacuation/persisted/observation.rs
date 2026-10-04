@@ -13,7 +13,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-async fn advertisements(directory: &NodeDirectory) -> Vec<NodeAdvertisement> {
+pub(super) async fn advertisements(directory: &NodeDirectory) -> Vec<NodeAdvertisement> {
     let mut nodes = Vec::new();
     for index in 0..3 {
         nodes.push(
@@ -100,13 +100,14 @@ impl FleetObserver for Observer {
                     .await?;
             assert_eq!(original.original().enrollment_count(), 1);
             assert_eq!(original.entries().count(), 1);
-            let check = self
+            let checks = self
                 .verifier
-                .recheck(self.journal.as_ref(), &self.record, end, clock)
+                .collect_maintenance(self.journal.as_ref(), &original, roster, end, clock)
                 .await?;
-            assert_eq!(check.record(), &self.record);
-            let observation = observation(&check, start, advertisements(&self.directory).await)
-                .with_role_evacuations(vec![check], Vec::new())?
+            assert_eq!(checks.len(), 1);
+            assert_eq!(checks[0].record(), &self.record);
+            let observation = observation(&checks[0], start, advertisements(&self.directory).await)
+                .with_role_evacuations(checks, Vec::new())?
                 .with_maintenance_enrollments(original)?
                 .check_maintenance_policies(roster, clock()?)?;
             assert!(
@@ -558,6 +559,19 @@ async fn checked_reader_policy_cannot_substitute_a_different_original_acceptance
     let roster = FleetRoster::collect(fixture.journal.as_ref(), &snapshot, deadline())
         .await
         .unwrap();
+    assert!(matches!(
+        fixture
+            .verifier()
+            .collect_maintenance(
+                fixture.journal.as_ref(),
+                &original,
+                &roster,
+                deadline(),
+                clock
+            )
+            .await,
+        Err(Error::Fenced)
+    ));
     let check = fixture
         .verifier()
         .recheck(fixture.journal.as_ref(), &changed, deadline(), clock)

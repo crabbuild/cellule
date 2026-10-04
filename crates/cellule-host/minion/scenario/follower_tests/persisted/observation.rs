@@ -10,7 +10,7 @@ use cellule_runtime::fleet::operations::{
     FleetAction, FleetInspectionObservation, FleetInspectionRequest,
 };
 
-async fn advertisements(fixture: &ManagedFixture) -> Vec<NodeAdvertisement> {
+pub(super) async fn advertisements(fixture: &ManagedFixture) -> Vec<NodeAdvertisement> {
     let mut nodes = Vec::new();
     for index in 0..fixture.nodes.len() {
         nodes.push(
@@ -42,12 +42,13 @@ fn observation(
     check: &FleetFollowerEvacuationCheck,
     graph: &FleetRoleCoverage,
     nodes: Vec<NodeAdvertisement>,
+    start: i64,
 ) -> FleetObservation {
     FleetObservation::new(
         scope(),
         graph.snapshot().registry(),
         graph.snapshot().registry().revision(),
-        check.interval().0.min(graph.interval().0),
+        check.interval().0.min(graph.interval().0).min(start),
         clock().unwrap(),
         false,
         nodes,
@@ -71,15 +72,7 @@ impl FleetObserver for Observer {
     ) -> FleetAdapterFuture<'a, FleetObservation> {
         Box::pin(async move {
             self.observations.fetch_add(1, Ordering::AcqRel);
-            let check = verifier(&self.fixture)
-                .recheck(
-                    self.fixture.native.journal.as_ref(),
-                    &self.record,
-                    end,
-                    clock,
-                )
-                .await?;
-            let graph = graph(&self.fixture).await;
+            let start = clock()?;
             let original = FleetMaintenanceEnrollments::collect(
                 self.fixture.native.journal.as_ref(),
                 roster,
@@ -87,11 +80,28 @@ impl FleetObserver for Observer {
                 clock,
             )
             .await?;
-            let observation = observation(&check, &graph, advertisements(&self.fixture).await)
-                .with_role_coverage(graph)?
-                .with_role_evacuations(Vec::new(), vec![check])?
-                .with_maintenance_enrollments(original)?
-                .check_maintenance_policies(roster, clock()?)?;
+            let checks = verifier(&self.fixture)
+                .collect_maintenance(
+                    self.fixture.native.journal.as_ref(),
+                    &original,
+                    roster,
+                    end,
+                    clock,
+                )
+                .await?;
+            assert_eq!(checks.len(), 1);
+            assert_eq!(checks[0].record(), &self.record);
+            let graph = graph(&self.fixture).await;
+            let observation = observation(
+                &checks[0],
+                &graph,
+                advertisements(&self.fixture).await,
+                start,
+            )
+            .with_role_coverage(graph)?
+            .with_role_evacuations(Vec::new(), checks)?
+            .with_maintenance_enrollments(original)?
+            .check_maintenance_policies(roster, clock()?)?;
             assert!(
                 observation
                     .maintenance_policy_coverage()
@@ -145,7 +155,12 @@ async fn follower_evacuation_observation_retains_native_policy_and_role_graph_in
         )
         .await
         .unwrap();
-        let base = observation(&check, &graph, advertisements(&fixture).await);
+        let base = observation(
+            &check,
+            &graph,
+            advertisements(&fixture).await,
+            check.interval().0,
+        );
         let retained = if policy_first {
             base.with_role_evacuations(Vec::new(), vec![check])
                 .unwrap()
@@ -251,7 +266,12 @@ async fn follower_evacuation_observation_refuses_duplicate_ensembles_and_stale_f
         .await
         .unwrap();
     let current = graph(&fixture).await;
-    let base = observation(&first, &current, advertisements(&fixture).await);
+    let base = observation(
+        &first,
+        &current,
+        advertisements(&fixture).await,
+        first.interval().0,
+    );
     assert!(matches!(
         base.with_role_evacuations(Vec::new(), vec![first, second]),
         Err(Error::Node(
@@ -274,7 +294,12 @@ async fn follower_evacuation_observation_refuses_duplicate_ensembles_and_stale_f
         assert_ne!(next.head(), old.head());
         let graph = graph(&fixture).await;
         assert_eq!(graph.snapshot(), &next);
-        let base = observation(&check, &graph, advertisements(&fixture).await);
+        let base = observation(
+            &check,
+            &graph,
+            advertisements(&fixture).await,
+            check.interval().0,
+        );
         let result = if policy_first {
             base.with_role_evacuations(Vec::new(), vec![check])
                 .unwrap()

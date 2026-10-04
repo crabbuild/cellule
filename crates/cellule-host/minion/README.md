@@ -550,6 +550,27 @@ Complete authenticated lookup, source/failed-owner successor policy, checked
 nonexecution, accepted-work joining and SettleRoles/Finalize remain delivery
 requirements. See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
 
+## Automatic maintenance policy lookup
+
+The role-enabled public observers now discover latest policy history from the
+complete original/current request set through the existing reader/follower
+verifiers. They retain exact original acceptances, current rows, full journal
+barriers and actual ready reader/native ensemble checks. Full roster rechecks
+surround all lookups. Pending source work remains blocking alongside checked
+replacement policy; missing latest history becomes an explicit MissingPolicy gap.
+
+Nine cases exercise independent-client reconstruction, missing history without
+role effects, earlier heads with unchanged registries, monotonic clock/age/deadline
+bounds, a new source acceptance, and controller/policy changes while actual native
+capture is paused. Existing public reconciliation cases consume this lookup.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked maintenance_policy_lookup
+```
+
+Source/failed-owner successor policy, checked nonexecution, accepted-work joining
+and complete maintenance finalization remain required. See the [lookup recipe](../docs/lifecycle.md#look-up-maintenance-policy-history).
+
 ## Failed reader lifetime evidence
 
 The `failed_reader_closure` cases use application-owned enrollments around two

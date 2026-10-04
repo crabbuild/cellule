@@ -963,6 +963,44 @@ supplied subset of evacuation checks grants complete policy/work coverage,
 SettleRoles or Finalize. Failed-owner successor policy, durable unknown actions
 and native/external accepted work must still be collected and settled.
 
+### Look up maintenance policy history
+
+Use the existing native verifiers to discover every eligible retired donor from
+the complete original/current request set. The application supplies the same
+linearizable journal domain and its authenticated peer/directory handles:
+
+```rust
+async fn collect_reader_maintenance_policy(
+    verifier: &cellule_host::fleet::FleetReaderEvacuationVerifier,
+    journal: &dyn cellule_host::fleet::FleetReaderEvacuationJournal,
+    original: &cellule_host::fleet::FleetMaintenanceEnrollments,
+    roster: &cellule_host::fleet::FleetRoster,
+    deadline: tokio::time::Instant,
+    clock: impl FnMut() -> cellule_runtime::Result<i64>,
+) -> cellule_runtime::Result<Vec<cellule_host::fleet::FleetReaderEvacuationCheck>> {
+    verifier.collect_maintenance(journal, original, roster, deadline, clock).await
+}
+```
+
+`FleetFollowerEvacuationVerifier::collect_maintenance` supplies the corresponding
+complete follower donor lookup and current native source/member checks. Both use
+one canonical request set shared with the matcher below. Each latest history
+must name the exact current row and original acceptance. Every returned check
+must match the expected full head, registry and roster. Full journal rechecks
+surround the entire collection, including explicit missing-history reads.
+One monotonic capture clock bounds the whole method to 30 seconds; the caller's
+deadline bounds every lookup and native confirmation. Errors preserve their source.
+Follower ensemble witnesses are bounded before retaining native graph copies.
+
+Collect the immutable original set first, call both role collectors for enabled
+producers, then construct the outer observation using the original start and the
+final clock. Attach both returned vectors through `with_role_evacuations` and
+retain `with_maintenance_enrollments` before matching. A missing latest record
+returns no check and becomes `MissingPolicy`; it never supplies a zero-role proof.
+Pending/Established work, source succession and unknown nonexecution stay in the
+full matcher even when they are ineligible for donor lookup. This read-only path
+starts no role effects or tasks and grants no settlement/finalization rights.
+
 ### Match every required maintenance policy
 
 After collecting the immutable original set and all available current native
