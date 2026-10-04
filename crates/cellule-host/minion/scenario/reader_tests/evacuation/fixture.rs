@@ -120,6 +120,7 @@ impl Fixture {
                 node_id(index),
                 journal.clone(),
                 Arc::new(super::super::super::adapters::Cells {
+                    receiver_directory: None,
                     records: records.clone(),
                     local: index,
                     root: root.path().into(),

@@ -24,11 +24,13 @@ pub use maintenance_enrollments::{
 };
 mod journal;
 mod reader_evacuation;
+mod receiver_recovery;
 mod records;
 mod recovery;
 pub use reader_evacuation::{
     ReaderEvacuationPage, ReaderEvacuationRecord, ReaderReplacementWitness,
 };
+pub use receiver_recovery::{ReceiverRecoveryBasis, ReceiverRecoveryEvidence};
 mod registry;
 mod writer_inventory;
 pub use recovery::{RecoveredActivation, RecoveryBasis, RecoveryEvidence};

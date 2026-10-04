@@ -7,6 +7,7 @@ pub(super) struct Cells {
     pub records: Arc<HashMap<CellId, Record>>,
     pub local: usize,
     pub root: PathBuf,
+    pub receiver_directory: Option<cellule_runtime::node::NodeDirectory>,
 }
 impl FleetCellProvider for Cells {
     fn cell_inputs<'a>(
@@ -42,6 +43,51 @@ impl FleetCellProvider for Cells {
             Err(invalid(
                 "this clean-movement scenario has no failed-session recovery proof",
             ))
+        })
+    }
+    fn receiver_recovery_inputs<'a>(
+        &'a self,
+        accepted: &'a AcceptedFleetAction,
+        control: &'a cellule_runtime::control::Control,
+    ) -> FleetAdapterFuture<'a, Option<FleetRecoveryInputs>> {
+        Box::pin(async move {
+            let Some(directory) = &self.receiver_directory else {
+                return Ok(None);
+            };
+            let FleetActionKind::Movement {
+                action: MovementAction::Activate,
+                attempt,
+            } = accepted.action().kind()
+            else {
+                return Err(invalid("receiver recovery requires routed activation"));
+            };
+            if accepted.action().receiver_route().is_none()
+                || accepted.session() != session(self.local)
+                || control.cell != attempt.spec().target.cell_id()
+                || control.incarnation != attempt.spec().incarnation
+            {
+                return Err(invalid("receiver recovery binding differs"));
+            }
+            let Some(owner) = &control.owner else {
+                return Ok(None);
+            };
+            let Some(takeover) = directory
+                .takeover_proof(owner.session, session(self.local), clock()?)
+                .await?
+            else {
+                return Ok(None);
+            };
+            let record = self
+                .records
+                .get(&control.cell)
+                .ok_or_else(|| invalid("receiver recovery Cell absent"))?;
+            Ok(Some(FleetRecoveryInputs {
+                takeover,
+                manifests: cellule_runtime::recovery::manifest::RecoveryManifestStore::new(
+                    record.authority.layout().clone(),
+                    record.replica.limits(),
+                ),
+            }))
         })
     }
 }
@@ -348,15 +394,24 @@ impl FleetTransport for LocalFleet {
             self.journal
                 .publish_action_result(&accepted, &outcome)
                 .await?;
-            if self
+            let mut remaining = self
                 .drop_closed_finalize_replies
-                .fetch_update(
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let drop_reply = loop {
+                if remaining == 0 {
+                    break false;
+                }
+                match self.drop_closed_finalize_replies.compare_exchange_weak(
+                    remaining,
+                    remaining - 1,
                     std::sync::atomic::Ordering::SeqCst,
                     std::sync::atomic::Ordering::SeqCst,
-                    |remaining| remaining.checked_sub(1),
-                )
-                .is_ok()
-            {
+                ) {
+                    Ok(_) => break true,
+                    Err(current) => remaining = current,
+                }
+            };
+            if drop_reply {
                 return Err(invalid(
                     "injected loss after committed closed-boot finalization",
                 ));

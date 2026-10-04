@@ -724,6 +724,18 @@ For failed-source recovery, `recovery_inputs` supplies an existing canonical
 `NodeTakeoverProof` and recovery manifest store. Ordinary node recovery first
 fences the failed session and seals/pins its required tail; the provider lookup
 performs none of those effects.
+For a process-closed receiver that claimed ownership after a proven release,
+`receiver_recovery_inputs` resolves prerequisites for the exact failed control
+and accepted route. Its default returns no proof. The host confirms a separate
+`ReceiverRecoveryBasis` before native takeover and `ReceiverRecoveryEvidence`
+before actor admission. The journal must persist both atomically against the
+original acceptance and reject mixing this basis with an Idle acquisition basis.
+The successful outcome remains Activated: the original clean release is retained.
+Fresh serving verifies canonical acquisition history, any pinned recovered
+suffix, and native derivation from the release root. Missing provider/journal
+evidence keeps the attempt charged. Deploy readers for record kinds 30 and 31
+before enabling this path; old source-recovery records keep their exact binding.
+
 The application authenticates management requests. The journal atomically
 checks the current controller epoch, head, permit, intent, endpoint, and
 deadline when first accepting an action. `AcceptedFleetAction` validates its

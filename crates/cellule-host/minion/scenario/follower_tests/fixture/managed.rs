@@ -119,6 +119,7 @@ impl ManagedFixture {
                 node_id(index),
                 journal.clone(),
                 Arc::new(adapters::Cells {
+                    receiver_directory: None,
                     records: records.clone(),
                     local: index,
                     root: root.path().into(),

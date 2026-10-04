@@ -18,6 +18,7 @@ mod enrollment;
 mod follower_evacuation;
 mod maintenance_enrollments;
 mod reader_evacuation;
+mod receiver_recovery;
 mod records;
 mod writer_inventory;
 use records::{Db, blob, profile_bytes, scope_bytes};

@@ -7,6 +7,20 @@ qualification remain required by the [fleet plan](../../../docs/fleet-operations
 
 ## Run
 
+The focused receiver-loss tests cover both unchanged Idle authority and a failed
+receiver that reached Recovering or Serving after clean source release:
+
+```sh
+cargo test -p cellule-host --example fleet_operations successor_tests:: --locked
+```
+
+They use real nodes, canonical directory takeover proof, immutable receiver
+recovery records, lost reply replay and an independently reopened journal after
+controller lease expiry. No configured takeover proof keeps the failed claim
+unresolved. The stopped-process witness is an explicit in-process test provider;
+the standalone receiver-loss command and process/provider qualification remain
+required.
+
 Run the real-node scenario from the workspace root:
 
 ```sh

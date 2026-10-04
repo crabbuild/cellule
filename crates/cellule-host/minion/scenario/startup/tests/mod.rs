@@ -486,6 +486,7 @@ async fn cordon_racing_accepted_boot_and_draining_reboot_keep_management_without
             node_id(0),
             fixture.journal.clone(),
             Arc::new(super::super::adapters::Cells {
+                receiver_directory: None,
                 records: Arc::new(HashMap::new()),
                 local: 0,
                 root: fixture.root.path().into(),

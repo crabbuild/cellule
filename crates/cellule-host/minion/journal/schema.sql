@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS bases (
     body BLOB NOT NULL CHECK (length(body)<=65536), PRIMARY KEY(key,node,session,kind),
     FOREIGN KEY(key,node,session) REFERENCES actions(key,node,session)
 );
+CREATE TABLE IF NOT EXISTS receiver_recoveries (
+    key BLOB NOT NULL CHECK(length(key)=32), node BLOB NOT NULL CHECK(length(node)=16),
+    session BLOB NOT NULL CHECK(length(session)=16), kind INTEGER NOT NULL CHECK(kind IN (1,2)),
+    body BLOB NOT NULL CHECK(length(body)<=65536), PRIMARY KEY(key,node,session,kind),
+    FOREIGN KEY(key,node,session) REFERENCES actions(key,node,session)
+);
 
 -- Role evidence shares registry revisions and the same accepted backend jobs.
 CREATE TABLE IF NOT EXISTS reader_evacuations (

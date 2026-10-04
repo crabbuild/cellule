@@ -309,7 +309,16 @@ async fn initialize(
     boots: &mut Vec<startup::BootOwner>,
     receipt_lifetime_ms: i64,
 ) -> JournalResult<(Arc<HashMap<CellId, Record>>, HashMap<CellId, Acknowledged>)> {
-    initialize_inner(root, journal, nodes, boots, receipt_lifetime_ms, None).await
+    initialize_inner(
+        root,
+        journal,
+        nodes,
+        boots,
+        receipt_lifetime_ms,
+        None,
+        false,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -320,6 +329,7 @@ async fn initialize_without_boot_withdrawal(
     boots: &mut Vec<startup::BootOwner>,
     receipt_lifetime_ms: i64,
     unbound_index: usize,
+    recover_receiver: bool,
 ) -> JournalResult<(Arc<HashMap<CellId, Record>>, HashMap<CellId, Acknowledged>)> {
     initialize_inner(
         root,
@@ -328,6 +338,7 @@ async fn initialize_without_boot_withdrawal(
         boots,
         receipt_lifetime_ms,
         Some(unbound_index),
+        recover_receiver,
     )
     .await
 }
@@ -339,6 +350,7 @@ async fn initialize_inner(
     boots: &mut Vec<startup::BootOwner>,
     receipt_lifetime_ms: i64,
     unbound_withdrawal_index: Option<usize>,
+    recover_receiver: bool,
 ) -> JournalResult<(Arc<HashMap<CellId, Record>>, HashMap<CellId, Acknowledged>)> {
     let application = application::compile()?;
     let code = *application
@@ -424,6 +436,7 @@ async fn initialize_inner(
             node_id(index),
             journal.clone(),
             Arc::new(adapters::Cells {
+                receiver_directory: recover_receiver.then(|| directory.clone()),
                 records: records.clone(),
                 local: index,
                 root: root.path().into(),

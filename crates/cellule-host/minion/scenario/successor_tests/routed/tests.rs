@@ -21,6 +21,16 @@ async fn closed_receiver_serving_claim_requires_canonical_recovery() {
     refuse_claimed_receiver(ControlState::Serving).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closed_recovering_receiver_recovers_through_canonical_takeover() {
+    route_receiver(false, Some(ControlState::Recovering)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closed_serving_receiver_recovers_through_canonical_takeover() {
+    route_receiver(false, Some(ControlState::Serving)).await;
+}
+
 async fn refuse_claimed_receiver(state: ControlState) {
     let fixture = Fixture::released().await;
     fixture.claim_without_actor(state).await;
@@ -127,7 +137,14 @@ async fn refuse_claimed_receiver(state: ControlState) {
 }
 
 async fn route_idle_receiver(accepted_before_shutdown: bool) {
-    let fixture = Fixture::released().await;
+    route_receiver(accepted_before_shutdown, None).await;
+}
+
+async fn route_receiver(accepted_before_shutdown: bool, failed_state: Option<ControlState>) {
+    let fixture = Fixture::released_with_recovery(failed_state.is_some()).await;
+    if let Some(state) = failed_state {
+        fixture.claim_without_actor(state).await;
+    }
     if accepted_before_shutdown {
         fixture.accept_original_activation().await;
     }
@@ -218,6 +235,42 @@ async fn route_idle_receiver(accepted_before_shutdown: bool) {
         FleetOutcome::Activated(_)
     ));
     assert_eq!(nodes[2].stats().active_cells(), 1);
+    if failed_state.is_some() {
+        assert!(
+            journal
+                .load_acquisition_basis(&accepted_activation)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let evidence = journal
+            .load_receiver_recovery_evidence(&accepted_activation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(evidence.basis().control().state, failed_state.unwrap());
+        assert_eq!(
+            evidence.basis().control().owner.as_ref().unwrap().session,
+            session(1)
+        );
+        assert_eq!(evidence.basis().control().epoch, released.epoch + 1);
+        assert_eq!(evidence.restored().epoch, released.epoch + 2);
+        assert_eq!(evidence.restored().root.as_ref(), Some(&released.root));
+        assert_eq!(
+            journal
+                .record_receiver_recovery_evidence(&evidence)
+                .await
+                .unwrap(),
+            evidence
+        );
+        assert_eq!(
+            journal
+                .record_receiver_recovery_basis(evidence.basis())
+                .await
+                .unwrap(),
+            *evidence.basis()
+        );
+    }
 
     // Let the original lease expire. The new claimant must adopt the exact
     // route and committed result already retained by the application journal.
@@ -225,11 +278,12 @@ async fn route_idle_receiver(accepted_before_shutdown: bool) {
         u64::try_from(profile.controller_lease_ms).unwrap() + 50,
     ))
     .await;
+    let reopened_journal = fixture.reopen_journal().await;
     let driver = FleetReconciler::new(
         scope(),
         SessionId::from_bytes([207; 16]),
         profile,
-        journal.clone(),
+        reopened_journal.clone(),
         new_controller_observer,
         fleet.clone(),
     )
@@ -262,7 +316,24 @@ async fn route_idle_receiver(accepted_before_shutdown: bool) {
         (node_id(2), session(2))
     );
     assert_eq!(activated.position.root, released.root);
-    assert_eq!(activated.position.epoch, released.epoch + 1);
+    assert_eq!(
+        activated.position.epoch,
+        released.epoch + 1 + u64::from(failed_state.is_some())
+    );
+    if failed_state.is_some() {
+        let original = journal
+            .load_receiver_recovery_evidence(&accepted_activation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reopened_journal
+                .load_receiver_recovery_evidence(&accepted_activation)
+                .await
+                .unwrap(),
+            Some(original)
+        );
+    }
 
     for effect in [MovementAction::Activate, MovementAction::Cancel] {
         let actions = journal
@@ -322,4 +393,5 @@ async fn route_idle_receiver(accepted_before_shutdown: bool) {
     assert_eq!(bytes, original.value.to_be_bytes());
 
     fixture.shutdown().await;
+    reopened_journal.close().await.unwrap();
 }

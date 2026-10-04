@@ -1,7 +1,7 @@
 use super::FleetAdapterFuture;
 use cellule_runtime::cell::catalog::CatalogProof;
-use cellule_runtime::control::{Owner, authority::CellAuthority};
-use cellule_runtime::fleet::operations::MoveAttemptSpec;
+use cellule_runtime::control::{Control, Owner, authority::CellAuthority};
+use cellule_runtime::fleet::operations::{AcceptedFleetAction, MoveAttemptSpec};
 use cellule_runtime::ltx::CellReplica;
 use std::path::PathBuf;
 
@@ -52,4 +52,16 @@ pub trait FleetCellProvider: Send + Sync + 'static {
         &'a self,
         spec: &'a MoveAttemptSpec,
     ) -> FleetAdapterFuture<'a, FleetRecoveryInputs>;
+
+    /// Read-only lookup of canonical recovery prerequisites for the exact
+    /// failed receiver control under a committed routed activation. None means
+    /// no configured/proven recovery, never permission to discard its claim.
+    /// This lookup must not fence, recover a log, change authority or admit work.
+    fn receiver_recovery_inputs<'a>(
+        &'a self,
+        _accepted: &'a AcceptedFleetAction,
+        _control: &'a Control,
+    ) -> FleetAdapterFuture<'a, Option<FleetRecoveryInputs>> {
+        Box::pin(async { Ok(None) })
+    }
 }

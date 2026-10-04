@@ -17,11 +17,13 @@ mod activation;
 mod inspection;
 mod prefix;
 mod receiver;
+mod receiver_recovery;
 mod recovery;
 
 pub(super) enum ServingPrefix<'a> {
     Released(&'a cellule_runtime::control::RootRef),
     Recovered(&'a cellule_runtime::fleet::operations::RecoveryEvidence),
+    ReceiverRecovered(&'a cellule_runtime::fleet::operations::ReceiverRecoveryEvidence),
 }
 
 impl FleetActionExecutor {

@@ -4,7 +4,7 @@ use crate::node::NodeTakeoverProof;
 
 use super::{
     AcceptedFleetAction, ActivationEvidence, FleetActionKind, FleetScope, MoveAttemptSpec,
-    MovementAction, OperationError, PublishedPosition, Result, nonzero,
+    MovementAction, OperationError, PublishedPosition, Result,
 };
 
 /// Original pinned input of recovery of an unresolved source release.
@@ -113,11 +113,10 @@ impl RecoveryBasis {
             .encode()
             .map_err(|e| OperationError::Control(Box::new(e)))?;
         if self.scope.application != self.spec.target.application()
-            || !nonzero(self.action_key.as_bytes())
-            || !nonzero(self.node.as_bytes())
-            || !nonzero(self.session.as_bytes())
-            || self.node == self.spec.source_node
-            || self.session == self.spec.source
+            || self.action_key
+                != super::actions::movement_key(self.scope, MovementAction::Recover, &self.spec)
+            || self.node != self.spec.destination_node
+            || self.session != self.spec.destination
             || self.accepted_at_ms < 0
             || self.observed_at_ms < self.accepted_at_ms
             || self.control.cell != self.spec.target.cell_id()

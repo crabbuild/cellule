@@ -16,6 +16,9 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) async fn released() -> Self {
+        Self::released_with_recovery(false).await
+    }
+    pub(super) async fn released_with_recovery(recover_receiver: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let profile = FleetProfile {
             controller_lease_ms: 3_000,
@@ -34,10 +37,17 @@ impl Fixture {
         );
         let mut nodes = Vec::new();
         let mut boots = Vec::new();
-        let (records, acknowledged) =
-            initialize_without_boot_withdrawal(&root, &journal, &mut nodes, &mut boots, 60_000, 1)
-                .await
-                .unwrap();
+        let (records, acknowledged) = initialize_without_boot_withdrawal(
+            &root,
+            &journal,
+            &mut nodes,
+            &mut boots,
+            60_000,
+            1,
+            recover_receiver,
+        )
+        .await
+        .unwrap();
         let fleet = Arc::new(adapters::LocalFleet {
             nodes: nodes.clone(),
             journal: journal.clone(),
@@ -155,6 +165,19 @@ impl Fixture {
             transport,
         )
         .unwrap()
+    }
+
+    pub(super) async fn reopen_journal(&self) -> Arc<SqliteJournal> {
+        Arc::new(
+            SqliteJournal::open(
+                self._root.path().join("closed-receiver-journal.sqlite"),
+                scope(),
+                self.profile,
+                clock().unwrap(),
+            )
+            .await
+            .unwrap(),
+        )
     }
 
     pub(super) async fn accept_original_activation(&self) -> AcceptedFleetAction {

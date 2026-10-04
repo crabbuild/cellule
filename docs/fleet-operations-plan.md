@@ -37,7 +37,7 @@ same action and evidence contracts.
 | Which external facilities are required? | A linearizable journal, complete enrollment registry, authenticated management transport, and trusted local Cell inputs. The reference example supplies these behind the same contracts. |
 | What keeps operations simple? | One operation ID, one status contract, one application loop, bounded defaults, and one canonical host drain lane. |
 | What proves success? | Receipt-preserving actor activation on another node. Maintenance additionally requires settled role obligations, host Stopped, and session withdrawal. |
-| What is the next concrete change? | Implement canonical recovery after a failed receiver reached Serving or Recovering; routed stale-generation and provider-fault checks follow. Current real-node cases cover routed Activate/Cancel, accepted activation before claim, lost committed replies, duplicate replay, controller replacement, and refusal after a receiver ownership claim. Complete the maintenance role/fault matrix, production process and transport adapters, W9 load and mixed-version qualification, and W10 rollout/runbooks. |
+| What is the next concrete change? | Finish the standalone receiver-loss command and qualify routed receiver recovery under interrupted evidence writes, inherited overlays and stale generations. Real-node cases cover routed Activate/Cancel, accepted activation before claim, failed Serving/Recovering receiver takeover, lost committed replies, duplicate replay, independent journal reconstruction and refusal without canonical proof. Complete the maintenance role/fault matrix, production process and transport adapters, W9 load and mixed-version qualification, and W10 rollout/runbooks. |
 
 Start with the [first slice commit sequence](#first-slice-commit-sequence).
 Every increment must expose a reviewable public behavior and retain its test
@@ -1292,6 +1292,7 @@ The current additions preserve previous layouts and discriminants:
 | Recover remote action | 7; Retire 6 remains journal-local. |
 | Recovered outcome | 11 |
 | RecoveryBasis and RecoveryEvidence record kinds | 10 and 11 |
+| ReceiverRecoveryBasis and ReceiverRecoveryEvidence record kinds | 30 and 31; separate from original source recovery. |
 | RegistryVersion, IntentPage, EnrollmentRecord, EnrollmentPage, and EnrollmentSpec record kinds | 12 through 16 |
 
 Only the new Recovered phase carries its recovery evidence extension. Old strict

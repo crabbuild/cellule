@@ -2,8 +2,8 @@ use std::{future::Future, pin::Pin};
 
 use cellule_runtime::fleet::operations::{
     AcceptedFleetAction, AcquisitionBasis, AttemptId, FleetAction, FleetActionOutcome,
-    FleetInspectionRequest, FleetScope, MoveAttempt, MovementAction, RecoveryBasis,
-    RecoveryEvidence,
+    FleetInspectionRequest, FleetScope, MoveAttempt, MovementAction, ReceiverRecoveryBasis,
+    ReceiverRecoveryEvidence, RecoveryBasis, RecoveryEvidence,
 };
 use cellule_runtime::identity::{NodeId, SessionId};
 
@@ -184,4 +184,41 @@ pub trait FleetActionJournal: Send + Sync + 'static {
         &'a self,
         accepted: &'a AcceptedFleetAction,
     ) -> FleetAdapterFuture<'a, Option<RecoveryEvidence>>;
+
+    /// Confirms immutable failed-receiver input before the canonical takeover.
+    /// Bind atomically to the original routed activation; changed controls
+    /// conflict and identical writes return the original observation time.
+    fn record_receiver_recovery_basis<'a>(
+        &'a self,
+        _basis: &'a ReceiverRecoveryBasis,
+    ) -> FleetAdapterFuture<'a, ReceiverRecoveryBasis> {
+        Box::pin(async {
+            Err(std::io::Error::other("receiver recovery journal is not configured").into())
+        })
+    }
+    /// Returns retained input without inferring it from successor state.
+    fn load_receiver_recovery_basis<'a>(
+        &'a self,
+        _accepted: &'a AcceptedFleetAction,
+    ) -> FleetAdapterFuture<'a, Option<ReceiverRecoveryBasis>> {
+        Box::pin(async { Ok(None) })
+    }
+    /// Confirms the canonical recovered position before actor admission.
+    /// Require the exact retained basis; incompatible/ambiguous writes cannot
+    /// authorize activation. Preserve this record through later publication.
+    fn record_receiver_recovery_evidence<'a>(
+        &'a self,
+        _evidence: &'a ReceiverRecoveryEvidence,
+    ) -> FleetAdapterFuture<'a, ReceiverRecoveryEvidence> {
+        Box::pin(async {
+            Err(std::io::Error::other("receiver recovery journal is not configured").into())
+        })
+    }
+    /// Returns immutable pre-admission evidence for the accepted route.
+    fn load_receiver_recovery_evidence<'a>(
+        &'a self,
+        _accepted: &'a AcceptedFleetAction,
+    ) -> FleetAdapterFuture<'a, Option<ReceiverRecoveryEvidence>> {
+        Box::pin(async { Ok(None) })
+    }
 }

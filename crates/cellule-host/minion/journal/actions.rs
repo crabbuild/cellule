@@ -232,7 +232,11 @@ impl Db<'_> {
         }
         Ok(())
     }
-    fn basis(&self, accepted: &AcceptedFleetAction, kind: u8) -> JournalResult<Option<Vec<u8>>> {
+    pub(super) fn basis(
+        &self,
+        accepted: &AcceptedFleetAction,
+        kind: u8,
+    ) -> JournalResult<Option<Vec<u8>>> {
         self.original(accepted)?;
         Ok(self
             .tx
@@ -425,10 +429,25 @@ impl FleetActionJournal for SqliteJournal {
             } = accepted.action().kind()
                 && matches!(result.outcome, FleetOutcome::Activated(_))
             {
-                let basis = AcquisitionBasis::from_bytes(
-                    &db.basis(&accepted, 1)?.ok_or(OperationError::NotFound)?,
-                )?;
-                basis.validate_result(&result)?;
+                if let Some(bytes) = db.basis(&accepted, 1)? {
+                    if db.receiver_basis(&accepted, 1)?.is_some() {
+                        return Err(OperationError::Conflict.into());
+                    }
+                    AcquisitionBasis::from_bytes(&bytes)?.validate_result(&result)?;
+                } else {
+                    let evidence = ReceiverRecoveryEvidence::from_bytes(
+                        &db.receiver_basis(&accepted, 2)?
+                            .ok_or(OperationError::NotFound)?,
+                    )?;
+                    let basis = ReceiverRecoveryBasis::from_bytes(
+                        &db.receiver_basis(&accepted, 1)?
+                            .ok_or(OperationError::NotFound)?,
+                    )?;
+                    if basis.accepted() != &accepted || evidence.basis() != &basis {
+                        return Err(OperationError::Conflict.into());
+                    }
+                    evidence.validate_result(&result)?;
+                }
             }
             if let FleetOutcome::Recovered(recovered) = &result.outcome
                 && let FleetActionKind::Movement {
@@ -618,6 +637,9 @@ impl FleetActionJournal for SqliteJournal {
         let basis = basis.clone();
         Box::pin(self.run(move |db| {
             let bytes = basis.to_bytes()?;
+            if db.receiver_basis(basis.accepted(), 1)?.is_some() {
+                return Err(OperationError::Conflict.into());
+            }
             if let Some(bytes) = db.basis(basis.accepted(), 1)? {
                 let original = AcquisitionBasis::from_bytes(&bytes)?;
                 if original.accepted() != basis.accepted() || original.control() != basis.control()
@@ -727,5 +749,30 @@ impl FleetActionJournal for SqliteJournal {
                 })
                 .transpose()
         }))
+    }
+
+    fn record_receiver_recovery_basis<'a>(
+        &'a self,
+        basis: &'a ReceiverRecoveryBasis,
+    ) -> FleetAdapterFuture<'a, ReceiverRecoveryBasis> {
+        self.receiver_recovery_basis(basis)
+    }
+    fn load_receiver_recovery_basis<'a>(
+        &'a self,
+        accepted: &'a AcceptedFleetAction,
+    ) -> FleetAdapterFuture<'a, Option<ReceiverRecoveryBasis>> {
+        self.receiver_recovery_input(accepted)
+    }
+    fn record_receiver_recovery_evidence<'a>(
+        &'a self,
+        evidence: &'a ReceiverRecoveryEvidence,
+    ) -> FleetAdapterFuture<'a, ReceiverRecoveryEvidence> {
+        self.receiver_recovery_evidence(evidence)
+    }
+    fn load_receiver_recovery_evidence<'a>(
+        &'a self,
+        accepted: &'a AcceptedFleetAction,
+    ) -> FleetAdapterFuture<'a, Option<ReceiverRecoveryEvidence>> {
+        self.receiver_recovery_result(accepted)
     }
 }

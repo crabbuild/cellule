@@ -43,6 +43,14 @@ impl FleetActionExecutor {
                     .as_ref()
                     .is_some_and(|owner| owner.session == self.session))
         {
+            if matches!(
+                observed.value().state,
+                ControlState::Serving | ControlState::Recovering
+            ) {
+                return self
+                    .recover_receiver(accepted, attempt, &inputs, observed)
+                    .await;
+            }
             return Ok(ActionResult::checked(FleetOutcome::Unknown));
         }
         if prepared.is_none()
@@ -53,6 +61,18 @@ impl FleetActionExecutor {
                 .as_ref()
                 .is_some_and(|owner| owner.session == self.session)
         {
+            if closed_receiver_route
+                && self
+                    .journal
+                    .load_receiver_recovery_evidence(accepted)
+                    .await
+                    .map_err(journal_error)?
+                    .is_some()
+            {
+                return self
+                    .receiver_recovered_serving(accepted, attempt, &inputs)
+                    .await;
+            }
             // Ordinary acquisition can win after unused credit was joined. It
             // needs current serving proof, not a second ownership CAS.
             return self

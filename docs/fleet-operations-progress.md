@@ -6857,3 +6857,54 @@ provider-fault cases, complete maintenance/controller-restart combinations,
 app-specific contracts and production transport/process adapters. W9 measured
 provider and mixed-version qualification and W10 rollout evidence remain
 required. Narrow tests do not establish completion of W4–W10.
+
+## October 4 2026 canonical failed-receiver recovery checkpoint
+
+Routed activation can now recover a failed receiver that already claimed the
+Cell. It reads the exact failed control, requires a canonical NodeTakeoverProof
+for a process-closed boot in the accepted route, verifies the release prefix,
+then calls the existing observed runtime takeover. ReceiverRecoveryBasis is
+durably confirmed before the ownership CAS; ReceiverRecoveryEvidence is
+confirmed before actor admission. These bounded records use separate kinds 30
+and 31 and retain the original routed acceptance. Source recovery and clean
+source release keep their existing semantics and bytes.
+
+The SQLite reference adapter retains receiver records in a separate table,
+compares immutable inputs on replay, forbids mixing them with an Idle
+acquisition basis, and checks the exact retained basis/evidence before publishing
+Activated. Fresh serving binds the entire input and recovered control to native
+acquisition history, verifies any original pinned overlay suffix and the source
+release prefix, and rechecks the actor. Missing canonical proof returns Unknown
+without another ownership CAS; missing journal support refuses acquisition.
+
+Two new real-node cases stop the receiver after canonical Serving/Recovering
+transitions but before actor/result publication. They recover at the replacement
+node, lose and replay the committed reply, wait for controller lease expiry,
+reopen an independent SQLite journal client, then retire after exact cleanup.
+They preserve the release root, advance through both receiver epochs, read the
+original command receipt/value, and join all node resources. The original
+refusal tests still prove that an unconfigured recovery provider preserves the
+foreign claim and full fleet charge. These are in-process lifecycle cases, not
+actual OS crashes or provider-backed qualification.
+
+Hosted workspace CI on PR #57's prior head caught a regression in the earlier
+source RecoveryBasis validation: an arbitrary nonzero action key was accepted.
+This change restores the exact source Recover key and preferred endpoint checks.
+The existing mutation test passes unchanged. The local warning-denied lint also
+passes after replacing a newly deprecated atomic update in the reply-loss
+fixture with a bounded-count CAS loop supported by the declared Rust minimum.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-runtime --lib fleet::operations::tests:: --locked` | 75 passed; 0 failed, including the CI regression and both new codec cases. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --locked -- --nocapture` | 7 passed; 0 failed. |
+| `cargo test -p cellule-host --test node fleet_receivers:: --locked -- --test-threads=2` | 29 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --all-targets --locked -- -D warnings` | Passed after the final prefix/publication changes. |
+| Boundaries, module ownership, whitespace, Rust fences and Markdown links | Passed; 137 Rust snippets and 1,348 local links/anchors checked. |
+
+Highest next priorities are the standalone receiver-loss executable; interrupted
+receiver basis/evidence writes and inherited-overlay cases; routed generation
+and provider-fault coverage; and the remaining maintenance role/fault matrix.
+Production process/transport adapters, W9 measured provider and mixed-version
+qualification, and W10 rollout/runbook evidence remain required. PR #57 remains
+a draft while hosted CI verifies the updated implementation.

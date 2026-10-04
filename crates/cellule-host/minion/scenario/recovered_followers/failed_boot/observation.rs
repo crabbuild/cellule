@@ -84,6 +84,7 @@ impl Observed {
                 node_id(index),
                 base.journal.clone(),
                 Arc::new(crate::scenario::adapters::Cells {
+                    receiver_directory: None,
                     records: Arc::new(HashMap::new()),
                     local: index,
                     root: base._root.path().into(),
