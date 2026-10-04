@@ -379,8 +379,11 @@ impl CellNode {
 
     /// Captures read-only request-bound evidence through the owned fleet lane.
     /// Authenticate the caller first. The node checks current journal state and
-    /// actual authority/actor readiness; cached effect replies are not consulted
-    /// as proof of current serving. A dropped waiter leaves the finite job owned.
+    /// actual authority/actor readiness for movement, or the exact local
+    /// admission gate for a maintenance Cordon. Cached effect replies are not
+    /// consulted as proof of current serving; maintenance inspection does not
+    /// prove role settlement or finalization. A dropped waiter leaves the finite
+    /// job owned.
     pub async fn inspect_fleet_action(
         &self,
         request: cellule_runtime::fleet::operations::FleetInspectionRequest,

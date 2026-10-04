@@ -435,6 +435,10 @@ Fresh inspection records bind a nonce and original capture interval. Use the
 host's `inspect_fleet_action` and validate its response against the complete
 request and a finite age bound. Legacy retained Inspect results are historical.
 The journal authorizes a capture; it does not supply current actor evidence.
+Movement inspection checks current actor/authority serving. Maintenance
+inspection checks only whether the exact local admission gate is Draining, so
+it can recover a lost Cordon reply. It does not prove role settlement, Stopped,
+or withdrawal.
 
 Before enabling fleet execution, the embedding application must provide the
 controlled bootstrap/import barrier, wire every enrollment producer, authenticate
@@ -577,6 +581,19 @@ cargo test -p cellule-host --example fleet_operations --all-features --locked sc
 Complete authenticated lookup, source/failed-owner successor policy, checked
 nonexecution, accepted-work joining and SettleRoles/Finalize remain delivery
 requirements. See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
+
+## Native source reader succession
+
+The [source reader recipe](../docs/source-readers.md) composes exact retained
+native retirement with an actual managed writer successor and current ready
+reader policy. It consumes the complete original/current request set and is
+retained through the public observer and matcher. Missing evidence remains an
+explicit source obligation. A checked local request does not finish maintenance.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::reader_tests::evacuation::source:: -- --test-threads=2
+```
 
 ## Original nonexecution confirmation
 

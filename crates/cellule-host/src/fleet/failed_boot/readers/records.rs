@@ -75,11 +75,13 @@ pub(super) fn result(
 }
 
 pub(super) fn closure_digest(
+    original: &EnrollmentRecord,
     reader: &EnrollmentRecord,
     process: &FleetFailedBootProcessEvidence,
 ) -> Result<Digest> {
     let mut hash = blake3::Hasher::new();
-    hash.update(b"cellule.fleet-failed-reader-closure.v1\0");
+    hash.update(b"cellule.fleet-failed-reader-closure.v2\0");
+    hash.update(&original.to_bytes().map_err(operation)?);
     hash.update(&reader.to_bytes().map_err(operation)?);
     hash.update(retirement(reader, process)?.as_bytes());
     Ok(Digest::from_bytes(*hash.finalize().as_bytes()))

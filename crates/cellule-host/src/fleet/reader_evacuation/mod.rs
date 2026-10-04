@@ -5,6 +5,12 @@ use cellule_runtime::{
     identity::Digest,
 };
 
+mod current;
+mod source;
+pub use source::{
+    FleetSourceReaderCheck, FleetSourceReaderInputs, FleetSourceReaderPolicies,
+    FleetSourceReaderRetirement, FleetSourceReaderSuccessors,
+};
 mod maintenance;
 mod publication;
 mod refresh;

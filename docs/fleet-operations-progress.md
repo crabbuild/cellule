@@ -4,6 +4,97 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 4 2026 source reader policy checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`. The full W1–W10 plan remains active.
+
+`FleetReaderEvacuationVerifier::collect_source_readers` now enumerates the exact
+original/current request set and composes retained native retirement with the
+actual managed writer successor, canonical final-root derivation/current origin,
+current reader policy and actual ready replacement requests. It uses the same
+managed-writer validator as original failed-boot writers and the same current
+reader confirmation loop as donor history. Whole-capture clocks/deadlines and
+full roster/head checks bound the collection. Provider absence remains unknown;
+changed allocations/presence and original backend errors refuse the capture.
+
+`FleetObservation::with_source_reader_policies` retains those native capsules and
+checks their original capture, full barrier, signed successor/replacement boots
+and captured writer rows. Planner identity v12 binds the new inputs. The complete
+maintenance matcher marks only the exact checked source reader `SourceReader`;
+omitted evidence remains `SourceSuccessor`. Attachment preserves incomplete
+observation and grants no SettleRoles/Finalize rights. Persisted enrollment,
+evacuation and signed peer formats are unchanged.
+
+Eleven real minion cases pass on the isolated source snapshot. They refresh past
+the original opening, drain the original writer, restore on another managed boot,
+join the exact original reader and install a new request on the same Active
+receiver. They cover missing/changed evidence, foreign physical/origin mappings,
+clock bounds, cancellation, deadline, source error preservation, policy/head/
+writer changes behind actual signed native replies, duplicate/late attachment,
+outer boot/native-row mismatch and independent SQLite client/public reconciliation.
+Every successful fixture joins all native owners and checks released ledgers.
+An initial fixture activation used the departed writer's signer and was correctly
+refused; the fixture now authenticates the actual successor boot through the same
+signature/principal path. Initial compile/setup failures are retained as diagnostics.
+
+All 13 fresh Rust commands pass on the frozen Rust 1.99 source: 1,711 framework
+passes with 37 documented ignores, all 331 minion cases, local LTX 54, Axum without
+default features 16 and cookbook 256 plus check, Clippy, docs and binary builds.
+The framework/minion total is 2,042 distinct passes; focused repeats and overlapping
+local LTX are excluded. Workspace features/targets, Clippy, warning-denied API docs
+and the minion build pass. Nine static gates pass; all 137 Rust snippets parse and
+1,307 local links resolve. All 1,133 Rust/Cargo paths match manifest SHA256
+`2e382bfbcbe4682a383628848c3187d6c06007e8d0e89661ef488785d17760a5`.
+Exact source/manifests, commands/results and initial failures are retained under
+`/Users/haipingfu/Workspace/crabbuild-target/cellule-source-reader-9110095/evidence`.
+A one-variable negative control verifies the opening root instead of the final
+joined root. The exact-prefix regression fails as intended, distinguishing both
+digests, transaction positions and sequences. The production source is restored
+byte-identically; initial control-root/LTX-root type failure is retained and excluded
+from regression evidence. The restored source also passed broad qualification.
+
+PR #37 was merged as `fa548bb` while qualification ran. Its Git tree is byte-identical
+to qualified baseline `9110095`; the native source reader increment continues on
+`codex/native-source-reader-policy` from that new main. Full follow-up head CI,
+physical process/provider retention and the complete W1–W10 scope remain required.
+
+The new [source reader recipe](../crates/cellule-host/docs/source-readers.md) documents
+provider ownership, collection/attachment and the runnable cases.
+
+### Failed receiver source succession continuation
+
+`FleetSourceReaderRetirement` now accepts either the retained native reader
+join or a `FleetFailedReaderClosure`. The collector checks the failed proof's
+original reader, process request and current boot row, then verifies the original
+opening root through the actual writer successor. Current replacement policy
+still applies: desired count 1 with no available replacement blocks collection;
+an explicit update to zero allows it. The source-policy subdigest moved to v2,
+and planner input identity moved to v13 to bind the new proof variant.
+
+All 12 source-reader minion cases pass, including the new failed-receiver case;
+all 10 failed-reader lifetime cases pass. The host crate passes all-target,
+all-feature `cargo check`, and formatting passes. The fixtures prove the API
+composition using process evidence tied to a stopped native reader; production
+OS termination and external accepted-work providers remain unqualified. The
+follow-up is published on PR #56; hosted qualification is pending.
+
+### Highest remaining work
+
+1. Qualify the follow-up head in CI and both routing campaigns.
+   Earlier follower-observation and overload failures still need independent
+   diagnosis if reproduced; a later green run alone does not establish their cause.
+2. Qualify production durable provider/process retention; complete failed-owner
+   follower succession, full native/external accepted-work coverage and unknown
+   outcomes.
+3. Implement SettleRoles/Finalize through original action joining, native Stopped,
+   withdrawal, retired boots and committed completion; finish Cron/Blob owners
+   and primitive fault matrices.
+4. Complete receiver-session loss/recovery/adoption and sustained convergence;
+   deliver canonical minion maintenance and receiver-loss commands.
+5. Complete W9 physical process/provider faults, mixed binaries and load/soak;
+   W10 exercised runbooks and staged rollout/rollback.
+
 ## October 4 2026 replica retry routing checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target
@@ -6402,3 +6493,71 @@ checked source release and acquisition/recovery evidence, and adopt unknown
 outcomes across controller replacement. Complete host shutdown/role barriers
 and concurrent ordinary activation/reader admission scenarios. W5–W10 and the
 plan's full acceptance matrix remain pending.
+
+## October 4 2026 failed-owner follower maintenance checkpoint
+
+The public maintenance-policy matcher now consumes an exact canonical
+recovered-follower closure together with the matching failed-boot process
+closure. At one full snapshot and capture barrier, it verifies the recovered
+log was retired, every original member row is present in the current roster,
+and the old source process is confirmed retired against that same log. Only
+those exact failed-owner source-side follower requests move from
+`SourceSuccessor` to `RecoveredFollower`. A recovered log without the process
+closure remains unchecked. Planner inputs bind these closures; the new policy
+status has its own versioned coverage digest.
+
+The runnable minion scenario exercises successful composition and the
+negative case where canonical log retirement alone leaves the maintenance
+obligations open. Both preserve the original maintenance capture and do not
+grant settlement or finalization.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --all-features --locked --example fleet_operations scenario::recovered_followers::failed_boot::writer_tests::successors::observation::combined::` | 4 passed; 330 filtered out. |
+| `cargo test -p cellule-host --all-features --locked --example fleet_operations` | 334 passed; 0 failed; 69.81 seconds. |
+
+The final source shape also passed workspace all-target/all-feature `cargo
+check`, warning-denied workspace Clippy, and warning-denied workspace API docs.
+Format, boundary, module-layout, Rust-fence, Markdown-link, SQL/peer-contract,
+and whitespace gates passed: 137 Rust snippets, 1307 Markdown links, and 28
+schema/protocol assertions with 570 validator links. Hosted CI has not yet run
+for these uncommitted changes.
+
+### Remaining work at the failed-owner follower checkpoint
+
+This closes one source-side policy gap only. Complete the aggregate
+authenticated observation and connect role policy, native/external accepted
+work and provider/process retention to `SettleRoles`/`Finalize`. Implement the
+host action executor beyond Cordon, remaining live-owner/failed-owner role
+evacuation, receiver adoption, Cron/Blob owner handling, broad fault and load
+qualification, and the W9–W10 rollout/runbooks. PR #37 is already merged;
+the continuation PR #56 was mergeable at this checkpoint, before these local
+changes were committed or pushed.
+
+## October 4 2026 maintenance inspection checkpoint
+
+`CellNode::inspect_fleet_action` now accepts fresh maintenance `Inspect`
+requests through the existing owned finite-action lane. It authorizes the exact
+head, registry and endpoint, reads the live local admission gate, and returns
+`Cordoned` only for `Draining`; `Active` and `Cordoned` return the explicit
+`IncompleteObservation` blocker. The read performs no action acceptance,
+release, role settlement or shutdown. A dropped Cordon result can therefore be
+recovered from local state without treating a historical result as current.
+
+Public node tests cover the active and draining responses, a lost durable
+Cordon-result reply, preservation of the existing Cell owner, and the rule that
+maintenance inspection never reports `RolesSettled` or `Stopped`.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --all-features --locked --test node fleet_maintenance::` | 6 passed; 109 filtered out. |
+
+The full `node` integration target also passed (115 tests). Workspace check,
+warning-denied Clippy, and warning-denied API docs passed. Format, boundary,
+module-layout, Rust-fence, Markdown-link, SQL/peer-contract, and whitespace
+gates passed: 137 Rust snippets, 1307 Markdown links, and 28 schema/protocol
+assertions with 570 validator links.
+
+The remaining maintenance inspection gap is the full role, accepted-work,
+facility, Stopped, and withdrawal barrier. This local check is only a Cordon
+recovery step and cannot move the operation into Closing or Completed.

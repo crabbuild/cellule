@@ -151,6 +151,7 @@ impl FleetRecoveredFollowerPublication {
 /// Complete original ensemble enrollment closure at one checked journal barrier.
 /// This settles only these follower rows. The failed leader's boot, reader roles,
 /// affected Cells and native process lifetimes still require their own proofs.
+#[derive(Clone)]
 pub struct FleetRecoveredFollowerClosure {
     snapshot: FleetJournalSnapshot,
     leader_node: NodeId,

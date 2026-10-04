@@ -1,7 +1,8 @@
 //! Complete original/current request matching for maintenance replacement policy.
 use super::{
-    FleetFollowerEvacuationCheck, FleetJournalSnapshot, FleetMaintenanceEnrollments,
-    FleetReaderEvacuationCheck, FleetRoster, operation,
+    FleetFailedBootClosure, FleetFollowerEvacuationCheck, FleetJournalSnapshot,
+    FleetMaintenanceEnrollments, FleetReaderEvacuationCheck, FleetRecoveredFollowerClosure,
+    FleetRoster, FleetSourceReaderPolicies, operation,
 };
 use cellule_runtime::fleet::operations::{EnrollmentRecord, EnrollmentStatus, RegistryVersion};
 use cellule_runtime::identity::Digest;
@@ -24,6 +25,11 @@ pub enum FleetMaintenancePolicyStatus {
     Follower(Digest),
     /// Independently joined original work whose role effect never committed.
     Nonexecution(Digest),
+    /// Exact native source reader joined with current successor and reader policy.
+    SourceReader(Digest),
+    /// Original follower owner failed, its canonical log was recovered and
+    /// retired, and the exact failed process boot was joined.
+    RecoveredFollower(Digest),
     /// Original acceptance still has an unknown native outcome.
     Pending,
     /// An installed original role has not been retired with checked replacement policy.
@@ -41,7 +47,11 @@ impl FleetMaintenancePolicyStatus {
     pub const fn is_checked(self) -> bool {
         matches!(
             self,
-            Self::Reader(_) | Self::Follower(_) | Self::Nonexecution(_)
+            Self::Reader(_)
+                | Self::Follower(_)
+                | Self::Nonexecution(_)
+                | Self::SourceReader(_)
+                | Self::RecoveredFollower(_)
         )
     }
 }
@@ -86,6 +96,8 @@ pub struct FleetMaintenancePolicyProgress {
     pub checked: usize,
     /// Requests independently confirmed never to have installed a native role.
     pub nonexecution: usize,
+    /// Failed-owner follower requests closed by canonical recovery and process proof.
+    pub recovered_followers: usize,
     /// Unknown accepted native outcomes.
     pub pending: usize,
     /// Installed roles awaiting checked retirement/replacement.
@@ -112,15 +124,30 @@ pub struct FleetMaintenancePolicyCoverage {
     obligations: Vec<FleetMaintenancePolicyObligation>,
     digest: Digest,
 }
+
+/// Checked supplemental evidence retained by one maintenance-policy matcher.
+pub(super) struct FleetMaintenancePolicyEvidence<'a> {
+    pub(super) nonexecution: Option<&'a FleetMaintenanceNonexecution>,
+    pub(super) source_readers: Option<&'a FleetSourceReaderPolicies>,
+    pub(super) failed_boots: &'a [FleetFailedBootClosure],
+    pub(super) recovered_followers: &'a [FleetRecoveredFollowerClosure],
+}
+
 impl FleetMaintenancePolicyCoverage {
     pub(in crate::fleet) fn check(
         original: &FleetMaintenanceEnrollments,
         roster: &FleetRoster,
         readers: &[FleetReaderEvacuationCheck],
         followers: &[FleetFollowerEvacuationCheck],
-        nonexecution: Option<&FleetMaintenanceNonexecution>,
+        evidence: FleetMaintenancePolicyEvidence<'_>,
         inputs: Digest,
     ) -> Result<Self> {
+        let FleetMaintenancePolicyEvidence {
+            nonexecution,
+            source_readers,
+            failed_boots,
+            recovered_followers,
+        } = evidence;
         let requests = requests::required(original, roster)?;
         let node = original.original().operation().node();
         let mut witnesses = BTreeMap::new();
@@ -137,6 +164,23 @@ impl FleetMaintenancePolicyCoverage {
                     request.terminal(),
                     None,
                     FleetMaintenancePolicyStatus::Nonexecution(evidence.request_digest()),
+                )?;
+            }
+        }
+        if let Some(checked) = source_readers {
+            if checked.snapshot() != roster.snapshot()
+                || checked.roster_digest() != roster.digest()?
+                || checked.original_digest() != original.digest()?
+            {
+                return Err(Error::Fenced);
+            }
+            let proof = checked.digest()?;
+            for check in checked.checks() {
+                witness_optional(
+                    &mut witnesses,
+                    check.retirement().retired(),
+                    Some(enrollment_digest(check.retirement().original())?),
+                    FleetMaintenancePolicyStatus::SourceReader(proof),
                 )?;
             }
         }
@@ -163,6 +207,69 @@ impl FleetMaintenancePolicyCoverage {
                 )?;
             }
         }
+        for closure in recovered_followers {
+            if closure.leader_node() != node {
+                continue;
+            }
+            if closure.snapshot() != roster.snapshot() {
+                return Err(Error::Fenced);
+            }
+            let leader_session = closure.retired().session();
+            let Some(boot) = failed_boots.iter().find(|proof| {
+                let target = proof.boot().spec().target;
+                target.node == node && target.session == leader_session
+            }) else {
+                // Retired log authority does not prove the old process stopped.
+                // Keep its source-side requests in SourceSuccessor until joined.
+                continue;
+            };
+            if boot.snapshot() != roster.snapshot()
+                || boot.boot().status() != EnrollmentStatus::Retired
+                || boot.canonical().node() != node
+                || boot.canonical().session() != leader_session
+                || boot.canonical().log() != Some(closure.retired().log())
+            {
+                return Err(Error::Fenced);
+            }
+            let mut proof_hash = blake3::Hasher::new();
+            proof_hash.update(b"cellule.fleet-maintenance-recovered-follower.v1\0");
+            proof_hash.update(closure.digest().as_bytes());
+            proof_hash.update(boot.digest().as_bytes());
+            let proof = Digest::from_bytes(*proof_hash.finalize().as_bytes());
+            for row in closure.members() {
+                let source = row.spec().source.ok_or(Error::Fenced)?;
+                if source.node != node || source.session != leader_session {
+                    return Err(Error::Fenced);
+                }
+                let key = row.spec().key().map_err(operation)?;
+                if !roster.enrollments().iter().any(|current| {
+                    current
+                        .spec()
+                        .key()
+                        .is_ok_and(|current_key| current_key == key)
+                        && current == row
+                }) {
+                    return Err(Error::Fenced);
+                }
+                let accepted = original.entries().find(|accepted| {
+                    accepted
+                        .spec()
+                        .key()
+                        .is_ok_and(|accepted_key| accepted_key == key)
+                });
+                let accepted_digest = accepted
+                    .filter(|accepted| accepted.status() == EnrollmentStatus::Established)
+                    .map(enrollment_digest)
+                    .transpose()?;
+                requests::validate_original(accepted, accepted_digest)?;
+                witness_optional(
+                    &mut witnesses,
+                    row,
+                    accepted_digest,
+                    FleetMaintenancePolicyStatus::RecoveredFollower(proof),
+                )?;
+            }
+        }
         let mut obligations = Vec::with_capacity(requests.len());
         for request in requests {
             let accepted = request.original;
@@ -182,9 +289,27 @@ impl FleetMaintenancePolicyCoverage {
                     }
                     FleetMaintenancePolicyStatus::Nonexecution(*proof)
                 }
-                _ if row.spec().target.node != node => {
-                    FleetMaintenancePolicyStatus::SourceSuccessor
-                }
+                _ if row.spec().target.node != node => match witnesses.get(&key) {
+                    Some((retired, digest, FleetMaintenancePolicyStatus::SourceReader(proof))) => {
+                        if row != *retired {
+                            return Err(Error::Fenced);
+                        }
+                        requests::validate_original(accepted, *digest)?;
+                        FleetMaintenancePolicyStatus::SourceReader(*proof)
+                    }
+                    Some((
+                        retired,
+                        digest,
+                        status @ FleetMaintenancePolicyStatus::RecoveredFollower(_),
+                    )) => {
+                        if row != *retired {
+                            return Err(Error::Fenced);
+                        }
+                        requests::validate_original(accepted, *digest)?;
+                        *status
+                    }
+                    _ => FleetMaintenancePolicyStatus::SourceSuccessor,
+                },
                 _ if row.established_evidence().is_none() => {
                     FleetMaintenancePolicyStatus::UnprovenNonexecution
                 }
@@ -210,11 +335,12 @@ impl FleetMaintenancePolicyCoverage {
             .map(FleetReaderEvacuationCheck::interval)
             .chain(followers.iter().map(FleetFollowerEvacuationCheck::interval))
             .chain(nonexecution.map(FleetMaintenanceNonexecution::interval))
+            .chain(source_readers.map(FleetSourceReaderPolicies::interval))
             .fold(original.interval(), |interval, next| {
                 (interval.0.min(next.0), interval.1.max(next.1))
             });
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-maintenance-policy-coverage.v1\0");
+        hash.update(b"cellule.fleet-maintenance-policy-coverage.v3\0");
         hash.update(inputs.as_bytes());
         hash.update(&(obligations.len() as u64).to_be_bytes());
         for obligation in &obligations {
@@ -232,6 +358,8 @@ impl FleetMaintenancePolicyCoverage {
                 FleetMaintenancePolicyStatus::SourceSuccessor => (6, None),
                 FleetMaintenancePolicyStatus::UnprovenNonexecution => (7, None),
                 FleetMaintenancePolicyStatus::Nonexecution(proof) => (8, Some(proof)),
+                FleetMaintenancePolicyStatus::SourceReader(proof) => (9, Some(proof)),
+                FleetMaintenancePolicyStatus::RecoveredFollower(proof) => (10, Some(proof)),
             };
             hash.update(&[tag]);
             if let Some(proof) = proof {
@@ -282,6 +410,7 @@ impl FleetMaintenancePolicyCoverage {
             required: self.obligations.len(),
             checked: 0,
             nonexecution: 0,
+            recovered_followers: 0,
             pending: 0,
             established: 0,
             missing_policy: 0,
@@ -291,7 +420,12 @@ impl FleetMaintenancePolicyCoverage {
         for obligation in &self.obligations {
             match obligation.status {
                 FleetMaintenancePolicyStatus::Reader(_)
-                | FleetMaintenancePolicyStatus::Follower(_) => progress.checked += 1,
+                | FleetMaintenancePolicyStatus::Follower(_)
+                | FleetMaintenancePolicyStatus::SourceReader(_) => progress.checked += 1,
+                FleetMaintenancePolicyStatus::RecoveredFollower(_) => {
+                    progress.checked += 1;
+                    progress.recovered_followers += 1;
+                }
                 FleetMaintenancePolicyStatus::Nonexecution(_) => {
                     progress.checked += 1;
                     progress.nonexecution += 1;
