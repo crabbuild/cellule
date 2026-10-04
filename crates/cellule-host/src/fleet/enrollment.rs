@@ -131,7 +131,10 @@ pub trait FleetEnrollmentJournal: Send + Sync + 'static {
     ) -> FleetAdapterFuture<'_, RegistryVersion>;
 
     /// First acceptance checks all spec intent revisions and Active mode for a
-    /// new reader/follower role in the same commit as Pending. Boot enrollment
+    /// new reader/follower role in the same commit as Pending. Load the operation
+    /// named by the source intent in that transaction: its original node, session
+    /// and intent revision must match, and Closing/Completed refuse new requests.
+    /// A missing operation is an error. Boot enrollment
     /// must honor its exact retained mode and cannot open readiness. Existing
     /// requests compare full original
     /// inputs before current intent checks; a cordon cannot erase admitted work.

@@ -556,6 +556,21 @@ they do not qualify a complete multi-process fleet or provider deployment.
 
 ## Journal bound fleet actions
 
+### Source enrollment closure
+
+First reader/follower acceptance checks both exact endpoint intents and the
+source intent's retained maintenance operation in the same journal transaction.
+Use `EnrollmentRecord::pending` with that original operation; Active sources
+require no operation input. A Draining source may recruit replacements before
+Closing. Closing/Completed fence new requests without requiring an intent revision
+change. Missing or mismatched operation evidence refuses admission.
+
+Compare the complete original request before these current checks on replay.
+Accepted work may still establish or retire after Closing; its original timestamp
+and canonical evidence remain intact. The fence supplies no role settlement,
+native joining or finalization proof. Node boot enrollment still honors its exact
+retained mode and supplies no readiness by itself.
+
 ### Fleet boot admission
 
 For a fleet-managed host, load its retained `NodeIntent` and pass it to

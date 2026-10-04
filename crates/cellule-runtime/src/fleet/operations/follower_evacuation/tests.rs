@@ -36,6 +36,7 @@ fn record() -> FollowerEvacuationRecord {
                 role: EnrollmentRole::Follower { log_epoch: epoch },
             },
             Some(&source),
+            None,
             &intent,
             10,
         )

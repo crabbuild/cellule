@@ -120,7 +120,8 @@ async fn failed_reader_closure_refuses_foreign_process_payload_history_and_stale
         .iter()
         .find(|intent| intent.node() == node_id(1))
         .unwrap();
-    let changed = EnrollmentRecord::pending(spec, Some(source), target, clock().unwrap()).unwrap();
+    let changed =
+        EnrollmentRecord::pending(spec, Some(source), None, target, clock().unwrap()).unwrap();
     assert!(
         FleetFailedReaderRetirement::capture(
             fixture.journal.as_ref(),
@@ -138,6 +139,7 @@ async fn failed_reader_closure_refuses_foreign_process_payload_history_and_stale
     let changed = EnrollmentRecord::pending(
         fixture.readers[0].spec().clone(),
         Some(source),
+        None,
         target,
         fixture.readers[0].accepted_at_ms() + 1,
     )

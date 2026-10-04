@@ -107,6 +107,342 @@ fn enrollment(id: u8, target: u8) -> EnrollmentSpec {
         target: endpoint(target),
     }
 }
+
+// Journal reducer evidence only: these tests exercise transaction ordering,
+// not the host observer's authority to certify a drained process.
+fn drain_proof(node: u8) -> DrainEvidence {
+    DrainEvidence {
+        node: endpoint(node).node,
+        session: endpoint(node).session,
+        remaining_cells: 0,
+        unresolved_attempts: 0,
+        relocated: true,
+        readers_settled: true,
+        followers_settled: true,
+        facilities_closed: true,
+        stopped: true,
+        withdrawn: true,
+    }
+}
+
+#[tokio::test]
+async fn closing_source_fences_new_roles_and_preserves_original_completion_after_reconstruction() {
+    for role in [
+        EnrollmentRole::Follower { log_epoch: 7 },
+        EnrollmentRole::Reader {
+            target: spec(1).target,
+            position: position(),
+        },
+    ] {
+        let fixture = Fixture::new().await;
+        fixture
+            .transition(JournalTransition::BeginMaintenance(request(3, 3)))
+            .await;
+        fixture
+            .transition(JournalTransition::Maintenance(MaintenanceEvent::Cordoned))
+            .await;
+        fixture
+            .transition(JournalTransition::Maintenance(
+                MaintenanceEvent::BeginEvacuation,
+            ))
+            .await;
+        let mut original = enrollment(60, 1);
+        original.role = role;
+        original.source.as_mut().unwrap().intent_revision = 2;
+        let accepted = match fixture
+            .journal
+            .accept_enrollment(&original, 1)
+            .await
+            .unwrap()
+        {
+            FleetEnrollmentAcceptance::New(record) => record,
+            _ => panic!("first acceptance expected"),
+        };
+        fixture
+            .transition(JournalTransition::Maintenance(
+                MaintenanceEvent::ReadyToClose(drain_proof(3)),
+            ))
+            .await;
+        fixture.journal.close().await.unwrap();
+        let restarted = fixture.client().await;
+        let before = restarted.load_snapshot(scope()).await.unwrap();
+        let fresh = EnrollmentSpec {
+            request: Digest::from_bytes([61; 32]),
+            ..original.clone()
+        };
+        assert!(restarted.accept_enrollment(&fresh, 2).await.is_err());
+        assert_eq!(restarted.load_snapshot(scope()).await.unwrap(), before);
+        assert_eq!(
+            restarted
+                .load_enrollment(scope(), fresh.key().unwrap())
+                .await
+                .unwrap(),
+            None
+        );
+        assert!(matches!(
+            restarted.accept_enrollment(&original, 2).await.unwrap(),
+            FleetEnrollmentAcceptance::Existing(record) if record == accepted
+        ));
+        let established = restarted
+            .publish_enrollment_result(
+                &accepted,
+                EnrollmentEvent::Established(Digest::from_bytes([62; 32])),
+                3,
+            )
+            .await
+            .unwrap();
+        let retired = restarted
+            .publish_enrollment_result(
+                &established,
+                EnrollmentEvent::Retired(Digest::from_bytes([63; 32])),
+                4,
+            )
+            .await
+            .unwrap();
+        assert_eq!(retired.accepted_at_ms(), accepted.accepted_at_ms());
+        assert!(!retired.unresolved());
+        restarted.close().await.unwrap();
+        let resumed = fixture.client().await;
+        let current = resumed.load_snapshot(scope()).await.unwrap();
+        let completed = resumed
+            .compare_exchange(
+                &current,
+                1,
+                4,
+                &JournalTransition::Maintenance(MaintenanceEvent::Stopped(drain_proof(3))),
+            )
+            .await
+            .unwrap();
+        // The current head may now belong to a different node. First acceptance
+        // must check the source's retained operation, not the head's operation.
+        let later = resumed
+            .compare_exchange(
+                &completed,
+                1,
+                4,
+                &JournalTransition::BeginMaintenance(request(2, 4)),
+            )
+            .await
+            .unwrap();
+        assert!(resumed.accept_enrollment(&fresh, 5).await.is_err());
+        assert_eq!(resumed.load_snapshot(scope()).await.unwrap(), later);
+        assert!(matches!(
+            resumed.accept_enrollment(&original, 5).await.unwrap(),
+            FleetEnrollmentAcceptance::Existing(record) if record == retired
+        ));
+        resumed.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn delayed_source_acceptance_checks_closing_in_its_original_transaction() {
+    let fixture = Fixture::new().await;
+    fixture
+        .transition(JournalTransition::BeginMaintenance(request(3, 3)))
+        .await;
+    fixture
+        .transition(JournalTransition::Maintenance(MaintenanceEvent::Cordoned))
+        .await;
+    fixture
+        .transition(JournalTransition::Maintenance(
+            MaintenanceEvent::BeginEvacuation,
+        ))
+        .await;
+    let independent = fixture.client().await;
+    let mut spec = enrollment(64, 1);
+    spec.source.as_mut().unwrap().intent_revision = 2;
+    let (paused, resume) = independent.pause_before_enrollment_acceptance();
+    let original = spec.clone();
+    let client = independent.clone();
+    let task = tokio::spawn(async move { client.accept_enrollment(&original, 1).await });
+    paused.await.unwrap();
+    let closed = fixture
+        .transition(JournalTransition::Maintenance(
+            MaintenanceEvent::ReadyToClose(drain_proof(3)),
+        ))
+        .await;
+    resume.send(()).unwrap();
+    assert!(task.await.unwrap().is_err());
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap(),
+        closed
+    );
+    assert_eq!(
+        independent
+            .load_enrollment(scope(), spec.key().unwrap())
+            .await
+            .unwrap(),
+        None
+    );
+    independent.close().await.unwrap();
+    fixture.journal.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn source_acceptance_and_closing_have_one_committed_registry_barrier() {
+    for reader in [false, true] {
+        let fixture = Fixture::new().await;
+        fixture
+            .transition(JournalTransition::BeginMaintenance(request(3, 3)))
+            .await;
+        fixture
+            .transition(JournalTransition::Maintenance(MaintenanceEvent::Cordoned))
+            .await;
+        let expected = fixture
+            .transition(JournalTransition::Maintenance(
+                MaintenanceEvent::BeginEvacuation,
+            ))
+            .await;
+        let independent = fixture.client().await;
+        let mut enrollment_spec = enrollment(65, 1);
+        enrollment_spec.source.as_mut().unwrap().intent_revision = 2;
+        if reader {
+            enrollment_spec.role = EnrollmentRole::Reader {
+                target: spec(1).target,
+                position: position(),
+            };
+        }
+        let transition =
+            JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(drain_proof(3)));
+        let (accepted, closing) = tokio::join!(
+            independent.accept_enrollment(&enrollment_spec, 1),
+            fixture
+                .journal
+                .compare_exchange(&expected, 1, 1, &transition),
+        );
+        assert_ne!(accepted.is_ok(), closing.is_ok());
+        let current = fixture.journal.load_snapshot(scope()).await.unwrap();
+        match accepted {
+            Ok(FleetEnrollmentAcceptance::New(original)) => {
+                assert!(matches!(
+                    closing.unwrap_err().downcast_ref::<OperationError>(),
+                    Some(OperationError::Conflict)
+                ));
+                assert_eq!(current.head(), expected.head());
+                assert_eq!(
+                    current.registry().revision(),
+                    expected.registry().revision() + 1
+                );
+                assert_eq!(
+                    independent
+                        .load_enrollment(scope(), enrollment_spec.key().unwrap())
+                        .await
+                        .unwrap(),
+                    Some(original)
+                );
+            }
+            Err(error) => {
+                assert!(matches!(
+                    error.downcast_ref::<OperationError>(),
+                    Some(OperationError::Conflict)
+                ));
+                assert_eq!(current, closing.unwrap());
+                assert_eq!(current.registry(), expected.registry());
+                assert_eq!(
+                    independent
+                        .load_enrollment(scope(), enrollment_spec.key().unwrap())
+                        .await
+                        .unwrap(),
+                    None
+                );
+            }
+            _ => panic!("first acceptance expected"),
+        }
+        independent.close().await.unwrap();
+        fixture.journal.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn source_operation_lookup_preserves_missing_and_codec_errors_without_new_rows() {
+    for missing in [true, false] {
+        let fixture = Fixture::new().await;
+        fixture
+            .transition(JournalTransition::BeginMaintenance(request(3, 3)))
+            .await;
+        let mut spec = enrollment(66, 1);
+        spec.source.as_mut().unwrap().intent_revision = 2;
+        let original = fixture.journal.accept_enrollment(&spec, 1).await.unwrap();
+        let version = fixture
+            .journal
+            .load_snapshot(scope())
+            .await
+            .unwrap()
+            .registry();
+        fixture
+            .journal
+            .run(move |db| {
+                if missing {
+                    db.tx.execute("DELETE FROM operations", [])?;
+                } else {
+                    db.tx
+                        .execute("UPDATE operations SET body=?1", [vec![0_u8; 1]])?;
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let fresh = EnrollmentSpec {
+            request: Digest::from_bytes([67; 32]),
+            ..spec.clone()
+        };
+        let error = match fixture.journal.accept_enrollment(&fresh, 2).await {
+            Err(error) => error,
+            Ok(_) => panic!("unavailable source operation admitted new work"),
+        };
+        if missing {
+            assert!(matches!(
+                error.downcast_ref::<OperationError>(),
+                Some(OperationError::NotFound)
+            ));
+        } else {
+            assert!(matches!(
+                error.downcast_ref::<OperationError>(),
+                Some(OperationError::Codec(_))
+            ));
+            assert!(
+                error
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<cellule_runtime::codec::CodecError>()
+                    .is_some()
+            );
+        }
+        assert_eq!(
+            fixture
+                .journal
+                .load_enrollment(scope(), fresh.key().unwrap())
+                .await
+                .unwrap(),
+            None
+        );
+        fixture
+            .journal
+            .run(move |db| {
+                // The deliberately damaged operation makes a full snapshot
+                // unavailable. Inspect only the retained registry bytes here.
+                let bytes =
+                    db.tx
+                        .query_row("SELECT registry FROM state WHERE singleton=1", [], |row| {
+                            blob(row, 0, MAX_RECORD_BYTES)
+                        })?;
+                assert_eq!(RegistryVersion::from_bytes(&bytes)?, version);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        // Full replay precedes the unavailable current operation and preserves
+        // the immutable acceptance, including its original timestamp.
+        let replay = fixture.journal.accept_enrollment(&spec, 3).await.unwrap();
+        let FleetEnrollmentAcceptance::New(original) = original else {
+            panic!("new expected")
+        };
+        assert!(
+            matches!(replay, FleetEnrollmentAcceptance::Existing(record) if record == original)
+        );
+        fixture.journal.close().await.unwrap();
+    }
+}
 fn result(
     accepted: &AcceptedFleetAction,
     outcome: FleetOutcome,

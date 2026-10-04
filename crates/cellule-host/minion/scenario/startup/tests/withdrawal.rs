@@ -325,6 +325,7 @@ async fn withdrawal_binding_is_exact_and_cannot_be_replaced_after_startup() {
             ..original.spec().clone()
         },
         None,
+        None,
         &fixture.intent,
         clock().unwrap(),
     )

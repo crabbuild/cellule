@@ -1,7 +1,10 @@
 use crate::identity::{CellTarget, Digest, NodeId, SessionId};
 use crate::node::NodeMode;
 
-use super::{FleetScope, NodeIntent, OperationError, PublishedPosition, Result, nonzero};
+use super::{
+    FleetScope, MaintenanceOperation, MaintenancePhase, NodeIntent, OperationError,
+    PublishedPosition, Result, nonzero,
+};
 
 /// Exact physical node and boot checked before an enrollment effect starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,25 +189,50 @@ impl EnrollmentRecord {
             EnrollmentEvent::Retired(evidence) => self.retire(evidence, now_ms),
         }
     }
-    /// Calculates first acceptance; publish atomically with both intent checks.
-    /// A draining source may enroll a replacement on an Active receiver. The
-    /// receiver cannot accept a new reader/follower role under a cordon. Boot
-    /// enrollment honors its exact retained mode without granting readiness.
+    /// Calculates first acceptance; publish atomically with both intent checks
+    /// and the source intent's retained maintenance operation. A draining source
+    /// may enroll a replacement on an Active receiver before Closing. Closing
+    /// and Completed fence new source requests even if the intent is unchanged.
+    /// An Active source requires no maintenance input. The receiver cannot accept
+    /// a new reader/follower role under a cordon. Boot enrollment honors its exact
+    /// retained mode without granting readiness. Replay original rows first.
     /// No I/O is performed.
     pub fn pending(
         spec: EnrollmentSpec,
         source_intent: Option<&NodeIntent>,
+        source_maintenance: Option<&MaintenanceOperation>,
         target_intent: &NodeIntent,
         now_ms: i64,
     ) -> Result<Self> {
         spec.validate()?;
-        match (spec.source, source_intent) {
-            (Some(source), Some(intent)) => source.check(spec.scope, intent, false)?,
-            (None, None) => {}
+        match (spec.source, source_intent, source_maintenance) {
+            (Some(source), Some(intent), maintenance) => {
+                source.check(spec.scope, intent, false)?;
+                match (intent.operation(), maintenance) {
+                    (None, None) => {}
+                    (Some(id), Some(operation)) => {
+                        operation.validate()?;
+                        // Phase changes intentionally retain the intent revision.
+                        // Checking only that revision admits delayed work after
+                        // the final evacuation barrier has committed.
+                        if operation.id() != id
+                            || operation.node() != intent.node()
+                            || operation.session() != intent.session()
+                            || operation.intent_revision() != intent.revision()
+                            || matches!(
+                                operation.phase(),
+                                MaintenancePhase::Closing | MaintenancePhase::Completed
+                            )
+                        {
+                            return Err(OperationError::Conflict);
+                        }
+                    }
+                    _ => return Err(OperationError::Conflict),
+                }
+            }
+            (None, None, None) => {}
             _ => {
-                return Err(OperationError::Invalid(
-                    "enrollment source intent is absent",
-                ));
+                return Err(OperationError::Invalid("enrollment source inputs differ"));
             }
         }
         let receives_role = match spec.role {

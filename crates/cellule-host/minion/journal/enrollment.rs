@@ -153,9 +153,22 @@ impl FleetEnrollmentJournal for SqliteJournal {
                         .source
                         .map(|endpoint| db.required_intent(endpoint.node))
                         .transpose()?;
+                    let source_maintenance = source
+                        .as_ref()
+                        .and_then(NodeIntent::operation)
+                        .map(|id| -> JournalResult<MaintenanceOperation> {
+                            db.operation(id)?
+                                .ok_or_else(|| OperationError::NotFound.into())
+                        })
+                        .transpose()?;
                     let target = db.required_intent(spec.target.node)?;
-                    let pending =
-                        EnrollmentRecord::pending(spec, source.as_ref(), &target, now_ms)?;
+                    let pending = EnrollmentRecord::pending(
+                        spec,
+                        source.as_ref(),
+                        source_maintenance.as_ref(),
+                        &target,
+                        now_ms,
+                    )?;
                     db.write_enrollment(&pending)?;
                     Ok(FleetEnrollmentAcceptance::New(pending))
                 })

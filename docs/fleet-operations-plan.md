@@ -37,7 +37,7 @@ same action and evidence contracts.
 | Which external facilities are required? | A linearizable journal, complete enrollment registry, authenticated management transport, and trusted local Cell inputs. The reference example supplies these behind the same contracts. |
 | What keeps operations simple? | One operation ID, one status contract, one application loop, bounded defaults, and one canonical host drain lane. |
 | What proves success? | Receipt-preserving actor activation on another node. Maintenance additionally requires settled role obligations, host Stopped, and session withdrawal. |
-| What is the next concrete change? | Qualify the current head, including both routing profiles. Complete authenticated production observation around jointly checked original-writer successors and failed-boot closures. Connect reader/follower replacement policy and accepted-work barriers to SettleRoles/Finalize. Keep cross-session recovery, process/provider and remaining failure/inspection gates in scope. |
+| What is the next concrete change? | Qualify the current head, including both routing profiles and atomic source enrollment closure at Closing. Complete authenticated production observation around jointly checked original-writer successors and failed-boot closures. Connect reader/follower replacement policy and accepted-work barriers to SettleRoles/Finalize. Keep cross-session recovery, process/provider and remaining failure/inspection gates in scope. |
 
 Start with the [first slice commit sequence](#first-slice-commit-sequence).
 Every increment must expose a reviewable public behavior and retain its test

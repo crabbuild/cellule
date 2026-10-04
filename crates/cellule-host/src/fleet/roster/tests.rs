@@ -40,6 +40,7 @@ fn record(n: u8) -> EnrollmentRecord {
             target: endpoint(2),
         },
         Some(&intent(1)),
+        None,
         &intent(2),
         1,
     )
@@ -190,7 +191,7 @@ fn original_failed_boot_remains_required_after_intent_replacement() {
     };
     roster
         .enrollments
-        .push(EnrollmentRecord::pending(boot, None, &intent(2), 1).unwrap());
+        .push(EnrollmentRecord::pending(boot, None, None, &intent(2), 1).unwrap());
     assert!(!roster.covers_advertisements(&[], 100).unwrap());
 }
 
@@ -287,6 +288,7 @@ fn boot(n: u8) -> EnrollmentRecord {
             source: None,
             target: endpoint(n),
         },
+        None,
         None,
         &intent(n),
         1,

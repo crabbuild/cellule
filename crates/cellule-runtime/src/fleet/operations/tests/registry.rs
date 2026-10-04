@@ -51,6 +51,7 @@ fn pending(role: EnrollmentRole) -> EnrollmentRecord {
     EnrollmentRecord::pending(
         spec.clone(),
         spec.source.map(|_| intent(1)).as_ref(),
+        None,
         &intent(2),
         10,
     )
@@ -132,37 +133,70 @@ fn retained_intent_revision_blocks_reboot_reopening_and_old_enrollment_checks() 
 
 #[test]
 fn pending_enrollment_checks_exact_committed_intents_and_allows_draining_donor() {
-    let source = intent(1)
-        .advance_maintenance(&maintenance_for(1, 2))
-        .unwrap();
+    let operation = maintenance_for(1, 2);
+    let source = intent(1).advance_maintenance(&operation).unwrap();
     let mut spec = enrollment(EnrollmentRole::Follower { log_epoch: 7 });
-    assert!(EnrollmentRecord::pending(spec.clone(), Some(&source), &intent(2), 10).is_err());
+    assert!(
+        EnrollmentRecord::pending(
+            spec.clone(),
+            Some(&source),
+            Some(&operation),
+            &intent(2),
+            10
+        )
+        .is_err()
+    );
     spec.source.as_mut().unwrap().intent_revision = source.revision();
-    let admitted = EnrollmentRecord::pending(spec.clone(), Some(&source), &intent(2), 10).unwrap();
+    let admitted = EnrollmentRecord::pending(
+        spec.clone(),
+        Some(&source),
+        Some(&operation),
+        &intent(2),
+        10,
+    )
+    .unwrap();
     assert!(admitted.unresolved());
     assert_eq!(admitted.status(), EnrollmentStatus::Pending);
     let draining_target = intent(2)
         .advance_maintenance(&maintenance_for(2, 2))
         .unwrap();
     spec.target.intent_revision = draining_target.revision();
-    assert!(EnrollmentRecord::pending(spec.clone(), Some(&source), &draining_target, 10).is_err());
+    assert!(
+        EnrollmentRecord::pending(
+            spec.clone(),
+            Some(&source),
+            Some(&operation),
+            &draining_target,
+            10
+        )
+        .is_err()
+    );
     let cordoned_target = NodeIntent {
         mode: NodeMode::Cordoned,
         ..draining_target
     };
-    assert!(EnrollmentRecord::pending(spec.clone(), Some(&source), &cordoned_target, 10).is_err());
+    assert!(
+        EnrollmentRecord::pending(
+            spec.clone(),
+            Some(&source),
+            Some(&operation),
+            &cordoned_target,
+            10
+        )
+        .is_err()
+    );
     let mut boot = enrollment(EnrollmentRole::Node {
         mode: NodeMode::Cordoned,
     });
     boot.target.intent_revision = cordoned_target.revision();
     let enrolled_boot =
-        EnrollmentRecord::pending(boot.clone(), None, &cordoned_target, 10).unwrap();
+        EnrollmentRecord::pending(boot.clone(), None, None, &cordoned_target, 10).unwrap();
     assert!(enrolled_boot.unresolved());
     boot.role = EnrollmentRole::Node {
         mode: NodeMode::Active,
     };
-    assert!(EnrollmentRecord::pending(boot, None, &cordoned_target, 10).is_err());
-    assert!(EnrollmentRecord::pending(spec.clone(), None, &intent(2), 10).is_err());
+    assert!(EnrollmentRecord::pending(boot, None, None, &cordoned_target, 10).is_err());
+    assert!(EnrollmentRecord::pending(spec.clone(), None, None, &intent(2), 10).is_err());
     let foreign = NodeIntent {
         scope: FleetScope {
             fleet: Digest::from_bytes([99; 32]),
@@ -170,13 +204,16 @@ fn pending_enrollment_checks_exact_committed_intents_and_allows_draining_donor()
         },
         ..source.clone()
     };
-    assert!(EnrollmentRecord::pending(spec, Some(&foreign), &intent(2), 10).is_err());
+    assert!(
+        EnrollmentRecord::pending(spec, Some(&foreign), Some(&operation), &intent(2), 10).is_err()
+    );
     assert!(
         EnrollmentRecord::pending(
             enrollment(EnrollmentRole::Node {
                 mode: NodeMode::Active
             }),
             Some(&intent(1)),
+            None,
             &intent(2),
             10
         )
@@ -188,8 +225,114 @@ fn pending_enrollment_checks_exact_committed_intents_and_allows_draining_donor()
                 mode: NodeMode::Active
             }),
             None,
+            None,
             &intent(2),
             -1
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn source_maintenance_phase_fences_new_roles_without_invalidating_replay() {
+    for role in [
+        EnrollmentRole::Follower { log_epoch: 7 },
+        EnrollmentRole::Reader {
+            target: spec(1).target,
+            position: release(),
+        },
+    ] {
+        let mut operation = maintenance_for(1, 2);
+        let source = intent(1).advance_maintenance(&operation).unwrap();
+        let mut request = enrollment(role);
+        request.source.as_mut().unwrap().intent_revision = source.revision();
+        let admit = |operation: &MaintenanceOperation| {
+            EnrollmentRecord::pending(
+                request.clone(),
+                Some(&source),
+                Some(operation),
+                &intent(2),
+                10,
+            )
+        };
+        let original = admit(&operation).unwrap();
+        assert!(
+            EnrollmentRecord::pending(request.clone(), Some(&source), None, &intent(2), 10)
+                .is_err()
+        );
+        for change in 0..4 {
+            let mut foreign = operation.clone();
+            match change {
+                0 => foreign.id = operation_id(9),
+                1 => foreign.node = endpoint(9).node,
+                2 => foreign.session = endpoint(9).session,
+                _ => foreign.intent_revision += 1,
+            }
+            assert!(matches!(admit(&foreign), Err(OperationError::Conflict)));
+        }
+        operation.apply(MaintenanceEvent::Cordoned, 1).unwrap();
+        assert!(admit(&operation).is_ok());
+        operation
+            .apply(MaintenanceEvent::BeginEvacuation, 2)
+            .unwrap();
+        assert!(admit(&operation).is_ok());
+        operation
+            .apply(MaintenanceEvent::ReadyToClose(drain_evidence()), 3)
+            .unwrap();
+        assert!(matches!(admit(&operation), Err(OperationError::Conflict)));
+        assert_eq!(source.advance_maintenance(&operation).unwrap(), source);
+        let established = original
+            .establish(Digest::from_bytes([41; 32]), 11)
+            .unwrap();
+        established.validate_replay(&request).unwrap();
+        operation
+            .apply(MaintenanceEvent::Stopped(drain_evidence()), 4)
+            .unwrap();
+        assert!(matches!(admit(&operation), Err(OperationError::Conflict)));
+        let retired = established
+            .retire(Digest::from_bytes([42; 32]), 12)
+            .unwrap();
+        retired.validate_replay(&request).unwrap();
+        assert_eq!(retired.accepted_at_ms(), original.accepted_at_ms());
+        // Adoption invalidates the old envelope and returns the new boot to the
+        // initial maintenance barrier; it does not reopen target admission.
+        let mut adopted = maintenance_for(1, 2);
+        adopted
+            .apply(MaintenanceEvent::SessionReplaced(endpoint(9).session), 5)
+            .unwrap();
+        assert!(matches!(admit(&adopted), Err(OperationError::Conflict)));
+        let rebound = source.advance_maintenance(&adopted).unwrap();
+        request.source.as_mut().unwrap().session = rebound.session();
+        request.source.as_mut().unwrap().intent_revision = rebound.revision();
+        assert!(
+            EnrollmentRecord::pending(request, Some(&rebound), Some(&adopted), &intent(2), 10)
+                .is_ok()
+        );
+    }
+}
+
+#[test]
+fn source_maintenance_input_is_absent_for_active_sources_and_node_enrollment() {
+    let operation = maintenance_for(1, 2);
+    assert!(matches!(
+        EnrollmentRecord::pending(
+            enrollment(EnrollmentRole::Follower { log_epoch: 7 }),
+            Some(&intent(1)),
+            Some(&operation),
+            &intent(2),
+            10,
+        ),
+        Err(OperationError::Conflict)
+    ));
+    assert!(
+        EnrollmentRecord::pending(
+            enrollment(EnrollmentRole::Node {
+                mode: NodeMode::Active
+            }),
+            None,
+            Some(&operation),
+            &intent(2),
+            10,
         )
         .is_err()
     );

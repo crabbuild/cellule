@@ -4,6 +4,80 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 source enrollment closure checkpoint
+
+The canonical executable is `crates/cellule-host/minion`, Cargo target
+`fleet_operations`, as confirmed by the user.
+
+First reader/follower acceptance now checks the operation named by the source
+intent in the same SQLite transaction as both endpoint intents and Pending
+publication. The pure `EnrollmentRecord::pending` constructor requires this
+retained operation for a Draining source and compares its ID, node, boot and
+intent revision. Requested, Cordoned and Evacuating may recruit replacements;
+Closing and Completed fence new requests even when the intent revision is
+unchanged. Active sources and boot enrollment require no source operation input.
+There is one canonical constructor; persisted records and codecs are unchanged.
+
+Full original request replay precedes current intent/operation reads. Already
+accepted requests retain their original timestamp and can still establish or
+retire after Closing. Missing, mismatched or corrupt operation records refuse
+new requests and retain original operation/codec errors. An older source operation
+is checked after another node becomes the current maintenance target.
+
+Two isolated regressions fail on published parent `b1390b2`: first acceptance
+after Closing and delayed acceptance after an independent client commits Closing.
+The corrected journal suite passes all 32 cases. New cases cover both reader and
+follower roles, reconstruction, original completion/retirement, independent
+acceptance versus Closing CAS, and missing/corrupt operation records without
+registry changes or new rows. Pure cases cover all phases, foreign bindings,
+missing/spurious inputs and exact successor boot adoption. Reducer drain fixtures
+exercise journal ordering; they do not certify a real process as drained.
+
+### Verification and CI
+
+All 13 fresh Rust commands pass on the isolated Rust 1.99 snapshot with its
+mounted checkout-specific target. All nine static gates pass; 132 documented Rust
+snippets parse and 1,278 local links resolve. Qualification gates are unchanged.
+
+| Verification | Result |
+| --- | --- |
+| Framework, all features, locked | 1,675 passed; zero failures; 36 documented ignored cases. |
+| Canonical minion | 274 passed; zero failures or ignores. |
+| Distinct framework/minion passes | 1,949; focused repeats and overlapping local LTX excluded. |
+| Local LTX without default features | All 54 passed. |
+| Features/targets, Clippy and API docs | Pass; lint/docs deny warnings. |
+| Normal executable and Axum without default features | Build and tests/docs pass. |
+| Fresh cookbook | 256 tests, check, Clippy, warning-denied docs and binary builds pass. |
+
+All 1,091 Rust/Cargo paths match the qualified source manifest, SHA256
+`71358161e10d7156f377cd36c1cebb5418230aa3539eddbb25c1e471da104d4e`.
+Frozen source, commands, original failing regressions and all repair logs are
+retained in `/tmp/cellule-enrollment-closing-evidence`.
+
+Published parent `b1390b2` passes follower/object capacity, workspace, MSRV,
+contract, cookbook quality, Compose smoke and fuzz checks. The ordinary leased routing
+profile passes with a lowest gated throughput ratio of 91.36%; object-only routing
+is still running. The pinned same-source control at `9037a04`
+([run 37163481429](https://github.com/crabbuild/cellule/actions/runs/37163481429))
+passes both profiles and aggregate routing. Its gated throughput minimum is
+95.37% leased and 92.47% object-only; the existing 90% gate is unchanged. Both
+177-file original campaigns, manifests, frozen binaries, stage TSVs and analyses
+are retained. This control does not qualify the PR baseline comparison or isolate
+the cause of the earlier routing failures.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Qualify the current head, including both ordinary routing profiles; retain and diagnose failures without weakening gates. |
+| 1 | Complete authenticated aggregate observation of all original reader/follower policies, failed-owner successors, durable unknown actions and native/external accepted work. |
+| 2 | Implement SettleRoles/Finalize with original action joining before terminal drain handoff, native Stopped, withdrawal, boot retirement and committed completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider faults, mixed binaries and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The admission fence supplies no aggregate settlement or finalization proof.
+SettleRoles/Finalize remain refused; the complete W1–W10 goal remains active.
+
 ## October 3 2026 original accepted fleet work checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target

@@ -275,7 +275,7 @@ the host library remains provider neutral.
 | --- | --- |
 | Controller and permits | `BEGIN IMMEDIATE` compares the complete head and registry version, then invokes the pure reducer and current intent allocation gate. |
 | Maintenance | Publish the physical-node intent and retained operation with the head. Keep the original request separately from later deadline and boot changes. Earlier cordons survive later operations. |
-| Enrollment | Check exact source/target intent rows and publish Pending in one transaction. Full input comparison precedes current intent checks on replay. Pending remains an obligation after expiry. |
+| Enrollment | Check exact source/target intent rows and the source's retained maintenance operation, then publish Pending in one transaction. Closing/Completed fence new reader/follower source requests. Full input comparison precedes current checks on replay. Pending remains an obligation after expiry. |
 | Boot confirmation | Read current physical intent and the exact Established node enrollment in one transaction; reject pending/settled/foreign records. No cached older intent can open readiness. |
 | Action acceptance | Check current head, permit, endpoint and intents before inserting the immutable acceptance. Key includes action digest, physical node and boot; source and receiver inspections remain distinct. |
 | Unaccepted action | `ResolveUnaccepted` checks that the exact attempt/effect/endpoint has no acceptance in the same `BEGIN IMMEDIATE` transaction that advances the head revision. A delayed old envelope then fails; an acceptance that won the race prevents retry. Both permits remain charged. |
@@ -290,6 +290,15 @@ the host library remains provider neutral.
 Applications must retry an ambiguous commit with the same immutable request
 identity and reread retained state. A timeout cannot free a permit or turn an
 unknown enrollment into a refusal.
+
+A Draining source can recruit reader/follower replacements during Requested,
+Cordoned and Evacuating. Closing and Completed refuse first acceptance even
+though the physical intent revision is unchanged. The transaction loads the
+operation named by that source intent, including an older operation after a
+different node becomes the current maintenance target. Missing or corrupt records
+retain their original errors and insert no enrollment. Full replay and canonical
+completion/retirement of accepted requests remain available. Node boot enrollment
+continues to honor its retained mode without granting role readiness.
 
 ## Evidence and integration work
 
