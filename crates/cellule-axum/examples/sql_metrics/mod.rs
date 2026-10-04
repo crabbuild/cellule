@@ -89,6 +89,8 @@ struct WriteMetrics {
     root_admission: Histogram,
     root_preparation: Histogram,
     root_preparation_work: Histogram,
+    root_open: Histogram,
+    directory: Histogram,
     dirty_admission: Histogram,
     recovery_admission: Histogram,
     publication_failures: AtomicU64,
@@ -150,6 +152,8 @@ impl CellTelemetry for QueryMetrics {
         use cellule_ltx::LtxPhase;
         match phase {
             LtxPhase::Compaction => self.writes.compaction.observe(elapsed),
+            LtxPhase::RootOpen => self.writes.root_open.observe(elapsed),
+            LtxPhase::Directory => self.writes.directory.observe(elapsed),
             LtxPhase::RootAdmission => self.writes.root_admission.observe(elapsed),
             LtxPhase::RootPreparation => self.writes.root_preparation.observe(elapsed),
             LtxPhase::RootPreparationWork => self.writes.root_preparation_work.observe(elapsed),
@@ -246,6 +250,8 @@ impl QueryMetrics {
                 "authority": self.writes.authority.snapshot(),
                 "publication": self.writes.publication.snapshot(),
                 "compaction": self.writes.compaction.snapshot(),
+                "root_open": self.writes.root_open.snapshot(),
+                "directory": self.writes.directory.snapshot(),
                 "root_admission": self.writes.root_admission.snapshot(),
                 "root_preparation": self.writes.root_preparation.snapshot(),
                 "root_preparation_work": self.writes.root_preparation_work.snapshot(),
