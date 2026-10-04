@@ -16,6 +16,7 @@ use tokio::sync::oneshot;
 #[derive(Clone)]
 pub(super) struct NativePeers {
     directory: NodeDirectory,
+    origin: usize,
     dispatchers: Vec<Arc<PeerDispatcher>>,
     pub(super) probes: Arc<AtomicUsize>,
     pause: Arc<Mutex<Option<Pause>>>,
@@ -25,10 +26,12 @@ struct Pause {
     captured: oneshot::Sender<()>,
     resume: oneshot::Receiver<()>,
 }
-struct Authorizer;
+struct Authorizer {
+    origin: SessionId,
+}
 impl PeerAuthorizer for Authorizer {
     fn authorize(&self, request: &VerifiedPeerRequest) -> cellule_runtime::Result<()> {
-        if request.origin_session() != session(0)
+        if request.origin_session() != self.origin
             || request.principal().issuer != "managed-owner"
             || request.principal().subject != "live-owner"
             || !request
@@ -51,6 +54,15 @@ impl NativePeers {
         layout: &CellStorageLayout,
         directory: NodeDirectory,
     ) -> Self {
+        Self::for_origin(nodes, managers, layout, directory, 0)
+    }
+    pub(super) fn for_origin(
+        nodes: &[Arc<CellNode>],
+        managers: &[ReadReplicaManager],
+        layout: &CellStorageLayout,
+        directory: NodeDirectory,
+        origin: usize,
+    ) -> Self {
         let dispatchers = nodes
             .iter()
             .zip(managers)
@@ -64,7 +76,9 @@ impl NativePeers {
                             layout.clone(),
                             registry,
                         )),
-                        Arc::new(Authorizer),
+                        Arc::new(Authorizer {
+                            origin: session(origin),
+                        }),
                     )
                     .with_replica_control(Arc::new(manager.clone()))
                     .with_replica_resolver(Arc::new(manager.clone())),
@@ -73,6 +87,7 @@ impl NativePeers {
             .collect();
         Self {
             directory,
+            origin,
             dispatchers,
             probes: Arc::new(AtomicUsize::new(0)),
             pause: Arc::new(Mutex::new(None)),
@@ -127,7 +142,9 @@ impl PeerRoundTrip for NativePeers {
                 .verify_peer_request(
                     &request,
                     Digest::from_bytes([30; 32]),
-                    SigningKey::from_bytes(&[1; 32]).verifying_key().to_bytes(),
+                    SigningKey::from_bytes(&[peers.origin as u8 + 1; 32])
+                        .verifying_key()
+                        .to_bytes(),
                     now,
                 )
                 .await?;

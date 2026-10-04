@@ -4,6 +4,79 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 4 2026 source reader policy checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`. The full W1–W10 plan remains active.
+
+`FleetReaderEvacuationVerifier::collect_source_readers` now enumerates the exact
+original/current request set and composes retained native retirement with the
+actual managed writer successor, canonical final-root derivation/current origin,
+current reader policy and actual ready replacement requests. It uses the same
+managed-writer validator as original failed-boot writers and the same current
+reader confirmation loop as donor history. Whole-capture clocks/deadlines and
+full roster/head checks bound the collection. Provider absence remains unknown;
+changed allocations/presence and original backend errors refuse the capture.
+
+`FleetObservation::with_source_reader_policies` retains those native capsules and
+checks their original capture, full barrier, signed successor/replacement boots
+and captured writer rows. Planner identity v12 binds the new inputs. The complete
+maintenance matcher marks only the exact checked source reader `SourceReader`;
+omitted evidence remains `SourceSuccessor`. Attachment preserves incomplete
+observation and grants no SettleRoles/Finalize rights. Persisted enrollment,
+evacuation and signed peer formats are unchanged.
+
+Eleven real minion cases pass on the isolated source snapshot. They refresh past
+the original opening, drain the original writer, restore on another managed boot,
+join the exact original reader and install a new request on the same Active
+receiver. They cover missing/changed evidence, foreign physical/origin mappings,
+clock bounds, cancellation, deadline, source error preservation, policy/head/
+writer changes behind actual signed native replies, duplicate/late attachment,
+outer boot/native-row mismatch and independent SQLite client/public reconciliation.
+Every successful fixture joins all native owners and checks released ledgers.
+An initial fixture activation used the departed writer's signer and was correctly
+refused; the fixture now authenticates the actual successor boot through the same
+signature/principal path. Initial compile/setup failures are retained as diagnostics.
+
+All 13 fresh Rust commands pass on the frozen Rust 1.99 source: 1,711 framework
+passes with 37 documented ignores, all 331 minion cases, local LTX 54, Axum without
+default features 16 and cookbook 256 plus check, Clippy, docs and binary builds.
+The framework/minion total is 2,042 distinct passes; focused repeats and overlapping
+local LTX are excluded. Workspace features/targets, Clippy, warning-denied API docs
+and the minion build pass. Nine static gates pass; all 137 Rust snippets parse and
+1,307 local links resolve. All 1,133 Rust/Cargo paths match manifest SHA256
+`2e382bfbcbe4682a383628848c3187d6c06007e8d0e89661ef488785d17760a5`.
+Exact source/manifests, commands/results and initial failures are retained under
+`/Users/haipingfu/Workspace/crabbuild-target/cellule-source-reader-9110095/evidence`.
+A one-variable negative control verifies the opening root instead of the final
+joined root. The exact-prefix regression fails as intended, distinguishing both
+digests, transaction positions and sequences. The production source is restored
+byte-identically; initial control-root/LTX-root type failure is retained and excluded
+from regression evidence. The restored source also passed broad qualification.
+
+PR #37 was merged as `fa548bb` while qualification ran. Its Git tree is byte-identical
+to qualified baseline `9110095`; the native source reader increment continues on
+`codex/native-source-reader-policy` from that new main. Full follow-up head CI,
+physical process/provider retention and the complete W1–W10 scope remain required.
+
+The new [source reader recipe](../crates/cellule-host/docs/source-readers.md) documents
+provider ownership, collection/attachment and the runnable cases.
+
+### Highest remaining work
+
+1. Qualify the follow-up head in CI and both routing campaigns.
+   Earlier follower-observation and overload failures still need independent
+   diagnosis if reproduced; a later green run alone does not establish their cause.
+2. Complete durable provider/process retention and failed-owner reader/follower
+   succession, full native/external accepted-work coverage and unknown outcomes.
+3. Implement SettleRoles/Finalize through original action joining, native Stopped,
+   withdrawal, retired boots and committed completion; finish Cron/Blob owners
+   and primitive fault matrices.
+4. Complete receiver-session loss/recovery/adoption and sustained convergence;
+   deliver canonical minion maintenance and receiver-loss commands.
+5. Complete W9 physical process/provider faults, mixed binaries and load/soak;
+   W10 exercised runbooks and staged rollout/rollback.
+
 ## October 4 2026 replica retry routing checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target

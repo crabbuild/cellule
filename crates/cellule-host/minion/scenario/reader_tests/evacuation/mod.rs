@@ -12,6 +12,7 @@ use ed25519_dalek::SigningKey;
 mod fixture;
 mod inventory_tests;
 mod persisted;
+mod source;
 mod tests;
 mod transport;
 

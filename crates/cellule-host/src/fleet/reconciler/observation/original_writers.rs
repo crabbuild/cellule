@@ -51,40 +51,50 @@ impl FleetObservation {
         }
         for proof in inventory.proofs() {
             let serving = proof.serving();
-            if !self.nodes.iter().any(|node| {
-                node.node() == proof.node()
-                    && node.session() == serving.owner().session
-                    && node.endpoint() == serving.owner().endpoint
-                    && node.release() == proof.release()
-            }) {
-                return Err(Error::Node("original writer successor boot differs"));
-            }
-            let observed = self.cells.iter().find(|owned| {
-                owned.observation.target.cell_id() == proof.original().target.cell_id()
-            });
-            // A partial planner scan can omit a scoped row; the complete
-            // original proof remains retained and cannot certify that scan.
-            if observed.is_none()
-                && self.complete
-                && proof.original().target.application() == self.scope.application
+            self.current_writer(proof.node(), proof.release(), serving)?;
+        }
+        Ok(())
+    }
+    pub(super) fn current_writer(
+        &self,
+        node: NodeId,
+        release: Digest,
+        serving: &cellule_runtime::cell::actor::CellServingObservation,
+    ) -> Result<()> {
+        if !self.nodes.iter().any(|ad| {
+            ad.node() == node
+                && ad.session() == serving.owner().session
+                && ad.endpoint() == serving.owner().endpoint
+                && ad.release() == release
+        }) {
+            return Err(Error::Node("original writer successor boot differs"));
+        }
+        let observed = self
+            .cells
+            .iter()
+            .find(|owned| owned.observation.target.cell_id() == serving.native().target.cell_id());
+        // A partial planner scan can omit a scoped row; the complete
+        // original proof remains retained and cannot certify that scan.
+        if observed.is_none()
+            && self.complete
+            && serving.native().target.application() == self.scope.application
+        {
+            return Err(Error::Node("original writer successor row is missing"));
+        }
+        if let Some(owned) = observed {
+            let row = &owned.observation;
+            let native = serving.native();
+            if owned.node != node
+                || owned.session != serving.owner().session
+                || row.target != native.target
+                || row.incarnation != native.incarnation
+                || row.generation != native.generation
+                || row.code != native.code
+                || row.schema != native.schema
+                || row.role != native.role
+                || row.position.as_ref() != Some(serving.position())
             {
-                return Err(Error::Node("original writer successor row is missing"));
-            }
-            if let Some(owned) = observed {
-                let row = &owned.observation;
-                let native = serving.native();
-                if owned.node != proof.node()
-                    || owned.session != serving.owner().session
-                    || row.target != native.target
-                    || row.incarnation != native.incarnation
-                    || row.generation != native.generation
-                    || row.code != native.code
-                    || row.schema != native.schema
-                    || row.role != native.role
-                    || row.position.as_ref() != Some(serving.position())
-                {
-                    return Err(Error::Node("original writer successor row differs"));
-                }
+                return Err(Error::Node("original writer successor row differs"));
             }
         }
         Ok(())

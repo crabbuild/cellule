@@ -2,6 +2,10 @@ use super::*;
 
 impl Fixture {
     pub(super) async fn new() -> Self {
+        Self::for_maintenance(1).await
+    }
+
+    pub(super) async fn for_maintenance(maintenance_node: usize) -> Self {
         let root = tempfile::tempdir().unwrap();
         let journal = Arc::new(
             SqliteJournal::open(
@@ -82,7 +86,11 @@ impl Fixture {
                             .unwrap()
                             .with_native_memory_limit(128 << 20)
                             .unwrap(),
-                        16 << 20,
+                        if maintenance_node == 0 {
+                            64 << 20
+                        } else {
+                            16 << 20
+                        },
                     )
                     .with_replica_host(
                         Host::default().with_local_disk_budget(DiskBudget::new(8 << 30)),
@@ -242,8 +250,8 @@ impl Fixture {
                 MaintenanceOperation::new(
                     OperationId::from_bytes([80; 16]).unwrap(),
                     Digest::from_bytes([81; 32]),
-                    node_id(1),
-                    session(1),
+                    node_id(maintenance_node),
+                    session(maintenance_node),
                     2,
                     now,
                     now + 60_000,
@@ -264,15 +272,23 @@ impl Fixture {
                 .unwrap();
         }
         let operation = snapshot.head().maintenance().unwrap().clone();
-        boots[1]
-            .refresh_capacity(1, journal.as_ref(), Instant::now() + Duration::from_secs(3))
+        boots[maintenance_node]
+            .refresh_capacity(
+                maintenance_node,
+                journal.as_ref(),
+                Instant::now() + Duration::from_secs(3),
+            )
             .await
             .unwrap();
         assert_eq!(
-            nodes[1].runtime().node_admission().mode().unwrap(),
+            nodes[maintenance_node]
+                .runtime()
+                .node_admission()
+                .mode()
+                .unwrap(),
             cellule_runtime::node::NodeMode::Draining
         );
-        assert!(nodes[1].is_management_ready());
+        assert!(nodes[maintenance_node].is_management_ready());
         Self {
             layout,
             root,

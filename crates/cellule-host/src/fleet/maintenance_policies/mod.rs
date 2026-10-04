@@ -1,7 +1,7 @@
 //! Complete original/current request matching for maintenance replacement policy.
 use super::{
     FleetFollowerEvacuationCheck, FleetJournalSnapshot, FleetMaintenanceEnrollments,
-    FleetReaderEvacuationCheck, FleetRoster, operation,
+    FleetReaderEvacuationCheck, FleetRoster, FleetSourceReaderPolicies, operation,
 };
 use cellule_runtime::fleet::operations::{EnrollmentRecord, EnrollmentStatus, RegistryVersion};
 use cellule_runtime::identity::Digest;
@@ -24,6 +24,8 @@ pub enum FleetMaintenancePolicyStatus {
     Follower(Digest),
     /// Independently joined original work whose role effect never committed.
     Nonexecution(Digest),
+    /// Exact native source reader joined with current successor and reader policy.
+    SourceReader(Digest),
     /// Original acceptance still has an unknown native outcome.
     Pending,
     /// An installed original role has not been retired with checked replacement policy.
@@ -41,7 +43,7 @@ impl FleetMaintenancePolicyStatus {
     pub const fn is_checked(self) -> bool {
         matches!(
             self,
-            Self::Reader(_) | Self::Follower(_) | Self::Nonexecution(_)
+            Self::Reader(_) | Self::Follower(_) | Self::Nonexecution(_) | Self::SourceReader(_)
         )
     }
 }
@@ -119,6 +121,7 @@ impl FleetMaintenancePolicyCoverage {
         readers: &[FleetReaderEvacuationCheck],
         followers: &[FleetFollowerEvacuationCheck],
         nonexecution: Option<&FleetMaintenanceNonexecution>,
+        source_readers: Option<&FleetSourceReaderPolicies>,
         inputs: Digest,
     ) -> Result<Self> {
         let requests = requests::required(original, roster)?;
@@ -137,6 +140,23 @@ impl FleetMaintenancePolicyCoverage {
                     request.terminal(),
                     None,
                     FleetMaintenancePolicyStatus::Nonexecution(evidence.request_digest()),
+                )?;
+            }
+        }
+        if let Some(checked) = source_readers {
+            if checked.snapshot() != roster.snapshot()
+                || checked.roster_digest() != roster.digest()?
+                || checked.original_digest() != original.digest()?
+            {
+                return Err(Error::Fenced);
+            }
+            let proof = checked.digest()?;
+            for check in checked.checks() {
+                witness_optional(
+                    &mut witnesses,
+                    check.retirement().retired(),
+                    Some(enrollment_digest(check.retirement().original())?),
+                    FleetMaintenancePolicyStatus::SourceReader(proof),
                 )?;
             }
         }
@@ -182,9 +202,16 @@ impl FleetMaintenancePolicyCoverage {
                     }
                     FleetMaintenancePolicyStatus::Nonexecution(*proof)
                 }
-                _ if row.spec().target.node != node => {
-                    FleetMaintenancePolicyStatus::SourceSuccessor
-                }
+                _ if row.spec().target.node != node => match witnesses.get(&key) {
+                    Some((retired, digest, FleetMaintenancePolicyStatus::SourceReader(proof))) => {
+                        if row != *retired {
+                            return Err(Error::Fenced);
+                        }
+                        requests::validate_original(accepted, *digest)?;
+                        FleetMaintenancePolicyStatus::SourceReader(*proof)
+                    }
+                    _ => FleetMaintenancePolicyStatus::SourceSuccessor,
+                },
                 _ if row.established_evidence().is_none() => {
                     FleetMaintenancePolicyStatus::UnprovenNonexecution
                 }
@@ -210,11 +237,12 @@ impl FleetMaintenancePolicyCoverage {
             .map(FleetReaderEvacuationCheck::interval)
             .chain(followers.iter().map(FleetFollowerEvacuationCheck::interval))
             .chain(nonexecution.map(FleetMaintenanceNonexecution::interval))
+            .chain(source_readers.map(FleetSourceReaderPolicies::interval))
             .fold(original.interval(), |interval, next| {
                 (interval.0.min(next.0), interval.1.max(next.1))
             });
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-maintenance-policy-coverage.v1\0");
+        hash.update(b"cellule.fleet-maintenance-policy-coverage.v2\0");
         hash.update(inputs.as_bytes());
         hash.update(&(obligations.len() as u64).to_be_bytes());
         for obligation in &obligations {
@@ -232,6 +260,7 @@ impl FleetMaintenancePolicyCoverage {
                 FleetMaintenancePolicyStatus::SourceSuccessor => (6, None),
                 FleetMaintenancePolicyStatus::UnprovenNonexecution => (7, None),
                 FleetMaintenancePolicyStatus::Nonexecution(proof) => (8, Some(proof)),
+                FleetMaintenancePolicyStatus::SourceReader(proof) => (9, Some(proof)),
             };
             hash.update(&[tag]);
             if let Some(proof) = proof {
@@ -291,7 +320,8 @@ impl FleetMaintenancePolicyCoverage {
         for obligation in &self.obligations {
             match obligation.status {
                 FleetMaintenancePolicyStatus::Reader(_)
-                | FleetMaintenancePolicyStatus::Follower(_) => progress.checked += 1,
+                | FleetMaintenancePolicyStatus::Follower(_)
+                | FleetMaintenancePolicyStatus::SourceReader(_) => progress.checked += 1,
                 FleetMaintenancePolicyStatus::Nonexecution(_) => {
                     progress.checked += 1;
                     progress.nonexecution += 1;

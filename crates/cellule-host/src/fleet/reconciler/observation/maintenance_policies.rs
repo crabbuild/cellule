@@ -22,6 +22,7 @@ impl FleetObservation {
             self.reader_evacuations().unwrap_or(&[]),
             self.follower_evacuations().unwrap_or(&[]),
             self.maintenance_nonexecution.as_ref(),
+            self.source_reader_policies.as_ref(),
             self.maintenance_policy_inputs()?,
         )?;
         self.maintenance_policies = Some(coverage);
@@ -51,9 +52,10 @@ impl FleetObservation {
     fn maintenance_policy_inputs(&self) -> Result<Digest> {
         let original = self.maintenance_enrollments.as_ref().ok_or(Error::Fenced)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-maintenance-policy-inputs.v2\0");
+        hash.update(b"cellule.fleet-maintenance-policy-inputs.v3\0");
         hash.update(original.digest()?.as_bytes());
         self.hash_role_evacuations(&mut hash)?;
+        self.hash_source_reader_policies(&mut hash)?;
         hash.update(&[u8::from(self.maintenance_nonexecution.is_some())]);
         if let Some(nonexecution) = &self.maintenance_nonexecution {
             hash.update(nonexecution.digest().as_bytes());

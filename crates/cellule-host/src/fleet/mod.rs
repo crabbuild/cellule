@@ -30,12 +30,14 @@ pub use maintenance_policies::{
     FleetMaintenancePolicyProgress, FleetMaintenancePolicyStatus,
 };
 mod movement;
+mod native_writer;
 mod reader_evacuation;
 mod reconciler;
 mod recovered;
 pub use reader_evacuation::{
     FleetReaderEvacuationCandidate, FleetReaderEvacuationCheck, FleetReaderEvacuationJournal,
-    FleetReaderEvacuationPublication, FleetReaderEvacuationVerifier,
+    FleetReaderEvacuationPublication, FleetReaderEvacuationVerifier, FleetSourceReaderCheck,
+    FleetSourceReaderInputs, FleetSourceReaderPolicies, FleetSourceReaderSuccessors,
 };
 mod references;
 mod roster;

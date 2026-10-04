@@ -1,11 +1,8 @@
 use super::*;
-use crate::read_replicas::{
-    ReaderReplacement,
-    maintenance::{boot_identity, same_authority, validate_replacement},
-};
+use crate::read_replicas::ReaderReplacement;
 use cellule_runtime::{
     Error, Result,
-    client::{CellDescription, Receipt},
+    client::Receipt,
     control::{Control, authority::CellAuthority},
     fleet::operations::{EnrollmentRole, MaintenancePhase},
     node::{NodeDirectory, NodeMode},
@@ -165,140 +162,28 @@ impl FleetReaderEvacuationVerifier {
             incarnation: position.incarnation,
             commit_sequence: record.minimum_sequence(),
         };
-        let expected = CellDescription {
-            cell: minimum.cell,
-            incarnation: minimum.incarnation,
-            code: record.authority().code,
-            schema: record.authority().schema,
-        };
-        let witnesses: Vec<_> = pages.iter().flat_map(|page| page.entries()).collect();
-        let mut replacements = Vec::with_capacity(witnesses.len());
-        let mut authority = record.authority().clone();
-        for _ in 0..2 {
-            let now = clock()?;
-            if now >= current.deadline_ms() {
-                return Err(Error::Deadline);
-            }
-            let observed = self
-                .authority
-                .load(minimum.cell)
-                .await?
-                .ok_or(Error::Fenced)?;
-            let fresh = observed.value();
-            if !same_authority(&authority, fresh) {
-                return Err(Error::Fenced);
-            }
-            let policy = self.policy.load(minimum.cell).await?.map(|row| row.value());
-            if policy.map(|policy| policy.revision()) != record.policy_revision()
-                || policy.map_or(0, |policy| policy.desired_readers()) != record.desired_readers()
-                || policy.is_some_and(|policy| {
-                    policy.cell() != minimum.cell || policy.incarnation() != minimum.incarnation
-                })
-            {
-                return Err(Error::Fenced);
-            }
-            let selected = self
-                .directory
-                .select_readers(
-                    minimum.cell,
-                    fresh.owner.as_ref().ok_or(Error::Fenced)?.session,
-                    fresh.code,
-                    witnesses.len(),
-                    now,
-                    10_000,
-                )
-                .await?;
-            if selected.len() != witnesses.len() {
-                return Err(Error::ReplicaUnavailable);
-            }
-            replacements.clear();
-            for selected in selected {
-                let witness = witnesses
-                    .iter()
-                    .find(|entry| {
-                        entry.node == selected.node() && entry.session == selected.session()
-                    })
-                    .ok_or(Error::Fenced)?;
-                let node = self
-                    .directory
-                    .load(witness.session, clock()?)
-                    .await?
-                    .ok_or(Error::Fenced)?;
-                let node = node.advertisement();
-                if node.node() != witness.node
-                    || boot_identity(node)? != witness.boot_identity
-                    || validate_replacement(&roster, node, target, minimum)?
-                        != (witness.enrollment_key, witness.enrollment_digest)
-                {
-                    return Err(Error::Fenced);
-                }
-                let (receipt, ready) = self.peer.status(target, node.clone(), expected).await?;
-                if !ready
-                    || receipt.cell != minimum.cell
-                    || receipt.incarnation != minimum.incarnation
-                    || receipt.commit_sequence
-                        < minimum.commit_sequence.max(witness.commit_sequence)
-                {
-                    return Err(Error::ReplicaUnavailable);
-                }
-                replacements.push(ReaderReplacement {
-                    node: witness.node,
-                    session: witness.session,
-                    boot_identity: witness.boot_identity,
-                    enrollment_key: witness.enrollment_key,
-                    enrollment_digest: witness.enrollment_digest,
-                    receipt,
-                });
-            }
-            authority = fresh.clone();
-            // Probes can suspend; no authority/policy change is hidden behind
-            // their replies or a stable native topology cursor.
-            let after = self
-                .authority
-                .load(minimum.cell)
-                .await?
-                .ok_or(Error::Fenced)?;
-            if !same_authority(&authority, after.value())
-                || self.policy.load(minimum.cell).await?.map(|row| row.value()) != policy
-            {
-                return Err(Error::Fenced);
-            }
-            authority = after.value().clone();
-            let selected = self
-                .directory
-                .select_readers(
-                    minimum.cell,
-                    authority.owner.as_ref().ok_or(Error::Fenced)?.session,
-                    authority.code,
-                    witnesses.len(),
-                    clock()?,
-                    10_000,
-                )
-                .await?;
-            if selected.len() != witnesses.len() {
-                return Err(Error::Fenced);
-            }
-            for node in selected {
-                let witness = witnesses
-                    .iter()
-                    .find(|entry| entry.node == node.node() && entry.session == node.session())
-                    .ok_or(Error::Fenced)?;
-                let fresh = self
-                    .directory
-                    .load(witness.session, clock()?)
-                    .await?
-                    .ok_or(Error::Fenced)?;
-                let fresh = fresh.advertisement();
-                if fresh.node() != witness.node
-                    || boot_identity(fresh)? != witness.boot_identity
-                    || validate_replacement(&roster, fresh, target, minimum)?
-                        != (witness.enrollment_key, witness.enrollment_digest)
-                {
-                    return Err(Error::Fenced);
-                }
-            }
-            roster.confirm(journal, deadline).await?;
-        }
+        let witnesses: Vec<_> = pages
+            .iter()
+            .flat_map(|page| page.entries())
+            .cloned()
+            .collect();
+        let (authority, replacements) = self
+            .confirm_current(
+                journal,
+                &roster,
+                super::current::CurrentReaderPolicy {
+                    target,
+                    authority: record.authority(),
+                    minimum,
+                    policy_revision: record.policy_revision(),
+                    desired_readers: record.desired_readers(),
+                    witnesses: &witnesses,
+                    operation_deadline_ms: current.deadline_ms(),
+                },
+                deadline,
+                clock,
+            )
+            .await?;
         let finished = clock()?;
         if finished < started || finished - started > 30_000 || finished >= current.deadline_ms() {
             return Err(Error::Deadline);

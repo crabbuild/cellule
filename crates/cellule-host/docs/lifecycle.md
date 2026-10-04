@@ -968,7 +968,7 @@ ensembles. Signed replacement boots must match the existing producer-specific
 identity; a changed writer row or follower epoch/ensemble invalidates the input.
 Attachment order with role coverage, writer successors or failed-boot closure
 does not change these checks. The reconciler repeats the roster comparison.
-Planner digest v11 binds collection presence, canonical record order, full
+Planner digest v12 binds collection presence, canonical record order, full
 barriers, fresh intervals, current authority, reader prefixes and retained native
 follower inventories. Persisted history, enrollment and transport codecs are unchanged.
 
@@ -993,7 +993,7 @@ fresh complete roster, and reconfirms the full journal snapshot. Retiring rows,
 extending a deadline or adopting a successor boot preserves the first set.
 `FleetObservation::with_maintenance_enrollments` retains this evidence inside the
 outer interval and compares the exact head, registry and roster with other checks,
-in either attachment order. Planner digest v11 binds its presence and full digest.
+in either attachment order. Planner digest v12 binds its presence and full digest.
 
 A missing manifest or page remains unknown. A committed empty manifest proves
 only that the original unresolved role set was empty at the phase transaction.
@@ -1046,6 +1046,15 @@ Pending/Established work, source succession and unknown nonexecution stay in the
 full matcher even when they are ineligible for donor lookup. This read-only path
 starts no role effects or tasks and grants no settlement/finalization rights.
 
+### Confirm source reader succession
+
+Use the [source reader collector](source-readers.md) after actual writer handoff
+and exact native reader joining. It consumes the same complete original/current
+request set and checks current writer origin, policy and native ready readers.
+Retain `with_source_reader_policies` before full maintenance policy matching.
+Missing native/provider evidence stays unknown; complete accepted-work/process
+coverage and finalization remain separate.
+
 ### Confirm original nonexecution
 
 A terminal request without establishment history remains unknown. An independent
@@ -1095,7 +1104,7 @@ async fn attach_nonexecution(
 
 The observation's outer interval must include both collections. Attach all native
 policy and nonexecution checks before matching; later input changes refuse.
-Checked nonexecution is reported separately and binds planner digest v11. It
+Checked nonexecution is reported separately and binds planner digest v12. It
 cannot upgrade incomplete node observation, prove installed-role redundancy,
 join other accepted work, or grant SettleRoles/Finalize rights.
 
@@ -1127,7 +1136,8 @@ supply complete request coverage.
 | `Reader` / `Follower` | Exact current role and fresh native replacement policy checked. |
 | `Pending` / `Established` | Accepted native outcome or installed role still unresolved. |
 | `MissingPolicy` | Retired donor lacks current replacement policy evidence. |
-| `SourceSuccessor` | Source-side or failed-owner policy still needs separate evidence. |
+| `SourceReader` | Exact original native source reader joined, final root verified against an actual managed successor, current ready-reader policy checked. |
+| `SourceSuccessor` | Remaining source-side or failed-owner policy still needs separate evidence. |
 | `Nonexecution` | Independently confirmed original work joining and exclusion; no role effect committed. |
 | `UnprovenNonexecution` | Closed unknown acceptance lacks checked nonexecution or policy evidence. |
 
@@ -1137,7 +1147,7 @@ empty original manifest and no currently unresolved related requests.
 `FleetReconcileReport::maintenance_policy` supplies bounded advisory counts with
 their own head revision, registry and original interval. `None` means unknown.
 Later allocations cannot restamp these counts to the report's newer snapshot.
-Planner digest v11 binds the coverage digest and source inputs; changing the
+Planner digest v12 binds the coverage digest and source inputs; changing the
 attached policy collections after matching is refused.
 
 `is_complete()` describes only enumerated request-policy coverage. It does not

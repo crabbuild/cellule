@@ -578,6 +578,19 @@ Complete authenticated lookup, source/failed-owner successor policy, checked
 nonexecution, accepted-work joining and SettleRoles/Finalize remain delivery
 requirements. See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
 
+## Native source reader succession
+
+The [source reader recipe](../docs/source-readers.md) composes exact retained
+native retirement with an actual managed writer successor and current ready
+reader policy. It consumes the complete original/current request set and is
+retained through the public observer and matcher. Missing evidence remains an
+explicit source obligation. A checked local request does not finish maintenance.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::reader_tests::evacuation::source:: -- --test-threads=2
+```
+
 ## Original nonexecution confirmation
 
 The actual reader/follower suites consume `FleetMaintenanceNonexecution` through

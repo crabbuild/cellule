@@ -215,7 +215,7 @@ impl FleetObservation {
         Ok(())
     }
 
-    fn role_boot(
+    pub(super) fn role_boot(
         &self,
         node: NodeId,
         session: SessionId,
