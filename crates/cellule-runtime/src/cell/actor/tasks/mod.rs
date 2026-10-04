@@ -7,8 +7,8 @@
 
 use super::admission::{
     fail_shutdown, fence_active, fence_admission, finish_migration, finish_work, rejection_error,
-    send_command_reply, send_command_task_reply, send_migration_reply, send_query_reply,
-    send_resolve_reply, subtract_unpublished_bytes,
+    send_command_task_reply, send_finished_command_reply, send_finished_migration_reply,
+    send_finished_query_reply, send_finished_resolve_reply, subtract_unpublished_bytes,
 };
 use super::*;
 

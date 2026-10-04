@@ -140,7 +140,7 @@ pub(super) fn handle_migrated(
             Ok(_) => Err(Error::Fenced),
             Err(error) => Err(error),
         };
-        send_migration_reply(&mut migration, result);
+        send_finished_migration_reply(&mut migration, result);
         return;
     };
     if active.generation != generation
@@ -153,7 +153,7 @@ pub(super) fn handle_migrated(
             Ok(_) => Err(Error::Fenced),
             Err(error) => Err(error),
         };
-        send_migration_reply(&mut migration, result);
+        send_finished_migration_reply(&mut migration, result);
         return;
     }
     active.finish_task(
@@ -176,10 +176,13 @@ pub(super) fn handle_migrated(
             active.schema = outcome.schema;
             let _ = publications.send(active.catalog.entry().clone());
             let admission = Arc::clone(&migration.successor_admission);
-            send_migration_reply(&mut migration, Ok(MigratedAdmission { admission, outcome }));
+            send_finished_migration_reply(
+                &mut migration,
+                Ok(MigratedAdmission { admission, outcome }),
+            );
         }
-        Ok(_) => send_migration_reply(&mut migration, Err(Error::Fenced)),
-        Err(error) => send_migration_reply(&mut migration, Err(error)),
+        Ok(_) => send_finished_migration_reply(&mut migration, Err(Error::Fenced)),
+        Err(error) => send_finished_migration_reply(&mut migration, Err(error)),
     }
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
 }

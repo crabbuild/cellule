@@ -49,7 +49,7 @@ pub(super) fn handle_executed(
     match result {
         Ok(CommandTaskResult::Recorded(outcome)) => {
             finish_work(active, false);
-            send_command_reply(&mut command, Ok(outcome));
+            send_finished_command_reply(&mut command, Ok(outcome));
         }
         Ok(CommandTaskResult::Pending {
             pending,
@@ -67,7 +67,7 @@ pub(super) fn handle_executed(
                     CoordinationDecision::Reject(reason) => rejection_error(reason),
                     _ => Error::Fenced,
                 });
-                send_command_reply(&mut command, Err(error));
+                send_finished_command_reply(&mut command, Err(error));
                 continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
                 return;
             };
@@ -78,7 +78,7 @@ pub(super) fn handle_executed(
                     let error = command
                         .operation
                         .unknown(Error::Capacity("pending publication bytes"));
-                    send_command_reply(&mut command, Err(error));
+                    send_finished_command_reply(&mut command, Err(error));
                     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
                     return;
                 }
@@ -117,7 +117,7 @@ pub(super) fn handle_executed(
         }
         Err(error) => {
             finish_work(active, false);
-            send_command_reply(&mut command, Err(error));
+            send_finished_command_reply(&mut command, Err(error));
         }
     }
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
@@ -144,7 +144,7 @@ pub(super) fn handle_queried(
     let Some(active) = cells.get_mut(&cell) else {
         // A query accepted before a fence keeps its result even when deactivation wins
         // the actor turn before this completion is delivered.
-        send_query_reply(&mut query, result);
+        send_finished_query_reply(&mut query, result);
         return;
     };
     if active.generation != generation
@@ -152,7 +152,7 @@ pub(super) fn handle_queried(
             .coordination
             .effect_matches(effect_id, CoordinationEffect::Work(AdmissionKind::Query))
     {
-        send_query_reply(&mut query, result);
+        send_finished_query_reply(&mut query, result);
         return;
     }
     active.finish_task(effect_id, CoordinationEffect::Work(AdmissionKind::Query));
@@ -161,7 +161,7 @@ pub(super) fn handle_queried(
         fenced = true;
     }
     finish_work(active, fenced);
-    send_query_reply(&mut query, result);
+    send_finished_query_reply(&mut query, result);
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
 }
 
@@ -186,7 +186,7 @@ pub(super) fn handle_resolved(
     let Some(active) = cells.get_mut(&cell) else {
         // Resolution is an accepted observation, not a new admission; preserve its
         // unknown/committed result across a concurrent fenced deactivation.
-        send_resolve_reply(&mut resolve, result);
+        send_finished_resolve_reply(&mut resolve, result);
         return;
     };
     if active.generation != generation
@@ -194,7 +194,7 @@ pub(super) fn handle_resolved(
             .coordination
             .effect_matches(effect_id, CoordinationEffect::Work(AdmissionKind::Resolve))
     {
-        send_resolve_reply(&mut resolve, result);
+        send_finished_resolve_reply(&mut resolve, result);
         return;
     }
     active.finish_task(effect_id, CoordinationEffect::Work(AdmissionKind::Resolve));
@@ -203,6 +203,6 @@ pub(super) fn handle_resolved(
         fenced = true;
     }
     finish_work(active, fenced);
-    send_resolve_reply(&mut resolve, result);
+    send_finished_resolve_reply(&mut resolve, result);
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
 }

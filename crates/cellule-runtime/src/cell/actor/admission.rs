@@ -156,7 +156,42 @@ pub(super) fn send_command_task_reply(
         Ok(CommandTaskResult::Pending { .. }) => Err(command.operation.unknown(Error::Fenced)),
         Err(error) => Err(error),
     };
+    send_finished_command_reply(command, result);
+}
+
+pub(super) fn release_command_request_slots(command: &mut QueuedCommand) {
+    command._work.release_request_slot();
+}
+
+/// Only completed SQL or proof tasks use these helpers. Early deadline replies
+/// use the ordinary send helpers and retain admission until their worker exits.
+pub(super) fn send_finished_command_reply(
+    command: &mut QueuedCommand,
+    result: crate::Result<StoredOutcome>,
+) {
+    release_command_request_slots(command);
     send_command_reply(command, result);
+}
+
+pub(super) fn send_finished_query_reply(query: &mut QueuedQuery, result: crate::Result<Vec<u8>>) {
+    query._work.release_request_slot();
+    send_query_reply(query, result);
+}
+
+pub(super) fn send_finished_resolve_reply(
+    resolve: &mut QueuedResolve,
+    result: crate::Result<Resolution>,
+) {
+    resolve._work.release_request_slot();
+    send_resolve_reply(resolve, result);
+}
+
+pub(super) fn send_finished_migration_reply(
+    migration: &mut QueuedMigration,
+    result: crate::Result<MigratedAdmission>,
+) {
+    migration._work.release_request_slot();
+    send_migration_reply(migration, result);
 }
 
 pub(super) fn send_query_reply(query: &mut QueuedQuery, result: crate::Result<Vec<u8>>) {
