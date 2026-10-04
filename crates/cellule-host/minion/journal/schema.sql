@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS actions (
     PRIMARY KEY(key,node,session)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS movement_index ON actions(operation,sequence,effect,node,session) WHERE length(sequence)=8;
+DROP INDEX IF EXISTS maintenance_action_index;
 CREATE TABLE IF NOT EXISTS bases (
     key BLOB NOT NULL, node BLOB NOT NULL, session BLOB NOT NULL, kind INTEGER NOT NULL CHECK (kind IN (1,2,3)),
     body BLOB NOT NULL CHECK (length(body)<=65536), PRIMARY KEY(key,node,session,kind),

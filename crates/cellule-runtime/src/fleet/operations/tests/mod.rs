@@ -500,6 +500,15 @@ fn drain_evidence() -> DrainEvidence {
     }
 }
 
+fn closing_evidence() -> DrainEvidence {
+    DrainEvidence {
+        facilities_closed: false,
+        stopped: false,
+        withdrawn: false,
+        ..drain_evidence()
+    }
+}
+
 #[test]
 fn maintenance_relocation_foreign_tails_and_shutdown_all_gate_completion() {
     let head = transition(&head(), JournalTransition::BeginMaintenance(maintenance()));
@@ -546,7 +555,7 @@ fn maintenance_relocation_foreign_tails_and_shutdown_all_gate_completion() {
     }
     let head = transition(
         &head,
-        JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(drain_evidence())),
+        JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(closing_evidence())),
     );
     let missing_withdrawal = DrainEvidence {
         withdrawn: false,
@@ -671,7 +680,7 @@ fn maintenance_idempotency_and_unresolved_attempts_prevent_false_close() {
             head.revision(),
             1,
             0,
-            JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(drain_evidence()))
+            JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(closing_evidence()))
         )
         .is_err()
     );

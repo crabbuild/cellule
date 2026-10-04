@@ -1,9 +1,8 @@
 # Minion fleet operations reference
 
-Status: durable journal and public-driver models, plus a finite real three-node
-admission-overload and controller-restart scenarios with receipt readback.
-The `balance` command exercises real count convergence. Complete maintenance,
-receiver-loss, production observations and
+Status: durable journal and public-driver models, plus finite real three-node
+overload, maintenance, controller-restart, and count-balance scenarios with
+receipt readback. Receiver-loss, role-enabled production observations, and
 qualification remain required by the [fleet plan](../../../docs/fleet-operations-plan.md).
 
 ## Run
@@ -13,6 +12,19 @@ Run the real-node scenario from the workspace root:
 ```sh
 cargo run -p cellule-host --example fleet_operations --locked -- overload
 ```
+
+Run planned maintenance through the public reconciler and native node actions:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance
+```
+
+This cordons the first node, moves all twelve Cells to the two eligible nodes,
+settles the complete writer-only role inventory, finalizes and withdraws the
+exact boot, and verifies every command receipt on its destination. The example
+proves an empty reader/follower obligation set for its closed writer-only
+constructor; role-enabled deployments and provider/process failures remain
+separate qualification requirements.
 
 It creates three independently leased CellNodes over shared strict in-memory
 object storage, initializes twelve real SQLite Cells, and acknowledges a command
@@ -312,8 +324,10 @@ BeginEvacuation binds it to the manifest. Session adoption cannot erase that
 anchor, and a missing anchor refuses capture. Phase replay cannot repair a missing manifest by
 inserting zero; missing or corrupt pages retain their original errors. Newly
 accepted remote replacements after capture remain visible in the current roster
-and native graph. Complete policy/work coverage and terminal joining remain
-required; this historical set does not enable SettleRoles or Finalize.
+and native graph. Complete policy/work coverage remains required before
+SettleRoles. This historical set alone grants neither SettleRoles nor Finalize;
+Finalize requires a separately committed Closing operation and the node's bound
+managed-boot withdrawal.
 
 ## Exact original reader joining
 
@@ -366,9 +380,10 @@ phase publication before dispatch, fresh activation/retirement, independent
 cleanup, retained permits after lost replies/timeouts, competing controllers,
 stop-new-moves behavior, and pressure relief using remaining shared budget.
 The separate `scenario::tests` cases invoke the same real-node implementations
-as the `overload` and `controller-restart` commands. The model tests do not create Cell actors. Planned
-maintenance and receiver-loss scenarios still require their complete barriers;
-controller replacement here retains all three live node sessions.
+as the `overload`, `maintenance`, and `controller-restart` commands. The model
+tests do not create Cell actors. Foreign follower evacuation, receiver loss,
+and provider/process qualification remain incomplete; controller replacement
+here retains all three live node sessions.
 
 The host now owns each whole closing attempt after a shutdown waiter disappears.
 It retains the same lane through facility/runtime/lease cleanup and exposes local
@@ -379,8 +394,9 @@ version and SQLite enrollment row into that owner before readiness. Native
 shutdown checks canonical withdrawal and committed boot retirement before
 Stopped; a lost retirement reply retains Draining until an exact replay confirms
 the original evidence. Partial startup still uses the retained application's
-boot cleanup. These local observations supply no relocation or redundancy proof
-and do not enable the still-refused fleet Finalize action.
+boot cleanup. These local observations supply no relocation or redundancy
+proof. Fleet Finalize consumes separately committed Closing evidence and uses
+this same retained shutdown and withdrawal owner.
 Publish native rotation/reader proofs before starting terminal shutdown: weak
 native handles can disappear when an autonomous successful stop clears owners.
 
@@ -579,8 +595,10 @@ cargo test -p cellule-host --example fleet_operations --all-features --locked sc
 ```
 
 Complete authenticated lookup, source/failed-owner successor policy, checked
-nonexecution, accepted-work joining and SettleRoles/Finalize remain delivery
-requirements. See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
+nonexecution and complete SettleRoles behavior remain delivery requirements.
+Finalize runs after the journal commits Closing; it joins accepted action work
+and publishes Stopped only after exact withdrawal.
+See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
 
 ## Native source reader succession
 

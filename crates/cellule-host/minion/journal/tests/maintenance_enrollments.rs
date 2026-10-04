@@ -29,6 +29,175 @@ async fn freeze(fixture: &Fixture) -> FleetJournalSnapshot {
 }
 
 #[tokio::test]
+async fn ready_to_close_requires_committed_settlement_at_the_current_registry_version() {
+    let fixture = Fixture::new().await;
+    let snapshot = freeze(&fixture).await;
+    let close =
+        JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(ready_drain_proof(3)));
+    let missing = fixture
+        .journal
+        .compare_exchange(&snapshot, 1, 0, &close)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        missing.downcast_ref::<OperationError>(),
+        Some(OperationError::Invalid(_))
+    ));
+
+    let operation = snapshot.head().maintenance().unwrap();
+    let action = snapshot
+        .head()
+        .maintenance_action(MaintenanceAction::SettleRoles, 0)
+        .unwrap();
+    let accepted = match fixture
+        .journal
+        .accept_action(&action, operation.node(), operation.session(), 0)
+        .await
+        .unwrap()
+    {
+        FleetActionAcceptance::New(accepted) => accepted,
+        FleetActionAcceptance::Existing { .. } => panic!("first SettleRoles acceptance expected"),
+    };
+    let unknown = result(&accepted, FleetOutcome::Unknown, 0);
+    fixture
+        .journal
+        .publish_action_result(&accepted, &unknown)
+        .await
+        .unwrap();
+    let unresolved = fixture
+        .journal
+        .compare_exchange(&snapshot, 1, 0, &close)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        unresolved.downcast_ref::<OperationError>(),
+        Some(OperationError::Invalid(_))
+    ));
+
+    let settled = result(
+        &accepted,
+        FleetOutcome::RolesSettledAt {
+            inventory: Digest::from_bytes([85; 32]),
+            head_revision: snapshot.head().revision(),
+            registry: snapshot.registry(),
+        },
+        0,
+    );
+    fixture
+        .journal
+        .publish_action_result(&accepted, &settled)
+        .await
+        .unwrap();
+    let closed = fixture
+        .journal
+        .compare_exchange(&snapshot, 1, 0, &close)
+        .await
+        .unwrap();
+    assert_eq!(
+        closed.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Closing
+    );
+}
+
+#[tokio::test]
+async fn registry_change_after_settlement_fences_ready_to_close() {
+    let fixture = Fixture::new().await;
+    let snapshot = freeze(&fixture).await;
+    roles_settled(&fixture.journal, 0).await;
+    let settled = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let changed = fixture
+        .journal
+        .set_scheduling(settled.registry(), false)
+        .await
+        .unwrap();
+    let current = fixture.journal.load_snapshot(scope()).await.unwrap();
+    assert_eq!(current.registry(), changed);
+    let error = fixture
+        .journal
+        .compare_exchange(
+            &current,
+            1,
+            0,
+            &JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(ready_drain_proof(3))),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<OperationError>(),
+        Some(OperationError::Conflict)
+    ));
+    assert_eq!(
+        fixture.journal.load_snapshot(scope()).await.unwrap().head(),
+        snapshot.head()
+    );
+}
+
+#[tokio::test]
+async fn head_change_after_settlement_fences_ready_to_close() {
+    let fixture = Fixture::new().await;
+    freeze(&fixture).await;
+    roles_settled(&fixture.journal, 0).await;
+    let settled = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let current = fixture
+        .journal
+        .claim_controller(
+            scope(),
+            settled.head().revision(),
+            SessionId::from_bytes([206; 16]),
+            1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(current.registry(), settled.registry());
+    assert_ne!(current.head().revision(), settled.head().revision());
+    let error = fixture
+        .journal
+        .compare_exchange(
+            &current,
+            current.head().controller().unwrap().epoch,
+            1,
+            &JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(ready_drain_proof(3))),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<OperationError>(),
+        Some(OperationError::Conflict)
+    ));
+}
+
+#[tokio::test]
+async fn deadline_revision_can_accept_a_new_settle_roles_action_for_the_same_boot() {
+    let fixture = Fixture::new().await;
+    freeze(&fixture).await;
+    roles_settled(&fixture.journal, 0).await;
+    let before = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let operation = before.head().maintenance().unwrap();
+    let first_key =
+        FleetAction::maintenance_action_key(scope(), MaintenanceAction::SettleRoles, operation)
+            .unwrap();
+    fixture
+        .journal
+        .compare_exchange(
+            &before,
+            before.head().controller().unwrap().epoch,
+            1,
+            &JournalTransition::Maintenance(MaintenanceEvent::ExtendDeadline(
+                operation.deadline_ms() + 10_000,
+            )),
+        )
+        .await
+        .unwrap();
+    roles_settled(&fixture.journal, 1).await;
+    let after = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let operation = after.head().maintenance().unwrap();
+    let second_key =
+        FleetAction::maintenance_action_key(scope(), MaintenanceAction::SettleRoles, operation)
+            .unwrap();
+    assert_ne!(first_key, second_key);
+}
+
+#[tokio::test]
 async fn original_roles_commit_with_evacuation_and_survive_lost_reply_retirement_and_restart() {
     let fixture = Fixture::new().await;
     let first = enrollment(70, 1);

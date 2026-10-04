@@ -2,13 +2,16 @@
 //! This fixture has no writers and uses a joined process lifetime stand-in.
 use super::*;
 use cellule_host::fleet::{
-    FleetActionCompletion, FleetFailedBootClosure, FleetFollowerReferences, FleetNodeInventory,
-    FleetNodeInventoryScan, FleetObservation, FleetObserver, FleetRoleCoverage,
-    FleetSnapshotRequest, FleetSnapshotSubject, FleetTransport,
+    FleetActionCompletion, FleetFailedBootClosure, FleetFollowerReferences,
+    FleetMaintenanceEnrollments, FleetNodeInventory, FleetNodeInventoryScan, FleetObservation,
+    FleetObserver, FleetRecoveredFollowerClosure, FleetRecoveredFollowerRetirement,
+    FleetRoleCoverage, FleetRoster, FleetSnapshotRequest, FleetSnapshotSubject, FleetTransport,
 };
 use cellule_runtime::fleet::operations::{
-    FleetAction, FleetInspectionObservation, FleetInspectionRequest,
+    FleetAction, FleetInspectionObservation, FleetInspectionRequest, JournalTransition,
+    MaintenanceEvent, MaintenanceOperation, OperationId,
 };
+use std::sync::atomic::AtomicU64;
 
 struct Observed {
     base: Fixture,
@@ -17,7 +20,16 @@ struct Observed {
 }
 impl Observed {
     async fn new() -> Self {
-        let base = confirmation::settled(crate::scenario::clock().unwrap() - 10_005, true).await;
+        Self::new_with_profile(FleetProfile::default()).await
+    }
+
+    async fn new_with_profile(profile: FleetProfile) -> Self {
+        let base = confirmation::settled_with_profile(
+            crate::scenario::clock().unwrap() - 10_005,
+            true,
+            profile,
+        )
+        .await;
         let before = base.journal.load_snapshot(scope()).await.unwrap();
         base.journal
             .set_scheduling(before.registry(), true)
@@ -129,6 +141,32 @@ impl Observed {
             crate::scenario::clock,
         )
         .await
+    }
+    async fn recovered_closure(
+        &self,
+        roster: &FleetRoster,
+    ) -> cellule_runtime::Result<FleetRecoveredFollowerClosure> {
+        let retirement = FleetRecoveredFollowerRetirement::capture(
+            self.base.journal.as_ref(),
+            &self.base.directory,
+            roster,
+            &self.base.sealed,
+            session(1),
+            deadline(),
+            crate::scenario::clock,
+        )
+        .await?;
+        Ok(retirement
+            .publish(
+                self.base.journal.as_ref(),
+                &self.base.directory,
+                session(1),
+                deadline(),
+                crate::scenario::clock,
+            )
+            .await?
+            .confirmed()?
+            .clone())
     }
     async fn page(
         &self,
@@ -252,6 +290,48 @@ impl Observed {
         .with_role_coverage(graph)?
         .with_failed_boot_closures(vec![closure])
     }
+    async fn observe_maintenance(
+        &self,
+        roster: &FleetRoster,
+    ) -> cellule_runtime::Result<FleetObservation> {
+        let closure = self.closure(roster).await?;
+        let recovered = self.recovered_closure(roster).await?;
+        let original = FleetMaintenanceEnrollments::collect(
+            self.base.journal.as_ref(),
+            roster,
+            deadline(),
+            crate::scenario::clock,
+        )
+        .await?;
+        let graph = self.graph(roster).await;
+        let started = [
+            closure.interval().0,
+            recovered.interval().0,
+            original.interval().0,
+            graph.interval().0,
+        ]
+        .into_iter()
+        .min()
+        .ok_or(cellule_runtime::Error::Deadline)?;
+        roster
+            .confirm(self.base.journal.as_ref(), deadline())
+            .await?;
+        let observation = FleetObservation::new(
+            scope(),
+            roster.snapshot().registry(),
+            roster.snapshot().registry().revision(),
+            started,
+            crate::scenario::clock()?,
+            true,
+            self.advertisements().await,
+            Vec::new(),
+        )?
+        .with_role_coverage(graph)?
+        .with_failed_boot_closures(vec![closure])?
+        .with_recovered_follower_closures(vec![recovered])?
+        .with_maintenance_enrollments(original)?;
+        observation.check_maintenance_policies(roster, crate::scenario::clock()?)
+    }
     async fn finish(&self) {
         for node in &self.nodes {
             node.shutdown().await.unwrap();
@@ -260,6 +340,196 @@ impl Observed {
         }
         self.base.journal.close().await.unwrap();
     }
+}
+
+struct MaintenanceObserver(Arc<Observed>);
+impl FleetObserver for MaintenanceObserver {
+    fn observe<'a>(
+        &'a self,
+        roster: &'a FleetRoster,
+        _: i64,
+        _: Instant,
+    ) -> FleetAdapterFuture<'a, FleetObservation> {
+        Box::pin(async move { Ok(self.0.observe_maintenance(roster).await?) })
+    }
+}
+
+async fn begin_failed_owner_maintenance(fixture: &Observed) -> MaintenanceOperation {
+    let before = fixture.base.journal.load_snapshot(scope()).await.unwrap();
+    let roster = FleetRoster::collect(fixture.base.journal.as_ref(), &before, deadline())
+        .await
+        .unwrap();
+    let intent_revision = roster
+        .intents()
+        .iter()
+        .find(|intent| intent.node() == node_id(0))
+        .unwrap()
+        .revision()
+        + 1;
+    let now = crate::scenario::clock().unwrap();
+    let operation = MaintenanceOperation::new(
+        OperationId::from_bytes([235; 16]).unwrap(),
+        Digest::from_bytes([236; 32]),
+        node_id(0),
+        session(0),
+        intent_revision,
+        now,
+        now + 60_000,
+    )
+    .unwrap();
+    let mut snapshot = fixture
+        .base
+        .journal
+        .compare_exchange(
+            &before,
+            before.head().controller().unwrap().epoch,
+            now,
+            &JournalTransition::BeginMaintenance(operation.clone()),
+        )
+        .await
+        .unwrap();
+    for transition in [
+        JournalTransition::Maintenance(MaintenanceEvent::Cordoned),
+        JournalTransition::Maintenance(MaintenanceEvent::BeginEvacuation),
+    ] {
+        snapshot = fixture
+            .base
+            .journal
+            .compare_exchange(
+                &snapshot,
+                snapshot.head().controller().unwrap().epoch,
+                crate::scenario::clock().unwrap(),
+                &transition,
+            )
+            .await
+            .unwrap();
+    }
+    operation
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_owner_maintenance_settles_and_finalizes_only_from_fresh_process_closure() {
+    let profile = FleetProfile {
+        controller_lease_ms: 2_500,
+        reconcile_interval_ms: 1_250,
+        ..FleetProfile::default()
+    };
+    let fixture = Arc::new(Observed::new_with_profile(profile).await);
+    let operation = begin_failed_owner_maintenance(&fixture).await;
+    let transport = Arc::new(crate::scenario::adapters::LocalFleet {
+        nodes: Vec::new(),
+        journal: fixture.base.journal.clone(),
+        boots: Vec::new(),
+        records: Arc::new(HashMap::new()),
+        reader_verifier: None,
+        capture_sequence: AtomicU64::new(0),
+        lose_release_replies: false,
+        lost_release_replies: AtomicUsize::new(0),
+        drop_closed_finalize_replies: AtomicUsize::new(1),
+        expired_receiver_cleanups: AtomicUsize::new(0),
+    });
+    let first_controller = FleetReconciler::new(
+        scope(),
+        session(1),
+        profile,
+        fixture.base.journal.clone(),
+        Arc::new(MaintenanceObserver(fixture.clone())),
+        transport.clone(),
+    )
+    .unwrap();
+    let closing = first_controller
+        .reconcile_once(crate::scenario::clock, deadline())
+        .await
+        .unwrap();
+    assert!(closing.maintenance_failure.is_none());
+    assert!(closing.blockers.is_empty());
+    assert_eq!(
+        closing.snapshot.head().maintenance().unwrap().phase(),
+        cellule_runtime::fleet::operations::MaintenancePhase::Closing
+    );
+    let stopped_reply_lost = first_controller
+        .reconcile_once(crate::scenario::clock, deadline())
+        .await
+        .unwrap();
+    assert!(stopped_reply_lost.maintenance_failure.is_some());
+    assert_eq!(
+        stopped_reply_lost
+            .snapshot
+            .head()
+            .maintenance()
+            .unwrap()
+            .phase(),
+        cellule_runtime::fleet::operations::MaintenancePhase::Closing
+    );
+    assert!(
+        stopped_reply_lost
+            .blockers
+            .contains(&cellule_runtime::fleet::operations::DrainBlocker::OutcomeUnknown)
+    );
+    drop(first_controller);
+
+    // The first controller published Stopped and lost its reply. Wait through
+    // its actual journal lease, then prove a different controller can replay
+    // the accepted result from the same SQLite journal.
+    let controller_expires_at = stopped_reply_lost
+        .snapshot
+        .head()
+        .controller()
+        .unwrap()
+        .expires_at_ms;
+    let wait_ms = controller_expires_at
+        .saturating_sub(crate::scenario::clock().unwrap())
+        .max(0) as u64
+        + 10;
+    tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+    let after_expiry = crate::scenario::clock().unwrap();
+    assert!(after_expiry > controller_expires_at);
+    assert!(after_expiry < operation.deadline_ms());
+    let restarted_controller = FleetReconciler::new(
+        scope(),
+        session(2),
+        profile,
+        fixture.base.journal.clone(),
+        Arc::new(MaintenanceObserver(fixture.clone())),
+        transport.clone(),
+    )
+    .unwrap();
+    let completed = restarted_controller
+        .reconcile_once(crate::scenario::clock, deadline())
+        .await
+        .unwrap();
+    let terminal = completed.snapshot.head().maintenance().unwrap();
+    assert_eq!(terminal.id(), operation.id());
+    assert_eq!(
+        terminal.phase(),
+        cellule_runtime::fleet::operations::MaintenancePhase::Completed
+    );
+    assert!(completed.maintenance_failure.is_none());
+    assert!(completed.blockers.is_empty());
+    assert!(completed.dispatched >= 1);
+    assert_eq!(
+        completed.snapshot.head().controller().unwrap().claimant,
+        session(2)
+    );
+    assert_eq!(
+        completed.snapshot.head().controller().unwrap().epoch,
+        stopped_reply_lost
+            .snapshot
+            .head()
+            .controller()
+            .unwrap()
+            .epoch
+            + 1
+    );
+    assert_eq!(
+        transport
+            .drop_closed_finalize_replies
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    drop(restarted_controller);
+    drop(transport);
+    fixture.finish().await;
 }
 struct Observer {
     fixture: Arc<Observed>,

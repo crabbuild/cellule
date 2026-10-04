@@ -393,6 +393,8 @@ mod maintenance_policies;
 mod nonexecution;
 mod original_writers;
 mod recovered_followers;
+mod role_settlement;
 mod source_readers;
+pub use role_settlement::FleetRoleSettlement;
 #[cfg(test)]
 mod tests;

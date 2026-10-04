@@ -3,7 +3,16 @@ use super::*;
 use cellule_host::fleet::FleetFailedBootClosure;
 
 pub(super) async fn settled(now: i64, retire_boot: bool) -> Fixture {
-    let fixture = Fixture::with_recovery_inputs_at(true, Vec::new(), Vec::new(), now).await;
+    settled_with_profile(now, retire_boot, FleetProfile::default()).await
+}
+
+pub(super) async fn settled_with_profile(
+    now: i64,
+    retire_boot: bool,
+    profile: FleetProfile,
+) -> Fixture {
+    let fixture =
+        Fixture::with_recovery_inputs_at_profile(true, Vec::new(), Vec::new(), now, profile).await;
     let checked = now + 10_005;
     let proof = retire_recovered_members(fixture.transport.clone(), &fixture.sealed)
         .await

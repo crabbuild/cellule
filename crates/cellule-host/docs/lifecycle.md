@@ -594,8 +594,9 @@ in either attachment order; matching registry revisions alone are insufficient.
 This closure settles that boot's enrollment. It does not convert a recovered
 tombstone into planned withdrawal or prove replacement policy, affected-writer
 relocation, operation completion or permission to stop the physical node.
-`SettleRoles`/`Finalize` still require those additional barriers and the existing
-native shutdown handoff. The [focused example cases](../minion/README.md#failed-boot-process-evidence)
+`SettleRoles` and the complete role/movement evidence needed to enter Closing
+remain separate barriers. Finalize runs through the existing native shutdown
+handoff only after Closing is committed. The [focused example cases](../minion/README.md#failed-boot-process-evidence)
 exercise a joined child lifetime and independently reconstructed evidence;
 they do not qualify a complete multi-process fleet or provider deployment.
 
@@ -975,8 +976,9 @@ follower inventories. Persisted history, enrollment and transport codecs are unc
 `reader_evacuations()` and `follower_evacuations()` expose the retained originals;
 each check's `record()` supplies its immutable durable history. A supplied subset
 does not establish complete policy coverage or upgrade an incomplete observation.
-All remaining roles, failed-owner recovery, original accepted native/external work
-and terminal drain handoff are still required before SettleRoles/Finalize.
+All remaining roles, failed-owner recovery and original accepted native/external
+work must be settled before SettleRoles and before the operation can enter
+Closing. Finalize then owns the terminal drain handoff and exact withdrawal.
 
 ### Retain the complete original maintenance role set
 

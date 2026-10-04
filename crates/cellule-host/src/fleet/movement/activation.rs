@@ -6,19 +6,17 @@ impl FleetActionExecutor {
         accepted: &AcceptedFleetAction,
         attempt: &MoveAttempt,
     ) -> cellule_runtime::Result<ActionResult> {
+        let closed_receiver_route = accepted.action().receiver_route().is_some();
         let prepared = match self.runtime.prepared_receiver(attempt.spec().id)? {
             Some(_) => {
                 let prepared = self.prepared(attempt)?;
                 match prepared.state()? {
                     ReceiverState::Prepared => Some(prepared),
-                    ReceiverState::Cancelled
-                        if self.confirmed_credit_settlement(attempt).await? =>
-                    {
-                        None
-                    }
+                    ReceiverState::Cancelled => None,
                     _ => return Ok(ActionResult::checked(FleetOutcome::Unknown)),
                 }
             }
+            None if closed_receiver_route => None,
             None if self.confirmed_credit_settlement(attempt).await? => None,
             None => {
                 return Err(Error::Peer(
@@ -33,6 +31,20 @@ impl FleetActionExecutor {
             .await?
             .ok_or(Error::Control("fleet activation authority is absent"))?;
         self.check_contract(attempt, &inputs, &observed)?;
+        if closed_receiver_route
+            && prepared.is_none()
+            && !(observed.value().state == ControlState::Idle
+                && observed.value().owner.is_none()
+                && observed.value().root.is_some())
+            && !(observed.value().state == ControlState::Serving
+                && observed
+                    .value()
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.session == self.session))
+        {
+            return Ok(ActionResult::checked(FleetOutcome::Unknown));
+        }
         if prepared.is_none()
             && observed.value().state == ControlState::Serving
             && observed

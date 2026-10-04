@@ -455,6 +455,30 @@ async fn wrong_boot_stale_intent_and_unsupported_roles_do_not_accept_effects() {
             .await
             .is_err()
     );
+    fixture.journal.transition(JournalTransition::Maintenance(
+        MaintenanceEvent::ReadyToClose(DrainEvidence {
+            node: NodeId::from_bytes([201; 16]),
+            session: SessionId::from_bytes([201; 16]),
+            remaining_cells: 0,
+            unresolved_attempts: 0,
+            relocated: true,
+            readers_settled: true,
+            followers_settled: true,
+            facilities_closed: false,
+            stopped: false,
+            withdrawn: false,
+        }),
+    ));
+    let finalize = fixture
+        .journal
+        .maintenance_action(MaintenanceAction::Finalize);
+    assert!(
+        fixture
+            .node
+            .apply_fleet_action(finalize, clock())
+            .await
+            .is_err()
+    );
     let inspection = fixture
         .node
         .inspect_fleet_action(maintenance_inspection(&fixture, 213))

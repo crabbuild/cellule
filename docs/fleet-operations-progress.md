@@ -4,6 +4,83 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 4 2026 managed-reader maintenance checkpoint
+
+The reference observer now accepts the full enrollment roster, including
+non-node roles, and retains the installed native role graph instead of rejecting
+readers or follower logs. It collects current reader and follower evacuation
+evidence separately from the maintenance replacement-policy check, so missing
+policy proof remains a blocker.
+
+A new minion end-to-end scenario starts with a managed reader on the maintenance
+node, activates a replacement on another managed node, publishes and verifies
+the durable evacuation policy, then drives SettleRoles and Finalize through the
+public reconciler and native node path. It confirms the source boot is stopped,
+withdrawn and retired, the old reader no longer serves, and the replacement still
+reads the expected value. The focused case passes; the full minion scenario
+suite passes (343 passed, 0 failed).
+
+The same reference observer now handles the four-boot follower fixture. Its
+global role coverage check validates an Established replacement lane that has
+not appended yet against the original producer and physical follower references;
+the generic per-node enrollment check alone rejected that valid empty lane. A
+new live-follower-only minion scenario verifies the two replacement members,
+reconciles SettleRoles and Finalize, confirms the donor boot is stopped,
+withdrawn and retired, and checks the new epoch's exact membership. Its focused
+case and formatting pass. At this checkpoint, dead-owner process closure was
+still open; the next checkpoint records that path.
+
+## October 4 2026 failed-owner maintenance checkpoint
+
+The reconciler now handles a maintenance target whose original boot has already
+been retired. `FleetRoleSettlement` binds settlement to the exact failed-boot
+closure, canonical fence, full journal head and registry. A dedicated transport
+path accepts and publishes the exact `RolesSettledAt` result without sending
+SettleRoles to the absent endpoint. Closing uses a matching closed-boot Finalize
+path; its default transport fails closed, while the reference SQLite adapter
+publishes Stopped only from the current retirement closure and exact maintenance
+evidence. Matching durable results are adopted idempotently.
+
+The new end-to-end case captures the failed process and recovered-follower
+closures, collects the original maintenance enrollment set and rechecks native
+role inventories plus physical follower references. It reconciles through
+Closing to Completed with an empty node endpoint list, proving the retired
+session is never contacted. The fixture uses a joined process-lifetime test
+stand-in. It also drops the Finalize reply after the exact `Stopped` result is
+durably published, waits for the real 2.5-second journal lease to expire, then
+starts a different controller session. The replacement replays the same
+accepted action from the retained SQLite result and completes the operation;
+provider and production process qualification remain open.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations --locked failed_owner_maintenance_settles_and_finalizes_only_from_fresh_process_closure` | 1 passed. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 344 passed; 0 failed; 68.26 seconds. |
+| `cargo check --workspace --all-targets --all-features --locked` | Passed. |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | Passed. |
+| `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked` | Passed. |
+| Format, boundary, module-layout, Rust-fence, Markdown-link, and SQL/peer-contract checks | Passed; 137 Rust snippets, 1307 local links, 28 protocol assertions and 570 validator links. |
+
+After adding the lost-Finalize/controller-restart assertion, the focused case,
+all 344 minion cases, formatting, and `git diff --check` passed again. The
+workspace-wide checks above predate this scenario-only change.
+
+GitHub reports PR #37 merged and PR #56 clean, mergeable, with all listed
+checks passing. The three newly reported conflict files are unchanged in this
+checkout and contain no conflict markers. These local changes remain uncommitted
+and are not included in PR #56.
+
+### Highest remaining work
+
+1. Qualify failed-owner and live role maintenance under cancellation, provider
+   failure, controller restart and real process loss; add missing role/fault
+   combinations.
+2. Complete receiver-session loss/recovery/adoption and add the canonical
+   receiver-loss executable scenario.
+3. Finish W9 physical process/provider faults, mixed-version and load/soak
+   qualification, then exercise W10 runbooks and staged rollout/rollback.
+4. Re-run the complete qualified source and hosted CI on the eventual PR head.
+
 ## October 4 2026 source reader policy checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target
@@ -6561,3 +6638,222 @@ assertions with 570 validator links.
 The remaining maintenance inspection gap is the full role, accepted-work,
 facility, Stopped, and withdrawal barrier. This local check is only a Cordon
 recovery step and cannot move the operation into Closing or Completed.
+
+## October 4 2026 writer-only end-to-end maintenance checkpoint
+
+The `maintenance` command now drives a real three-node reference fleet through
+the public reconciler and native node actions. It cordons node 0, moves all 12
+SQL Cells to nodes 1 and 2, observes the complete writer-only role inventory,
+commits `SettleRoles`, finalizes the drain, withdraws and retires the exact boot,
+and verifies each command receipt and final placement. The observer derives
+active node sessions from the unresolved Established enrollment rows, so the
+post-finalization check can still prove the stopped node is absent while
+checking follower references across all physical nodes.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations --locked maintenance_moves_every_cell_then_settles_roles_and_withdraws_the_node -- --nocapture` | 1 passed. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 340 passed; 0 failed; 68.34 seconds. |
+| `cargo run -p cellule-host --example fleet_operations --locked -- maintenance` | 12 released, activated and retired; 12 receipt checks; two receivers; final counts `[0, 6, 6]`; maintenance completed and boot withdrawn. |
+
+The workspace all-target/all-feature `cargo check`, warning-denied Clippy, and
+warning-denied API docs passed. Clippy prompted sharing the large settlement
+proof through `Arc`; the focused maintenance test passed again after that
+change. Format, boundaries, module layout, Rust fences, Markdown links,
+SQL/peer contracts, and `git diff --check` also passed. The full 340-test
+example run preceded only that proof-storage change. The PR #56 routing rerun
+and hosted checks for the current local diff have not completed.
+
+This establishes one runnable, real-node writer-only maintenance path. Its
+empty reader/follower inventory comes from the scenario's closed writer-only
+constructor. It does not qualify reader/follower-enabled maintenance, foreign
+live- or failed-owner obligations, receiver loss, controller restart during
+maintenance, provider/process failures or rollout operations. PR #56's hosted
+routing rerun still targets its earlier committed head and was in progress when
+this checkpoint was recorded; it does not cover these local changes.
+
+## October 4 2026 closed-boot role-settlement checkpoint
+
+Role settlement now distinguishes a live maintenance target from one whose
+original boot has already been retired. The opaque `FleetRoleSettlement`
+retains the exact failed-boot closure digest when the target process is closed,
+and verifies that the retired boot, canonical fence, closure digest, full head,
+and registry all match the settlement barrier. Missing or ambiguous live/closed
+target evidence refuses settlement.
+
+`FleetReconciler` sends that proof through a dedicated closed-boot transport
+method instead of dispatching SettleRoles to a stopped `CellNode`. The default
+transport refuses this case. The reference SQLite adapter accepts the exact
+maintenance action and publishes the checked `RolesSettledAt` result through
+the shared journal after validating both opaque proofs. The minion now exercises
+the full failed-owner path: complete follower-only role settlement, terminal
+`Finalize` from the same fresh failed-boot closure, and no transport call to the
+retired `CellNode`. The scenario drops the committed `Stopped` reply, waits
+beyond actual controller lease expiry, and completes under a different
+controller session replaying the same SQLite journal record.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo check -p cellule-host --example fleet_operations --locked` | Passed. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 344 passed; 0 failed at the prior full-suite checkpoint. |
+| `cargo test -p cellule-host --example fleet_operations --locked failed_owner_maintenance_settles_and_finalizes_only_from_fresh_process_closure` | 1 passed; 0 failed in 4.49s on this checkpoint. |
+| `cargo test -p cellule-host --lib role_settlement::tests --locked` | 3 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --locked -- -D warnings` | Passed. |
+| `cargo fmt --all --check` | Passed. |
+
+### Remaining W7 work after closed-boot settlement and finalization
+
+Exercise this transport path with the full role matrix, recovered follower
+closure and joined process evidence. Closed-boot terminal Finalize is now
+covered for a follower-only failed owner, including a lost durable reply and
+controller restart; extend that evidence to the remaining role and fault
+combinations. Then qualify provider and process faults. W4
+receiver-session-loss reconciliation, the W8 receiver-loss executable, and W9–W10
+qualification/rollout remain high-priority work. These local changes are
+uncommitted; PR #56 remains clean at its prior remote head and does not include
+this checkpoint.
+
+## October 4 2026 receiver-route acceptance checkpoint
+
+W4 now has a bounded post-release receiver-route record. Each hop names the
+previous and next exact node/session, a nonzero closed-process digest, and a
+bootstrapped registry version. The route limits retries to two handoffs,
+rejects source/repeated nodes and nonmonotonic registry revisions, and binds the
+ordered route into a separate routed-action key and action family. Ordinary
+movement action keys and encoded bytes remain unchanged.
+
+First acceptance checks the current head, endpoint and registry together. The
+reference SQLite journal rejects first acceptance through ordinary dispatch;
+its routed acceptance entry point requires the opaque `FleetFailedBootClosure`
+and compares its exact endpoint, digest, and full head/registry snapshot before
+publishing. Route history is bounded and rejects competing branches. The journal
+can enumerate accepted endpoints after a controller restart, and reconciliation
+chooses the unique deepest retained route.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo check -p cellule-runtime --lib --locked` | Passed. |
+| `cargo check -p cellule-host --example fleet_operations --locked` | Passed. |
+| `cargo test -p cellule-runtime --lib fleet::operations::tests::contracts::receiver_continuation_is_registry_bound_endpoint_bound_and_versioned --locked` | 1 passed; 0 failed. |
+| `cargo test -p cellule-host --example fleet_operations --locked routed_receiver_acceptance_requires_typed_closed_boot_proof` | 1 passed; 0 failed. |
+| `cargo clippy -p cellule-runtime --lib --locked -- -D warnings` | Passed. |
+| `cargo clippy -p cellule-host --example fleet_operations --locked -- -D warnings` | Passed. |
+| `cargo fmt --all --check`, `git diff --check`, boundary and documentation checks | Passed; 137 Rust snippets and 1,307 Markdown links/anchors checked. |
+
+This checkpoint establishes only the durable route contract and acceptance
+boundary. The reconciler still selects the original receiver, and the executor
+does not yet prepare or recover on a replacement boot. W4 still needs fresh
+eligible-node selection, closed-boot route creation before dispatch, new-session
+resource admission, takeover of a prior receiver that reached `Serving` or
+`Recovering`, and end-to-end unknown/refusal/restart tests. These local changes
+remain uncommitted and are not included in PR #56.
+
+## October 4 2026 routed receiver execution checkpoint
+
+The reconciler now consumes a fresh roster and placement capture before it
+routes `Activate` or `Cancel`. It requires the exact previous receiver's
+retired-process closure, confirms that current advertisements map to established
+active boots, excludes source and already visited nodes, projects other charged
+attempts, and checks signed headroom before choosing an activation target. It
+then first-accepts the routed action through the typed closed-boot journal API
+before transport dispatch. The reference minion sends the action to the route's
+exact node/session, and its journal validates that endpoint's current active
+intent.
+
+A replacement receiver does not inherit the old process's local reservation.
+Its routed activation uses ordinary runtime admission after reading canonical
+control. It proceeds only from an unowned `Idle` control with the exact released
+root and a valid acquisition basis; a same-boot serving result is rechecked
+through the actor. A routed retry rereads control under the same accepted route.
+Routed cleanup can settle the original receiver's lost credit only after the
+closed-process proof is recorded and the routed receiver has no unresolved
+local activation.
+
+The path remains fail-closed when the adapter omits process closures, the
+roster is incomplete, the replacement lacks advertised capacity, or a previous
+receiver may have reached `Serving` or `Recovering`. The latter still needs the
+separate canonical failed-owner recovery proof. The normal movement observer
+does not synthesize failed-receiver closures; the dedicated test scenario below
+uses an explicit test-only process provider. Controller reconstruction, the
+Serving/Recovering refusal boundary, app-specific Cell contracts, and network
+transport adapters remain to be qualified.
+
+| Check | Observed result |
+| --- | --- |
+| `cargo check -p cellule-host --example fleet_operations --locked` | Passed after routed dispatch, minion endpoint validation, and new-session activation changes. |
+| `cargo clippy -p cellule-host --example fleet_operations --locked -- -D warnings` | Passed after the same changes. |
+| `cargo fmt --all --check` | Passed. |
+| Process-failure routed execution scenario | Added below; focused test passed. |
+
+These local changes remain uncommitted and are not included in PR #56. The
+highest remaining W4 work is controller-reconstruction and refusal/fault
+coverage, followed by previous-receiver `Serving`/`Recovering` recovery,
+app-contract selection, and qualification of routed remote transports.
+
+## October 4 2026 routed receiver-loss scenario checkpoint
+
+The executable minion fixture now covers receiver loss after durable source
+release. It starts three real `CellNode`s, reserves the original receiver,
+releases the source, joins the original receiver shutdown, withdraws its exact
+canonical session, and publishes a typed failed-boot closure. The observer
+recaptures that closure against each current head. Reconciliation then accepts
+both `Activate` and receiver `Cancel` at the exact replacement node/session,
+restores the released root at the next epoch, retires the attempt, and reads
+back the acknowledged SQL receipt and committed value. It replays the exact
+accepted `Activate` after the reply is lost and confirms the receiver still has
+one active Cell. The test then lets the first controller lease expire and
+resumes with a new controller session that adopts the retained action and
+completes cleanup. It shuts down all nodes and verifies runtime and
+disk-reservation resources are released.
+
+The process provider is a test-only in-process stand-in that treats joined
+`CellNode` shutdown as retained evidence. It exercises the provider contract
+and routing barrier but is not process-supervision or multi-process
+qualification.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations driver_routes_activation_and_cleanup_after_receiver_boot_closure --locked -- --nocapture` | 1 passed; 0 failed. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests::driver_ --locked -- --nocapture` | 2 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --all-targets --locked -- -D warnings` | Passed. |
+| `cargo fmt --all --check`, `git diff --check`, Rust-fence and Markdown-link checks | Passed; 137 snippets and 1,307 links/anchors checked. |
+
+W4 still needs an explicit routed stale-generation check and refusal when the
+closed receiver's control has advanced to `Serving` or `Recovering`. Existing
+public cases cover pre-release capacity refusal, duplicate preparation,
+activation and cleanup, exact idle-release generation checks, and shutdown
+resource joins. App-specific Cell contract selection and routed network
+adapters also remain unqualified. PR #56 and PR #37 are merged; this follow-up
+work remains local until separately reviewed.
+
+## October 4 2026 accepted receiver activation continuation checkpoint
+
+An accepted activation whose receiver stopped before claiming authority no
+longer stalls at failed endpoint inspection. The reconciler can consult fresh
+typed process closure, durably accept the bounded replacement route, and invoke
+the ordinary receiver executor. A failed inspection or routing attempt keeps
+the first original error in the report, bounded to one error per attempt.
+Controller deadlines do not authorize this continuation.
+
+The shared real-node fixture now checks both unaccepted and already accepted
+activation from the unchanged Idle root, including lost replacement replies,
+duplicate replay, controller lease expiry, receipt readback and joined cleanup.
+Two further cases stop the original receiver after real authority transitions
+to Recovering or Serving but before actor/result publication. Routed execution
+leaves that control unchanged, records Unknown without an acquisition basis,
+installs no replacement writer, and retains the full fleet charge. Explicit
+receiver cancellation also stays unresolved rather than erasing that claim.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --locked -- --nocapture` | 5 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --all-targets --locked -- -D warnings` | Passed for the continuation and shared fixtures. |
+| Module ownership, crate boundaries, whitespace, Rust fences and Markdown links | Passed; 137 snippets and 1,307 links/anchors checked. |
+
+These are in-process scenarios with an explicit test-only stopped-process
+provider. The next implementation priorities remain canonical recovery of a
+previous receiver's failed ownership claim, routed stale-generation and
+provider-fault cases, complete maintenance/controller-restart combinations,
+app-specific contracts and production transport/process adapters. W9 measured
+provider and mixed-version qualification and W10 rollout evidence remain
+required. Narrow tests do not establish completion of W4–W10.

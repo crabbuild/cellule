@@ -369,6 +369,7 @@ impl Fixture {
             directory,
             nodes,
             managers,
+            records,
             boots,
             handle,
             target,

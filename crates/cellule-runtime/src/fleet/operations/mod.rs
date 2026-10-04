@@ -42,6 +42,7 @@ pub use accepted::AcceptedFleetAction;
 pub use acquisition::AcquisitionBasis;
 pub use actions::{
     FleetAction, FleetActionKind, FleetActionOutcome, FleetOutcome, MaintenanceAction,
+    ReceiverHandoff, ReceiverRoute,
 };
 pub use attempt::{
     ActivationEvidence, AttemptEvent, AttemptPhase, MoveAttempt, MoveAttemptSpec, MovementAction,
@@ -73,6 +74,8 @@ pub const MAX_PAGE_ENTRIES: usize = 128;
 pub const MAX_ACTIVE_ATTEMPTS: usize = 2;
 /// Hard initial bound on disk demand reserved by unresolved attempts.
 pub const MAX_RESTORE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// Maximum closed receiver boots retained before reconciliation blocks.
+pub const MAX_RECEIVER_HANDOFFS: usize = 2;
 
 /// Failure of a pure fleet operation transition or its bounded codec.
 #[derive(Debug, thiserror::Error)]

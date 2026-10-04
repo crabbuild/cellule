@@ -11,7 +11,7 @@ use cellule_runtime::identity::{Digest, NodeId, SessionId};
 use tokio::{sync::watch, task::JoinHandle};
 
 use super::snapshot::{FleetNodeSnapshot, FleetSnapshotRequest, SnapshotOwners};
-use super::{FleetActionAcceptance, FleetActionJournal, FleetCellProvider};
+use super::{FleetActionAcceptance, FleetActionJournal, FleetCellProvider, FleetRoleSettlement};
 
 mod work;
 pub use work::{
@@ -37,6 +37,15 @@ pub struct FleetActionCompletion {
 pub(super) struct ActionResult {
     pub(super) outcome: FleetOutcome,
     pub(super) error: Option<Error>,
+}
+
+/// Result of durably accepting a host Finalize action outside the ordinary
+/// finite action bank.
+pub(crate) enum FinalizeActionAdmission {
+    /// The local terminal owner must run or resume the canonical host drain.
+    Accepted(AcceptedFleetAction),
+    /// The exact action already has a durable non-Unknown result.
+    Completed(Arc<FleetActionCompletion>),
 }
 
 impl ActionResult {
@@ -68,6 +77,7 @@ enum JobRequest {
     Effect {
         action: FleetAction,
         now_ms: i64,
+        settlement: Option<Arc<FleetRoleSettlement>>,
     },
     Inspection(FleetInspectionRequest),
     Snapshot {
@@ -105,9 +115,16 @@ impl JobRequest {
     }
     fn validate_replay(&self, other: &Self) -> Result<(), OperationError> {
         match (self, other) {
-            (Self::Effect { action, .. }, Self::Effect { action: replay, .. }) => {
-                action.validate_replay(replay)
-            }
+            (
+                Self::Effect {
+                    action, settlement, ..
+                },
+                Self::Effect {
+                    action: replay,
+                    settlement: replay_settlement,
+                    ..
+                },
+            ) if settlement == replay_settlement => action.validate_replay(replay),
             (Self::Inspection(original), Self::Inspection(replay)) if original == replay => Ok(()),
             (
                 Self::Snapshot {
@@ -239,6 +256,13 @@ impl FleetActionExecutor {
         })
     }
 
+    pub(crate) fn reserve_finalize_retention(
+        &self,
+    ) -> cellule_runtime::Result<NodeByteReservation> {
+        self.runtime
+            .try_reserve_node_bytes(3 * MAX_RECORD_BYTES as usize)
+    }
+
     pub(crate) async fn apply(
         self: &Arc<Self>,
         action: FleetAction,
@@ -266,13 +290,176 @@ impl FleetActionExecutor {
                 "fleet action time regressed",
             ))));
         }
-        let completion = self.submit(JobRequest::Effect { action, now_ms }).await?;
+        let completion = self
+            .submit(JobRequest::Effect {
+                action,
+                now_ms,
+                settlement: None,
+            })
+            .await?;
         match completion.as_ref() {
             JobCompletion::Effect(result) => Ok(Arc::clone(result)),
             _ => Err(Arc::new(Error::Control(
                 "fleet action completion kind mismatch",
             ))),
         }
+    }
+
+    pub(crate) async fn apply_role_settlement(
+        self: &Arc<Self>,
+        action: FleetAction,
+        settlement: FleetRoleSettlement,
+        now_ms: i64,
+    ) -> EffectCompletion {
+        if action.scope() != self.scope
+            || !matches!(
+                action.kind(),
+                FleetActionKind::Maintenance {
+                    action: MaintenanceAction::SettleRoles,
+                    ..
+                }
+            )
+        {
+            return Err(Arc::new(Error::Fenced));
+        }
+        action
+            .validate_endpoint(self.node, self.session)
+            .map_err(operation)
+            .map_err(Arc::new)?;
+        settlement.validate_for(&action).map_err(Arc::new)?;
+        if now_ms < action.issued_at_ms() {
+            return Err(Arc::new(operation(OperationError::Invalid(
+                "fleet action time regressed",
+            ))));
+        }
+        let completion = self
+            .submit(JobRequest::Effect {
+                action,
+                now_ms,
+                settlement: Some(Arc::new(settlement)),
+            })
+            .await?;
+        match completion.as_ref() {
+            JobCompletion::Effect(result) => Ok(Arc::clone(result)),
+            _ => Err(Arc::new(Error::Control(
+                "fleet role settlement completion kind mismatch",
+            ))),
+        }
+    }
+
+    /// Accepts the terminal action without adding it to the bank that the
+    /// canonical node drain joins. Closing admission after acceptance makes
+    /// every previously admitted sibling part of that drain's join set.
+    pub(crate) async fn accept_finalize(
+        &self,
+        action: &FleetAction,
+        now_ms: i64,
+    ) -> Result<FinalizeActionAdmission, Arc<Error>> {
+        let maintenance = match action.kind() {
+            FleetActionKind::Maintenance {
+                action: MaintenanceAction::Finalize,
+                operation,
+            } => operation,
+            _ => {
+                return Err(Arc::new(Error::Control(
+                    "host finalization requires a Finalize maintenance action",
+                )));
+            }
+        };
+        let evidence = maintenance.drain_evidence().ok_or_else(|| {
+            Arc::new(operation(OperationError::Invalid(
+                "fleet Finalize lacks committed drain evidence",
+            )))
+        })?;
+        if action.scope() != self.scope
+            || maintenance.node() != self.node
+            || maintenance.session() != self.session
+            || maintenance.phase() != cellule_runtime::fleet::operations::MaintenancePhase::Closing
+            || evidence.node != self.node
+            || evidence.session != self.session
+            || evidence.remaining_cells != 0
+            || evidence.unresolved_attempts != 0
+            || !evidence.relocated
+            || !evidence.readers_settled
+            || !evidence.followers_settled
+        {
+            return Err(Arc::new(operation(OperationError::Invalid(
+                "fleet Finalize lacks exact ready-to-close evidence",
+            ))));
+        }
+        action
+            .validate_endpoint(self.node, self.session)
+            .map_err(operation)
+            .map_err(Arc::new)?;
+        if now_ms < action.issued_at_ms() {
+            return Err(Arc::new(operation(OperationError::Invalid(
+                "fleet Finalize time regressed",
+            ))));
+        }
+
+        let acceptance = self
+            .journal
+            .accept_action(action, self.node, self.session, now_ms)
+            .await
+            .map_err(journal_error)
+            .map_err(Arc::new)?;
+        let accepted = match acceptance {
+            FleetActionAcceptance::New(accepted) => {
+                accepted
+                    .validate_replay(action, self.node, self.session)
+                    .map_err(operation)
+                    .map_err(Arc::new)?;
+                if accepted.action() != action || accepted.accepted_at_ms() != now_ms {
+                    return Err(Arc::new(operation(OperationError::Conflict)));
+                }
+                accepted
+            }
+            FleetActionAcceptance::Existing { accepted, result } => {
+                accepted
+                    .validate_replay(action, self.node, self.session)
+                    .map_err(operation)
+                    .map_err(Arc::new)?;
+                if let Some(result) = result {
+                    accepted
+                        .validate_result(&result)
+                        .map_err(operation)
+                        .map_err(Arc::new)?;
+                    if !matches!(&result.outcome, FleetOutcome::Unknown) {
+                        return Ok(FinalizeActionAdmission::Completed(Arc::new(
+                            FleetActionCompletion {
+                                accepted,
+                                outcome: *result,
+                                committed: true,
+                                execution_error: None,
+                                journal_error: None,
+                            },
+                        )));
+                    }
+                }
+                accepted
+            }
+        };
+        self.close_admission().map_err(Arc::new)?;
+        Ok(FinalizeActionAdmission::Accepted(accepted))
+    }
+
+    fn close_admission(&self) -> cellule_runtime::Result<()> {
+        let mut bank = self
+            .bank
+            .lock()
+            .map_err(|_| Error::Control("fleet action bank poisoned"))?;
+        bank.draining = true;
+        Ok(())
+    }
+
+    /// Publishes terminal evidence retained by the host Finalize owner.
+    pub(crate) async fn publish_terminal(
+        &self,
+        accepted: AcceptedFleetAction,
+        outcome: FleetActionOutcome,
+        execution_error: Option<Arc<Error>>,
+    ) -> FleetActionCompletion {
+        self.publish(accepted, outcome, execution_error).await
     }
 
     pub(crate) async fn observe(
@@ -377,8 +564,12 @@ impl FleetActionExecutor {
                 let issued = request.clone();
                 let task = tokio::spawn(async move {
                     let result = match issued {
-                        JobRequest::Effect { action, now_ms } => executor
-                            .execute(action, now_ms)
+                        JobRequest::Effect {
+                            action,
+                            now_ms,
+                            settlement,
+                        } => executor
+                            .execute(action, now_ms, settlement)
                             .await
                             .map(JobCompletion::Effect),
                         JobRequest::Inspection(request) => executor
@@ -430,7 +621,12 @@ impl FleetActionExecutor {
         }
     }
 
-    async fn execute(&self, action: FleetAction, now_ms: i64) -> EffectCompletion {
+    async fn execute(
+        &self,
+        action: FleetAction,
+        now_ms: i64,
+        settlement: Option<Arc<FleetRoleSettlement>>,
+    ) -> EffectCompletion {
         let acceptance = self
             .journal
             .accept_action(&action, self.node, self.session, now_ms)
@@ -443,8 +639,21 @@ impl FleetActionExecutor {
                     .validate_replay(&action, self.node, self.session)
                     .map_err(operation)
                     .map_err(Arc::new)?;
+                let refresh_roles = matches!(
+                    accepted.action().kind(),
+                    FleetActionKind::Maintenance {
+                        action: MaintenanceAction::SettleRoles,
+                        ..
+                    }
+                ) && result.as_ref().is_some_and(|result| {
+                    matches!(
+                        &result.outcome,
+                        FleetOutcome::RolesSettled { .. } | FleetOutcome::RolesSettledAt { .. }
+                    )
+                });
                 if let Some(result) = result
                     && !matches!(result.outcome, FleetOutcome::Unknown)
+                    && !(refresh_roles && settlement.is_some())
                 {
                     accepted
                         .validate_result(&result)
@@ -458,7 +667,11 @@ impl FleetActionExecutor {
                         journal_error: None,
                     }));
                 }
-                let result = self.inspect_accepted(&accepted).await;
+                let result = if let Some(settlement) = settlement {
+                    self.perform_action(&accepted, Some(settlement)).await
+                } else {
+                    self.inspect_accepted(&accepted).await
+                };
                 (accepted, result)
             }
             FleetActionAcceptance::New(accepted) => {
@@ -469,7 +682,7 @@ impl FleetActionExecutor {
                 if accepted.action() != &action || accepted.accepted_at_ms() != now_ms {
                     return Err(Arc::new(operation(OperationError::Conflict)));
                 }
-                let result = self.perform_action(&accepted).await;
+                let result = self.perform_action(&accepted, settlement).await;
                 (accepted, result)
             }
         };
@@ -670,7 +883,7 @@ impl ActionBank {
     }
 }
 
-pub(super) fn wall_time_ms() -> cellule_runtime::Result<i64> {
+pub(crate) fn wall_time_ms() -> cellule_runtime::Result<i64> {
     let elapsed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|source| Error::Facility {

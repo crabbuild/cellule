@@ -1,7 +1,16 @@
 use super::*;
 
+#[derive(Clone)]
+struct ClosedReceiverProof {
+    snapshot: FleetJournalSnapshot,
+    node: NodeId,
+    session: SessionId,
+    digest: Digest,
+    retired: bool,
+}
+
 impl Db<'_> {
-    fn accepted(
+    pub(super) fn accepted(
         &self,
         key: Digest,
         node: NodeId,
@@ -45,6 +54,171 @@ impl Db<'_> {
         })
         .transpose()
     }
+
+    fn check_receiver_route(&self, action: &FleetAction) -> JournalResult<()> {
+        let Some(route) = action.receiver_route() else {
+            return Ok(());
+        };
+        let FleetActionKind::Movement { attempt, .. } = action.kind() else {
+            return Err(OperationError::Conflict.into());
+        };
+        let spec = attempt.spec();
+        let rows = {
+            let mut statement = self.tx.prepare(
+                "SELECT key,node,session FROM actions WHERE operation=?1 AND sequence=?2 AND length(sequence)=8 LIMIT 65",
+            )?;
+            statement
+                .query_map(
+                    params![
+                        spec.id.operation.as_bytes().as_slice(),
+                        spec.id.sequence.to_be_bytes().as_slice()
+                    ],
+                    |row| Ok((blob(row, 0, 32)?, blob(row, 1, 16)?, blob(row, 2, 16)?)),
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        if rows.len() > 64 {
+            return Err(OperationError::Conflict.into());
+        }
+        let mut latest: Option<ReceiverRoute> = None;
+        for (key, node, session) in rows {
+            let key = Digest::from_bytes(
+                key.as_slice()
+                    .try_into()
+                    .map_err(|_| OperationError::Invalid("action index width"))?,
+            );
+            let node = NodeId::from_bytes(
+                node.as_slice()
+                    .try_into()
+                    .map_err(|_| OperationError::Invalid("node identity width"))?,
+            );
+            let session = SessionId::from_bytes(
+                session
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| OperationError::Invalid("session identity width"))?,
+            );
+            let (accepted, _) = self
+                .accepted(key, node, session)?
+                .ok_or(OperationError::NotFound)?;
+            let FleetActionKind::Movement {
+                attempt: recorded, ..
+            } = accepted.action().kind()
+            else {
+                return Err(OperationError::Conflict.into());
+            };
+            if accepted.action().scope() != action.scope()
+                || recorded.spec() != spec
+                || accepted.node() != node
+                || accepted.session() != session
+            {
+                return Err(OperationError::Conflict.into());
+            }
+            let Some(recorded_route) = accepted.action().receiver_route() else {
+                continue;
+            };
+            if let Some(previous) = &latest {
+                if recorded_route.hop_count() == previous.hop_count() {
+                    if recorded_route != previous {
+                        return Err(OperationError::Conflict.into());
+                    }
+                } else if recorded_route.hop_count() > previous.hop_count() {
+                    if !recorded_route.follows(previous) {
+                        return Err(OperationError::Conflict.into());
+                    }
+                    latest = Some(recorded_route.clone());
+                }
+            } else {
+                latest = Some(recorded_route.clone());
+            }
+        }
+        match latest {
+            Some(previous) if route.follows(&previous) => Ok(()),
+            None if route.hop_count() == 1 => Ok(()),
+            _ => Err(OperationError::Conflict.into()),
+        }
+    }
+
+    fn accept_action(
+        &self,
+        action: FleetAction,
+        node: NodeId,
+        session: SessionId,
+        now_ms: i64,
+        closed: Option<ClosedReceiverProof>,
+    ) -> JournalResult<FleetActionAcceptance> {
+        self.check_scope(action.scope())?;
+        let key = action.key()?;
+        if let Some((accepted, result)) = self.accepted(key, node, session)? {
+            accepted.validate_replay(&action, node, session)?;
+            return Ok(FleetActionAcceptance::Existing {
+                accepted,
+                result: result.map(Box::new),
+            });
+        }
+        let snapshot = self.snapshot()?;
+        match (action.receiver_route(), closed) {
+            (Some(route), Some(closed)) => {
+                let hop = route
+                    .latest_handoff()
+                    .ok_or(OperationError::Invalid("receiver route lacks final hop"))?;
+                if !closed.retired
+                    || hop.previous() != (closed.node, closed.session)
+                    || hop.process_closure() != closed.digest
+                    || hop.registry() != snapshot.registry()
+                    || closed.snapshot.head() != snapshot.head()
+                    || closed.snapshot.registry() != snapshot.registry()
+                    || action.receiver_endpoint() != Some((node, session))
+                {
+                    return Err(OperationError::Conflict.into());
+                }
+            }
+            (Some(_), None) => {
+                return Err(OperationError::Fenced.into());
+            }
+            (None, Some(_)) => {
+                return Err(OperationError::Invalid(
+                    "closed receiver proof supplied for an ordinary action",
+                )
+                .into());
+            }
+            (None, None) => {}
+        }
+        let accepted = AcceptedFleetAction::new_with_registry(
+            action.clone(),
+            snapshot.head(),
+            snapshot.registry(),
+            node,
+            session,
+            now_ms,
+        )?;
+        self.check_intents(&action, node, session)?;
+        self.check_receiver_route(&action)?;
+        let (operation, sequence, effect) = match action.kind() {
+            FleetActionKind::Movement { action, attempt } => (
+                attempt.spec().id.operation,
+                attempt.spec().id.sequence.to_be_bytes().to_vec(),
+                *action as u8,
+            ),
+            FleetActionKind::Maintenance { action, operation } => {
+                (operation.id(), vec![], *action as u8)
+            }
+        };
+        self.tx.execute(
+            "INSERT INTO actions(key,node,session,operation,sequence,effect,accepted) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                key.as_bytes().as_slice(),
+                node.as_bytes().as_slice(),
+                session.as_bytes().as_slice(),
+                operation.as_bytes().as_slice(),
+                sequence,
+                effect,
+                accepted.to_bytes()?
+            ],
+        )?;
+        Ok(FleetActionAcceptance::New(accepted))
+    }
+
     fn original(&self, accepted: &AcceptedFleetAction) -> JournalResult<()> {
         let (original, _) = self
             .accepted(
@@ -125,8 +299,10 @@ impl Db<'_> {
                         | MovementAction::Activate
                         | MovementAction::Recover
                 ) {
-                    let receiver = self.required_intent(spec.destination_node)?;
-                    if receiver.session() != spec.destination || receiver.mode() != NodeMode::Active
+                    let (receiver_node, receiver_session) =
+                        action.receiver_endpoint().ok_or(OperationError::Conflict)?;
+                    let receiver = self.required_intent(receiver_node)?;
+                    if receiver.session() != receiver_session || receiver.mode() != NodeMode::Active
                     {
                         return Err(OperationError::Conflict.into());
                     }
@@ -201,22 +377,26 @@ impl FleetActionJournal for SqliteJournal {
         now_ms: i64,
     ) -> FleetAdapterFuture<'a, FleetActionAcceptance> {
         let action = action.clone();
-        Box::pin(self.run(move |db| {
-            db.check_scope(action.scope())?;
-            let key = action.key()?;
-            if let Some((accepted, result)) = db.accepted(key, node, session)? {
-                accepted.validate_replay(&action, node, session)?;
-                return Ok(FleetActionAcceptance::Existing { accepted, result: result.map(Box::new) });
-            }
-            let accepted = AcceptedFleetAction::new(action.clone(), db.snapshot()?.head(), node, session, now_ms)?;
-            db.check_intents(&action, node, session)?;
-            let (operation, sequence, effect) = match action.kind() {
-                FleetActionKind::Movement { action, attempt } => (attempt.spec().id.operation, attempt.spec().id.sequence.to_be_bytes().to_vec(), *action as u8),
-                FleetActionKind::Maintenance { action, operation } => (operation.id(), vec![], *action as u8),
-            };
-            db.tx.execute("INSERT INTO actions(key,node,session,operation,sequence,effect,accepted) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![key.as_bytes().as_slice(), node.as_bytes().as_slice(), session.as_bytes().as_slice(), operation.as_bytes().as_slice(), sequence, effect, accepted.to_bytes()?])?;
-            Ok(FleetActionAcceptance::New(accepted))
-        }))
+        Box::pin(self.run(move |db| db.accept_action(action, node, session, now_ms, None)))
+    }
+
+    fn accept_closed_receiver_action<'a>(
+        &'a self,
+        action: &'a FleetAction,
+        node: NodeId,
+        session: SessionId,
+        now_ms: i64,
+        closure: &'a FleetFailedBootClosure,
+    ) -> FleetAdapterFuture<'a, FleetActionAcceptance> {
+        let action = action.clone();
+        let closed = ClosedReceiverProof {
+            snapshot: closure.snapshot().clone(),
+            node: closure.canonical().node(),
+            session: closure.canonical().session(),
+            digest: closure.digest(),
+            retired: closure.boot().status() == EnrollmentStatus::Retired,
+        };
+        Box::pin(self.run(move |db| db.accept_action(action, node, session, now_ms, Some(closed))))
     }
     fn publish_action_result<'a>(
         &'a self,
@@ -228,6 +408,17 @@ impl FleetActionJournal for SqliteJournal {
         Box::pin(self.run(move |db| {
             db.original(&accepted)?;
             accepted.validate_result(&result)?;
+            if let FleetOutcome::RolesSettledAt {
+                registry,
+                head_revision,
+                ..
+            } = &result.outcome
+            {
+                let current = db.snapshot()?;
+                if current.registry() != *registry || current.head().revision() != *head_revision {
+                    return Err(OperationError::Conflict.into());
+                }
+            }
             if let FleetActionKind::Movement {
                 action: MovementAction::Activate,
                 ..
@@ -263,7 +454,42 @@ impl FleetActionJournal for SqliteJournal {
                 if previous == result {
                     return Ok(());
                 }
-                if !matches!(previous.outcome, FleetOutcome::Unknown) {
+                let refreshable_roles = matches!(
+                    accepted.action().kind(),
+                    FleetActionKind::Maintenance {
+                        action: MaintenanceAction::SettleRoles,
+                        ..
+                    }
+                ) && matches!(
+                    (&previous.outcome, &result.outcome),
+                    (
+                        FleetOutcome::RolesSettled { .. } | FleetOutcome::RolesSettledAt { .. },
+                        FleetOutcome::RolesSettledAt { .. }
+                    )
+                ) && result.observed_at_ms > previous.observed_at_ms
+                    && match (&previous.outcome, &result.outcome) {
+                        (
+                            FleetOutcome::RolesSettledAt {
+                                registry: previous,
+                                head_revision: previous_head,
+                                ..
+                            },
+                            FleetOutcome::RolesSettledAt {
+                                registry: current,
+                                head_revision: current_head,
+                                ..
+                            },
+                        ) => {
+                            current.revision() >= previous.revision()
+                                && current_head >= previous_head
+                        }
+                        (
+                            FleetOutcome::RolesSettled { .. },
+                            FleetOutcome::RolesSettledAt { .. },
+                        ) => true,
+                        _ => false,
+                    };
+                if !matches!(previous.outcome, FleetOutcome::Unknown) && !refreshable_roles {
                     return Err(OperationError::Conflict.into());
                 }
                 if matches!(result.outcome, FleetOutcome::Unknown) {
@@ -304,6 +530,87 @@ impl FleetActionJournal for SqliteJournal {
             }).transpose()
         }))
     }
+
+    fn load_movement_actions<'a>(
+        &'a self,
+        scope: FleetScope,
+        attempt: &'a MoveAttempt,
+        effect: MovementAction,
+    ) -> FleetAdapterFuture<'a, Vec<FleetActionAcceptance>> {
+        let attempt = attempt.clone();
+        Box::pin(self.run(move |db| {
+            db.check_scope(scope)?;
+            let rows = {
+                let mut statement = db.tx.prepare(
+                    "SELECT key,node,session FROM actions WHERE operation=?1 AND sequence=?2 AND effect=?3 ORDER BY node,session LIMIT 4",
+                )?;
+                statement
+                    .query_map(
+                        params![
+                            attempt.spec().id.operation.as_bytes().as_slice(),
+                            attempt.spec().id.sequence.to_be_bytes().as_slice(),
+                            effect as u8
+                        ],
+                        |row| {
+                            Ok((
+                                blob(row, 0, 32)?,
+                                blob(row, 1, 16)?,
+                                blob(row, 2, 16)?,
+                            ))
+                        },
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            if rows.len() > MAX_RECEIVER_HANDOFFS + 1 {
+                return Err(OperationError::Conflict.into());
+            }
+            rows.into_iter()
+                .map(|(key, node, session)| {
+                    let key = Digest::from_bytes(
+                        key.as_slice()
+                            .try_into()
+                            .map_err(|_| OperationError::Invalid("action index width"))?,
+                    );
+                    let node = NodeId::from_bytes(
+                        node.as_slice()
+                            .try_into()
+                            .map_err(|_| OperationError::Invalid("node identity width"))?,
+                    );
+                    let session = SessionId::from_bytes(
+                        session
+                            .as_slice()
+                            .try_into()
+                            .map_err(|_| OperationError::Invalid("session identity width"))?,
+                    );
+                    let (accepted, result) = db
+                        .accepted(key, node, session)?
+                        .ok_or(OperationError::NotFound)?;
+                    let FleetActionKind::Movement {
+                        action,
+                        attempt: original,
+                    } = accepted.action().kind()
+                    else {
+                        return Err(OperationError::Conflict.into());
+                    };
+                    if accepted.action().scope() != scope
+                        || accepted.action().key()? != key
+                        || *action != effect
+                        || original.spec() != attempt.spec()
+                        || accepted.node() != node
+                        || accepted.session() != session
+                    {
+                        return Err(OperationError::Conflict.into());
+                    }
+                    accepted.validate_replay(accepted.action(), node, session)?;
+                    Ok(FleetActionAcceptance::Existing {
+                        accepted,
+                        result: result.map(Box::new),
+                    })
+                })
+                .collect()
+        }))
+    }
+
     fn record_acquisition_basis<'a>(
         &'a self,
         basis: &'a AcquisitionBasis,

@@ -3,7 +3,9 @@ use crate::fleet::{
     FLEET_ACTION_COMPONENT, FleetActionCompletion, FleetActionExecutor, FleetActionJournal,
     FleetCellProvider, FleetEnrollmentJournal,
 };
-use cellule_runtime::fleet::operations::{FleetAction, FleetScope};
+use cellule_runtime::fleet::operations::{
+    FleetAction, FleetActionKind, FleetScope, MaintenanceAction,
+};
 use cellule_runtime::identity::NodeId;
 
 impl CellNode {
@@ -446,14 +448,52 @@ impl CellNode {
     /// Applications authenticate the caller before invoking this local boundary.
     /// The executor supports settled movement, explicit busy maintenance
     /// release, receiver inspection, and cordon through the shared role gate.
-    /// Role settlement and
-    /// finalization require their host barriers and are refused. Count a
-    /// result only when `committed` is true, then inspect current serving evidence.
+    /// Finalize is accepted separately and runs through the retained host drain
+    /// owner after ready-to-close evidence and managed boot withdrawal are bound.
+    /// Role settlement still requires its host barriers. Count an effect only
+    /// when `committed` is true, then inspect current serving evidence.
     /// Raw Inspect actions are refused: use `inspect_fleet_action` so a durable
     /// historical acknowledgement cannot masquerade as a current observation.
     pub async fn apply_fleet_action(
         &self,
         action: FleetAction,
+        now_ms: i64,
+    ) -> Result<Arc<FleetActionCompletion>, Arc<Error>> {
+        if matches!(
+            action.kind(),
+            FleetActionKind::Maintenance {
+                action: MaintenanceAction::Finalize,
+                ..
+            }
+        ) {
+            let executor = self.owned_component::<FleetActionExecutor>(FLEET_ACTION_COMPONENT);
+            return self
+                .fleet_finalize
+                .apply(
+                    action,
+                    now_ms,
+                    executor,
+                    Arc::clone(&self.drain_owner),
+                    Arc::clone(&self.shutdown_lock),
+                    self.is_management_ready(),
+                )
+                .await;
+        }
+        if !self.is_management_ready() {
+            return Err(Arc::new(Error::CellDraining));
+        }
+        let executor = self
+            .owned_component::<FleetActionExecutor>(FLEET_ACTION_COMPONENT)
+            .ok_or_else(|| Arc::new(Error::Control("fleet action executor is not installed")))?;
+        executor.apply(action, now_ms).await
+    }
+
+    /// Applies SettleRoles only with an opaque complete inventory/policy proof
+    /// produced by the host reconciler at the action's exact journal barrier.
+    pub async fn apply_fleet_role_settlement(
+        &self,
+        action: FleetAction,
+        settlement: crate::fleet::FleetRoleSettlement,
         now_ms: i64,
     ) -> Result<Arc<FleetActionCompletion>, Arc<Error>> {
         if !self.is_management_ready() {
@@ -462,6 +502,8 @@ impl CellNode {
         let executor = self
             .owned_component::<FleetActionExecutor>(FLEET_ACTION_COMPONENT)
             .ok_or_else(|| Arc::new(Error::Control("fleet action executor is not installed")))?;
-        executor.apply(action, now_ms).await
+        executor
+            .apply_role_settlement(action, settlement, now_ms)
+            .await
     }
 }

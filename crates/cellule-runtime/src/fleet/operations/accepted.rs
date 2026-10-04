@@ -2,7 +2,7 @@ use crate::identity::{NodeId, SessionId};
 
 use super::{
     FleetAction, FleetActionKind, FleetActionOutcome, FleetHead, MovementAction, OperationError,
-    Result, nonzero,
+    RegistryVersion, Result, nonzero,
 };
 
 /// Immutable acceptance of one exact local fleet effect.
@@ -29,6 +29,27 @@ impl AcceptedFleetAction {
         now_ms: i64,
     ) -> Result<Self> {
         action.authorize_against(head, now_ms)?;
+        let accepted = Self {
+            action,
+            node,
+            session,
+            accepted_at_ms: now_ms,
+        };
+        accepted.validate()?;
+        Ok(accepted)
+    }
+
+    /// Checks a continuation against the current head and exact registry in
+    /// the same transaction that durably accepts the receiver action.
+    pub fn new_with_registry(
+        action: FleetAction,
+        head: &FleetHead,
+        registry: RegistryVersion,
+        node: NodeId,
+        session: SessionId,
+        now_ms: i64,
+    ) -> Result<Self> {
+        action.authorize_against_registry(head, registry, now_ms)?;
         let accepted = Self {
             action,
             node,
@@ -138,7 +159,11 @@ impl FleetAction {
                     action: replay,
                     attempt: b,
                 },
-            ) => original == replay && a.spec() == b.spec(),
+            ) => {
+                original == replay
+                    && a.spec() == b.spec()
+                    && self.receiver_route == action.receiver_route
+            }
             (
                 FleetActionKind::Maintenance {
                     action: original,
@@ -176,7 +201,7 @@ impl FleetAction {
             FleetActionKind::Movement { action, attempt } => {
                 let spec = attempt.spec();
                 let source = node == spec.source_node && session == spec.source;
-                let receiver = node == spec.destination_node && session == spec.destination;
+                let receiver = self.receiver_endpoint() == Some((node, session));
                 match action {
                     MovementAction::Release | MovementAction::ReleaseMaintenance => source,
                     MovementAction::Prepare

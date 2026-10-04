@@ -101,7 +101,7 @@ impl FleetActionExecutor {
             MovementAction::Recover => self.recover(accepted, attempt).await,
             MovementAction::Prepare => self.prepare(attempt).await,
             MovementAction::Activate => self.activate(accepted, attempt).await,
-            MovementAction::Cancel => self.cancel(attempt).await,
+            MovementAction::Cancel => self.cancel(accepted, attempt).await,
             MovementAction::Inspect => Err(Error::Control(
                 "fleet Inspect requires request-bound inspection",
             )),
@@ -117,7 +117,7 @@ impl FleetActionExecutor {
             accepted.action().kind(),
             FleetActionKind::Maintenance { .. }
         ) {
-            return self.perform_maintenance(accepted);
+            return self.perform_maintenance(accepted, None);
         }
         let FleetActionKind::Movement { action, attempt } = accepted.action().kind() else {
             return Err(Error::Control("accepted fleet effect is not movement"));
@@ -128,6 +128,17 @@ impl FleetActionExecutor {
         match action {
             MovementAction::Recover => self.inspect_recovery(accepted, attempt).await,
             MovementAction::Prepare => self.inspect_preparation(attempt),
+            MovementAction::Activate if accepted.action().receiver_route().is_some() => {
+                if self.runtime.prepared_receiver(attempt.spec().id)?.is_some() {
+                    return Err(Error::Peer(
+                        "routed activation unexpectedly owns a prepared receiver credit",
+                    ));
+                }
+                // Re-read canonical control and retry only through the exact
+                // routed acceptance. AcquisitionBasis checks the immutable
+                // release root before a new local acquisition can begin.
+                self.activate(accepted, attempt).await
+            }
             MovementAction::Activate => {
                 if self.runtime.prepared_receiver(attempt.spec().id)?.is_none()
                     && self.confirmed_credit_settlement(attempt).await?
@@ -173,7 +184,7 @@ impl FleetActionExecutor {
                     _ => Ok(ActionResult::checked(FleetOutcome::Unknown)),
                 }
             }
-            MovementAction::Cancel => self.cancel(attempt).await,
+            MovementAction::Cancel => self.cancel(accepted, attempt).await,
             MovementAction::Inspect => Err(Error::Control(
                 "fleet Inspect requires request-bound inspection",
             )),

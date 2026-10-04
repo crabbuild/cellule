@@ -42,10 +42,12 @@ impl Fixture {
                 nodes,
                 boots,
                 records,
+                reader_verifier: None,
                 journal,
                 capture_sequence: std::sync::atomic::AtomicU64::new(0),
                 lose_release_replies: false,
                 lost_release_replies: std::sync::atomic::AtomicUsize::new(0),
+                drop_closed_finalize_replies: std::sync::atomic::AtomicUsize::new(0),
                 expired_receiver_cleanups: std::sync::atomic::AtomicUsize::new(0),
             },
         }

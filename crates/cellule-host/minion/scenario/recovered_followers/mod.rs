@@ -136,6 +136,16 @@ impl Fixture {
         Self::with_recovered_boot_at(observe, cells, frames, now, 0, 1).await
     }
 
+    async fn with_recovery_inputs_at_profile(
+        observe: bool,
+        cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
+        frames: Vec<Bytes>,
+        now: i64,
+        profile: FleetProfile,
+    ) -> Self {
+        Self::with_recovered_boot_at_profile(observe, cells, frames, now, 0, 1, profile).await
+    }
+
     async fn with_recovered_boot_at(
         observe: bool,
         cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
@@ -143,6 +153,27 @@ impl Fixture {
         now: i64,
         leader: usize,
         claimant: usize,
+    ) -> Self {
+        Self::with_recovered_boot_at_profile(
+            observe,
+            cells,
+            frames,
+            now,
+            leader,
+            claimant,
+            FleetProfile::default(),
+        )
+        .await
+    }
+
+    async fn with_recovered_boot_at_profile(
+        observe: bool,
+        cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
+        frames: Vec<Bytes>,
+        now: i64,
+        leader: usize,
+        claimant: usize,
+        profile: FleetProfile,
     ) -> Self {
         assert!(leader < 3 && claimant < 3 && leader != claimant);
         let check = now + 10_005;
@@ -152,7 +183,7 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("journal.sqlite");
         let journal = Arc::new(
-            SqliteJournal::open(path.clone(), scope(), FleetProfile::default(), now)
+            SqliteJournal::open(path.clone(), scope(), profile, now)
                 .await
                 .unwrap(),
         );

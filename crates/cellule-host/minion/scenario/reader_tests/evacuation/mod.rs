@@ -28,6 +28,7 @@ struct Fixture {
     directory: NodeDirectory,
     nodes: Vec<Arc<CellNode>>,
     managers: Vec<ReadReplicaManager>,
+    records: Arc<HashMap<CellId, Record>>,
     boots: Vec<startup::BootOwner>,
     handle: CellHandle,
     target: CellTarget,

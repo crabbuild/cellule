@@ -18,10 +18,12 @@ pub(super) async fn run(
         nodes: nodes.clone(),
         boots: boots.clone(),
         records: records.clone(),
+        reader_verifier: None,
         journal: journal.clone(),
         capture_sequence: std::sync::atomic::AtomicU64::new(0),
         lose_release_replies: false,
         lost_release_replies: std::sync::atomic::AtomicUsize::new(0),
+        drop_closed_finalize_replies: std::sync::atomic::AtomicUsize::new(0),
         expired_receiver_cleanups: std::sync::atomic::AtomicUsize::new(0),
     });
     let driver = FleetReconciler::new(
@@ -47,6 +49,8 @@ pub(super) async fn run(
         expired_receiver_cleanups: 0,
         blockers: Vec::new(),
         final_counts: [0; 3],
+        maintenance_completed: false,
+        maintenance_boot_withdrawn: false,
     };
     let mut specs = HashMap::new();
     let deadline = Instant::now() + Duration::from_secs(120);

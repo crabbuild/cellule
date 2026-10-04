@@ -1,11 +1,13 @@
-//! Full observation of this example's closed, writer-only construction profile.
-//! Role-enabled applications need their producer/native/policy collectors.
+//! Full bounded observation of the reference fleet's native role graph.
+//! Policy checks remain separate evidence and missing checks stay blocking.
 
 use super::*;
 use cellule_host::fleet::{
-    FleetFollowerReferences, FleetMaintenanceEnrollments, FleetNodeInventory,
-    FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation, FleetOwnedCell, FleetRoleCoverage,
-    FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest, FleetSnapshotSubject,
+    FleetFailedBootProcessRequest, FleetFailedBootProcesses, FleetFailedBootRetirement,
+    FleetFollowerEvacuationVerifier, FleetFollowerReferences, FleetMaintenanceEnrollments,
+    FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation,
+    FleetOwnedCell, FleetRoleCoverage, FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest,
+    FleetSnapshotSubject,
 };
 use cellule_runtime::control::{Control, ControlState};
 use cellule_runtime::fleet::operations::{EnrollmentRole, EnrollmentStatus, PublishedPosition};
@@ -47,13 +49,88 @@ pub(super) async fn observe(
     roster: &FleetRoster,
     deadline: Instant,
 ) -> JournalResult<FleetObservation> {
+    observe_inner(fleet, roster, deadline, None).await
+}
+
+#[cfg(test)]
+pub(super) async fn observe_with_failed_boot_closure(
+    fleet: &adapters::LocalFleet,
+    roster: &FleetRoster,
+    deadline: Instant,
+    request: &FleetFailedBootProcessRequest,
+    processes: &dyn FleetFailedBootProcesses,
+    claimant: SessionId,
+) -> JournalResult<FleetObservation> {
+    observe_inner(
+        fleet,
+        roster,
+        deadline,
+        Some((request, processes, claimant)),
+    )
+    .await
+}
+
+async fn observe_inner(
+    fleet: &adapters::LocalFleet,
+    roster: &FleetRoster,
+    deadline: Instant,
+    failed_boot: Option<(
+        &FleetFailedBootProcessRequest,
+        &dyn FleetFailedBootProcesses,
+        SessionId,
+    )>,
+) -> JournalResult<FleetObservation> {
     let capture = collect(fleet, roster, deadline).await?;
+    let mut reader_checks = Vec::new();
+    let mut follower_checks = Vec::new();
+    let mut finished = capture.finished;
+    if let Some(original) = capture.maintenance_enrollments.as_ref() {
+        if let Some(verifier) = &fleet.reader_verifier {
+            reader_checks = verifier
+                .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
+                .await?;
+        }
+        let follower_verifier = FleetFollowerEvacuationVerifier::new(
+            fleet.boots[0].directory.clone(),
+            Arc::new(adapters::LocalSnapshots::new(fleet.nodes.clone())),
+        );
+        follower_checks = follower_verifier
+            .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
+            .await?;
+        roster.confirm(fleet.journal.as_ref(), deadline).await?;
+        finished = clock()?;
+    }
+    let failed_boot_closures = if let Some((request, processes, claimant)) = failed_boot {
+        let closure = FleetFailedBootRetirement::capture_retained(
+            fleet.journal.as_ref(),
+            &fleet.boots[0].directory,
+            roster,
+            request,
+            claimant,
+            deadline,
+            clock,
+        )
+        .await?
+        .confirm(
+            fleet.journal.as_ref(),
+            &fleet.boots[0].directory,
+            processes,
+            claimant,
+            deadline,
+            clock,
+        )
+        .await?;
+        finished = clock()?;
+        Some(vec![closure])
+    } else {
+        None
+    };
     let observation = FleetObservation::new(
         scope(),
         roster.snapshot().registry(),
         roster.snapshot().registry().revision(),
         capture.started,
-        capture.finished,
+        finished,
         capture.complete,
         capture.nodes,
         capture.cells,
@@ -62,10 +139,15 @@ pub(super) async fn observe(
         Some(coverage) => observation.with_role_coverage(coverage)?,
         None => observation,
     };
+    let observation = match failed_boot_closures {
+        Some(closures) => observation.with_failed_boot_closures(closures)?,
+        None => observation,
+    };
     Ok(match capture.maintenance_enrollments {
         Some(original) => observation
+            .with_role_evacuations(reader_checks, follower_checks)?
             .with_maintenance_enrollments(original)?
-            .check_maintenance_policies(roster, capture.finished)?,
+            .check_maintenance_policies(roster, finished)?,
         None => observation,
     })
 }
@@ -150,24 +232,50 @@ async fn collect(
         } else {
             None
         };
-    if fleet.nodes.len() != 3 || fleet.boots.len() != 3 || fleet.records.len() != CELL_COUNT {
+    if fleet.nodes.len() < 3 || fleet.boots.len() != fleet.nodes.len() || fleet.records.is_empty() {
         return Err(invalid("example construction profile differs"));
     }
     let directory = &fleet.boots[0].directory;
-    let expected_sessions = (0..3).map(session).collect::<Vec<_>>();
+    let mut expected_sessions = roster
+        .enrollments()
+        .iter()
+        .filter(|record| {
+            record.unresolved()
+                && record.status() == EnrollmentStatus::Established
+                && matches!(record.spec().role, EnrollmentRole::Node { .. })
+        })
+        .map(|record| record.spec().target.session)
+        .collect::<Vec<_>>();
+    expected_sessions.sort_by_key(|boot| *boot.as_bytes());
+    let node_enrollments_complete = roster.enrollments().iter().all(|record| {
+        !matches!(record.spec().role, EnrollmentRole::Node { .. })
+            || record.status() != EnrollmentStatus::Pending
+    });
+    let mut active_indices = Vec::with_capacity(expected_sessions.len());
+    for record in roster.enrollments().iter().filter(|record| {
+        record.unresolved()
+            && record.status() == EnrollmentStatus::Established
+            && matches!(record.spec().role, EnrollmentRole::Node { .. })
+    }) {
+        let endpoint = record.spec().target;
+        if let Some(index) = (0..fleet.nodes.len())
+            .find(|index| node_id(*index) == endpoint.node && session(*index) == endpoint.session)
+        {
+            active_indices.push(index);
+        }
+    }
+    active_indices.sort_unstable();
     let mut advertised = directory.advertised_sessions(started, 128).await?;
     advertised.sort_by_key(|boot| *boot.as_bytes());
     let mut complete = advertised == expected_sessions
-        && roster.enrollments().iter().all(|record| {
-            matches!(record.spec().role, EnrollmentRole::Node { .. })
-                && record.status() != EnrollmentStatus::Pending
-        });
+        && active_indices.len() == expected_sessions.len()
+        && node_enrollments_complete;
     let mut nodes = Vec::new();
     let mut cells = Vec::new();
     let mut seen = HashSet::new();
     let mut inventories: Vec<Option<FleetNodeInventory>> = Vec::new();
     let mut references = Vec::new();
-    for index in 0..3 {
+    for index in active_indices.iter().copied() {
         let mut scan = FleetNodeInventoryScan::new(roster, node_id(index), session(index))?;
         let mut stable = true;
         while let Some(subject) = scan.next_subject()? {
@@ -200,24 +308,26 @@ async fn collect(
         cells.extend(scan.cells().iter().cloned());
         let inventory = if stable {
             let inventory = scan.finish()?;
-            let bindings = inventory.bindings();
-            // Absence requires this bootstrapped closed writer composition,
-            // native traversal and unexpected directory discovery together.
-            complete &= bindings.managed_startup
-                && !bindings.readers
-                && !bindings.follower_store
-                && !bindings.follower_producer
-                && !bindings.durability_supervisor
-                && inventory.node_log().is_none()
-                && inventory.transitioning_cells().is_empty()
-                && inventory.validate_enrollments(roster).is_ok();
+            // Global role coverage below applies enrollment validation with
+            // the exact cross-node proof for Established follower lanes that
+            // have not received their first append yet.
+            complete &=
+                inventory.bindings().managed_startup && inventory.transitioning_cells().is_empty();
             Some(inventory)
         } else {
             None
         };
         inventories.push(inventory);
         // Include expired and fenced leader obligations; live discovery alone
-        // could hide a follower role left by a failed boot.
+        // could hide a follower role left by a failed boot. The graph may be
+        // nonempty; its exact match is checked after every native recheck.
+        nodes.push(
+            fleet.boots[index]
+                .refresh_capacity(index, fleet.journal.as_ref(), deadline)
+                .await?,
+        );
+    }
+    for index in 0..fleet.nodes.len() {
         let logs = FleetFollowerReferences::collect(
             directory,
             roster,
@@ -227,13 +337,8 @@ async fn collect(
             clock,
         )
         .await?;
-        complete &= logs.entries().is_empty() && logs.validate_enrollments(roster).is_ok();
+        complete &= logs.validate_enrollments(roster).is_ok();
         references.push(logs);
-        nodes.push(
-            fleet.boots[index]
-                .refresh_capacity(index, fleet.journal.as_ref(), deadline)
-                .await?,
-        );
     }
     let mut authority = HashMap::new();
     for (cell, record) in fleet.records.iter() {
@@ -247,7 +352,7 @@ async fn collect(
     cells.retain(|owned| {
         let matches = authority
             .get(&owned.observation.target.cell_id())
-            .is_some_and(|current| matches_authority(owned, current));
+            .is_some_and(|current| matches_authority(owned, current, fleet.nodes.len()));
         complete &= matches;
         matches
     });
@@ -265,7 +370,7 @@ async fn collect(
     complete &= recheck_authority(fleet, &authority, &mut cells).await?;
     // Recheck every role category after *all* authority and membership reads.
     // Stable local-only traversals cannot supply this fleet-wide interval.
-    for (index, inventory) in inventories.iter_mut().enumerate() {
+    for (index, inventory) in active_indices.iter().copied().zip(inventories.iter_mut()) {
         let Some(inventory) = inventory else {
             let response = page(
                 fleet,
@@ -407,7 +512,7 @@ fn retain_unchanged_writers(
     });
 }
 
-fn matches_authority(owned: &FleetOwnedCell, current: &Control) -> bool {
+fn matches_authority(owned: &FleetOwnedCell, current: &Control, node_count: usize) -> bool {
     let row = &owned.observation;
     current.cell == row.target.cell_id()
         && current.incarnation == row.incarnation
@@ -416,7 +521,7 @@ fn matches_authority(owned: &FleetOwnedCell, current: &Control) -> bool {
         && current.state == ControlState::Serving
         && current.owner.as_ref().is_some_and(|owner| {
             owner.session == owned.session
-                && (0..3).any(|n| node_id(n) == owned.node && owner == &super::owner(n))
+                && (0..node_count).any(|n| node_id(n) == owned.node && owner == &super::owner(n))
         })
         && current.recovery.is_none()
         && current.root.as_ref().is_some_and(|root| {

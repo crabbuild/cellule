@@ -2,7 +2,7 @@
 use super::*;
 use cellule_host::fleet::{
     FleetActionCompletion, FleetAdapterFuture, FleetMaintenanceEnrollments, FleetObservation,
-    FleetObserver, FleetReaderEvacuationCheck, FleetRoster, FleetTransport,
+    FleetObserver, FleetReaderEvacuationCheck, FleetReconciler, FleetRoster, FleetTransport,
 };
 use cellule_runtime::fleet::operations::{
     FleetAction, FleetInspectionObservation, FleetInspectionRequest,
@@ -12,6 +12,137 @@ use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reference_observer_covers_a_live_reader_but_keeps_replacement_policy_open() {
+    let fixture = Fixture::new().await;
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let roster = FleetRoster::collect(fixture.journal.as_ref(), &snapshot, deadline())
+        .await
+        .unwrap();
+    let fleet = Arc::new(crate::scenario::adapters::LocalFleet {
+        nodes: fixture.nodes.clone(),
+        journal: fixture.journal.clone(),
+        boots: fixture.boots.clone(),
+        records: fixture.records.clone(),
+        reader_verifier: None,
+        capture_sequence: std::sync::atomic::AtomicU64::new(0),
+        lose_release_replies: false,
+        lost_release_replies: AtomicUsize::new(0),
+        drop_closed_finalize_replies: std::sync::atomic::AtomicUsize::new(0),
+        expired_receiver_cleanups: AtomicUsize::new(0),
+    });
+
+    let observation = fleet
+        .observe(&roster, clock().unwrap(), deadline())
+        .await
+        .unwrap();
+    let graph = observation.role_coverage().unwrap();
+    assert_eq!(graph.native_boots(), 3);
+    assert_eq!(graph.physical_nodes(), 3);
+    assert_eq!(graph.pending_enrollments(), 0);
+    let policies = observation.maintenance_policy_coverage().unwrap();
+    assert!(!policies.is_complete());
+    assert_eq!(policies.progress().required, 1);
+    assert_eq!(policies.progress().established, 1);
+
+    fixture.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reference_observer_reconciles_reader_only_maintenance_to_completion() {
+    let fixture = Fixture::new().await;
+    let fleet = Arc::new(crate::scenario::adapters::LocalFleet {
+        nodes: fixture.nodes.clone(),
+        journal: fixture.journal.clone(),
+        boots: fixture.boots.clone(),
+        records: fixture.records.clone(),
+        reader_verifier: Some(fixture.verifier()),
+        capture_sequence: std::sync::atomic::AtomicU64::new(0),
+        lose_release_replies: false,
+        lost_release_replies: AtomicUsize::new(0),
+        drop_closed_finalize_replies: std::sync::atomic::AtomicUsize::new(0),
+        expired_receiver_cleanups: AtomicUsize::new(0),
+    });
+
+    fixture.spare().await;
+    let capture = fixture.evacuate().await.unwrap();
+    let publication = fixture.publish(&capture).await;
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let roster = FleetRoster::collect(fixture.journal.as_ref(), &snapshot, deadline())
+        .await
+        .unwrap();
+    let observation = fleet
+        .observe(&roster, clock().unwrap(), deadline())
+        .await
+        .unwrap();
+    assert_eq!(observation.role_coverage().unwrap().native_boots(), 3);
+    let policies = observation.maintenance_policy_coverage().unwrap();
+    assert!(policies.is_complete());
+    assert_eq!(policies.progress().required, 1);
+    assert_eq!(policies.progress().checked, 1);
+    assert_eq!(
+        policies.obligations()[0].status(),
+        cellule_host::fleet::FleetMaintenancePolicyStatus::Reader(
+            publication.record().unwrap().digest().unwrap()
+        )
+    );
+
+    enabled(&fixture).await;
+    let driver = FleetReconciler::new(
+        scope(),
+        SessionId::from_bytes([206; 16]),
+        FleetProfile::default(),
+        fixture.journal.clone(),
+        fleet.clone(),
+        fleet.clone(),
+    )
+    .unwrap();
+    let mut report = None;
+    for _ in 0..3 {
+        let next = driver.reconcile_once(clock, deadline()).await.unwrap();
+        let completed = next.snapshot.head().maintenance().is_some_and(|operation| {
+            operation.phase() == cellule_runtime::fleet::operations::MaintenancePhase::Completed
+        });
+        report = Some(next);
+        if completed {
+            break;
+        }
+    }
+    let report = report.unwrap();
+    assert_eq!(
+        report.snapshot.head().maintenance().unwrap().phase(),
+        cellule_runtime::fleet::operations::MaintenancePhase::Completed
+    );
+    assert_eq!(fixture.nodes[1].state(), NodeState::Stopped);
+    assert!(fixture.directory.is_withdrawn(session(1)).await.unwrap());
+    assert_eq!(
+        fixture.original_row().await.status(),
+        EnrollmentStatus::Retired
+    );
+    assert!(
+        fixture
+            .reader
+            .query::<application::ReadValue>(None, 0)
+            .await
+            .is_err()
+    );
+    let replacement = fixture.managers[2]
+        .resolve(fixture.target.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        replacement
+            .query::<application::ReadValue>(Some(capture.minimum()), 0)
+            .await
+            .unwrap()
+            .output,
+        17
+    );
+
+    drop((capture, driver, fleet));
+    fixture.finish().await;
+}
 
 pub(super) async fn advertisements(directory: &NodeDirectory) -> Vec<NodeAdvertisement> {
     let mut nodes = Vec::new();

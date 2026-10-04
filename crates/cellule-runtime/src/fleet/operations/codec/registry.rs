@@ -1,7 +1,7 @@
 use super::*;
 use crate::node::NodeMode;
 
-fn write_version(e: &mut BoundedEncoder, version: RegistryVersion) -> Result<()> {
+pub(super) fn write_version(e: &mut BoundedEncoder, version: RegistryVersion) -> Result<()> {
     write_scope(e, version.scope)?;
     e.write_u64(version.revision)?;
     e.write_bool(version.bootstrap_revision.is_some())?;
@@ -12,7 +12,7 @@ fn write_version(e: &mut BoundedEncoder, version: RegistryVersion) -> Result<()>
     Ok(())
 }
 
-fn read_version(d: &mut BoundedDecoder<'_>) -> Result<RegistryVersion> {
+pub(super) fn read_version(d: &mut BoundedDecoder<'_>) -> Result<RegistryVersion> {
     let version = RegistryVersion {
         scope: read_scope(d)?,
         revision: d.read_u64()?,
