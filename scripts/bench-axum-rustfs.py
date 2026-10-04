@@ -168,7 +168,7 @@ def timed_writes(address, concurrency, seconds, first_id, directory, label):
 
 
 class Service:
-    def __init__(self, binary, directory, prefix, label, cells, workers):
+    def __init__(self, binary, directory, prefix, label, cells, workers, startup_timeout=120):
         self.cells = cells
         self.log = directory / f"{label}.log"
         env = os.environ.copy()
@@ -178,7 +178,7 @@ class Service:
         self.output = self.log.open("w")
         self.process = subprocess.Popen([str(binary)], env=env, stdout=self.output, stderr=subprocess.STDOUT)
         try:
-            deadline = started + 120
+            deadline = started + startup_timeout
             while time.perf_counter() < deadline:
                 contents = self.log.read_text()
                 ready = re.search(r"Orders service: http://(\S+)", contents)
@@ -190,6 +190,8 @@ class Service:
                     self.restored = int(startup.group(2))
                     require("Storage probe: passed all six checks;" in contents, "S3 capability probe missing")
                     self.startup_ms = (time.perf_counter() - started) * 1000
+                    activation = re.search(r"Cells activation milliseconds: (\d+)", contents)
+                    self.activation_ms = int(activation.group(1)) if activation else None
                     return
                 require(self.process.poll() is None, f"service failed to start; see {self.log}")
                 time.sleep(0.05)

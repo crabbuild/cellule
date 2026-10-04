@@ -5,6 +5,13 @@ verification, and limitations. Companion JSON files retain every measured pair,
 critical publication phases, receipt hashes and source/binary provenance. CI links retain
 raw artifacts. Do not combine gains from separate runs.
 
+The [node capacity target](node-capacity.md) tracks the 2,000-Cell,
+10,000-write/s and 50,000-read/s goal, offered-load measurements and required
+recovery/resource evidence. It is not a supported capacity claim.
+The [node scaling probes](2026-10-04-node-scaling-probes.md) retain provider CPU
+comparisons and failed density admission attempts with a
+[dataset](2026-10-04-node-scaling-probes.json).
+
 Reports identify frozen measured revisions. The later CI fix preserves reader
 rotation across discovery changes and synchronizes a durability test with its
 telemetry callback; those changes are outside the reported benchmark comparisons.

@@ -27,7 +27,7 @@ blake3.workspace = true
 cellule-ltx = { workspace = true, features = ["replica"] }
 cellule-store.workspace = true
 object_store.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 rusqlite.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }

@@ -47,7 +47,9 @@ use uuid::Uuid;
 mod sql_metrics;
 
 const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
-const MAX_CELLS: u32 = 16;
+const MAX_CELLS: u32 = 2_000;
+// Manifest shard counts are powers of two; a probe activates a bounded subset.
+const DECLARED_SHARDS: u32 = 2_048;
 const SCHEMA: &str = "CREATE TABLE orders (id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
 const COMMANDS: [OperationDescriptor; 1] = [operation(1)];
 const QUERIES: [OperationDescriptor; 1] = [operation(2)];
@@ -88,7 +90,7 @@ impl CellModule for Orders {
                 id: ORDERS,
                 name: Self::NAME,
                 role: CatalogRole::Sql,
-                shards: MAX_CELLS,
+                shards: DECLARED_SHARDS,
                 effect_targets: &[],
                 dead_letter: None,
             }],
@@ -123,7 +125,7 @@ impl CellApplication for OrdersApp {
             "orders",
             ORDERS,
             CatalogRole::Sql,
-            MAX_CELLS,
+            DECLARED_SHARDS,
         )?)?;
         Ok(())
     }
@@ -262,14 +264,14 @@ async fn read_order(
     })
 }
 
-fn example_count(name: &str, default: u32) -> ExampleResult<u32> {
+fn example_count(name: &str, default: u32, maximum: u32) -> ExampleResult<u32> {
     let count = match std::env::var(name) {
         Ok(value) => value.parse()?,
         Err(std::env::VarError::NotPresent) => default,
         Err(error) => return Err(error.into()),
     };
-    if !(1..=MAX_CELLS).contains(&count) {
-        return Err(format!("{name} must be in 1..={MAX_CELLS}").into());
+    if !(1..=maximum).contains(&count) {
+        return Err(format!("{name} must be in 1..={maximum}").into());
     }
     Ok(count)
 }
@@ -320,8 +322,8 @@ async fn example_storage() -> ExampleResult<(Store, Path)> {
 
 #[tokio::main]
 async fn main() -> ExampleResult<()> {
-    let cells = example_count("CELLULE_AXUM_CELLS", 1)?;
-    let workers = example_count("CELLULE_AXUM_WORKERS", 1)?;
+    let cells = example_count("CELLULE_AXUM_CELLS", 1, MAX_CELLS)?;
+    let workers = example_count("CELLULE_AXUM_WORKERS", 1, 16)?;
     let bind: SocketAddr = std::env::var("CELLULE_AXUM_BIND")
         .unwrap_or_else(|_| "127.0.0.1:3000".into())
         .parse()?;
@@ -359,16 +361,17 @@ async fn main() -> ExampleResult<()> {
         endpoint: "https://orders.local".into(),
     };
     let files = tempfile::TempDir::new()?;
-    let runtime = CellRuntime::new_with_replica_host(
-        SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(MAX_CELLS)?)?,
-        16 * 1024 * 1024,
-        session,
-        host,
-    )?;
+    // Native reservations need headroom below the node's pressure threshold;
+    // sizing this ceiling exactly to the writer count closes dense admission.
+    // This is an admission ceiling, not allocated memory or an RSS limit.
+    let pool = SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(cells)?)?
+        .with_native_memory_limit(512 * 1024 * 1024)?;
+    let runtime = CellRuntime::new_with_replica_host(pool, 16 * 1024 * 1024, session, host)?;
     let result: ExampleResult<()> = async {
         runtime.install_telemetry(query_metrics.clone())?;
         let mut handles = Vec::with_capacity(targets.len());
         let mut restored = 0;
+        let activation_started = std::time::Instant::now();
         for (shard, target) in targets.iter().enumerate() {
             // Publish the catalog entry and fenced owner before bootstrapping each Cell.
             let proof = catalog
@@ -443,6 +446,10 @@ async fn main() -> ExampleResult<()> {
             restored,
             workers,
             files.path().display()
+        );
+        println!(
+            "Cells activation milliseconds: {}",
+            activation_started.elapsed().as_millis()
         );
         println!(
             "Orders service: http://{} (Ctrl-C to drain)",
