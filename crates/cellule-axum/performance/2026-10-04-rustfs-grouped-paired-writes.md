@@ -97,6 +97,17 @@ raw replies are retained, not excluded from the evidence. Its exact error
 source must be diagnosed before retrying; resource ceilings and zero-error
 checks remain unchanged.
 
+A subsequent [error-source probe](https://github.com/crabbuild/cellule/actions/runs/37176372337)
+reproduces five baseline warmup failures. Every failed follow-up read reports
+`InvocationError::NotStarted(Capacity("Cell mailbox requests"))`. Both binaries
+have identical error-only probes and retained source diffs. A real actor
+regression reproduces the same refusal after a durable reply is delivered
+while its completed request still holds a slot. The admission fix releases
+finished request slots before terminal delivery, including all group members,
+while retaining byte charges until completion data is dropped and all admission
+for workers still running after timeout. It passes the regression and the
+local runtime suite; a fresh 64-client comparison is still required.
+
 The performance objective remains open for multicell publication limits,
 the sixteen-Cell tail regressions, and admission behavior at higher concurrency.
 Response throughput in the dataset measures JSON response-body bytes, not

@@ -166,6 +166,12 @@ The node bounds:
 - Per-Cell request and byte admission
 - Node-wide memory, disk, and activity admission
 
+A finished SQL or durability-proof task releases its per-Cell request slot
+before delivering the terminal reply, so a caller can admit its next invocation
+at the same concurrency bound. Completion data retains its byte reservations
+until dropped. An early deadline reply does not release a running worker's
+request slot or byte reservations; actual worker exit remains the boundary.
+
 Worker-job admission uses one slot per SQL worker:
 
 - **Waiting.** A job waiting for a busy worker holds neither another worker's slot nor a node worker-job reservation.

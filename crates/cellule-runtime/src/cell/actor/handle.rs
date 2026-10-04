@@ -48,9 +48,17 @@ pub(super) struct CellAdmission {
 }
 
 pub(super) struct WorkAdmission {
-    pub(super) _request: OwnedSemaphorePermit,
+    pub(super) _request: Option<OwnedSemaphorePermit>,
     pub(super) _cell_bytes: OwnedSemaphorePermit,
     pub(super) _node_bytes: ResourceReservation,
+}
+
+impl WorkAdmission {
+    pub(super) fn release_request_slot(&mut self) {
+        // A finished request can hand its slot to the reply's next invocation.
+        // Retained completion data still owns both byte reservations until drop.
+        drop(self._request.take());
+    }
 }
 
 /// One resident Cell whose published due time has passed.
@@ -467,7 +475,10 @@ impl CellHandle {
             return Err(Error::CellDraining);
         }
         let admission = WorkAdmission {
-            _request: try_one(self.admission.requests.clone(), "Cell mailbox requests")?,
+            _request: Some(try_one(
+                self.admission.requests.clone(),
+                "Cell mailbox requests",
+            )?),
             _cell_bytes: try_many(
                 self.admission.bytes.clone(),
                 reservation_bytes,
