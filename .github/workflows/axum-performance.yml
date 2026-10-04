@@ -91,6 +91,20 @@ jobs:
           lscpu > "$RUNNER_TEMP/axum-evidence/cpu.txt"
           rustc -Vv > "$RUNNER_TEMP/axum-evidence/rustc.txt"
           docker info --format '{{json .}}' > "$RUNNER_TEMP/axum-evidence/docker.json"
+          python3 - "$GITHUB_WORKSPACE" "$RUNNER_TEMP/axum-baseline-source" <<'PY'
+          import sys
+          from pathlib import Path
+          for directory in sys.argv[1:]:
+              p = Path(directory) / "crates/cellule-axum/examples/sql.rs"
+              s = p.read_text()
+              start = s.index("async fn read_order(")
+              pos = s.index(".await?;", start)
+              probe = '.await.map_err(|error| { eprintln!("[DEBUG-write-read] {error:?}"); error })?;'
+              p.write_text(s[:pos] + probe + s[pos + len(".await?;"):])
+          PY
+          git diff -- crates/cellule-axum/examples/sql.rs > "$RUNNER_TEMP/axum-evidence/candidate-instrumentation.diff"
+          git -C "$RUNNER_TEMP/axum-baseline-source" diff > "$RUNNER_TEMP/axum-evidence/baseline-instrumentation.diff"
+          sha256sum "$RUNNER_TEMP/axum-evidence/"*.patch "$RUNNER_TEMP/axum-evidence/"*.diff > "$RUNNER_TEMP/axum-evidence/instrumentation.sha256"
           CARGO_TARGET_DIR="$RUNNER_TEMP/axum-baseline-target" \
             cargo build --release -p cellule-axum --example sql --locked \
             --manifest-path "$RUNNER_TEMP/axum-baseline-source/Cargo.toml"
