@@ -11,6 +11,7 @@ Signed node transport uses the separate
 | --- | --- |
 | Fixed tenant with application-written handlers | [`sql` example](../examples/sql.rs) |
 | Authorized request context, typed registration and OpenAPI | [`typed-api-service` example](../examples/typed-api-service/main.rs) |
+| Interactive API documentation | [Application-owned Swagger UI page](../examples/openapi-ui.html), served at `/docs` by both service examples |
 | Native application builder, tenant scopes, leased host startup and shutdown | [Standalone application service](../examples/application-builder-service/README.md) |
 | Atomic evidence storage | [Example journal](../examples/typed-api-service/recovery/mod.rs) |
 | Local provider setup and cleanup on failure | [Example support](../examples/typed-api-service/support/mod.rs) |

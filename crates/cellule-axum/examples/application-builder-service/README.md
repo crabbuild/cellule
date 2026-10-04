@@ -67,6 +67,13 @@ cargo run --manifest-path crates/cellule-axum/examples/application-builder-servi
 The server binds `127.0.0.1:3002`. Set `CELLULE_EXAMPLE_BIND=127.0.0.1:0`
 to have the OS choose a free port; the selected address is printed.
 
+Open [interactive API docs](http://127.0.0.1:3002/docs), select **Authorize**,
+and enter `alpha-writer` or `beta-reader` without the `Bearer` prefix. Use
+**Try it out** to call routes; the read body is JSON `null`. The write recipe
+below generates a valid mutation identity. The [shared Swagger UI page](../openapi-ui.html)
+loads pinned assets from unpkg and needs browser internet access; the specification
+at `/openapi.json` is served locally and is also suitable for SDK generation.
+
 On a workstation with the mounted Workspace volume, set `CARGO_TARGET_DIR`
 to a directory unique to this checkout beneath `$HOME/Workspace/crabbuild-target`.
 
@@ -96,6 +103,7 @@ path parameters, and mutation inputs cannot select another tenant.
 | `POST /orders/total/read` | JSON `null` | Observed total and receipt; accepts `x-cellule-receipt` |
 | `POST /orders/total/resolve/{request_id}` | Empty | Original authorized command outcome, safe replay, or unresolved state |
 | `GET /ready` | Empty | `204` when the node/lease are ready |
+| `GET /docs` | Empty | Interactive Swagger UI with authorization and request execution |
 | `GET /openapi.json` | Empty | Generated command/query schemas, recovery/readiness routes, and bearer security |
 
 Write Alpha's total, retain the original body, then read at its receipt:

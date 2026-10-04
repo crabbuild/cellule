@@ -9,6 +9,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::DefaultBodyLimit,
+    response::Html,
     routing::{get, post},
 };
 use cellule_app::CellApplication;
@@ -40,17 +41,22 @@ async fn serve(state: Arc<ServiceState>) -> AppResult<()> {
         CellApi::<OrdersApp, Arc<ServiceState>>::new(state.node.application())?
             .command::<SetTotal, WriteOrders>(
                 ORDERS,
-                EndpointSpec::new("/orders/total", "setTotal"),
+                EndpointSpec::new("/orders/total", "setTotal")
+                    .description("Set the authorized tenant's total with a caller-created mutation identity. Retain the exact original body for retries and recovery. Negative totals are durable rejections."),
             )?
             .query::<ReadTotal, ReadOrders>(
                 ORDERS,
-                EndpointSpec::new("/orders/total/read", "readTotal"),
+                EndpointSpec::new("/orders/total/read", "readTotal")
+                    .description("Read the authorized tenant's total using JSON null as the body. Supply x-cellule-receipt to require observation of a previous write."),
             )?
             .into_router()
             .split_for_parts();
     document.merge(ManualRoutes::openapi());
     document.info.title = "Orders service".into();
     document.info.version = env!("CARGO_PKG_VERSION").into();
+    document.info.description = Some(
+        "Local example: use Authorize with token `alpha-writer` for read/write or `beta-reader` for read only (without the Bearer prefix). Queries take JSON `null`. Mutations require a UUID request_id and current issued_at_ms/expires_at_ms Unix timestamps in milliseconds; use a 60-second window and keep the same identity and input for every retry. Restarting this example resets its state.".into(),
+    );
 
     // The same service that authenticates requests documents its security.
     use utoipa::openapi::{
@@ -91,13 +97,20 @@ async fn serve(state: Arc<ServiceState>) -> AppResult<()> {
             post(recovery::resolve),
         )
         .route("/ready", get(auth::ready))
+        .route(
+            "/docs",
+            get(|| async { Html(include_str!("../../openapi-ui.html")) }),
+        )
         .route("/openapi.json", get(move || async move { Json(document) }))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(state);
 
     let bind = std::env::var("CELLULE_EXAMPLE_BIND").unwrap_or_else(|_| "127.0.0.1:3002".into());
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    println!("Orders service: http://{}", listener.local_addr()?);
+    println!(
+        "Orders service: http://{} (API docs: /docs)",
+        listener.local_addr()?
+    );
     let (signal_tx, signal_rx) = tokio::sync::oneshot::channel();
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
