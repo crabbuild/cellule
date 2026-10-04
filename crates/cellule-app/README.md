@@ -3,6 +3,12 @@
 Declare a stable Cell topology, compile native Rust modules, and expose typed
 application handles. The host owns runtime lifecycle and network wiring.
 
+Each SQL Cell owns its SQLite database, request ledger, and capture/recovery
+lineage. Cells can share worker threads and resource budgets within a host,
+and run on different nodes under separate fenced ownership. The application
+builder declares Cell types, partitions, schemas, and operations; the host
+handles placement, activation, routing, and recovery.
+
 ```mermaid
 flowchart LR
     Modules[Native modules] --> Builder[ApplicationBuilder]

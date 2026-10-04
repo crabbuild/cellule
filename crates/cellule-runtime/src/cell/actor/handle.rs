@@ -160,6 +160,7 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
+                group: None,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_execution",
@@ -214,6 +215,7 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
+                group: None,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_effect_execution",

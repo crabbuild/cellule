@@ -1,0 +1,117 @@
+diff --git a/crates/cellule-axum/examples/sql.rs b/crates/cellule-axum/examples/sql.rs
+index b75ed2c..0840f21 100644
+--- a/crates/cellule-axum/examples/sql.rs
++++ b/crates/cellule-axum/examples/sql.rs
+@@ -340,7 +340,13 @@ async fn main() -> ExampleResult<()> {
+         .map(|shard| CellTarget::new(tenant, application_id, ORDERS, &partition_for_shard(shard)))
+         .collect::<cellule_runtime::Result<_>>()?;
+     let (store, prefix) = example_storage().await?;
+-    let layout = CellStorageLayout::new(store, prefix, *application_id.as_bytes());
++    let host = Host::default().with_local_disk_budget(DiskBudget::new(1 << 30));
++    let query_metrics = Arc::new(sql_metrics::QueryMetrics::new(&host));
++    let layout = CellStorageLayout::new(
++        store.with_storage_observer(query_metrics.clone()),
++        prefix,
++        *application_id.as_bytes(),
++    );
+     let registry = application.registry();
+     let code = registry
+         .module_code(Orders::NAME)
+@@ -357,9 +363,8 @@ async fn main() -> ExampleResult<()> {
+         SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(MAX_CELLS)?)?,
+         16 * 1024 * 1024,
+         session,
+-        Host::default().with_local_disk_budget(DiskBudget::new(1 << 30)),
++        host,
+     )?;
+-    let query_metrics = Arc::new(sql_metrics::QueryMetrics::default());
+     let result: ExampleResult<()> = async {
+         runtime.install_telemetry(query_metrics.clone())?;
+         let mut handles = Vec::with_capacity(targets.len());
+diff --git a/crates/cellule-ltx/src/environment/host/mod.rs b/crates/cellule-ltx/src/environment/host/mod.rs
+index 0dc308d..8d7ac64 100644
+--- a/crates/cellule-ltx/src/environment/host/mod.rs
++++ b/crates/cellule-ltx/src/environment/host/mod.rs
+@@ -553,12 +553,15 @@ impl Host {
+     pub(crate) async fn for_dirty(&self) -> crate::Result<Self> {
+         let mut host = self.clone();
+         if host.dirty.is_none() {
++            let started = self.now_monotonic();
+             let permit = self
+                 .dirty_slots
+                 .clone()
+                 .acquire_owned()
+                 .await
+-                .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
++                .map_err(|e| crate::LtxError::Other(Box::new(e)));
++            self.observe_ltx_phase(LtxPhase::DirtyAdmission, started, permit.is_ok());
++            let permit = permit?;
+             let resource = self.reserve_resource(HostResourceKind::Dirty, 1)?;
+             host.dirty = Some(Arc::new(HostPermit {
+                 _resource: resource,
+@@ -572,12 +575,15 @@ impl Host {
+     pub(crate) async fn for_recovery(&self) -> crate::Result<Self> {
+         let mut host = self.for_dirty().await?;
+         if host.recovery.is_none() {
++            let started = self.now_monotonic();
+             let permit = self
+                 .recovery_slots
+                 .clone()
+                 .acquire_owned()
+                 .await
+-                .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
++                .map_err(|e| crate::LtxError::Other(Box::new(e)));
++            self.observe_ltx_phase(LtxPhase::RecoveryAdmission, started, permit.is_ok());
++            let permit = permit?;
+             let resource = self.reserve_resource(HostResourceKind::Recovery, 1)?;
+             host.recovery = Some(Arc::new(HostPermit {
+                 _resource: resource,
+diff --git a/crates/cellule-ltx/src/environment/telemetry.rs b/crates/cellule-ltx/src/environment/telemetry.rs
+index bd5ac84..17fa6e3 100644
+--- a/crates/cellule-ltx/src/environment/telemetry.rs
++++ b/crates/cellule-ltx/src/environment/telemetry.rs
+@@ -33,7 +33,16 @@ pub enum LtxPhase {
+     /// Checkpoint maintenance for the capture.
+     Checkpoint,
+     /// Preparing one immutable successor root from captured cuts.
++    /// Includes dirty-memory admission and admitted preparation work.
+     RootPreparation,
++    /// Waiting for dirty-memory admission before preparing captured cuts.
++    RootAdmission,
++    /// Preparing captured cuts after dirty-memory admission succeeds.
++    RootPreparationWork,
++    /// Acquiring a new shared dirty-memory semaphore permit.
++    DirtyAdmission,
++    /// Acquiring a new recovery permit after dirty-memory admission.
++    RecoveryAdmission,
+     /// Opening an exact root.
+     RootOpen,
+     /// Reading root directory pages.
+diff --git a/crates/cellule-ltx/src/replica/prepare.rs b/crates/cellule-ltx/src/replica/prepare.rs
+index 26b2ecb..24b0e84 100644
+--- a/crates/cellule-ltx/src/replica/prepare.rs
++++ b/crates/cellule-ltx/src/replica/prepare.rs
+@@ -55,10 +55,20 @@ impl CellReplica {
+         let started = self.host.now_monotonic();
+         let result = async {
+             let mut replica = self.clone();
+-            replica.host = self.host.for_dirty().await?;
+-            replica
++            let admitted = self.host.for_dirty().await;
++            self.host
++                .observe_ltx_phase(crate::LtxPhase::RootAdmission, started, admitted.is_ok());
++            replica.host = admitted?;
++            let work_started = self.host.now_monotonic();
++            let prepared = replica
+                 .prepare_captured(base, cuts, commit_sequence, schema)
+-                .await
++                .await;
++            self.host.observe_ltx_phase(
++                crate::LtxPhase::RootPreparationWork,
++                work_started,
++                prepared.is_ok(),
++            );
++            prepared
+         }
+         .await;
+         self.host

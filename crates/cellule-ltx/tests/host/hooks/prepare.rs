@@ -2,6 +2,115 @@
 
 use super::*;
 
+#[tokio::test]
+async fn root_preparation_separates_admission_wait_and_preserves_admission_errors() {
+    use cellule_ltx::{LtxPhase, LtxTelemetry, environment::Clock};
+    use std::time::Instant;
+
+    struct TestClock(Mutex<Instant>);
+    impl Clock for TestClock {
+        fn unix_millis(&self) -> i64 {
+            0
+        }
+        fn file_age(&self, _path: &Path) -> io::Result<Duration> {
+            Ok(Duration::ZERO)
+        }
+        fn monotonic(&self) -> Instant {
+            *self.0.lock().unwrap()
+        }
+    }
+    #[derive(Default)]
+    struct Phases(Mutex<Vec<(LtxPhase, Duration, bool)>>);
+    impl LtxTelemetry for Phases {
+        fn phase(&self, phase: LtxPhase, duration: Duration, succeeded: bool) {
+            self.0.lock().unwrap().push((phase, duration, succeeded));
+        }
+    }
+
+    let (directory, _faults, host, mut writer) = fixture();
+    let captured = writer.capture().unwrap();
+    let slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery_slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let clock = Arc::new(TestClock(Mutex::new(Instant::now())));
+    let phases = Arc::new(Phases::default());
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(Arc::new(InMemory::new())),
+            ObjectPath::from("root-admission-timing"),
+            [41; 16],
+        ),
+        [42; 32],
+        [43; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(
+        host.with_dirty_slots(Arc::clone(&slots))
+            .with_recovery_slots(recovery_slots.clone())
+            .with_clock(clock.clone())
+            .with_ltx_telemetry(phases.clone()),
+    );
+    let held = slots.clone().acquire_owned().await.unwrap();
+    let mut preparation = Box::pin(replica.prepare(None, &captured, 1, 1));
+    assert!(futures_util::poll!(&mut preparation).is_pending());
+    assert!(phases.0.lock().unwrap().is_empty());
+    *clock.0.lock().unwrap() += Duration::from_millis(100);
+    drop(held);
+    let prepared = preparation.await.unwrap();
+    assert_eq!(prepared.root().position, captured.position);
+    assert_eq!(prepared.root().commit_sequence, 1);
+    for (phase, elapsed) in [
+        (LtxPhase::DirtyAdmission, Duration::from_millis(100)),
+        (LtxPhase::RootAdmission, Duration::from_millis(100)),
+        (LtxPhase::RootPreparationWork, Duration::ZERO),
+        (LtxPhase::RootPreparation, Duration::from_millis(100)),
+    ] {
+        let observed = phases.0.lock().unwrap();
+        assert_eq!(observed.iter().filter(|entry| entry.0 == phase).count(), 1);
+        assert!(observed.contains(&(phase, elapsed, true)), "{observed:?}");
+    }
+    assert_eq!(slots.available_permits(), 1);
+
+    phases.0.lock().unwrap().clear();
+    let held_recovery = recovery_slots.clone().acquire_owned().await.unwrap();
+    let root = prepared.root();
+    let mut compaction = Box::pin(replica.prepare_compaction(&root, 0..1, 9, directory.path()));
+    assert!(futures_util::poll!(&mut compaction).is_pending());
+    assert_eq!(slots.available_permits(), 1);
+    assert!(phases.0.lock().unwrap().is_empty());
+    *clock.0.lock().unwrap() += Duration::from_millis(100);
+    drop(held_recovery);
+    let compacted = compaction.await.unwrap();
+    assert_eq!(compacted.root().position, root.position);
+    assert_eq!(compacted.root().commit_sequence, root.commit_sequence);
+    assert!(phases.0.lock().unwrap().contains(&(
+        LtxPhase::RecoveryAdmission,
+        Duration::from_millis(100),
+        true,
+    )));
+    assert_eq!(slots.available_permits(), 1);
+    assert_eq!(recovery_slots.available_permits(), 1);
+
+    phases.0.lock().unwrap().clear();
+    slots.close();
+    let error = replica.prepare(None, &captured, 1, 1).await.err().unwrap();
+    match error {
+        LtxError::Other(source) => {
+            assert!(source.downcast_ref::<tokio::sync::AcquireError>().is_some());
+        }
+        other => panic!("admission source was lost: {other}"),
+    }
+    assert_eq!(
+        *phases.0.lock().unwrap(),
+        vec![
+            (LtxPhase::DirtyAdmission, Duration::ZERO, false),
+            (LtxPhase::RootAdmission, Duration::ZERO, false),
+            (LtxPhase::RootPreparation, Duration::ZERO, false),
+        ]
+    );
+    writer.close().unwrap();
+}
+
 async fn verified_fixture(
     extra_bytes: i64,
 ) -> (tempfile::TempDir, Arc<Faults>, cellule_ltx::VerifiedRoot) {
@@ -232,20 +341,23 @@ async fn prepare_overlaps_independent_immutable_uploads() {
 #[cfg(feature = "replica")]
 #[tokio::test(start_paused = true)]
 async fn warm_append_reuses_its_authenticated_root_metadata() {
-    let (_directory, _faults, _host, mut writer) = fixture();
+    use cellule_store::test_support::{CountingObjectStore, ObjectReadKind};
+
+    let (directory, _faults, _host, mut writer) = fixture();
     let first = writer.capture_deferred().unwrap();
     let delay = Duration::from_millis(100);
     let backend = InMemory::new();
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(ThrottledStore::new(
+        backend.clone(),
+        ThrottleConfig {
+            wait_get_per_call: delay,
+            wait_put_per_call: delay,
+            ..ThrottleConfig::default()
+        },
+    ))));
     let replica = CellReplica::new(
         CellStorageLayout::new(
-            Store::new(Arc::new(ThrottledStore::new(
-                backend.clone(),
-                ThrottleConfig {
-                    wait_get_per_call: delay,
-                    wait_put_per_call: delay,
-                    ..ThrottleConfig::default()
-                },
-            ))),
+            Store::new(counted.clone()),
             ObjectPath::from("cached-root-metadata"),
             [74; 16],
         ),
@@ -260,6 +372,7 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
         .transaction(|transaction| transaction.execute_batch("INSERT INTO t VALUES(2)"))
         .unwrap();
     let second = writer.capture_deferred().unwrap();
+    counted.reset();
     let started = tokio::time::Instant::now();
 
     let prepared = replica.prepare(Some(&root), &second, 2, 1).await.unwrap();
@@ -268,7 +381,35 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
     // wave plus one overlapping immutable-upload wave, with no serial
     // metadata GETs or directory-before-root upload dependency.
     assert_eq!(started.elapsed(), delay * 2);
+    assert_eq!(counted.counts().heads, 2);
+    assert_eq!(counted.counts().body_requests(), 0);
+    assert_eq!(counted.put_requests(), 5);
     assert_eq!(prepared.root().position, second.position);
+    counted.reset();
+    let compacted = replica
+        .prepare_compaction(&prepared.root(), 0..2, 9, directory.path())
+        .await
+        .unwrap();
+    assert_eq!(compacted.root().position, prepared.root().position);
+    assert_eq!(
+        compacted.root().commit_sequence,
+        prepared.root().commit_sequence
+    );
+    // Remote range reads belong to compaction's authenticated body/index
+    // spools, rather than ordinary warm-write SQLite page faults.
+    assert_eq!(counted.counts().ranges, 4);
+    for extension in [".ltx", ".index"] {
+        assert_eq!(
+            counted
+                .requests()
+                .iter()
+                .filter(|request| {
+                    request.kind == ObjectReadKind::Range && request.location.ends_with(extension)
+                })
+                .count(),
+            2
+        );
+    }
     let independent = CellReplica::new(
         CellStorageLayout::new(
             Store::new(Arc::new(ThrottledStore::new(

@@ -51,7 +51,8 @@ def request(connection, method, path, body=None):
     response = connection.getresponse()
     raw = response.read()
     elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
-    return {"status": response.status, "body": json.loads(raw), "latency_ms": elapsed_ms}
+    return {"status": response.status, "body": json.loads(raw), "latency_ms": elapsed_ms,
+            "payload_bytes": len(raw)}
 
 
 def receipt_matches(actual, minimum):
@@ -101,7 +102,7 @@ def parallel(address, concurrency, inputs, operation):
 def summary(results, elapsed, expected_status):
     latencies = sorted(item["latency_ms"] for item in results)
     successes = sum(item["status"] == expected_status for item in results)
-    percentile = lambda percent: latencies[max(0, math.ceil(len(latencies) * percent / 100) - 1)]
+    percentile = lambda percent: latencies[max(0, math.ceil(len(latencies) * percent / 100) - 1)] if latencies else None
     return {
         "attempts": len(results),
         "successes": successes,
@@ -109,8 +110,61 @@ def summary(results, elapsed, expected_status):
         "statuses": dict(Counter(str(item["status"]) for item in results)),
         "seconds": elapsed,
         "successful_requests_per_second": successes / elapsed,
+        "payload_bytes_per_second": sum(item["payload_bytes"] for item in results if item["status"] == expected_status) / elapsed,
         "latency_ms_all_attempts": {"p50": percentile(50), "p95": percentile(95), "p99": percentile(99)},
     }
+
+
+def timed_writes(address, concurrency, seconds, first_id, directory, label):
+    """Retain every outcome, including errors; latency includes final in-flight requests.
+
+    This closed-loop driver is intended for storage-bound writes, not read TPS.
+    Stop admission at the deadline, then wait for all issued HTTP requests.
+    """
+    started = []
+    barrier = threading.Barrier(concurrency + 1, action=lambda: started.append(time.perf_counter()))
+
+    def worker(index):
+        connection = http.client.HTTPConnection(address, timeout=60)
+        replies = []
+        order_id = first_id + index
+        try:
+            connection.connect()
+            barrier.wait(timeout=60)
+            while time.perf_counter() < started[0] + seconds:
+                require(len(replies) < 100_000 // concurrency, "bounded write ledger exhausted")
+                envelope = identity(order_id)
+                # Disjoint arithmetic progressions preserve unique IDs even if
+                # clients complete at different rates; validate Cell coverage below.
+                admitted = time.perf_counter()
+                try:
+                    reply = request(connection, "POST", "/orders", envelope)
+                except Exception as error:
+                    reply = {"status": 0, "body": {"uncertain": True, "error": str(error)},
+                             "latency_ms": (time.perf_counter() - admitted) * 1000,
+                             "payload_bytes": 0}
+                replies.append(dict(reply, request=envelope,
+                                    completed_seconds=time.perf_counter() - started[0]))
+                if reply["status"] == 0:
+                    break
+                order_id += concurrency
+            return replies
+        except BaseException:
+            barrier.abort()
+            raise
+        finally:
+            connection.close()
+            # A failed peer or exhausted ledger still leaves every issued
+            # identity and terminal/uncertain outcome available for inspection.
+            (directory / f"{label}-client-{index}.json").write_text(json.dumps(replies) + "\n")
+
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(worker, index) for index in range(concurrency)]
+        barrier.wait(timeout=60)
+        replies = [item for future in futures for item in future.result()]
+        elapsed = time.perf_counter() - started[0]
+    require(replies, "steady write window completed no requests")
+    return replies, elapsed
 
 
 class Service:
@@ -184,6 +238,17 @@ def process_usage(pid):
     for index, value in enumerate(reversed(cpu.split(":"))):
         seconds += float(value) * 60 ** index
     return {"cpu_seconds": seconds, "rss_bytes": int(fields[1]) * 1024}
+
+
+def provider_usage(container):
+    """Read the dedicated provider's cgroup v2 CPU counters, outside the load loop."""
+    raw = subprocess.check_output(
+        ["docker", "exec", container, "cat", "/sys/fs/cgroup/cpu.stat"],
+        text=True, timeout=30,
+    )
+    counters = {key: int(value) for key, value in (line.split() for line in raw.splitlines())}
+    require("usage_usec" in counters, "provider cgroup lacks CPU usage evidence")
+    return counters
 
 
 def steady_reads(args, directory, service, concurrency, acknowledged):
@@ -268,9 +333,57 @@ def point(args, directory, repeat, concurrency, cells):
             reply = request(connection, "POST", "/orders", envelope)
             return dict(reply, request=envelope)
 
-        writes, elapsed = parallel(service.address, concurrency, envelopes[args.warmup:], write)
+        if args.write_seconds:
+            provider_before = provider_usage(args.provider_container) if args.provider_container else None
+            provider_started = time.perf_counter()
+            before = process_usage(service.process.pid)
+            driver_before = process_usage(os.getpid())
+            warm, warm_elapsed = timed_writes(service.address, concurrency, args.write_warmup_seconds, args.warmup + 1, directory, "write-warmup")
+            (directory / "write-warmup.json").write_text(json.dumps(warm, indent=2) + "\n")
+            require(all(item["status"] == 201 for item in warm), "steady write warmup failed")
+            for reply in warm:
+                verify_order(reply, reply["request"], initial_receipts[reply["request"]["id"] % cells], 201)
+                acknowledged.append((reply["request"], reply["body"]))
+            first_id = max(item["request"]["id"] for item in warm) + 1
+            profiler = None
+            if args.sample and platform.system() == "Darwin":
+                profiler = subprocess.Popen(["/usr/bin/sample", str(service.process.pid), "10", "-file", str(directory / "server-sample.txt")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                writes, elapsed = timed_writes(service.address, concurrency, args.write_seconds, first_id, directory, "writes")
+            finally:
+                if profiler is not None:
+                    profiler.wait(timeout=30)
+            after = process_usage(service.process.pid)
+            driver_after = process_usage(os.getpid())
+            provider_after = provider_usage(args.provider_container) if args.provider_container else None
+            provider_wall = time.perf_counter() - provider_started
+        else:
+            writes, elapsed = parallel(service.address, concurrency, envelopes[args.warmup:], write)
         (directory / "writes.json").write_text(json.dumps(writes, indent=2) + "\n")
         write_summary = summary(writes, elapsed, 201)
+        if args.write_seconds:
+            write_summary.update(
+                measurement_seconds=args.write_seconds, warmup_seconds=warm_elapsed,
+                warmup_successes=len(warm),
+                server_cpu_seconds=after["cpu_seconds"] - before["cpu_seconds"],
+                server_cpu_cores=(after["cpu_seconds"] - before["cpu_seconds"]) / (warm_elapsed + elapsed),
+                server_rss_before_bytes=before["rss_bytes"], server_rss_after_bytes=after["rss_bytes"],
+                driver_cpu_seconds=driver_after["cpu_seconds"] - driver_before["cpu_seconds"],
+                driver_cpu_cores=(driver_after["cpu_seconds"] - driver_before["cpu_seconds"]) / (warm_elapsed + elapsed),
+                completion_intervals=[dict(
+                    start_seconds=start, end_seconds=min(start + 10, args.write_seconds),
+                    **summary([reply for reply in writes if start <= reply["completed_seconds"] < min(start + 10, args.write_seconds)], min(10, args.write_seconds - start), 201),
+                ) for start in range(0, args.write_seconds, 10)],
+                completions_after_admission_deadline=sum(reply["completed_seconds"] >= args.write_seconds for reply in writes),
+            )
+            if provider_before is not None:
+                provider_cpu = (provider_after["usage_usec"] - provider_before["usage_usec"]) / 1_000_000
+                require(provider_cpu >= 0, "provider cgroup reset during measurement")
+                write_summary["provider_resources"] = {
+                    "window_seconds_including_warmup": provider_wall,
+                    "cpu_seconds": provider_cpu, "cpu_cores": provider_cpu / provider_wall,
+                    "cgroup_before": provider_before, "cgroup_after": provider_after,
+                }
         # Persist every failure before refusing qualification. Never silently
         # retry an uncertain outcome or replace the request identity.
         require(write_summary["errors"] == 0, f"write errors: {write_summary}; see {directory}")
@@ -333,12 +446,13 @@ def point(args, directory, repeat, concurrency, cells):
         recovered_replays, _ = parallel(service.address, concurrency, acknowledged, replay)
         # One shared identity across distinct Cells proves request ledgers are
         # Cell-scoped. Each recovered writer must publish and replay independently.
-        shared_identity = identity(len(envelopes) + 1)
+        next_id = max(envelope["id"] for envelope, _ in acknowledged) + 1
+        shared_identity = identity(next_id)
         next_replies = []
         connection = http.client.HTTPConnection(service.address, timeout=60)
         try:
             for index in range(cells):
-                next_envelope = dict(shared_identity, id=len(envelopes) + index + 1, total_cents=100 + index)
+                next_envelope = dict(shared_identity, id=next_id + index, total_cents=100 + index)
                 shard = next_envelope["id"] % cells
                 next_reply = request(connection, "POST", "/orders", next_envelope)
                 verify_order(next_reply, next_envelope, by_shard[shard][0][1]["receipt"], 201)
@@ -361,6 +475,7 @@ def point(args, directory, repeat, concurrency, cells):
             "writes": write_summary, "reads": read_summary, "steady_reads": steady,
             "verification": {
                 "warmup_writes": args.warmup, "acknowledged_rows": len(acknowledged),
+                "timed_warmup_writes": len(warm) if args.write_seconds else 0,
                 "live_exact_retries": len(replayed), "conflicts": conflicts,
                 "invalid_identities": invalid_replies,
                 "cold_recovered_rows": len(recovered), "cold_exact_retries": len(recovered_replays),
@@ -397,14 +512,22 @@ def main():
     parser.add_argument("--writes", type=positive, default=300)
     parser.add_argument("--reads", type=positive, default=1500)
     parser.add_argument("--warmup", type=positive, default=20)
+    parser.add_argument("--write-seconds", type=positive, help="steady closed-loop write duration, up to 3600 seconds")
+    parser.add_argument("--write-warmup-seconds", type=positive, default=5)
     parser.add_argument("--read-driver", type=Path, help="release http_load example binary")
     parser.add_argument("--read-seconds", type=positive, help="steady-state read duration, up to 3600 seconds")
     parser.add_argument("--read-warmup-seconds", type=positive, default=5)
     parser.add_argument("--sample", action="store_true", help="capture a ten-second macOS server stack sample")
+    parser.add_argument("--provider-container", help="record dedicated RustFS container cgroup v2 CPU during timed writes")
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
     if args.baseline_binary:
         args.baseline_binary = args.baseline_binary.resolve(strict=True)
+    if args.write_seconds:
+        require(args.write_seconds <= 3600 and args.write_warmup_seconds <= 60, "write duration/warmup exceed bounds")
+        require(max(args.concurrency) <= 128, "steady-state clients are bounded at 128")
+        require(not args.read_seconds, "measure steady writes and reads in separate runs")
+    require(not args.provider_container or args.write_seconds, "provider CPU measurement requires timed writes")
     require(bool(args.read_driver) == bool(args.read_seconds), "read driver and duration must be supplied together")
     if args.read_driver:
         args.read_driver = args.read_driver.resolve(strict=True)
@@ -436,8 +559,10 @@ def main():
         "writes": args.writes, "reads": args.reads, "warmup": args.warmup,
         "repeats": args.repeats, "concurrency": args.concurrency, "cells": args.cells, "workers": args.workers,
         "read_seconds": args.read_seconds, "read_warmup_seconds": args.read_warmup_seconds,
+        "write_seconds": args.write_seconds, "write_warmup_seconds": args.write_warmup_seconds,
         "read_driver_sha256": driver_digest, "baseline_binary_sha256": baseline_digest,
         "http_tokio_workers": os.environ.get("TOKIO_WORKER_THREADS", "system_default"),
+        "provider_container": args.provider_container,
         "workload": "order_id mod active Cells; POST inserts then receipt-bound SELECT; GET owner-ordered SELECT; closed loop",
     }
     (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
