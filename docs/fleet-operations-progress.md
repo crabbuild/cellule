@@ -6968,3 +6968,72 @@ the maintenance role/controller/fault matrix; production process/transport
 adapters and measured W9 fault/mixed-version qualification; and W10 rollout and
 runbook evidence. The four required CLI scenarios are available, while W8's
 complete application integration and qualification obligations remain open.
+
+## October 4 2026 interrupted receiver recovery checkpoint
+
+Source: parent `c61fc55`; implementation/CI diff SHA-256
+`e333a421e2ad6a98bfe10c459df6a6be0072366c85b7bc8284fd80eb7b6ae33a`.
+Reproduce from this checkpoint commit with
+`git diff --binary c61fc55 HEAD -- .github/workflows/rust.yml crates/cellule-host/src/fleet/movement crates/cellule-host/minion ':(exclude)*.md' | shasum -a 256`.
+
+Actual transaction-boundary faults exposed a liveness gap: an interrupted
+receiver evidence write left a safe native rollback root, but replay could not
+publish its result after ordinary acquisition because the recovery evidence was
+missing. The host now reconstructs that record only from the exact original
+canonical acquisition input/materialization. A retained record keeps its
+original capture time. Missing, corrupt or valid-but-substituted history cannot
+be replaced by current owner, root equality or epoch counters.
+
+Replay also resumes an Idle rollback itself through ordinary admitted native
+acquisition. It confirms the original recovery evidence and verifies its
+materialized prefix and the clean release prefix before another ownership CAS.
+The original routed acceptance, basis and movement charge remain unchanged;
+there is no second movement or replacement Idle basis. A same-session ordinary
+acquisition winner passes the same current-serving/history checks. Fresh
+inspection performs neither evidence repair nor acquisition.
+
+Nine new real-node cases pause SQLite basis/evidence writes before commit or
+after commit before reply. They cover both basis boundaries, both evidence
+boundaries, cancelled waiters before and after takeover, another interrupted
+reconstruction write, automatic Idle resumption and an ordinary acquisition
+winner. Missing/corrupt/substituted native records leave authority unchanged and
+retain the full charge; an already retained journal recovery record cannot
+replace missing native history. The substituted record comes from a different
+fully joined canonical acquisition and decodes successfully for the same
+Cell/incarnation/epoch. Each successful case reopens an independent journal
+client, compares immutable records, settles through the public reconciler,
+resolves the original command receipt/value and joins all node resources.
+While paused, active-cell credit is distinguished from actual Owned actor
+inventory. Original injected I/O errors remain in the source chain.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | 16 passed; 0 failed, including the 9 new fault cases. |
+| `cargo test -p cellule-host --test node fleet_receivers:: --all-features --locked -- --test-threads=2` | 29 passed; 0 failed. |
+| `cargo test -p cellule-host --example fleet_operations reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --nocapture --test-threads=1` | 1 passed; 0 failed with unchanged deadlines and completion assertions. |
+| `cargo run -p cellule-host --example fleet_operations --all-features --locked -- receiver-loss` | Exit 0; 12 receipt checks, one release/activation/retirement, controller epoch 2, final placement `[11, 0, 1]`, 3 joined nodes/retired boots and lost activation reply replay. |
+| Host example/all-target/all-feature Clippy with `-D warnings`, format, boundaries, module ownership, whitespace, documented Rust and local Markdown links | Passed; 137 Rust snippets and 1,348 local links/anchors checked. |
+
+Hosted Rust workspace CI on `c61fc55` ran all 352 minion cases: 351 passed and
+one follower-only maintenance collection hit its finite observer deadline.
+There was no stack abort or observation-count failure. The new CI scheduling
+isolates unrelated fixtures with one harness test thread; every case retains
+its native worker concurrency, races, deadlines and required evidence. This is
+a scheduling change, not a measured diagnosis or proof that the hosted timeout
+is resolved. Hosted current-head results must confirm it. Object-proof,
+follower-proof, MSRV, contract and quality checks passed on `c61fc55`; those
+results do not qualify this newer source.
+
+Highest next priorities:
+
+1. Verify current-head CI; qualify routed recovery with inherited overlays,
+   historical suffix loss/substitution and stale generation/provider faults.
+2. Complete maintenance controller loss during evacuation/closing and the
+   remaining reader/follower/primitive fault combinations, including external
+   Cron/Blob owners and accepted-work/process closure.
+3. Deliver production process/transport integration and the versioned W9 fleet
+   qualification profile/runner with actual provider, load, resource and
+   mixed-binary evidence; exercise W10 rollout, rollback and runbooks.
+
+This remains a focused W4/W5 increment. In-process process-closure providers
+and selected test success do not establish completion of W4–W10.

@@ -64,7 +64,7 @@ impl FleetActionExecutor {
             if closed_receiver_route
                 && self
                     .journal
-                    .load_receiver_recovery_evidence(accepted)
+                    .load_receiver_recovery_basis(accepted)
                     .await
                     .map_err(journal_error)?
                     .is_some()
@@ -79,6 +79,18 @@ impl FleetActionExecutor {
                 .serving(attempt, &inputs)
                 .await
                 .map(ActionResult::checked);
+        }
+        if closed_receiver_route
+            && self
+                .journal
+                .load_receiver_recovery_basis(accepted)
+                .await
+                .map_err(journal_error)?
+                .is_some()
+        {
+            return self
+                .resume_receiver_recovery(accepted, attempt, &inputs, observed)
+                .await;
         }
         let basis =
             AcquisitionBasis::new(accepted.clone(), observed.value().clone(), wall_time_ms()?)

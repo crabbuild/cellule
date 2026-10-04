@@ -736,6 +736,16 @@ suffix, and native derivation from the release root. Missing provider/journal
 evidence keeps the attempt charged. Deploy readers for record kinds 30 and 31
 before enabling this path; old source-recovery records keep their exact binding.
 
+An interrupted receiver evidence write may leave a safe Idle rollback root.
+Replay of the original accepted effect reconfirms the immutable takeover input
+and materialization from canonical acquisition history, then records the missing
+evidence. Before resuming ordinary admitted acquisition, it verifies that Idle
+root against the recovery and clean release prefixes. The original basis and
+capture times remain unchanged; no second movement permit or Idle basis replaces
+them. If ordinary acquisition already won, replay verifies the current actor
+against the same history. Missing, corrupt, or substituted history leaves Unknown
+and the full charge. Fresh inspection performs no evidence writes or acquisition.
+
 The application authenticates management requests. The journal atomically
 checks the current controller epoch, head, permit, intent, endpoint, and
 deadline when first accepting an action. `AcceptedFleetAction` validates its

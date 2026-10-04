@@ -37,7 +37,7 @@ same action and evidence contracts.
 | Which external facilities are required? | A linearizable journal, complete enrollment registry, authenticated management transport, and trusted local Cell inputs. The reference example supplies these behind the same contracts. |
 | What keeps operations simple? | One operation ID, one status contract, one application loop, bounded defaults, and one canonical host drain lane. |
 | What proves success? | Receipt-preserving actor activation on another node. Maintenance additionally requires settled role obligations, host Stopped, and session withdrawal. |
-| What is the next concrete change? | Qualify routed receiver recovery under interrupted evidence writes, inherited overlays and stale generations. Real-node cases cover routed Activate/Cancel, accepted activation before claim, failed Serving/Recovering receiver takeover, lost committed replies, duplicate replay, independent journal reconstruction and refusal without canonical proof. Complete the maintenance role/fault matrix, production process and transport adapters, W9 load and mixed-version qualification, and W10 rollout/runbooks. |
+| What is the next concrete change? | Qualify routed receiver recovery with inherited overlays and stale generations. Real-node cases now cover interrupted basis/evidence writes and replies, cancellation before/after takeover, safe Idle resumption, an ordinary acquisition winner, immutable reconstruction and refusal with missing/corrupt/substituted native history. Complete the maintenance role/fault matrix, production process and transport adapters, W9 load and mixed-version qualification, and W10 rollout/runbooks. |
 
 Start with the [first slice commit sequence](#first-slice-commit-sequence).
 Every increment must expose a reviewable public behavior and retain its test
@@ -776,7 +776,16 @@ of that spec or a second movement permit.
    replays only at that target. A controller restart recovers the accepted
    target/closure chain from durable journal records. A second receiver failure
    may continue only after its own fresh process closure; bound the chain and
-   leave an inspectable charged blocker when the bound is exhausted.
+leave an inspectable charged blocker when the bound is exhausted.
+
+An interrupted evidence write after native materialization can roll the target
+back to a safe Idle root. Replay reconfirms or reconstructs the original receiver
+evidence only from the exact canonical acquisition record. It verifies both the
+original recovery prefix and clean release prefix before ordinary admitted
+acquisition. The retained acceptance, original recovery input/materialization,
+capture times and charged permit remain unchanged. A same-session ordinary
+acquisition winner must pass those same current-serving checks. Missing or
+substituted history remains Unknown; inspection cannot repair records or acquire.
 
 Tests must kill the original receiver after confirmed release, preserve the
 acknowledged root, recover on a different live receiver, and verify current

@@ -147,16 +147,8 @@ impl FleetActionExecutor {
         inputs: &FleetCellInputs,
     ) -> cellule_runtime::Result<ActionResult> {
         let evidence = self
-            .journal
-            .load_receiver_recovery_evidence(accepted)
-            .await
-            .map_err(journal_error)?
-            .ok_or(Error::Peer(
-                "serving receiver lacks retained recovery evidence",
-            ))?;
-        if evidence.basis().accepted() != accepted {
-            return Err(Error::Fenced);
-        }
+            .confirm_receiver_recovery_evidence(accepted, inputs)
+            .await?;
         let serving = self
             .serving_evidence(attempt, inputs, ServingPrefix::ReceiverRecovered(&evidence))
             .await?;
@@ -171,5 +163,74 @@ impl FleetActionExecutor {
         };
         evidence.validate_result(&envelope).map_err(operation)?;
         Ok(ActionResult::checked(outcome))
+    }
+
+    // Effect replay may repair an interrupted evidence write. This lookup is
+    // never used by read-only inspection and starts no acquisition. Native
+    // history retained the exact input/materialization before actor admission;
+    // current owner, counters or root equality cannot replace that history.
+    pub(super) async fn confirm_receiver_recovery_evidence(
+        &self,
+        accepted: &AcceptedFleetAction,
+        inputs: &FleetCellInputs,
+    ) -> cellule_runtime::Result<ReceiverRecoveryEvidence> {
+        if let Some(evidence) = self
+            .journal
+            .load_receiver_recovery_evidence(accepted)
+            .await
+            .map_err(journal_error)?
+        {
+            if evidence.basis().accepted() != accepted {
+                return Err(Error::Fenced);
+            }
+            return Ok(evidence);
+        }
+        let basis = self
+            .journal
+            .load_receiver_recovery_basis(accepted)
+            .await
+            .map_err(journal_error)?
+            .ok_or(Error::Peer(
+                "serving receiver lacks retained recovery input",
+            ))?;
+        if basis.accepted() != accepted {
+            return Err(Error::Fenced);
+        }
+        let original = basis.control();
+        let epoch = original
+            .epoch
+            .checked_add(1)
+            .ok_or(Error::Control("receiver recovery epoch overflow"))?;
+        let canonical = inputs
+            .authority
+            .acquisition_record(original.cell, original.incarnation, epoch)
+            .await?
+            .ok_or(Error::AcquisitionHistoryIncomplete {
+                cell: original.cell,
+                incarnation: original.incarnation,
+                epoch,
+            })?;
+        if canonical.input() != original {
+            return Err(Error::Control(
+                "receiver recovery input differs from canonical acquisition",
+            ));
+        }
+        let evidence =
+            ReceiverRecoveryEvidence::new(basis, canonical.materialized().clone(), wall_time_ms()?)
+                .map_err(operation)?;
+        let retained = self
+            .journal
+            .record_receiver_recovery_evidence(&evidence)
+            .await
+            .map_err(journal_error)?;
+        if retained.basis() != evidence.basis()
+            || retained.restored() != evidence.restored()
+            || retained.recorded_at_ms() > evidence.recorded_at_ms()
+        {
+            return Err(Error::Peer(
+                "journal changed reconstructed receiver recovery result",
+            ));
+        }
+        Ok(retained)
     }
 }

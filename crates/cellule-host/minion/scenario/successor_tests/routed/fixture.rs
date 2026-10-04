@@ -254,6 +254,29 @@ impl Fixture {
             .unwrap()
     }
 
+    pub(super) async fn acquire_rolled_back_replacement(&self) {
+        let record = &self.records[&self.spec.target.cell_id()];
+        let idle = record
+            .authority
+            .load(record.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(idle.value().state, ControlState::Idle);
+        self.nodes[2]
+            .runtime()
+            .acquire_idle_restored(
+                record.catalog.clone(),
+                record.replica.clone(),
+                record.authority.clone(),
+                idle,
+                self._root.path().join("ordinary-receiver-resume.sqlite"),
+                owner(2),
+            )
+            .await
+            .unwrap();
+    }
+
     pub(super) async fn shutdown(&self) {
         let nodes = &self.nodes;
         let boots = &self.boots;

@@ -18,6 +18,7 @@ mod inspection;
 mod prefix;
 mod receiver;
 mod receiver_recovery;
+mod receiver_resume;
 mod recovery;
 
 pub(super) enum ServingPrefix<'a> {

@@ -20,6 +20,15 @@ controller lease expiry. No configured takeover proof keeps the failed claim
 unresolved. The stopped-process witness is an explicit in-process reference
 provider; process/provider qualification remains required.
 
+The `recovery_faults::` cases pause actual receiver basis/evidence transactions
+before commit or after commit before reply. They check cancellation on both
+sides of takeover, repeated evidence-write failure, safe Idle resumption and an
+ordinary acquisition winner. Missing, corrupt and valid substituted native
+history cannot authorize continuation. Each completed case verifies the original
+receipt/value, immutable records through an independent journal client, and
+joined node resources. These selected cases retain two-worker native races;
+CI runs unrelated minion fixtures serially to isolate their finite deadlines.
+
 Run receiver loss after clean source release through the public reconciler:
 
 ```sh

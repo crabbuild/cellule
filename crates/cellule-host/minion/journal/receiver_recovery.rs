@@ -47,22 +47,40 @@ impl SqliteJournal {
         basis: &'a ReceiverRecoveryBasis,
     ) -> FleetAdapterFuture<'a, ReceiverRecoveryBasis> {
         let basis = basis.clone();
-        Box::pin(self.run(move |db| {
-            let bytes = basis.to_bytes()?;
-            if db.basis(basis.accepted(), 1)?.is_some() {
-                return Err(OperationError::Conflict.into());
-            }
-            if let Some(bytes) = db.receiver_basis(basis.accepted(), 1)? {
-                let original = ReceiverRecoveryBasis::from_bytes(&bytes)?;
-                if original.accepted() != basis.accepted() || original.control() != basis.control()
-                {
-                    return Err(OperationError::Conflict.into());
-                }
-                return Ok(original);
-            }
-            db.write_receiver_basis(basis.accepted(), 1, bytes)?;
-            Ok(basis)
-        }))
+        Box::pin(async move {
+            #[cfg(test)]
+            self.receiver_recovery_write_boundary(
+                RecoveryWrite::Basis,
+                RecoveryWriteBoundary::BeforeCommit,
+            )
+            .await?;
+            let retained = self
+                .run(move |db| {
+                    let bytes = basis.to_bytes()?;
+                    if db.basis(basis.accepted(), 1)?.is_some() {
+                        return Err(OperationError::Conflict.into());
+                    }
+                    if let Some(bytes) = db.receiver_basis(basis.accepted(), 1)? {
+                        let original = ReceiverRecoveryBasis::from_bytes(&bytes)?;
+                        if original.accepted() != basis.accepted()
+                            || original.control() != basis.control()
+                        {
+                            return Err(OperationError::Conflict.into());
+                        }
+                        return Ok(original);
+                    }
+                    db.write_receiver_basis(basis.accepted(), 1, bytes)?;
+                    Ok(basis)
+                })
+                .await?;
+            #[cfg(test)]
+            self.receiver_recovery_write_boundary(
+                RecoveryWrite::Basis,
+                RecoveryWriteBoundary::AfterCommit,
+            )
+            .await?;
+            Ok(retained)
+        })
     }
     pub(super) fn receiver_recovery_input<'a>(
         &'a self,
@@ -86,28 +104,45 @@ impl SqliteJournal {
         evidence: &'a ReceiverRecoveryEvidence,
     ) -> FleetAdapterFuture<'a, ReceiverRecoveryEvidence> {
         let evidence = evidence.clone();
-        Box::pin(self.run(move |db| {
-            let accepted = evidence.basis().accepted();
-            let basis = ReceiverRecoveryBasis::from_bytes(
-                &db.receiver_basis(accepted, 1)?
-                    .ok_or(OperationError::NotFound)?,
-            )?;
-            if &basis != evidence.basis() {
-                return Err(OperationError::Conflict.into());
-            }
-            let bytes = evidence.to_bytes()?;
-            if let Some(bytes) = db.receiver_basis(accepted, 2)? {
-                let original = ReceiverRecoveryEvidence::from_bytes(&bytes)?;
-                if original.basis() != evidence.basis()
-                    || original.restored() != evidence.restored()
-                {
-                    return Err(OperationError::Conflict.into());
-                }
-                return Ok(original);
-            }
-            db.write_receiver_basis(accepted, 2, bytes)?;
-            Ok(evidence)
-        }))
+        Box::pin(async move {
+            #[cfg(test)]
+            self.receiver_recovery_write_boundary(
+                RecoveryWrite::Evidence,
+                RecoveryWriteBoundary::BeforeCommit,
+            )
+            .await?;
+            let retained = self
+                .run(move |db| {
+                    let accepted = evidence.basis().accepted();
+                    let basis = ReceiverRecoveryBasis::from_bytes(
+                        &db.receiver_basis(accepted, 1)?
+                            .ok_or(OperationError::NotFound)?,
+                    )?;
+                    if &basis != evidence.basis() {
+                        return Err(OperationError::Conflict.into());
+                    }
+                    let bytes = evidence.to_bytes()?;
+                    if let Some(bytes) = db.receiver_basis(accepted, 2)? {
+                        let original = ReceiverRecoveryEvidence::from_bytes(&bytes)?;
+                        if original.basis() != evidence.basis()
+                            || original.restored() != evidence.restored()
+                        {
+                            return Err(OperationError::Conflict.into());
+                        }
+                        return Ok(original);
+                    }
+                    db.write_receiver_basis(accepted, 2, bytes)?;
+                    Ok(evidence)
+                })
+                .await?;
+            #[cfg(test)]
+            self.receiver_recovery_write_boundary(
+                RecoveryWrite::Evidence,
+                RecoveryWriteBoundary::AfterCommit,
+            )
+            .await?;
+            Ok(retained)
+        })
     }
     pub(super) fn receiver_recovery_result<'a>(
         &'a self,

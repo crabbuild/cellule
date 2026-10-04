@@ -88,10 +88,11 @@ jobs:
               --locked -- --ignored --exact --nocapture
           done
       - name: Test fleet journal and public controller models
-        # Each case runs concurrent native runtimes and SQL workers. Bound whole
-        # fixtures on the hosted runner; retain each case's deadlines and races.
+        # Each case runs concurrent native runtimes and SQL workers. Isolate
+        # unrelated fixtures on the hosted runner; retain each case's deadlines,
+        # worker concurrency, protocol races and required evidence.
         # Preserve earlier assertion details even if a later native case aborts.
-        run: cargo test -p cellule-host --example fleet_operations --all-features --locked -- --test-threads=2 --nocapture
+        run: cargo test -p cellule-host --example fleet_operations --all-features --locked -- --test-threads=1 --nocapture
       - name: Verify Axum HTTP publication, retries and cold recovery against RustFS
         env:
           AWS_ACCESS_KEY_ID: cellule-ci

@@ -4,4 +4,5 @@ use crate::scenario::receiver_loss::adapters::{ClosedBootObserver, LoseRoutedAct
 use cellule_host::fleet::{FleetActionAcceptance, FleetObserver, FleetTransport};
 use cellule_runtime::control::{ControlState, Transition};
 mod fixture;
+mod recovery_faults;
 mod tests;

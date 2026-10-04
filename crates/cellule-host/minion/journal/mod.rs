@@ -19,6 +19,10 @@ mod follower_evacuation;
 mod maintenance_enrollments;
 mod reader_evacuation;
 mod receiver_recovery;
+#[cfg(test)]
+mod receiver_recovery_faults;
+#[cfg(test)]
+pub(crate) use receiver_recovery_faults::{RecoveryWrite, RecoveryWriteBoundary};
 mod records;
 mod writer_inventory;
 use records::{Db, blob, profile_bytes, scope_bytes};
@@ -51,6 +55,8 @@ struct Inner {
     follower_evacuation_reply: Mutex<Option<EnrollmentReplyPause>>,
     #[cfg(test)]
     original_writer_reply: Mutex<Option<BootReplyPause>>,
+    #[cfg(test)]
+    receiver_recovery_reply: Mutex<Option<receiver_recovery_faults::RecoveryWritePause>>,
 }
 
 #[cfg(test)]
@@ -148,6 +154,8 @@ impl SqliteJournal {
                 follower_evacuation_reply: Mutex::new(None),
                 #[cfg(test)]
                 original_writer_reply: Mutex::new(None),
+                #[cfg(test)]
+                receiver_recovery_reply: Mutex::new(None),
             }),
         })
     }
