@@ -2,7 +2,8 @@
 
 The compaction pipeline is faster, but this comparison does **not** establish a
 consistent improvement in write throughput or HTTP tail latency. A second
-comparison against current main also has mixed results. Keep the optimization goal open.
+comparison against current main and a third instrumented comparison also have
+mixed results. Keep the optimization goal open.
 
 ## Scope
 
@@ -136,3 +137,83 @@ complete 191,177 writes. The independent artifact audit checks 199,959 timed
 receipts; the remaining 288 manual warmup acknowledgments are covered by the
 harness. Source rows, exact replays, contiguous sequences, drained authority,
 new recovery fences, and independent next writes all pass.
+
+## Instrumented admission diagnosis
+
+[Completed instrumented comparison](https://github.com/crabbuild/cellule/actions/runs/37164312064)
+uses candidate `1b73491650462c38de8b4a34c07619f117b5d948` against main
+`5724959a79be90df1ed8e85f6e123c109455d2f5`, with the same three-pair,
+120-second protocol. This candidate adds observations to the compaction overlap;
+it does **not** include the subsequent recovery-admission fix.
+[Full diagnostic data](2026-10-04-rustfs-admission-diagnostic-writes.json)
+retains all eighteen points, raw-client hashes, capacities, provider operation
+histograms, and dedicated RustFS cgroup CPU counters. The observation backport
+and full baseline diff pass their retained SHA-256 checks. The backport matches
+the tracked fixture and changes only example wiring and phase observations.
+
+| Cells | Baseline median TPS | Candidate median TPS | Paired TPS change | Paired p95 change | Paired p99 change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 60.00 | 62.53 | -0.7% | +4.4% | +11.7% |
+| 4 | 100.11 | 99.08 | -0.3% | -2.9% | -1.9% |
+| 16 | 105.24 | 104.67 | -0.5% | -5.2% | +1.4% |
+
+| Cells | Repeat | TPS change | p95 change | p99 change |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1 | +4.2% | +0.5% | +6.3% |
+| 1 | 2 | -0.7% | +4.4% | +13.1% |
+| 1 | 3 | -2.6% | +14.1% | +11.7% |
+| 4 | 1 | -0.3% | -2.9% | -1.9% |
+| 4 | 2 | +0.2% | -4.2% | -4.5% |
+| 4 | 3 | -6.0% | -0.9% | -1.6% |
+| 16 | 1 | -0.5% | -10.1% | +1.4% |
+| 16 | 2 | -12.7% | +6.8% | +15.8% |
+| 16 | 3 | +2.2% | -5.2% | -8.2% |
+
+The sixteen-Cell second pair regresses throughput by 12.7%; it remains in the
+analysis. These results still do not establish consistent end-to-end gains.
+
+Both variants report the same capacities: four dirty-memory slots, two recovery
+slots, four blocking jobs, thirty-two I/O slots, 65,536 MiB of scratch admission,
+and a 1 GiB local disk budget. The baseline phase means below are medians across
+the three repeats; root admission and admitted work have matching counts.
+
+| Cells | Root admission (ms) | Admitted root preparation (ms) | Total root preparation (ms) | Recovery admission (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.003 | 8.059 | 8.065 | 0.000 |
+| 4 | 0.003 | 20.205 | 20.212 | 0.721 |
+| 16 | 83.205 | 32.259 | 115.469 | 13.851 |
+
+| Cells | HTTP service CPU (cores) | RustFS CPU (cores) | Provider PUT mean (ms) |
+| --- | ---: | ---: | ---: |
+| 1 | 0.279 | 2.281 | 5.282 |
+| 4 | 0.487 | 2.989 | 13.495 |
+| 16 | 0.503 | 2.996 | 22.431 |
+
+At sixteen Cells, admission accounts for about 72% of mean root preparation.
+The candidate has similar waits: approximately 83 ms before admission and 33 ms
+of admitted work. This confirms substantial framework queueing under the current
+host budget; it does not justify increasing that budget without measuring
+provider and memory pressure.
+
+RustFS consumes approximately three of the runner's four logical CPU cores at
+four and sixteen Cells, while the HTTP service consumes about half a core.
+Provider cgroup counters show no CPU throttling. Rising PUT durations and high
+provider CPU support investigating provider work and request amplification;
+they do not isolate provider CPU, disk, or network as the sole cause. Provider
+operation counts and phase histograms include startup and verification, so they
+must not be divided by measured-window writes to claim an exact per-write cost.
+Service and provider CPU windows include timed warmup. Overlapping operations
+are not additive latency.
+
+All eighteen points pass live replay and fresh-SQLite recovery for 201,844
+acknowledged writes, including warmup. Measured windows complete 192,920 writes
+with zero errors. The independent raw audit checks 201,556 timed receipts;
+288 manual warmup acknowledgments are covered by the harness. Per-Cell sequences,
+exclusive ownership, drained authority, new fences, and independent next writes
+all pass. This HTTP/object-proof coverage does not substitute for separate
+follower durability qualification.
+
+The next comparison isolates the recovery-admission change against the
+instrumentation-only commit. That change removes a reproduced dirty-capacity
+reservation by recovery waiters, while preserving resource ceilings and ledger
+charges. Its sustained throughput and latency effect remains unproven.
