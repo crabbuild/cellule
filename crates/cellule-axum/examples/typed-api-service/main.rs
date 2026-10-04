@@ -1,5 +1,5 @@
 //! Typed registration, authorization, OpenAPI, evidence custody and recovery.
-//! Run: cargo run -p cellule-axum --example integration --features openapi --locked
+//! Run: cargo run -p cellule-axum --example typed-api-service --features openapi --locked
 
 mod recovery;
 mod support;
@@ -223,7 +223,7 @@ async fn main() -> ExampleResult<()> {
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3001").await?;
         println!(
-            "Integration service: http://{} (Ctrl-C to drain)",
+            "Typed API service: http://{} (Ctrl-C to drain)",
             listener.local_addr()?
         );
         let (signal_tx, signal_rx) = tokio::sync::oneshot::channel();

@@ -14,7 +14,7 @@ Axum-specific pieces are the request extractors, `CellApi` routes, OpenAPI
 annotations, and HTTP listener/shutdown wiring.
 
 This example keeps its own `Cargo.toml` and lockfile as an embedding application.
-Run it with `--manifest-path`; the adapter's `sql` and `integration` examples
+Run it with `--manifest-path`; the adapter's `sql` and `typed-api-service` examples
 remain ordinary `cargo run -p cellule-axum --example ...` targets.
 
 ```text
