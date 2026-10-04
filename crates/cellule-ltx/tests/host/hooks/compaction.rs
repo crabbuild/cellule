@@ -2,6 +2,36 @@
 
 use super::*;
 
+#[cfg(feature = "replica")]
+async fn compaction_case_inputs(
+    replica: &CellReplica,
+    writer: &mut Db,
+    composed: bool,
+) -> (cellule_ltx::RootRef, Option<cellule_ltx::CaptureBatch>) {
+    let mut root = replica
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    if !composed {
+        return (root, None);
+    }
+    for sequence in 2..=8 {
+        writer
+            .transaction(|tx| tx.execute_batch("UPDATE t SET v=randomblob(20000)"))
+            .unwrap();
+        root = replica
+            .prepare(Some(&root), &writer.capture().unwrap(), sequence, 1)
+            .await
+            .unwrap()
+            .root();
+    }
+    writer
+        .transaction(|tx| tx.execute_batch("UPDATE t SET v=randomblob(20000)"))
+        .unwrap();
+    (root, Some(writer.capture().unwrap()))
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn canceled_parallel_output_flushes_retain_both_jobs_and_scratch() {
     use cellule_store::test_support::CountingObjectStore;
@@ -117,7 +147,11 @@ async fn canceled_parallel_output_flushes_retain_both_jobs_and_scratch() {
 async fn compaction_dependency_failure_cannot_return_metadata_proposal() {
     use cellule_store::test_support::CountingObjectStore;
 
-    for operation in ["compaction_ltx_read", "compaction_index_read"] {
+    for (composed, operation) in [false, true].into_iter().flat_map(|composed| {
+        ["compaction_ltx_read", "compaction_index_read"]
+            .into_iter()
+            .map(move |operation| (composed, operation))
+    }) {
         let (directory, faults, host, mut writer) = fixture();
         let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
         let replica = CellReplica::new(
@@ -132,16 +166,19 @@ async fn compaction_dependency_failure_cannot_return_metadata_proposal() {
         )
         .unwrap()
         .with_host(host);
-        let root = replica
-            .prepare(None, &writer.capture().unwrap(), 1, 1)
-            .await
-            .unwrap()
-            .root();
+        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed).await;
         counted.reset();
         faults.arm(Some(operation));
-        let result = replica
-            .prepare_compaction(&root, 0..1, 9, directory.path())
-            .await;
+        let result = if let Some(cuts) = &cuts {
+            replica
+                .prepare_scheduled_compaction_append(&root, cuts, 9, 1, 32, directory.path())
+                .await
+                .map(|prepared| prepared.unwrap())
+        } else {
+            replica
+                .prepare_compaction(&root, 0..1, 9, directory.path())
+                .await
+        };
         assert!(result.is_err(), "metadata upload must not mask {operation}");
         assert!(
             counted.put_requests() > 0,
@@ -597,14 +634,18 @@ async fn cell_compaction_uses_injected_filesystem_and_cleans_failed_scratch() {
 
 #[tokio::test]
 async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
-    for operation in [
-        "create",
-        "open_rw",
-        "read_exact_at",
-        "write_all_at",
-        "write_all",
-        "sync_all",
-    ] {
+    for (composed, operation) in [false, true].into_iter().flat_map(|composed| {
+        [
+            "create",
+            "open_rw",
+            "read_exact_at",
+            "write_all_at",
+            "write_all",
+            "sync_all",
+        ]
+        .into_iter()
+        .map(move |operation| (composed, operation))
+    }) {
         let (directory, faults, host, mut writer) = fixture();
         let jobs = Arc::new(tokio::sync::Semaphore::new(1));
         let dirty = Arc::new(tokio::sync::Semaphore::new(1));
@@ -627,11 +668,7 @@ async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
                 .with_recovery_slots(recovery.clone())
                 .with_scratch_slots(scratch.clone()),
         );
-        let root = replica
-            .prepare(None, &writer.capture().unwrap(), 1, 1)
-            .await
-            .unwrap()
-            .root();
+        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed).await;
         writer.close().unwrap();
         let pause = Arc::new(Pause {
             operation,
@@ -644,10 +681,18 @@ async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
         *faults.forbidden_thread.lock().unwrap() = Some(std::thread::current().id());
         let task_replica = replica.clone();
         let destination = directory.path().to_owned();
+        let task_cuts = cuts.clone();
         let task = tokio::spawn(async move {
-            task_replica
-                .prepare_compaction(&root, 0..1, 9, &destination)
-                .await
+            if let Some(cuts) = &task_cuts {
+                task_replica
+                    .prepare_scheduled_compaction_append(&root, cuts, 9, 1, 32, &destination)
+                    .await
+                    .map(|prepared| prepared.unwrap())
+            } else {
+                task_replica
+                    .prepare_compaction(&root, 0..1, 9, &destination)
+                    .await
+            }
         });
         tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
             .await
@@ -699,10 +744,20 @@ async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
             }),
             "{operation}"
         );
-        let compacted = replica
-            .prepare_compaction(&root, 0..1, 9, directory.path())
-            .await
-            .unwrap();
-        assert_eq!(compacted.root().position, root.position);
+        if let Some(cuts) = &cuts {
+            let prepared = replica
+                .prepare_scheduled_compaction_append(&root, cuts, 9, 1, 32, directory.path())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(prepared.root().position, cuts.position);
+            assert_eq!(prepared.predecessor(), Some(root));
+        } else {
+            let compacted = replica
+                .prepare_compaction(&root, 0..1, 9, directory.path())
+                .await
+                .unwrap();
+            assert_eq!(compacted.root().position, root.position);
+        }
     }
 }

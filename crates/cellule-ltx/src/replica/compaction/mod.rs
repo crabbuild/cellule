@@ -9,8 +9,8 @@ use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 
 use super::merge::LocatorMerge;
 use super::{
-    CellReplica, DirectoryEntry, LoadedGraph, PreparedRoot, RootRef, SEGMENT_TRANSFER_CONCURRENCY,
-    SegmentDescriptor, directory,
+    AppendBaseState, CellReplica, CompactionAppend, DirectoryEntry, LoadedGraph, PreparedRoot,
+    RootRef, SEGMENT_TRANSFER_CONCURRENCY, SegmentDescriptor, directory,
 };
 use crate::{CellObjectKind, LtxError, Result, SegmentInfo, Txid, environment::FileIo};
 
@@ -35,6 +35,7 @@ pub(super) async fn prepare(
     range: Range<usize>,
     level: u8,
     scratch_directory: &Path,
+    append: Option<CompactionAppend>,
 ) -> Result<PreparedRoot> {
     let selected = graph
         .descriptors
@@ -67,7 +68,7 @@ pub(super) async fn prepare(
                 })
             })
             .await??;
-        prepare_root(replica, base, graph, range, level, files).await
+        prepare_root(replica, base, graph, range, level, files, append).await
     }
     .await;
     // Ordinary completion includes cleanup. Cancellation leaves cleanup owned
@@ -92,6 +93,7 @@ async fn prepare_root(
     range: Range<usize>,
     level: u8,
     files: CompactionFiles,
+    append: Option<CompactionAppend>,
 ) -> Result<PreparedRoot> {
     let selected = &graph.descriptors[range.clone()];
     // The authenticated streams have separate scratch files. Both must finish
@@ -169,6 +171,31 @@ async fn prepare_root(
             entries.stream(replica.host.clone()),
         )
         .await?;
+        if let Some(append) = append {
+            // This private state authenticates identical logical contents, but
+            // does not claim an uploaded intermediate root. Streamed directory
+            // nodes remain available; only final descriptor pages/root are PUT.
+            let state = AppendBaseState {
+                aggregate: graph.aggregate,
+                directory_digest: directory.root_digest(),
+                directory_height: directory.height(),
+                page_size,
+                database_pages,
+                inherited_segment_pages: graph.document.segment_pages.clone(),
+                descriptors,
+            };
+            return replica
+                .prepare_append(
+                    Some(base),
+                    Some(state),
+                    append.inputs,
+                    append.position,
+                    append.commit_sequence,
+                    append.schema,
+                    None,
+                )
+                .await;
+        }
         replica
             .finish_root(
                 Some(base),

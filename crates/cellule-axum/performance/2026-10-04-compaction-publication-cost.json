@@ -1,0 +1,42 @@
+{
+  "source": "4c1c9826322b154a4dd2af6f86b89cd586e871a7",
+  "profile": "Isolated real runtime pressure-append fixture; test-only request counting and final-root inventory, not timed HTTP evidence. Valid append is measured without first preparing an invalid sequence. Fixed limits and remaining publication/schema/fencing assertions retained.",
+  "results": [
+    {
+      "schema": 1,
+      "provider_puts": 10,
+      "provider_heads": 4,
+      "provider_full_gets": 1,
+      "new_objects": 9,
+      "objects_not_reachable_from_final_root": [
+        "quiet-compaction/cells/v1/apps/2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b/cells/2929292929292929292929292929292929292929292929292929292929292929/inc/2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a/objects/24d244c8d19d58849ca09ca8a05ce13638536a74778ec9fdf5d923ebd8362acb.root",
+        "quiet-compaction/cells/v1/apps/2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b/cells/2929292929292929292929292929292929292929292929292929292929292929/inc/2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a/objects/35093ab4139f45354b7d5a8bc14147522507450b00c91b807a1d04efa0404dfc.root",
+        "quiet-compaction/cells/v1/apps/2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b/cells/2929292929292929292929292929292929292929292929292929292929292929/inc/2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a/objects/9b968a77d1879f0b02fa33c990c086870eb3a95b93661d8e38482baa37e673e4.dir"
+      ],
+      "restored_rows": 39,
+      "final_root_origin_inventory_verified": true,
+      "log_sha256": "4ca782511cbcc5d762d3e5ccc0d9b6e39ac68e477a7e8b34e5379cdbf8405d93"
+    },
+    {
+      "schema": 2,
+      "provider_puts": 10,
+      "provider_heads": 4,
+      "provider_full_gets": 1,
+      "new_objects": 9,
+      "objects_not_reachable_from_final_root": [
+        "quiet-compaction/cells/v1/apps/2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b/cells/2929292929292929292929292929292929292929292929292929292929292929/inc/2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a/objects/24d244c8d19d58849ca09ca8a05ce13638536a74778ec9fdf5d923ebd8362acb.root",
+        "quiet-compaction/cells/v1/apps/2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b/cells/2929292929292929292929292929292929292929292929292929292929292929/inc/2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a/objects/35093ab4139f45354b7d5a8bc14147522507450b00c91b807a1d04efa0404dfc.root",
+        "quiet-compaction/cells/v1/apps/2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b/cells/2929292929292929292929292929292929292929292929292929292929292929/inc/2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a/objects/9b968a77d1879f0b02fa33c990c086870eb3a95b93661d8e38482baa37e673e4.dir"
+      ],
+      "restored_rows": 39,
+      "final_root_origin_inventory_verified": true,
+      "log_sha256": "9790129feafea75db86e44944ee7c0fd61541df36583a0e41c92c1f3d3d2fe58"
+    }
+  ],
+  "conclusion": "Both native append and schema migration issue ten PUTs and four metadata HEADs. Two newly uploaded root metadata objects and one directory object are absent from the final dependency inventory. First optimization target: construct final root from verified compaction state without uploading/reopening intermediate root metadata. Directory streaming and retained locator nodes must remain bounded and complete.",
+  "limitations": [
+    "The replica cost ledger is drained inside publisher compaction telemetry; its final five-object count does not cover the entire preparation. Provider counters cover the full operation.",
+    "Unreachable intermediate directory removal cannot be generalized to partial-page updates; unchanged compacted directory nodes may remain required.",
+    "No implementation or end-to-end speedup has been established by this diagnostic."
+  ]
+}

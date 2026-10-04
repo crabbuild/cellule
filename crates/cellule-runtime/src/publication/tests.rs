@@ -24,6 +24,138 @@ async fn schema_migration_combines_foreground_compaction_without_an_intermediate
     verify_compaction_append(2).await;
 }
 
+#[tokio::test]
+async fn pressure_append_avoids_intermediate_root_metadata() {
+    for schema in [1, 2] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut database =
+            Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
+        let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+            Arc::new(InMemory::new()),
+        ));
+        let cell = CellId::from_bytes([111; 32]);
+        let incarnation = IncarnationId::from_bytes([112; 16]);
+        let layout = CellStorageLayout::new(
+            Store::new(counted.clone()),
+            Path::from("composed-compaction"),
+            [113; 16],
+        );
+        let replica = CellReplica::new(
+            layout.clone(),
+            *cell.as_bytes(),
+            *incarnation.as_bytes(),
+            Limits::default(),
+        )
+        .unwrap();
+        let initial = Control::initial(
+            cell,
+            incarnation,
+            Owner {
+                session: SessionId::from_bytes([114; 16]),
+                endpoint: "https://owner.internal".into(),
+            },
+            Digest::from_bytes([115; 32]),
+            1,
+        )
+        .unwrap();
+        layout
+            .store()
+            .create_strict(
+                &layout.control_path(cell.as_bytes()),
+                Bytes::from(initial.encode().unwrap()),
+            )
+            .await
+            .unwrap();
+        let authority = CellAuthority::new(layout);
+        let observed = authority.load(cell).await.unwrap().unwrap();
+        let mut publisher = CellPublisher::new(
+            replica.clone(),
+            authority.clone(),
+            observed,
+            directory.path().to_owned(),
+        );
+        for sequence in 1..=31 {
+            database
+                .transaction(|transaction| {
+                    if sequence == 1 {
+                        transaction.execute_batch("CREATE TABLE events(id INTEGER PRIMARY KEY)")?;
+                    }
+                    transaction.execute("INSERT INTO events VALUES (?1)", [sequence])?;
+                    Ok(())
+                })
+                .unwrap();
+            let cuts = database.capture_deferred().unwrap();
+            let prepared = publisher.prepare_append(&cuts, sequence, 1).await.unwrap();
+            publisher.publish_prepared(&prepared, None).await.unwrap();
+        }
+        let before = publisher.control().value().ltx_root().unwrap();
+        let revision = publisher.control().value().revision;
+        database
+            .transaction(|transaction| {
+                transaction.execute("INSERT INTO events VALUES (32)", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let cuts = database.capture_deferred().unwrap();
+        counted.reset();
+        let composed = publisher.prepare_append(&cuts, 32, schema).await.unwrap();
+        let requests = (counted.put_requests(), counted.counts().heads);
+        assert_eq!(composed.predecessor(), Some(before));
+        assert_eq!(publisher.lineage_confirmed, Some(composed.preparation()));
+        let lineage = authority
+            .root_lineage(composed.root())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lineage.predecessors(), &[before]);
+        assert_eq!(
+            authority.load(cell).await.unwrap().unwrap().value(),
+            publisher.control().value()
+        );
+
+        // Verify before the reference producer can fill any missing objects.
+        replica.reachable_objects(&composed.root()).await.unwrap();
+        let restored = directory.path().join("restored.sqlite");
+        composed.verified().restore(&restored).await.unwrap();
+        let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+        let rows: Vec<u64> = connection
+            .prepare("SELECT id FROM events ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<cellule_ltx::rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(rows, (1..=32).collect::<Vec<_>>());
+        // The old two-step producer remains the immutable-format reference.
+        let compacted = replica
+            .prepare_scheduled_compaction(&before, directory.path())
+            .await
+            .unwrap()
+            .unwrap();
+        let reference = replica
+            .prepare_after_compaction(&compacted, &cuts, 32, schema)
+            .await
+            .unwrap();
+        assert_eq!(composed.root(), reference.root());
+        if schema == 1 {
+            publisher.publish_prepared(&composed, None).await.unwrap();
+        } else {
+            publisher
+                .publish_migration(&composed, None, Digest::from_bytes([116; 32]), schema)
+                .await
+                .unwrap();
+        }
+        assert_eq!(publisher.control().value().revision, revision + 1);
+        assert_eq!(publisher.control().value().schema, schema);
+        database.close().unwrap();
+        assert_eq!(
+            requests,
+            (8, 1),
+            "only final root and lineage metadata is retained"
+        );
+    }
+}
+
 async fn verify_compaction_append(schema: u32) {
     let directory = tempfile::tempdir().unwrap();
     let mut database = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
