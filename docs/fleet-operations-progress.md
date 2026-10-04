@@ -76,9 +76,8 @@ All 12 source-reader minion cases pass, including the new failed-receiver case;
 all 10 failed-reader lifetime cases pass. The host crate passes all-target,
 all-feature `cargo check`, and formatting passes. The fixtures prove the API
 composition using process evidence tied to a stopped native reader; production
-OS termination and external accepted-work providers remain unqualified. PR #56
-is currently mergeable with no reported conflicts. These follow-up edits are
-local and have not been pushed yet.
+OS termination and external accepted-work providers remain unqualified. The
+follow-up is published on PR #56; hosted qualification is pending.
 
 ### Highest remaining work
 
