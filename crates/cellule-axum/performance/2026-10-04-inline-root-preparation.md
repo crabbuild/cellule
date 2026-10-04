@@ -24,12 +24,15 @@ Existing exact-root, failure, and cancellation checks pass.
 Isolated runtime/LTX verification passes 1,277 tests; local LTX without replication
 passes 54. Targeted Clippy, workspace API docs, format and architecture checks pass.
 The dataset records source equality, log hashes and fixed-observer admission.
-New-source workspace/MSRV CI and provider/process qualification remain pending.
+New-source workspace/MSRV CI and provider/process qualification now pass; see
+[correctness qualification](2026-10-04-inline-root-qualification.md).
 
 This updates the one current development-v1 schema atomically. Earlier development
 roots require recreation under the [format policy](../../cellule-runtime/docs/storage.md#format-policy).
 The 32 KiB root, 64 KiB page and 4,096-descriptor graph limits remain enforced.
 
 These operation counts do **not** establish an HTTP throughput or latency gain.
-A frozen, three-pair 120-second RustFS comparison at 1, 4 and 16 Cells is next.
+Completed three-pair 120-second RustFS comparisons at 1, 4 and 16 Cells are
+tracked separately: [inline versus composed](2026-10-04-rustfs-inline-root-writes.md)
+and [full change versus main](2026-10-04-rustfs-inline-root-main-writes.md).
 Earlier sustained results remain separate evidence.

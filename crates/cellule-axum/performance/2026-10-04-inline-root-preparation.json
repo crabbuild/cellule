@@ -5,7 +5,7 @@
     "baseline_revision": "c78ea0f48d243377ddee6308640966955de4ad35",
     "candidate_revision": "ddd87706a7d01a51501a46936a63ab699c358b73"
   },
-  "scope": "Deterministic preparation operation counts, excluding authority CAS and later verification. No sustained HTTP gain has been established for this candidate.",
+  "scope": "Deterministic preparation operation counts, excluding authority CAS and later verification. Sustained HTTP evidence is tracked in separate paired comparison datasets.",
   "costs": [
     {
       "fixture": "first small LTX root",
@@ -153,8 +153,15 @@
   },
   "limitations": [
     "The required development-v1 segments field updates the current schema atomically; old development roots must be recreated. No compatibility reader is introduced.",
-    "Counts do not establish throughput or latency improvement; fixed-budget paired sustained RustFS measurements are pending.",
-    "New-source workspace/MSRV CI and provider/process qualification are pending. Prior green runs prove the preceding source only.",
+    "Operation counts alone do not establish throughput or latency gains; see the separate sustained comparison datasets, including negative pairs.",
+    "New-source workspace/MSRV CI and provider/process qualification pass; exact checkout and source/binary identities are retained in the qualification dataset.",
     "Larger descriptor tails still use external pages; full page reuse boundaries remain unchanged."
-  ]
+  ],
+  "qualification_dataset": "2026-10-04-inline-root-qualification.json",
+  "sustained_datasets": [
+    "2026-10-04-rustfs-inline-root-writes.json",
+    "2026-10-04-rustfs-inline-root-main-writes.json"
+  ],
+  "qualified_candidate_revision": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+  "candidate_identity": "The preparation and qualified revisions differ only in performance reports; production, tests, observers and harness bytes are identical."
 }

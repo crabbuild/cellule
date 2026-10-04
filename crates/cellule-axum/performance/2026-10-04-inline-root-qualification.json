@@ -1,0 +1,357 @@
+{
+  "candidate": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+  "actual_checkout": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+  "equal_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+  "workspace": {
+    "run": 37192886964,
+    "candidate": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+    "actual_checkout": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+    "equal_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+    "workspace_checks": [
+      "Format",
+      "Architecture boundaries",
+      "Release metadata",
+      "Check",
+      "Documentation links",
+      "Test",
+      "Compile website Rust examples",
+      "Run SQL example",
+      "Run Blob example",
+      "Run basic example",
+      "Run balanced three-process storefront smoke and replica retry",
+      "Test fleet journal and public controller models",
+      "Verify Axum HTTP publication, retries and cold recovery against RustFS",
+      "Test local LTX without replica",
+      "Test replica feature",
+      "Lint",
+      "Validate SQL and peer contracts",
+      "Package the independent bootstrap crate"
+    ],
+    "msrv_check": "Rust 1.97.0, all workspace targets/features/locked",
+    "full_workspace_test_step": {
+      "summaries": 36,
+      "passed": 1721,
+      "failed": 0,
+      "ignored": 37
+    },
+    "completed_job_log_sha256": "2226b0e344ead7e6ffe9d1d6c6af31958f08bcf12b9880c08f6c541f9778a372"
+  },
+  "msrv": {
+    "job": 111408621711,
+    "run": 37192886964,
+    "checkout_source": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+    "candidate_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+    "log_sha256": "d529d59fbe7b09717cec6aa186e717624dc8cce668b9f3dabcc92883e061e0bd",
+    "minimum_rust_check": "pass; completed job and actual toolchain/full-workspace command/source log"
+  },
+  "provider": {
+    "ci_run": "https://github.com/crabbuild/cellule/actions/runs/37192887119",
+    "candidate": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+    "source": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+    "source_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+    "repeats": [
+      {
+        "lane": "follower",
+        "repeat": "cell-follower-capacity-run-1",
+        "acknowledged_writes": 9776,
+        "raw_files_checked": 107,
+        "binary_sha256": "220be610d057d3cea78050ac49ff8aec0110f67da606dc43c2702845a938a765"
+      },
+      {
+        "lane": "follower",
+        "repeat": "cell-follower-capacity-run-2",
+        "acknowledged_writes": 7824,
+        "raw_files_checked": 101,
+        "binary_sha256": "220be610d057d3cea78050ac49ff8aec0110f67da606dc43c2702845a938a765"
+      },
+      {
+        "lane": "follower",
+        "repeat": "cell-follower-capacity-run-3",
+        "acknowledged_writes": 9634,
+        "raw_files_checked": 107,
+        "binary_sha256": "220be610d057d3cea78050ac49ff8aec0110f67da606dc43c2702845a938a765"
+      },
+      {
+        "lane": "object",
+        "repeat": "cell-write-capacity-run-1",
+        "acknowledged_writes": 10788,
+        "raw_files_checked": 106,
+        "binary_sha256": "749ba20912efde7f0d687be48744c0e00feae9b7410557c8445e0de0076ba6d7"
+      },
+      {
+        "lane": "object",
+        "repeat": "cell-write-capacity-run-2",
+        "acknowledged_writes": 7803,
+        "raw_files_checked": 100,
+        "binary_sha256": "749ba20912efde7f0d687be48744c0e00feae9b7410557c8445e0de0076ba6d7"
+      },
+      {
+        "lane": "object",
+        "repeat": "cell-write-capacity-run-3",
+        "acknowledged_writes": 9755,
+        "raw_files_checked": 106,
+        "binary_sha256": "749ba20912efde7f0d687be48744c0e00feae9b7410557c8445e0de0076ba6d7"
+      }
+    ],
+    "acknowledged_writes": 55580,
+    "raw_files_checked": 627,
+    "source_checkout_log_sha256": "35b9dd4290699fc19ee354cd5433e9e1698d347e4fc9aa1cd0d1e9c6c9a779b6",
+    "audit_log_sha256": "91b9876131ec2f1c0c3e551e08d34c3e01841846a7243ccd231f09fd5e2fe2f1",
+    "auditor_identity_only_changes": {
+      "identity_substitutions": {
+        "ce93119794182c01c5d876568799cdb4dbe94628": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+        "1ca9759282fb5b1d5a15059b8b235bf34c819f2e": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+        "8cfad7e150ed12e1b22731f1933aa4a3c0cb1ad9": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+        "37187645547": "37192887119",
+        "37187645453": "37192886934",
+        "ce93119": "inline-root"
+      },
+      "files": [
+        {
+          "old_file": "audit-ce93119-qualification.py",
+          "new_file": "audit-inline-root-qualification.py",
+          "before_sha256": "1f92d2881e7d6a888fb923f8c7ed8f189f14d8083301260f98a839a998e14a47",
+          "after_sha256": "fb8292489e342689ff8dbc1676591870b9bad0665557a9327ce79a18c5f4460e",
+          "change": "revision/run/tree/artifact names only; same guards and limits"
+        },
+        {
+          "old_file": "audit-ce93119-reference.py",
+          "new_file": "audit-inline-root-reference.py",
+          "before_sha256": "59087a7d97b983cfce7c75be48b2181411a57415c677a26e3b8a508b8c88102c",
+          "after_sha256": "b0d9da3ce1d3e2e5817577c91a8eb81298087c384d2948429aa7336192dbd78e",
+          "change": "revision/run/tree/artifact names only; same guards and limits"
+        },
+        {
+          "old_file": "audit-ce93119-routing.py",
+          "new_file": "audit-inline-root-routing.py",
+          "before_sha256": "d995cd73a02d4931a213dd9eaf934b6f819e3f23194de186e1d967e980d2ba96",
+          "after_sha256": "ac6604569d497b969002d552148bb3816db359adcaed8f11273b83b7e73a6e6d",
+          "change": "revision/run/tree/artifact names only; same guards and limits"
+        }
+      ],
+      "candidate_head": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+      "actual_pr_merge_source": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+      "equal_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+      "unchanged_harness_and_observer_paths": [
+        "crates/cellule-app/qualification/entities.py",
+        "crates/cellule-app/qualification/scale.py",
+        "crates/cellule-peer-http/qualification/routing.py",
+        "scripts/bench-axum-rustfs.py",
+        "Cargo.lock",
+        "crates/cellule-axum/examples/sql_metrics/mod.rs"
+      ]
+    }
+  },
+  "reference": {
+    "run_id": 37192886934,
+    "head": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+    "actual_source": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+    "source_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+    "workloads": {
+      "entity-scaling": {
+        "verified_cells": 80,
+        "acknowledged_writes": 12862,
+        "windows": 36,
+        "raw_hashes": 377,
+        "roles_verified": 21,
+        "unique_scratch_volumes": 21,
+        "binary_sha256": "220be610d057d3cea78050ac49ff8aec0110f67da606dc43c2702845a938a765"
+      },
+      "scaling": {
+        "mixed_windows": 4,
+        "reader_loss_verified": true,
+        "raw_hashes": 46,
+        "acknowledged_writes": 1500,
+        "successful_reads": 284478,
+        "roles_verified": 21,
+        "unique_scratch_volumes": 21,
+        "binary_sha256": "220be610d057d3cea78050ac49ff8aec0110f67da606dc43c2702845a938a765"
+      }
+    }
+  },
+  "contracts": {
+    "run": 37192886952,
+    "actual_checkout": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+    "candidate_head": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+    "job": 111408621570,
+    "source_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+    "log_sha256": "82e88532897ba82df0c339729535af87610ffe67b0aebc7bc835eb222b6126b0",
+    "successful_steps": [
+      "Validate executable design contracts",
+      "Verify tracked qualification profiles",
+      "Run production hot-path preflight guards",
+      "Verify application and host boundaries",
+      "Verify receipt, placement, pressure, and resource contracts",
+      "Verify canonical LTX contracts",
+      "Smoke-test the complete qualification matrix in a fresh process"
+    ],
+    "test_execution_summaries": 48,
+    "test_executions_passed_including_repeated_filters": 651,
+    "limitation": "Contract/profile/synthetic-matrix verification; this is not provider qualification."
+  },
+  "decoder_fuzz": {
+    "run": 37192886943,
+    "head": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+    "actual_checkout": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+    "equal_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+    "log_sha256": "77f44353a8a5230053888cca96fe812f148161c3e87310791484d5bce2ad06ed",
+    "targets": [
+      {
+        "target": "ltx",
+        "configured_seconds": 90,
+        "executions": 2063268,
+        "elapsed_seconds": 91
+      },
+      {
+        "target": "root",
+        "configured_seconds": 90,
+        "executions": 7785884,
+        "elapsed_seconds": 91
+      },
+      {
+        "target": "directory",
+        "configured_seconds": 90,
+        "executions": 29921408,
+        "elapsed_seconds": 91
+      },
+      {
+        "target": "bundle",
+        "configured_seconds": 90,
+        "executions": 13202252,
+        "elapsed_seconds": 91
+      },
+      {
+        "target": "node_frame",
+        "configured_seconds": 90,
+        "executions": 17555047,
+        "elapsed_seconds": 91
+      }
+    ],
+    "limitation": "Per-PR decoder fuzz smoke using the existing external-vector corpus; this is not a proof of every semantic input or a nightly-duration search."
+  },
+  "applications": {
+    "run": 37192886924,
+    "head": "9d212463d1429e77147234d31e6b1ee84abe2f55",
+    "actual_checkout": "4a711819cd0ad85784ff7614d50256b55fd76fed",
+    "equal_tree": "5df075e68065e2a6c81adfe4e7bf0355a81a15b0",
+    "quality_and_scenarios": [
+      "quality",
+      "scenarios (approvals)",
+      "scenarios (taskboard)",
+      "scenarios (report-export)",
+      "scenarios (file-vault)",
+      "scenarios (webhook-delivery)",
+      "scenarios (telemetry-ingest)",
+      "scenarios (project-tracker)",
+      "scenarios (quotas)",
+      "scenarios (entity-registry)",
+      "scenarios (tenant-workspace)",
+      "scenarios (media-pipeline)",
+      "scenarios (endpoint-monitor)",
+      "scenarios (release-pipeline)",
+      "scenarios (provisioning)",
+      "scenarios (support-desk)",
+      "scenarios (reservations)",
+      "scenarios (work-queue)",
+      "scenarios (interval-scheduler)",
+      "scenarios (usage-ledger)",
+      "scenarios (settings)",
+      "scenarios (checkout)"
+    ],
+    "log_sha256": "99b3460def15d8459fdebf15719d363830f121240017fdffc9475388878430d3"
+  },
+  "http_smoke": {
+    "source_evidence": "inline-root-workspace-source-proof.json; actual checkout/HTTP step succeeds on frozen source",
+    "server_binary_sha256": "627366fe3c84dc78238ee86e952225b59e9cf849aae67aba64ba6a8a9b3c9828",
+    "points": [
+      {
+        "cells": 1,
+        "clients": 1,
+        "acknowledged": 12,
+        "cold_replayed": 12,
+        "next_writes": 1
+      },
+      {
+        "cells": 4,
+        "clients": 1,
+        "acknowledged": 12,
+        "cold_replayed": 12,
+        "next_writes": 4
+      },
+      {
+        "cells": 1,
+        "clients": 4,
+        "acknowledged": 12,
+        "cold_replayed": 12,
+        "next_writes": 1
+      },
+      {
+        "cells": 4,
+        "clients": 4,
+        "acknowledged": 12,
+        "cold_replayed": 12,
+        "next_writes": 4
+      }
+    ],
+    "acknowledged": 48,
+    "raw_sha256": {
+      "r1-n1-c1/result.json": "d57ef906f1089610c881151bc18e0411ebe5ddd2cc732e098a2e13ab9973a75f",
+      "r1-n1-c1/active-owner-refused.log": "015a7646df53656090fde191117eebdddd13cb82b85eff68b7d38cf176e3bfef",
+      "r1-n1-c1/steady-reads.json": "b3c19d0fd63a5f036c9e08e4b8467c80edc4718bb6ed773e22af27ce8742d2e2",
+      "r1-n1-c1/steady-config.json": "96c08aaf8162bf665a397069ef2a58a13adcc0e618f77de75794ab2644fc73b4",
+      "r1-n1-c1/writes.json": "82ecbb978e7bdee6ce9e7b6345720dba285c2293aac2d9a48a879459fa6957f1",
+      "r1-n1-c1/reads.json": "ac37fff78557fd98d66d05ab9fdf2f2edae01cbe6d6119529fdde06781067b2c",
+      "r1-n1-c1/requests.json": "a7c3446ca9cf36d47fbd03ff6e0944691f039ce872c7155c5eaa83c816c1a550",
+      "r1-n1-c1/recovered.log": "3b5b587010cb491fee7be70049f618e400f565f257e778de46fe7ff56b4447e3",
+      "r1-n1-c1/initial.log": "e489d3335d80bcb14a1bcb7c12fbfb3b5cfeaf8d3010ab9eac4afcc550bf1286",
+      "r1-n1-c1/steady-driver.stdout": "c3e801a0c2cdbed983412df39795c339eaf2c7f9241349439ba1a223ac64f251",
+      "r1-n1-c1/steady-driver.stderr": "e6662dd0da77bafc01deeadc78344f7907f65b47c854fd807a02f43b684cc253",
+      "r1-n4-c1/result.json": "852c4606a22f16ce1512583b154acabaa2687072f374aef479678911bac3d92d",
+      "r1-n4-c1/active-owner-refused.log": "12c7dcf02c00d4f64191d67904dba77982e60d7f3276a31b4cd1ca1feb7ccf1b",
+      "r1-n4-c1/steady-reads.json": "da23ff720cc9fc7a1650553f4627db1340e2a3a2e34ad79b93392fa6c0645b99",
+      "r1-n4-c1/steady-config.json": "8f08445d5f94b63d0ab3c4e5e92cdfce4c53a6870a3cd7db066323b18aabd2a9",
+      "r1-n4-c1/writes.json": "af383511fcd94662f2096f79ef8ac051415196363b2c464a70a4310cd2d05e46",
+      "r1-n4-c1/reads.json": "a1f7445a350917176a68f35de9fcb0fbb43a727886285564906e2fcdf8a9a989",
+      "r1-n4-c1/requests.json": "54703b41354237f4b5739ec2c96cca30818ce5d54f0503e7a417de7d6bc33903",
+      "r1-n4-c1/recovered.log": "4ffaecc6f09e3139d8c335d352d77286533d02b6c25142721c51810b6a26fc4d",
+      "r1-n4-c1/initial.log": "9fb65c41bf78c64aa3881dd68890d81938facc8ba306fc0c5b22a4e1ff9e20d8",
+      "r1-n4-c1/steady-driver.stdout": "1d0a9310d4c12a2dfb6b31e36d6b013deb5ba8bd005f8f2a7ee060828b9bcd50",
+      "r1-n4-c1/steady-driver.stderr": "9f7033e7555a39491a6b90bc5784c85503a8d2c4e3e0c8fcf418172e1d351211",
+      "r1-n1-c4/result.json": "8832251fcbbd3789d1a359f0656fb833a06a5a7e36ebc71ac33790d3f9819f02",
+      "r1-n1-c4/active-owner-refused.log": "98ba812b400f46a1aa607148b25bc0100b66b2e8d85940e327ff80d95bbb44bc",
+      "r1-n1-c4/steady-reads.json": "54699985324bd16254cb3d3a6683528e23bc368e10b8d534aa2bc2c7bf4f8d03",
+      "r1-n1-c4/steady-config.json": "42871db119c5204b97d001b27895455f3067a70e586af0d53b47af3d30c138be",
+      "r1-n1-c4/writes.json": "1b905de63a459f1027bb4306605fb5915eb82c2118c964d48116eb12cd4a7ade",
+      "r1-n1-c4/reads.json": "ea0bc10fb8bf6fb816e278a81c9e2ad37739aa11fe41a9a3e200b18317e17f94",
+      "r1-n1-c4/requests.json": "7a5183fc823fb516bf388053f3c05fb10d0d472cd9c26461bfdc50e6ea9d2aa5",
+      "r1-n1-c4/recovered.log": "1ba7fd35486d2060dc02d5cc11a1dc4e4519e92d492f8bffdf43f4f77f55de2a",
+      "r1-n1-c4/initial.log": "757ab484a2b613f409dff5f6687b5a7b6d37c73e01444b02be3e0dd877dda7ad",
+      "r1-n1-c4/steady-driver.stdout": "41c69eb0302839dd8e57c43ae138a62ec14ada152495902fa31be8d500e02b62",
+      "r1-n1-c4/steady-driver.stderr": "fcf9e59882dec9fdb6bab80fb6431b26a836a5144a814c1f098752d55cae5922",
+      "r1-n4-c4/result.json": "57d57dce2a32287afccf46b03aeda3bdf3672354e0562a5f81723a8574a13221",
+      "r1-n4-c4/active-owner-refused.log": "d88b3df40ad1b3846a84faff2f24ec7e8886bfacaf9758e4ec54488751c7cca6",
+      "r1-n4-c4/steady-reads.json": "be2bd8c3ac14483be0a61ef4fc1342892dd0d70061f96de31ed929357a4cf0bb",
+      "r1-n4-c4/steady-config.json": "e67c1af87d8c99efc2bfb44899ab814f21d9a6a0eddc37b7699b4c22ca18f4c1",
+      "r1-n4-c4/writes.json": "cbb6487d3cd69db9232b22373a6156f1b6a8a9401b6d8aec327828896eda4bd2",
+      "r1-n4-c4/reads.json": "01b16179e50d5d331c5f82b8d5401c767a603cb42f7191198e0fa216e67ab4ad",
+      "r1-n4-c4/requests.json": "b8ed1ea1a075bbfe648e2ce1d7d99a0261ec6e12424c43c1d25390593d147c01",
+      "r1-n4-c4/recovered.log": "d0be18b26470b680d8ca9273719947f685a779c054a7bdafedb141b8519e91c6",
+      "r1-n4-c4/initial.log": "64f1f7f6d950e19c1c5f4ff9d95699ca65048eb0f0f52fb2433b45772bac05bd",
+      "r1-n4-c4/steady-driver.stdout": "3ca65e1232bee57217933873a8870932cd8d6e7fb4f04722aea35e8b5dc0974c",
+      "r1-n4-c4/steady-driver.stderr": "6682ded924192431e729a34c2a69f127cc1458653f6353ef160b831a1d45c157"
+    },
+    "auditor_sha256": "e7d952f5a394320147b068b8d06ae4bc220b815d109df2398026adf465279270",
+    "scope": "Small HTTP durability/replay/cold continuation smoke; no sustained performance comparison."
+  },
+  "audit_sha256": {
+    "audit-inline-root-qualification.py": "fb8292489e342689ff8dbc1676591870b9bad0665557a9327ce79a18c5f4460e",
+    "audit-inline-root-reference.py": "b0d9da3ce1d3e2e5817577c91a8eb81298087c384d2948429aa7336192dbd78e",
+    "inline-root-reference-ci.log": "1932db5248c7d967bdc9a3e34204829676f2787d3131b6a69e26d50b59167a4b",
+    "inline-root-reference-audit.log": "a14767fc8a9c72034d451adbfb96feb8db39130cfeb9d36a60b9133cefc22892"
+  },
+  "limitations": [
+    "Correctness/resource qualification counts are not paired performance gains.",
+    "Controlled RustFS/provider profiles; not qualification of all cloud environments.",
+    "Decoder fuzz smoke is not semantic completeness or nightly-duration coverage."
+  ]
+}
