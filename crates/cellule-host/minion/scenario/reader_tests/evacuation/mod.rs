@@ -1,10 +1,14 @@
 //! Actual managed boots and nonzero reader replacement under retained intent.
 use super::super::startup;
 use super::*;
+use cellule_host::fleet::FleetEnrollmentAcceptance;
 use cellule_host::read_replicas::ReaderEvacuation;
 use cellule_runtime::{
     client::{CellDescription, CellReadReplica},
-    fleet::operations::{JournalTransition, MaintenanceEvent, MaintenanceOperation, OperationId},
+    fleet::operations::{
+        EnrollmentEndpoint, EnrollmentEvent, EnrollmentRole, EnrollmentSpec, JournalTransition,
+        MaintenanceEvent, MaintenanceOperation, OperationId, PublishedPosition,
+    },
     peer::{PeerPrincipal, PeerSigner, ReplicaPeerClient},
 };
 use ed25519_dalek::SigningKey;

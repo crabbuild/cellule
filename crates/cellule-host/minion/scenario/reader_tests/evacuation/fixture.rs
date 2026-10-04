@@ -6,6 +6,17 @@ impl Fixture {
     }
 
     pub(super) async fn for_maintenance(maintenance_node: usize) -> Self {
+        Self::for_maintenance_with_reader_enrollment(maintenance_node, true).await
+    }
+
+    pub(super) async fn for_failed_reader_receiver(maintenance_node: usize) -> Self {
+        Self::for_maintenance_with_reader_enrollment(maintenance_node, false).await
+    }
+
+    async fn for_maintenance_with_reader_enrollment(
+        maintenance_node: usize,
+        reader_enrollment: bool,
+    ) -> Self {
         let root = tempfile::tempdir().unwrap();
         let journal = Arc::new(
             SqliteJournal::open(
@@ -79,27 +90,29 @@ impl Fixture {
                 )
                 .await
                 .unwrap();
-            let node = Arc::new(
-                CellNodeBuilder::new(app.clone())
-                    .with_runtime(
-                        SqlWorkerPool::new(2, 8)
-                            .unwrap()
-                            .with_native_memory_limit(128 << 20)
-                            .unwrap(),
-                        if maintenance_node == 0 {
-                            64 << 20
-                        } else {
-                            16 << 20
-                        },
-                    )
-                    .with_replica_host(
-                        Host::default().with_local_disk_budget(DiskBudget::new(8 << 30)),
-                    )
-                    .with_session(session(index))
-                    .with_fleet_startup_intent(intent.clone())
-                    .build()
-                    .unwrap(),
-            );
+            let builder = CellNodeBuilder::new(app.clone())
+                .with_runtime(
+                    SqlWorkerPool::new(2, 8)
+                        .unwrap()
+                        .with_native_memory_limit(128 << 20)
+                        .unwrap(),
+                    if maintenance_node == 0 {
+                        64 << 20
+                    } else {
+                        16 << 20
+                    },
+                )
+                .with_replica_host(Host::default().with_local_disk_budget(DiskBudget::new(8 << 30)))
+                .with_session(session(index));
+            // The failed-receiver fixture keeps this one receiver outside the
+            // graceful reader-retirement owner so process evidence, rather
+            // than native shutdown, must close the original enrollment.
+            let builder = if reader_enrollment || index != 1 {
+                builder.with_fleet_startup_intent(intent.clone())
+            } else {
+                builder
+            };
+            let node = Arc::new(builder.build().unwrap());
             node.install_task_group(CancellationToken::new(), CancellationToken::new())
                 .unwrap();
             node.install_fleet_actions(
@@ -121,9 +134,16 @@ impl Fixture {
                     limits,
                 )
                 .unwrap();
-            node.install_fleet_reader_enrollment(scope(), node_id(index), journal.clone())
-                .unwrap();
-            let ad = startup::advertisement(index, &node, &intent).await.unwrap();
+            if reader_enrollment || index != 1 {
+                node.install_fleet_reader_enrollment(scope(), node_id(index), journal.clone())
+                    .unwrap();
+            }
+            let ad = if !reader_enrollment && index == 1 {
+                startup::advertisement_with_read_capacity(index, &node, &intent).await
+            } else {
+                startup::advertisement(index, &node, &intent).await
+            }
+            .unwrap();
             let spec = startup::spec(&intent).unwrap();
             let original =
                 startup::enroll(&journal, &directory, &spec, ad.clone(), clock().unwrap())
@@ -131,21 +151,23 @@ impl Fixture {
                     .unwrap();
             let guard = NodeLeaseGuard::new(clock().unwrap(), ad.expires_at_ms()).unwrap();
             node.install_node_lease_for_startup(guard.clone()).unwrap();
-            node.confirm_fleet_startup(journal.as_ref(), spec.key().unwrap())
-                .await
-                .unwrap();
             let observed = directory
                 .load(session(index), clock().unwrap())
                 .await
                 .unwrap()
                 .unwrap();
-            node.install_fleet_boot_withdrawal(
-                directory.clone(),
-                observed,
-                original,
-                journal.clone(),
-            )
-            .unwrap();
+            if reader_enrollment || index != 1 {
+                node.confirm_fleet_startup(journal.as_ref(), spec.key().unwrap())
+                    .await
+                    .unwrap();
+                node.install_fleet_boot_withdrawal(
+                    directory.clone(),
+                    observed,
+                    original,
+                    journal.clone(),
+                )
+                .unwrap();
+            }
             node.start().unwrap();
             boots.push(startup::BootOwner {
                 node: node.clone(),
@@ -179,10 +201,12 @@ impl Fixture {
             .await
             .unwrap()
             .unwrap();
-        boots[1]
-            .refresh_capacity(1, journal.as_ref(), Instant::now() + Duration::from_secs(3))
-            .await
-            .unwrap();
+        if reader_enrollment {
+            boots[1]
+                .refresh_capacity(1, journal.as_ref(), Instant::now() + Duration::from_secs(3))
+                .await
+                .unwrap();
+        }
         let transport = Arc::new(transport::NativePeers::new(
             &nodes,
             &managers,
@@ -214,20 +238,68 @@ impl Fixture {
             code,
             schema: 1,
         };
-        peer.activate(&target, &directory, ad.advertisement().clone(), description)
-            .await
-            .unwrap();
-        let reader = managers[1].resolve(target.clone()).await.unwrap();
-        let completion = managers[1]
-            .enrollment_completion(target.cell_id())
-            .await
-            .unwrap()
-            .unwrap();
-        let original = journal
-            .load_enrollment(scope(), completion.spec.key().unwrap())
-            .await
-            .unwrap()
-            .unwrap();
+        let (reader, original) = if reader_enrollment {
+            peer.activate(&target, &directory, ad.advertisement().clone(), description)
+                .await
+                .unwrap();
+            let reader = managers[1].resolve(target.clone()).await.unwrap();
+            let completion = managers[1]
+                .enrollment_completion(target.cell_id())
+                .await
+                .unwrap()
+                .unwrap();
+            let original = journal
+                .load_enrollment(scope(), completion.spec.key().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+            (reader, original)
+        } else {
+            let prepared = managers[1]
+                .prepare_source(target.clone(), session(0))
+                .await
+                .unwrap();
+            let spec = EnrollmentSpec {
+                scope: scope(),
+                request: Digest::from_bytes([190; 32]),
+                source: Some(EnrollmentEndpoint {
+                    node: node_id(0),
+                    session: session(0),
+                    intent_revision: 1,
+                }),
+                target: EnrollmentEndpoint {
+                    node: node_id(1),
+                    session: session(1),
+                    intent_revision: 1,
+                },
+                role: EnrollmentRole::Reader {
+                    target: target.clone(),
+                    position: PublishedPosition {
+                        incarnation,
+                        epoch: prepared.epoch(),
+                        root: prepared.root().clone(),
+                    },
+                },
+            };
+            let FleetEnrollmentAcceptance::New(pending) = journal
+                .accept_enrollment(&spec, clock().unwrap())
+                .await
+                .unwrap()
+            else {
+                panic!("new reader request expected")
+            };
+            managers[1].activate_source(prepared).await.unwrap();
+            let original = journal
+                .publish_enrollment_result(
+                    &pending,
+                    EnrollmentEvent::Established(Digest::from_bytes([191; 32])),
+                    clock().unwrap(),
+                )
+                .await
+                .unwrap();
+            let reader = managers[1].resolve(target.clone()).await.unwrap();
+            (reader, original)
+        };
         assert_eq!(original.status(), EnrollmentStatus::Established);
         let snapshot = journal.load_snapshot(scope()).await.unwrap();
         journal

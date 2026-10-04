@@ -1,9 +1,11 @@
 //! Actual managed writer handoff, exact native joining and current source policy.
 use super::*;
 use cellule_host::fleet::{
-    FleetAdapterFuture, FleetJournalSnapshot, FleetMaintenanceEnrollments, FleetObservation,
+    FleetAdapterFuture, FleetFailedBootProcessEvidence, FleetFailedBootProcessRequest,
+    FleetFailedBootProcesses, FleetFailedBootRetirement, FleetFailedReaderRetirement,
+    FleetJournalSnapshot, FleetMaintenanceEnrollments, FleetObservation,
     FleetReaderEvacuationVerifier, FleetRoster, FleetSourceReaderInputs, FleetSourceReaderPolicies,
-    FleetSourceReaderSuccessors,
+    FleetSourceReaderRetirement, FleetSourceReaderSuccessors,
 };
 use cellule_runtime::{fleet::operations::EnrollmentRole, read_policy::ReadPolicyStore};
 use std::sync::atomic::{AtomicUsize, Ordering};

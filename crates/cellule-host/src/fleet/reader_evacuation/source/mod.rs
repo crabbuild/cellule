@@ -2,15 +2,17 @@
 use super::*;
 use crate::{
     CellNode,
+    fleet::FleetFailedReaderClosure,
     read_replicas::{ReaderEnrollmentRetirement, ReaderReplacement},
 };
 use cellule_runtime::{
+    Error, Result,
     cell::{actor::CellServingObservation, catalog::CatalogProof},
     control::{
         Control,
         authority::{CellAuthority, VerifiedRootPrefix},
     },
-    fleet::operations::EnrollmentRecord,
+    fleet::operations::{EnrollmentRecord, EnrollmentRole},
     identity::NodeId,
     ltx::CellReplica,
 };
@@ -19,12 +21,89 @@ use std::sync::Arc;
 mod collection;
 mod digest;
 
-/// Authenticated mapping of one retained native retirement to its current writer.
+/// Durable native or failed-process closure for one original reader request.
+/// A failed-process closure proves nonexecution only; current source lineage and
+/// replacement policy still have to pass the same successor checks.
+#[derive(Clone)]
+pub enum FleetSourceReaderRetirement {
+    /// Native removal joined all local query/refresh work and retained its final root.
+    Native(Arc<ReaderEnrollmentRetirement>),
+    /// Application-confirmed original process and accepted-work closure.
+    Failed(Arc<FleetFailedReaderClosure>),
+}
+impl FleetSourceReaderRetirement {
+    /// Exact first accepted reader row used by the retirement proof.
+    #[must_use]
+    pub fn original(&self) -> &EnrollmentRecord {
+        match self {
+            Self::Native(retirement) => retirement.original(),
+            Self::Failed(closure) => closure.original(),
+        }
+    }
+    /// Exact terminal row confirmed by the retirement proof.
+    #[must_use]
+    pub fn retired(&self) -> &EnrollmentRecord {
+        match self {
+            Self::Native(retirement) => retirement.retired(),
+            Self::Failed(closure) => closure.reader(),
+        }
+    }
+    /// Original bounded proof interval, distinct from the current lookup interval.
+    #[must_use]
+    pub fn interval(&self) -> (i64, i64) {
+        match self {
+            Self::Native(retirement) => retirement.interval(),
+            Self::Failed(closure) => closure.interval(),
+        }
+    }
+    /// Exact native final root, or the original failed reader's pinned opening root.
+    pub fn root(&self) -> Result<cellule_runtime::ltx::RootRef> {
+        match self {
+            Self::Native(retirement) => Ok(retirement.root()),
+            Self::Failed(closure) => {
+                let EnrollmentRole::Reader { target, position } = &closure.original().spec().role
+                else {
+                    return Err(Error::Fenced);
+                };
+                Ok(position.root.to_ltx(target.cell_id(), position.incarnation))
+            }
+        }
+    }
+    /// Lowest prefix this exact retirement requires from its current successor.
+    pub fn minimum_commit_sequence(&self) -> u64 {
+        match self {
+            Self::Native(retirement) => retirement.receipt().commit_sequence,
+            Self::Failed(closure) => match &closure.original().spec().role {
+                EnrollmentRole::Reader { position, .. } => position.root.commit_sequence,
+                _ => 0,
+            },
+        }
+    }
+    /// Failed-process evidence when the old receiver lifetime no longer exists.
+    #[must_use]
+    pub fn failed_process(&self) -> Option<&FleetFailedReaderClosure> {
+        match self {
+            Self::Native(_) => None,
+            Self::Failed(closure) => Some(closure.as_ref()),
+        }
+    }
+    /// Native join capsule when the old receiver remains available.
+    #[must_use]
+    pub fn native(&self) -> Option<&ReaderEnrollmentRetirement> {
+        match self {
+            Self::Native(retirement) => Some(retirement.as_ref()),
+            Self::Failed(_) => None,
+        }
+    }
+}
+
+/// Authenticated mapping of one retained retirement to its current writer.
 /// Providers retain this exact allocation through their existing accepted-work
-/// owner. Losing native evidence cannot be repaired from a terminal journal row.
+/// owner. Failed receiver closures are not a substitute for current source or
+/// replacement evidence.
 pub struct FleetSourceReaderInputs {
-    /// Exact locally joined original reader and last installed root.
-    pub retirement: Arc<ReaderEnrollmentRetirement>,
+    /// Exact native join or application-authenticated failed receiver closure.
+    pub retirement: FleetSourceReaderRetirement,
     /// Authenticated physical destination of the current native writer.
     pub node: NodeId,
     /// Actual existing managed host; collection starts no writer acquisition.
@@ -37,10 +116,10 @@ pub struct FleetSourceReaderInputs {
     pub replica: CellReplica,
 }
 
-/// Read-only application lookup of original native evidence and current writer.
+/// Read-only application lookup of original closure evidence and current writer.
 /// Authenticate both physical endpoints and all canonical backend mappings.
-/// Process restart exclusion and durable accepted-work retention remain separate
-/// requirements; this interface cannot reconstruct a lost native join witness.
+/// Process restart exclusion and durable accepted-work retention remain the
+/// provider's responsibility; None remains unknown and cannot infer closure.
 pub trait FleetSourceReaderSuccessors: Send + Sync {
     /// None is unknown, never empty work. Return the same retained allocation on
     /// global recheck; substituting a new capsule or mapping fences collection.
@@ -51,8 +130,8 @@ pub trait FleetSourceReaderSuccessors: Send + Sync {
     ) -> FleetAdapterFuture<'a, Option<Arc<FleetSourceReaderInputs>>>;
 }
 
-/// Fresh current policy for one exact source-side native reader retirement.
-/// This grants no original-writer/process/accepted-work or finalization rights.
+/// Fresh current policy for one exact native or failed-process reader closure.
+/// This grants no original-writer, accepted-work or finalization rights.
 pub struct FleetSourceReaderCheck {
     inputs: Arc<FleetSourceReaderInputs>,
     serving: CellServingObservation,
@@ -64,9 +143,9 @@ pub struct FleetSourceReaderCheck {
     replacements: Vec<ReaderReplacement>,
 }
 impl FleetSourceReaderCheck {
-    /// Original charged local retirement retained throughout this observation.
+    /// Exact native/process retirement evidence retained throughout this observation.
     #[must_use]
-    pub fn retirement(&self) -> &ReaderEnrollmentRetirement {
+    pub fn retirement(&self) -> &FleetSourceReaderRetirement {
         &self.inputs.retirement
     }
     /// Authenticated physical successor.

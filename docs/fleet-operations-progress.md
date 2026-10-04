@@ -62,13 +62,32 @@ physical process/provider retention and the complete W1–W10 scope remain requi
 The new [source reader recipe](../crates/cellule-host/docs/source-readers.md) documents
 provider ownership, collection/attachment and the runnable cases.
 
+### Failed receiver source succession continuation
+
+`FleetSourceReaderRetirement` now accepts either the retained native reader
+join or a `FleetFailedReaderClosure`. The collector checks the failed proof's
+original reader, process request and current boot row, then verifies the original
+opening root through the actual writer successor. Current replacement policy
+still applies: desired count 1 with no available replacement blocks collection;
+an explicit update to zero allows it. The source-policy subdigest moved to v2,
+and planner input identity moved to v13 to bind the new proof variant.
+
+All 12 source-reader minion cases pass, including the new failed-receiver case;
+all 10 failed-reader lifetime cases pass. The host crate passes all-target,
+all-feature `cargo check`, and formatting passes. The fixtures prove the API
+composition using process evidence tied to a stopped native reader; production
+OS termination and external accepted-work providers remain unqualified. PR #56
+is currently mergeable with no reported conflicts. These follow-up edits are
+local and have not been pushed yet.
+
 ### Highest remaining work
 
 1. Qualify the follow-up head in CI and both routing campaigns.
    Earlier follower-observation and overload failures still need independent
    diagnosis if reproduced; a later green run alone does not establish their cause.
-2. Complete durable provider/process retention and failed-owner reader/follower
-   succession, full native/external accepted-work coverage and unknown outcomes.
+2. Qualify production durable provider/process retention; complete failed-owner
+   follower succession, full native/external accepted-work coverage and unknown
+   outcomes.
 3. Implement SettleRoles/Finalize through original action joining, native Stopped,
    withdrawal, retired boots and committed completion; finish Cron/Blob owners
    and primitive fault matrices.

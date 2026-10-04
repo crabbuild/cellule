@@ -37,7 +37,8 @@ mod recovered;
 pub use reader_evacuation::{
     FleetReaderEvacuationCandidate, FleetReaderEvacuationCheck, FleetReaderEvacuationJournal,
     FleetReaderEvacuationPublication, FleetReaderEvacuationVerifier, FleetSourceReaderCheck,
-    FleetSourceReaderInputs, FleetSourceReaderPolicies, FleetSourceReaderSuccessors,
+    FleetSourceReaderInputs, FleetSourceReaderPolicies, FleetSourceReaderRetirement,
+    FleetSourceReaderSuccessors,
 };
 mod references;
 mod roster;

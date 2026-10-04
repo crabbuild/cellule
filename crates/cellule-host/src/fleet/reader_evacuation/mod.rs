@@ -9,7 +9,7 @@ mod current;
 mod source;
 pub use source::{
     FleetSourceReaderCheck, FleetSourceReaderInputs, FleetSourceReaderPolicies,
-    FleetSourceReaderSuccessors,
+    FleetSourceReaderRetirement, FleetSourceReaderSuccessors,
 };
 mod maintenance;
 mod publication;

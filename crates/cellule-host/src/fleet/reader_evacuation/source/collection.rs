@@ -89,12 +89,17 @@ impl FleetReaderEvacuationVerifier {
                     .map_err(provider)?;
                 now()?;
                 if let Some(inputs) = &inputs {
-                    validate(row, request.original, inputs)?;
+                    validate(row, request.original, inputs, roster)?;
                     let (serving, writer_boot) = self.source_writer(inputs, roster, now()?).await?;
-                    let root = serving.position().root.to_ltx(
-                        inputs.retirement.receipt().cell,
-                        serving.position().incarnation,
-                    );
+                    let EnrollmentRole::Reader { target, position } =
+                        &inputs.retirement.original().spec().role
+                    else {
+                        return Err(Error::Fenced);
+                    };
+                    let root = serving
+                        .position()
+                        .root
+                        .to_ltx(target.cell_id(), position.incarnation);
                     let origin = inputs
                         .host
                         .runtime()
@@ -102,14 +107,14 @@ impl FleetReaderEvacuationVerifier {
                             &inputs.catalog,
                             &inputs.authority,
                             inputs.replica.clone(),
-                            inputs.retirement.root(),
+                            inputs.retirement.root()?,
                             root,
                             10_000,
                         )
                         .await?;
                     let authority = self
                         .authority
-                        .load(inputs.retirement.receipt().cell)
+                        .load(target.cell_id())
                         .await?
                         .ok_or(Error::Fenced)?;
                     let authority = authority.value().clone();
@@ -138,10 +143,7 @@ impl FleetReaderEvacuationVerifier {
                         incarnation: authority.incarnation,
                         commit_sequence: root
                             .commit_sequence
-                            .max(inputs.retirement.receipt().commit_sequence),
-                    };
-                    let EnrollmentRole::Reader { target, .. } = &row.spec().role else {
-                        return Err(Error::Fenced);
+                            .max(inputs.retirement.minimum_commit_sequence()),
                     };
                     let selected = self
                         .directory
@@ -342,6 +344,7 @@ fn validate(
     row: &EnrollmentRecord,
     accepted: Option<&EnrollmentRecord>,
     inputs: &FleetSourceReaderInputs,
+    roster: &FleetRoster,
 ) -> Result<()> {
     let original = inputs.retirement.original();
     let EnrollmentRole::Reader { target, position } = &original.spec().role else {
@@ -351,7 +354,8 @@ fn validate(
         Digest::from_bytes(*blake3::hash(&original.to_bytes().map_err(operation)?).as_bytes());
     requests::validate_original(accepted, Some(digest))?;
     let entry = inputs.catalog.entry();
-    let root = inputs.retirement.root();
+    let root = inputs.retirement.root()?;
+    let minimum_commit_sequence = inputs.retirement.minimum_commit_sequence();
     if inputs.retirement.retired() != row
         || row.spec() != original.spec()
         || row.accepted_at_ms() != original.accepted_at_ms()
@@ -366,9 +370,34 @@ fn validate(
             )
         || root.cell != *target.cell_id().as_bytes()
         || root.incarnation != *position.incarnation.as_bytes()
-        || root.commit_sequence != inputs.retirement.receipt().commit_sequence
+        || root.commit_sequence < minimum_commit_sequence
+        || inputs
+            .retirement
+            .native()
+            .is_some_and(|native| root.commit_sequence != native.receipt().commit_sequence)
     {
         return Err(Error::Fenced);
+    }
+    if let Some(closure) = inputs.retirement.failed_process()
+        && (closure.reader() != row
+            || closure.original() != original
+            || closure.snapshot().head().scope() != row.spec().scope
+            || closure.request().boot().spec().scope != row.spec().scope
+            || closure.request().boot().spec().target.node != original.spec().target.node
+            || closure.request().boot().spec().target.session != original.spec().target.session
+            || closure.process().request_digest() != closure.request().digest())
+    {
+        return Err(Error::Fenced);
+    }
+    if let Some(closure) = inputs.retirement.failed_process() {
+        let request_boot = closure.request().boot();
+        let boot_key = request_boot.spec().key().map_err(operation)?;
+        let boot = roster
+            .enrollments()
+            .iter()
+            .find(|record| record.spec().key().is_ok_and(|key| key == boot_key))
+            .ok_or(Error::Fenced)?;
+        closure.validate_boot(boot)?;
     }
     Ok(())
 }

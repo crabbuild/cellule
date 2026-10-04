@@ -36,6 +36,24 @@ pub(super) async fn advertisement(
     node: &CellNode,
     intent: &NodeIntent,
 ) -> JournalResult<NodeAdvertisement> {
+    advertisement_with_receive_capacity(index, node, intent, false).await
+}
+
+#[cfg(test)]
+pub(super) async fn advertisement_with_read_capacity(
+    index: usize,
+    node: &CellNode,
+    intent: &NodeIntent,
+) -> JournalResult<NodeAdvertisement> {
+    advertisement_with_receive_capacity(index, node, intent, true).await
+}
+
+async fn advertisement_with_receive_capacity(
+    index: usize,
+    node: &CellNode,
+    intent: &NodeIntent,
+    receive_capacity: bool,
+) -> JournalResult<NodeAdvertisement> {
     // Boot discovery publishes no receive capacity before readiness. The
     // observer separately captures real signed capacity after startup.
     let sample = tokio::time::timeout(Duration::from_secs(3), async {
@@ -49,6 +67,14 @@ pub(super) async fn advertisement(
     .await??;
     let now = clock()?;
     let stats = node.stats();
+    let memory_capacity =
+        u64::try_from(stats.resident_capacity_bytes() + stats.retained_capacity_bytes())?;
+    let memory_used = u64::try_from(stats.resident_bytes() + stats.retained_bytes())?;
+    let disk_free = stats
+        .local_disk_capacity_bytes()
+        .saturating_sub(stats.local_disk_reserved_bytes());
+    let job_capacity = stats.placement_job_capacity();
+    let jobs_running = stats.placement_running_jobs();
     let key = SigningKey::from_bytes(&[index as u8 + 1; 32]);
     Ok(NodeAdvertisement::sign(
         intent.node(),
@@ -66,20 +92,29 @@ pub(super) async fn advertisement(
         vec![1],
         NodeFailureDomain::default(),
         NodeCapacity {
+            free_memory_bytes: if receive_capacity {
+                memory_capacity.saturating_sub(memory_used)
+            } else {
+                0
+            },
+            free_disk_bytes: if receive_capacity { disk_free } else { 0 },
+            job_credits: if receive_capacity {
+                job_capacity.saturating_sub(jobs_running)
+            } else {
+                0
+            },
             log_protocol: 1,
-            ..NodeCapacity::default()
+            ..Default::default()
         },
     )?
     .with_operational_placement(
         cellule_runtime::node::NodePlacementCapacity {
-            memory_capacity_bytes: u64::try_from(
-                stats.resident_capacity_bytes() + stats.retained_capacity_bytes(),
-            )?,
+            memory_capacity_bytes: memory_capacity,
             disk_capacity_bytes: stats.local_disk_capacity_bytes(),
             active_cells: stats.placement_active_cells(),
             max_active_cells: stats.placement_active_cell_capacity(),
-            running_jobs: stats.placement_running_jobs(),
-            job_capacity: stats.placement_job_capacity(),
+            running_jobs: jobs_running,
+            job_capacity,
             ..Default::default()
         },
         sample,

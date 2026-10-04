@@ -3,11 +3,11 @@ use super::*;
 use cellule_runtime::Result;
 
 impl FleetSourceReaderPolicies {
-    /// Binds full original/current rows, exact roots, native successor identity,
-    /// policy, ready replacements and the original fresh collection barrier.
+    /// Binds full original/current rows, closure evidence, exact roots, native
+    /// successor identity, policy, ready replacements and the original barrier.
     pub fn digest(&self) -> Result<Digest> {
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-source-reader-policies.v1\0");
+        hash.update(b"cellule.fleet-source-reader-policies.v2\0");
         for bytes in [
             self.snapshot.head().to_bytes().map_err(operation)?,
             self.snapshot.registry().to_bytes().map_err(operation)?,
@@ -23,6 +23,29 @@ impl FleetSourceReaderPolicies {
         hash.update(&(self.checks.len() as u64).to_be_bytes());
         for check in &self.checks {
             let retirement = check.retirement();
+            match retirement {
+                FleetSourceReaderRetirement::Native(_) => {
+                    hash.update(&[1]);
+                }
+                FleetSourceReaderRetirement::Failed(closure) => {
+                    hash.update(&[2]);
+                    hash.update(closure.digest().as_bytes());
+                    hash.update(closure.request().digest().as_bytes());
+                    hash.update(closure.process().request_digest().as_bytes());
+                    hash.update(closure.process().witness().as_bytes());
+                    for bytes in [
+                        closure.snapshot().head().to_bytes().map_err(operation)?,
+                        closure
+                            .snapshot()
+                            .registry()
+                            .to_bytes()
+                            .map_err(operation)?,
+                    ] {
+                        hash.update(&(bytes.len() as u64).to_be_bytes());
+                        hash.update(&bytes);
+                    }
+                }
+            }
             for row in [retirement.original(), retirement.retired()] {
                 let bytes = row.to_bytes().map_err(operation)?;
                 hash.update(&(bytes.len() as u64).to_be_bytes());
@@ -31,7 +54,7 @@ impl FleetSourceReaderPolicies {
             for time in [retirement.interval().0, retirement.interval().1] {
                 hash.update(&time.to_be_bytes());
             }
-            root(&mut hash, retirement.root());
+            root(&mut hash, retirement.root()?);
             root(&mut hash, check.origin.prefix());
             root(&mut hash, check.origin.root());
             hash.update(&(check.origin.inspected_roots() as u64).to_be_bytes());

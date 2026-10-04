@@ -124,7 +124,9 @@ impl FleetFailedReaderRetirement {
         let finished_at_ms = clock()?;
         Ok(FleetFailedReaderClosure {
             snapshot,
-            digest: records::closure_digest(&reader, process)?,
+            request: self.request.clone(),
+            digest: records::closure_digest(&self.original, &reader, process)?,
+            original: self.original.clone(),
             reader,
             process: process.clone(),
             started_at_ms: self.request.started_at_ms,

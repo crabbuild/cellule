@@ -57,8 +57,14 @@ async fn source_reader_policy_binds_actual_final_root_writer_and_new_request_in_
         assert_eq!(policies.checks().len(), 1);
         let check = &policies.checks()[0];
         assert_eq!(check.retirement().original(), &source.fixture.original);
-        assert_eq!(check.origin().prefix(), source.inputs.retirement.root());
-        assert_eq!(check.origin().root(), source.inputs.retirement.root());
+        assert_eq!(
+            check.origin().prefix(),
+            source.inputs.retirement.root().unwrap()
+        );
+        assert_eq!(
+            check.origin().root(),
+            source.inputs.retirement.root().unwrap()
+        );
         assert_eq!(check.serving().owner().session, session(2));
         let EnrollmentRole::Reader { position, .. } = &source.fixture.original.spec().role else {
             panic!("not reader")
@@ -108,6 +114,42 @@ async fn source_reader_policy_binds_actual_final_root_writer_and_new_request_in_
     }
     assert_eq!(provider.calls.load(Ordering::SeqCst), 4);
     drop(provider);
+    source.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_receiver_closure_still_requires_current_source_and_replacement_policy() {
+    let source = SourceFixture::failed_receiver().await;
+    let blocked = Provider::stable(source.inputs.clone());
+    assert!(matches!(
+        source.collect(&blocked).await,
+        Err(Error::ReplicaUnavailable)
+    ));
+    assert_eq!(blocked.calls.load(Ordering::SeqCst), 1);
+
+    let policies = ReadPolicyStore::new(source.fixture.layout.clone());
+    let observed = policies
+        .load(source.fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let updated = policies.update(&observed, 0).await.unwrap();
+    assert_eq!(updated.value().desired_readers(), 0);
+
+    let provider = Provider::stable(source.inputs.clone());
+    let checked = source.collect(&provider).await.unwrap();
+    assert_eq!(checked.checks().len(), 1);
+    let check = &checked.checks()[0];
+    assert!(check.retirement().failed_process().is_some());
+    assert_eq!(check.serving().owner().session, session(2));
+    assert_eq!(check.desired_readers(), 0);
+    assert!(check.replacements().is_empty());
+    assert_eq!(
+        check.origin().prefix(),
+        source.inputs.retirement.root().unwrap()
+    );
+    assert!(check.origin().root().commit_sequence >= check.origin().prefix().commit_sequence);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     source.finish().await;
 }
 
