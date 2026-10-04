@@ -2,6 +2,7 @@ use super::*;
 
 mod maintenance_enrollments;
 mod maintenance_policies;
+mod nonexecution;
 use cellule_runtime::control::{Control, ControlState, Owner, RootRef};
 use cellule_runtime::identity::{ApplicationId, CellTarget, IncarnationId, NamespaceId, TenantId};
 

@@ -24,6 +24,8 @@ mod maintenance_enrollments;
 mod maintenance_policies;
 pub use maintenance_enrollments::FleetMaintenanceEnrollments;
 pub use maintenance_policies::{
+    FleetEnrollmentNonexecution, FleetEnrollmentNonexecutionEvidence,
+    FleetEnrollmentNonexecutionRequest, FleetMaintenanceNonexecution,
     FleetMaintenancePolicyCoverage, FleetMaintenancePolicyObligation,
     FleetMaintenancePolicyProgress, FleetMaintenancePolicyStatus,
 };

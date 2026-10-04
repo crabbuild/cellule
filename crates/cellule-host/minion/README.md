@@ -550,6 +550,28 @@ Complete authenticated lookup, source/failed-owner successor policy, checked
 nonexecution, accepted-work joining and SettleRoles/Finalize remain delivery
 requirements. See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
 
+## Original nonexecution confirmation
+
+The actual reader/follower suites consume `FleetMaintenanceNonexecution` through
+the public observation and policy matcher. The reader case pauses a committed
+Pending acceptance, refuses native admission before SQL/VFS work, joins the
+original producer, and synchronizes its exact retained witness before constructing
+a fresh file provider. The follower case loses its original member acceptance
+reply, joins the existing owner, verifies no native epoch or follower RPC started,
+and confirms the retained exclusion after delayed acceptance replays terminal rows.
+These are in-process evidence cases; production provider/process qualification
+remains required.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked maintenance_nonexecution
+```
+
+Cases also cover absent proof, substituted witnesses, second-read errors, evidence
+appearing during confirmation, controller/head changes, stable original bindings,
+clock/deadline bounds, cancelled reads and attachment ordering. Terminal rows alone
+stay blocking. Source/failed-owner installed-role succession, other accepted work
+and terminal maintenance remain separate unfinished streams.
+
 ## Automatic maintenance policy lookup
 
 The role-enabled public observers now discover latest policy history from the

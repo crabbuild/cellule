@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::fleet::{
-    FleetFailedBootClosure, FleetMaintenanceEnrollments, FleetMaintenancePolicyCoverage,
-    FleetOriginalWriterSuccessorInventory, FleetRoleCoverage, FleetRoster,
+    FleetFailedBootClosure, FleetMaintenanceEnrollments, FleetMaintenanceNonexecution,
+    FleetMaintenancePolicyCoverage, FleetOriginalWriterSuccessorInventory, FleetRoleCoverage,
+    FleetRoster,
 };
 use cellule_runtime::cell::actor::OwnedCellObservation;
 use cellule_runtime::fleet::operations::{FleetScope, RegistryVersion};
@@ -47,6 +48,7 @@ pub struct FleetObservation {
     role_evacuations: Option<RoleEvacuations>,
     maintenance_enrollments: Option<FleetMaintenanceEnrollments>,
     maintenance_policies: Option<FleetMaintenancePolicyCoverage>,
+    maintenance_nonexecution: Option<FleetMaintenanceNonexecution>,
 }
 
 impl FleetObservation {
@@ -81,6 +83,7 @@ impl FleetObservation {
             role_evacuations: None,
             maintenance_enrollments: None,
             maintenance_policies: None,
+            maintenance_nonexecution: None,
         };
         observation.placements(capture_finished_at_ms)?;
         Ok(observation)
@@ -108,6 +111,7 @@ impl FleetObservation {
     fn validate_role_coverage(&self) -> Result<()> {
         self.validate_maintenance_policies()?;
         self.validate_maintenance_enrollments()?;
+        self.validate_maintenance_nonexecution()?;
         self.validate_original_writer_successors()?;
         self.validate_failed_boot_closures()?;
         self.validate_role_evacuations()?;
@@ -213,7 +217,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v10\0");
+        hash.update(b"cellule.fleet-planner-inputs.v11\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -268,6 +272,10 @@ impl FleetObservation {
             }
         }
         self.hash_role_evacuations(&mut hash)?;
+        hash.update(&[u8::from(self.maintenance_nonexecution.is_some())]);
+        if let Some(nonexecution) = &self.maintenance_nonexecution {
+            hash.update(nonexecution.digest().as_bytes());
+        }
         hash.update(&[u8::from(self.maintenance_enrollments.is_some())]);
         if let Some(original) = &self.maintenance_enrollments {
             hash.update(original.digest()?.as_bytes());
@@ -374,6 +382,7 @@ mod evacuations;
 mod failed_boots;
 mod maintenance_enrollments;
 mod maintenance_policies;
+mod nonexecution;
 mod original_writers;
 #[cfg(test)]
 mod tests;

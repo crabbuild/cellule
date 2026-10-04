@@ -8,7 +8,12 @@ use cellule_runtime::identity::Digest;
 use cellule_runtime::{Error, Result};
 use std::collections::BTreeMap;
 
+mod nonexecution;
 pub(in crate::fleet) mod requests;
+pub use nonexecution::{
+    FleetEnrollmentNonexecution, FleetEnrollmentNonexecutionEvidence,
+    FleetEnrollmentNonexecutionRequest, FleetMaintenanceNonexecution,
+};
 
 /// Policy result for one exact retained request. Unchecked states remain blockers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +22,8 @@ pub enum FleetMaintenancePolicyStatus {
     Reader(Digest),
     /// Current native replacement ensemble and policy checked from this history.
     Follower(Digest),
+    /// Independently joined original work whose role effect never committed.
+    Nonexecution(Digest),
     /// Original acceptance still has an unknown native outcome.
     Pending,
     /// An installed original role has not been retired with checked replacement policy.
@@ -29,10 +36,13 @@ pub enum FleetMaintenancePolicyStatus {
     UnprovenNonexecution,
 }
 impl FleetMaintenancePolicyStatus {
-    /// Whether this request has a current checked replacement policy.
+    /// Whether current policy or independently joined original nonexecution is checked.
     #[must_use]
     pub const fn is_checked(self) -> bool {
-        matches!(self, Self::Reader(_) | Self::Follower(_))
+        matches!(
+            self,
+            Self::Reader(_) | Self::Follower(_) | Self::Nonexecution(_)
+        )
     }
 }
 
@@ -72,8 +82,10 @@ pub struct FleetMaintenancePolicyProgress {
     pub interval: (i64, i64),
     /// Every original/current required request.
     pub required: usize,
-    /// Requests with current checked reader/follower policy.
+    /// Requests with current policy or independently checked original nonexecution.
     pub checked: usize,
+    /// Requests independently confirmed never to have installed a native role.
+    pub nonexecution: usize,
     /// Unknown accepted native outcomes.
     pub pending: usize,
     /// Installed roles awaiting checked retirement/replacement.
@@ -90,7 +102,7 @@ pub struct FleetMaintenancePolicyProgress {
 ///
 /// This local value proves that a supplied subset cannot masquerade as complete
 /// request-policy coverage. It does not discover unjournaled native roles, join
-/// accepted work, prove failed-owner succession or grant settlement/finalization.
+/// installed-role accepted work, prove failed-owner succession or grant settlement/finalization.
 /// Applications account bounded copies of at most 10,000 retained requests.
 pub struct FleetMaintenancePolicyCoverage {
     snapshot: FleetJournalSnapshot,
@@ -106,11 +118,28 @@ impl FleetMaintenancePolicyCoverage {
         roster: &FleetRoster,
         readers: &[FleetReaderEvacuationCheck],
         followers: &[FleetFollowerEvacuationCheck],
+        nonexecution: Option<&FleetMaintenanceNonexecution>,
         inputs: Digest,
     ) -> Result<Self> {
         let requests = requests::required(original, roster)?;
         let node = original.original().operation().node();
         let mut witnesses = BTreeMap::new();
+        if let Some(checked) = nonexecution {
+            if checked.snapshot() != roster.snapshot()
+                || checked.roster_digest() != roster.digest()?
+                || checked.original_digest() != original.digest()?
+            {
+                return Err(Error::Fenced);
+            }
+            for (request, evidence) in checked.checks() {
+                witness_optional(
+                    &mut witnesses,
+                    request.terminal(),
+                    None,
+                    FleetMaintenancePolicyStatus::Nonexecution(evidence.request_digest()),
+                )?;
+            }
+        }
         for check in readers {
             witness_optional(
                 &mut witnesses,
@@ -142,6 +171,17 @@ impl FleetMaintenancePolicyCoverage {
             let status = match row.status() {
                 EnrollmentStatus::Pending => FleetMaintenancePolicyStatus::Pending,
                 EnrollmentStatus::Established => FleetMaintenancePolicyStatus::Established,
+                _ if let Some((terminal, _, FleetMaintenancePolicyStatus::Nonexecution(proof))) =
+                    witnesses.get(&key) =>
+                {
+                    if row != *terminal
+                        || row.established_evidence().is_some()
+                        || accepted.is_some_and(|row| row.established_evidence().is_some())
+                    {
+                        return Err(Error::Fenced);
+                    }
+                    FleetMaintenancePolicyStatus::Nonexecution(*proof)
+                }
                 _ if row.spec().target.node != node => {
                     FleetMaintenancePolicyStatus::SourceSuccessor
                 }
@@ -169,6 +209,7 @@ impl FleetMaintenancePolicyCoverage {
             .iter()
             .map(FleetReaderEvacuationCheck::interval)
             .chain(followers.iter().map(FleetFollowerEvacuationCheck::interval))
+            .chain(nonexecution.map(FleetMaintenanceNonexecution::interval))
             .fold(original.interval(), |interval, next| {
                 (interval.0.min(next.0), interval.1.max(next.1))
             });
@@ -190,6 +231,7 @@ impl FleetMaintenancePolicyCoverage {
                 FleetMaintenancePolicyStatus::MissingPolicy => (5, None),
                 FleetMaintenancePolicyStatus::SourceSuccessor => (6, None),
                 FleetMaintenancePolicyStatus::UnprovenNonexecution => (7, None),
+                FleetMaintenancePolicyStatus::Nonexecution(proof) => (8, Some(proof)),
             };
             hash.update(&[tag]);
             if let Some(proof) = proof {
@@ -215,7 +257,7 @@ impl FleetMaintenancePolicyCoverage {
     pub fn obligations(&self) -> &[FleetMaintenancePolicyObligation] {
         &self.obligations
     }
-    /// All enumerated requests have checked policy; other node barriers remain.
+    /// All requests have checked policy or nonexecution; other node barriers remain.
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.obligations.iter().all(|row| row.status.is_checked())
@@ -239,6 +281,7 @@ impl FleetMaintenancePolicyCoverage {
             interval: self.interval,
             required: self.obligations.len(),
             checked: 0,
+            nonexecution: 0,
             pending: 0,
             established: 0,
             missing_policy: 0,
@@ -249,6 +292,10 @@ impl FleetMaintenancePolicyCoverage {
             match obligation.status {
                 FleetMaintenancePolicyStatus::Reader(_)
                 | FleetMaintenancePolicyStatus::Follower(_) => progress.checked += 1,
+                FleetMaintenancePolicyStatus::Nonexecution(_) => {
+                    progress.checked += 1;
+                    progress.nonexecution += 1;
+                }
                 FleetMaintenancePolicyStatus::Pending => progress.pending += 1,
                 FleetMaintenancePolicyStatus::Established => progress.established += 1,
                 FleetMaintenancePolicyStatus::MissingPolicy => progress.missing_policy += 1,

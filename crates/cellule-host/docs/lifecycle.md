@@ -923,7 +923,7 @@ ensembles. Signed replacement boots must match the existing producer-specific
 identity; a changed writer row or follower epoch/ensemble invalidates the input.
 Attachment order with role coverage, writer successors or failed-boot closure
 does not change these checks. The reconciler repeats the roster comparison.
-Planner digest v10 binds collection presence, canonical record order, full
+Planner digest v11 binds collection presence, canonical record order, full
 barriers, fresh intervals, current authority, reader prefixes and retained native
 follower inventories. Persisted history, enrollment and transport codecs are unchanged.
 
@@ -948,7 +948,7 @@ fresh complete roster, and reconfirms the full journal snapshot. Retiring rows,
 extending a deadline or adopting a successor boot preserves the first set.
 `FleetObservation::with_maintenance_enrollments` retains this evidence inside the
 outer interval and compares the exact head, registry and roster with other checks,
-in either attachment order. Planner digest v10 binds its presence and full digest.
+in either attachment order. Planner digest v11 binds its presence and full digest.
 
 A missing manifest or page remains unknown. A committed empty manifest proves
 only that the original unresolved role set was empty at the phase transaction.
@@ -1001,6 +1001,59 @@ Pending/Established work, source succession and unknown nonexecution stay in the
 full matcher even when they are ineligible for donor lookup. This read-only path
 starts no role effects or tasks and grants no settlement/finalization rights.
 
+### Confirm original nonexecution
+
+A terminal request without establishment history remains unknown. An independent
+`FleetEnrollmentNonexecution` provider confirms durable evidence that all original
+native/external producer work was joined, no role effect committed, and the exact
+request cannot execute later. Confirmation is read-only. The application owns
+authentication, earlier joining and durable evidence retention; neither a digest
+constructor nor a journal tombstone performs those duties. A role that committed
+but lost its establishment reply requires native retirement and replacement
+policy, not this nonexecution proof.
+
+`FleetMaintenanceNonexecution::collect` enumerates the same complete original/current
+set as policy matching, confirms each eligible terminal request twice, and rechecks
+the full head/registry. Missing evidence remains a gap; source errors and changed
+bindings refuse collection. One monotonic interval and caller deadline bound the
+whole capture. Stable request identities retain the immutable original manifest,
+acceptance and terminal witness across controller/head changes. Fresh capsules
+remain bound to their exact full roster and original capture interval.
+
+```rust
+use cellule_host::fleet::{
+    FleetEnrollmentNonexecution, FleetJournal, FleetMaintenanceEnrollments,
+    FleetMaintenanceNonexecution, FleetObservation, FleetRoster,
+};
+use cellule_runtime::Result;
+use tokio::time::Instant;
+
+async fn attach_nonexecution(
+    journal: &dyn FleetJournal,
+    provider: &dyn FleetEnrollmentNonexecution,
+    roster: &FleetRoster,
+    observation: FleetObservation,
+    deadline: Instant,
+    clock: impl Fn() -> Result<i64>,
+) -> Result<FleetObservation> {
+    let original = FleetMaintenanceEnrollments::collect(
+        journal, roster, deadline, &clock,
+    ).await?;
+    let checks = FleetMaintenanceNonexecution::collect(
+        journal, &original, roster, provider, deadline, &clock,
+    ).await?;
+    observation.with_maintenance_enrollments(original)?
+        .with_maintenance_nonexecution(checks)?
+        .check_maintenance_policies(roster, clock()?)
+}
+```
+
+The observation's outer interval must include both collections. Attach all native
+policy and nonexecution checks before matching; later input changes refuse.
+Checked nonexecution is reported separately and binds planner digest v11. It
+cannot upgrade incomplete node observation, prove installed-role redundancy,
+join other accepted work, or grant SettleRoles/Finalize rights.
+
 ### Match every required maintenance policy
 
 After collecting the immutable original set and all available current native
@@ -1030,6 +1083,7 @@ supply complete request coverage.
 | `Pending` / `Established` | Accepted native outcome or installed role still unresolved. |
 | `MissingPolicy` | Retired donor lacks current replacement policy evidence. |
 | `SourceSuccessor` | Source-side or failed-owner policy still needs separate evidence. |
+| `Nonexecution` | Independently confirmed original work joining and exclusion; no role effect committed. |
 | `UnprovenNonexecution` | Closed unknown acceptance lacks checked nonexecution or policy evidence. |
 
 Missing original history refuses matching. Explicit zero requires a committed
@@ -1038,7 +1092,7 @@ empty original manifest and no currently unresolved related requests.
 `FleetReconcileReport::maintenance_policy` supplies bounded advisory counts with
 their own head revision, registry and original interval. `None` means unknown.
 Later allocations cannot restamp these counts to the report's newer snapshot.
-Planner digest v10 binds the coverage digest and source inputs; changing the
+Planner digest v11 binds the coverage digest and source inputs; changing the
 attached policy collections after matching is refused.
 
 `is_complete()` describes only enumerated request-policy coverage. It does not

@@ -32,6 +32,7 @@ mod aggregate;
 mod coverage;
 mod evacuation;
 mod inventory;
+mod nonexecution;
 mod observation;
 mod persisted;
 mod tests;

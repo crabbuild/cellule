@@ -12,6 +12,7 @@ mod evacuation;
 mod failed;
 mod inventory;
 mod leases;
+pub(super) mod nonexecution;
 mod reconciliation;
 
 struct ReaderFixture {

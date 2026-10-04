@@ -4,6 +4,100 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 3 2026 original nonexecution confirmation checkpoint
+
+The canonical executable remains `crates/cellule-host/minion`, Cargo target
+`fleet_operations`, as confirmed by the user.
+
+`FleetMaintenanceNonexecution::collect` now confirms independently retained
+original nonexecution through the application's read-only authenticated provider.
+The same complete original/current request set selects eligible terminal rows;
+Pending and installed roles cannot be certified. Exact original acceptances,
+terminal rows and settlement witnesses bind stable request identities. Every
+provider result is checked twice, including absence, and the complete journal
+barrier is reconfirmed. Whole-capture clocks and deadlines refuse regression,
+expiry and changed inputs. Source errors stay retained; missing evidence stays
+unknown. The provider must confirm earlier native/external work joining and that
+the role effect never committed, then exclude delayed execution of that request.
+A terminal row or evidence constructor supplies no such independent proof.
+
+Public observation attachment retains the original full head, roster, capture
+digest and interval. Matching exposes checked Nonexecution separately, including
+source-side requests; installed source/failed-owner policy remains blocking.
+Changing checks after matching, duplicate attachment and older-head restamping
+refuse. Planner digest v11 binds all original provider inputs and results;
+persisted codecs are unchanged. This cannot upgrade complete observation, join
+other accepted work or grant SettleRoles/Finalize rights.
+
+Twelve new cases include actual native reader admission refusal followed by
+original producer joining, and actual follower exclusion after a lost member
+acceptance reply. Retained witnesses are synchronized and consumed after provider
+and SQLite-client reconstruction. The reader case covers both physical endpoints;
+the follower case verifies that no native epoch or follower RPC started and delayed
+acceptance replays the exclusions. Other cases cover missing/substituted/foreign
+evidence, second-read errors, changed proof presence, head changes with unchanged
+registry, original digest stability, bad clocks/deadlines, cancelled read-only
+confirmation, duplicate/late attachment, installed roles and new unknown source
+work. These demonstrate in-process joining; production provider/process
+qualification remains required. Removing only the request-binding guard in the
+isolated snapshot makes the foreign-original regression fail. The guard is restored.
+
+### Verification and CI
+
+All 13 fresh Rust commands and nine static gates pass on the isolated Rust 1.99
+snapshot `/tmp/cellule-maintenance-nonexecution-1b65e0a`, using its mounted target.
+The framework passes 1,679 tests with zero failures and 36 documented ignores;
+minion passes all 310 cases. These are **1,989 distinct passes**, excluding focused
+repeats and overlapping local LTX. Local LTX passes 54 tests, Axum without default
+features passes 16, and the fresh cookbook passes 256 plus check, Clippy,
+warning-denied docs and binary builds. All 135 Rust snippets parse and 1,280 local
+links resolve. All 1,112 Rust/Cargo paths match manifest SHA256
+`1b010d9a79510a0f09706d0761832e2c058fdc48f4c12f5a072c27ec5d7d9598`.
+Frozen source, commands, preliminary repairs, original negative regression and
+restored qualification logs are retained under
+`/tmp/cellule-maintenance-nonexecution-evidence`.
+
+Preliminary repairs correct a controller-lease field name, inspect the preserved
+native refusal's source chain, isolate full-head rejection from the earlier
+interval guard, and collapse two nested conditions flagged by Clippy. Original
+failed logs are retained. No production error was flattened or assertion removed.
+
+Published parent `1b65e0a` is MERGEABLE with 31 successful checks, three failed
+checks and three documented skips. The workspace minion run passes 297 of 298
+cases; follower policy observation exceeds the unchanged five-second roster
+deadline. The hosted minion step now bounds simultaneous case fixtures to two,
+retaining every case's internal concurrency, deadlines and assertions. Fresh
+hosted verification remains required; this is a scheduling control, not proof
+that the failure's cause is independently isolated.
+The exact CI command with `--test-threads=2` also passes all 310 cases locally;
+that repeat is excluded from the distinct pass count.
+
+Object-only routing passes; its lowest gated throughput is 91.93% of baseline.
+Leased forwarded-command throughput fails at 85.50%; latency gates pass. Leased
+routing and its aggregate therefore fail. The previously failing leased
+local-command lane passes at 101.09%. Both original 178-file campaigns, frozen
+binaries/source, stage TSVs, job logs, manifests and hashes are retained. Replaying
+all original measurements through the unchanged comparator reproduces both results.
+Baseline and candidate binaries are byte-identical to their respective `0eabc9a`
+and `8c49a81` campaigns. Candidate preparation means are higher in all four failing
+forwarded-command pairs, while two pairs have higher candidate throughput and two
+have substantially lower throughput. Publication cost, runner/service variation
+and execution order remain hypotheses; no independent performance correction is
+established. No profile, gate, expected evidence or deadline was weakened. The new
+head requires fresh qualification.
+
+### Highest remaining work
+
+| Priority | Remaining delivery stream |
+| --- | --- |
+| 0 | Verify the hosted minion scheduling control; diagnose and fix ordinary leased routing throughput, then qualify the current head through both profiles and their aggregate. Keep all failed evidence. |
+| 1 | Complete source/failed-owner successor policy for installed roles and production nonexecution evidence retention. Complete durable unknown actions and native/external accepted-work coverage. |
+| 2 | Implement SettleRoles/Finalize with original action joining before terminal drain handoff, native Stopped, withdrawal, boot retirement and committed completion. Finish Cron/Blob owners and primitive fault matrices. |
+| 3 | Complete receiver-session loss/recovery/adoption, refusal/unknown supervision and sustained convergence; deliver canonical minion maintenance and receiver-loss commands. |
+| 4 | W9 physical process/provider faults, mixed binaries and load/soak qualification; W10 exercised runbooks and staged rollout/rollback. |
+
+The full W1–W10 plan remains active and unfinished. SettleRoles/Finalize remain refused.
+
 ## October 3 2026 automatic maintenance policy lookup checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target
