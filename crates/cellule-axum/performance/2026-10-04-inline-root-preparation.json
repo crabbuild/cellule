@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-04",
+  "comparison": {
+    "baseline_revision": "c78ea0f48d243377ddee6308640966955de4ad35",
+    "candidate_revision": "ddd87706a7d01a51501a46936a63ab699c358b73"
+  },
+  "scope": "Deterministic preparation operation counts, excluding authority CAS and later verification. No sustained HTTP gain has been established for this candidate.",
+  "costs": [
+    {
+      "fixture": "first small LTX root",
+      "baseline_puts": 5,
+      "candidate_puts": 4,
+      "candidate_heads": 0,
+      "candidate_gets": 0
+    },
+    {
+      "fixture": "warm small-root append",
+      "baseline_puts": 5,
+      "baseline_heads": 2,
+      "candidate_puts": 4,
+      "candidate_heads": 1,
+      "candidate_gets": 0
+    },
+    {
+      "fixture": "native pressure append, sequence 32",
+      "baseline_puts": 9,
+      "baseline_heads": 2,
+      "candidate_puts": 8,
+      "candidate_heads": 1,
+      "includes_required_lineage_put": true
+    },
+    {
+      "fixture": "schema migration pressure append, sequence 32",
+      "baseline_puts": 9,
+      "baseline_heads": 2,
+      "candidate_puts": 8,
+      "candidate_heads": 1,
+      "includes_required_lineage_put": true
+    }
+  ],
+  "packing": {
+    "inline_descriptor_limit": 32,
+    "descriptors_per_external_page": 96,
+    "root_bytes_limit": 32768,
+    "segment_page_bytes_limit": 65536,
+    "graph_descriptor_limit": 4096,
+    "verified_boundaries": [
+      {
+        "descriptors": 32,
+        "external_pages": 0,
+        "inline_descriptors": 32
+      },
+      {
+        "descriptors": 33,
+        "external_pages": 1,
+        "inline_descriptors": 0
+      },
+      {
+        "descriptors": 96,
+        "external_pages": 1,
+        "inline_descriptors": 0
+      },
+      {
+        "descriptors": 97,
+        "external_pages": 1,
+        "inline_descriptors": 1
+      },
+      {
+        "descriptors": 128,
+        "external_pages": 1,
+        "inline_descriptors": 32
+      },
+      {
+        "descriptors": 129,
+        "external_pages": 2,
+        "inline_descriptors": 0
+      }
+    ]
+  },
+  "correctness": [
+    "byte-identical cold restore at all six packing boundaries using fresh store identities",
+    "cached root and external descriptor origin absence prevents successor upload",
+    "canonical malformed inline descriptors fail semantic validation and successor preparation with zero PUT",
+    "exact pressure reference roots and original authority predecessor retained for native and schema-migration preparation",
+    "native uploads and required lineage pause tests cover both inline and external metadata; readiness and authority wait for both",
+    "existing dependency failure and cancellation cleanup suites pass"
+  ],
+  "local_validation": {
+    "isolated_runtime_ltx_all_features": {
+      "passed": 1277,
+      "failed": 0,
+      "ignored": 16
+    },
+    "ltx_no_default_features": {
+      "passed": 54,
+      "failed": 0,
+      "ignored": 0
+    },
+    "clippy": "pass, all targets and features for runtime/LTX, -D warnings",
+    "api_docs": "pass, workspace/all-features/no-deps, -D warnings",
+    "source_equality": {
+      "rust_and_manifest_files": 1122,
+      "mismatches": 0,
+      "inventory_sha256": "c4986863b023c020f0d04f756e4980e89c7a2a01cc916b1f8b57ea5949307c2c"
+    },
+    "logs_sha256": {
+      "inline-root-runtime-ltx-tests-complete.log": "f3ac14fa5f2b67e4d1bde698cb5f8ca22ef6a0b9ab24c70060c72b0851739741",
+      "inline-root-clippy.log": "741af8ccab7ccb714eaeae083ca9f73d64746a143029a4799ef179b7b3612715",
+      "inline-root-api-docs.log": "b856b2a414d1e8dd8ef880820ba54fcad7a13a8c20af6f8acffef4333f6e0a66",
+      "inline-root-no-default.log": "1027b26f5d5432adeaae62095f260cfdf1224f91f9ca4c3127be8981d187f591",
+      "inline-root-before.log": "c9c06f245a4d8365a35e091c6b5f21b77ebdbddabb7685a64e2f6f2fbca182e7",
+      "inline-root-after.log": "cdf37eb10cd94d0e05eee684b53843384ceb363711d1c889fe776abfa3d4db12",
+      "inline-root-pressure-cost.log": "8cbda44e4bd5c1257376272e4b65b399335d577c12a3f21626c17127c47a57cb",
+      "inline-root-warm-hook-count.log": "14b7ec0ad0fc4d8afb4e3ddc4e8c3cad3f8ac91577be99af5b09a4e0d99448ae"
+    }
+  },
+  "benchmark_admission": {
+    "baseline_policy_bytes_unchanged": true,
+    "audit": {
+      "patch_sha256": "1ae7cfaee1f4fd454df73a2bc9e282455e8b36da4461f79b432431fbf7859a74",
+      "targets": [
+        {
+          "path": "crates/cellule-axum/examples/sql.rs",
+          "proof": "fixed-target-reverse-check",
+          "baseline_before_sha256": "dfab7641a55e6ba653d3c068ca65f6a38d9fb785c59847fcda843dbc0ea38baa",
+          "baseline_after_sha256": "dfab7641a55e6ba653d3c068ca65f6a38d9fb785c59847fcda843dbc0ea38baa",
+          "candidate_sha256": "dfab7641a55e6ba653d3c068ca65f6a38d9fb785c59847fcda843dbc0ea38baa"
+        },
+        {
+          "path": "crates/cellule-ltx/src/environment/host/mod.rs",
+          "proof": "candidate-byte-equality",
+          "baseline_before_sha256": "ec6f3c6f658c61aa170695af1f81b0d2676f8ac9baeeff4e2f82193c502fb166",
+          "baseline_after_sha256": "ec6f3c6f658c61aa170695af1f81b0d2676f8ac9baeeff4e2f82193c502fb166",
+          "candidate_sha256": "ec6f3c6f658c61aa170695af1f81b0d2676f8ac9baeeff4e2f82193c502fb166"
+        },
+        {
+          "path": "crates/cellule-ltx/src/environment/telemetry.rs",
+          "proof": "candidate-byte-equality",
+          "baseline_before_sha256": "9f23ada9280c6a5bd46cd2f4ee51f3ee0437ba262a4c8bc5fdc646b972640149",
+          "baseline_after_sha256": "9f23ada9280c6a5bd46cd2f4ee51f3ee0437ba262a4c8bc5fdc646b972640149",
+          "candidate_sha256": "9f23ada9280c6a5bd46cd2f4ee51f3ee0437ba262a4c8bc5fdc646b972640149"
+        },
+        {
+          "path": "crates/cellule-ltx/src/replica/prepare.rs",
+          "proof": "fixed-target-reverse-check",
+          "baseline_before_sha256": "bb894a029fbbbc1041854e19c1a5520feb4751001a8ebc601468df5a55a7b98a",
+          "baseline_after_sha256": "bb894a029fbbbc1041854e19c1a5520feb4751001a8ebc601468df5a55a7b98a",
+          "candidate_sha256": "546070b5d9351421939a799ee4a580a2b382a4028d08cf6a6d8c258b4dbc77cf"
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "The required development-v1 segments field updates the current schema atomically; old development roots must be recreated. No compatibility reader is introduced.",
+    "Counts do not establish throughput or latency improvement; fixed-budget paired sustained RustFS measurements are pending.",
+    "New-source workspace/MSRV CI and provider/process qualification are pending. Prior green runs prove the preceding source only.",
+    "Larger descriptor tails still use external pages; full page reuse boundaries remain unchanged."
+  ]
+}

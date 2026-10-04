@@ -19,6 +19,10 @@ a consistent multicell gain. These are single-host RustFS measurements with
 fixed budgets, not evidence of horizontal scaling. Each Cell has an independent
 SQLite database; SQL workers and provider capacity are shared.
 
+The [inline-root preparation report](2026-10-04-inline-root-preparation.md)
+tracks the next candidate's operation counts and boundary/recovery verification.
+Its sustained HTTP performance and provider qualification remain pending.
+
 Additional cost and qualification evidence:
 [root phase calibration](2026-10-04-rustfs-root-phase-calibration.md),
 [compaction publication cost](2026-10-04-compaction-publication-cost.md), and
