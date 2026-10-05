@@ -553,11 +553,7 @@ pub(super) fn start_publication(
                 }
             };
             authority = authority_started.elapsed();
-            let mut logged = false;
-            for durability in durabilities.iter().flatten() {
-                logged = true;
-                durability.prove_object().await?;
-            }
+            let logged = PendingDurability::prove_objects(&durabilities).await?;
             if !logged {
                 publisher.record_object_proof(newest_submitted_at.elapsed());
             }

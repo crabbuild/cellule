@@ -389,6 +389,10 @@ group with one serialized authority update, without a batching timer. Staging
 does not release a local proof or bridge an unpublished sequence gap. Failed or
 cancelled updates retain the original tickets for retry, including shutdown;
 local confirmation follows a successful CAS and a fresh node-lease check.
+One coalesced Cell root stages its entire covered ticket set before that flush.
+Tickets are grouped by the original durability binding; equal epoch numbers
+alone cannot combine different bindings. Per-command proof telemetry remains
+scoped to every covered commit.
 
 **Retired lane collection.** Retired follower lanes keep their durable
 append-fence marker for ten minutes. The server then:

@@ -944,6 +944,40 @@ impl PendingDurability {
             .durability_proof(proof.source(), self.submitted_at.elapsed());
         Ok(())
     }
+
+    pub(crate) async fn prove_objects(pendings: &[Option<Self>]) -> Result<bool> {
+        let mut groups: Vec<Vec<&Self>> = Vec::new();
+        for pending in pendings.iter().flatten() {
+            if let Some(group) = groups.iter_mut().find(|group| {
+                group.first().is_some_and(|first| {
+                    std::sync::Arc::ptr_eq(&first.durability, &pending.durability)
+                })
+            }) {
+                group.push(pending);
+            } else {
+                groups.push(vec![pending]);
+            }
+        }
+        let logged = !groups.is_empty();
+        // A root covers every queued Cell commit, even if its captured cuts
+        // were submitted under different original node-log bindings. Never
+        // combine those bindings just because their epoch numbers match.
+        for group in groups {
+            let Some(first) = group.first() else { continue };
+            let tickets = group
+                .iter()
+                .map(|pending| pending.ticket)
+                .collect::<Vec<_>>();
+            first.durability.confirm_objects(&tickets).await?;
+            for pending in group {
+                pending.telemetry.durability_proof(
+                    crate::node::log::DurabilitySource::Object,
+                    pending.submitted_at.elapsed(),
+                );
+            }
+        }
+        Ok(logged)
+    }
 }
 
 impl CellDurabilitySubmitter {

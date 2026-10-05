@@ -372,14 +372,36 @@ impl DurabilityGate {
         self.prove_objects(&[ticket])
     }
 
-    pub(crate) fn object_is_covered(&self, ticket: CommitTicket) -> Result<bool> {
+    pub(crate) fn objects_are_covered(&self, tickets: &[CommitTicket]) -> Result<bool> {
         let state = self.lock()?;
-        validate_ticket(&state, ticket)?;
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
+        }
         if state.fenced {
             return Err(Error::Fenced);
         }
-        Ok((ticket.first_sequence..=ticket.last_sequence)
-            .all(|sequence| state.object_covered.contains(&sequence)))
+        Ok(tickets.iter().all(|ticket| {
+            (ticket.first_sequence..=ticket.last_sequence)
+                .all(|sequence| state.object_covered.contains(&sequence))
+        }))
+    }
+
+    pub(crate) fn uncovered_objects(&self, tickets: &[CommitTicket]) -> Result<Vec<CommitTicket>> {
+        let state = self.lock()?;
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
+        }
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        Ok(tickets
+            .iter()
+            .copied()
+            .filter(|ticket| {
+                (ticket.first_sequence..=ticket.last_sequence)
+                    .any(|sequence| !state.object_covered.contains(&sequence))
+            })
+            .collect())
     }
 
     pub(crate) fn prove_objects(&self, tickets: &[CommitTicket]) -> Result<u64> {

@@ -14,6 +14,171 @@ use crate::control::{Control, Owner};
 use crate::identity::IncarnationId;
 use crate::identity::{CellId, Digest, SessionId};
 
+#[derive(Default)]
+struct CoverageAuthority(std::sync::Mutex<Vec<(u64, u64)>>);
+
+#[derive(Default)]
+struct CoverageTelemetry(std::sync::atomic::AtomicUsize);
+
+impl crate::fleet::telemetry::CellTelemetry for CoverageTelemetry {
+    fn durability_proof(
+        &self,
+        source: crate::node::log::DurabilitySource,
+        _waited: std::time::Duration,
+    ) {
+        assert_eq!(source, crate::node::log::DurabilitySource::Object);
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl crate::node::durability::NodeLogAuthority for CoverageAuthority {
+    fn activate<'a>(
+        &'a self,
+        _epoch: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn advance_coverage<'a>(
+        &'a self,
+        epoch: u64,
+        through: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push((epoch, through));
+            Ok(())
+        })
+    }
+    fn close<'a>(
+        &'a self,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn coverage_binding(
+    byte: u8,
+) -> (
+    Arc<crate::node::durability::NodeDurability>,
+    crate::node::log::DurabilityGate,
+    Arc<CoverageAuthority>,
+) {
+    use crate::node::{
+        durability::NodeDurability, log::DurabilityGate, log_shipper::NodeLogShipper,
+        log_transport::NodeLogTransport,
+    };
+    let gate = DurabilityGate::new(
+        SessionId::from_bytes([byte; 16]),
+        crate::identity::NodeId::from_bytes([byte; 16]),
+        2,
+        [crate::identity::NodeId::from_bytes([byte + 1; 16])],
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(RefusingTransport);
+    let shipper = NodeLogShipper::new(gate.clone(), transport.clone(), Limits::default()).unwrap();
+    let authority = Arc::new(CoverageAuthority::default());
+    let durability = Arc::new(NodeDurability::new(
+        gate.clone(),
+        shipper,
+        authority.clone(),
+        transport,
+        crate::NodeLeaseGuard::new(0, 30_000).unwrap(),
+    ));
+    (durability, gate, authority)
+}
+
+fn coverage_pending(
+    durability: &Arc<crate::node::durability::NodeDurability>,
+    ticket: crate::node::log::CommitTicket,
+) -> Option<super::PendingDurability> {
+    Some(super::PendingDurability {
+        durability: durability.clone(),
+        ticket,
+        submitted_at: std::time::Instant::now(),
+        telemetry: Default::default(),
+    })
+}
+
+#[tokio::test]
+async fn one_coalesced_root_confirms_all_covered_tickets_with_one_authority_update() {
+    let (durability, gate, authority) = coverage_binding(1);
+    let mut pendings = (0..64)
+        .map(|_| coverage_pending(&durability, gate.issue(1).unwrap()))
+        .collect::<Vec<_>>();
+    let recording = Arc::new(CoverageTelemetry::default());
+    let telemetry = crate::fleet::telemetry::CellTelemetryHandle::default();
+    telemetry.install(recording.clone()).unwrap();
+    for pending in pendings.iter_mut().flatten() {
+        pending.telemetry = telemetry.clone();
+    }
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .unwrap()
+    );
+    assert_eq!(gate.tiered_through(), 64);
+    assert_eq!(*authority.0.lock().unwrap(), vec![(2, 64)]);
+    assert_eq!(recording.0.load(std::sync::atomic::Ordering::Relaxed), 64);
+    durability.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn coalesced_root_keeps_original_bindings_with_equal_epoch_numbers_separate() {
+    let (left, left_gate, left_authority) = coverage_binding(1);
+    let (right, right_gate, right_authority) = coverage_binding(3);
+    let pendings = vec![
+        coverage_pending(&left, left_gate.issue(1).unwrap()),
+        coverage_pending(&right, right_gate.issue(1).unwrap()),
+        None,
+        coverage_pending(&left, left_gate.issue(1).unwrap()),
+        coverage_pending(&right, right_gate.issue(1).unwrap()),
+    ];
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .unwrap()
+    );
+    assert_eq!(*left_authority.0.lock().unwrap(), vec![(2, 2)]);
+    assert_eq!(*right_authority.0.lock().unwrap(), vec![(2, 2)]);
+    assert_eq!(left_gate.tiered_through(), 2);
+    assert_eq!(right_gate.tiered_through(), 2);
+    assert!(
+        !super::PendingDurability::prove_objects(&[None, None])
+            .await
+            .unwrap()
+    );
+    left.shutdown().await.unwrap();
+    right.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_ticket_in_root_group_stages_no_siblings() {
+    let (durability, gate, authority) = coverage_binding(1);
+    let (other, foreign, _) = coverage_binding(3);
+    let valid = gate.issue(1).unwrap();
+    let wrong = foreign.issue(1).unwrap();
+    let pendings = vec![
+        coverage_pending(&durability, valid),
+        coverage_pending(&durability, wrong),
+    ];
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .is_err()
+    );
+    assert!(authority.0.lock().unwrap().is_empty());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(matches!(
+        durability.shutdown().await,
+        Err(Error::PendingPublication)
+    ));
+    assert!(authority.0.lock().unwrap().is_empty());
+    durability.prove_object(valid).await.unwrap();
+    other.prove_object(wrong).await.unwrap();
+    durability.shutdown().await.unwrap();
+    other.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
     verify_compaction_append(1).await;

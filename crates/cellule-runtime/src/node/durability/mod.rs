@@ -282,23 +282,32 @@ impl NodeDurability {
     /// Concurrent completions share coverage updates; local proofs become visible
     /// only after the batch's authority CAS succeeds under the original node lease.
     pub async fn prove_object(&self, ticket: CommitTicket) -> Result<DurabilityProof> {
-        self.node_lease.check()?;
-        if self.object_coverage.stage(&self.gate, ticket)? {
-            self.object_coverage
-                .flush(
-                    &self.gate,
-                    self.authority.as_ref(),
-                    &self.node_lease,
-                    Some(ticket),
-                )
-                .await?;
-        }
+        self.confirm_objects(&[ticket]).await?;
         let proof = self.gate.prove(ticket).await?;
         self.node_lease.check()?;
         if proof.source() != DurabilitySource::Object {
             return Err(Error::Node("object proof lost its durability race"));
         }
         Ok(proof)
+    }
+
+    pub(crate) async fn confirm_objects(&self, tickets: &[CommitTicket]) -> Result<()> {
+        self.node_lease.check()?;
+        if self.object_coverage.stage(&self.gate, tickets)? {
+            self.object_coverage
+                .flush(
+                    &self.gate,
+                    self.authority.as_ref(),
+                    &self.node_lease,
+                    tickets,
+                )
+                .await?;
+        }
+        self.node_lease.check()?;
+        if !self.gate.objects_are_covered(tickets)? {
+            return Err(Error::Node("object coverage batch remains unconfirmed"));
+        }
+        Ok(())
     }
 
     /// Returns this binding's exact enrolled log epoch.
@@ -373,7 +382,7 @@ impl NodeDurability {
         }
         self.shipper.shutdown().await?;
         self.object_coverage
-            .flush(&self.gate, self.authority.as_ref(), &self.node_lease, None)
+            .flush(&self.gate, self.authority.as_ref(), &self.node_lease, &[])
             .await?;
         let barrier = self.gate.begin_rotation()?;
         // A complete member fence precedes authority closure. Retain it before

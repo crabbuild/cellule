@@ -10,19 +10,24 @@ pub(super) struct ObjectCoverage {
 }
 
 impl ObjectCoverage {
-    pub(super) fn stage(&self, gate: &DurabilityGate, ticket: CommitTicket) -> Result<bool> {
+    pub(super) fn stage(&self, gate: &DurabilityGate, tickets: &[CommitTicket]) -> Result<bool> {
         let mut pending = self.pending()?;
-        if gate.object_is_covered(ticket)? {
-            return Ok(false);
-        }
-        match pending.entry(ticket.first_sequence()) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(ticket);
+        // Validate every scope before staging any sibling. The root may cover
+        // interleaved node sequences, but never tickets from another binding.
+        let uncovered = gate.uncovered_objects(tickets)?;
+        for ticket in &uncovered {
+            if pending
+                .get(&ticket.first_sequence())
+                .is_some_and(|before| before != ticket)
+            {
+                return Err(Error::Node("conflicting object coverage ticket"));
             }
-            std::collections::btree_map::Entry::Occupied(entry) if *entry.get() == ticket => {}
-            _ => return Err(Error::Node("conflicting object coverage ticket")),
         }
-        Ok(true)
+        let needed = !uncovered.is_empty();
+        for ticket in uncovered {
+            pending.insert(ticket.first_sequence(), ticket);
+        }
+        Ok(needed)
     }
 
     pub(super) async fn flush(
@@ -30,16 +35,14 @@ impl ObjectCoverage {
         gate: &DurabilityGate,
         authority: &dyn NodeLogAuthority,
         lease: &NodeLeaseGuard,
-        ticket: Option<CommitTicket>,
+        tickets: &[CommitTicket],
     ) -> Result<()> {
         let _flushing = tokio::select! {
             guard = self.flushing.lock() => guard,
             () = lease.wait_fenced() => return Err(Error::Fenced),
         };
         lease.check()?;
-        if let Some(ticket) = ticket
-            && gate.object_is_covered(ticket)?
-        {
+        if !tickets.is_empty() && gate.objects_are_covered(tickets)? {
             return Ok(());
         }
         let tickets = self.pending()?.values().copied().collect::<Vec<_>>();

@@ -514,7 +514,7 @@ async fn rejected_batch_retains_original_roots_without_releasing_proofs() {
     assert!(results.iter().all(Result::is_err));
     assert_eq!(gate.tiered_through(), 0);
     for ticket in &tickets {
-        assert!(!gate.object_is_covered(*ticket).unwrap());
+        assert!(!gate.objects_are_covered(&[*ticket]).unwrap());
     }
     authority.0.lock().unwrap().reject_coverage = false;
     durability.prove_object(tickets[0]).await.unwrap();
