@@ -18,6 +18,9 @@ failed 64-Cell pair and identifies the conservative disk admission ceiling.
 The [SQLite growth admission report](2026-10-04-sqlite-growth-admission.md)
 records the concurrent admission regression and two cold-audited steady windows,
 with publication and compaction remaining as throughput limits.
+The [node lease report](2026-10-05-node-lease-renewals.md) records the redundant
+idle renewal regression, observed 2,000-Cell residency and failed provider-bound
+density runs. These failures do not establish throughput qualification.
 
 Reports identify frozen measured revisions. The later CI fix preserves reader
 rotation across discovery changes and synchronizes a durability test with its
