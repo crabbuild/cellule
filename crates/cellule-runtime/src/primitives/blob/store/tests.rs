@@ -71,6 +71,20 @@ struct Provider {
     inner: Arc<object_store::memory::InMemory>,
     gate: Arc<Gate>,
     failure: Arc<u8>,
+    blocking: Option<Arc<BlockingJob>>,
+}
+#[derive(Default, Debug)]
+struct BlockingJob {
+    entered: AtomicBool,
+    finished: AtomicBool,
+    released: std::sync::Mutex<bool>,
+    resume: std::sync::Condvar,
+}
+impl BlockingJob {
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.resume.notify_all();
+    }
 }
 impl fmt::Display for Provider {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -86,6 +100,31 @@ impl ObjectStore for Provider {
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
         self.gate.before(1).await;
+        if let Some(blocking) = &self.blocking {
+            let blocking = blocking.clone();
+            let inner = self.inner.clone();
+            let path = location.clone();
+            return tokio::task::spawn_blocking(move || {
+                use futures_util::FutureExt;
+                blocking.entered.store(true, Ordering::Release);
+                let mut released = blocking.released.lock().unwrap();
+                while !*released {
+                    released = blocking.resume.wait(released).unwrap();
+                }
+                drop(released);
+                // This uncontended InMemory put is immediately ready. Actual
+                // publication occurs on the original blocking worker, which
+                // survives teardown of its waiting Tokio runtime.
+                let result = inner
+                    .put_opts(&path, payload, options)
+                    .now_or_never()
+                    .unwrap();
+                blocking.finished.store(true, Ordering::Release);
+                result
+            })
+            .await
+            .unwrap();
+        }
         assert!(
             !self.gate.panic.load(Ordering::Acquire),
             "original Blob provider panic"
@@ -158,6 +197,7 @@ fn fixture() -> (BlobArtifactStore, Arc<Provider>) {
         inner: Arc::new(object_store::memory::InMemory::new()),
         gate: Arc::new(Gate::default()),
         failure: Arc::new(37),
+        blocking: None,
     });
     (
         BlobArtifactStore::new(Store::new(provider.clone())),
@@ -333,6 +373,101 @@ async fn native_capacity_is_retained_after_waiter_cancellation_until_actual_join
         store.put_part(part_digest(b"spill"), b"spill").await,
         Err(Error::CellDraining)
     ));
+}
+
+#[test]
+fn forced_runtime_loss_cannot_turn_an_unjoined_provider_job_into_local_closure() {
+    let blocking = Arc::new(BlockingJob::default());
+    let provider = Arc::new(Provider {
+        inner: Arc::new(object_store::memory::InMemory::new()),
+        gate: Arc::new(Gate::default()),
+        failure: Arc::new(38),
+        blocking: Some(blocking.clone()),
+    });
+    let store = BlobArtifactStore::new(Store::new(provider.clone()));
+    let former = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let caller = {
+        let store = store.clone();
+        former.spawn(async move {
+            store
+                .put_part(part_digest(b"unfinished"), b"unfinished")
+                .await
+        })
+    };
+    former.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !blocking.entered.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    });
+    former.shutdown_background();
+    store.close();
+    let current = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let supervisors_stopped = current.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while store.lifecycle_observation().unwrap().accepted_jobs() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+    });
+    let observed = store.lifecycle_observation().unwrap();
+    let early_close = current.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), store.close_and_join()).await
+    });
+    let finished_early = blocking.finished.load(Ordering::Acquire);
+    // Always let the original native worker finish before any failure assertion.
+    blocking.release();
+    let native_finished = current.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !blocking.finished.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+    });
+    drop(caller);
+    assert!(supervisors_stopped.is_ok() && native_finished.is_ok() && !finished_early);
+    assert!(observed.admission_closed());
+    assert_eq!(observed.accepted_jobs(), 0);
+    assert_eq!(observed.unjoined_jobs(), 1);
+    assert!(!observed.locally_joined());
+    assert!(matches!(
+        early_close,
+        Ok(Err(Error::Control(
+            "Blob artifact original native join is unproven"
+        )))
+    ));
+    assert!(matches!(
+        observed.first_failure().unwrap().as_ref(),
+        Error::Control("Blob artifact supervisor ended before original native join")
+    ));
+    current.block_on(async {
+        let raw = provider
+            .inner
+            .get(&store.part_path(&part_digest(b"unfinished")))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        assert_eq!(raw.as_ref(), b"unfinished");
+        // Provider completion after abandonment cannot reconstruct the original
+        // join or erase its retained unknown result/ownership obligation.
+        assert!(store.close_and_join().await.is_err());
+        assert!(!store.lifecycle_observation().unwrap().locally_joined());
+    });
 }
 
 #[tokio::test]

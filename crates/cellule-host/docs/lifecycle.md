@@ -120,6 +120,10 @@ outside this local job count. Complete uploads, external streams, read/backup
 pins, global references and unknown remote effects still require their original
 owners and fleet barriers. Installation does not remove `BlobInventory` or
 authorize Blob Cell release, global GC or physical-node finalization.
+An original supervisor lost during forced runtime teardown retains unjoined
+work and closes admission. Its later provider completion does not repair that
+join. Store drain returns an error, so the host cannot use a zero task count to
+claim Stopped or withdrawal.
 
 ## Requested node-log rotation
 

@@ -18,6 +18,7 @@ const MAX_JOBS: usize = 64;
 pub struct BlobArtifactLifecycleObservation {
     closed: bool,
     accepted_jobs: usize,
+    unjoined_jobs: usize,
     first_failure: Option<Arc<Error>>,
 }
 impl BlobArtifactLifecycleObservation {
@@ -26,15 +27,23 @@ impl BlobArtifactLifecycleObservation {
     pub const fn admission_closed(&self) -> bool {
         self.closed
     }
-    /// Original native jobs still running, including cancelled callers' work.
+    /// Accepted operations with retained supervisors, including cancelled
+    /// callers' work. Inspect `unjoined_jobs` for lost original supervisors.
     #[must_use]
     pub const fn accepted_jobs(&self) -> usize {
         self.accepted_jobs
     }
-    /// Closed plus zero is stable; operation success still needs its result.
+    /// Original supervisors lost before observing their native task join.
+    /// Their native work may still exist; zero running jobs cannot close it.
+    #[must_use]
+    pub const fn unjoined_jobs(&self) -> usize {
+        self.unjoined_jobs
+    }
+    /// Closed admission with no accepted or unjoined original work. Operation
+    /// success and remote outcome still require their own result evidence.
     #[must_use]
     pub const fn locally_joined(&self) -> bool {
-        self.closed && self.accepted_jobs == 0
+        self.closed && self.accepted_jobs == 0 && self.unjoined_jobs == 0
     }
     /// Original first native failure, retained after waiter loss and closure.
     /// This diagnostic cannot classify an ambiguous remote result as absent.
@@ -49,12 +58,26 @@ pub(super) struct ArtifactLifetime {
     state: AtomicUsize,
     changed: Notify,
     first_failure: Mutex<Option<Arc<Error>>>,
+    unjoined_jobs: AtomicUsize,
 }
-struct Accepted(Arc<ArtifactLifetime>);
+struct Accepted {
+    lifetime: Arc<ArtifactLifetime>,
+    joined: bool,
+}
 impl Drop for Accepted {
     fn drop(&mut self) {
-        self.0.state.fetch_sub(1, Ordering::AcqRel);
-        self.0.changed.notify_waiters();
+        if !self.joined {
+            // Runtime teardown can drop this supervisor before the separately
+            // owned native task (or its provider job) joins. Retain unknown
+            // joining and close admission; releasing a task count is no proof.
+            self.lifetime.unjoined_jobs.fetch_add(1, Ordering::AcqRel);
+            self.lifetime.close();
+            self.lifetime.retain_failure(Error::Control(
+                "Blob artifact supervisor ended before original native join",
+            ));
+        }
+        self.lifetime.state.fetch_sub(1, Ordering::AcqRel);
+        self.lifetime.changed.notify_waiters();
     }
 }
 impl ArtifactLifetime {
@@ -70,18 +93,28 @@ impl ArtifactLifetime {
                     Error::Capacity("Blob artifact jobs")
                 }
             })?;
-        Ok(Accepted(self.clone()))
+        Ok(Accepted {
+            lifetime: self.clone(),
+            joined: false,
+        })
     }
     pub(super) fn close(&self) {
         self.state.fetch_or(CLOSED, Ordering::AcqRel);
     }
-    pub(super) async fn join(&self) {
+    pub(super) async fn join(&self) -> Result<()> {
         loop {
             let changed = self.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
             if self.state.load(Ordering::Acquire) & !CLOSED == 0 {
-                return;
+                // A final guard may have recorded an unproven join before its
+                // release; acquire its state before checking that flag again.
+                if self.unjoined_jobs.load(Ordering::Acquire) != 0 {
+                    return Err(Error::Control(
+                        "Blob artifact original native join is unproven",
+                    ));
+                }
+                return Ok(());
             }
             changed.await;
         }
@@ -98,6 +131,7 @@ impl ArtifactLifetime {
         Ok(BlobArtifactLifecycleObservation {
             closed: state & CLOSED != 0,
             accepted_jobs: state & !CLOSED,
+            unjoined_jobs: self.unjoined_jobs.load(Ordering::Acquire),
             first_failure,
         })
     }
@@ -124,7 +158,7 @@ impl ArtifactLifetime {
         T: Send + 'static,
     {
         let runtime = tokio::runtime::Handle::try_current().map_err(Error::RuntimeStart)?;
-        let accepted = self.accept()?;
+        let mut accepted = self.accept()?;
         let (reply, waiter) = oneshot::channel();
         // The retained supervisor joins the original native task even if its
         // caller cancels. This also preserves a provider panic's JoinError.
@@ -136,10 +170,11 @@ impl ArtifactLifetime {
                     source: Box::new(source),
                 }),
             };
-            let result = result.map_err(|error| accepted.0.retain_failure(error));
+            let result = result.map_err(|error| accepted.lifetime.retain_failure(error));
             let _ = reply.send(result);
             // Inputs, native I/O and undelivered output have all completed or
             // dropped before waking an irreversible closed-plus-zero waiter.
+            accepted.joined = true;
             drop(accepted);
         });
         waiter.await.map_err(|_| Error::RuntimeClosed)?

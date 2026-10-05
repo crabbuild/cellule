@@ -1,6 +1,6 @@
 {
   "parent": "973e0eeaddb51158cdc7d075e06c2feb84795cd5",
-  "delta_sha256": "1627093025d25bde705f6c63c56c17bb5422736a38a617bffb125705a823d535",
+  "delta_sha256": "966568654b6fb252f2fd6635265c14864034f67c0e607d5009a0513a17291398",
   "paths": [
     {
       "path": "Cargo.lock",
@@ -15,7 +15,12 @@
     {
       "path": "crates/cellule-host/docs/lifecycle.md",
       "deleted": false,
-      "sha256": "7ced89ba44a3a21ec871b66f8259305b05ad489277b03dcb9f817b9f30c89d1a"
+      "sha256": "d785b03764f63920b648ece66151c92a6defeeea5e86a2be2d4e51cfc53db012"
+    },
+    {
+      "path": "crates/cellule-host/minion/scenario/recovered_followers/failed_boot/writer_tests/successors/observation.rs",
+      "deleted": false,
+      "sha256": "f167fa647de90d49588c9bc81904a2449de59542561b0c6f3e638ed2b813d4c0"
     },
     {
       "path": "crates/cellule-host/src/lib.rs",
@@ -45,7 +50,7 @@
     {
       "path": "crates/cellule-runtime/docs/primitives.md",
       "deleted": false,
-      "sha256": "a4c967133b690567640e2c08a9958188e4e9c1de4c2a79755510c34ac9238909"
+      "sha256": "b12cde95f7982f6ca6cf1134ea0a4cdd863e0847f8e437bfa2818141c8ef73cc"
     },
     {
       "path": "crates/cellule-runtime/src/primitives/blob/api/mod.rs",
@@ -65,17 +70,17 @@
     {
       "path": "crates/cellule-runtime/src/primitives/blob/store/lifecycle.rs",
       "deleted": false,
-      "sha256": "17ee91254f25886ba1fef29facf1506a3a70ac1e17164c5db006b6e09fb1bfc4"
+      "sha256": "577f9b2d1944a1e5b4f2667204eda14f3571faeba7358f434666d16faf0ea017"
     },
     {
       "path": "crates/cellule-runtime/src/primitives/blob/store/mod.rs",
       "deleted": false,
-      "sha256": "07d277ef58d491f810528720c268828675fb823826219bb91438275d76c0dc64"
+      "sha256": "36ba2f50c5d5790718f9ded6d3bd2e5dfeaf38ce14add71ac51217e1cd6c1dc8"
     },
     {
       "path": "crates/cellule-runtime/src/primitives/blob/store/tests.rs",
       "deleted": false,
-      "sha256": "0a7c9f5b2c3697fe3b58d57ca79bcced27454af9df3300831bedd75ead39726e"
+      "sha256": "a5d2ce29b53dc6a7187ed946bf5e69edbde470cbde09603acd12e9843b16727b"
     },
     {
       "path": "crates/cellule-runtime/src/primitives/blob/tests.rs",
@@ -96,6 +101,16 @@
       "path": "crates/cellule-runtime/tests/primitives/blob_cron/mod.rs",
       "deleted": false,
       "sha256": "391afd6d9fa713a3260cf8a36f6b87d62cbaf620da6e0553e3c9ac8b1b3aedc6"
+    },
+    {
+      "path": "docs/fleet-operations-plan.md",
+      "deleted": false,
+      "sha256": "ecaabafe51dbd9b27f49c0a4055f4c937017c229df214a095bbf207fe525fa76"
+    },
+    {
+      "path": "docs/fleet-operations-progress.md",
+      "deleted": false,
+      "sha256": "f36160a90923d3968c1d706d659dde269dc68449d653e3583ee7fe67de65e8ec"
     }
   ]
 }

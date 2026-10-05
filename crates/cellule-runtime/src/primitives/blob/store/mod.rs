@@ -69,7 +69,8 @@ impl BlobArtifactStore {
         self.lifetime.close();
     }
 
-    /// Closes admission and waits for all original native artifact jobs.
+    /// Closes admission and waits for known original operations, returning an
+    /// error if any original supervisor was lost before observing native join.
     /// Cancelling this waiter never cancels accepted work or reopens admission.
     /// This proves local joining, not cross-Cell reachability, remote operation
     /// success, Cell release, pin retirement or permission to finalize a node.
@@ -77,7 +78,7 @@ impl BlobArtifactStore {
     /// revoke or count their later execution through normal Cell admission.
     pub async fn close_and_join(&self) -> Result<BlobArtifactLifecycleObservation> {
         self.close();
-        self.lifetime.join().await;
+        self.lifetime.join().await?;
         self.lifecycle_observation()
     }
 

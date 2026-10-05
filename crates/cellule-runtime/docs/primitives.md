@@ -331,10 +331,15 @@ reference set through original listing/deletion, even after caller loss.
 | API | Local guarantee |
 | --- | --- |
 | `close()` | Refuse new namespace operations and GC through every clone. |
-| `close_and_join()` | Close admission and join the original accepted operations; cancelled join waiters do not cancel work or reopen admission. |
-| `lifecycle_observation()` | Capture admission, accepted-operation count and the first source-bearing failure retained by the original owner. Closed plus zero is stable. |
+| `close_and_join()` | Close admission and join known original operations; return an error if any original native join was lost. Cancelled join waiters do not cancel work or reopen admission. |
+| `lifecycle_observation()` | Capture admission, accepted-operation count, unjoined original work and the first source-bearing failure. Local joining requires closed admission, zero accepted operations and zero unjoined work. |
 
 A joined operation can have failed or returned an uncertain command result.
+Forced Tokio runtime teardown can discard a supervisor while an original
+provider worker still runs. This irreversibly closes admission and retains an
+unproven join even after that worker finishes. Zero accepted operations cannot
+clear it; `locally_joined()` remains false and repeated close/join returns an
+error. Native joining cannot be reconstructed from a later object-store read.
 Retained diagnostics preserve the original source; they do not establish remote
 absence or success. Preparing a mutation still returns a caller-owned
 `PreparedCommand`: after return, its later execution is outside the store job
