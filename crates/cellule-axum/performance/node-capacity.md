@@ -119,7 +119,10 @@ owns two loopback follower processes, keeps their independent persistent stores
 under `fleet/data-1` and `fleet/data-2`, and drains accepted work before their
 enrollments withdraw. It retains logs and sampled peer resources beside each
 owner point. Original follower boot sessions and certificates are pinned;
-another boot cannot silently replace a selected follower.
+another boot cannot silently replace a selected follower. Signed requests keep
+their ten-second initial horizon. After directory I/O, expiry also counts
+monotonic elapsed time so wall-clock rollback cannot extend the deadline or
+invalidate an already admitted horizon.
 
 The Cell-authority contender runs without enrolling another boot for the
 already-live fixture leader. It still must fail at the canonical active-Cell

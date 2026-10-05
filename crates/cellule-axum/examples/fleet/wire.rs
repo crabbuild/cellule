@@ -2,6 +2,7 @@
 use cellule_runtime::{Error, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use prost::Message;
+use std::time::Duration;
 
 pub(super) const REQUEST_DOMAIN: &[u8] = b"cellule.axum-capacity.node-log.request.v1\0";
 pub(super) const RESPONSE_DOMAIN: &[u8] = b"cellule.axum-capacity.node-log.response.v1\0";
@@ -97,4 +98,12 @@ pub(super) fn validate(request: &Request, now: i64) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+pub(super) fn request_time(start: i64, observed: i64, elapsed: Duration) -> Result<i64> {
+    let elapsed_ms = i64::try_from(elapsed.as_millis()).map_err(|_| Error::Deadline)?;
+    let monotonic_now = start.checked_add(elapsed_ms).ok_or(Error::Deadline)?;
+    // A validated horizon cannot become excessive when the wall clock moves
+    // backward. Count elapsed time anyway; rollback must never extend expiry.
+    Ok(observed.max(monotonic_now))
 }
