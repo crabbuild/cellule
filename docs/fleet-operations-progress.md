@@ -7320,7 +7320,7 @@ was relaxed.
 | Serial minion successor suite after the read-boundary change | 20 passed; 0 failed, 127.62 seconds. |
 | Serial minion successor suite with the final producer change and probes | 20 passed; 0 failed, 97.32 seconds. |
 | Runtime/host all-target/all-feature Clippy and warning-denied API docs | Passed for the final producer change and test additions. |
-| Format, whitespace, boundaries, module ownership, document and SQL/peer gates | Passed: 137 snippets, 1,351 Markdown links, 28 protocol/schema assertions and 571 validator links. |
+| Format, whitespace, boundaries, module ownership, document and SQL/peer gates | Passed: 137 snippets, 1,348 local Markdown links, 28 protocol/schema assertions and 571 validator links. |
 
 Highest next priorities:
 
