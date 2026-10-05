@@ -162,6 +162,10 @@ pub(super) async fn maintenance_follower() -> JournalResult<ScenarioSummary> {
     execute(Scenario::MaintenanceFollower).await
 }
 
+pub(super) async fn maintenance_roles() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::MaintenanceRoles).await
+}
+
 pub(super) async fn receiver_loss() -> JournalResult<ScenarioSummary> {
     execute(Scenario::ReceiverLoss).await
 }
@@ -173,6 +177,7 @@ enum Scenario {
     Maintenance,
     MaintenanceReader,
     MaintenanceFollower,
+    MaintenanceRoles,
     ReceiverLoss,
 }
 
@@ -197,6 +202,7 @@ async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
     let additional_enrollments = match scenario {
         Scenario::MaintenanceReader => 2,
         Scenario::MaintenanceFollower => 4,
+        Scenario::MaintenanceRoles => 7,
         _ => 0,
     };
     let result = run_scenario(
@@ -304,7 +310,20 @@ fn run_scenario<'a>(
             root, journal, nodes, boots, profile,
         )),
         Scenario::MaintenanceFollower => Box::pin(follower_maintenance::run(
-            root, journal, nodes, boots, profile,
+            root,
+            journal,
+            nodes,
+            boots,
+            profile,
+            follower_maintenance::Roles::Followers,
+        )),
+        Scenario::MaintenanceRoles => Box::pin(follower_maintenance::run(
+            root,
+            journal,
+            nodes,
+            boots,
+            profile,
+            follower_maintenance::Roles::ReadersAndFollowers,
         )),
         Scenario::ReceiverLoss => receiver_loss::run(root, journal, nodes, boots, profile),
         other => Box::pin(run(

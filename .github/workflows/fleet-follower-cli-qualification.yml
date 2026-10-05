@@ -33,15 +33,16 @@ jobs:
             cargo test -p cellule-host --example fleet_operations --all-features --locked "$1" -- --nocapture --test-threads=1 2>&1 | tee "evidence/$2.log"
             python3 -c 'import re,sys; s=open(sys.argv[1]).read(); n=int(sys.argv[2]); assert re.search(r"test result: ok\. "+str(n)+r" passed; 0 failed",s), "unexpected selected test count"' "evidence/$2.log" "$3"
           }
-          selected scenario::follower_maintenance::tests:: follower-cli 1
+          selected scenario::follower_maintenance::tests:: follower-cli 2
           selected scenario::reader_maintenance::tests:: reader-cli 1
           selected scenario::balance::tests:: count-balance 1
           selected scenario::observation::tests:: native-observation 12
           selected scenario::follower_tests::persisted::observation:: follower-observation 3
-      - name: Production follower maintenance command
+      - name: Production follower and combined maintenance commands
         run: |
           set -euo pipefail
           cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-follower 2>&1 | tee evidence/production-command.log
+          cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-roles 2>&1 | tee evidence/production-combined-command.log
           sha256sum target/debug/examples/fleet_operations > evidence/binary.sha256
       - name: Warning denied lint
         if: always()

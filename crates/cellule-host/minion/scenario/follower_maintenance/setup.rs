@@ -2,12 +2,18 @@
 use super::*;
 use cellule_host::NodeDurabilitySupervisorConfig;
 use cellule_runtime::node::log_transport::LocalFollowerTransport;
+use cellule_runtime::{
+    client::CellDescription,
+    peer::{PeerPrincipal, PeerSigner, ReplicaPeerClient},
+};
+use ed25519_dalek::SigningKey;
 
 pub(super) async fn initialize(
     root: &tempfile::TempDir,
     journal: &Arc<SqliteJournal>,
     nodes: &mut Vec<Arc<CellNode>>,
     boots: &mut Vec<startup::BootOwner>,
+    roles: Roles,
 ) -> JournalResult<Inputs> {
     let app = application::compile()?;
     let code = *app
@@ -61,6 +67,7 @@ pub(super) async fn initialize(
             authority: authority.clone(),
         },
     )]));
+    let mut managers = Vec::new();
     for index in 0..4 {
         let intent = journal
             .register_initial_intent(&NodeIntent::initial(
@@ -87,6 +94,15 @@ pub(super) async fn initialize(
         let node = Arc::new(builder.build()?);
         nodes.push(node.clone());
         node.install_task_group(CancellationToken::new(), CancellationToken::new())?;
+        if matches!(roles, Roles::ReadersAndFollowers) {
+            managers.push(node.install_read_replicas(
+                layout.clone(),
+                directory.clone(),
+                root.path().join(format!("readers-{index}")),
+                limits,
+            )?);
+            node.install_fleet_reader_enrollment(scope(), node_id(index), journal.clone())?;
+        }
         node.install_fleet_actions(
             scope(),
             node_id(index),
@@ -220,10 +236,58 @@ pub(super) async fn initialize(
         }
     })
     .await?;
+    let readers = if matches!(roles, Roles::ReadersAndFollowers) {
+        let peer = ReplicaPeerClient::new(
+            app.registry(),
+            Arc::new(PeerSigner::new(
+                session(0),
+                app.registry().release_digest(),
+                SigningKey::from_bytes(&[1; 32]),
+            )),
+            PeerPrincipal {
+                issuer: "managed-owner".into(),
+                subject: "live-owner".into(),
+                actions: vec!["replica-maintenance".into()],
+            },
+            Arc::new(native_peers::NativePeers::new(
+                nodes,
+                &managers,
+                &layout,
+                directory.clone(),
+            )),
+        );
+        let description = CellDescription {
+            cell: target.cell_id(),
+            incarnation,
+            code,
+            schema: 1,
+        };
+        let verifier = cellule_host::fleet::FleetReaderEvacuationVerifier::new(
+            directory,
+            CellAuthority::new(layout.clone()),
+            cellule_runtime::read_policy::ReadPolicyStore::new(layout),
+            peer.clone(),
+        );
+        Some(
+            Box::pin(readers::Readers::initialize(
+                journal,
+                managers,
+                target,
+                description,
+                peer,
+                verifier,
+                boots,
+            ))
+            .await?,
+        )
+    } else {
+        None
+    };
     let version = journal.load_snapshot(scope()).await?.registry();
     journal.set_scheduling(version, true).await?;
     Ok(Inputs {
         records,
         acknowledged,
+        readers,
     })
 }
