@@ -1,9 +1,10 @@
 # Minion fleet operations reference
 
-Status: durable journal and public-driver models, plus finite real three-node
+Status: durable journal and public-driver models, plus finite real-node
 overload, maintenance, controller-restart, receiver-loss, and count-balance
-scenarios with receipt readback. Role-enabled production observations and
-qualification remain required by the [fleet plan](../../../docs/fleet-operations-plan.md).
+scenarios with receipt readback. Reader and follower maintenance use three or
+four managed boots with native role evacuation. Role-enabled production
+observations and qualification remain required by the [fleet plan](../../../docs/fleet-operations-plan.md).
 
 ## Run
 
@@ -146,8 +147,29 @@ separately.
 The finite live-owner adapter retains exactly two prepared epochs and exact
 original close barriers in memory. It uses fresh canonical append/retire
 authorization and offers no failed-owner seal/tail capability. External process
-restart, remote authentication and mixed reader/follower/primitive maintenance
+restart, remote authentication and the complete primitive maintenance matrix
 remain separate qualification requirements.
+
+Run combined reader and live-follower maintenance on one physical donor:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-roles
+```
+
+This extends the same four-boot follower scenario with managed readers installed
+before readiness. The donor owns a reader and a foreign follower tail. A durable
+follower evacuation policy alone must leave maintenance Evacuating. The native
+reader evacuation then refuses while one selected replacement has no Established
+reader, preserving the original enrollment and open view. After both eligible
+receivers establish real readers, native evacuation closes and joins the donor
+view and publishes immutable reader policy evidence. Complete fresh observation
+must prove both roles before SettleRoles and Finalize. The command checks both
+replacement readers against the captured receipt, preserves the original
+mutation and renewed writer acknowledgement, and joins all four nodes, eleven
+enrollment rows, and every resource ledger. Writer counts remain `[1, 0, 0, 0]`;
+eight service/receipt checks are reported separately from zero fleet writer
+moves. This qualifies an in-process reader/follower combination; busy primitive
+owners, process/provider failures and reboot remain required by the fleet plan.
 
 The overload command creates three independently leased CellNodes over shared
 strict in-memory object storage, initializes twelve real SQLite Cells, and acknowledges a command

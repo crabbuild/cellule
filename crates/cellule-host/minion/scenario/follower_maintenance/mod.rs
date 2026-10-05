@@ -17,6 +17,7 @@ use cellule_runtime::{
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 mod provider;
+mod readers;
 mod service;
 mod setup;
 #[cfg(test)]
@@ -25,6 +26,12 @@ mod tests;
 struct Inputs {
     records: Arc<HashMap<CellId, Record>>,
     acknowledged: Acknowledged,
+    readers: Option<readers::Readers>,
+}
+
+pub(super) enum Roles {
+    Followers,
+    ReadersAndFollowers,
 }
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(10)
@@ -36,8 +43,11 @@ pub(super) async fn run(
     nodes: &mut Vec<Arc<CellNode>>,
     boots: &mut Vec<startup::BootOwner>,
     profile: FleetProfile,
+    roles: Roles,
 ) -> JournalResult<ScenarioSummary> {
-    let inputs = setup::initialize(root, &journal, nodes, boots).await?;
+    // These role-enabled futures contain native peer activation and complete
+    // fleet capture. Keep each composition boundary off the caller stack.
+    let inputs = Box::pin(setup::initialize(root, &journal, nodes, boots, roles)).await?;
     let version = journal.load_snapshot(scope()).await?.registry();
     let page = journal.enrollments_page(version, None, 128).await?;
     let original = page
@@ -57,7 +67,10 @@ pub(super) async fn run(
         boots: boots.clone(),
         records: inputs.records.clone(),
         journal: journal.clone(),
-        reader_verifier: None,
+        reader_verifier: inputs
+            .readers
+            .as_ref()
+            .map(|readers| readers.verifier.clone()),
         capture_sequence: AtomicU64::new(0),
         lose_release_replies: false,
         lost_release_replies: AtomicUsize::new(0),
@@ -106,7 +119,7 @@ pub(super) async fn run(
     // The driver owns cordon and evacuation transitions. No fixture writes a
     // ready-to-close row or an invented native role proof.
     loop {
-        let report = driver.reconcile_once(clock, deadline()).await?;
+        let report = Box::pin(driver.reconcile_once(clock, deadline())).await?;
         checked_report(&report)?;
         for blocker in report.blockers {
             if !blockers.contains(&blocker) {
@@ -134,7 +147,7 @@ pub(super) async fn run(
     }
     // The missing replacement remains an explicit policy blocker and cannot
     // retire an uncovered original follower or authorize native Finalize.
-    let blocked = driver.reconcile_once(clock, deadline()).await?;
+    let blocked = Box::pin(driver.reconcile_once(clock, deadline())).await?;
     checked_report(&blocked)?;
     if blocked
         .snapshot
@@ -154,6 +167,9 @@ pub(super) async fn run(
         if !blockers.contains(&blocker) {
             blockers.push(blocker);
         }
+    }
+    if let Some(readers) = &inputs.readers {
+        readers.check_original(&journal, true).await?;
     }
     let store = nodes[1]
         .try_owned_component::<FollowerStore>(cellule_host::FOLLOWER_STORE_COMPONENT)?
@@ -261,8 +277,30 @@ pub(super) async fn run(
     )
     .await?;
     let record = publication.record()?;
+    let reader_capture = if let Some(readers) = &inputs.readers {
+        // A follower proof alone cannot close a donor that also owns a reader.
+        let blocked = Box::pin(driver.reconcile_once(clock, deadline())).await?;
+        checked_report(&blocked)?;
+        readers
+            .require_blocked(&blocked, &journal, &nodes[1])
+            .await?;
+        for blocker in blocked.blockers {
+            if !blockers.contains(&blocker) {
+                blockers.push(blocker);
+            }
+        }
+        Box::pin(readers.prepare_replacement(&journal, boots)).await?;
+        let blocked = Box::pin(driver.reconcile_once(clock, deadline())).await?;
+        checked_report(&blocked)?;
+        readers
+            .require_blocked(&blocked, &journal, &nodes[1])
+            .await?;
+        Some(Box::pin(readers.complete_replacement(&journal, boots)).await?)
+    } else {
+        None
+    };
     let completed = loop {
-        let report = driver.reconcile_once(clock, deadline()).await?;
+        let report = Box::pin(driver.reconcile_once(clock, deadline())).await?;
         checked_report(&report)?;
         for blocker in report.blockers {
             if !blockers.contains(&blocker) {
@@ -314,6 +352,9 @@ pub(super) async fn run(
         ));
     }
     service::readback(root, &inputs, &renewed).await?;
+    if let Some((readers, capture)) = inputs.readers.as_ref().zip(reader_capture.as_ref()) {
+        readers.readback(&journal, capture).await?;
+    }
     let roster = FleetRoster::collect(journal.as_ref(), &completed, deadline()).await?;
     let final_counts = observation::complete_counts(&fleet, &roster, deadline())
         .await?
@@ -325,7 +366,7 @@ pub(super) async fn run(
         released: 0,
         activated: 0,
         retired: 0,
-        receipt_checks: 5,
+        receipt_checks: if inputs.readers.is_some() { 8 } else { 5 },
         max_inflight: 0,
         max_restore_bytes: 0,
         joined_nodes: 0,
