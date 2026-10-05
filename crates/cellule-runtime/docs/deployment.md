@@ -1018,7 +1018,10 @@ can call `CellRuntime::quiesce_cell_at` with the exact Cell ID, runtime boot,
 local generation, incarnation and ownership epoch. A mismatch fails before
 closing admission. The transition is sticky for that activation and returns
 when the actor installs the gate; it does not wait for accepted work to finish.
-An unavailable publisher conservatively refuses the request, requiring a retry.
+The activation's immutable admission fence remains available while accepted
+publication owns its publisher, so closing admission does not require a quiet
+publication gap. A wrong epoch or generation remains fenced. Publisher return,
+accepted work and exact-root publication still gate final release.
 
 | Work | During Cell quiescence |
 | --- | --- |
@@ -1076,6 +1079,12 @@ Cell refuses before closing admission because external stream/upload/pin owners
 are not covered. `OwnedCellObservation::maintenance_cost` is a separate peak
 receiver envelope derived from validated per-Cell LTX limits. It stays available
 while mutations invalidate measured worker samples; it establishes no readiness.
+`OwnedCellObservation::owner_fence` retains the activation incarnation/epoch even
+when `position` is unavailable during publication. An observer can retain that
+exact writer's maintenance demand after independently rechecking its native
+generation, canonical owner, boot, executable contract and configured envelope.
+Root advancement still invalidates complete counts and ordinary movement demand;
+this advisory identity supplies neither final release nor role-settlement proof.
 The driver can plan with it only for the exact boot/node of a retained Evacuating
 maintenance operation and a fresh authenticated collection barrier. Receiver
 preparation precedes source quiescence and rechecks the actual cost. Ordinary

@@ -7706,3 +7706,59 @@ remain unqualified. Highest next priorities:
    lineage and unknown-result fault coverage through the existing public paths.
 3. Deliver W9's committed profile/runner and measured process/provider/load/mixed-
    binary campaigns, then exercise W10 rollout, rollback and recovery runbooks.
+
+
+## October 5 2026 busy SQL maintenance checkpoint
+
+Parent: `ba50f650ae85be31e616338a52ab84d6b1139eb5`. The sixteen changed
+Rust paths match native snapshot `e3f6dac05e12500ca1f3b36eee895e3368d9b929`
+exactly. The Rust delta SHA-256 is
+`39d002eb02c35f888ad6e79e43e400ebc63672cf372aa0eda2a4071f4434878c`.
+
+Two reproducible gaps prevented controlled maintenance under continuous writes:
+publication temporarily borrowed the publisher needed by exact quiescence, and
+the reference observer discarded unchanged writer demand when the root advanced.
+A real root-CAS pause reproduced the first gap; an actual acknowledged mutation
+reproduced the second. Both regressions were observed failing before the fix.
+
+The actor's immutable admission fence now admits exact quiescence and busy
+release during publication borrowing. The returned native inventory retains the
+same owner fence independently of its optional published position. Host planning
+binds it in digest v15 and permits it only under exact Evacuating maintenance and
+the existing peak receiver envelope. The reference observer independently checks
+canonical owner/epoch, boot, native generation, executable contract and envelope.
+Root changes still invalidate complete counts and ordinary movement demand.
+Release still prepares the receiver first, joins accepted work/publication,
+refreshes readiness and obtains the exact final canonical root; role settlement
+and finalization keep their existing full barriers.
+
+Canonical minion `maintenance-busy` runs two continuously offering SQL command
+lanes on one original donor Cell through that same public driver. Each must
+receive native admission refusal before the finite 512-command bound. Every
+accepted request retains its digest, expiry, sequence and stored result, resolves
+exactly on its canonical successor, and contributes one exact audit row. All
+twelve original receipts/values survive movement. All clients join before shared
+node and journal cleanup on success or failure. A startup-refusal regression
+preserves the native source error and checks joined sibling tasks/resources.
+
+| Check | Observed result |
+| --- | --- |
+| Local Rust 1.97 source | 29 selected tests passed: 2 busy command/startup, 13 native observations, 6 host inventory/digest contracts, 3 runtime maintenance cases and 5 planner/quiet-maintenance cases. The earlier busy repeat and final production command also passed. |
+| Production busy command | 88 accepted commands, 2 admission refusals, 88 exact audit rows; 12 released/activated/retired Cells, 100 receipt checks, `[0, 6, 6]` ownership, 3 joined nodes and 3 retired boots; Completed and exact withdrawal confirmed. |
+| Static/API gates | Host/runtime all-target/all-feature warning-denied Clippy and API docs, format, architecture boundaries/layout, 1348 Markdown links, 137 Rust snippets and 28 SQL/peer assertions with 571 validator links passed. |
+| Native exact snapshot | [Job 111619387502](https://github.com/crabbuild/cellule/actions/runs/37264858825/job/111619387502) succeeded on Rust 1.99: all 36 nonzero-count regressions, three production commands and warning-denied host/runtime lint. The busy regression preserved 379 commands; production preserved 384 plus the twelve original receipts, with `[0, 6, 6]` ownership and joined/retired boots. Artifact `busy-maintenance-37264858825-1` retains exact source, binary digest, CPU/memory/limits and raw logs. |
+| Published parent `ba50f65` | Complete Rust workspace/MSRV, follower/object capacity, contract, website and cookbook campaigns succeeded. Compose run 37262366756 is live; smoke reader scaling and both routing measurements are running. The earlier `fe8a96c` Compose campaign completed successfully. |
+
+No profiles, deadlines, native stack limits or expected evidence were weakened.
+The earlier unexplained constrained-reader availability failure is still not
+claimed repaired by passing campaigns. Full W4–W10 completion remains unproven.
+Highest next priorities:
+
+1. Finish exact native and current-head CI, preserve source hashes, push the
+   qualified checkpoint and keep current main ancestry/PR mergeability.
+2. Complete the primitive/external-owner fault matrix, Blob stream/upload/pin
+   barriers, successive-boot lineage and original accepted-work ownership under
+   controller/owner/process failures.
+3. Deliver W9's versioned fleet profile/runner and measured provider/process,
+   sustained-load/soak and mixed-binary evidence, then exercise W10 rollout,
+   rollback, stuck-drain and recovery runbooks.

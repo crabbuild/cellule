@@ -275,6 +275,7 @@ async fn canonical_owner_renewal_invalidates_the_exact_authority_interval() {
     assert_eq!(renewed.value().root, original.value().root);
     let unchanged = recheck_authority(
         &fixture.fleet,
+        &roster,
         &HashMap::from([(cell, original.value().clone())]),
         &mut cells,
     )
@@ -288,5 +289,105 @@ async fn canonical_owner_renewal_invalidates_the_exact_authority_interval() {
             .all(|owned| owned.observation.target.cell_id() != cell)
     );
     drop(inventory);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn same_writer_publication_retains_only_explicit_maintenance_demand() {
+    use cellule_runtime::fleet::operations::MaintenanceEvent;
+    let fixture = Fixture::new().await;
+    let roster = fixture.roster().await;
+    let inventory = capture_node(&fixture, &roster, 0).await;
+    let mut cells = inventory.cells().to_vec();
+    let cell = cells[0].observation.target.cell_id();
+    let record = fixture.fleet.records.get(&cell).unwrap();
+    let original = record.authority.load(cell).await.unwrap().unwrap();
+    let handle = fixture.fleet.nodes[0]
+        .runtime()
+        .local_handle(record.catalog.clone(), &original)
+        .await
+        .unwrap()
+        .unwrap();
+    let now = clock().unwrap();
+    let operation = MaintenanceOperation::new(
+        OperationId::from_bytes([222; 16]).unwrap(),
+        Digest::from_bytes([223; 32]),
+        node_id(0),
+        session(0),
+        2,
+        now,
+        now + 60_000,
+    )
+    .unwrap();
+    let mut snapshot = roster.snapshot().clone();
+    for transition in [
+        JournalTransition::BeginMaintenance(operation),
+        JournalTransition::Maintenance(MaintenanceEvent::Cordoned),
+        JournalTransition::Maintenance(MaintenanceEvent::BeginEvacuation),
+    ] {
+        snapshot = fixture
+            .fleet
+            .journal
+            .compare_exchange(
+                &snapshot,
+                snapshot.head().controller().unwrap().epoch,
+                clock().unwrap(),
+                &transition,
+            )
+            .await
+            .unwrap();
+    }
+    let roster = fixture.roster().await;
+    handle
+        .execute(
+            MutationIdentity {
+                request_id: RequestId::from_bytes([239; 16]),
+                issued_at_ms: now,
+                expires_at_ms: now + 60_000,
+            },
+            Digest::from_bytes([239; 32]),
+            now,
+            64,
+            64,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(vec![239]))
+            },
+        )
+        .await
+        .unwrap();
+    let published = record.authority.load(cell).await.unwrap().unwrap();
+    assert_eq!(
+        published.value().owner_fence(),
+        original.value().owner_fence()
+    );
+    assert_ne!(published.value().root, original.value().root);
+    let unchanged = recheck_authority(
+        &fixture.fleet,
+        &roster,
+        &HashMap::from([(cell, original.value().clone())]),
+        &mut cells,
+    )
+    .await
+    .unwrap();
+    assert!(!unchanged);
+    // Incomplete counts stay incomplete. The original activation is still a
+    // candidate for the separately authorized busy-maintenance action.
+    assert_eq!(cells.len(), CELL_COUNT);
+    let original_row = cells
+        .iter()
+        .find(|row| row.observation.target.cell_id() == cell)
+        .unwrap();
+    assert!(maintenance_candidate(&roster, original_row, now));
+    assert!(!maintenance_candidate(&roster, original_row, now + 60_000));
+    let mut foreign = original_row.clone();
+    foreign.session = session(1);
+    assert!(!maintenance_candidate(&roster, &foreign, now));
+    assert!(!matches_writer_authority(&foreign, published.value(), 3));
+    foreign = original_row.clone();
+    foreign.observation.owner_fence.epoch += 1;
+    assert!(!matches_writer_authority(&foreign, published.value(), 3));
+    drop(inventory);
+    drop(roster);
     fixture.close().await;
 }

@@ -166,6 +166,10 @@ impl FleetObserver for Observer {
                             target: target(n),
                             generation: u64::from(n),
                             incarnation: position(1).incarnation,
+                            owner_fence: cellule_runtime::control::OwnerFence {
+                                incarnation: position(1).incarnation,
+                                epoch: 1,
+                            },
                             code: Digest::from_bytes([9; 32]),
                             schema: 1,
                             role: CatalogRole::Sql,
@@ -860,12 +864,7 @@ async fn draining_advertisement_or_pressure_alone_cannot_plan_busy_work() {
 
 #[tokio::test]
 async fn maintenance_planning_keeps_blob_role_and_missing_evidence_blocked() {
-    for state in [
-        CellState::Blob,
-        CellState::RoleBlocked,
-        CellState::NoCost,
-        CellState::NoPosition,
-    ] {
+    for state in [CellState::Blob, CellState::RoleBlocked, CellState::NoCost] {
         let fixture = Fixture::new(false, false, false).await;
         *fixture.observer.cell_state.lock().unwrap() = state;
         fixture.request_maintenance(NOW + 20_000).await;
@@ -1779,4 +1778,21 @@ async fn unknown_enrollment_disables_counts_and_keeps_pressure_relief_available(
         assert_eq!(record.updated_at_ms(), 0);
         fixture.journal.close().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn explicit_maintenance_can_prepare_from_retained_fence_without_borrowed_publisher_position()
+{
+    let fixture = Fixture::new(false, false, false).await;
+    *fixture.observer.cell_state.lock().unwrap() = CellState::NoPosition;
+    fixture.request_maintenance(NOW + 20_000).await;
+    let driver = fixture.driver(206);
+    fixture.step(&driver, 1).await;
+    let planned = fixture.step(&driver, 2).await;
+    assert_eq!(planned.allocated, 2);
+    assert_eq!(fixture.transport.released.load(Ordering::SeqCst), 0);
+    assert!(planned.snapshot.head().attempts().iter().all(|attempt| {
+        attempt.spec().source_epoch == 1 && attempt.spec().cost.disk_bytes == 8192
+    }));
+    fixture.journal.close().await.unwrap();
 }

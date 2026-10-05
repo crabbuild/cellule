@@ -98,6 +98,30 @@ proves an empty reader/follower obligation set for its closed writer-only
 constructor; role-enabled deployments and provider/process failures remain
 separate qualification requirements.
 
+Run planned maintenance under continuous SQL command admission:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-busy
+```
+
+Two client lanes continuously mutate one original donor Cell while the same
+public reconciler cordons the node, prepares receiver reservations and dispatches
+native busy release. The actor's immutable owner fence remains observable while
+publication owns its publisher. Root advancement invalidates complete counts;
+explicit maintenance can retain demand for that independently verified writer.
+Source quiescence follows receiver preparation and joins accepted publication
+before canonical release. No extra application quiescence call is used.
+
+Each lane must receive an admission refusal before its finite 512-command bound;
+exhausting that load is failure. The command resolves every acknowledged request
+on its canonical successor and compares the exact digest, sequence and stored
+result. An audit table must contain exactly one row per acknowledgement. All
+twelve original receipts and SQL values also survive movement. Output reports
+accepted commands, both admission refusals and exact audit rows. Success and
+failure join every client task before node/journal cleanup; all three boots
+retire and runtime resource ledgers empty. This finite in-process workload does
+not qualify external primitive owners, process crashes or measured provider load.
+
 Run reader-only maintenance with a live foreign writer:
 
 ```sh

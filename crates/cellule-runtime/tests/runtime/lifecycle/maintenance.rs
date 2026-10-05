@@ -3,6 +3,190 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publication_borrow_cannot_starve_exact_maintenance_quiescence_or_release() {
+    use cellule_runtime::cell::actor::{CellInventoryEntry, MaintenanceCellRelease};
+    for release in [false, true] {
+        let store = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+        let fixture = fixture_with_limits_and_store(
+            b"maintenance-during-publication",
+            Limits::default(),
+            Store::new(store.clone()),
+        );
+        let (runtime, handle, _) = activate_runtime(&fixture, 16 << 20).await;
+        let owner = inventory::stable_owner(&runtime).await;
+        let epoch = handle.owner_fence().epoch;
+        let session = SessionId::from_bytes([4; 16]);
+        let identity = mutation_identity_window(96, 10, 10_000);
+        let digest = Digest::from_bytes([96; 32]);
+        store.arm_next_update();
+        let executing = {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                handle
+                    .execute(identity, digest, 20, 64, 64, |transaction| {
+                        transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                        Ok(HandlerOutcome::Success(b"accepted-publication".to_vec()))
+                    })
+                    .await
+            })
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            store.wait_until_blocked(),
+        )
+        .await
+        .unwrap();
+        let page = runtime.fleet_cells_page(None, 128).await.unwrap();
+        let publisher_borrowed = page.entries().iter().any(|entry| matches!(entry,
+            CellInventoryEntry::Owned(current) if current.target.cell_id() == handle.cell_id() && current.position.is_none() && current.owner_fence == handle.owner_fence()));
+        drop(page);
+        let wrong_epoch = runtime
+            .quiesce_cell_at(
+                handle.cell_id(),
+                session,
+                owner.generation,
+                owner.incarnation,
+                epoch + 1,
+            )
+            .await;
+        let wrong_generation = runtime
+            .quiesce_cell_at(
+                handle.cell_id(),
+                session,
+                owner.generation + 1,
+                owner.incarnation,
+                epoch,
+            )
+            .await;
+        let releasing = if release {
+            let runtime = runtime.clone();
+            let cell = handle.cell_id();
+            Some(tokio::spawn(async move {
+                runtime
+                    .release_maintenance_cell_at(
+                        cell,
+                        session,
+                        owner.generation,
+                        owner.incarnation,
+                        epoch,
+                        tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+                    )
+                    .await
+            }))
+        } else {
+            None
+        };
+        let quiesced = if release {
+            None
+        } else {
+            Some(
+                runtime
+                    .quiesce_cell_at(
+                        handle.cell_id(),
+                        session,
+                        owner.generation,
+                        owner.incarnation,
+                        epoch,
+                    )
+                    .await,
+            )
+        };
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let page = runtime.fleet_cells_page(None, 128).await.unwrap();
+                if page.entries().iter().any(|entry| matches!(entry,
+                    CellInventoryEntry::Owned(current) if current.target.cell_id() == handle.cell_id() && current.quiescing)) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }).await;
+        let refused = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            handle.query(1, 1, |_| Ok(vec![1])),
+        )
+        .await;
+        let premature_response = executing.is_finished();
+        let premature_release = releasing
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished);
+        // Always resume and join native publication before assertions. A failed
+        // maintenance barrier cannot strand the paused original CAS or SQLite.
+        store.release();
+        let outcome = executing.await.unwrap().unwrap();
+        let released = match releasing {
+            Some(task) => Some(task.await.unwrap().unwrap()),
+            None => None,
+        };
+        assert!(publisher_borrowed);
+        assert!(matches!(wrong_epoch, Err(cellule_runtime::Error::Fenced)));
+        assert!(matches!(
+            wrong_generation,
+            Err(cellule_runtime::Error::Fenced)
+        ));
+        assert!(closed.is_ok());
+        assert!(quiesced.is_none_or(|result| result.is_ok()));
+        assert!(matches!(
+            refused,
+            Ok(Err(cellule_runtime::Error::CellDraining))
+        ));
+        assert!(!premature_response && !premature_release);
+        let resolving = match released {
+            Some(MaintenanceCellRelease::Released(position)) => {
+                assert_eq!(position.root.commit_sequence, outcome.commit_sequence());
+                let authority = CellAuthority::new(fixture.layout.clone());
+                let idle = authority.load(handle.cell_id()).await.unwrap().unwrap();
+                assert_eq!(idle.value().state, ControlState::Idle);
+                assert_eq!(idle.value().root.as_ref(), Some(&position.root));
+                let successor_session = SessionId::from_bytes([97; 16]);
+                let successor = CellRuntime::new(
+                    SqlWorkerPool::new(1, 10).unwrap(),
+                    16 << 20,
+                    successor_session,
+                )
+                .unwrap();
+                let restored = successor
+                    .acquire_idle_restored(
+                        handle.catalog().clone(),
+                        fixture.replica.clone(),
+                        authority,
+                        idle,
+                        fixture
+                            ._directory
+                            .path()
+                            .join("publication-successor.sqlite"),
+                        Owner {
+                            session: successor_session,
+                            endpoint: "https://successor.internal:8081".into(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    restored.resolve(identity, digest, 21, 64).await.unwrap(),
+                    Resolution::Committed(outcome.clone())
+                );
+                restored.drain().await.unwrap();
+                successor.shutdown().await.unwrap();
+                assert_eq!(successor.stats().retained_bytes(), 0);
+                None
+            }
+            Some(other) => panic!("publication maintenance refused: {other:?}"),
+            None => Some(handle.resolve(identity, digest, 21, 64).await.unwrap()),
+        };
+        if let Some(resolved) = resolving {
+            assert_eq!(resolved, Resolution::Committed(outcome));
+            handle.drain().await.unwrap();
+        }
+        runtime.shutdown().await.unwrap();
+        assert_eq!(runtime.stats().active_cells(), 0);
+        assert_eq!(runtime.stats().retained_bytes(), 0);
+        assert_eq!(runtime.stats().worker_jobs(), 0);
+        assert_eq!(runtime.stats().local_disk_reserved_bytes(), 0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn maintenance_quiescence_keeps_accepted_work_and_original_resolution() {
     let fixture = fixture();
     let (runtime, handle, _) = activate_runtime(&fixture, 16 << 20).await;

@@ -208,6 +208,12 @@ impl FleetObservation {
                     .iter()
                     .any(|node| node.node == owned.node && node.session == owned.session)
                 || row.generation == 0
+                || row.owner_fence.incarnation != row.incarnation
+                || row.owner_fence.epoch == 0
+                || row.position.as_ref().is_some_and(|position| {
+                    position.incarnation != row.owner_fence.incarnation
+                        || position.epoch != row.owner_fence.epoch
+                })
                 || row.resident_since_ms < 0
                 || row.resident_since_ms > now_ms
             {
@@ -223,7 +229,7 @@ impl FleetObservation {
     pub(super) fn digest(&self, now_ms: i64) -> Result<Digest> {
         let nodes = self.placements(now_ms)?;
         let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule.fleet-planner-inputs.v14\0");
+        hash.update(b"cellule.fleet-planner-inputs.v15\0");
         hash.update(self.scope.fleet.as_bytes());
         hash.update(self.scope.application.as_bytes());
         hash.update(&self.registry.to_bytes().map_err(super::operation)?);
@@ -323,6 +329,8 @@ impl FleetObservation {
             hash.update(owned.session.as_bytes());
             hash.update(row.target.cell_id().as_bytes());
             hash.update(row.incarnation.as_bytes());
+            hash.update(row.owner_fence.incarnation.as_bytes());
+            hash.update(&row.owner_fence.epoch.to_be_bytes());
             hash.update(row.code.as_bytes());
             hash.update(&row.schema.to_be_bytes());
             // Role now controls busy-maintenance eligibility. Use explicit tags

@@ -10,7 +10,9 @@ use cellule_host::fleet::{
     FleetSnapshotSubject,
 };
 use cellule_runtime::control::{Control, ControlState};
-use cellule_runtime::fleet::operations::{EnrollmentRole, EnrollmentStatus, PublishedPosition};
+use cellule_runtime::fleet::operations::{
+    DrainBlocker, EnrollmentRole, EnrollmentStatus, PublishedPosition,
+};
 use cellule_runtime::node::NodeAdvertisement;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -343,11 +345,15 @@ async fn collect(
         authority.insert(*cell, current.value().clone());
     }
     cells.retain(|owned| {
-        let matches = authority
-            .get(&owned.observation.target.cell_id())
-            .is_some_and(|current| matches_authority(owned, current, fleet.nodes.len()));
-        complete &= matches;
-        matches
+        let Some(current) = authority.get(&owned.observation.target.cell_id()) else {
+            complete = false;
+            return false;
+        };
+        let exact = matches_authority(owned, current, fleet.nodes.len());
+        complete &= exact;
+        exact
+            || (maintenance_candidate(roster, owned, started)
+                && matches_writer_authority(owned, current, fleet.nodes.len()))
     });
     for (cell, current) in &authority {
         complete &= match current.state {
@@ -358,9 +364,10 @@ async fn collect(
             ControlState::Recovering => false,
         };
     }
-    // Recheck exact authority after the full scan. A concurrent publication or
-    // takeover invalidates that Cell's planning row, not just count completeness.
-    complete &= recheck_authority(fleet, &authority, &mut cells).await?;
+    // Root changes invalidate complete counts and ordinary movement demand.
+    // Explicit maintenance may retain this exact writer's peak envelope; the
+    // prepared action still joins publication and obtains its final root proof.
+    complete &= recheck_authority(fleet, roster, &authority, &mut cells).await?;
     // Recheck every role category after *all* authority and membership reads.
     // Stable local-only traversals cannot supply this fleet-wide interval.
     for (index, inventory) in active_indices.iter().copied().zip(inventories.iter_mut()) {
@@ -376,7 +383,7 @@ async fn collect(
             let FleetSnapshotNativePage::Cells(actors) = response.page() else {
                 return Err(invalid("example repeated actor page category differs"));
             };
-            retain_unchanged_writers(&mut cells, index, actors.entries());
+            retain_unchanged_writers(&mut cells, roster, index, actors.entries(), clock()?);
             continue;
         };
         let mut recheck = inventory.recheck();
@@ -391,7 +398,13 @@ async fn collect(
                     FleetSnapshotNativePage::Cells(actors) => {
                         // Count planning stops on changed topology. Keep only
                         // independently unchanged writer rows for pressure relief.
-                        retain_unchanged_writers(&mut cells, index, actors.entries());
+                        retain_unchanged_writers(
+                            &mut cells,
+                            roster,
+                            index,
+                            actors.entries(),
+                            clock()?,
+                        );
                     }
                     FleetSnapshotNativePage::Host => {
                         cells.retain(|owned| owned.node != node_id(index));
@@ -453,6 +466,7 @@ async fn collect(
 
 async fn recheck_authority(
     fleet: &adapters::LocalFleet,
+    roster: &FleetRoster,
     authority: &HashMap<CellId, Control>,
     cells: &mut Vec<FleetOwnedCell>,
 ) -> JournalResult<bool> {
@@ -467,23 +481,14 @@ async fn recheck_authority(
             .await?
             .ok_or_else(|| invalid("example authority disappeared during capture"))?;
         if current.value() != original {
-            let value = current.value();
-            let protected_same = value.cell == original.cell
-                && value.incarnation == original.incarnation
-                && value.epoch == original.epoch
-                && value.state == original.state
-                && value.owner == original.owner
-                && value.root == original.root
-                && value.recovery == original.recovery
-                && value.code == original.code
-                && value.schema == original.schema
-                && value.next_due_ms == original.next_due_ms;
-            eprintln!(
-                "FLEET_CAPTURE authority_changed cell={cell:?} revision={}..{} progress={}..{} protected_fields_unchanged={protected_same}",
-                original.revision, value.revision, original.progress, value.progress,
-            );
             unchanged = false;
-            cells.retain(|row| row.observation.target.cell_id() != *cell);
+            let now = clock()?;
+            cells.retain(|row| {
+                row.observation.target.cell_id() != *cell
+                    || (maintenance_candidate(roster, row, now)
+                        && matches_writer_authority(row, original, fleet.nodes.len())
+                        && matches_writer_authority(row, current.value(), fleet.nodes.len()))
+            });
         }
     }
     Ok(unchanged)
@@ -491,8 +496,10 @@ async fn recheck_authority(
 
 fn retain_unchanged_writers(
     cells: &mut Vec<FleetOwnedCell>,
+    roster: &FleetRoster,
     index: usize,
     entries: &[CellInventoryEntry],
+    now: i64,
 ) {
     cells.retain(|owned| {
         owned.node != node_id(index)
@@ -506,17 +513,44 @@ fn retain_unchanged_writers(
                     && current.incarnation == original.incarnation
                     && current.code == original.code
                     && current.schema == original.schema
-                    && current.position == original.position
-                    && current.cost == original.cost
-                    && current.blockers == original.blockers
+                    && current.role == original.role
+                    && current.owner_fence == original.owner_fence
+                    && ((current.position == original.position
+                        && current.cost == original.cost
+                        && current.blockers == original.blockers)
+                        || (maintenance_candidate(roster, owned, now)
+                            && current.maintenance_cost == original.maintenance_cost
+                            && current.blockers.iter().all(|blocker| {
+                                matches!(
+                                    blocker,
+                                    DrainBlocker::BusyExecution
+                                        | DrainBlocker::ExternalLease
+                                        | DrainBlocker::PendingPublication
+                                        | DrainBlocker::UnknownInventory
+                                )
+                            })))
             })
     });
 }
 
-fn matches_authority(owned: &FleetOwnedCell, current: &Control, node_count: usize) -> bool {
+fn maintenance_candidate(roster: &FleetRoster, owned: &FleetOwnedCell, now: i64) -> bool {
+    roster
+        .snapshot()
+        .head()
+        .maintenance()
+        .is_some_and(|operation| {
+            operation.phase() == cellule_runtime::fleet::operations::MaintenancePhase::Evacuating
+                && operation.node() == owned.node
+                && operation.session() == owned.session
+                && now < operation.deadline_ms()
+        })
+}
+
+fn matches_writer_authority(owned: &FleetOwnedCell, current: &Control, node_count: usize) -> bool {
     let row = &owned.observation;
     current.cell == row.target.cell_id()
         && current.incarnation == row.incarnation
+        && current.owner_fence() == row.owner_fence
         && current.code == row.code
         && current.schema == row.schema
         && current.state == ControlState::Serving
@@ -525,6 +559,12 @@ fn matches_authority(owned: &FleetOwnedCell, current: &Control, node_count: usiz
                 && (0..node_count).any(|n| node_id(n) == owned.node && owner == &super::owner(n))
         })
         && current.recovery.is_none()
+        && current.root.is_some()
+}
+
+fn matches_authority(owned: &FleetOwnedCell, current: &Control, node_count: usize) -> bool {
+    let row = &owned.observation;
+    matches_writer_authority(owned, current, node_count)
         && current.root.as_ref().is_some_and(|root| {
             row.position
                 == Some(PublishedPosition {
