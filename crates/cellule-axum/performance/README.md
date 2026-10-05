@@ -28,7 +28,9 @@ cold-start disk accounting and retains the causal regression. The
 The [compaction admission report](2026-10-05-compaction-admission.md) records
 foreground exclusion by unadmitted quiet compactions and a four-Cell causal
 regression. The resumed report retains the first provider OOM and a longer
-fresh-provider comparison, including every regression.
+fresh-provider comparison, including every regression. The
+[native capture diagnostic](2026-10-05-native-capture.md) isolates WAL/LTX
+work from the broader worker and publication timings.
 
 Reports identify frozen measured revisions. The later CI fix preserves reader
 rotation across discovery changes and synchronizes a durability test with its
