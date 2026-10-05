@@ -15,6 +15,9 @@ The [object coverage batching report](2026-10-04-object-coverage-batching.md)
 tracks concurrent publication comparisons. The
 [coalesced root report](2026-10-04-coalesced-root-coverage.md) retains the next
 failed 64-Cell pair and identifies the conservative disk admission ceiling.
+The [SQLite growth admission report](2026-10-04-sqlite-growth-admission.md)
+records the concurrent admission regression and two cold-audited steady windows,
+with publication and compaction remaining as throughput limits.
 
 Reports identify frozen measured revisions. The later CI fix preserves reader
 rotation across discovery changes and synchronizes a durability test with its
