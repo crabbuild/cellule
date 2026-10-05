@@ -7522,3 +7522,62 @@ Highest next priorities:
 3. Deliver W9 recorded provider/process, load/soak and mixed-version campaigns,
    then exercise W10 rollout, rollback and recovery runbooks. W4–W10 remain
    incomplete; focused publication regressions do not establish fleet readiness.
+
+
+## October 5 2026 executable reader maintenance checkpoint
+
+Parent: `9257b18c825118db00518fd8b494a7bd9a75792b`. The Rust-only diff
+has SHA-256 `5045af8d1faba496434d2414631c62eb294e6f492e9efd15976d9c0ad9802aa5`.
+
+Delivered `maintenance-reader` through the canonical minion executable. Three
+managed boots retain Pending/Established before readiness, one real writer
+acknowledges a mutation from 17 to 29, and the public driver cordons the reader's
+physical node. A complete observation without replacement policy remains
+Evacuating, preserving the original Established reader and its usable value.
+The command opens a selected native replacement, performs canonical evacuation,
+publishes immutable policy evidence and lets fresh complete observation
+authorize SettleRoles and Finalize. It checks Completed, Stopped, exact boot
+withdrawal, retired/fenced original reader, receipt-bound replacement value 29,
+the original writer's stored mutation result and unchanged writer ownership.
+The shared exit path joins three nodes, both reader enrollments and boot rows,
+then checks every existing runtime resource ledger.
+
+The signed native peer verifier/dispatcher adapter moved from the private reader
+test tree into a shared production minion module. Existing cancellation/probe
+controls remain test-only; the executable and tests use the same routing. No
+framework transport, second scheduler or application authentication policy was
+added to the framework.
+
+The first executable regression failed because replacement activation still saw
+the original donor in the reader directory's bounded membership cache. It now
+waits within its deadline for canonical selection to observe the signed cordon
+and choose the spare, preserving the original reader during that interval.
+The reference heartbeat also waits for a newer actual classifier sample that
+matches the current local admission mode before signing. No mode, sample time
+or sequence is fabricated, and the canonical reader cache remains unchanged.
+All temporary diagnosis probes were removed.
+
+| Source / check | Observed result |
+| --- | --- |
+| Exact Rust snapshot `0409277`; [native reader job 111598959724](https://github.com/crabbuild/cellule/actions/runs/37257960935/job/111598959724) | Success on Rust 1.99: executable regression (1 test, 8.26 seconds), production `maintenance-reader` command, 10 unchanged reader fault cases, 2 existing public reader observer cases, 3 unchanged follower observer cases, and host all-target/all-feature warning-denied Clippy. The snapshot matches all nine changed Rust paths, including the old adapter deletion. |
+| Local executable and regression | Success: zero writer movement/permits, two receipt checks, one receiving reader node, three joined nodes and boot retirements, final writer counts `[1, 0, 0]`, maintenance Completed and exact withdrawal. |
+| Local existing reader faults | 10 passed, 0 failed, 32.70 seconds. Original profiles, deadlines and assertions remain unchanged. |
+| Local quality gates | Host all-target/all-feature warning-denied Clippy and API docs, format, boundaries/layout, 137 Rust snippets, 1348 Markdown links, and 28 SQL/peer assertions with 571 validator links passed. |
+| Parent `9257b18`; [Compose smoke job 111597096334](https://github.com/crabbuild/cellule/actions/runs/37257164322/job/111597096334) | Failure in the unchanged sustained mixed-reader load at three constrained nodes: `ReplicaUnavailable` at `process_scaling.rs:548`. Earlier smoke/fault cases and initial reader readiness passed. Captured containers show no OOM kill or unexpected node exit. Cause remains unproven; do not treat focused reader qualification as a full CI repair. |
+
+Raw Compose driver, node, provider, arrival/receipt and container evidence is in
+the failed run's `cell-reference-compose-37257164322-1` artifact. The parent Rust
+workspace job was still live at this checkpoint. Complete new-head workspace and
+provider CI remain required.
+
+Highest next priorities:
+
+1. Reproduce and fix the constrained mixed-reader `ReplicaUnavailable` failure
+   using the actual process/provider campaign and original availability gates.
+   Finish full current-head CI and keep PR #57 synchronized and mergeable.
+2. Deliver the live-follower maintenance CLI using the existing native supervisor,
+   then complete successive boot/lineage and the remaining W4–W7 role/primitive
+   faults, including external Cron/Blob and failed-process ownership barriers.
+3. Complete W9 measured profiles, provider/process, load/soak and mixed-version
+   campaigns, then exercise W10 rollout, rollback and recovery runbooks. W4–W10
+   remain incomplete; this finite reader executable is one W8 deliverable.

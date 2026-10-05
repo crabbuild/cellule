@@ -239,6 +239,10 @@ impl BootOwner {
             loop {
                 if let Some(sample) = self.node.runtime().operational_sample()?
                     && previous.is_none_or(|old| sample.sequence > old.sequence)
+                    // A newer cached tick may still precede the intent change.
+                    // Publish only a sample that reflects the current role gate;
+                    // otherwise remote placement can keep selecting this donor.
+                    && sample.mode == self.node.runtime().node_admission().mode()?
                 {
                     return Ok::<_, cellule_runtime::Error>(sample);
                 }

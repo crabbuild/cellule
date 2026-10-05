@@ -97,6 +97,26 @@ proves an empty reader/follower obligation set for its closed writer-only
 constructor; role-enabled deployments and provider/process failures remain
 separate qualification requirements.
 
+Run reader-only maintenance with a live foreign writer:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-reader
+```
+
+This registers three managed boots and a real reader, acknowledges a mutation
+to 29, then submits maintenance for the reader's physical node through the same
+public driver. Missing replacement policy keeps the operation Evacuating and
+the original reader usable. After signed reader selection observes the cordon,
+the command opens a replacement, performs canonical reader evacuation and
+publishes immutable policy evidence. Fresh complete observation authorizes
+SettleRoles and native Finalize. It checks Completed, Stopped, exact withdrawal,
+fenced original reader, receipt-bound replacement readback and the original
+writer's stored mutation result. Cleanup joins all three nodes, both reader
+enrollments and boot rows, and checks the existing resource ledgers. Output
+keeps zero writer releases/activations separate from two receipt checks and
+reader replacement. This finite in-process example does not qualify external
+process failure or the remaining follower/primitive combinations.
+
 It creates three independently leased CellNodes over shared strict in-memory
 object storage, initializes twelve real SQLite Cells, and acknowledges a command
 on each. A held seven-GiB disk admission token causes the existing actor's

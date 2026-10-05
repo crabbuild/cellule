@@ -8,7 +8,9 @@ mod balance;
 mod failure;
 #[cfg(test)]
 mod follower_tests;
+mod native_peers;
 mod observation;
+mod reader_maintenance;
 #[cfg(test)]
 mod reader_tests;
 mod receiver_loss;
@@ -151,6 +153,10 @@ pub(super) async fn maintenance() -> JournalResult<ScenarioSummary> {
     execute(Scenario::Maintenance).await
 }
 
+pub(super) async fn maintenance_reader() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::MaintenanceReader).await
+}
+
 pub(super) async fn receiver_loss() -> JournalResult<ScenarioSummary> {
     execute(Scenario::ReceiverLoss).await
 }
@@ -160,6 +166,7 @@ enum Scenario {
     ControllerRestart,
     CountBalance,
     Maintenance,
+    MaintenanceReader,
     ReceiverLoss,
 }
 
@@ -181,6 +188,7 @@ async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
     let journal = Arc::new(SqliteJournal::open(path.clone(), scope(), profile, clock()?).await?);
     let mut nodes = Vec::new();
     let mut boots = Vec::new();
+    let reader_maintenance = matches!(scenario, Scenario::MaintenanceReader);
     let result = run_scenario(
         scenario,
         &root,
@@ -211,7 +219,7 @@ async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
             let page = journal.enrollments_page(version, None, 128).await?;
             if boots.len() != nodes.len()
                 || page.next().is_some()
-                || page.entries().len() != boots.len()
+                || page.entries().len() != boots.len() + if reader_maintenance { 2 } else { 0 }
                 || page.entries().iter().any(|entry| {
                     entry.status() != cellule_runtime::fleet::operations::EnrollmentStatus::Retired
                 })
@@ -282,6 +290,9 @@ fn run_scenario<'a>(
     match scenario {
         Scenario::CountBalance => Box::pin(balance::run(root, journal, nodes, boots, profile)),
         Scenario::Maintenance => Box::pin(run_maintenance(root, journal, nodes, boots, profile)),
+        Scenario::MaintenanceReader => Box::pin(reader_maintenance::run(
+            root, journal, nodes, boots, profile,
+        )),
         Scenario::ReceiverLoss => receiver_loss::run(root, journal, nodes, boots, profile),
         other => Box::pin(run(
             root,

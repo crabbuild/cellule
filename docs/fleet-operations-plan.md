@@ -121,12 +121,12 @@ entire work package complete.
 
 The [fleet journal example](../crates/cellule-host/minion/README.md)
 currently supports `inspect-journal <database-path>`, `overload`,
-`controller-restart`, `receiver-loss`, count `balance`, and writer-only
-`maintenance`. The first reopens the local durable reference journal. Movement
+`controller-restart`, `receiver-loss`, count `balance`, writer-only
+`maintenance`, and reader-only `maintenance-reader`. The first reopens the local durable reference journal. Movement
 commands exercise real bounded placement,
 including a new controller epoch after lost source replies and actual lease
-expiry. Reader, follower, and failed-owner maintenance are currently covered by
-minion scenarios. Receiver loss joins the failed receiver, publishes exact boot
+expiry. Live-reader maintenance is runnable through the CLI; follower and failed-owner
+maintenance have focused minion scenarios. Receiver loss joins the failed receiver, publishes exact boot
 closure, routes the original release, loses and replays activation, and rebuilds
 the controller from retained state before checking all twelve receipts. Complete
 production observations and the full W8 exit requirements remain deliverables.
@@ -1825,8 +1825,8 @@ node crates/cellule-runtime/docs/validate.mjs
 ```
 
 The following example commands are deliverables of W8. The current tree supports
-`overload`, `controller-restart`, `receiver-loss`, and writer-only `maintenance`
-with the evidence limits recorded in
+`overload`, `controller-restart`, `receiver-loss`, writer-only `maintenance`,
+and reader-only `maintenance-reader` with the evidence limits recorded in
 [execution evidence](fleet-operations-progress.md). Reader-only
 and live-follower-only maintenance each have focused end-to-end minion scenarios,
 as does failed-owner follower maintenance. A role-complete maintenance CLI and
@@ -1835,6 +1835,7 @@ the full fault/provider qualification remain required:
 ```sh
 cargo run -p cellule-host --example fleet_operations --locked -- overload
 cargo run -p cellule-host --example fleet_operations --locked -- maintenance
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-reader
 cargo run -p cellule-host --example fleet_operations --locked -- controller-restart
 cargo run -p cellule-host --example fleet_operations --locked -- receiver-loss
 ```
