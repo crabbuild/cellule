@@ -376,16 +376,18 @@ impl NodeDirectory {
                         return Ok(None);
                     };
                     validate_record_path(&self.layout, advertisement.session, &meta.location)?;
+                    // Canonical decoding above verifies the signatures on each
+                    // fresh body. These policies neither mutate nor reuse it.
                     match scan {
                         AdvertisementScan::LiveRelease => {
                             if advertisement.expires_at_ms <= now_ms {
                                 return Ok(None);
                             }
-                            self.validate(&advertisement, now_ms)?;
+                            advertisement.validate_at(now_ms)?;
+                            self.validate_scope(&advertisement)?;
                         }
                         AdvertisementScan::AdvertisedFleet => {
                             advertisement.validate_shape()?;
-                            advertisement.verify_signature()?;
                             if advertisement.fleet != self.fleet
                                 || advertisement.issued_at_ms
                                     > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)

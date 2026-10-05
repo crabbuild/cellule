@@ -141,7 +141,10 @@ impl NodeDirectory {
         let Some((advertisement, token)) = self.load_canonical(session).await? else {
             return Ok(None);
         };
-        self.validate(&advertisement, now_ms)?;
+        // This fresh canonical decode already verified both immutable signature
+        // sets. Apply current time/scope policy to those same bytes once.
+        advertisement.validate_at(now_ms)?;
+        self.validate_scope(&advertisement)?;
         Ok(Some(VersionedNodeAdvertisement {
             advertisement,
             token,
@@ -169,7 +172,8 @@ impl NodeDirectory {
         if advertisement.expires_at_ms <= now_ms {
             return Ok(None);
         }
-        self.validate(&advertisement, now_ms)?;
+        // load_canonical authenticated this exact read, including placement.
+        advertisement.validate_at(now_ms)?;
         Ok(Some(VersionedNodeAdvertisement {
             advertisement,
             token,
@@ -189,7 +193,7 @@ impl NodeDirectory {
             return Ok(None);
         };
         advertisement.validate_shape()?;
-        advertisement.verify_signature()?;
+        // load_canonical authenticated the exact immutable record, even expired.
         self.validate_scope(&advertisement)?;
         if advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
             return Err(Error::Node("advertisement issue time is in the future"));
