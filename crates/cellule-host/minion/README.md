@@ -7,10 +7,10 @@ qualification remain required by the [fleet plan](../../../docs/fleet-operations
 
 ## Run
 
-The maintenance restart regression loses the reply after a real follower donor
-commits `SettleRoles`, then reconstructs the driver over an independent SQLite
-client. The original acceptance/key remains unchanged; a fresh complete proof
-must cover the current head before Closing. Two cases renew the same claimant
+Maintenance restart tests lose the reply after a real follower donor commits
+`SettleRoles`, fail its result write, or lose acknowledgement after that write
+commits, then reconstruct the driver over an independent SQLite client. The original acceptance/key remains unchanged; a fresh complete proof
+must cover the current head before Closing. Six cases renew the same claimant
 and replace it after the real controller lease expires. They check final
 withdrawal, canonical-root restoration, the original command result, and joined
 resources:
@@ -22,8 +22,21 @@ cargo test -p cellule-host --example fleet_operations --all-features --locked \
 
 The expiry case keeps the original boots live with actual signed heartbeats,
 then checks the new claimant/epoch and the old controller's fenced refusal.
-Uncommitted result publication races, external process/provider failures and
-the complete W7 fault matrix still require separate evidence.
+The result-write cases require the old proof's Conflict, joined local retirement
+and a fresh complete capture before Closing. The original acceptance, native
+error and any committed historical receipt remain unchanged.
+
+Cancellation cases pause the actual result transaction/reply, cancel its
+controller waiter, and join an exact duplicate to the retained native owner:
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::follower_tests::persisted::cancelled_settlement:: -- --test-threads=1
+```
+
+A new head cannot replace the running original or authorize closure with its old
+proof. External process/provider failures and the complete W7 fault matrix still
+require separate evidence.
 
 The focused receiver-loss tests cover both unchanged Idle authority and a failed
 receiver that reached Recovering or Serving after clean source release:

@@ -409,7 +409,9 @@ impl FleetActionJournal for SqliteJournal {
     ) -> FleetAdapterFuture<'a, ()> {
         let accepted = accepted.clone();
         let result = result.clone();
-        Box::pin(self.run(move |db| {
+        #[cfg(test)]
+        let role_settlement = matches!(&result.outcome, FleetOutcome::RolesSettledAt { .. });
+        let write = self.run(move |db| {
             db.original(&accepted)?;
             accepted.validate_result(&result)?;
             if let FleetOutcome::RolesSettledAt {
@@ -525,7 +527,17 @@ impl FleetActionJournal for SqliteJournal {
                 ],
             )?;
             Ok(())
-        }))
+        });
+        Box::pin(async move {
+            #[cfg(test)]
+            self.role_result_boundary(role_settlement, ResultWriteBoundary::BeforeCommit)
+                .await?;
+            write.await?;
+            #[cfg(test)]
+            self.role_result_boundary(role_settlement, ResultWriteBoundary::AfterCommit)
+                .await?;
+            Ok(())
+        })
     }
     fn load_movement_action<'a>(
         &'a self,

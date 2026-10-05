@@ -7470,3 +7470,55 @@ Highest next priorities:
 3. Complete W9 recorded process/provider, load/soak and mixed-version campaigns,
    then exercise W10 operator rollout, rollback and recovery runbooks. W4–W10
    remain incomplete; these focused cases do not establish full fleet readiness.
+
+
+## October 5 2026 role-result publication and cancelled-owner checkpoint
+
+Parent: `ab5eb0bfe4a8dedcc62a7cb44528e250210c9512`. The Rust-only diff
+has SHA-256 `70aa7b017943121bed73faa6f9e1c4316a99ad55611dec6763002a372d3fdfd0`.
+
+A real-node regression reproduced an unpublished native `SettleRoles` proof
+that prevented every later complete observation. The joined executor retried
+the original proof after controller renewal; its old-head publication correctly
+returned Conflict, but its retained local job prevented fresh capture forever.
+The executor now returns that original publication error and retires only this
+joined, read-only local proof after its failed retry. Original durable acceptance
+and historical results remain unchanged. A later pass must collect complete fresh
+native and foreign-role evidence and commit through the existing atomic
+head/registry check before Closing. Physical-effect receipts remain retained
+across publication failures and are never reexecuted.
+
+Four new restart cases fault the actual journal write before commit or its reply
+after commit, under both same-claimant renewal and replacement after actual lease
+expiry. Two additional cases cancel the public controller while the original
+native publication owner is paused at those boundaries. Exact duplicates join
+that owner; competing fresh proofs are refused while it runs. After its original
+completion and failed stale-proof retry, fresh evidence advances Closing and
+Completed. All cases preserve original acceptance, errors and historical results,
+check canonical-root value and original request-result readback of 29, and join
+all runtime, disk and enrollment ledgers. No existing qualification profile,
+five-second deadline or expected evidence changed. These new restart/cancellation
+cases use their own ten-second pass bound.
+
+| Source / job | Observed result |
+| --- | --- |
+| Published parent `ab5eb0b`; [workspace job 111590038595](https://github.com/crabbuild/cellule/actions/runs/37254990107/job/111590038595) | Success: all 369 minion cases, 0 failures, 864.60 seconds; workspace, provider/process smoke, local/replica LTX, warning-denied lint and contract gates passed. Environment-specific ignored cloud suites are not qualified by this result. |
+| Snapshot `4b847c4`; [native publication job 111594331530](https://github.com/crabbuild/cellule/actions/runs/37256405859/job/111594331530) | Success on Rust 1.99: 6 restart cases (128.49 seconds), 2 cancelled owners (17.81 seconds), 3 unchanged observer contracts, 7 physical-action retention cases, 3 opaque-proof refusals, and host all-target/all-feature warning-denied Clippy. |
+
+The native snapshot contains the exact staged Rust source and no probes. Its
+21 selected tests establish the focused regression scope; the new published
+head still requires its full workspace and provider CI. Local verification also
+passed the six restart and two cancellation cases, seven physical-action cases,
+six public maintenance cases, three opaque-proof cases, host Clippy/API docs,
+format, boundaries/layout and document/SQL-peer gates.
+
+Highest next priorities:
+
+1. Verify this source checkpoint's full CI and preserve current main ancestry
+   and PR mergeability. Extend the maintenance executable beyond writer-only
+   coverage using the existing public reader/follower orchestration.
+2. Complete successive boot/lineage and remaining W4–W7 role/primitive faults,
+   including actual external Cron/Blob and failed-process ownership barriers.
+3. Deliver W9 recorded provider/process, load/soak and mixed-version campaigns,
+   then exercise W10 rollout, rollback and recovery runbooks. W4–W10 remain
+   incomplete; focused publication regressions do not establish fleet readiness.

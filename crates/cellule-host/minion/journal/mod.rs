@@ -12,7 +12,11 @@ use cellule_runtime::node::NodeMode;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use tokio::sync::{Notify, Semaphore};
 
+#[cfg(test)]
+mod action_result_faults;
 mod actions;
+#[cfg(test)]
+pub(crate) use action_result_faults::ResultWriteBoundary;
 mod controller;
 mod enrollment;
 mod follower_evacuation;
@@ -43,6 +47,8 @@ struct Inner {
     slots: Arc<Semaphore>,
     scope: FleetScope,
     profile: FleetProfile,
+    #[cfg(test)]
+    role_result_fault: Mutex<Option<action_result_faults::RoleResultFault>>,
     #[cfg(test)]
     lose_commit_reply: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -142,6 +148,8 @@ impl SqliteJournal {
                 slots: Arc::new(Semaphore::new(MAX_PENDING_JOBS)),
                 scope,
                 profile,
+                #[cfg(test)]
+                role_result_fault: Mutex::new(None),
                 #[cfg(test)]
                 lose_commit_reply: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
