@@ -637,4 +637,5 @@ const fn operation(id: u32, input_limit: u32, output_limit: u32) -> OperationDes
     }
 }
 
+mod lifecycle;
 mod maintenance;

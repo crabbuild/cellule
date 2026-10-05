@@ -7813,3 +7813,103 @@ Highest next priorities:
    logical upload/range/pin lifetimes into the existing native role barriers.
 3. Complete remaining W4–W10 fault, boot-lineage, process/provider, load,
    mixed-version and rollout/rollback/recovery evidence. The plan remains open.
+
+
+## October 5 2026 original Blob lifetime checkpoint
+
+Parent: `973e0eeaddb51158cdc7d075e06c2feb84795cd5`. PR #37 is merged;
+continuation #57 is mergeable and includes current main
+`80c4fd99c10fc7e91ab34c628ea61fcd488e0cea`. No unresolved index entries or
+conflict markers remain in the three reported files.
+
+The original Blob store now owns at most 64 accepted operations through shared,
+irreversible admission. A retained supervisor joins the original native future
+and preserves its first source-bearing failure, including provider panic
+JoinError. Caller loss or cancellation of a close waiter leaves original work
+running. Forced Tokio runtime loss records an unjoined original supervisor,
+closes admission and refuses local closure even after the provider eventually
+finishes. Known accepted counts alone cannot prove joining. The regression uses
+an actual paused spawn_blocking provider operation and observes its bytes
+published after runtime loss; removing the unjoined guard reproduced the false
+closure before restoring the passing implementation.
+
+Public namespace operations share that owner. Convenience mutation retains
+part staging through its normal Cell command response. Preparation retains
+staging/preparation and returns the existing caller-owned PreparedCommand;
+closure cannot revoke its later execution. Range queries retain metadata lookup
+and every bounded part read without readmission between parts. Head/list and
+non-part mutations use the same admission. Codec, ID, part digest/path, SQLite
+manifest and durable response contracts remain unchanged. GC accepts a complete
+Arc<BTreeSet<[u8; 32]>> retained through original listing and deletion, without
+truncation or unbounded copying.
+
+`CellNode::install_blob_artifact_store` installs the configured provider as an
+existing owned facility before readiness, after the task group. The returned
+clone configures the existing client. Canonical reverse facility drain closes
+and joins that original store before runtime shutdown. Duplicate, closed-store
+and late installation are refused. Lost original joining returns a drain error;
+cancelled waiters cannot fabricate Stopped or close an unrelated store.
+
+Public regressions hold actual SQLite work ahead of range metadata, close
+admission, cancel callers/close waiters and finish all original part reads under
+one lifetime. Removing whole-query ownership reproduced the admission failure
+after cleanup. Cancelled upload coverage resolves original prepared evidence as
+Committed before replay; sequence 2 and one upload are preserved. Host coverage
+pauses actual GC listing, cancels its caller/shutdown waiter, retains complete
+references and finishes one original sweep with joined drain and zero resources.
+Five provider cases cover original put/read/GC, failure and panic sources, all
+64 retained jobs, invalid inputs and forced runtime loss.
+
+The published parent's full Rust job passed workspace tests but failed one
+minion corruption test: it unwrapped construction of an inconsistent native
+identity that the strengthened constructor correctly refuses. The exact local
+case reproduced that failure. The fixture now accepts construction refusal and
+checks each exact error; corruption cases expand from eight to fourteen,
+including coherent wrong fences that must fail original-writer attachment.
+No production validation, profiles, deadlines or assertions are weakened.
+
+Verification:
+
+- Local Rust 1.97: 25 Blob unit/codec cases, five public Blob/Cron cases, two
+  public host Blob cases, ten successor observation cases and the existing typed
+  application consumer passed. Warning-denied host/runtime lint and API docs,
+  format, boundaries/layout and document gates passed.
+- Final Blob snapshot `7fd0a2e5172618b7ab90cd7918af42227ab4e1b8` passed
+  [run 37271127229](https://github.com/crabbuild/cellule/actions/runs/37271127229):
+  25 Blob cases, all 52 parallel public primitive cases and all 129 parallel
+  public node cases (206 total), warning-denied lint/API docs and static gates
+  on Rust 1.99. All 22 recorded snapshot paths matched current bytes before
+  this progress update; delta SHA-256
+  `966568654b6fb252f2fd6635265c14864034f67c0e607d5009a0513a17291398`.
+- Minion snapshot `9dad2e91d80bc9852bc2e638e663b5d58ba24eb2` passed
+  [run 37270034524](https://github.com/crabbuild/cellule/actions/runs/37270034524):
+  ten exact observation contracts, all 382 serial minion cases in 804.49 seconds,
+  the typed application consumer and warning-denied lint. This snapshot precedes
+  the forced-runtime-loss guard; it proves the minion fix at that source.
+  Delta SHA-256
+  `14c5313674464a9fed5e48a512ccfb42beac17f3a20f06e0fc5d948317c4f8dc`.
+- Earlier parallel maintenance cleanup passed two complete runtime suites, each
+  231 passed/4 ignored, in
+  [run 37267463895](https://github.com/crabbuild/cellule/actions/runs/37267463895).
+  Full CI on the newly published head remains required. The published parent
+  also passed follower/object capacity, contract, website, all 21 cookbook
+  scenarios, Compose smoke and leased routing. Object-only routing was still
+  running at the final observation; no outcome is inferred from that state.
+  Passing leased routing does not explain the retained earlier p99 failure.
+
+The sole dependency change adds already-resolved async-trait as a host test
+dependency for the real ObjectStore decorator; resolved versions are unchanged.
+This checkpoint supplies original local operation ownership. Returned prepared
+commands, Cell-scoped upload/stream/read/backup pins, migration, cross-Cell GC
+references and unknown remote outcomes still require canonical owner coverage.
+BlobInventory and missing Blob maintenance cost remain blocking. W4–W10 remain
+incomplete.
+
+Highest next priorities:
+
+1. Finish current-head CI and keep the continuation mergeable; diagnose the
+   retained leased routing p99 and constrained-reader availability failures.
+2. Add Cell-scoped Blob logical/pin and global retention proof through the
+   original owner, then qualify maintenance handoff and native role settlement.
+3. Complete remaining fault/boot-lineage, W9 process/provider/load and
+   mixed-version campaigns, then exercised W10 rollout/rollback/recovery.

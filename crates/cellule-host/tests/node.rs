@@ -101,6 +101,7 @@ mod node {
         Arc::new(builder.finish().unwrap())
     }
 
+    mod blob_artifacts;
     pub mod builder;
     pub mod components;
     pub mod durability;

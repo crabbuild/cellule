@@ -318,6 +318,45 @@ A product-level collector must:
 
 The helper is not wired to a product collector yet.
 
+### Own accepted Blob operations during shutdown
+
+All clones of one `BlobArtifactStore` share one irreversible admission word.
+The store admits at most 64 original operations. A public namespace mutation
+retains staging through its command response; a range read retains metadata
+lookup and every part read. Closing between parts cannot interrupt that accepted
+read. Cancellation removes the caller's waiter while the original operation
+continues. GC retains an `Arc<BTreeSet<[u8; 32]>>` with the complete supplied
+reference set through original listing/deletion, even after caller loss.
+
+| API | Local guarantee |
+| --- | --- |
+| `close()` | Refuse new namespace operations and GC through every clone. |
+| `close_and_join()` | Close admission and join known original operations; return an error if any original native join was lost. Cancelled join waiters do not cancel work or reopen admission. |
+| `lifecycle_observation()` | Capture admission, accepted-operation count, unjoined original work and the first source-bearing failure. Local joining requires closed admission, zero accepted operations and zero unjoined work. |
+
+A joined operation can have failed or returned an uncertain command result.
+Forced Tokio runtime teardown can discard a supervisor while an original
+provider worker still runs. This irreversibly closes admission and retains an
+unproven join even after that worker finishes. Zero accepted operations cannot
+clear it; `locally_joined()` remains false and repeated close/join returns an
+error. Native joining cannot be reconstructed from a later object-store read.
+Retained diagnostics preserve the original source; they do not establish remote
+absence or success. Preparing a mutation still returns a caller-owned
+`PreparedCommand`: after return, its later execution is outside the store job
+count and uses normal Cell admission and durability. Retain its evidence and
+resolve uncertain execution. Store closure cannot revoke that command or prove
+all writes in the object-store scope are quiesced.
+
+Install the same store with `CellNode::install_blob_artifact_store` before
+readiness, after the task group, and pass its returned clone to
+`CellClient::with_blob_artifact_store`. The existing host drain closes and joins
+it before runtime shutdown. This local lifetime boundary supplies no complete
+Cell-scoped upload, stream, pin, migration or cross-Cell retention proof.
+`BlobInventory` therefore still blocks maintenance release. The global collector
+must protect outstanding read/pin obligations as well as authoritative manifest
+references and quiesced writes; the store's local count alone cannot authorize
+deletion or fleet finalization.
+
 <a id="cron"></a>
 ## Use Cron for failover-safe recurring triggers
 

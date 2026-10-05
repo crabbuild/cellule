@@ -15,7 +15,7 @@ use cellule_runtime::primitives::effects::{EffectClaimRequest, EffectLeaseOutcom
 
 mod peer;
 
-fn node_runtime(session: SessionId) -> CellRuntime {
+pub(super) fn node_runtime(session: SessionId) -> CellRuntime {
     // These are independent nodes. The convenience default Host shares a
     // process-wide disk budget, including reservations held by other runtimes.
     CellRuntime::new_with_replica_host(

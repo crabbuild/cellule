@@ -133,7 +133,7 @@ async fn object_store_sweep_keeps_live_parts_and_reclaims_old_orphans() {
         .unwrap();
 
     let report = artifacts
-        .sweep_unreferenced(&BTreeSet::from([live_digest]), i64::MAX)
+        .sweep_unreferenced(std::sync::Arc::new(BTreeSet::from([live_digest])), i64::MAX)
         .await
         .unwrap();
     assert_eq!(report.scanned(), 2);
@@ -174,7 +174,7 @@ async fn object_store_sweep_reaches_orphans_beyond_live_entries() {
         .unwrap();
 
     let report = artifacts
-        .sweep_unreferenced(&live_digests, i64::MAX)
+        .sweep_unreferenced(std::sync::Arc::new(live_digests), i64::MAX)
         .await
         .unwrap();
     assert_eq!(report.scanned(), 130);
@@ -198,14 +198,14 @@ async fn object_store_sweep_bounds_deletions_and_finishes_on_retry() {
     }
 
     let first = artifacts
-        .sweep_unreferenced(&BTreeSet::new(), i64::MAX)
+        .sweep_unreferenced(std::sync::Arc::new(BTreeSet::new()), i64::MAX)
         .await
         .unwrap();
     assert_eq!(first.deleted(), MAX_BLOB_GC_DELETIONS);
     assert!(first.has_more());
 
     let second = artifacts
-        .sweep_unreferenced(&BTreeSet::new(), i64::MAX)
+        .sweep_unreferenced(std::sync::Arc::new(BTreeSet::new()), i64::MAX)
         .await
         .unwrap();
     assert_eq!(second.deleted(), 1);

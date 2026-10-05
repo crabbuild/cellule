@@ -19,7 +19,7 @@ mod store;
 mod tests;
 
 pub use api::{BlobCommand, BlobModule, BlobNamespace, BlobQueryCommand, register_blob};
-pub use store::{BlobArtifactStore, BlobGarbageCollectionReport};
+pub use store::{BlobArtifactLifecycleObservation, BlobArtifactStore, BlobGarbageCollectionReport};
 
 use sql::*;
 use store::part_digest;

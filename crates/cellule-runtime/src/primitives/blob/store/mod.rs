@@ -1,6 +1,14 @@
 //! Durable Blob part store backed by the configured object store.
 
 use super::*;
+use crate::client::InvocationError;
+use std::sync::Arc;
+
+mod lifecycle;
+#[cfg(test)]
+mod tests;
+use lifecycle::ArtifactLifetime;
+pub use lifecycle::BlobArtifactLifecycleObservation;
 
 /// Object-store backing for Blob parts.
 ///
@@ -10,6 +18,7 @@ use super::*;
 #[derive(Clone)]
 pub struct BlobArtifactStore {
     store: Store,
+    lifetime: Arc<ArtifactLifetime>,
 }
 
 /// Result from one Blob part reachability sweep.
@@ -41,23 +50,115 @@ impl BlobGarbageCollectionReport {
 }
 
 impl BlobArtifactStore {
-    /// Wraps a configured object store for Blob artifact data.
+    /// Wraps a configured object store with shared, irreversible admission.
+    /// At most 64 original operations are accepted concurrently. Namespace
+    /// operations span metadata, provider I/O and their command/query response;
+    /// GC retains the complete reference set. Clones share closure and keep
+    /// accepted operations running after caller cancellation.
     #[must_use]
     pub fn new(store: Store) -> Self {
-        Self { store }
+        Self {
+            store,
+            lifetime: Arc::new(ArtifactLifetime::default()),
+        }
     }
 
+    /// Irreversibly refuses new artifact I/O through every clone. Accepted jobs
+    /// continue; use `close_and_join` before disposing of their provider.
+    pub fn close(&self) {
+        self.lifetime.close();
+    }
+
+    /// Closes admission and waits for known original operations, returning an
+    /// error if any original supervisor was lost before observing native join.
+    /// Cancelling this waiter never cancels accepted work or reopens admission.
+    /// This proves local joining, not cross-Cell reachability, remote operation
+    /// success, Cell release, pin retirement or permission to finalize a node.
+    /// Already returned prepared commands are caller-owned; this does not
+    /// revoke or count their later execution through normal Cell admission.
+    pub async fn close_and_join(&self) -> Result<BlobArtifactLifecycleObservation> {
+        self.close();
+        self.lifetime.join().await?;
+        self.lifecycle_observation()
+    }
+
+    /// Reads original local admission, accepted-work and failure diagnostics.
+    /// Open counts are advisory; closed plus zero is irreversible.
+    pub fn lifecycle_observation(&self) -> Result<BlobArtifactLifecycleObservation> {
+        self.lifetime.observe()
+    }
+
+    pub(super) async fn run_invocation<T, U, F>(
+        &self,
+        work: F,
+    ) -> std::result::Result<T, InvocationError<U>>
+    where
+        T: Send + 'static,
+        U: Send + 'static,
+        F: std::future::Future<Output = std::result::Result<T, InvocationError<U>>>
+            + Send
+            + 'static,
+    {
+        let lifetime = self.lifetime.clone();
+        self.lifetime
+            .run(async move {
+                // Preserve typed rejection/pending evidence. Only source-bearing
+                // failures enter local diagnostics; joining a Pending result does
+                // not prove the remote command completed or failed to execute.
+                Ok(work.await.map_err(|error| match error {
+                    InvocationError::NotStarted(source) => {
+                        InvocationError::NotStarted(lifetime.retain_failure(source))
+                    }
+                    InvocationError::InvalidPublishedResult { receipt, source } => {
+                        InvocationError::InvalidPublishedResult {
+                            receipt,
+                            source: Box::new(lifetime.retain_failure(*source)),
+                        }
+                    }
+                    other => other,
+                }))
+            })
+            .await
+            .map_err(InvocationError::NotStarted)?
+    }
+
+    #[cfg(test)]
     pub(super) async fn put_part(&self, digest: [u8; 32], payload: &[u8]) -> Result<()> {
+        if payload.len() > MAX_BLOB_PART_BYTES {
+            return Err(Error::Command("blob part exceeds 256 KiB"));
+        }
         if part_digest(payload) != digest {
             return Err(Error::Command("blob part digest does not match payload"));
         }
-        self.store
-            .put(&self.part_path(&digest), Bytes::copy_from_slice(payload))
-            .await?;
+        // Copy only bounded input; the accepted native owner retains it even
+        // when preparation's caller disappears before immutable publication.
+        let payload = Bytes::copy_from_slice(payload);
+        let store = self.clone();
+        self.lifetime
+            .run(async move { store.put_part_native(digest, payload).await })
+            .await
+    }
+
+    pub(super) async fn put_part_native(&self, digest: [u8; 32], payload: Bytes) -> Result<()> {
+        self.store.put(&self.part_path(&digest), payload).await?;
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) async fn read_part(&self, digest: [u8; 32], size: u32) -> Result<Vec<u8>> {
+        if usize::try_from(size)
+            .ok()
+            .is_none_or(|size| size > MAX_BLOB_PART_BYTES)
+        {
+            return Err(Error::Command("invalid stored blob part size"));
+        }
+        let store = self.clone();
+        self.lifetime
+            .run(async move { store.read_part_native(digest, size).await })
+            .await
+    }
+
+    pub(super) async fn read_part_native(&self, digest: [u8; 32], size: u32) -> Result<Vec<u8>> {
         if usize::try_from(size)
             .ok()
             .is_none_or(|size| size > MAX_BLOB_PART_BYTES)
@@ -82,15 +183,28 @@ impl BlobArtifactStore {
     /// Objects newer than `cutoff_ms` are retained for uploads whose SQLite
     /// manifests have not committed. Each call inspects the complete unordered
     /// listing until 128 parts have been deleted; schedule another call while
-    /// [`BlobGarbageCollectionReport::has_more`] is true.
+    /// [`BlobGarbageCollectionReport::has_more`] is true. The complete reference
+    /// set is shared ownership because native deletion outlives a cancelled
+    /// waiter; never truncate it to satisfy an admission or deletion budget.
     pub async fn sweep_unreferenced(
         &self,
-        live_digests: &BTreeSet<[u8; 32]>,
+        live_digests: Arc<BTreeSet<[u8; 32]>>,
         cutoff_ms: i64,
     ) -> Result<BlobGarbageCollectionReport> {
         if cutoff_ms < 0 {
             return Err(Error::Command("negative blob garbage-collection cutoff"));
         }
+        let store = self.clone();
+        self.lifetime
+            .run(async move { store.sweep_native(&live_digests, cutoff_ms).await })
+            .await
+    }
+
+    async fn sweep_native(
+        &self,
+        live_digests: &BTreeSet<[u8; 32]>,
+        cutoff_ms: i64,
+    ) -> Result<BlobGarbageCollectionReport> {
         let prefix = self
             .store
             .storage_scope()
