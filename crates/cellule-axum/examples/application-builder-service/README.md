@@ -25,9 +25,9 @@ OrdersApp::compile ───────────────► CellApi + Op
            │                             │
            ▼                             ▼
 ServiceNode::start                  Axum routes
-  probe storage                         │
-  enroll + renew lease                  │
-  provision both tenant Cells           │
+  probe storage                          │
+  enroll + renew lease                   │
+  provision both tenant Cells            │
            │                             │
            └── scoped handle ◄── authenticate + authorize
 
