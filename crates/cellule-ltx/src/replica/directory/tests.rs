@@ -193,9 +193,11 @@ async fn incremental_update_rebuilds_the_last_height_two_branch() {
             host: &replica.host,
             origin: crate::LtxReadOrigin::Cold,
         },
-        base_tree.root_digest(),
-        base_tree.height(),
-        base_tree.root.aggregate,
+        DirectoryRoot {
+            digest: base_tree.root_digest(),
+            height: base_tree.height(),
+            aggregate: base_tree.root.aggregate,
+        },
         changes,
         base_pages,
         Verification {
@@ -209,6 +211,7 @@ async fn incremental_update_rebuilds_the_last_height_two_branch() {
             origin: crate::LtxReadOrigin::Cold,
         },
         final_tree.checksum(),
+        None,
     )
     .await
     .unwrap();

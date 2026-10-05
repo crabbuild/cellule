@@ -20,7 +20,7 @@ pub enum CommandResponseSource {
 /// response has already been released for the same commit sequence.
 #[derive(Clone, Copy, Debug)]
 pub struct PublicationTiming {
-    /// Time spent queued behind earlier roots for this Cell.
+    /// Time queued for this Cell's publisher and shared preparation admission.
     pub queue_wait: Duration,
     /// Time spent preparing the immutable root, including bounded retries.
     pub preparation: Duration,

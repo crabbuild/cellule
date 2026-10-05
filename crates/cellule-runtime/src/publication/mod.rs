@@ -332,6 +332,39 @@ impl CellPublisher {
         }
     }
 
+    pub(crate) async fn admit_publication(&mut self) -> Result<cellule_ltx::CellReplica> {
+        self.check_node_lease()?;
+        let replica = self.replica.clone();
+        let admission = replica.admit_root_preparation();
+        tokio::pin!(admission);
+        loop {
+            tokio::select! {
+                result = &mut admission => return result.map_err(Into::into),
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                    self.renew().await?;
+                }
+            }
+        }
+    }
+
+    pub(crate) async fn prepare_admitted_batch(
+        &mut self,
+        replica: cellule_ltx::CellReplica,
+        cuts: &cellule_ltx::CaptureBatch,
+        commit_sequence: u64,
+    ) -> Result<cellule_ltx::PreparedRoot> {
+        let result = self
+            .prepare_append(
+                cuts,
+                commit_sequence,
+                self.observed.value().schema,
+                Some(replica),
+            )
+            .await;
+        self.record_publication_cost();
+        result
+    }
+
     pub(crate) async fn prepare(
         &mut self,
         pending: &crate::cell::executor::PendingCommit,
@@ -341,6 +374,7 @@ impl CellPublisher {
                 pending.cuts(),
                 pending.outcome().commit_sequence(),
                 self.observed.value().schema,
+                None,
             )
             .await;
         self.record_publication_cost();
@@ -357,7 +391,7 @@ impl CellPublisher {
         commit_sequence: u64,
     ) -> Result<cellule_ltx::PreparedRoot> {
         let result = self
-            .prepare_append(cuts, commit_sequence, self.observed.value().schema)
+            .prepare_append(cuts, commit_sequence, self.observed.value().schema, None)
             .await;
         self.record_publication_cost();
         result
@@ -376,6 +410,7 @@ impl CellPublisher {
                 cuts,
                 0,
                 self.observed.value().schema,
+                None,
             )
             .await;
         self.record_publication_cost();
@@ -397,6 +432,7 @@ impl CellPublisher {
                 pending.cuts(),
                 pending.commit_sequence(),
                 pending.to_schema(),
+                None,
             )
             .await;
         self.record_publication_cost();
@@ -420,8 +456,12 @@ impl CellPublisher {
         cuts: &cellule_ltx::CaptureBatch,
         commit_sequence: u64,
         schema: u32,
+        mut admitted: Option<cellule_ltx::CellReplica>,
     ) -> Result<cellule_ltx::PreparedRoot> {
         if let Some(root) = self.compaction_pressure(cuts.segments.len()).await? {
+            // Selected coverage can require recovery too. Do not hold half a new
+            // cohort while canonical paired admission negotiates both permits.
+            drop(admitted.take());
             match self
                 .prepare_compaction_append(&root, cuts, commit_sequence, schema)
                 .await
@@ -440,7 +480,7 @@ impl CellPublisher {
         }
         let base = self.compact_before_append(cuts.segments.len()).await?;
         let prepared = match self
-            .prepare_cuts(&base, cuts, commit_sequence, schema)
+            .prepare_cuts(&base, cuts, commit_sequence, schema, admitted.take())
             .await
         {
             Ok(prepared) => prepared,
@@ -456,6 +496,7 @@ impl CellPublisher {
                     cuts,
                     commit_sequence,
                     schema,
+                    None,
                 )
                 .await?
             }
@@ -666,33 +707,43 @@ impl CellPublisher {
         cuts: &cellule_ltx::CaptureBatch,
         commit_sequence: u64,
         schema: u32,
+        mut admitted: Option<cellule_ltx::CellReplica>,
     ) -> Result<cellule_ltx::PreparedRoot> {
         let mut backoff = Backoff::default();
         loop {
-            let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
-            let attempt = async {
-                match base {
-                    AppendBase::Published(root) => {
-                        replica
-                            .prepare(root.as_ref(), cuts, commit_sequence, schema)
-                            .await
+            let (replica, confirmation) = lineage::replica(
+                admitted.take().unwrap_or_else(|| self.replica.clone()),
+                &self.authority,
+            );
+            let result = {
+                let attempt = async {
+                    match base {
+                        AppendBase::Published(root) => {
+                            replica
+                                .prepare(root.as_ref(), cuts, commit_sequence, schema)
+                                .await
+                        }
+                        AppendBase::Compacted(prepared) => {
+                            replica
+                                .prepare_after_compaction(prepared, cuts, commit_sequence, schema)
+                                .await
+                        }
                     }
-                    AppendBase::Compacted(prepared) => {
-                        replica
-                            .prepare_after_compaction(prepared, cuts, commit_sequence, schema)
-                            .await
+                };
+                tokio::pin!(attempt);
+                loop {
+                    tokio::select! {
+                        result = &mut attempt => break result,
+                        _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                            self.renew().await?;
+                        }
                     }
                 }
             };
-            tokio::pin!(attempt);
-            let result = loop {
-                tokio::select! {
-                    result = &mut attempt => break result,
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
-                        self.renew().await?;
-                    }
-                }
-            };
+            // Only this native attempt owns the preselected dirty scope. Release
+            // it before authority CAS, provider backoff or recovery fallback;
+            // dispatched native jobs retain their own clones until completion.
+            drop(replica);
             match result {
                 Ok(prepared) => {
                     self.lineage_confirmed = *confirmation

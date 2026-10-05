@@ -37,9 +37,14 @@ The Cell runtime serializes accepted commands, binds each SQLite commit to an
 immutable LTX root, and publishes roots through one authoritative control CAS.
 One published root may cover several queued commits: a commit that reached its
 follower proof can queue behind an unpublished root, and the next publication
-coalesces every queued commit into one root, so the control CAS and the shared
+selects coverage after shared dirty-memory admission, coalescing every queued
+commit into one root. Commits arriving during the admission wait remain in the
+existing retained-byte budget. The control CAS and the shared
 directory, segment-page, and root uploads are paid once per range instead of
-once per commit.
+once per commit. The publisher token still serializes preparation and CAS;
+waiting does not restart retry grace. Admission is released before provider
+backoff, authority CAS or paired compaction recovery. Publication queue timing
+includes the admission wait; LTX root timing measures preparation after admission.
 
 Without a node log, the actor groups up to four already-queued, consecutive
 native mutations into one SQLite transaction and WAL capture. Each member

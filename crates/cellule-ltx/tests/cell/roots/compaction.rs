@@ -245,6 +245,7 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
     assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
     backend.put(&body_path, original.into()).await.unwrap();
 
+    counted.reset();
     let prepared = replica
         .prepare_scheduled_compaction_append(&root, &cuts, 9, 2, 32, scratch.path())
         .await
@@ -252,6 +253,21 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
         .unwrap();
     assert_eq!(prepared.predecessor(), Some(root));
     assert_eq!(prepared.verified().schema(), 2);
+    assert_eq!(
+        counted.put_requests(),
+        6,
+        "one-leaf compaction append needs two body/index pairs, final directory and root"
+    );
+    let compacted = replica
+        .prepare_scheduled_compaction(&root, scratch.path())
+        .await
+        .unwrap()
+        .unwrap();
+    let reference = replica
+        .prepare_after_compaction(&compacted, &cuts, 9, 2)
+        .await
+        .unwrap();
+    assert_eq!(prepared.root(), reference.root());
     assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
     let destination = directory.path().join("restored.sqlite");
     prepared.verified().restore(&destination).await.unwrap();
@@ -344,6 +360,85 @@ async fn composed_append_checks_external_descriptor_origin_with_an_inline_capabl
     drop(connection);
     writer.durability_barrier().unwrap();
     writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn composed_append_truncation_and_growth_restore_exact_bytes() {
+    for final_bytes in [200_000, 2_000_000] {
+        let source = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let path = source.path().join("writer.sqlite");
+        let initial = cellule_ltx::rusqlite::Connection::open(&path).unwrap();
+        initial
+            .execute_batch("PRAGMA auto_vacuum = FULL; VACUUM")
+            .unwrap();
+        drop(initial);
+        let mut writer = Db::open(&path, Limits::default()).unwrap();
+        let store = Store::new(Arc::new(InMemory::new()));
+        let cell = replica(store.clone(), [237; 32], [238; 16]);
+        let mut root = None;
+        let mut all = Vec::new();
+        for sequence in 1..=8 {
+            writer.transaction(|tx| {
+                if sequence == 1 {
+                    tx.execute_batch("CREATE TABLE payload(v); INSERT INTO payload VALUES(zeroblob(200000)); CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")?;
+                }
+                tx.execute("UPDATE counter SET v=?1", [sequence])?;
+                Ok(())
+            }).unwrap();
+            let cuts = writer.capture().unwrap();
+            all.extend(cuts.segments.clone());
+            root = Some(
+                cell.prepare(root.as_ref(), &cuts, sequence, 1)
+                    .await
+                    .unwrap()
+                    .root(),
+            );
+        }
+        let root = root.unwrap();
+        assert_eq!(cell.open_root(&root).await.unwrap().directory_height(), 0);
+        writer
+            .transaction(|tx| tx.execute_batch("DELETE FROM payload; UPDATE counter SET v=9"))
+            .unwrap();
+        let mut cuts = writer.capture().unwrap();
+        all.extend(cuts.segments.clone());
+        let truncated_pages = cuts.segments.last().unwrap().info().database_pages;
+        writer
+            .transaction(|tx| {
+                tx.execute("INSERT INTO payload VALUES(?1)", [vec![0xab; final_bytes]])?;
+                tx.execute_batch("UPDATE counter SET v=10")
+            })
+            .unwrap();
+        let regrown = writer.capture().unwrap();
+        assert!(regrown.segments.last().unwrap().info().database_pages > truncated_pages);
+        all.extend(regrown.segments.clone());
+        cuts.segments.extend(regrown.segments);
+        cuts.position = regrown.position;
+        let prepared = cell
+            .prepare_scheduled_compaction_append(&root, &cuts, 10, 1, 32, scratch.path())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.predecessor(), Some(root));
+        writer.close().unwrap();
+        let expected = source.path().join("expected.sqlite");
+        restore_exact(
+            &VerifiedPlan::new(&all, cuts.position, Limits::default()).unwrap(),
+            &expected,
+        )
+        .unwrap();
+        let cold = replica(store, [237; 32], [238; 16]);
+        cold.reachable_objects(&prepared.root()).await.unwrap();
+        let view = cold.open_root(&prepared.root()).await.unwrap();
+        assert_eq!(view.directory_height() > 0, final_bytes > 1_000_000);
+        let restored = source.path().join("restored.sqlite");
+        view.restore(&restored).await.unwrap();
+        assert_eq!(
+            std::fs::read(restored).unwrap(),
+            std::fs::read(expected).unwrap()
+        );
+        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

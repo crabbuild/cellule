@@ -163,12 +163,20 @@ async fn prepare_root(
         let endpoint = descriptors.last().ok_or(LtxError::LTXCorrupted)?;
         let page_size = endpoint.info.page_size;
         let database_pages = endpoint.info.database_pages;
+        let retain_leaf = append.as_ref().is_some_and(|append| {
+            graph.document.directory_height == 0
+                && append
+                    .inputs
+                    .last()
+                    .is_some_and(|input| directory::fits_leaf(input.info.database_pages))
+        });
         let directory = directory::relocate_and_upload(
             replica,
             &graph,
             &descriptors,
             selected,
             entries.stream(replica.host.clone()),
+            retain_leaf,
         )
         .await?;
         if let Some(append) = append {
@@ -183,6 +191,7 @@ async fn prepare_root(
                 database_pages,
                 inherited_segment_pages: graph.document.segment_pages.clone(),
                 descriptors,
+                private_directory: retain_leaf.then_some(directory),
             };
             return replica
                 .prepare_append(

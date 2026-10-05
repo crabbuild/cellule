@@ -19,6 +19,7 @@ sequenceDiagram
 
 | Step | Contract |
 | --- | --- |
+| `admit_root_preparation` | Waits for the existing dirty reservation before capture selection; the scoped clone starts no work and grants no authority. |
 | `CellReplica::prepare` | Verifies cuts and writes immutable root dependencies. |
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
@@ -76,6 +77,13 @@ Only final descriptor pages and root metadata are constructed; the proposal
 retains the original authority predecessor and the same persisted bytes as the
 two-step path. `None` leaves the caller's existing cascade policy in charge.
 No unuploaded intermediate state can be used as a `PreparedRoot`.
+
+When the verified relocation and final append each fit one directory leaf, the
+preparation retains that bounded leaf privately and uploads only the final
+directory. The same digest, locator, truncation and checksum checks still run.
+Larger directories stream their required nodes through bounded uploads; growth
+outside one leaf uses that path. Original root and selected source verification
+remain required before a proposal can escape.
 
 The verified compaction composition sets the original predecessor in the native
 factory before derivation metadata runs. Metadata and the complete proposal name
