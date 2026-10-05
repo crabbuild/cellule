@@ -292,7 +292,12 @@ impl PeerDispatcher {
                     result: Some(wire::read_reply::Result::CommandOutput(observation.output)),
                 })),
             },
-            Err(error) => error_reply(error),
+            Err(error) => {
+                if !matches!(error, Error::ReplicaBehind { .. }) {
+                    eprintln!("[DEBUG-mixed-reader] server_replica_error error={error:?}");
+                }
+                error_reply(error)
+            },
         }
     }
 

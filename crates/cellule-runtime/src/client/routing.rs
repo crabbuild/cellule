@@ -208,10 +208,16 @@ impl ReplicaReadRouter {
         minimum: Option<Receipt>,
         input: Q::Input,
     ) -> Result<(Observed<Q::Output>, NodeId)> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_secs(5);
+        let mut stage = "discovery";
         let query = async {
             let (expected, selected) = self.selected(target).await?;
             let candidate_count = selected.len();
+            if selected.is_empty() {
+                eprintln!("[DEBUG-mixed-reader] discovery_empty cell={:?} elapsed_ms={}", target.cell_id(), started.elapsed().as_millis());
+            }
+            stage = "candidate";
             // Retries remove candidates, but their positions remain in the
             // original placement so fallback cannot reset the next query's tie.
             let mut selected = selected.into_iter().enumerate().collect::<Vec<_>>();
@@ -264,9 +270,18 @@ impl ReplicaReadRouter {
                         peer.query_encoded(node, query, attempt_deadline).await
                     }
                 };
-                let queried = tokio::time::timeout_at(attempt_deadline, querying)
-                    .await
-                    .unwrap_or(Err(Error::ReplicaUnavailable));
+                let queried = match tokio::time::timeout_at(attempt_deadline, querying).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        eprintln!("[DEBUG-mixed-reader] attempt_timeout cell={:?} reader={reader_node:?} elapsed_ms={} candidates={candidate_count}", target.cell_id(), started.elapsed().as_millis());
+                        Err(Error::ReplicaUnavailable)
+                    }
+                };
+                if let Err(error) = &queried {
+                    if !matches!(error, Error::ReplicaBehind { .. }) {
+                        eprintln!("[DEBUG-mixed-reader] attempt_error cell={:?} reader={reader_node:?} elapsed_ms={} error={error:?}", target.cell_id(), started.elapsed().as_millis());
+                    }
+                }
                 drop(attempt);
                 match queried {
                     Ok(result) => {
@@ -303,9 +318,13 @@ impl ReplicaReadRouter {
                 Error::ReplicaUnavailable
             }))
         };
-        tokio::time::timeout_at(deadline, query)
-            .await
-            .unwrap_or(Err(Error::ReplicaUnavailable))
+        match tokio::time::timeout_at(deadline, query).await {
+            Ok(result) => result,
+            Err(_) => {
+                eprintln!("[DEBUG-mixed-reader] outer_timeout cell={:?} stage={stage} elapsed_ms={}", target.cell_id(), started.elapsed().as_millis());
+                Err(Error::ReplicaUnavailable)
+            }
+        }
     }
 }
 

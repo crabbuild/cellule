@@ -175,6 +175,9 @@ pub(super) async fn start_configured(
                 Ok(())
             }
             .await;
+            if let Err(error) = &result {
+                eprintln!("[DEBUG-mixed-reader] node={node} lease_maintenance_error remaining_ms={} error={error:?}", lease.remaining().as_millis());
+            }
             lease.fence();
             result
         })

@@ -1,40 +1,42 @@
-name: Fleet executable reader maintenance diagnosis
+name: Constrained mixed reader process diagnosis
 on:
   push:
     branches: [codex/fleet-observer-diagnosis-ed16bf9]
 permissions:
   contents: read
 jobs:
-  native-reader-maintenance:
+  native-mixed-reader:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CELLULE_REFERENCE_PROJECT: cell-reader-diagnosis
+      CELLULE_PERF_ITERATIONS: "30"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+      - name: Freeze original process profile and diagnostic source
+        run: |
+          set -euo pipefail
+          CELLULE_REFERENCE_STATE="$RUNNER_TEMP/cell-reader-diagnosis"
+          printf 'CELLULE_REFERENCE_STATE=%s\n' "$CELLULE_REFERENCE_STATE" >> "$GITHUB_ENV"
+          mkdir -p "$CELLULE_REFERENCE_STATE/source" "$CELLULE_REFERENCE_STATE/target-linux" "$CELLULE_REFERENCE_STATE/evidence"
+          chmod 1777 "$CELLULE_REFERENCE_STATE/evidence"
+          git archive HEAD | tar -x -C "$CELLULE_REFERENCE_STATE/source"
+          git rev-parse HEAD > "$CELLULE_REFERENCE_STATE/evidence/source-revision.txt"
+          uname -a > "$CELLULE_REFERENCE_STATE/evidence/host.txt"
+          docker info --format '{{json .}}' > "$CELLULE_REFERENCE_STATE/evidence/docker-info.json"
+      - name: Build original release test binary
+        run: |
+          set -euo pipefail
+          docker compose -p "$CELLULE_REFERENCE_PROJECT"             -f "$CELLULE_REFERENCE_STATE/source/crates/cellule-app/qualification/compose.yaml"             run --name cell-reader-diagnosis-build build             2>&1 | tee "$CELLULE_REFERENCE_STATE/evidence/build.log"
+      - name: Original constrained reader scaling and fault campaign
+        run: |
+          python3 "$CELLULE_REFERENCE_STATE/source/crates/cellule-app/qualification/scale.py"             --state "$CELLULE_REFERENCE_STATE" --project "$CELLULE_REFERENCE_PROJECT-scale"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
-      - name: Reader maintenance executable regression
-        run: |
-          cargo test -p cellule-host --example fleet_operations scenario::reader_maintenance::tests:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Production reader command
-        run: |
-          cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-reader
-      - name: Existing native reader fault cases
-        if: always()
-        run: |
-          cargo test -p cellule-host --example fleet_operations scenario::reader_tests::evacuation::tests:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Existing reader public observer contracts
-        if: always()
-        run: |
-          cargo test -p cellule-host --example fleet_operations scenario::reader_tests::evacuation::persisted::observation::reference_observer --all-features --locked -- --nocapture --test-threads=1
-      - name: Existing follower observer contracts
-        if: always()
-        run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Warning denied lint
-        if: always()
-        run: |
-          cargo clippy -p cellule-host --all-targets --all-features --locked -- -D warnings
+          name: mixed-reader-diagnosis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cell-reader-diagnosis/evidence/
+          if-no-files-found: error
+          retention-days: 7
