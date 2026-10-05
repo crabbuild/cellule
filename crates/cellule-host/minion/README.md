@@ -7,6 +7,21 @@ qualification remain required by the [fleet plan](../../../docs/fleet-operations
 
 ## Run
 
+The maintenance restart regression loses the reply after a real follower donor
+commits `SettleRoles`, then reconstructs the driver over an independent SQLite
+client. The original acceptance/key remains unchanged; a fresh complete proof
+must cover the renewed head before Closing. The case checks final withdrawal,
+canonical-root restoration, the original command result, and joined resources:
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::follower_tests::persisted::restart:: -- --test-threads=1
+```
+
+This case renews the same claimant. Replacement after actual lease expiry,
+external process/provider failures and the complete W7 fault matrix still need
+their separate evidence.
+
 The focused receiver-loss tests cover both unchanged Idle authority and a failed
 receiver that reached Recovering or Serving after clean source release:
 

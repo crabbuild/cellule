@@ -10,11 +10,20 @@ pub(super) async fn captures(
 ) -> (Vec<FleetNodeInventory>, Vec<FleetFollowerReferences>, u64) {
     let mut sequence = 0;
     let mut native = Vec::new();
-    let mut foreign = Vec::new();
     for index in 0..fixture.nodes.len() {
         native.push(aggregate::collect(fixture, roster, index, &mut sequence).await);
-        foreign.push(aggregate::references(fixture, roster, index).await);
     }
+    let members = (0..fixture.nodes.len()).map(node_id).collect::<Vec<_>>();
+    let foreign = FleetFollowerReferences::collect_all(
+        &fixture.native.directory,
+        roster,
+        &members,
+        1,
+        Instant::now() + Duration::from_secs(5),
+        clock,
+    )
+    .await
+    .unwrap();
     (native, foreign, sequence)
 }
 
@@ -41,18 +50,16 @@ pub(super) async fn foreign_rechecks(
     roster: &FleetRoster,
     foreign: &mut [FleetFollowerReferences],
 ) {
-    for references in foreign {
-        references
-            .recheck(
-                &fixture.native.directory,
-                roster,
-                1,
-                Instant::now() + Duration::from_secs(5),
-                clock,
-            )
-            .await
-            .unwrap();
-    }
+    FleetFollowerReferences::recheck_all(
+        foreign,
+        &fixture.native.directory,
+        roster,
+        1,
+        Instant::now() + Duration::from_secs(5),
+        clock,
+    )
+    .await
+    .unwrap();
 }
 
 pub(super) fn check(

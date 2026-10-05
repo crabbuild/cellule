@@ -7334,3 +7334,71 @@ Highest next priorities:
 3. Deliver W9's measured profile/runner, provider/process and mixed-version/load
    evidence; exercise W10 staged rollout, rollback and runbooks. Keep PR #57
    synchronized with main and mergeable.
+
+
+## 2026-10-05 — Native role settlement after controller reconstruction
+
+Parent: `f42df6a6f0e7c0bb2e495e06f4c626d81d1b8aa0`. The Rust-only diff
+has SHA-256 `da4b6e40b2896bf2dc75cdbf7935304bedeed39d1cd2427585e95a96851a6199`.
+
+The new real-node regression drops the reply after the donor commits
+`RolesSettledAt`, then reconstructs the public driver over an independent SQLite
+client. It failed before the fix: the executor validated the new proof against
+the original accepted envelope's earlier head, then failed publication with
+`fleet-action-journal` Conflict and retained Evacuating. The executor now checks
+stable replay identity against the original acceptance, validates the refreshed
+opaque proof against the current request, and publishes through the existing
+atomic current-head/registry check. Movement still uses its original accepted
+inputs. No persisted format, action key, original deadline or qualification
+profile changed.
+
+The regression proves that acceptance stays byte-identical while the receipt
+covers the renewed head, then reaches Closing/Completed and checks Stopped,
+permanent withdrawal and unchanged follower policy history. Rotation drained
+the original actor, so final service evidence restores the authority-pinned
+canonical root and compares both the value and original `sys_requests` result
+with the acknowledged 29. Joined cleanup checks runtime/disk/enrollment ledgers.
+This is same-claimant reconstruction, not replacement after lease expiry or
+external process qualification. The new case has its own ten-second pass bound;
+existing five-second follower qualification and its partition remain unchanged.
+
+Earlier full-head evidence now has a terminal result:
+
+| Source / job | Observed result |
+| --- | --- |
+| `f42df6a`; [Rust workspace job 111578870302](https://github.com/crabbuild/cellule/actions/runs/37251146273/job/111578870302) | All 365 minion cases passed, 0 failed, 731.52 seconds; workspace tests, process smoke, Axum provider checks and local/replica LTX suites passed. The job later failed at warning-denied Clippy on one deprecated `fetch_update` in the public host fault fixture. |
+| `f42df6a`; [follower-proof job 111578923743](https://github.com/crabbuild/cellule/actions/runs/37251146389/job/111578923743) | Success. Object proof, MSRV, qualification contract, website and cookbook quality/scenario jobs also completed successfully. This does not qualify the new source checkpoint. |
+| `ffc7688`; [native diagnostic job 111580309609](https://github.com/crabbuild/cellule/actions/runs/37251638607/job/111580309609) | Both routed cases passed. Follower-only maintenance exceeded its original 2.50-second share: 1.675 seconds in collection and 0.824 seconds in policy checks. No journal-conflict probe fired in this reproduction. |
+| `0bf64cc`; [native repeated diagnostic job 111581716096](https://github.com/crabbuild/cellule/actions/runs/37252117116/job/111581716096) | Both routed cases and three independent executions of the unchanged follower-only case passed. Each command selected one exact test. This run adds collector logging and repetitions, not a deadline/profile change. |
+| `35e1b0c`; [native settlement diagnostic job 111582701148](https://github.com/crabbuild/cellule/actions/runs/37252452852/job/111582701148) | The new reconstructed-controller settlement/restore case passed, 1 selected test, 14.48 seconds. Both routed cases passed. All three unchanged follower-only repetitions failed at their original observation deadline; the job is Failure. This snapshot contains the settlement fix/test, but predates the separate public-fixture lint rename. |
+
+The CI lint failure used the newer stable compiler; local Rust is 1.97. The last
+`fetch_update` was changed to the already-supported `try_update` with identical
+ordering and closure. No lint suppression was added.
+
+Local verification of the final source:
+
+| Check | Result |
+| --- | --- |
+| New native restart/restore regression | 1 passed; before-fix failure was observed at the real node/journal seam. |
+| Opaque role-settlement binding/refusal unit cases | 3 passed. |
+| Public host maintenance actions | 6 passed. |
+| Public host action acceptance, cancellation and publication cases | 7 passed. |
+| Exact journal Closing reconstruction and enrollment-during-capture refusal | 1 passed each; changed-registry Conflict is still required before allocation. |
+| Host all-target/all-feature warning-denied Clippy | Passed on Rust 1.97 after the rename. Latest stable verification belongs to current-head CI. |
+
+Temporary test-only capture probes remain because the observed native
+changed-barrier refusal and timing variation require repeated campaign evidence.
+The strict snapshot refusal is unchanged. A green run alone does not establish
+that all timing or controller-expiry failure patterns are eliminated.
+
+Highest next priorities:
+
+1. Verify this checkpoint's complete CI and remove probes after confirmed native
+   regressions. Qualify actual new-claimant maintenance restart, unknown result
+   publication and changed-head/registry races without weakening refusal gates.
+2. Complete the role/primitive fault matrix, successive boot/provider/lineage
+   cases and actual external process, Cron and Blob ownership barriers.
+3. Deliver W9 measured load/profile/provider and mixed-version evidence, then
+   W10 staged rollout/rollback and exercised operator runbooks. W4–W10 remain
+   incomplete; keep PR #57 synchronized and mergeable.

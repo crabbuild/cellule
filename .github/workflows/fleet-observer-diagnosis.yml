@@ -35,3 +35,15 @@ jobs:
       - name: Reconstructed controller settlement
         if: always()
         run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart::reconstructed_controller_refreshes_native_settlement_after_a_lost_reply --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Native policy and graph composition
+        if: always()
+        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::follower_evacuation_observation_retains_native_policy_and_role_graph_in_both_orders --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Shared references and failed batch recheck
+        if: always()
+        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::reference_batches:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Runtime directory cursor contracts
+        if: always()
+        run: cargo test -p cellule-runtime --lib node::directory::inventory --all-features --locked -- --nocapture --test-threads=1
+      - name: Runtime canonical authentication contracts
+        if: always()
+        run: cargo test -p cellule-runtime --lib node::tests::scanned_records --all-features --locked -- --nocapture --test-threads=1

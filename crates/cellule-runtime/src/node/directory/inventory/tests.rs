@@ -5,6 +5,125 @@ use object_store::{memory::InMemory, path::Path};
 
 const NOW: i64 = 1_000_000;
 
+#[tokio::test]
+async fn shared_windows_preserve_member_cursors_and_exact_expired_rows() {
+    let directory = directory();
+    for id in [3, 1, 2] {
+        enroll(&directory, id, NOW).await;
+    }
+    let other = NodeId::from_bytes([8; 16]);
+    let requests = [(other, None), (member(), None)];
+    let pages = directory
+        .follower_logs_pages(&requests, 1, NOW + 2)
+        .await
+        .unwrap();
+    assert_eq!(pages[0].member(), other);
+    assert_eq!(pages[0].total_logs(), 0);
+    assert!(pages[0].entries().is_empty());
+    let single = directory
+        .follower_logs_page(member(), None, 1, NOW + 2)
+        .await
+        .unwrap();
+    assert_eq!(pages[1].topology(), single.topology());
+    assert_eq!(pages[1].entries(), single.entries());
+    assert_eq!(pages[1].total_logs(), single.total_logs());
+    let cursor = pages[1].next().unwrap();
+    assert_eq!(cursor.to_bytes(), single.next().unwrap().to_bytes());
+    let decoded = LogInventoryCursor::from_bytes(&cursor.to_bytes()).unwrap();
+    let pages = directory
+        .follower_logs_pages(&[(other, None), (member(), Some(decoded))], 2, NOW + 20_000)
+        .await
+        .unwrap();
+    assert!(
+        pages[1]
+            .entries()
+            .iter()
+            .all(|row| row.leader_state == LogLeaderState::Expired)
+    );
+    assert_eq!(
+        pages[1]
+            .entries()
+            .iter()
+            .map(|row| row.leader)
+            .collect::<Vec<_>>(),
+        [
+            SessionId::from_bytes([2; 16]),
+            SessionId::from_bytes([3; 16])
+        ]
+    );
+    assert!(pages[1].next().is_none());
+    assert!(
+        directory
+            .follower_logs_pages(&[(member(), None), (other, Some(cursor))], 1, NOW + 3)
+            .await
+            .is_err()
+    );
+    let second = directory
+        .load(SessionId::from_bytes([2; 16]), NOW + 3)
+        .await
+        .unwrap()
+        .unwrap();
+    directory
+        .advance_log_coverage(&second, 27, NOW + 4)
+        .await
+        .unwrap();
+    let pages = directory
+        .follower_logs_pages(&[(other, None), (member(), Some(cursor))], 2, NOW + 5)
+        .await
+        .unwrap();
+    assert_eq!(pages[1].topology(), single.topology());
+    assert_eq!(pages[1].entries()[0].log.tiered_through(), 27);
+}
+
+#[tokio::test]
+async fn shared_windows_enforce_total_page_and_unique_member_bounds() {
+    let directory = directory();
+    let other = NodeId::from_bytes([8; 16]);
+    for requests in [
+        vec![],
+        vec![(member(), None), (member(), None)],
+        vec![(NodeId::from_bytes([0; 16]), None)],
+    ] {
+        assert!(
+            directory
+                .follower_logs_pages(&requests, 1, NOW)
+                .await
+                .is_err()
+        );
+    }
+    for limit in [0, 65, usize::MAX] {
+        assert!(
+            directory
+                .follower_logs_pages(&[(member(), None), (other, None)], limit, NOW)
+                .await
+                .is_err()
+        );
+    }
+    let requests = (1..=128)
+        .map(|id| (NodeId::from_bytes([id; 16]), None))
+        .collect::<Vec<_>>();
+    let pages = directory
+        .follower_logs_pages(&requests, 1, NOW)
+        .await
+        .unwrap();
+    assert_eq!(pages.len(), 128);
+    assert!(pages.iter().all(|page| page.entries().is_empty()));
+    assert!(
+        directory
+            .follower_logs_pages(&requests, 1, -1)
+            .await
+            .is_err()
+    );
+    let mut too_many = requests;
+    too_many.push((NodeId::from_bytes([129; 16]), None));
+    assert!(
+        directory
+            .follower_logs_pages(&too_many, 1, NOW)
+            .await
+            .is_err()
+    );
+}
+
 fn directory() -> NodeDirectory {
     NodeDirectory::new(
         CellStorageLayout::new(

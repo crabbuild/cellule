@@ -314,7 +314,6 @@ async fn collect(
     let mut cells = Vec::new();
     let mut seen = HashSet::new();
     let mut inventories: Vec<Option<FleetNodeInventory>> = Vec::new();
-    let mut references = Vec::new();
     for index in active_indices.iter().copied() {
         #[cfg(test)]
         trace.stage("native-inventory");
@@ -371,20 +370,14 @@ async fn collect(
                 .await?,
         );
     }
-    for index in 0..fleet.nodes.len() {
-        #[cfg(test)]
-        trace.stage("foreign-follower-references");
-        let logs = FleetFollowerReferences::collect(
-            directory,
-            roster,
-            node_id(index),
-            128,
-            deadline,
-            clock,
-        )
-        .await?;
+    #[cfg(test)]
+    trace.stage("foreign-follower-references");
+    let members = (0..fleet.nodes.len()).map(node_id).collect::<Vec<_>>();
+    let mut references =
+        FleetFollowerReferences::collect_all(directory, roster, &members, 128, deadline, clock)
+            .await?;
+    for logs in &references {
         complete &= logs.validate_enrollments(roster).is_ok();
-        references.push(logs);
     }
     let mut authority = HashMap::new();
     #[cfg(test)]
@@ -462,14 +455,21 @@ async fn collect(
     }
     #[cfg(test)]
     trace.stage("foreign-follower-recheck");
-    for logs in &mut references {
-        match logs.recheck(directory, roster, 128, deadline, clock).await {
-            Ok(()) => {}
-            Err(cellule_runtime::Error::Node("authoritative follower inventory changed")) => {
-                complete = false;
-            }
-            Err(source) => return Err(source.into()),
+    match FleetFollowerReferences::recheck_all(
+        &mut references,
+        directory,
+        roster,
+        128,
+        deadline,
+        clock,
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(cellule_runtime::Error::Node("authoritative follower inventory changed")) => {
+            complete = false;
         }
+        Err(source) => return Err(source.into()),
     }
     let mut after = directory.advertised_sessions(clock()?, 128).await?;
     after.sort_by_key(|boot| *boot.as_bytes());
