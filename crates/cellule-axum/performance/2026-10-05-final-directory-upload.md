@@ -38,3 +38,5 @@ original owner-loss/follower-only recovery qualification.
 
 [Critical metrics and raw evidence hashes](2026-10-05-final-directory-upload.json).
 Full logs remain outside Git in the evidence directory named by that file.
+
+[Completed multicell RustFS comparison](2026-10-05-final-directory-r9.md).
