@@ -150,6 +150,13 @@ impl Fixture {
         }
     }
 
+    pub(super) fn scratch(&self, name: &str) -> PathBuf {
+        self._root.path().join(name)
+    }
+    pub(super) fn directory(&self) -> cellule_runtime::node::NodeDirectory {
+        self.boots[0].directory.clone()
+    }
+
     pub(super) fn driver(
         &self,
         claimant: SessionId,

@@ -798,6 +798,17 @@ lost replies, repeated write failure, cancelled repair waiters, missing/corrupt
 or substituted history, and real sealed suffixes with receipt readback. The full
 routed inherited-overlay and controller/provider fault campaign remains open.
 
+Three selected routed reference cases now inherit an actual sealed follower tail
+through an interrupted earlier native claim. They combine evidence-write failure,
+safe Idle reacquisition, historical manifest absence/corruption, cancelled replay
+waiters, and real controller expiry with an independently reconstructed journal.
+They retain the manifest epoch, exact native materialization and original command
+receipts, and join original receiver credit before retiring the attempt. Original
+follower requests are Pending before canonical enrollment; complete native
+retirement and typed publication precede receiver process closure. These are
+in-process fault models. Exhaustive provider/backend/lineage faults, successive
+receiver-boot failures and measured process/provider qualification remain required.
+
 An interrupted target may instead retain its own Recovering claim and attached
 overlay. Effect replay reconfirms the original fenced input and uses the shared
 native takeover continuation without another ownership CAS. The current control

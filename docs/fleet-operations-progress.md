@@ -7179,3 +7179,87 @@ Highest next priorities:
 3. Deliver the W9 versioned measured fleet profile/runner, actual provider/process
    and mixed-binary/load/resource evidence, then exercise W10 staged operations,
    rollout/rollback and runbooks. These remain required for full plan completion.
+
+
+## 2026-10-05 — Routed inherited suffix and controller fault campaign
+
+Parent: `a509e2c1d087f39086c93802837060f0453ea81e`. The code-only diff, excluding
+Markdown, has SHA-256
+`5127a30bbfbe190133f197722bbde06029f85b14e51e69604ca0b1cc7c4cc7e5`.
+This checkpoint adds three selected W4/W5 fault models; full W4–W10 delivery
+remains open. Production authority, formats, action keys and profiles are unchanged.
+
+The routed fixture now acquires the released Cell through an actual earlier
+native owner, captures a SQLite tail and fsyncs it to every selected follower.
+Each original member request is durably Pending before canonical enrollment.
+Activation follows all first-append acknowledgments. Native recovery seals and
+pins the complete tail; complete member retirement and typed fleet publication
+retain every original request before the later receiver's process closure.
+
+Removing that original manifest makes a real preferred-receiver takeover commit
+its claim, then fail materialization. The current Recovering control inherits
+the exact earlier overlay; no successful acquisition record is fabricated.
+Routed recovery retains that control as its original basis while preserving the
+manifest's earlier Cell epoch. The additional runtime and all fleet runtimes
+join their jobs, actors, descriptors and admission credits before private paths
+are dropped. Process evidence remains the documented in-process reference.
+
+The new cases prove:
+
+- Evidence-write failure rolls back safely to Idle; replay confirms the original
+  canonical materialization before ordinary admitted reacquisition. The explicit
+  native suffix proof identifies the earlier manifest epoch and exact acquisition
+  that materialized it, despite a missing interrupted intermediate record.
+- Missing/corrupt historical manifests keep the attempt charged with original
+  storage/manifest errors and no writer or additional ownership claim. Restoring
+  original bytes resumes the same evidence. A replacement controller waits for
+  real lease expiry, opens an independent SQLite client, adopts the original route
+  and checked result, joins receiver credit and retires the attempt. The old
+  controller is fenced and leaves the journal unchanged.
+- A manifest outage after a routed ownership CAS preserves that exact Recovering
+  claim. Restored bytes permit native resumption without another epoch. A replay
+  waiter cancelled at the actual pre-admission evidence write cannot cancel
+  materialization or actor admission; the owned action retains exact native
+  evidence and the replacement controller joins its completion.
+
+Every completion resolves the original acknowledged command and reads the
+actual materialized suffix value. Retention and complete process/provider
+qualification remain separate.
+
+Sharing the larger fixture initially caused a reproducible stack overflow in
+an existing receiver evidence test, both alone and in the combined suite.
+Boxing the shared finite constructor and completion futures fixes that seam
+without increasing stack limits or changing test profiles. The same failing
+case and the full successor suite then pass. The existing member transport
+moved into one focused module and is reused by both fixture families.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | Final code: 20 passed; 0 failed, 54.13 seconds. An intermediate repeated run hit controller Fenced in an existing history fixture while its journal write was paused; that timing debt remains recorded rather than weakening its expectation. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=1` | Final code: 20 passed; 0 failed, 131.63 seconds using the serial CI harness. |
+| `cargo test -p cellule-host --example fleet_operations scenario::recovered_followers::tests:: --all-features --locked -- --nocapture --test-threads=2` | 7 passed; 0 failed after the shared transport move. |
+| Host all-target/all-feature Clippy with `-D warnings`; format, whitespace, architecture and module ownership | Passed. |
+
+Hosted parent Rust run `37246672617` is terminal Failure: 343 of 362 minion
+cases passed, 19 failed. Its test-only probes localize repeated routed failures
+to failed-boot closure with about 1.05 seconds of remaining budget versus about
+1.10 seconds elapsed. The follower-only case exhausted its roughly 2.50-second
+share during native collection and roster confirmation. No native snapshot hang
+is shown by those traces. The exact cause and correction for the consumed
+controller partitions remain open; do not extend deadlines or suppress failures.
+Contract run `37246672563`, follower/object proof, MSRV and cookbook quality
+checks passed on that parent. The intermittent earlier LTX timer failure is
+not established as fixed by this one green run. New-head CI remains required.
+
+Highest next priorities:
+
+1. Reproduce and fix the hosted collection/controller-budget failures with
+   original profiles and proof checks intact; remove temporary probes only after
+   confirming the cause and regression. Diagnose the observed fixture lease-expiry
+   race and retain broad CI evidence for each published head.
+2. Extend routed provider/backend/lineage faults and successive boot failures,
+   complete remaining maintenance role/primitive combinations, and qualify
+   actual accepted external-work/process providers, including Cron/Blob closure.
+3. Deliver W9's committed measured fleet profile/runner and actual provider/process,
+   mixed-version/load/resource campaign; exercise W10 rollout, rollback and
+   runbooks. Keep PR #57 synchronized with main and mergeable throughout.

@@ -18,6 +18,17 @@ impl FaultFixture {
     ) -> Self {
         let native = super::super::fixture::Fixture::released_with_recovery(true).await;
         native.claim_without_actor(ControlState::Serving).await;
+        // Keep the shared finite constructor out of every caller's inline
+        // future; nested native observation exceeds normal debug test stacks.
+        Box::pin(Self::pause_claim(native, write, boundary, fail)).await
+    }
+
+    pub(super) async fn pause_claim(
+        native: super::super::fixture::Fixture,
+        write: RecoveryWrite,
+        boundary: RecoveryWriteBoundary,
+        fail: bool,
+    ) -> Self {
         let original = native.records[&native.spec.target.cell_id()]
             .authority
             .load(native.spec.target.cell_id())
@@ -133,6 +144,15 @@ impl CompletedFixture {
             .unwrap()
     }
     pub(super) async fn finish(self) {
+        Box::pin(self.finish_inner(None, false)).await;
+    }
+    pub(super) async fn finish_value(self, expected_value: Option<i64>) {
+        Box::pin(self.finish_inner(expected_value, false)).await;
+    }
+    pub(super) async fn finish_after_controller_loss(self, expected_value: i64) {
+        Box::pin(self.finish_inner(Some(expected_value), true)).await;
+    }
+    async fn finish_inner(self, expected_value: Option<i64>, replace_controller: bool) {
         let client = self.native.reopen_journal().await;
         let basis = self
             .native
@@ -164,15 +184,50 @@ impl CompletedFixture {
                 .unwrap(),
             Some(evidence)
         );
-        let driver = self.native.driver(
+        let old_snapshot = client.load_snapshot(scope()).await.unwrap();
+        let old_lease = old_snapshot.head().controller().unwrap();
+        let old_epoch = old_lease.epoch;
+        let old_driver = self.native.driver(
             SessionId::from_bytes([206; 16]),
-            self.observer,
+            self.observer.clone(),
             self.native.fleet.clone(),
         );
+        if replace_controller {
+            let wait = old_lease.expires_at_ms.saturating_sub(clock().unwrap()) + 1;
+            tokio::time::sleep(Duration::from_millis(u64::try_from(wait.max(0)).unwrap())).await;
+        }
+        let claimant = SessionId::from_bytes([if replace_controller { 207 } else { 206 }; 16]);
+        let driver = FleetReconciler::new(
+            scope(),
+            claimant,
+            self.native.profile,
+            client.clone(),
+            self.observer.clone(),
+            self.native.fleet.clone(),
+        )
+        .unwrap();
         let mut report = driver
             .reconcile_once(clock, Instant::now() + Duration::from_secs(5))
             .await
             .unwrap();
+        if replace_controller {
+            assert!(report.snapshot.head().controller().unwrap().epoch > old_epoch);
+            assert_eq!(
+                report.snapshot.head().controller().unwrap().claimant,
+                claimant
+            );
+            let before = client.load_snapshot(scope()).await.unwrap();
+            let error = old_driver
+                .reconcile_once(clock, Instant::now() + Duration::from_secs(1))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&error, cellule_runtime::Error::Facility { name: "fleet-journal", source }
+                if matches!(source.downcast_ref::<OperationError>(), Some(OperationError::Fenced))),
+                "{error:?}"
+            );
+            assert_eq!(client.load_snapshot(scope()).await.unwrap(), before);
+        }
         for _ in 0..12 {
             if report.snapshot.head().attempts().is_empty() {
                 break;
@@ -213,7 +268,10 @@ impl CompletedFixture {
             })
             .await
             .unwrap();
-        assert_eq!(bytes, original.value.to_be_bytes());
+        assert_eq!(
+            bytes,
+            expected_value.unwrap_or(original.value).to_be_bytes()
+        );
         assert_eq!(self.native.nodes[2].stats().active_cells(), 1);
         self.native.shutdown().await;
         client.close().await.unwrap();

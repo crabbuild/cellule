@@ -6,6 +6,7 @@ use cellule_runtime::control::Control;
 use std::sync::Mutex;
 
 mod fixture;
+mod inherited;
 mod tests;
 
 struct CapturedTransport {

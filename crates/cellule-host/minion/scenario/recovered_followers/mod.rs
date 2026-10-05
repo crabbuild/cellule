@@ -31,67 +31,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(unix)]
 mod failed_boot;
+mod members;
 mod tests;
+pub(in crate::scenario) use members::Members;
 
 const NOW: i64 = 1_000_000;
 const CHECK: i64 = NOW + 10_005;
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(5)
-}
-
-struct Members {
-    peers: Vec<(NodeId, LocalRecoveredFollowerTransport)>,
-    retirements: AtomicUsize,
-}
-impl Members {
-    fn peer(&self, member: NodeId) -> &LocalRecoveredFollowerTransport {
-        &self
-            .peers
-            .iter()
-            .find(|(node, _)| *node == member)
-            .unwrap()
-            .1
-    }
-}
-impl NodeLogTransport for Members {
-    fn append<'a>(
-        &'a self,
-        member: NodeId,
-        request: AppendRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.peer(member).append(member, request)
-    }
-    fn seal<'a>(
-        &'a self,
-        member: NodeId,
-        request: SealRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.peer(member).seal(member, request)
-    }
-    fn retire<'a>(
-        &'a self,
-        member: NodeId,
-        request: RetireRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.peer(member).retire(member, request)
-    }
-    fn tail<'a>(
-        &'a self,
-        member: NodeId,
-        request: TailRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<Vec<Bytes>>> {
-        self.peer(member).tail(member, request)
-    }
-}
-impl RecoveredNodeLogTransport for Members {
-    fn retire_recovered<'a>(
-        &'a self,
-        member: NodeId,
-        request: RecoveredRetireRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.retirements.fetch_add(1, Ordering::AcqRel);
-        self.peer(member).retire_recovered(member, request)
-    }
 }
 
 struct Fixture {
