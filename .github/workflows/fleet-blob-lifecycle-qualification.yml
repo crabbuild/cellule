@@ -1,0 +1,63 @@
+name: Fleet Blob lifecycle qualification
+on:
+  push:
+    branches: [codex/fleet-blob-lifecycle-qualification]
+permissions:
+  contents: read
+jobs:
+  native-blob-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
+      - name: Record source and native environment
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source.txt
+          cat qualification-source.json > evidence/qualification-source.json
+          rustc -Vv > evidence/rustc.txt
+          uname -a > evidence/host.txt
+          lscpu > evidence/cpu.txt
+          cat /proc/meminfo > evidence/memory.txt
+          ulimit -a > evidence/limits.txt
+      - name: Format and architecture
+        run: |
+          cargo fmt --all --check
+          python3 scripts/check-boundaries.py
+          python3 scripts/check-module-layout.py
+          python3 scripts/check-doc-links.py
+          python3 scripts/check-doc-rust-fences.py
+      - name: Original Blob provider and compatibility contracts
+        run: |
+          set -euo pipefail
+          cargo test -p cellule-runtime --lib --all-features --locked primitives::blob:: -- --nocapture 2>&1 | tee evidence/blob-unit.log
+          python3 -c 'import re; assert re.search(r"test result: ok\. 24 passed; 0 failed",open("evidence/blob-unit.log").read())'
+      - name: Entire public primitive suite with parallel fixtures
+        run: |
+          set -euo pipefail
+          cargo test -p cellule-runtime --test primitives --all-features --locked -- --nocapture 2>&1 | tee evidence/primitives.log
+          python3 -c 'import re; assert re.search(r"test result: ok\. 52 passed; 0 failed",open("evidence/primitives.log").read())'
+      - name: Entire public node suite with parallel fixtures
+        run: |
+          set -euo pipefail
+          cargo test -p cellule-host --test node --all-features --locked -- --nocapture 2>&1 | tee evidence/node.log
+          python3 -c 'import re; assert re.search(r"test result: ok\. 129 passed; 0 failed",open("evidence/node.log").read())'
+      - name: Warning denied runtime and host lint
+        run: cargo clippy -p cellule-runtime -p cellule-host --all-targets --all-features --locked -- -D warnings
+      - name: Warning denied API docs
+        run: RUSTDOCFLAGS='-D warnings' cargo doc -p cellule-runtime -p cellule-host --all-features --no-deps --locked
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: blob-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7

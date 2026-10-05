@@ -1,0 +1,101 @@
+{
+  "parent": "973e0eeaddb51158cdc7d075e06c2feb84795cd5",
+  "delta_sha256": "1627093025d25bde705f6c63c56c17bb5422736a38a617bffb125705a823d535",
+  "paths": [
+    {
+      "path": "Cargo.lock",
+      "deleted": false,
+      "sha256": "ab2d215375dc5ddd95186bb259ac6af9c06ee86237ec68e67d3f5e5a81f67b8b"
+    },
+    {
+      "path": "crates/cellule-host/Cargo.toml",
+      "deleted": false,
+      "sha256": "f1ca3674712927b390ec68f5fbb2ba23d898c903d1a2fc0ec7525a1be49c279c"
+    },
+    {
+      "path": "crates/cellule-host/docs/lifecycle.md",
+      "deleted": false,
+      "sha256": "7ced89ba44a3a21ec871b66f8259305b05ad489277b03dcb9f817b9f30c89d1a"
+    },
+    {
+      "path": "crates/cellule-host/src/lib.rs",
+      "deleted": false,
+      "sha256": "fe486abf08990e36163baff20ffdb4b9380698e232a8e6c62611a1b29070e677"
+    },
+    {
+      "path": "crates/cellule-host/src/node/blob_artifacts.rs",
+      "deleted": false,
+      "sha256": "429f0fda49817efd4089f24c14841c7e96a3c78497b89a1129607f44edcd2c65"
+    },
+    {
+      "path": "crates/cellule-host/src/node/mod.rs",
+      "deleted": false,
+      "sha256": "11c0d59847cd2c74a5e3a507e8eea6625bd45b9d864abe982d1a5fd752dc6d84"
+    },
+    {
+      "path": "crates/cellule-host/tests/node.rs",
+      "deleted": false,
+      "sha256": "2d0853ec625e0318e4f365fdbf23d5b83302ae0e947e6a98dd3bdcef6a50ab1b"
+    },
+    {
+      "path": "crates/cellule-host/tests/node/blob_artifacts.rs",
+      "deleted": false,
+      "sha256": "4ddf638583cb97ab71101f3f32da1a5e6726e91019309127e74fbe70bd0d78bd"
+    },
+    {
+      "path": "crates/cellule-runtime/docs/primitives.md",
+      "deleted": false,
+      "sha256": "a4c967133b690567640e2c08a9958188e4e9c1de4c2a79755510c34ac9238909"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/api/mod.rs",
+      "deleted": false,
+      "sha256": "23a0c5e2d84467767fde0a875e7258c9e09083c84a392fa093cb1733ae8058f4"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/mod.rs",
+      "deleted": false,
+      "sha256": "cdbdc71fdc06f4d8dc34cf8b14b1a2f90bc318e3994d79885723d8ee95135a62"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/store.rs",
+      "deleted": true,
+      "sha256": "b9a5df6d9ea5067d39a8d7114e6d6e5101b8160522aff0d0e85544d454fe03f7"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/store/lifecycle.rs",
+      "deleted": false,
+      "sha256": "17ee91254f25886ba1fef29facf1506a3a70ac1e17164c5db006b6e09fb1bfc4"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/store/mod.rs",
+      "deleted": false,
+      "sha256": "07d277ef58d491f810528720c268828675fb823826219bb91438275d76c0dc64"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/store/tests.rs",
+      "deleted": false,
+      "sha256": "0a7c9f5b2c3697fe3b58d57ca79bcced27454af9df3300831bedd75ead39726e"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/tests.rs",
+      "deleted": false,
+      "sha256": "e38edcc41a1cd5fdc7a50482c8b15483419b64fda95ebd3dcccb6e45b6637913"
+    },
+    {
+      "path": "crates/cellule-runtime/tests/primitives/blob_cron/lifecycle.rs",
+      "deleted": false,
+      "sha256": "6f21333d55dcebc2736a011c1821c2329c31948ec4befb3887b3b0f289a71c1d"
+    },
+    {
+      "path": "crates/cellule-runtime/tests/primitives/blob_cron/maintenance/mod.rs",
+      "deleted": false,
+      "sha256": "747b7c4c32042a7221c676a37590af887d6228bd365cff355b4831d5c1b23a89"
+    },
+    {
+      "path": "crates/cellule-runtime/tests/primitives/blob_cron/mod.rs",
+      "deleted": false,
+      "sha256": "391afd6d9fa713a3260cf8a36f6b87d62cbaf620da6e0553e3c9ac8b1b3aedc6"
+    }
+  ]
+}

@@ -123,15 +123,25 @@ impl<M: BlobModule> BlobNamespace<M> {
     }
 
     /// Applies one multipart or conditional mutation on the key's shard.
+    /// Once accepted, the original operation owns staging through command
+    /// response, including after caller cancellation or artifact-store closure.
+    /// Prepare separately and retain evidence when cancellation may require
+    /// resolving an uncertain command outcome.
     pub async fn mutate(
         &self,
         identity: crate::cell::executor::MutationIdentity,
         mutation: BlobMutation,
     ) -> std::result::Result<Committed<BlobMutationOutcome>, InvocationError<BlobMutationOutcome>>
     {
-        self.prepare_mutation(identity, mutation)
-            .await?
-            .execute()
+        let namespace = self.clone();
+        self.artifact_store
+            .run_invocation(async move {
+                namespace
+                    .prepare_mutation_native(identity, mutation)
+                    .await?
+                    .execute()
+                    .await
+            })
             .await
     }
 
@@ -141,7 +151,25 @@ impl<M: BlobModule> BlobNamespace<M> {
     /// manifest reference or make an object visible. Retain the returned
     /// command's evidence before executing; resolve it after cancellation or
     /// an uncertain reply before deciding whether to retry the same command.
+    /// The returned command is caller-owned and no longer a store job. Store
+    /// closure cannot revoke it or prove its future manifest write is absent.
     pub async fn prepare_mutation(
+        &self,
+        identity: crate::cell::executor::MutationIdentity,
+        mutation: BlobMutation,
+    ) -> std::result::Result<
+        crate::client::PreparedCommand<BlobCommand<M>>,
+        InvocationError<BlobMutationOutcome>,
+    > {
+        let namespace = self.clone();
+        self.artifact_store
+            .run_invocation(
+                async move { namespace.prepare_mutation_native(identity, mutation).await },
+            )
+            .await
+    }
+
+    async fn prepare_mutation_native(
         &self,
         identity: crate::cell::executor::MutationIdentity,
         mutation: BlobMutation,
@@ -165,8 +193,9 @@ impl<M: BlobModule> BlobNamespace<M> {
                     )));
                 }
                 let digest = super::part_digest(&payload);
+                let size = payload.len() as u32;
                 self.artifact_store
-                    .put_part(digest, &payload)
+                    .put_part_native(digest, bytes::Bytes::from(payload))
                     .await
                     .map_err(InvocationError::NotStarted)?;
                 BlobMutation::PutPartRef {
@@ -174,7 +203,7 @@ impl<M: BlobModule> BlobNamespace<M> {
                     upload_id,
                     part_number,
                     digest,
-                    size: payload.len() as u32,
+                    size,
                 }
             }
             mutation => mutation,
@@ -185,7 +214,20 @@ impl<M: BlobModule> BlobNamespace<M> {
     }
 
     /// Reads metadata or a bounded range from one key shard.
+    /// The original accepted lifetime covers metadata and all part reads;
+    /// closing admission or cancelling the caller does not truncate that work.
     pub async fn query(
+        &self,
+        query: BlobQuery,
+        minimum: Option<Receipt>,
+    ) -> std::result::Result<Observed<BlobQueryResult>, InvocationError<BlobQueryResult>> {
+        let namespace = self.clone();
+        self.artifact_store
+            .run_invocation(async move { namespace.query_native(query, minimum).await })
+            .await
+    }
+
+    async fn query_native(
         &self,
         query: BlobQuery,
         minimum: Option<Receipt>,
@@ -220,16 +262,21 @@ impl<M: BlobModule> BlobNamespace<M> {
         let target = self
             .shard_target(shard)
             .map_err(InvocationError::NotStarted)?;
-        self.client
-            .query::<BlobQueryCommand<M>>(
-                &target,
-                minimum,
-                BlobQuery::List {
-                    prefix,
-                    after,
-                    limit,
-                },
-            )
+        let client = self.client.clone();
+        self.artifact_store
+            .run_invocation(async move {
+                client
+                    .query::<BlobQueryCommand<M>>(
+                        &target,
+                        minimum,
+                        BlobQuery::List {
+                            prefix,
+                            after,
+                            limit,
+                        },
+                    )
+                    .await
+            })
             .await
     }
 
@@ -276,7 +323,9 @@ async fn hydrate_read(store: &BlobArtifactStore, read: &mut BlobRead) -> crate::
     let end = read.end.min(read.metadata.size);
     let mut bytes = Vec::with_capacity((end.saturating_sub(read.offset)) as usize);
     for part in &read.parts {
-        let payload = store.read_part(part.digest, part.size).await?;
+        // All parts belong to the public query's original accepted lifetime.
+        // Closing admission between parts must not interrupt its remaining I/O.
+        let payload = store.read_part_native(part.digest, part.size).await?;
         let part_end = part.offset.saturating_add(u64::from(part.size));
         let start = read.offset.saturating_sub(part.offset) as usize;
         let take_end = end.saturating_sub(part.offset).min(u64::from(part.size)) as usize;

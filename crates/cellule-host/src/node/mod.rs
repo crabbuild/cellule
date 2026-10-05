@@ -137,6 +137,7 @@ impl CellNode {
     }
 }
 
+mod blob_artifacts;
 mod components;
 mod drain;
 mod fleet;
