@@ -1,6 +1,8 @@
 //! Bounded discovery of authoritative log references, including failed owners.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
+
+mod batch;
 
 use super::*;
 
@@ -109,6 +111,35 @@ impl LogInventoryPage {
 }
 
 impl NodeDirectory {
+    /// Traverses the directory once for bounded physical-follower windows.
+    /// Returns pages in request order with the same cursor/digest contract as
+    /// `follower_logs_page`. The sum of requested page limits is at most 128;
+    /// each window retains at most one additional lookahead row. Any invalid
+    /// record or cursor rejects the entire batch. This is interval evidence,
+    /// not atomic membership or permission to finalize a node.
+    pub async fn follower_logs_pages(
+        &self,
+        requests: &[(NodeId, Option<LogInventoryCursor>)],
+        limit: usize,
+        now_ms: i64,
+    ) -> Result<Vec<LogInventoryPage>> {
+        if requests.is_empty()
+            || requests.len() > MAX_PAGE_ENTRIES
+            || limit == 0
+            || limit > MAX_PAGE_ENTRIES / requests.len()
+            || now_ms < 0
+        {
+            return Err(Error::Node("invalid follower log inventory batch bounds"));
+        }
+        let mut members = HashSet::new();
+        for (member, _) in requests {
+            if member.as_bytes() == &[0; 16] || !members.insert(*member) {
+                return Err(Error::Node("invalid follower log inventory batch member"));
+            }
+        }
+        batch::collect(self, requests, limit, now_ms).await
+    }
+
     /// Discovers current log references to a follower, including expired records
     /// and fenced/recovering tombstones that `live` intentionally omits.
     ///
@@ -127,121 +158,11 @@ impl NodeDirectory {
         if member.as_bytes() == &[0; 16] || !(1..=MAX_PAGE_ENTRIES).contains(&limit) || now_ms < 0 {
             return Err(Error::Node("invalid follower log inventory bounds"));
         }
-        let prefix = self.layout.node_directory_path();
-        let mut objects = self.layout.store().inner().list(Some(&prefix));
-        let mut seen = HashSet::with_capacity(MAX_LIVE_NODE_RECORDS);
-        let mut window = BTreeMap::new();
-        let mut combined = [0_u8; 32];
-        let mut total_logs = 0;
-        let mut cursor_found = cursor.is_none();
-        while let Some(object) = objects.next().await {
-            if seen.len() == MAX_LIVE_NODE_RECORDS {
-                return Err(Error::Capacity("follower log inventory record bound"));
-            }
-            let meta = object.map_err(|error| map_object_store_error(error, prefix.as_ref()))?;
-            let Some((record, _)) = self.load_record_at(&meta.location).await? else {
-                // A disappearing record does not establish a complete scan.
-                return Err(Error::Node("log inventory record changed during scan"));
-            };
-            let session = record.session();
-            validate_record_path(&self.layout, session, &meta.location)?;
-            if !seen.insert(session) {
-                return Err(Error::Node("duplicate log inventory session"));
-            }
-            let (node, leader_state) = match &record {
-                NodeRecord::Advertisement(advertisement) => {
-                    // load_record_at authenticated this fresh immutable body,
-                    // including signatures on expired and foreign-release logs.
-                    advertisement.validate_shape()?;
-                    if advertisement.fleet != self.fleet
-                        || advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
-                    {
-                        return Err(Error::Node("log inventory fleet or issue time differs"));
-                    }
-                    (
-                        advertisement.node,
-                        if advertisement.expires_at_ms > now_ms {
-                            LogLeaderState::Live
-                        } else {
-                            LogLeaderState::Expired
-                        },
-                    )
-                }
-                NodeRecord::Tombstone(tombstone) => (tombstone.node, LogLeaderState::Fenced),
-            };
-            let Some(log) = record.log().filter(|log| log.members().contains(&member)) else {
-                continue;
-            };
-            total_logs += 1;
-            // Commutative digest makes arbitrary object listing order harmless.
-            // Duplicate sessions are rejected separately. Volatile coverage and
-            // heartbeat times do not reset topology; exact actions recheck them.
-            let mut hash = blake3::Hasher::new();
-            hash.update(session.as_bytes());
-            hash.update(node.as_bytes());
-            hash.update(&log.epoch().to_le_bytes());
-            hash.update(&[match log.phase() {
-                NodeLogPhase::Open => 1,
-                NodeLogPhase::Recovering => 2,
-                NodeLogPhase::Sealed => 3,
-                NodeLogPhase::Retired => 4,
-            }]);
-            for enrolled in log.members() {
-                hash.update(enrolled.as_bytes());
-            }
-            for (combined, byte) in combined.iter_mut().zip(hash.finalize().as_bytes()) {
-                *combined ^= byte;
-            }
-            if cursor.is_some_and(|cursor| cursor.after == session) {
-                cursor_found = true;
-            }
-            if cursor.is_some_and(|cursor| session.as_bytes() <= cursor.after.as_bytes()) {
-                continue;
-            }
-            window.insert(
-                *session.as_bytes(),
-                FollowerLogObservation {
-                    leader: session,
-                    leader_node: node,
-                    leader_state,
-                    log: log.clone(),
-                },
-            );
-            if window.len() > limit + 1 {
-                window.pop_last();
-            }
-        }
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"cellule-authoritative-log-inventory-v1");
-        hash.update(&self.inventory_scope);
-        hash.update(member.as_bytes());
-        hash.update(&(total_logs as u64).to_le_bytes());
-        hash.update(&combined);
-        let topology = Digest::from_bytes(*hash.finalize().as_bytes());
-        if !cursor_found || cursor.is_some_and(|cursor| cursor.topology != topology) {
-            return Err(Error::Node("log inventory topology changed; restart scan"));
-        }
-        let more = window.len() > limit;
-        if more {
-            window.pop_last();
-        }
-        let entries = window.into_values().collect::<Vec<_>>();
-        let next = if more {
-            entries.last().map(|last| LogInventoryCursor {
-                topology,
-                after: last.leader,
-            })
-        } else {
-            None
-        };
-        Ok(LogInventoryPage {
-            member,
-            topology,
-            observed_at_ms: now_ms,
-            total_logs,
-            entries,
-            next,
-        })
+        self.follower_logs_pages(&[(member, cursor)], limit, now_ms)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(Error::Node("follower log inventory page missing"))
     }
 }
 

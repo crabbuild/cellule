@@ -7402,3 +7402,71 @@ Highest next priorities:
 3. Deliver W9 measured load/profile/provider and mixed-version evidence, then
    W10 staged rollout/rollback and exercised operator runbooks. W4–W10 remain
    incomplete; keep PR #57 synchronized and mergeable.
+
+
+## October 4 2026 shared inventory and controller-expiry checkpoint
+
+Parent: `eba3b6c34c363ab40a707425a510ccb4ff6ed6b9`. The Rust-only diff
+has SHA-256 `92b66d2924d9c269dd488ddc713af1296981884e51d1d7cbdde9d654752dc99d`.
+
+Delivered:
+
+- `NodeDirectory::follower_logs_pages` supplies independent follower windows
+  from one fresh authenticated directory traversal. Requests are unique and
+  bounded; combined page rows stay at most 128, plus one lookahead per member.
+  The scalar API uses the same implementation. Existing topology domains,
+  48-byte cursors, exact rows and expired/fenced obligations are unchanged.
+- `FleetFollowerReferences::collect_all` and `recheck_all` preserve the complete
+  per-member inventories and original full roster. A failed recheck invalidates
+  every previous confirmation without changing any original row or interval.
+  Coverage remains invalid until every member is freshly confirmed. Minion uses
+  these APIs at its existing collection/recheck boundaries.
+- Immutable enrollment fingerprints serialize their already-authenticated
+  original private inputs through the canonical serializer. The regression was
+  red with four repeated signature passes, then green with zero and identical
+  original digest bytes for attempt, enrollment and refusal. Every fresh
+  canonical directory read still independently authenticates each record.
+- Maintenance restart now also waits for actual controller lease expiry while
+  the original boot owners publish real signed heartbeats. A new claimant gains
+  epoch 2, refreshes the same accepted settlement at its current head, and reaches
+  Completed/Stopped/withdrawn. The old claimant is fenced with an unchanged
+  journal; canonical-root value and original request-result readback remain 29.
+
+Native evidence:
+
+| Source / job | Result |
+| --- | --- |
+| Published parent `eba3b6c`; [workspace job 111583565455](https://github.com/crabbuild/cellule/actions/runs/37252756090/job/111583565455) | Failure: 364 minion cases passed, 2 observer cases failed, 1002.01 seconds. The failures exhausted the unchanged controller/observation deadlines. Follower proof, object proof, MSRV, contract, website and cookbook checks passed. |
+| Shared traversal snapshot `1c6f6c2`; [diagnostic job 111585942801](https://github.com/crabbuild/cellule/actions/runs/37253571241/job/111585942801) | Failure: all three original follower-only repetitions still exhausted their original share; policy/graph composition also refused changed accepted work during native capture. The strict refusal remains unchanged. |
+| Shared traversal plus immutable fingerprint snapshot `5d162c4`; [diagnostic job 111588516964](https://github.com/crabbuild/cellule/actions/runs/37254474648/job/111588516964) | Success: both routed cases, three original follower-only repetitions, same-claimant restart, policy/graph composition, 2 reference batch cases, 8 cursor cases, 8 canonical authentication cases, actual-expiry restart and 13 enrollment cases. Each command selected its expected cases. The actual-expiry case took 36.28 seconds. |
+
+In the final native reproduction, original follower collection took about
+0.66–0.67 seconds instead of 1.44 seconds in the preceding shared-scan-only
+snapshot. Repeated producer-page signature work was the remaining cost. Original
+five-second follower deadlines, their observation partition and qualification
+profiles were preserved. These are diagnostic observations, not a measured W9
+production capacity profile. The successful diagnostic snapshot includes tagged
+probes; they have now been removed from the source checkpoint.
+
+Local verification: 124 runtime node cases, 3 original observer cases, 2 shared
+reference cases and both controller restart cases passed. The 3 original observer
+cases also passed after probe removal. Host/runtime all-target/all-feature
+warning-denied Clippy and warning-denied API docs passed. Formatting, boundaries,
+module layout, 137 Rust snippets, 1348 Markdown links and 28 SQL/peer assertions
+passed; the runtime validator checked 571 links. Full cleaned-source workspace
+and process evidence belongs to the new PR head's CI.
+
+PR #37 is merged. The continuation PR #57 includes the latest fetched main and
+was mergeable when this checkpoint was prepared; none of the three reported
+conflict files has conflict markers.
+
+Highest next priorities:
+
+1. Complete the cleaned checkpoint's full PR CI and preserve strict changed-head,
+   changed-registry and accepted-work capture refusals.
+2. Qualify uncommitted SettleRoles publication across controller replacement,
+   successive boot/lineage cases and the remaining W4–W7 role/primitive faults,
+   including external Cron/Blob owners.
+3. Complete W9 recorded process/provider, load/soak and mixed-version campaigns,
+   then exercise W10 operator rollout, rollback and recovery runbooks. W4–W10
+   remain incomplete; these focused cases do not establish full fleet readiness.

@@ -2,6 +2,36 @@
 use super::*;
 
 #[tokio::test]
+async fn shared_follower_windows_authenticate_each_fresh_record_once() {
+    let requests = (9..=12)
+        .map(|n| (NodeId::from_bytes([n; 16]), None))
+        .collect::<Vec<_>>();
+    for original in records::canonical_advertisements() {
+        let directory = directory();
+        directory.create(original.clone(), NOW_MS).await.unwrap();
+        let before = signature_passes();
+        let pages = directory
+            .follower_logs_pages(&requests, 32, NOW_MS + 1)
+            .await
+            .unwrap();
+        assert_eq!(signature_passes() - before, 1);
+        assert_eq!(pages.len(), requests.len());
+        for (page, (member, _)) in pages.iter().zip(&requests) {
+            assert_eq!(page.member(), *member);
+            assert_eq!(page.total_logs(), 0);
+            assert!(page.entries().is_empty());
+            assert!(page.next().is_none());
+        }
+        let before = signature_passes();
+        directory
+            .follower_logs_pages(&requests, 32, NOW_MS + 2)
+            .await
+            .unwrap();
+        assert_eq!(signature_passes() - before, 1);
+    }
+}
+
+#[tokio::test]
 async fn canonical_producers_verify_once_before_creating_or_refreshing_bytes() {
     let key = SigningKey::from_bytes(&[7; 32]);
     for original in records::canonical_advertisements() {
@@ -197,6 +227,19 @@ async fn every_fresh_scan_rejects_forged_identity_and_operational_signatures() {
             assert!(
                 directory
                     .follower_logs_page(NodeId::from_bytes([9; 16]), None, 128, NOW_MS + 20_000)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                directory
+                    .follower_logs_pages(
+                        &[
+                            (NodeId::from_bytes([9; 16]), None),
+                            (NodeId::from_bytes([10; 16]), None)
+                        ],
+                        64,
+                        NOW_MS + 20_000
+                    )
                     .await
                     .is_err()
             );

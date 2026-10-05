@@ -130,21 +130,10 @@ impl FleetSnapshotTransport for LocalSnapshots {
                     node_id(*index) == request.node() && session(*index) == request.session()
                 })
                 .ok_or_else(|| Box::new(cellule_runtime::Error::Fenced) as JournalError)?;
-            #[cfg(test)]
-            let mut trace = super::observation::Trace::new(
-                format!("snapshot node={index} subject={:?}", request.subject()),
-                deadline,
-                "native-snapshot",
-            );
-            let result = self.nodes[index]
+            self.nodes[index]
                 .fleet_snapshot(request.clone())
                 .await
-                .map_err(|error| Box::new(error) as JournalError);
-            #[cfg(test)]
-            if result.is_ok() {
-                trace.finish();
-            }
-            result
+                .map_err(|error| Box::new(error) as JournalError)
         })
     }
 }

@@ -15,11 +15,6 @@ use cellule_runtime::node::NodeAdvertisement;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
-#[cfg(test)]
-mod diagnostics;
-#[cfg(test)]
-pub(super) use diagnostics::Trace;
-
 struct Capture {
     started: i64,
     finished: i64,
@@ -84,26 +79,11 @@ async fn observe_inner(
         SessionId,
     )>,
 ) -> JournalResult<FleetObservation> {
-    #[cfg(test)]
-    let mut trace = Trace::new(
-        format!(
-            "observer phase={:?}",
-            roster
-                .snapshot()
-                .head()
-                .maintenance()
-                .map(|operation| operation.phase())
-        ),
-        deadline,
-        "native-role-collection",
-    );
     let capture = collect(fleet, roster, deadline).await?;
     let mut reader_checks = Vec::new();
     let mut follower_checks = Vec::new();
     let mut finished = capture.finished;
     if let Some(original) = capture.maintenance_enrollments.as_ref() {
-        #[cfg(test)]
-        trace.stage("reader-policies");
         if let Some(verifier) = &fleet.reader_verifier {
             reader_checks = verifier
                 .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
@@ -113,16 +93,12 @@ async fn observe_inner(
             fleet.boots[0].directory.clone(),
             Arc::new(adapters::LocalSnapshots::new(fleet.nodes.clone())),
         );
-        #[cfg(test)]
-        trace.stage("follower-policies");
         follower_checks = follower_verifier
             .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
             .await?;
         roster.confirm(fleet.journal.as_ref(), deadline).await?;
         finished = clock()?;
     }
-    #[cfg(test)]
-    trace.stage("failed-boot-closure");
     let failed_boot_closures = if let Some((request, processes, claimant)) = failed_boot {
         let closure = FleetFailedBootRetirement::capture_retained(
             fleet.journal.as_ref(),
@@ -173,8 +149,6 @@ async fn observe_inner(
             .check_maintenance_policies(roster, finished)?,
         None => observation,
     };
-    #[cfg(test)]
-    trace.finish();
     Ok(observation)
 }
 
@@ -185,12 +159,6 @@ async fn page(
     subject: FleetSnapshotSubject,
     deadline: Instant,
 ) -> JournalResult<Arc<FleetNodeSnapshot>> {
-    #[cfg(test)]
-    let mut trace = Trace::new(
-        format!("collector snapshot node={index} subject={subject:?}"),
-        deadline,
-        "request-construction",
-    );
     let issued = clock()?;
     let remaining = deadline.saturating_duration_since(Instant::now());
     let interval = i64::try_from(remaining.as_millis())?.min(30_000);
@@ -225,15 +193,11 @@ async fn page(
         .nodes
         .get(index)
         .ok_or_else(|| invalid("example snapshot node missing"))?;
-    #[cfg(test)]
-    trace.stage("native-snapshot");
     let response = node
         .fleet_snapshot(request.clone())
         .await
         .map_err(|source| Box::new(source) as JournalError)?;
     response.validate(&request, clock()?)?;
-    #[cfg(test)]
-    trace.finish();
     Ok(response)
 }
 
@@ -242,8 +206,6 @@ async fn collect(
     roster: &FleetRoster,
     deadline: Instant,
 ) -> JournalResult<Capture> {
-    #[cfg(test)]
-    let mut trace = Trace::new("collector".into(), deadline, "maintenance-enrollments");
     let started = clock()?;
     let maintenance_enrollments =
         if roster
@@ -303,8 +265,6 @@ async fn collect(
         }
     }
     active_indices.sort_unstable();
-    #[cfg(test)]
-    trace.stage("advertised-sessions");
     let mut advertised = directory.advertised_sessions(started, 128).await?;
     advertised.sort_by_key(|boot| *boot.as_bytes());
     let mut complete = advertised == expected_sessions
@@ -314,10 +274,7 @@ async fn collect(
     let mut cells = Vec::new();
     let mut seen = HashSet::new();
     let mut inventories: Vec<Option<FleetNodeInventory>> = Vec::new();
-    let mut references = Vec::new();
     for index in active_indices.iter().copied() {
-        #[cfg(test)]
-        trace.stage("native-inventory");
         let mut scan = FleetNodeInventoryScan::new(roster, node_id(index), session(index))?;
         let mut stable = true;
         while let Some(subject) = scan.next_subject()? {
@@ -363,32 +320,20 @@ async fn collect(
         // Include expired and fenced leader obligations; live discovery alone
         // could hide a follower role left by a failed boot. The graph may be
         // nonempty; its exact match is checked after every native recheck.
-        #[cfg(test)]
-        trace.stage("capacity-publication");
         nodes.push(
             fleet.boots[index]
                 .refresh_capacity(index, fleet.journal.as_ref(), deadline)
                 .await?,
         );
     }
-    for index in 0..fleet.nodes.len() {
-        #[cfg(test)]
-        trace.stage("foreign-follower-references");
-        let logs = FleetFollowerReferences::collect(
-            directory,
-            roster,
-            node_id(index),
-            128,
-            deadline,
-            clock,
-        )
-        .await?;
+    let members = (0..fleet.nodes.len()).map(node_id).collect::<Vec<_>>();
+    let mut references =
+        FleetFollowerReferences::collect_all(directory, roster, &members, 128, deadline, clock)
+            .await?;
+    for logs in &references {
         complete &= logs.validate_enrollments(roster).is_ok();
-        references.push(logs);
     }
     let mut authority = HashMap::new();
-    #[cfg(test)]
-    trace.stage("cell-authority");
     for (cell, record) in fleet.records.iter() {
         let current = record
             .authority
@@ -416,8 +361,6 @@ async fn collect(
     // Recheck exact authority after the full scan. A concurrent publication or
     // takeover invalidates that Cell's planning row, not just count completeness.
     complete &= recheck_authority(fleet, &authority, &mut cells).await?;
-    #[cfg(test)]
-    trace.stage("native-inventory-recheck");
     // Recheck every role category after *all* authority and membership reads.
     // Stable local-only traversals cannot supply this fleet-wide interval.
     for (index, inventory) in active_indices.iter().copied().zip(inventories.iter_mut()) {
@@ -460,16 +403,21 @@ async fn collect(
         }
         complete &= recheck.finish().is_ok();
     }
-    #[cfg(test)]
-    trace.stage("foreign-follower-recheck");
-    for logs in &mut references {
-        match logs.recheck(directory, roster, 128, deadline, clock).await {
-            Ok(()) => {}
-            Err(cellule_runtime::Error::Node("authoritative follower inventory changed")) => {
-                complete = false;
-            }
-            Err(source) => return Err(source.into()),
+    match FleetFollowerReferences::recheck_all(
+        &mut references,
+        directory,
+        roster,
+        128,
+        deadline,
+        clock,
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(cellule_runtime::Error::Node("authoritative follower inventory changed")) => {
+            complete = false;
         }
+        Err(source) => return Err(source.into()),
     }
     let mut after = directory.advertised_sessions(clock()?, 128).await?;
     after.sort_by_key(|boot| *boot.as_bytes());
@@ -490,8 +438,6 @@ async fn collect(
     } else {
         None
     };
-    #[cfg(test)]
-    trace.stage("roster-confirmation");
     roster.confirm(fleet.journal.as_ref(), deadline).await?;
     let capture = Capture {
         started,
@@ -502,8 +448,6 @@ async fn collect(
         role_coverage,
         maintenance_enrollments,
     };
-    #[cfg(test)]
-    trace.finish();
     Ok(capture)
 }
 

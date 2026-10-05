@@ -948,6 +948,20 @@ retained original requests; Pending requests without a current reference still
 require their original nonexecution or closure evidence. Applications account
 the bounded copied buffer, with at most 10,000 rows and 128 rows per page.
 
+For several physical followers, `FleetFollowerReferences::collect_all` shares
+one fresh canonical directory traversal per continuation round. Requests are
+unique, intent-bound and ordered; their combined page limit is 128 rows, with
+one lookahead per window. Each member keeps the same complete cursor, topology,
+exact rows and original interval as individual collection. Every new traversal
+authenticates all records before filtering, including expired obligations.
+
+`FleetFollowerReferences::recheck_all` first invalidates every earlier
+confirmation, then checks every member against a fresh traversal and the full
+roster. Only a wholly matching set advances confirmation intervals. Failure or
+cancellation preserves all original rows/times and leaves the whole set
+unconfirmed. A retry must freshly confirm every member before role coverage is
+valid again. Applications account the complete per-member copied buffers.
+
 After native and policy collection, `references.recheck(...)` traverses every
 page again and compares exact rows. Native topology fingerprints intentionally
 omit volatile coverage and leader liveness, so a first-page fingerprint cannot

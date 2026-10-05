@@ -675,3 +675,82 @@ async fn enrollment_evidence_is_replay_stable_and_separates_native_outcomes() {
         refused.clone().evidence_digest().unwrap()
     );
 }
+
+// The original recipe is independent of the immutable proof's serializer path.
+fn original_evidence_digest(
+    prepared: &PreparedNodeLogEnrollment,
+    source: &VersionedNodeAdvertisement,
+    domain: &[u8],
+) -> Digest {
+    let mut hash = blake3::Hasher::new();
+    hash.update(domain);
+    hash.update(&prepared.source().encode().unwrap());
+    hash.update(&source.advertisement().encode().unwrap());
+    for token in [&source.token.e_tag, &source.token.version] {
+        if let Some(token) = token {
+            hash.update(&[1]);
+            hash.update(&(token.len() as u64).to_le_bytes());
+            hash.update(token.as_bytes());
+        } else {
+            hash.update(&[0]);
+        }
+    }
+    hash.update(&prepared.log().epoch().to_le_bytes());
+    for follower in prepared.followers() {
+        hash.update(&follower.encode().unwrap());
+    }
+    Digest::from_bytes(*hash.finalize().as_bytes())
+}
+
+#[tokio::test]
+async fn immutable_enrollment_evidence_preserves_bytes_without_reauthenticating_history() {
+    for commit in [false, true] {
+        let (directory, source, _) = ensemble().await;
+        let prepared = directory
+            .prepare_log_enrollment(&source, 7, 1, 3, NOW_MS + 1)
+            .await
+            .unwrap()
+            .unwrap();
+        let attempt = directory
+            .prepare_log_enrollment_attempt(&prepared, NOW_MS + 2)
+            .await
+            .unwrap();
+        let expected = original_evidence_digest(
+            attempt.prepared(),
+            attempt.observed(),
+            b"cellule.node-log.attempt.v1\0",
+        );
+        let before = signature_passes();
+        assert_eq!(attempt.evidence_digest().unwrap(), expected);
+        assert_eq!(signature_passes() - before, 0);
+        if commit {
+            let proof = directory
+                .commit_log_enrollment(&attempt, NOW_MS + 3)
+                .await
+                .unwrap();
+            let expected = original_evidence_digest(
+                proof.prepared(),
+                proof.enrollment(),
+                b"cellule.node-log.enrolled.v1\0",
+            );
+            let before = signature_passes();
+            assert_eq!(proof.evidence_digest().unwrap(), expected);
+            assert_eq!(proof.clone().evidence_digest().unwrap(), expected);
+            assert_eq!(signature_passes() - before, 0);
+        } else {
+            let proof = directory
+                .fence_log_enrollment(&attempt, NOW_MS + 3)
+                .await
+                .unwrap();
+            let expected = original_evidence_digest(
+                proof.prepared(),
+                proof.refusal(),
+                b"cellule.node-log.refused.v1\0",
+            );
+            let before = signature_passes();
+            assert_eq!(proof.evidence_digest().unwrap(), expected);
+            assert_eq!(proof.clone().evidence_digest().unwrap(), expected);
+            assert_eq!(signature_passes() - before, 0);
+        }
+    }
+}
