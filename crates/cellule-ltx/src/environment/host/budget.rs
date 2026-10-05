@@ -40,6 +40,11 @@ impl fmt::Debug for DiskBudget {
 }
 
 impl DiskBudget {
+    #[cfg(feature = "replica")]
+    pub(crate) fn same_scope(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Creates a budget. A zero capacity rejects every non-empty reservation.
     #[must_use]
     pub fn new(capacity: u64) -> Self {

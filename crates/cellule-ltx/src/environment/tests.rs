@@ -19,6 +19,115 @@ use crate::environment::executor::TokioExecutor;
 
 #[cfg(feature = "replica")]
 #[tokio::test]
+async fn cloned_hosts_share_live_directory_cache_and_its_disk_charge() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let root = directory.path().join("cache");
+    let budget = DiskBudget::new(4096);
+    let base = Host::default().with_local_disk_budget(budget.clone());
+    let first = base
+        .clone()
+        .with_directory_cache(root.clone())
+        .await
+        .unwrap();
+    first
+        .directory_cache_put("first".into(), b"verified".to_vec(), 64)
+        .unwrap();
+    first.drain_cache_fills().await;
+    assert_eq!(budget.used(), 8);
+    let mut hosts = vec![first];
+    for _ in 0..20 {
+        hosts.push(
+            base.clone()
+                .with_directory_cache(root.clone())
+                .await
+                .unwrap(),
+        );
+    }
+    let charged = budget.used();
+    hosts[0]
+        .directory_cache_put("second".into(), b"another".to_vec(), 64)
+        .unwrap();
+    hosts[0].drain_cache_fills().await;
+    let shared = hosts
+        .iter()
+        .all(|host| host.directory_cache_stats().unwrap().entries() == 2);
+    drop(hosts);
+    let released = budget.used();
+    // Assert after every owner has dropped so even the regression cleans up.
+    assert_eq!(
+        charged, 8,
+        "one physical cache entry must have one disk charge"
+    );
+    assert!(
+        shared,
+        "a cache fill must be visible to all live Cell hosts"
+    );
+    assert_eq!(released, 0);
+    let reopened = base.with_directory_cache(root).await.unwrap();
+    assert_eq!(reopened.directory_cache_stats().unwrap().entries(), 2);
+    assert_eq!(budget.used(), 15);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
+async fn concurrent_cache_openers_share_fills_and_release_one_charge() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let root = directory.path().join("cache");
+    let budget = DiskBudget::new(4096);
+    let base = Host::default().with_local_disk_budget(budget.clone());
+    let opens = (0..32).map(|_| base.clone().with_directory_cache(root.clone()));
+    let hosts: Vec<_> = futures_util::future::join_all(opens)
+        .await
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    hosts[0]
+        .directory_cache_put("node".into(), b"verified".to_vec(), 64)
+        .unwrap();
+    hosts[0].drain_cache_fills().await;
+    assert!(
+        hosts
+            .iter()
+            .all(|host| host.directory_cache_stats().unwrap().entries() == 1)
+    );
+    assert_eq!(budget.used(), 8);
+    drop(hosts);
+    assert_eq!(budget.used(), 0);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
+async fn directory_cache_reuse_preserves_the_selected_disk_budget() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let root = directory.path().join("cache");
+    let first_budget = DiskBudget::new(4096);
+    let second_budget = DiskBudget::new(4096);
+    let base = Host::default().with_local_disk_budget(first_budget.clone());
+    let first = base
+        .clone()
+        .with_directory_cache(root.clone())
+        .await
+        .unwrap();
+    first
+        .directory_cache_put("node".into(), b"verified".to_vec(), 64)
+        .unwrap();
+    first.drain_cache_fills().await;
+    let second = base
+        .with_local_disk_budget(second_budget.clone())
+        .with_directory_cache(root)
+        .await
+        .unwrap();
+    assert_eq!(first_budget.used(), 8);
+    assert_eq!(second_budget.used(), 8);
+    drop(first);
+    assert_eq!(first_budget.used(), 0);
+    assert_eq!(second_budget.used(), 8);
+    drop(second);
+    assert_eq!(second_budget.used(), 0);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
 async fn directory_cache_fill_does_not_queue_bytes_behind_busy_jobs() {
     let directory = tempfile::TempDir::new().unwrap();
     let jobs = Arc::new(tokio::sync::Semaphore::new(1));
