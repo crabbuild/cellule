@@ -36,7 +36,7 @@ jobs:
           selected scenario::follower_maintenance::tests:: follower-cli 1
           selected scenario::reader_maintenance::tests:: reader-cli 1
           selected scenario::balance::tests:: count-balance 1
-          selected scenario::observation::tests:: native-observation 7
+          selected scenario::observation::tests:: native-observation 12
           selected scenario::follower_tests::persisted::observation:: follower-observation 3
       - name: Production follower maintenance command
         run: |
