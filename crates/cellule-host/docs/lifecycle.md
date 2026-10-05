@@ -115,8 +115,11 @@ joins the retained original work. An unrelated store has independent admission.
 
 The store's lifecycle observation distinguishes local joining from result
 success. Native source-bearing failures remain available through a retained
-clone. A returned prepared command has its own normal Cell execution and is
-outside this local job count. Complete uploads, external streams, read/backup
+clone. A returned prepared command holds no running job until execution through
+the configured client acquires this original store admission; closure refuses
+new dispatch from its clones and reconstructed snapshots. Already accepted
+commands still require their original result evidence. Complete uploads,
+external streams, read/backup
 pins, global references and unknown remote effects still require their original
 owners and fleet barriers. Installation does not remove `BlobInventory` or
 authorize Blob Cell release, global GC or physical-node finalization.

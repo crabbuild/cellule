@@ -7913,3 +7913,72 @@ Highest next priorities:
    original owner, then qualify maintenance handoff and native role settlement.
 3. Complete remaining fault/boot-lineage, W9 process/provider/load and
    mixed-version campaigns, then exercised W10 rollout/rollback/recovery.
+
+
+## October 5 2026 prepared Blob admission checkpoint
+
+Parent: `b8b99002143b15013069444f31000da5aae255ab`.
+Prepared command execution for a compiled Blob namespace with a configured
+artifact store now uses that same original admission and retained native owner.
+This applies to ordinary client commands, returned namespace commands, clones
+and restored snapshots without adding a wrapper, field or persisted codec.
+Closure refuses new dispatch; already accepted execution completes after caller
+loss. Convenience mutation calls the same native dispatch under its existing
+whole-operation owner, preserving accepted staging/publication across closure
+and using one slot. Original command identity, digest, body, snapshot bytes,
+request resolution and durability are unchanged.
+
+Three new public regressions prove closed originals/clones/restores cannot
+publish a manifest, cancelled accepted execution survives a held real SQLite
+worker and joins after closure, and open replay preserves exact receipt/output
+at sequence 2 with only one part upload. The cancelled close waiter is confirmed
+polled and Pending before it is aborted. Previously committed results remain
+resolvable after closure. The existing upload-cancellation case now reads exact
+original result bytes and sequence through resolution; open replay separately
+retains its deduplication assertions. Before production changes, the closed
+prepared-dispatch regression failed after complete fixture cleanup.
+
+Full parent Rust CI failed its upload job-count assertion with 2 rather than 1:
+[run 37271901314](https://github.com/crabbuild/cellule/actions/runs/37271901314).
+The fixture assumed the prior reply also meant its supervisor had joined.
+A temporary delayed-cleanup probe reproduced that exact result. Fixture setup
+now waits for prior original jobs to join before measuring the next paused job;
+the same probe passed with the exact one-job assertion. The probe is removed.
+Production ownership ordering and all qualification profiles/deadlines remain
+unchanged.
+
+Local Rust 1.97: all eight public Blob/Cron cases, all five command-snapshot
+contracts and the typed application consumer passed, along with warning-denied
+host/runtime lint/API docs, format, architecture/layout, document links/fences
+and SQL/peer contracts. Exact native snapshot
+`f817476440399c00302fc23227be8d8b656a8cfd` passed
+[run 37273384545](https://github.com/crabbuild/cellule/actions/runs/37273384545)
+on Rust 1.99: all 25 Blob cases, all 55 parallel primitive cases, all 129 parallel
+node cases, five snapshot contracts and one application consumer (215 total),
+plus warning-denied lint/API docs and static gates. All ten qualification paths
+matched current bytes before this final progress update; delta SHA-256
+`363fd210b356ce16ca81ec769e292a9cb0141068009162910b646b66e8515050`.
+The first qualification attempt passed 214 native cases before naming an
+unavailable application test target; its terminal failure was retained, the
+command was corrected to the existing integration target, and the final run
+passed. No live run was cancelled or profile weakened.
+
+The parent's follower/object capacity and Compose smoke passed; its leased and
+object-only routing jobs were still live at the final observation. Full CI on
+the newly published head remains required. Current main remains an ancestor and
+PR #57 is mergeable; no unresolved index entries exist.
+
+These are local dispatch barriers. Cell-scoped upload/stream/read/backup pins,
+complete cross-Cell and pinned-root retention, migration, unknown remote effects,
+and external client/provider capabilities still need original owner coverage.
+BlobInventory and missing Blob maintenance cost remain blocking. The full
+W4–W10 goal remains open.
+
+Highest next priorities:
+
+1. Complete exact native qualification and new-head CI; preserve main ancestry
+   and PR mergeability, and diagnose retained routing/availability failures.
+2. Bind Blob original-operation and pin inventories to exact Cell/boot scope,
+   then integrate complete retention and maintenance handoff barriers.
+3. Complete remaining primitive/role faults, successive boot lineage, W9
+   process/provider/load/mixed-version campaigns and W10 rollout/runbooks.

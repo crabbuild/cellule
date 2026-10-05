@@ -1559,8 +1559,11 @@ namespace/GC work before runtime shutdown. GC retains its complete supplied
 reference set with shared ownership. Focused tests cover cancelled provider jobs,
 capacity, original failure/panic sources, metadata-paused ranges and manifest
 publication after upload waiter loss. This supplies local lifetime coverage;
-returned prepared commands, Cell-scoped stream/upload/pin coverage, global
-retention and unknown remote effects remain separate obligations. `BlobInventory`
+Prepared command dispatch through the configured client now acquires that same
+original admission, including clones and restored snapshots; closure refuses
+new dispatch without changing request identity or snapshot bytes. Cell-scoped
+stream/upload/pin coverage, global retention and unknown remote effects remain
+separate obligations. `BlobInventory`
 still blocks release. Complete the remaining host fault cases, every primitive's
 acceptance matrix, Blob owner/pin barriers and process/provider qualification
 before claiming this work package complete.
