@@ -218,6 +218,18 @@ impl FleetActionExecutor {
                     .await?;
                 return self.recovered_serving(accepted, attempt, &inputs).await;
             }
+            if current.value() != basis.control()
+                && (current.value().state == ControlState::Idle
+                    || current
+                        .value()
+                        .owner
+                        .as_ref()
+                        .is_some_and(|owner| owner.session == self.session))
+            {
+                return self
+                    .resume_source_recovery(accepted, attempt, &inputs, current)
+                    .await;
+            }
         }
         if self
             .journal

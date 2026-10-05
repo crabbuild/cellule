@@ -147,16 +147,37 @@ impl FleetActionExecutor {
             if rows.next().is_some() {
                 return Err(Error::Control("recovered suffix manifest is ambiguous"));
             }
-            self.runtime
-                .verify_recovered_prefix(
-                    &inputs.catalog,
-                    &inputs.authority,
-                    inputs.replica.clone(),
-                    suffix,
-                    root,
-                    10_000,
-                )
-                .await?;
+            let observed = inputs
+                .authority
+                .load(original.cell)
+                .await?
+                .ok_or(Error::Fenced)?;
+            if observed.value().ltx_root() != Some(root) {
+                return Err(Error::Fenced);
+            }
+            if observed.value().state == ControlState::Idle {
+                self.runtime
+                    .verify_recovered_idle_prefix(
+                        &inputs.catalog,
+                        &inputs.authority,
+                        inputs.replica.clone(),
+                        suffix,
+                        &observed,
+                        10_000,
+                    )
+                    .await?;
+            } else {
+                self.runtime
+                    .verify_recovered_prefix(
+                        &inputs.catalog,
+                        &inputs.authority,
+                        inputs.replica.clone(),
+                        suffix,
+                        root,
+                        10_000,
+                    )
+                    .await?;
+            }
         } else {
             self.runtime
                 .verify_root_prefix(

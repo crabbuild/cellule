@@ -7108,3 +7108,74 @@ Highest next priorities:
 3. Deliver the W9 versioned measured fleet profile/runner and provider/process,
    mixed-binary and load/resource evidence; exercise W10 staged operations,
    rollback and runbooks. These remain required for full plan completion.
+
+
+## 2026-10-05 — Failed-source evidence repair and bound Idle suffix proof
+
+Parent: `15b4f2923a8ea58cab3fcf0cf09cab5e546d3637`. The code-only diff from
+that parent, excluding Markdown, has SHA-256
+`fafc62ff7fdb11f4b27c9dcd0e46894fa443ecf856af90590a8f87913fde711b`.
+This checkpoint advances W4 recovery; it does not complete W4–W10.
+
+Accepted failed-source Recover replay now repairs a missing evidence write only
+from the exact original retained basis and immutable native acquisition
+input/materialization. A committed evidence reply lost in transport retains the
+original record and time. A safe Idle rollback can resume ordinary admitted
+acquisition after prefix/origin verification; an ordinary acquisition winner
+retains its actor and must satisfy the same original-history checks. Fresh
+inspection writes no metadata and starts no acquisition. Failed evidence writes
+keep the full attempt charged and preserve their original I/O source error.
+
+Actual sealed-suffix replay exposed a missing pre-acquisition contract: the
+Serving suffix verifier correctly rejects Idle. The new explicit
+`verify_recovered_idle_prefix` requires a complete unowned Idle control with
+cleared overlay, shares the bounded canonical-history/origin walk and runtime
+I/O/memory admission, and rechecks the complete control before and after I/O.
+It supplies no ownership, actor, retention, role or settlement rights. The
+existing Serving verifier retains its strict state requirement.
+
+Ten new public host cases cover lost evidence replies, failed and repeated
+writes, cancelled repair waiters, ordinary acquisition winners, missing/corrupt
+original history in both Idle and Serving states, valid substituted history,
+missing materialized origin, and actual sealed-suffix manifest faults. Restoring
+exact original bytes permits replay without another movement permit or rewritten
+basis. Completion checks current writer, original canonical evidence, repeated
+action identity, acknowledged command resolution and joined resources.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --test node fleet_receivers:: --all-features --locked -- --test-threads=2` | 41 passed; 0 failed, including all ten new cases. |
+| `cargo test -p cellule-runtime --lib control::authority::acquisition::tests:: --all-features --locked -- --test-threads=2` | 11 passed; 0 failed. Idle refusal by the Serving API, zero bound, missing acquisition and stale complete control covered. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | 17 passed; 0 failed after the temporary deadline probes were compiled. |
+| Exact minion `reference_observer_reconciles_follower_only_maintenance_to_completion` | 1 passed; 0 failed, 2.55 seconds locally. This does not establish a hosted CI fix. |
+| Runtime/host all-target/all-feature Clippy with `-D warnings`; API docs with `RUSTDOCFLAGS='-D warnings'` | Passed. |
+| Format, whitespace, boundaries, module ownership, Rust fences, Markdown links and runtime SQL/peer validator | Passed: 137 snippets, 1,348 Markdown links/anchors, 28 protocol/schema assertions and 571 validator links. |
+
+Authoritative hosted results for parent `15b4f29`: Rust run `37244070031`
+finished with workspace failure, 343 of 362 minion cases passing and 19 failing.
+Most failures were observation deadlines; the previously failing follower-only
+observer failed again. Workspace all-feature/target checks, workspace tests,
+API docs, MSRV and the balanced three-process smoke passed before that step.
+Follower and object proof checks also passed on the parent. These results do
+not qualify the new code. Contract run `37244070048` failed the unchanged
+paused-clock LTX compaction test: 500 ms observed versus the required 400 ms.
+Neither failure is resolved by this checkpoint.
+
+Temporary test-only `[DEBUG-fleet-57]` probes report failed/cancelled collection
+stages, native snapshot waits, policy verification and original elapsed budgets
+in the next hosted run. Normal successful observations print no probe output.
+No deadlines, qualification profiles or assertions were changed. Remove the
+probes after the hosted cause is confirmed and fixed. The isolated ARM64 Linux
+observer and LTX repetitions passed earlier; AMD64 emulation failed in native
+compiler/linker setup before tests and supplies no AMD64 test evidence.
+
+Highest next priorities:
+
+1. Diagnose the hosted observer and LTX failures with original deadlines and
+   evidence intact; verify this checkpoint in CI and keep PR #57 mergeable.
+2. Complete the routed inherited-overlay/boot/controller succession campaign,
+   historical suffix/lineage and provider faults, and the remaining maintenance
+   role/primitive fault combinations and accepted external-job/process closure.
+3. Deliver the W9 versioned measured fleet profile/runner, actual provider/process
+   and mixed-binary/load/resource evidence, then exercise W10 staged operations,
+   rollout/rollback and runbooks. These remain required for full plan completion.

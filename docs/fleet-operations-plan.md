@@ -787,6 +787,17 @@ capture times and charged permit remain unchanged. A same-session ordinary
 acquisition winner must pass those same current-serving checks. Missing or
 substituted history remains Unknown; inspection cannot repair records or acquire.
 
+Failed-source Recover now applies this continuation to its original retained
+`RecoveryBasis` and exact native materialization as well. Missing metadata is
+reconstructed only from the original immutable acquisition input/result, never
+from the current Idle root or a newer owner. For sealed suffixes, the explicit
+Idle verifier checks the complete unowned selected control before and after
+the bounded original-history/origin walk. Ordinary acquisition winners still
+require original native history and fresh actor proof. Public host cases cover
+lost replies, repeated write failure, cancelled repair waiters, missing/corrupt
+or substituted history, and real sealed suffixes with receipt readback. The full
+routed inherited-overlay and controller/provider fault campaign remains open.
+
 An interrupted target may instead retain its own Recovering claim and attached
 overlay. Effect replay reconfirms the original fenced input and uses the shared
 native takeover continuation without another ownership CAS. The current control

@@ -14,6 +14,7 @@ use cellule_runtime::identity::RequestId;
 use cellule_runtime::ltx::CellReplica;
 
 mod prefix;
+mod recovery_resume;
 mod successor;
 mod suffix;
 mod suffix_resume;
@@ -1727,9 +1728,16 @@ async fn lost_recovery_evidence_reply_cannot_admit_actor_or_claim_completion() {
     assert_eq!(current.value().epoch, evidence.restored().epoch);
     assert_eq!(movement.receiver.stats().active_cells(), 0);
     assert_eq!(movement.receiver.stats().worker_jobs(), 0);
-    let repeated = apply(&movement.receiver, action.clone()).await;
-    assert!(matches!(repeated.outcome.outcome, FleetOutcome::Unknown));
-    assert!(repeated.execution_error.is_some());
+    // Inspection cannot restart a safely rolled-back acquisition. Keep the
+    // ordinary winner independent of the accepted effect's automatic replay.
+    assert!(
+        movement
+            .receiver
+            .inspect_fleet_action(movement.inspection(248))
+            .await
+            .is_err()
+    );
+    assert_eq!(movement.receiver.stats().active_cells(), 0);
     assert_eq!(
         movement.source.journal.current_attempt().phase(),
         AttemptPhase::Recovering

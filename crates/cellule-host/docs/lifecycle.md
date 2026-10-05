@@ -746,6 +746,18 @@ them. If ordinary acquisition already won, replay verifies the current actor
 against the same history. Missing, corrupt, or substituted history leaves Unknown
 and the full charge. Fresh inspection performs no evidence writes or acquisition.
 
+Failed-source Recover uses the same ordering after a failed evidence write or
+lost reply: confirm the original accepted `RecoveryBasis`, reconstruct missing
+`RecoveryEvidence` only from its exact immutable native acquisition, and retain
+the original materialization. Effect replay verifies the selected Idle root
+against that materialization and any original sealed suffix before ordinary
+admitted acquisition. An ordinary acquisition winner must pass the same native
+history, origin and actor checks. Missing or substituted history remains a
+charged blocker even when the current writer can read its local SQLite state.
+The suffix verifier for this pre-acquisition path requires an unowned Idle
+control with cleared overlay and rechecks its complete value before and after
+origin I/O; it grants no serving or settlement proof.
+
 If an interrupted takeover still owns a Recovering control with its pinned
 overlay, replay supplies the original retained control and failed-session proof
 to `resume_takeover_restored_observed`. That shared native path reconfirms the
@@ -782,7 +794,7 @@ complete primitive maintenance coverage and role finalization remain under imple
 | Ordinary acquisition on the preferred session | Free the unused preparation without closing the ordinary writer. Verify current authority, actor readiness, and the required release position. Matching session alone never proves prepared credit was consumed. |
 | Recover unresolved source release | Journal Recovering, cancel proved-unused preparation, validate canonical failed-session proof, and confirm `RecoveryBasis` before ownership CAS. Confirm `RecoveryEvidence` after exact recovery publication and before actor admission. Return Recovered only with current actor/authority proof. |
 | Recovery input reply lost | No ownership CAS starts. Retain the original input/time; an unchanged full canonical control permits confirming that basis and continuing the accepted action. |
-| Recovery position reply lost | No actor is admitted. Canonical rollback preserves the materialized root; the attempt stays charged and Unknown. Ordinary acquisition can restore serving, after which inspection verifies it against the retained recovery evidence. |
+| Recovery position write fails or reply is lost | No actor is admitted. Canonical rollback preserves the materialized root; the attempt stays charged and Unknown. Accepted effect replay reconfirms exact native history and retained evidence before admitted Idle reacquisition, or verifies an ordinary acquisition winner. Fresh inspection cannot repair metadata or acquire. |
 | Duplicate | Compare the full immutable specification, including cost and physical identities. Join current work or return its committed result. |
 | Dropped caller | Retain and finish execution plus journal publication independently of the caller. |
 | Result publication failure | Retain the original checked result. Result delivery joins the owned task, so an immediate subsequent dispatch can retry publication. Drain also retries; neither repeats source release. |

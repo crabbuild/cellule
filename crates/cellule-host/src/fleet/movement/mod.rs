@@ -20,6 +20,7 @@ mod receiver;
 mod receiver_recovery;
 mod receiver_resume;
 mod recovery;
+mod recovery_resume;
 
 pub(super) enum ServingPrefix<'a> {
     Released(&'a cellule_runtime::control::RootRef),

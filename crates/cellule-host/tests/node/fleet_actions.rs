@@ -58,6 +58,10 @@ pub(super) struct Journal {
     pub(super) basis_writes: AtomicUsize,
     pub(super) panic_basis: AtomicBool,
     pub(super) lose_recovery_evidence_reply: AtomicBool,
+    pub(super) fail_recovery_evidence_writes: AtomicUsize,
+    pub(super) block_recovery_evidence: AtomicBool,
+    pub(super) recovery_evidence_entered: tokio::sync::Notify,
+    pub(super) recovery_evidence_resume: tokio::sync::Semaphore,
     pub(super) block_inspections: AtomicBool,
     pub(super) inspection_entered: tokio::sync::Notify,
     pub(super) inspection_resume: tokio::sync::Semaphore,
@@ -123,6 +127,10 @@ impl Journal {
             basis_writes: AtomicUsize::new(0),
             panic_basis: AtomicBool::new(false),
             lose_recovery_evidence_reply: AtomicBool::new(false),
+            fail_recovery_evidence_writes: AtomicUsize::new(0),
+            block_recovery_evidence: AtomicBool::new(false),
+            recovery_evidence_entered: tokio::sync::Notify::new(),
+            recovery_evidence_resume: tokio::sync::Semaphore::new(0),
             block_inspections: AtomicBool::new(false),
             inspection_entered: tokio::sync::Notify::new(),
             inspection_resume: tokio::sync::Semaphore::new(0),
@@ -532,6 +540,26 @@ impl FleetActionJournal for Journal {
         evidence: &'a RecoveryEvidence,
     ) -> FleetAdapterFuture<'a, RecoveryEvidence> {
         Box::pin(async move {
+            if self.block_recovery_evidence.swap(false, Ordering::SeqCst) {
+                self.recovery_evidence_entered.notify_one();
+                self.recovery_evidence_resume
+                    .acquire()
+                    .await
+                    .unwrap()
+                    .forget();
+            }
+            if self
+                .fail_recovery_evidence_writes
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(Box::new(std::io::Error::other(
+                    "injected recovery evidence write failure",
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
             evidence.basis().validate_acceptance(accepted)?;
             let retained = {
                 let mut state = self.state.lock().unwrap();
