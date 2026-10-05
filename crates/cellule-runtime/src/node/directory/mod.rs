@@ -111,7 +111,9 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<VersionedNodeAdvertisement> {
         self.validate(&advertisement, now_ms)?;
-        let encoded = advertisement.encode()?;
+        // validate authenticated both signature sets; serialize this exact
+        // immutable value without repeating their cryptographic verification.
+        let encoded = advertisement.canonical_bytes()?;
         let path = self.layout.node_path(advertisement.session.as_bytes());
         let result = match self
             .layout

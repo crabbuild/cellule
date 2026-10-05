@@ -670,11 +670,13 @@ impl NodeDirectory {
             candidate.log.clone_from(&base.advertisement.log);
             self.validate(&candidate, now_ms)?;
             validate_successor(&base.advertisement, &candidate)?;
+            // The validated candidate remains immutable through its CAS body.
+            let encoded = candidate.canonical_bytes()?;
             let path = self.layout.node_path(candidate.session.as_bytes());
             match self
                 .layout
                 .store()
-                .update(&path, Bytes::from(candidate.encode()?), base.token.clone())
+                .update(&path, Bytes::from(encoded), base.token.clone())
                 .await
             {
                 Ok(token) => {

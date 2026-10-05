@@ -2,6 +2,57 @@
 use super::*;
 
 #[tokio::test]
+async fn canonical_producers_verify_once_before_creating_or_refreshing_bytes() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    for original in records::canonical_advertisements() {
+        let directory = directory();
+        let before = signature_passes();
+        let current = directory.create(original.clone(), NOW_MS).await.unwrap();
+        assert_eq!(signature_passes() - before, 1);
+        let next = advertisement(&key, 2, NOW_MS + 1_000);
+        let next = match original.placement_version {
+            0 => next,
+            PLACEMENT_SCHEMA_VERSION => next
+                .with_placement_capacity(original.placement.unwrap(), &key)
+                .unwrap(),
+            OPERATIONAL_PLACEMENT_SCHEMA_VERSION => next
+                .with_operational_placement(
+                    original.placement.unwrap(),
+                    NodeOperationalSample {
+                        sequence: 2,
+                        observed_at_ms: NOW_MS + 1_000,
+                        mode: NodeMode::Draining,
+                        pressure: NodePressure::Critical,
+                    },
+                    &key,
+                )
+                .unwrap(),
+            _ => unreachable!(),
+        };
+        let before = signature_passes();
+        let refreshed = directory
+            .refresh(&current, next.clone(), NOW_MS + 1_000)
+            .await
+            .unwrap();
+        assert_eq!(signature_passes() - before, 1);
+        assert_eq!(
+            refreshed.advertisement().placement_version,
+            original.placement_version
+        );
+        let bytes = directory
+            .layout
+            .store()
+            .get_with_etag(&directory.layout.node_path(original.session().as_bytes()))
+            .await
+            .unwrap()
+            .0;
+        let decoded = NodeAdvertisement::decode_canonical(&bytes).unwrap();
+        assert_eq!(&decoded, refreshed.advertisement());
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+}
+
+#[tokio::test]
 async fn exact_canonical_reads_verify_once_per_fresh_record() {
     for original in records::canonical_advertisements() {
         let directory = directory();
@@ -191,5 +242,112 @@ async fn later_canonical_read_observes_new_bytes_and_authenticates_them_again() 
             .unwrap();
         assert_eq!(loaded.advertisement(), &next);
         assert_eq!(signature_passes() - before, 1);
+    }
+}
+
+#[tokio::test]
+async fn authenticated_reads_keep_path_scope_and_time_policies() {
+    for original in records::canonical_advertisements() {
+        let directory = directory();
+        directory.create(original.clone(), NOW_MS).await.unwrap();
+        assert!(
+            directory
+                .load(original.session(), NOW_MS + 20_000)
+                .await
+                .is_err()
+        );
+        assert!(
+            directory
+                .load_if_live(original.session(), NOW_MS + 20_000)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            directory
+                .live(NOW_MS + 20_000, 128)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let future = NOW_MS - MAX_CLOCK_SKEW_MS - 1;
+        assert!(directory.load(original.session(), future).await.is_err());
+        assert!(
+            directory
+                .load_if_live(original.session(), future)
+                .await
+                .is_err()
+        );
+        assert!(
+            directory
+                .inspect_advertisement(original.session(), future)
+                .await
+                .is_err()
+        );
+        assert!(directory.advertised_sessions(future, 128).await.is_err());
+        assert!(
+            directory
+                .follower_logs_page(NodeId::from_bytes([9; 16]), None, 128, future)
+                .await
+                .is_err()
+        );
+        let foreign = NodeDirectory::new(
+            directory.layout.clone(),
+            Digest::from_bytes([88; 32]),
+            directory.image,
+            directory.release,
+        );
+        assert!(foreign.load(original.session(), NOW_MS + 1).await.is_err());
+        assert!(
+            foreign
+                .load_if_live(original.session(), NOW_MS + 1)
+                .await
+                .is_err()
+        );
+        assert!(
+            foreign
+                .inspect_advertisement(original.session(), NOW_MS + 1)
+                .await
+                .is_err()
+        );
+        assert!(foreign.live(NOW_MS + 1, 128).await.is_err());
+        assert!(
+            foreign
+                .advertised_sessions(NOW_MS + 20_000, 128)
+                .await
+                .is_err()
+        );
+        assert!(
+            foreign
+                .follower_logs_page(NodeId::from_bytes([9; 16]), None, 128, NOW_MS + 20_000)
+                .await
+                .is_err()
+        );
+        let body = Bytes::from(original.encode().unwrap());
+        directory
+            .layout
+            .store()
+            .create_strict(&directory.layout.node_path(&[77; 16]), body)
+            .await
+            .unwrap();
+        assert!(
+            directory
+                .load(SessionId::from_bytes([77; 16]), NOW_MS + 1)
+                .await
+                .is_err()
+        );
+        assert!(directory.live(NOW_MS + 1, 128).await.is_err());
+        assert!(
+            directory
+                .advertised_sessions(NOW_MS + 20_000, 128)
+                .await
+                .is_err()
+        );
+        assert!(
+            directory
+                .follower_logs_page(NodeId::from_bytes([9; 16]), None, 128, NOW_MS + 20_000)
+                .await
+                .is_err()
+        );
     }
 }
