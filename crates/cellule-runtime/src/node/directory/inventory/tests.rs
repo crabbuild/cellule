@@ -6,6 +6,60 @@ use object_store::{memory::InMemory, path::Path};
 const NOW: i64 = 1_000_000;
 
 #[tokio::test]
+async fn shared_windows_keep_existing_topology_domain_and_cursor_bytes() {
+    let mut directory = directory();
+    directory.inventory_scope = [42; 16];
+    for id in [3, 1, 2] {
+        enroll(&directory, id, NOW).await;
+    }
+    // Independent encoding of the existing v1 domain: session, physical owner,
+    // little-endian epoch, Open tag, complete ensemble; XOR then scoped count.
+    let mut combined = [0; 32];
+    for id in 1..=3 {
+        let mut row = Vec::new();
+        row.extend_from_slice(&[id; 16]);
+        row.extend_from_slice(&[id; 16]);
+        row.extend_from_slice(&4u64.to_le_bytes());
+        row.push(1);
+        row.extend_from_slice(&[9; 16]);
+        for (byte, value) in combined.iter_mut().zip(blake3::hash(&row).as_bytes()) {
+            *byte ^= value;
+        }
+    }
+    let mut domain = b"cellule-authoritative-log-inventory-v1".to_vec();
+    domain.extend_from_slice(&[42; 16]);
+    domain.extend_from_slice(&[9; 16]);
+    domain.extend_from_slice(&3u64.to_le_bytes());
+    domain.extend_from_slice(&combined);
+    let expected = *blake3::hash(&domain).as_bytes();
+    let pages = directory
+        .follower_logs_pages(
+            &[(NodeId::from_bytes([8; 16]), None), (member(), None)],
+            1,
+            NOW + 2,
+        )
+        .await
+        .unwrap();
+    assert_eq!(pages[1].topology().as_bytes(), &expected);
+    let mut cursor = [0; 48];
+    cursor[..32].copy_from_slice(&expected);
+    cursor[32..].copy_from_slice(&[1; 16]);
+    assert_eq!(pages[1].next().unwrap().to_bytes(), cursor);
+    let next = directory
+        .follower_logs_page(
+            member(),
+            Some(LogInventoryCursor::from_bytes(&cursor).unwrap()),
+            128,
+            NOW + 3,
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.total_logs(), 3);
+    assert_eq!(next.entries().len(), 2);
+    assert!(next.next().is_none());
+}
+
+#[tokio::test]
 async fn shared_windows_preserve_member_cursors_and_exact_expired_rows() {
     let directory = directory();
     for id in [3, 1, 2] {

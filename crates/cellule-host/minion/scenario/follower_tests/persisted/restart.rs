@@ -10,6 +10,21 @@ use cellule_runtime::fleet::operations::{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconstructed_controller_refreshes_native_settlement_after_a_lost_reply() {
+    run(Restart::Renew).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_claimant_after_real_expiry_refreshes_settlement_and_fences_old_controller() {
+    run(Restart::ReplaceAfterExpiry).await;
+}
+
+#[derive(Clone, Copy)]
+enum Restart {
+    Renew,
+    ReplaceAfterExpiry,
+}
+
+async fn run(restart: Restart) {
     let (fixture, capture, policy) = setup().await;
     let publication = publish(&fixture, &capture, policy).await;
     let fleet = Arc::new(crate::scenario::adapters::LocalFleet {
@@ -54,11 +69,30 @@ async fn reconstructed_controller_refreshes_native_settlement_after_a_lost_reply
     );
     // The transport dropped the successful reply before ReadyToClose. A fresh
     // driver over an independent client must renew and recheck the same intent.
-    drop((first, original));
+    drop(original);
+    let claimant = match restart {
+        Restart::Renew => session(9),
+        Restart::ReplaceAfterExpiry => {
+            let expires = before.snapshot.head().controller().unwrap().expires_at_ms;
+            // Advance real wall time while the application's original lease
+            // owners publish actual heartbeats. No logical clock jump or
+            // fabricated advertisement keeps native participants admitted.
+            while clock().unwrap() <= expires {
+                for (index, boot) in fixture.boots.iter().enumerate() {
+                    boot.refresh_capacity(index, fixture.native.journal.as_ref(), deadline())
+                        .await
+                        .unwrap();
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            assert!(clock().unwrap() > expires);
+            session(10)
+        }
+    };
     let client = Arc::new(client(&fixture).await);
     let driver = FleetReconciler::new(
         scope(),
-        session(9),
+        claimant,
         FleetProfile::default(),
         client.clone(),
         fleet.clone(),
@@ -78,6 +112,30 @@ async fn reconstructed_controller_refreshes_native_settlement_after_a_lost_reply
         MaintenancePhase::Closing
     );
     assert!(next.snapshot.head().revision() > before.snapshot.head().revision());
+    let controller = next.snapshot.head().controller().unwrap();
+    assert_eq!(controller.claimant, claimant);
+    assert_eq!(
+        controller.epoch,
+        match restart {
+            Restart::Renew => 1,
+            Restart::ReplaceAfterExpiry => 2,
+        }
+    );
+    if matches!(restart, Restart::ReplaceAfterExpiry) {
+        let current = client.load_snapshot(scope()).await.unwrap();
+        let rejected = first
+            .reconcile_once(clock, restart_deadline())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&rejected, Error::Facility { name: "fleet-journal", source }
+            if matches!(source.downcast_ref::<cellule_runtime::fleet::operations::OperationError>(),
+                Some(cellule_runtime::fleet::operations::OperationError::Fenced))),
+            "old controller returned the wrong refusal: {rejected:?}"
+        );
+        assert_eq!(client.load_snapshot(scope()).await.unwrap(), current);
+    }
+    drop(first);
     let latest = fixture
         .native
         .journal

@@ -58,3 +58,11 @@ jobs:
         if: always()
         run: |
           cargo test -p cellule-runtime --lib node::tests::scanned_records --all-features --locked -- --nocapture --test-threads=1
+      - name: New claimant after real expiry
+        if: always()
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart::new_claimant_after_real_expiry_refreshes_settlement_and_fences_old_controller --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Immutable enrollment evidence contract
+        if: always()
+        run: |
+          cargo test -p cellule-runtime --lib node::tests::enrollment --all-features --locked -- --nocapture --test-threads=1
