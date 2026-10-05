@@ -29,14 +29,14 @@ pub(super) async fn complete_counts(
     fleet: &adapters::LocalFleet,
     roster: &FleetRoster,
     deadline: Instant,
-) -> JournalResult<Option<[usize; 3]>> {
+) -> JournalResult<Option<Vec<usize>>> {
     let capture = collect(fleet, roster, deadline).await?;
     if !capture.complete {
         return Ok(None);
     }
-    let mut counts = [0; 3];
+    let mut counts = vec![0; fleet.nodes.len()];
     for owned in capture.cells {
-        let index = (0..3)
+        let index = (0..fleet.nodes.len())
             .find(|n| node_id(*n) == owned.node && session(*n) == owned.session)
             .ok_or_else(|| invalid("example count endpoint differs"))?;
         counts[index] += 1;

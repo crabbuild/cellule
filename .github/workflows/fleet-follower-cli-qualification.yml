@@ -1,0 +1,55 @@
+name: Fleet executable follower maintenance qualification
+on:
+  push:
+    branches: [codex/fleet-follower-cli-qualification]
+permissions:
+  contents: read
+jobs:
+  native-follower-maintenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
+      - name: Record source and native environment
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source.txt
+          rustc -Vv > evidence/rustc.txt
+          uname -a > evidence/host.txt
+          lscpu > evidence/cpu.txt
+          cat /proc/meminfo > evidence/memory.txt
+          ulimit -a > evidence/limits.txt
+      - name: Selected native lifecycle regressions
+        run: |
+          set -euo pipefail
+          selected() {
+            cargo test -p cellule-host --example fleet_operations --all-features --locked "$1" -- --nocapture --test-threads=1 2>&1 | tee "evidence/$2.log"
+            python3 -c 'import re,sys; s=open(sys.argv[1]).read(); n=int(sys.argv[2]); assert re.search(r"test result: ok\. "+str(n)+r" passed; 0 failed",s), "unexpected selected test count"' "evidence/$2.log" "$3"
+          }
+          selected scenario::follower_maintenance::tests:: follower-cli 1
+          selected scenario::reader_maintenance::tests:: reader-cli 1
+          selected scenario::balance::tests:: count-balance 1
+          selected scenario::observation::tests:: native-observation 7
+          selected scenario::follower_tests::persisted::observation:: follower-observation 3
+      - name: Production follower maintenance command
+        run: |
+          set -euo pipefail
+          cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-follower 2>&1 | tee evidence/production-command.log
+          sha256sum target/debug/examples/fleet_operations > evidence/binary.sha256
+      - name: Warning denied lint
+        if: always()
+        run: cargo clippy -p cellule-host --all-targets --all-features --locked -- -D warnings
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: follower-maintenance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7

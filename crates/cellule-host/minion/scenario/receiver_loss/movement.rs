@@ -54,7 +54,7 @@ async fn continue_inner(
         controller_epoch: 1,
         expired_receiver_cleanups: 0,
         blockers: Vec::new(),
-        final_counts: [0; 3],
+        final_counts: vec![0; 3],
         maintenance_completed: false,
         maintenance_boot_withdrawn: false,
         receiver_process_closures: 1,
