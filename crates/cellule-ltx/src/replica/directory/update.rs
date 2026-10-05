@@ -7,22 +7,26 @@ use std::{
 use crate::{LtxError, Result};
 
 use super::{
-    Aggregate, DirectoryEntry, DirectoryObject, DirectoryTree, FANOUT, Header, Node, Verification,
-    encode_branch, encode_leaf, read_node, verify_branch, verify_leaf,
+    DirectoryEntry, DirectoryObject, DirectoryRoot, DirectoryTree, FANOUT, Header, Node,
+    Verification, encode_branch, encode_leaf, read_node, verify_branch, verify_leaf,
 };
 
 type ChangedLeaves = BTreeMap<u32, Vec<DirectoryEntry>>;
 
 pub(super) async fn run(
     base: Verification<'_>,
-    root: [u8; 32],
-    height: u32,
-    aggregate: Aggregate,
+    root: DirectoryRoot,
     changes: BTreeMap<u32, DirectoryEntry>,
     retain_through: u32,
     final_state: Verification<'_>,
     expected_checksum: u64,
+    private_leaf: Option<&DirectoryTree>,
 ) -> Result<DirectoryTree> {
+    let DirectoryRoot {
+        digest: root,
+        height,
+        aggregate,
+    } = root;
     if height > 3
         || base.page_size != final_state.page_size
         || retain_through > base.database_pages
@@ -37,6 +41,39 @@ pub(super) async fn run(
         digest: root,
         aggregate,
     };
+    if let Some(leaf) = private_leaf {
+        if height != 0
+            || leaf.height != 0
+            || leaf.root.digest != root
+            || leaf.root.aggregate != aggregate
+            || !super::fits_leaf(final_state.database_pages)
+        {
+            return Err(LtxError::LTXCorrupted);
+        }
+        let prepared = leaf.objects.iter().find(|object| object.digest == root);
+        let root = mutate_leaf(
+            base,
+            final_state,
+            Some(old),
+            0,
+            &changed,
+            retain_through,
+            &mut objects,
+            prepared.map(|object| object.bytes.as_slice()),
+        )
+        .await?
+        .ok_or(LtxError::LTXCorrupted)?;
+        // An unchanged final leaf still needs its private dependency uploaded.
+        if objects.is_empty()
+            && let Some(prepared) = prepared
+        {
+            objects.push(DirectoryObject {
+                digest: prepared.digest,
+                bytes: prepared.bytes.clone(),
+            });
+        }
+        return finish_tree(objects, root, 0, final_state, expected_checksum);
+    }
     let root_span = node_span(height)?;
     let root_end = u32::try_from(root_span).map_err(|_| LtxError::LTXCorrupted)?;
     let root_changes = changed
@@ -99,6 +136,16 @@ pub(super) async fn run(
             .ok_or(LtxError::LTXCorrupted)?;
     }
     let root = nodes.pop().ok_or(LtxError::LTXCorrupted)?;
+    finish_tree(objects, root, final_height, final_state, expected_checksum)
+}
+
+fn finish_tree(
+    objects: Vec<DirectoryObject>,
+    root: Node,
+    height: u32,
+    final_state: Verification<'_>,
+    expected_checksum: u64,
+) -> Result<DirectoryTree> {
     let lock = crate::ltx::lock_pgno(final_state.page_size);
     let expected_pages =
         u64::from(final_state.database_pages) - u64::from(lock <= final_state.database_pages);
@@ -113,7 +160,7 @@ pub(super) async fn run(
     Ok(DirectoryTree {
         objects,
         root,
-        height: final_height,
+        height,
     })
 }
 
@@ -154,6 +201,7 @@ fn mutate_node<'a>(
                 changes,
                 retain_through,
                 objects,
+                None,
             )
             .await;
         }
@@ -246,10 +294,19 @@ async fn mutate_leaf(
     changes: &ChangedLeaves,
     retain_through: u32,
     objects: &mut Vec<DirectoryObject>,
+    private_bytes: Option<&[u8]>,
 ) -> Result<Option<Node>> {
     let mut entries = BTreeMap::new();
     if let Some(node) = &old {
-        let bytes = read_node(&base, node.digest).await?;
+        let bytes = match private_bytes {
+            Some(bytes) => {
+                if *blake3::hash(bytes).as_bytes() != node.digest {
+                    return Err(LtxError::ChecksumMismatch);
+                }
+                std::sync::Arc::from(bytes)
+            }
+            None => read_node(&base, node.digest).await?,
+        };
         let header = Header::parse(&bytes)?;
         if header.kind != 0 {
             return Err(LtxError::LTXCorrupted);

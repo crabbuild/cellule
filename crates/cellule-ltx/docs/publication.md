@@ -78,6 +78,13 @@ retains the original authority predecessor and the same persisted bytes as the
 two-step path. `None` leaves the caller's existing cascade policy in charge.
 No unuploaded intermediate state can be used as a `PreparedRoot`.
 
+When the verified relocation and final append each fit one directory leaf, the
+preparation retains that bounded leaf privately and uploads only the final
+directory. The same digest, locator, truncation and checksum checks still run.
+Larger directories stream their required nodes through bounded uploads; growth
+outside one leaf uses that path. Original root and selected source verification
+remain required before a proposal can escape.
+
 The verified compaction composition sets the original predecessor in the native
 factory before derivation metadata runs. Metadata and the complete proposal name
 the same input. That private preparation context is removed from the immutable

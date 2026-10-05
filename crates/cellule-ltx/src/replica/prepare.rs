@@ -670,9 +670,11 @@ impl CellReplica {
                     host: &self.host,
                     origin: crate::LtxReadOrigin::Cold,
                 },
-                graph.directory_digest,
-                graph.directory_height,
-                graph.aggregate,
+                directory::DirectoryRoot {
+                    digest: graph.directory_digest,
+                    height: graph.directory_height,
+                    aggregate: graph.aggregate,
+                },
                 changes,
                 retain_through,
                 directory::Verification {
@@ -686,6 +688,7 @@ impl CellReplica {
                     origin: crate::LtxReadOrigin::Cold,
                 },
                 target.checksum,
+                graph.private_directory.as_ref(),
             )
             .await?
         } else {

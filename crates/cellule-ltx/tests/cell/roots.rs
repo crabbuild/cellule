@@ -31,6 +31,7 @@ fn replica(store: Store, cell: [u8; 32], incarnation: [u8; 16]) -> CellReplica {
     .unwrap()
 }
 
+mod batch_cost;
 mod compaction;
 mod compaction_transfers;
 mod directory;

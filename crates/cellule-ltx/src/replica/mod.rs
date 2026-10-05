@@ -858,6 +858,8 @@ fn scheduled_compaction_range(
 /// Authenticated directory and descriptors, without claiming that root metadata
 /// has been uploaded. Compaction may supply this state directly to an append.
 struct AppendBaseState {
+    // Only a bounded, privately verified compaction leaf may skip origin I/O.
+    private_directory: Option<DirectoryTree>,
     aggregate: directory::Aggregate,
     directory_digest: [u8; 32],
     directory_height: u32,
@@ -870,6 +872,7 @@ struct AppendBaseState {
 impl From<LoadedGraph> for AppendBaseState {
     fn from(graph: LoadedGraph) -> Self {
         Self {
+            private_directory: None,
             aggregate: graph.aggregate,
             directory_digest: graph.document.directory_digest,
             directory_height: graph.document.directory_height,

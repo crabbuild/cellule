@@ -18,6 +18,9 @@ const HEADER_BYTES: usize = 32;
 const LEAF_RECORD_BYTES: usize = 88;
 const BRANCH_RECORD_BYTES: usize = 56;
 const FANOUT: usize = 256;
+pub(in crate::replica) fn fits_leaf(database_pages: u32) -> bool {
+    database_pages > 0 && database_pages as usize <= FANOUT
+}
 const MAX_NODE_BYTES: u64 = (HEADER_BYTES + FANOUT * LEAF_RECORD_BYTES) as u64;
 
 #[derive(Clone)]
@@ -132,26 +135,30 @@ impl DirectoryTree {
 
     pub(super) async fn update(
         base: Verification<'_>,
-        root: [u8; 32],
-        height: u32,
-        aggregate: Aggregate,
+        root: DirectoryRoot,
         changes: BTreeMap<u32, DirectoryEntry>,
         retain_through: u32,
         final_state: Verification<'_>,
         expected_checksum: u64,
+        private_leaf: Option<&Self>,
     ) -> Result<Self> {
         update::run(
             base,
             root,
-            height,
-            aggregate,
             changes,
             retain_through,
             final_state,
             expected_checksum,
+            private_leaf,
         )
         .await
     }
+}
+
+pub(super) struct DirectoryRoot {
+    pub digest: [u8; 32],
+    pub height: u32,
+    pub aggregate: Aggregate,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
