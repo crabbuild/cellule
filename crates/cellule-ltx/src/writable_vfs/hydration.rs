@@ -112,6 +112,9 @@ impl Registration {
                 ffi::SQLITE_FCNTL_FILE_POINTER,
                 (&mut file as *mut *mut ffi::sqlite3_file).cast(),
             ))?;
+            // Managed SQLite admission wraps the selected sparse VFS. Peel
+            // that checked wrapper before validating the activation identity.
+            let file = crate::db::disk::underlying_file(file);
             if file.is_null() || !std::ptr::eq((*file).pMethods, &METHODS) {
                 return Err(LtxError::InvalidState(
                     "sparse SQLite main file unavailable",

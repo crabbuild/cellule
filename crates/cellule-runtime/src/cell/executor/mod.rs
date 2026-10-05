@@ -932,6 +932,9 @@ impl CellExecutor {
             Ok(value) => value,
             Err(TransactionError::Operation(error)) => return Err(error),
             Err(TransactionError::Admission(error)) => return Err(admission_error(error)),
+            Err(TransactionError::RolledBack { resource, .. }) => {
+                return Err(admission_error(resource));
+            }
             Err(error) => {
                 self.fenced = true;
                 return Err(transaction_error(error));
@@ -1255,6 +1258,7 @@ impl CellExecutor {
             Ok(value) => Ok(value),
             Err(TransactionError::Operation(error)) => Err(error),
             Err(TransactionError::Admission(error)) => Err(admission_error(error)),
+            Err(TransactionError::RolledBack { resource, .. }) => Err(admission_error(resource)),
             Err(error) => {
                 self.fenced = true;
                 Err(transaction_error(error))
@@ -1442,6 +1446,7 @@ fn runtime_metadata(
 fn transaction_error(error: TransactionError<Error>) -> Error {
     match error {
         TransactionError::Admission(error) => admission_error(error),
+        TransactionError::RolledBack { resource, .. } => admission_error(resource),
         TransactionError::Operation(error) => error,
         TransactionError::Sqlite(error) => error.into(),
         TransactionError::Capture(error) => error.into(),

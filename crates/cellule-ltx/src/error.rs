@@ -140,8 +140,10 @@ impl fmt::Display for LimitKind {
 /// `Operation` proves SQLite rolled the transaction back. `Sqlite` includes
 /// begin, rollback, or commit failures; commit failures fence the writer because
 /// their outcome can be ambiguous. `Admission` occurs before SQLite starts and
-/// leaves the writer reusable. `Capture` occurs after a successful commit while
-/// establishing the WAL cut required for later LTX capture.
+/// leaves the writer reusable. `RolledBack` preserves a resource refusal after
+/// the callback plus any original operation error, with SQLite rollback proven.
+/// `Capture` preserves capture-session failures, including a fenced session
+/// and failure to establish a committed WAL cut required for later LTX capture.
 #[derive(Debug, thiserror::Error)]
 pub enum TransactionError<E: std::error::Error + 'static> {
     /// Resource admission failed before SQLite started; the writer stays usable.
@@ -150,10 +152,19 @@ pub enum TransactionError<E: std::error::Error + 'static> {
     /// The caller's operation failed after SQLite rolled the transaction back.
     #[error("transaction operation failed")]
     Operation(#[source] E),
+    /// Storage refused work after the callback, and SQLite proved rollback.
+    #[error("transaction resource refusal was rolled back")]
+    RolledBack {
+        /// Original resource refusal; the writer remains reusable.
+        #[source]
+        resource: LtxError,
+        /// Original handler error when the refusal interrupted its SQL.
+        operation: Option<E>,
+    },
     /// SQLite rejected the transaction; an ambiguous commit fences the writer.
     #[error("SQLite transaction failed")]
     Sqlite(#[source] rusqlite::Error),
-    /// The commit succeeded but its WAL cut could not be established.
+    /// The capture session is fenced, or its committed WAL cut could not be established.
     #[error("WAL capture boundary failed")]
     Capture(#[source] LtxError),
 }

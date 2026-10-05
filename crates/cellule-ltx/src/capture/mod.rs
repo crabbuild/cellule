@@ -117,8 +117,8 @@ pub(crate) struct CaptureEngine {
     ///
     /// A commit whose delta cannot fit this bound is captured as a full
     /// database image instead, which is bounded by the host's `max_file_bytes`.
-    /// The commit-time admission in `Db::transaction_with` normally refuses such
-    /// a commit before SQLite publishes it.
+    /// The managed database admits file growth and reserves the bounded image
+    /// before COMMIT; an oversized delta does not itself refuse the transaction.
     max_incremental_bytes: u64,
     #[cfg(feature = "replica")]
     sealed_l0_captured_indexes: HashMap<u64, Vec<u8>>,

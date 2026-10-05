@@ -36,3 +36,20 @@ before acknowledgement.
 
 Run [the local example](../examples/local_roundtrip.rs) to see write, capture,
 source removal, restore, and read-back.
+
+
+## Local disk admission
+
+Managed connections use a per-session wrapper around the host's selected SQLite
+VFS. It admits database, WAL, shared-memory and temporary-file growth before
+I/O, and keeps uncertain write residue charged. Sparse inherited pages retain
+the sparse VFS's materialization accounting. Closing the session releases its
+handles and unregisters its wrapper.
+
+Transaction admission reserves capture credit from the database image bound.
+Before COMMIT, a second check admits remaining dirty-page and checkpoint I/O.
+A refusal after the callback returns `TransactionError::RolledBack` only after
+SQLite proves rollback; it retains the resource cause and any operation error.
+The runtime can then reuse the owner and retry the original identity. Ambiguous
+COMMIT, rollback, and capture failures still fence. Pruning an older published
+cut retains credit for newer pending commits.

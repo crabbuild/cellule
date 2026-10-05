@@ -354,25 +354,28 @@ fn truncate_boundary_image_may_exceed_the_incremental_bound() {
 #[test]
 fn local_disk_admission_rejects_before_running_the_transaction() {
     let temp = tempfile::TempDir::new().unwrap();
-    let budget = crate::DiskBudget::new(255);
+    let budget = crate::DiskBudget::new(4 << 20);
     let host = crate::Host::default().with_local_disk_budget(budget.clone());
-    let limits = Limits {
-        max_capture_bytes: 128,
-        ..Limits::default()
-    };
-    let mut db = Db::open_with_host(&temp.path().join("disk.sqlite"), limits, host).unwrap();
+    let mut db =
+        Db::open_with_host(&temp.path().join("disk.sqlite"), Limits::default(), host).unwrap();
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE t(v)"))
+        .unwrap();
+    db.capture().unwrap();
+    let settled = budget.used();
+    let blocker = budget.try_reserve(budget.available()).unwrap();
     let ran = std::cell::Cell::new(false);
-
     let result = db.transaction(|_| {
         ran.set(true);
         Ok(())
     });
-
     assert!(matches!(
         result,
         Err(LtxError::Limit(crate::LimitKind::LocalDiskBytes))
     ));
     assert!(!ran.get());
+    drop(blocker);
+    assert_eq!(budget.used(), settled);
+    db.close().unwrap();
     assert_eq!(budget.used(), 0);
 }
 
@@ -441,7 +444,21 @@ fn pending_wal_and_captured_segments_reconcile_and_release_disk_admission() {
         transaction.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES (1)")
     })
     .unwrap();
-    assert_eq!(budget.used(), 2 * limits.max_capture_bytes);
+    let physical_before_capture = std::fs::metadata(&path).unwrap().len()
+        + std::fs::metadata(format!("{}-wal", path.display()))
+            .unwrap()
+            .len()
+        + std::fs::metadata(format!("{}-shm", path.display()))
+            .unwrap()
+            .len();
+    assert!(
+        budget.used() > physical_before_capture,
+        "retain credit until the commit is captured"
+    );
+    assert!(
+        budget.used() < limits.max_capture_bytes,
+        "a tiny write must not reserve the incremental ceiling"
+    );
 
     let batch = db.capture().unwrap();
     let retained = batch
@@ -453,7 +470,10 @@ fn pending_wal_and_captured_segments_reconcile_and_release_disk_admission() {
         .unwrap()
         .len();
     let database = std::fs::metadata(&path).unwrap().len();
-    assert_eq!(budget.used(), database + retained + wal);
+    let shm = std::fs::metadata(format!("{}-shm", path.display()))
+        .unwrap()
+        .len();
+    assert_eq!(budget.used(), database + retained + wal + shm);
 
     db.close().unwrap();
     assert_eq!(budget.used(), 0);
@@ -546,3 +566,281 @@ fn truncate_checkpoint_and_auto_vacuum_preserve_every_cut() {
 
 #[cfg(feature = "replica")]
 mod continuation;
+
+#[test]
+fn small_independent_cells_share_disk_by_actual_growth() {
+    const CELLS: usize = 16;
+    let temp = tempfile::TempDir::new().unwrap();
+    let budget = crate::DiskBudget::new(1 << 30);
+    let host = crate::Host::default().with_local_disk_budget(budget.clone());
+    let mut databases = Vec::new();
+    for index in 0..CELLS {
+        let mut db = Db::open_with_host(
+            &temp.path().join(format!("cell-{index}.sqlite")),
+            Limits::default(),
+            host.clone(),
+        )
+        .unwrap();
+        db.transaction(|tx| {
+            tx.execute_batch("CREATE TABLE value(n INTEGER); INSERT INTO value VALUES (0)")
+        })
+        .unwrap();
+        db.capture().unwrap();
+        databases.push(db);
+    }
+    let settled_before = budget.used();
+    let barrier = Arc::new(std::sync::Barrier::new(CELLS + 1));
+    let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let (entered, refused, peak) = std::thread::scope(|scope| {
+        let mut jobs = Vec::new();
+        for (index, db) in databases.iter_mut().enumerate() {
+            let barrier = barrier.clone();
+            let release = release.clone();
+            let sender = sender.clone();
+            jobs.push(scope.spawn(move || {
+                barrier.wait();
+                let result = db.transaction(|tx| {
+                    tx.execute("UPDATE value SET n=n+1", [])?;
+                    sender.send((index, None)).unwrap();
+                    let (lock, changed) = &*release;
+                    let mut ready = lock.lock().unwrap();
+                    while !*ready {
+                        ready = changed.wait(ready).unwrap();
+                    }
+                    Ok(())
+                });
+                match result {
+                    Ok(()) => {
+                        db.capture().unwrap();
+                        true
+                    }
+                    Err(error) => {
+                        sender.send((index, Some(error.to_string()))).unwrap();
+                        false
+                    }
+                }
+            }));
+        }
+        barrier.wait();
+        let mut entered = 0;
+        let mut refused = Vec::new();
+        for _ in 0..CELLS {
+            match receiver.recv_timeout(Duration::from_secs(10)) {
+                Ok((_, None)) => entered += 1,
+                Ok((index, Some(error))) => refused.push((index, error)),
+                Err(error) => {
+                    refused.push((CELLS, error.to_string()));
+                    break;
+                }
+            }
+        }
+        let peak = budget.used();
+        let (lock, changed) = &*release;
+        *lock.lock().unwrap() = true;
+        changed.notify_all();
+        let committed = jobs
+            .into_iter()
+            .map(|job| job.join().unwrap())
+            .filter(|committed| *committed)
+            .count();
+        assert_eq!(committed, entered);
+        (entered, refused, peak)
+    });
+    let settled_after = budget.used();
+    for db in databases {
+        db.close().unwrap();
+    }
+    assert_eq!(budget.used(), 0);
+    println!(
+        "small-cell admission: entered={entered} refused={refused:?} settled_before={settled_before} peak_reserved={peak} settled_after={settled_after}"
+    );
+    assert_eq!(
+        entered, CELLS,
+        "independent tiny writes must fit the actual 1-GiB disk budget"
+    );
+}
+
+#[test]
+fn disk_growth_refusal_rolls_back_spilled_pages_and_keeps_their_charge() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = temp.path().join("spilled.sqlite");
+    let budget = crate::DiskBudget::new(1 << 20);
+    let host = crate::Host::default().with_local_disk_budget(budget.clone());
+    let mut db = Db::open_with_host(&path, Limits::default(), host).unwrap();
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE payload(v BLOB)"))
+        .unwrap();
+    db.capture().unwrap();
+    let used_before = budget.used();
+    let result = db.transaction_with(|tx| -> rusqlite::Result<()> {
+        for _ in 0..1000 {
+            tx.execute("INSERT INTO payload VALUES (zeroblob(8192))", [])?;
+        }
+        Ok(())
+    });
+    assert!(
+        matches!(result, Err(crate::TransactionError::RolledBack { resource: LtxError::Limit(crate::LimitKind::LocalDiskBytes), operation: Some(ref error) }) if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull)),
+        "{result:?}"
+    );
+    assert!(
+        !db.fenced,
+        "SQLite proves rollback after FULL before the commit hook"
+    );
+    let count = db
+        .query_with(|connection| {
+            connection.query_row("SELECT count(*) FROM payload", [], |row| {
+                row.get::<_, u64>(0)
+            })
+        })
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(
+        budget.used() > used_before,
+        "rollback does not delete spilled WAL bytes"
+    );
+    assert!(budget.used() <= budget.capacity());
+    let physical = std::fs::metadata(&path).unwrap().len()
+        + std::fs::metadata(format!("{}-wal", path.display()))
+            .unwrap()
+            .len()
+        + std::fs::metadata(format!("{}-shm", path.display()))
+            .unwrap()
+            .len();
+    assert!(
+        budget.used() >= physical,
+        "retained bytes and spill residue stay charged"
+    );
+    // The VFS error source remains available to the runtime, which must not
+    // confuse a rolled-back storage refusal with an application-domain error.
+    assert!(
+        db.disk.take_error().is_none(),
+        "the proved rollback owns its exact quota source"
+    );
+    db.transaction(|tx| {
+        tx.execute("INSERT INTO payload VALUES ('retry')", [])
+            .map(|_| ())
+    })
+    .unwrap();
+    let batch = db.capture().unwrap();
+    assert!(!batch.segments.is_empty());
+    db.close().unwrap();
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn bounded_small_budget_captures_large_writes_as_full_images_for_each_page_size() {
+    for page_size in [512_u32, 4096, 65536] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("image.sqlite");
+        let initial = Connection::open(&path).unwrap();
+        initial.pragma_update(None, "page_size", page_size).unwrap();
+        initial.execute_batch("VACUUM").unwrap();
+        drop(initial);
+        let budget = crate::DiskBudget::new(16 << 20);
+        let host = crate::Host::default().with_local_disk_budget(budget.clone());
+        let limits = Limits {
+            max_capture_bytes: 128,
+            max_database_bytes: 4 << 20,
+            max_file_bytes: 8 << 20,
+            ..Limits::default()
+        };
+        let mut db = Db::open_with_host(&path, limits, host).unwrap();
+        db.transaction(|tx| {
+            tx.execute_batch(
+                "CREATE TABLE payload(v); INSERT INTO payload VALUES (randomblob(300000))",
+            )
+        })
+        .unwrap();
+        let batch = db.capture().unwrap();
+        assert!(
+            batch
+                .segments
+                .iter()
+                .any(|segment| segment.info().size_bytes > limits.max_capture_bytes)
+        );
+        let plan = VerifiedPlan::new(&batch.segments, batch.position, limits).unwrap();
+        let restored = temp.path().join("restored.sqlite");
+        restore_exact(&plan, &restored).unwrap();
+        let conn = Connection::open(&restored).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT length(v) FROM payload", [], |r| r.get::<_, u64>(0))
+                .unwrap(),
+            300000
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        db.close().unwrap();
+        assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
+fn committed_cut_and_truncate_capture_finish_using_their_reserved_credit() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let budget = crate::DiskBudget::new(8 << 20);
+    let host = crate::Host::default().with_local_disk_budget(budget.clone());
+    let mut db = Db::open_with_host(
+        &temp.path().join("reserved.sqlite"),
+        Limits::default(),
+        host,
+    )
+    .unwrap();
+    db.capture.truncate_page_n = 1;
+    db.transaction(|tx| {
+        tx.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES (randomblob(30000))")
+    })
+    .unwrap();
+    let blocker = budget.try_reserve(budget.available()).unwrap();
+    let batch = db.capture().unwrap();
+    assert!(
+        batch.segments.len() > 1,
+        "exercise ordinary and boundary cuts"
+    );
+    assert!(!db.has_pending_capture());
+    let plan = VerifiedPlan::new(&batch.segments, batch.position, Limits::default()).unwrap();
+    let restored = temp.path().join("restored.sqlite");
+    restore_exact(&plan, &restored).unwrap();
+    assert_eq!(
+        Connection::open(&restored)
+            .unwrap()
+            .query_row("SELECT length(v) FROM t", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        30000
+    );
+    drop(blocker);
+    db.close().unwrap();
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+#[cfg(feature = "replica")]
+fn pruning_a_published_cut_preserves_newer_pending_capture_credit() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let budget = crate::DiskBudget::new(8 << 20);
+    let host = crate::Host::default().with_local_disk_budget(budget.clone());
+    let mut db =
+        Db::open_with_host(&temp.path().join("pruned.sqlite"), Limits::default(), host).unwrap();
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES (0)"))
+        .unwrap();
+    let seed = db.capture().unwrap();
+    db.transaction(|tx| tx.execute("UPDATE t SET v=1", []).map(|_| ()))
+        .unwrap();
+    assert!(db.has_pending_capture());
+    let reserved_before = budget.used();
+    let removed_bytes = seed
+        .segments
+        .iter()
+        .map(|segment| segment.info().size_bytes)
+        .sum::<u64>();
+    assert_eq!(db.prune_captured(&seed).unwrap(), seed.segments.len());
+    assert_eq!(budget.used(), reserved_before - removed_bytes);
+    let blocker = budget.try_reserve(budget.available()).unwrap();
+    let next = db.capture().unwrap();
+    assert_eq!(next.position.txid, seed.position.txid + 1);
+    drop(blocker);
+    db.close().unwrap();
+    assert_eq!(budget.used(), 0);
+}

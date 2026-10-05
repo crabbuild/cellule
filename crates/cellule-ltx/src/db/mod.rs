@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, Transaction};
 
+pub(crate) mod disk;
+
 use crate::{CaptureBatch, Limits, LocalSegment, LtxError, Position, Result, SegmentInfo};
 use crate::{capture::CaptureEngine, host::LtxHost, ltx, types::Txid};
 
@@ -40,7 +42,7 @@ pub struct Db {
     fenced: bool,
     retained_bytes: u64,
     retained_segments: usize,
-    local_disk: crate::DiskReservation,
+    #[cfg(feature = "replica")]
     sparse: bool,
     #[cfg(feature = "replica")]
     retained: Vec<LocalSegment>,
@@ -49,6 +51,8 @@ pub struct Db {
     pending_durability: Vec<PathBuf>,
     #[cfg(feature = "replica")]
     paged: Option<crate::writable_vfs::Registration>,
+    // Connections and sparse registrations must release before VFS discovery.
+    disk: disk::Registration,
 }
 
 impl Db {
@@ -84,6 +88,7 @@ impl Db {
             Some(registration.vfs()),
             host,
             true,
+            Some(page_size),
             None,
         )
         .map_err(|error| registration.take_error().unwrap_or(error))?;
@@ -144,10 +149,12 @@ impl Db {
         result
     }
 
-    /// Takes the provider/checksum source behind a sparse SQLite I/O error.
+    /// Takes the quota or provider/checksum source behind a SQLite I/O error.
     #[cfg(feature = "replica")]
     pub fn take_io_error(&self) -> Option<LtxError> {
-        self.paged.as_ref().and_then(|p| p.take_error())
+        self.disk
+            .take_error()
+            .or_else(|| self.paged.as_ref().and_then(|p| p.take_error()))
     }
 
     /// Deletes this session's exact captured artifacts after their root publishes.
@@ -241,6 +248,7 @@ impl Db {
             vfs.as_deref(),
             host,
             false,
+            None,
             Some(local_disk),
         )?;
         db.capture.seed_continuation(
@@ -264,7 +272,7 @@ impl Db {
     /// Opens a fresh session using the host's filesystem, SQLite VFS and clock.
     pub fn open_with_host(path: &Path, limits: Limits, host: crate::Host) -> Result<Self> {
         let vfs = host.sqlite_vfs.clone();
-        Self::open_inner(path, limits, vfs.as_deref(), host, false, None)
+        Self::open_inner(path, limits, vfs.as_deref(), host, false, None, None)
     }
 
     fn open_inner(
@@ -273,6 +281,7 @@ impl Db {
         vfs: Option<&str>,
         facilities: crate::Host,
         sparse: bool,
+        page_size_hint: Option<u32>,
         local_disk: Option<crate::DiskReservation>,
     ) -> Result<Self> {
         let limits = limits.validate()?;
@@ -323,13 +332,39 @@ impl Db {
             }
             None => facilities.reserve_local_disk(if sparse { 0 } else { database_bytes })?,
         };
+        let page_size = match page_size_hint {
+            Some(size) => size,
+            None if database_bytes >= 18 => {
+                let header = facilities.filesystem.open(path)?.read_exact_at(0, 18)?;
+                let size = u16::from_be_bytes([header[16], header[17]]);
+                let size = if size == 1 { 65536 } else { u32::from(size) };
+                if (512..=65536).contains(&size) && size.is_power_of_two() {
+                    size
+                } else {
+                    4096
+                }
+            }
+            None => 4096,
+        };
+        let disk = disk::Registration::new(
+            path,
+            vfs,
+            local_disk,
+            page_size,
+            database_bytes,
+            sparse,
+            limits.max_file_bytes,
+        )?;
+        let vfs = Some(disk.vfs()?);
         // Atomic directory creation fences concurrent handles and stale sessions.
         // Never unlink it on close: an old open file must not acquire a new epoch.
         facilities
             .filesystem
             .create_dir(&CaptureEngine::meta_path_for(path))?;
-        let capture = CaptureEngine::open_with_host(path, host, vfs, limits.max_capture_bytes)?;
-        let writer = open_connection(path, vfs)?;
+        let capture = CaptureEngine::open_with_host(path, host, vfs, limits.max_capture_bytes)
+            .map_err(|error| disk.take_error().unwrap_or(error))?;
+        let writer = open_connection(path, vfs)
+            .map_err(|error| disk.take_error().unwrap_or(error.into()))?;
         writer.busy_timeout(std::time::Duration::from_secs(1))?;
         writer.pragma_update(None, "wal_autocheckpoint", 0)?;
         writer.pragma_update(None, "synchronous", "FULL")?;
@@ -350,7 +385,7 @@ impl Db {
             fenced: false,
             retained_bytes: 0,
             retained_segments: 0,
-            local_disk,
+            #[cfg(feature = "replica")]
             sparse,
             #[cfg(feature = "replica")]
             retained: Vec::new(),
@@ -359,6 +394,7 @@ impl Db {
             pending_durability: Vec::new(),
             #[cfg(feature = "replica")]
             paged: None,
+            disk,
         })
     }
 
@@ -370,26 +406,36 @@ impl Db {
         &mut self,
         operation: impl FnOnce(&Transaction<'_>) -> rusqlite::Result<T>,
     ) -> Result<T> {
-        self.transaction_with(operation)
-            .map_err(|error| match error {
+        let result = self.transaction_with(operation);
+        result.map_err(|error| {
+            let error = match error {
                 crate::TransactionError::Admission(error) => error,
+                crate::TransactionError::RolledBack { resource, .. } => resource,
                 crate::TransactionError::Operation(error)
                 | crate::TransactionError::Sqlite(error) => error.into(),
                 crate::TransactionError::Capture(error) => error,
-            })
+            };
+            // A failed rollback/COMMIT keeps its ambiguity and original source.
+            if self.fenced {
+                error
+            } else {
+                self.disk.take_error().unwrap_or(error)
+            }
+        })
     }
 
     /// Commits one transaction while preserving application-domain failures.
     ///
-    /// An `Operation` result guarantees the transaction was rolled back and the
-    /// writer remains reusable. SQLite commit/rollback ambiguity fences the
-    /// writer. A successful return is still local-only until capture and remote
-    /// publication complete.
+    /// `Operation` and `RolledBack` prove the transaction was rolled back and
+    /// the writer remains reusable. `RolledBack` preserves a resource refusal
+    /// after the callback, including its original operation error when present.
+    /// SQLite commit/rollback ambiguity fences the writer. A successful return
+    /// is still local-only until capture and remote publication complete.
     ///
     /// A commit larger than `Limits::max_capture_bytes` is not refused: the
     /// later capture represents it as a full database image, which is bounded
-    /// by `Limits::max_file_bytes`, so a large write can never leave a local
-    /// commit that the session cannot capture.
+    /// by `Limits::max_file_bytes`. Capture still fails and fences if the full
+    /// image exceeds that artifact limit.
     pub fn transaction_with<T, E>(
         &mut self,
         operation: impl FnOnce(&Transaction<'_>) -> std::result::Result<T, E>,
@@ -401,12 +447,12 @@ impl Db {
             .map_err(crate::TransactionError::Capture)?;
         self.ensure_capacity()
             .map_err(crate::TransactionError::Admission)?;
-        let disk_before = self.local_disk.bytes();
-        let write_bytes = self.limits.max_capture_bytes.checked_mul(2).ok_or(
-            crate::TransactionError::Admission(LtxError::Limit(crate::LimitKind::LocalDiskBytes)),
-        )?;
-        self.local_disk
-            .try_grow(write_bytes)
+        let pages = self
+            .writer
+            .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+            .map_err(crate::TransactionError::Sqlite)?;
+        self.disk
+            .admit_capture(pages)
             .map_err(crate::TransactionError::Admission)?;
         self.observer.reset();
         let tx = match self
@@ -415,7 +461,9 @@ impl Db {
         {
             Ok(tx) => tx,
             Err(error) => {
-                let _ = self.local_disk.resize(disk_before);
+                if self.required_cut.is_none() && self.capture.pos().txid.0 > 0 {
+                    let _ = self.disk.settle(self.retained_bytes, pages, false);
+                }
                 return Err(crate::TransactionError::Sqlite(error));
             }
         };
@@ -435,10 +483,46 @@ impl Db {
                     self.fenced = true;
                     return Err(crate::TransactionError::Sqlite(rollback));
                 }
-                let _ = self.local_disk.resize(disk_before);
+                if self.required_cut.is_none() && self.capture.pos().txid.0 > 0 {
+                    let _ = self.reconcile_local_disk();
+                }
+                if let Some(resource) = self.disk.take_error() {
+                    if resource.classify() == crate::FailureClass::Capacity {
+                        return Err(crate::TransactionError::RolledBack {
+                            resource,
+                            operation: Some(error),
+                        });
+                    }
+                    self.fenced = true;
+                    return Err(crate::TransactionError::Capture(resource));
+                }
                 return Err(crate::TransactionError::Operation(error));
             }
         };
+        let pending_pages = tx.query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0));
+        let admission = pending_pages
+            .map_err(LtxError::from)
+            .and_then(|pages| self.disk.seal(pages));
+        if let Err(error) = admission {
+            // The callback ran, but SQLite has not published a commit. Return a
+            // typed resource refusal only after proving rollback; do not label
+            // this a pre-callback Admission error.
+            if let Err(rollback) = tx.rollback() {
+                self.fenced = true;
+                return Err(crate::TransactionError::Sqlite(rollback));
+            }
+            if self.required_cut.is_none() && self.capture.pos().txid.0 > 0 {
+                let _ = self.reconcile_local_disk();
+            }
+            if error.classify() == crate::FailureClass::Capacity {
+                return Err(crate::TransactionError::RolledBack {
+                    resource: error,
+                    operation: None,
+                });
+            }
+            self.fenced = true;
+            return Err(crate::TransactionError::Capture(error));
+        }
         if let Err(error) = tx.commit() {
             // Commit failure is potentially ambiguous even if SQLite did not
             // invoke the WAL hook. Never accept another mutation here.
@@ -448,7 +532,9 @@ impl Db {
         match self.observer.cut(&self.path, &self.host) {
             Ok(Some(cut)) => self.required_cut = Some(cut),
             Ok(None) => {
-                let _ = self.local_disk.resize(disk_before);
+                if self.required_cut.is_none() && self.capture.pos().txid.0 > 0 {
+                    let _ = self.reconcile_local_disk();
+                }
             }
             Err(error) => {
                 self.fenced = true;
@@ -598,7 +684,13 @@ impl Db {
         self.capture.start_timing(self.host.now_monotonic());
         self.capture
             .timing_begin(crate::capture::TimingPhase::Preparation);
-        if let Err(error) = self.ensure_capacity() {
+        let preparation = self.ensure_capacity().and_then(|()| {
+            let pages = self
+                .writer
+                .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))?;
+            self.disk.admit_capture(pages)
+        });
+        if let Err(error) = preparation {
             self.capture
                 .timing_end(crate::capture::TimingPhase::Preparation);
             let timing = self.capture.finish_timing(self.host.now_monotonic());
@@ -682,12 +774,10 @@ impl Db {
         let (initial, mut timing, _) = self.capture_inner(false);
         let result = (|| {
             let mut batch = initial?;
-            self.local_disk.try_grow(
-                self.limits
-                    .max_capture_bytes
-                    .checked_mul(2)
-                    .ok_or(LtxError::Limit(crate::LimitKind::LocalDiskBytes))?,
-            )?;
+            let pages = self
+                .writer
+                .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))?;
+            self.disk.admit_capture(pages)?;
             let before = self.capture.pos();
             self.capture.start_timing(self.host.now_monotonic());
             let checkpoint_result = self.capture.checkpoint(mode);
@@ -802,7 +892,15 @@ impl Db {
         checksums.verify_database(&ltx_host, path, continuation.page_size)?;
         let vfs = host.sqlite_vfs.clone();
         let local_disk = host.reserve_local_disk(database_bytes)?;
-        let mut db = Self::open_inner(path, limits, vfs.as_deref(), host, false, Some(local_disk))?;
+        let mut db = Self::open_inner(
+            path,
+            limits,
+            vfs.as_deref(),
+            host,
+            false,
+            None,
+            Some(local_disk),
+        )?;
         db.capture.seed_continuation(
             continuation.position,
             checksums,
@@ -833,7 +931,10 @@ impl Db {
         self.host.observe_ltx_capture(&timing, batch.is_ok());
         let mut batch = batch?;
         batch.timing = timing;
-        self.local_disk.try_grow(self.limits.max_file_bytes)?;
+        let pages = self
+            .writer
+            .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))?;
+        self.disk.admit_capture(pages)?;
         let (mut scratch, mut output) =
             SnapshotScratch::create(&self.host, destination, self.limits.max_file_bytes)?;
         let pos: Position = self.capture.snapshot_to_writer(&mut output)?.into();
@@ -920,22 +1021,11 @@ impl Db {
     }
 
     fn reconcile_local_disk(&self) -> Result<()> {
-        let database_bytes = if self.sparse {
-            0
-        } else {
-            self.host.filesystem.file_len(&self.path)?
-        };
-        let wal_bytes = match self.host.filesystem.file_len(&self.capture.wal_path()) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(error) => return Err(error.into()),
-        };
-        let live = database_bytes
-            .checked_add(self.retained_bytes)
-            .ok_or(LtxError::Limit(crate::LimitKind::LocalDiskBytes))?
-            .checked_add(wal_bytes)
-            .ok_or(LtxError::Limit(crate::LimitKind::LocalDiskBytes))?;
-        self.local_disk.resize(live)
+        let pages = self
+            .writer
+            .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))?;
+        self.disk
+            .settle(self.retained_bytes, pages, self.required_cut.is_some())
     }
 }
 

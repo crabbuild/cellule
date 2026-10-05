@@ -463,3 +463,65 @@ async fn node_byte_admission_rejects_before_sql_execution() {
     ));
     handle.drain().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn precommit_disk_refusal_rolls_back_and_reuses_the_same_owner_and_identity() {
+    let fixture = fixture();
+    let session = SessionId::from_bytes([146; 16]);
+    let disk = DiskBudget::new(1 << 30);
+    let runtime = CellRuntime::new_with_replica_host(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        2 * 1024 * 1024,
+        session,
+        ReplicaHost::default().with_local_disk_budget(disk.clone()),
+    )
+    .unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, session).await;
+    let pressure = Arc::new(Mutex::new(None));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let identity = mutation_identity_window(146, 10, 10000);
+    let digest = Digest::from_bytes([146; 32]);
+    let callback_pressure = pressure.clone();
+    let callback_disk = disk.clone();
+    let callback_calls = calls.clone();
+    let refused = handle
+        .execute(identity, digest, 20, 1024, 1024, move |tx| {
+            callback_calls.fetch_add(1, Ordering::SeqCst);
+            tx.execute("UPDATE counter SET value = value + 1", [])?;
+            // Remove the remaining headroom after SQL has run, before COMMIT.
+            // The managed database must prove rollback rather than fence a safe
+            // owner or claim the callback never ran.
+            *callback_pressure.lock().unwrap() = Some(
+                callback_disk
+                    .try_reserve(callback_disk.available())
+                    .unwrap(),
+            );
+            Ok(HandlerOutcome::Success(vec![1]))
+        })
+        .await;
+    drop(pressure.lock().unwrap().take());
+    let after_refusal = read_counter(handle.clone()).await;
+    let retry_calls = calls.clone();
+    let retried = handle
+        .execute(identity, digest, 21, 1024, 1024, move |tx| {
+            retry_calls.fetch_add(1, Ordering::SeqCst);
+            tx.execute("UPDATE counter SET value = value + 1", [])?;
+            Ok(HandlerOutcome::Success(vec![1]))
+        })
+        .await;
+    let after_retry = read_counter(handle.clone()).await;
+    let shutdown = runtime.shutdown().await;
+    assert!(
+        matches!(
+            refused,
+            Err(cellule_runtime::Error::Capacity("local disk bytes"))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(after_refusal.unwrap(), 0_i64.to_be_bytes());
+    assert_eq!(retried.unwrap().commit_sequence(), 1);
+    assert_eq!(after_retry.unwrap(), 1_i64.to_be_bytes());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    shutdown.unwrap();
+    assert_eq!(disk.used(), 0);
+}
