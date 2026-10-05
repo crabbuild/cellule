@@ -2,9 +2,21 @@
 
 use super::*;
 
+fn isolated_replica_host() -> cellule_ltx::Host {
+    let host = cellule_ltx::Host::default();
+    let budget = cellule_ltx::DiskBudget::new(host.local_disk_capacity());
+    host.with_local_disk_budget(budget)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publication_borrow_cannot_starve_exact_maintenance_quiescence_or_release() {
     use cellule_runtime::cell::actor::{CellInventoryEntry, MaintenanceCellRelease};
+    // Model other live tests or runtimes using the process-wide default budget.
+    // This reservation must survive this runtime's complete shutdown.
+    let foreign_disk = cellule_ltx::Host::default()
+        .local_disk_budget()
+        .try_reserve(4096)
+        .unwrap();
     for release in [false, true] {
         let store = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
         let fixture = fixture_with_limits_and_store(
@@ -12,10 +24,20 @@ async fn publication_borrow_cannot_starve_exact_maintenance_quiescence_or_releas
             Limits::default(),
             Store::new(store.clone()),
         );
-        let (runtime, handle, _) = activate_runtime(&fixture, 16 << 20).await;
+        // Default hosts intentionally share a process-wide disk budget. Give
+        // each simulated node its own budget so zero verifies its cleanup,
+        // even while unrelated nodes retain their admitted artifacts.
+        let session = SessionId::from_bytes([4; 16]);
+        let runtime = CellRuntime::new_with_replica_host(
+            SqlWorkerPool::new(2, 10).unwrap(),
+            16 << 20,
+            session,
+            isolated_replica_host(),
+        )
+        .unwrap();
+        let handle = bootstrap_on(&runtime, &fixture, session).await;
         let owner = inventory::stable_owner(&runtime).await;
         let epoch = handle.owner_fence().epoch;
-        let session = SessionId::from_bytes([4; 16]);
         let identity = mutation_identity_window(96, 10, 10_000);
         let digest = Digest::from_bytes([96; 32]);
         store.arm_next_update();
@@ -139,10 +161,11 @@ async fn publication_borrow_cannot_starve_exact_maintenance_quiescence_or_releas
                 assert_eq!(idle.value().state, ControlState::Idle);
                 assert_eq!(idle.value().root.as_ref(), Some(&position.root));
                 let successor_session = SessionId::from_bytes([97; 16]);
-                let successor = CellRuntime::new(
+                let successor = CellRuntime::new_with_replica_host(
                     SqlWorkerPool::new(1, 10).unwrap(),
                     16 << 20,
                     successor_session,
+                    isolated_replica_host(),
                 )
                 .unwrap();
                 let restored = successor
@@ -169,6 +192,7 @@ async fn publication_borrow_cannot_starve_exact_maintenance_quiescence_or_releas
                 restored.drain().await.unwrap();
                 successor.shutdown().await.unwrap();
                 assert_eq!(successor.stats().retained_bytes(), 0);
+                assert_eq!(successor.stats().local_disk_reserved_bytes(), 0);
                 None
             }
             Some(other) => panic!("publication maintenance refused: {other:?}"),
@@ -183,6 +207,7 @@ async fn publication_borrow_cannot_starve_exact_maintenance_quiescence_or_releas
         assert_eq!(runtime.stats().retained_bytes(), 0);
         assert_eq!(runtime.stats().worker_jobs(), 0);
         assert_eq!(runtime.stats().local_disk_reserved_bytes(), 0);
+        assert_eq!(foreign_disk.bytes(), 4096);
     }
 }
 

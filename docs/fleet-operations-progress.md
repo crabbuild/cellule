@@ -7762,3 +7762,54 @@ Highest next priorities:
 3. Deliver W9's versioned fleet profile/runner and measured provider/process,
    sustained-load/soak and mixed-binary evidence, then exercise W10 rollout,
    rollback, stuck-drain and recovery runbooks.
+
+
+## October 5 2026 maintenance test disk-budget isolation checkpoint
+
+Parent: `7dad25d0881527ba5a65d9b82cd7ff1aa3978e31`. PR #37 merged on
+October 4; continuation PR #57 is mergeable, and fetched main
+`80c4fd99c10fc7e91ab34c628ea61fcd488e0cea` is an ancestor. There are no
+unmerged paths. Canonical minion remains `crates/cellule-host/minion`.
+
+The full Rust workspace run
+[37265455102](https://github.com/crabbuild/cellule/actions/runs/37265455102)
+failed in the new publication/maintenance regression's final disk-zero
+assertion. Its runtime used the intentionally process-wide default disk budget,
+which reports other live fixtures' reservations too. Holding an unrelated 4096
+byte default-budget reservation reproduced the same assertion failure in one
+selected test, without timing or parallel-load dependence.
+
+The donor and successor test nodes now each use a separate disk budget of the
+unchanged default capacity. The unrelated reservation remains live throughout
+both native quiescence and release variants. Donor disk, worker, retained-memory
+and active-Cell zero assertions remain required; successor disk-zero is also
+asserted after exact receipt recovery and native shutdown. The unrelated
+reservation must retain all 4096 bytes. Production budget sharing, shutdown and
+publication behavior are unchanged.
+
+Local Rust 1.97: all three public runtime maintenance regressions passed with
+parallel selected execution. Format, module layout and architecture boundaries
+passed. Exact native snapshot `a3cfd497438614af1bba7f75bd0b570bde7bdfd7`
+contains only this test change over the published parent and isolated workflow.
+[Run 37267463895](https://github.com/crabbuild/cellule/actions/runs/37267463895)
+is running both complete parallel runtime integration suites and warning-denied
+runtime lint; success is not yet claimed. The snapshot deliberately excludes
+unpublished Blob lifecycle work.
+
+The published parent's follower/object capacity, contract, website and cookbook
+quality checks passed. The earlier Compose run
+[37262366756](https://github.com/crabbuild/cellule/actions/runs/37262366756)
+finished: reader smoke and object-only routing passed, leased routing failed its
+local expired-burst query p99 gate. Retained frozen-binary evidence reports
+candidate/baseline p99 ratio 2.13677 (3.059677 ms / 1.431917 ms), p95 ratio 1.06777,
+and unchanged paced throughput. Its cause remains open; no gate is weakened or
+performance fix claimed. Complete current-head checks are still required.
+
+Highest next priorities:
+
+1. Complete exact native cleanup and full PR CI; diagnose the retained leased
+   routing tail-latency failure and constrained-reader availability gap.
+2. Finish and qualify unpublished Blob accepted-I/O ownership and integrate
+   logical upload/range/pin lifetimes into the existing native role barriers.
+3. Complete remaining W4–W10 fault, boot-lineage, process/provider, load,
+   mixed-version and rollout/rollback/recovery evidence. The plan remains open.
