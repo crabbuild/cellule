@@ -8,6 +8,7 @@ pub(crate) struct ManagedFixture {
     pub nodes: Vec<Arc<CellNode>>,
     pub boots: Vec<startup::BootOwner>,
     pub handle: CellHandle,
+    pub records: Arc<HashMap<CellId, Record>>,
 }
 
 impl ManagedFixture {
@@ -118,6 +119,7 @@ impl ManagedFixture {
                 node_id(index),
                 journal.clone(),
                 Arc::new(adapters::Cells {
+                    receiver_directory: None,
                     records: records.clone(),
                     local: index,
                     root: root.path().into(),
@@ -323,6 +325,7 @@ impl ManagedFixture {
             nodes,
             boots,
             handle,
+            records,
         }
     }
 

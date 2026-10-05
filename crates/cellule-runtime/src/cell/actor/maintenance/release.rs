@@ -23,11 +23,10 @@ pub(in crate::cell::actor) fn begin(
         let _ = reply.send(Err(Error::Fenced));
         return None;
     }
-    let Some(publisher) = active.publisher.as_ref() else {
-        refuse(reply, DrainBlocker::BusyExecution, None);
-        return None;
-    };
-    if publisher.control().value().epoch != epoch {
+    // This exact activation fence survives temporary publisher ownership by an
+    // accepted publication. Preflight still waits for that owner to return and
+    // for complete native settlement before the canonical final release.
+    if active.admission.owner_fence.epoch != epoch {
         let _ = reply.send(Err(Error::Fenced));
         return None;
     }

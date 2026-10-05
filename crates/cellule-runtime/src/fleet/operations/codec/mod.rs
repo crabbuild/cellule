@@ -15,6 +15,7 @@ mod follower_evacuation;
 mod inspection;
 mod maintenance_enrollments;
 mod reader_evacuation;
+mod receiver_recovery;
 mod recovery;
 mod registry;
 mod writer_inventory;
@@ -53,6 +54,8 @@ const WRITER_INVENTORY_BASIS: u8 = 26;
 const MAINTENANCE_ENROLLMENTS: u8 = 27;
 const MAINTENANCE_ENROLLMENTS_PAGE: u8 = 28;
 const MAINTENANCE_ENROLLMENTS_BASIS: u8 = 29;
+const RECEIVER_RECOVERY_BASIS: u8 = 30;
+const RECEIVER_RECOVERY_EVIDENCE: u8 = 31;
 
 fn encoder(kind: u8) -> Result<BoundedEncoder> {
     encoder_limited(kind, MAX_RECORD_BYTES)

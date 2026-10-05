@@ -1,14 +1,18 @@
-//! Full observation of this example's closed, writer-only construction profile.
-//! Role-enabled applications need their producer/native/policy collectors.
+//! Full bounded observation of the reference fleet's native role graph.
+//! Policy checks remain separate evidence and missing checks stay blocking.
 
 use super::*;
 use cellule_host::fleet::{
-    FleetFollowerReferences, FleetMaintenanceEnrollments, FleetNodeInventory,
-    FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation, FleetOwnedCell, FleetRoleCoverage,
-    FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest, FleetSnapshotSubject,
+    FleetFailedBootProcessRequest, FleetFailedBootProcesses, FleetFailedBootRetirement,
+    FleetFollowerEvacuationVerifier, FleetFollowerReferences, FleetMaintenanceEnrollments,
+    FleetNodeInventory, FleetNodeInventoryScan, FleetNodeSnapshot, FleetObservation,
+    FleetOwnedCell, FleetRoleCoverage, FleetRoster, FleetSnapshotNativePage, FleetSnapshotRequest,
+    FleetSnapshotSubject,
 };
 use cellule_runtime::control::{Control, ControlState};
-use cellule_runtime::fleet::operations::{EnrollmentRole, EnrollmentStatus, PublishedPosition};
+use cellule_runtime::fleet::operations::{
+    DrainBlocker, EnrollmentRole, EnrollmentStatus, PublishedPosition,
+};
 use cellule_runtime::node::NodeAdvertisement;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -27,14 +31,14 @@ pub(super) async fn complete_counts(
     fleet: &adapters::LocalFleet,
     roster: &FleetRoster,
     deadline: Instant,
-) -> JournalResult<Option<[usize; 3]>> {
+) -> JournalResult<Option<Vec<usize>>> {
     let capture = collect(fleet, roster, deadline).await?;
     if !capture.complete {
         return Ok(None);
     }
-    let mut counts = [0; 3];
+    let mut counts = vec![0; fleet.nodes.len()];
     for owned in capture.cells {
-        let index = (0..3)
+        let index = (0..fleet.nodes.len())
             .find(|n| node_id(*n) == owned.node && session(*n) == owned.session)
             .ok_or_else(|| invalid("example count endpoint differs"))?;
         counts[index] += 1;
@@ -47,13 +51,87 @@ pub(super) async fn observe(
     roster: &FleetRoster,
     deadline: Instant,
 ) -> JournalResult<FleetObservation> {
+    observe_inner(fleet, roster, deadline, None).await
+}
+
+pub(super) async fn observe_with_failed_boot_closure(
+    fleet: &adapters::LocalFleet,
+    roster: &FleetRoster,
+    deadline: Instant,
+    request: &FleetFailedBootProcessRequest,
+    processes: &dyn FleetFailedBootProcesses,
+    claimant: SessionId,
+) -> JournalResult<FleetObservation> {
+    observe_inner(
+        fleet,
+        roster,
+        deadline,
+        Some((request, processes, claimant)),
+    )
+    .await
+}
+
+async fn observe_inner(
+    fleet: &adapters::LocalFleet,
+    roster: &FleetRoster,
+    deadline: Instant,
+    failed_boot: Option<(
+        &FleetFailedBootProcessRequest,
+        &dyn FleetFailedBootProcesses,
+        SessionId,
+    )>,
+) -> JournalResult<FleetObservation> {
     let capture = collect(fleet, roster, deadline).await?;
+    let mut reader_checks = Vec::new();
+    let mut follower_checks = Vec::new();
+    let mut finished = capture.finished;
+    if let Some(original) = capture.maintenance_enrollments.as_ref() {
+        if let Some(verifier) = &fleet.reader_verifier {
+            reader_checks = verifier
+                .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
+                .await?;
+        }
+        let follower_verifier = FleetFollowerEvacuationVerifier::new(
+            fleet.boots[0].directory.clone(),
+            Arc::new(adapters::LocalSnapshots::new(fleet.nodes.clone())),
+        );
+        follower_checks = follower_verifier
+            .collect_maintenance(fleet.journal.as_ref(), original, roster, deadline, clock)
+            .await?;
+        roster.confirm(fleet.journal.as_ref(), deadline).await?;
+        finished = clock()?;
+    }
+    let failed_boot_closures = if let Some((request, processes, claimant)) = failed_boot {
+        let closure = FleetFailedBootRetirement::capture_retained(
+            fleet.journal.as_ref(),
+            &fleet.boots[0].directory,
+            roster,
+            request,
+            claimant,
+            deadline,
+            clock,
+        )
+        .await?
+        .confirm(
+            fleet.journal.as_ref(),
+            &fleet.boots[0].directory,
+            processes,
+            claimant,
+            deadline,
+            clock,
+        )
+        .await?;
+        finished = clock()?;
+        Some(vec![closure])
+    } else {
+        None
+    };
     let observation = FleetObservation::new(
         scope(),
         roster.snapshot().registry(),
         roster.snapshot().registry().revision(),
         capture.started,
-        capture.finished,
+        finished,
         capture.complete,
         capture.nodes,
         capture.cells,
@@ -62,12 +140,18 @@ pub(super) async fn observe(
         Some(coverage) => observation.with_role_coverage(coverage)?,
         None => observation,
     };
-    Ok(match capture.maintenance_enrollments {
-        Some(original) => observation
-            .with_maintenance_enrollments(original)?
-            .check_maintenance_policies(roster, capture.finished)?,
+    let observation = match failed_boot_closures {
+        Some(closures) => observation.with_failed_boot_closures(closures)?,
         None => observation,
-    })
+    };
+    let observation = match capture.maintenance_enrollments {
+        Some(original) => observation
+            .with_role_evacuations(reader_checks, follower_checks)?
+            .with_maintenance_enrollments(original)?
+            .check_maintenance_policies(roster, finished)?,
+        None => observation,
+    };
+    Ok(observation)
 }
 
 async fn page(
@@ -150,24 +234,49 @@ async fn collect(
         } else {
             None
         };
-    if fleet.nodes.len() != 3 || fleet.boots.len() != 3 || fleet.records.len() != CELL_COUNT {
+    if fleet.nodes.len() < 3 || fleet.boots.len() != fleet.nodes.len() || fleet.records.is_empty() {
         return Err(invalid("example construction profile differs"));
     }
     let directory = &fleet.boots[0].directory;
-    let expected_sessions = (0..3).map(session).collect::<Vec<_>>();
+    let mut expected_sessions = roster
+        .enrollments()
+        .iter()
+        .filter(|record| {
+            record.unresolved()
+                && record.status() == EnrollmentStatus::Established
+                && matches!(record.spec().role, EnrollmentRole::Node { .. })
+        })
+        .map(|record| record.spec().target.session)
+        .collect::<Vec<_>>();
+    expected_sessions.sort_by_key(|boot| *boot.as_bytes());
+    let node_enrollments_complete = roster.enrollments().iter().all(|record| {
+        !matches!(record.spec().role, EnrollmentRole::Node { .. })
+            || record.status() != EnrollmentStatus::Pending
+    });
+    let mut active_indices = Vec::with_capacity(expected_sessions.len());
+    for record in roster.enrollments().iter().filter(|record| {
+        record.unresolved()
+            && record.status() == EnrollmentStatus::Established
+            && matches!(record.spec().role, EnrollmentRole::Node { .. })
+    }) {
+        let endpoint = record.spec().target;
+        if let Some(index) = (0..fleet.nodes.len())
+            .find(|index| node_id(*index) == endpoint.node && session(*index) == endpoint.session)
+        {
+            active_indices.push(index);
+        }
+    }
+    active_indices.sort_unstable();
     let mut advertised = directory.advertised_sessions(started, 128).await?;
     advertised.sort_by_key(|boot| *boot.as_bytes());
     let mut complete = advertised == expected_sessions
-        && roster.enrollments().iter().all(|record| {
-            matches!(record.spec().role, EnrollmentRole::Node { .. })
-                && record.status() != EnrollmentStatus::Pending
-        });
+        && active_indices.len() == expected_sessions.len()
+        && node_enrollments_complete;
     let mut nodes = Vec::new();
     let mut cells = Vec::new();
     let mut seen = HashSet::new();
     let mut inventories: Vec<Option<FleetNodeInventory>> = Vec::new();
-    let mut references = Vec::new();
-    for index in 0..3 {
+    for index in active_indices.iter().copied() {
         let mut scan = FleetNodeInventoryScan::new(roster, node_id(index), session(index))?;
         let mut stable = true;
         while let Some(subject) = scan.next_subject()? {
@@ -200,40 +309,31 @@ async fn collect(
         cells.extend(scan.cells().iter().cloned());
         let inventory = if stable {
             let inventory = scan.finish()?;
-            let bindings = inventory.bindings();
-            // Absence requires this bootstrapped closed writer composition,
-            // native traversal and unexpected directory discovery together.
-            complete &= bindings.managed_startup
-                && !bindings.readers
-                && !bindings.follower_store
-                && !bindings.follower_producer
-                && !bindings.durability_supervisor
-                && inventory.node_log().is_none()
-                && inventory.transitioning_cells().is_empty()
-                && inventory.validate_enrollments(roster).is_ok();
+            // Global role coverage below applies enrollment validation with
+            // the exact cross-node proof for Established follower lanes that
+            // have not received their first append yet.
+            complete &=
+                inventory.bindings().managed_startup && inventory.transitioning_cells().is_empty();
             Some(inventory)
         } else {
             None
         };
         inventories.push(inventory);
         // Include expired and fenced leader obligations; live discovery alone
-        // could hide a follower role left by a failed boot.
-        let logs = FleetFollowerReferences::collect(
-            directory,
-            roster,
-            node_id(index),
-            128,
-            deadline,
-            clock,
-        )
-        .await?;
-        complete &= logs.entries().is_empty() && logs.validate_enrollments(roster).is_ok();
-        references.push(logs);
+        // could hide a follower role left by a failed boot. The graph may be
+        // nonempty; its exact match is checked after every native recheck.
         nodes.push(
             fleet.boots[index]
                 .refresh_capacity(index, fleet.journal.as_ref(), deadline)
                 .await?,
         );
+    }
+    let members = (0..fleet.nodes.len()).map(node_id).collect::<Vec<_>>();
+    let mut references =
+        FleetFollowerReferences::collect_all(directory, roster, &members, 128, deadline, clock)
+            .await?;
+    for logs in &references {
+        complete &= logs.validate_enrollments(roster).is_ok();
     }
     let mut authority = HashMap::new();
     for (cell, record) in fleet.records.iter() {
@@ -245,11 +345,15 @@ async fn collect(
         authority.insert(*cell, current.value().clone());
     }
     cells.retain(|owned| {
-        let matches = authority
-            .get(&owned.observation.target.cell_id())
-            .is_some_and(|current| matches_authority(owned, current));
-        complete &= matches;
-        matches
+        let Some(current) = authority.get(&owned.observation.target.cell_id()) else {
+            complete = false;
+            return false;
+        };
+        let exact = matches_authority(owned, current, fleet.nodes.len());
+        complete &= exact;
+        exact
+            || (maintenance_candidate(roster, owned, started)
+                && matches_writer_authority(owned, current, fleet.nodes.len()))
     });
     for (cell, current) in &authority {
         complete &= match current.state {
@@ -260,12 +364,13 @@ async fn collect(
             ControlState::Recovering => false,
         };
     }
-    // Recheck exact authority after the full scan. A concurrent publication or
-    // takeover invalidates that Cell's planning row, not just count completeness.
-    complete &= recheck_authority(fleet, &authority, &mut cells).await?;
+    // Root changes invalidate complete counts and ordinary movement demand.
+    // Explicit maintenance may retain this exact writer's peak envelope; the
+    // prepared action still joins publication and obtains its final root proof.
+    complete &= recheck_authority(fleet, roster, &authority, &mut cells).await?;
     // Recheck every role category after *all* authority and membership reads.
     // Stable local-only traversals cannot supply this fleet-wide interval.
-    for (index, inventory) in inventories.iter_mut().enumerate() {
+    for (index, inventory) in active_indices.iter().copied().zip(inventories.iter_mut()) {
         let Some(inventory) = inventory else {
             let response = page(
                 fleet,
@@ -278,7 +383,7 @@ async fn collect(
             let FleetSnapshotNativePage::Cells(actors) = response.page() else {
                 return Err(invalid("example repeated actor page category differs"));
             };
-            retain_unchanged_writers(&mut cells, index, actors.entries());
+            retain_unchanged_writers(&mut cells, roster, index, actors.entries(), clock()?);
             continue;
         };
         let mut recheck = inventory.recheck();
@@ -293,7 +398,13 @@ async fn collect(
                     FleetSnapshotNativePage::Cells(actors) => {
                         // Count planning stops on changed topology. Keep only
                         // independently unchanged writer rows for pressure relief.
-                        retain_unchanged_writers(&mut cells, index, actors.entries());
+                        retain_unchanged_writers(
+                            &mut cells,
+                            roster,
+                            index,
+                            actors.entries(),
+                            clock()?,
+                        );
                     }
                     FleetSnapshotNativePage::Host => {
                         cells.retain(|owned| owned.node != node_id(index));
@@ -305,14 +416,21 @@ async fn collect(
         }
         complete &= recheck.finish().is_ok();
     }
-    for logs in &mut references {
-        match logs.recheck(directory, roster, 128, deadline, clock).await {
-            Ok(()) => {}
-            Err(cellule_runtime::Error::Node("authoritative follower inventory changed")) => {
-                complete = false;
-            }
-            Err(source) => return Err(source.into()),
+    match FleetFollowerReferences::recheck_all(
+        &mut references,
+        directory,
+        roster,
+        128,
+        deadline,
+        clock,
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(cellule_runtime::Error::Node("authoritative follower inventory changed")) => {
+            complete = false;
         }
+        Err(source) => return Err(source.into()),
     }
     let mut after = directory.advertised_sessions(clock()?, 128).await?;
     after.sort_by_key(|boot| *boot.as_bytes());
@@ -334,7 +452,7 @@ async fn collect(
         None
     };
     roster.confirm(fleet.journal.as_ref(), deadline).await?;
-    Ok(Capture {
+    let capture = Capture {
         started,
         finished: clock()?,
         complete,
@@ -342,11 +460,13 @@ async fn collect(
         cells,
         role_coverage,
         maintenance_enrollments,
-    })
+    };
+    Ok(capture)
 }
 
 async fn recheck_authority(
     fleet: &adapters::LocalFleet,
+    roster: &FleetRoster,
     authority: &HashMap<CellId, Control>,
     cells: &mut Vec<FleetOwnedCell>,
 ) -> JournalResult<bool> {
@@ -361,23 +481,14 @@ async fn recheck_authority(
             .await?
             .ok_or_else(|| invalid("example authority disappeared during capture"))?;
         if current.value() != original {
-            let value = current.value();
-            let protected_same = value.cell == original.cell
-                && value.incarnation == original.incarnation
-                && value.epoch == original.epoch
-                && value.state == original.state
-                && value.owner == original.owner
-                && value.root == original.root
-                && value.recovery == original.recovery
-                && value.code == original.code
-                && value.schema == original.schema
-                && value.next_due_ms == original.next_due_ms;
-            eprintln!(
-                "FLEET_CAPTURE authority_changed cell={cell:?} revision={}..{} progress={}..{} protected_fields_unchanged={protected_same}",
-                original.revision, value.revision, original.progress, value.progress,
-            );
             unchanged = false;
-            cells.retain(|row| row.observation.target.cell_id() != *cell);
+            let now = clock()?;
+            cells.retain(|row| {
+                row.observation.target.cell_id() != *cell
+                    || (maintenance_candidate(roster, row, now)
+                        && matches_writer_authority(row, original, fleet.nodes.len())
+                        && matches_writer_authority(row, current.value(), fleet.nodes.len()))
+            });
         }
     }
     Ok(unchanged)
@@ -385,8 +496,10 @@ async fn recheck_authority(
 
 fn retain_unchanged_writers(
     cells: &mut Vec<FleetOwnedCell>,
+    roster: &FleetRoster,
     index: usize,
     entries: &[CellInventoryEntry],
+    now: i64,
 ) {
     cells.retain(|owned| {
         owned.node != node_id(index)
@@ -400,25 +513,58 @@ fn retain_unchanged_writers(
                     && current.incarnation == original.incarnation
                     && current.code == original.code
                     && current.schema == original.schema
-                    && current.position == original.position
-                    && current.cost == original.cost
-                    && current.blockers == original.blockers
+                    && current.role == original.role
+                    && current.owner_fence == original.owner_fence
+                    && ((current.position == original.position
+                        && current.cost == original.cost
+                        && current.blockers == original.blockers)
+                        || (maintenance_candidate(roster, owned, now)
+                            && current.maintenance_cost == original.maintenance_cost
+                            && current.blockers.iter().all(|blocker| {
+                                matches!(
+                                    blocker,
+                                    DrainBlocker::BusyExecution
+                                        | DrainBlocker::ExternalLease
+                                        | DrainBlocker::PendingPublication
+                                        | DrainBlocker::UnknownInventory
+                                )
+                            })))
             })
     });
 }
 
-fn matches_authority(owned: &FleetOwnedCell, current: &Control) -> bool {
+fn maintenance_candidate(roster: &FleetRoster, owned: &FleetOwnedCell, now: i64) -> bool {
+    roster
+        .snapshot()
+        .head()
+        .maintenance()
+        .is_some_and(|operation| {
+            operation.phase() == cellule_runtime::fleet::operations::MaintenancePhase::Evacuating
+                && operation.node() == owned.node
+                && operation.session() == owned.session
+                && now < operation.deadline_ms()
+        })
+}
+
+fn matches_writer_authority(owned: &FleetOwnedCell, current: &Control, node_count: usize) -> bool {
     let row = &owned.observation;
     current.cell == row.target.cell_id()
         && current.incarnation == row.incarnation
+        && current.owner_fence() == row.owner_fence
         && current.code == row.code
         && current.schema == row.schema
         && current.state == ControlState::Serving
         && current.owner.as_ref().is_some_and(|owner| {
             owner.session == owned.session
-                && (0..3).any(|n| node_id(n) == owned.node && owner == &super::owner(n))
+                && (0..node_count).any(|n| node_id(n) == owned.node && owner == &super::owner(n))
         })
         && current.recovery.is_none()
+        && current.root.is_some()
+}
+
+fn matches_authority(owned: &FleetOwnedCell, current: &Control, node_count: usize) -> bool {
+    let row = &owned.observation;
+    matches_writer_authority(owned, current, node_count)
         && current.root.as_ref().is_some_and(|root| {
             row.position
                 == Some(PublishedPosition {

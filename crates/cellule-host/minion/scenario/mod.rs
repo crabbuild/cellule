@@ -6,11 +6,16 @@ mod adapters;
 mod application;
 mod balance;
 mod failure;
+mod follower_maintenance;
 #[cfg(test)]
 mod follower_tests;
+mod maintenance;
+mod native_peers;
 mod observation;
+mod reader_maintenance;
 #[cfg(test)]
 mod reader_tests;
+mod receiver_loss;
 #[cfg(test)]
 mod recovered_followers;
 mod startup;
@@ -20,7 +25,9 @@ mod successor_tests;
 mod tests;
 
 use super::journal::{JournalError, JournalResult, SqliteJournal};
-use cellule_host::fleet::{FleetEnrollmentJournal, FleetJournal, FleetReconciler};
+use cellule_host::fleet::{
+    FleetAdapterFuture, FleetEnrollmentJournal, FleetJournal, FleetReconciler,
+};
 use cellule_host::{CellNode, CellNodeBuilder, NodeState};
 use cellule_runtime::{
     cell::{
@@ -30,7 +37,9 @@ use cellule_runtime::{
         worker::SqlWorkerPool,
     },
     control::{Owner, authority::CellAuthority},
-    fleet::operations::{FleetProfile, FleetScope, NodeIntent},
+    fleet::operations::{
+        FleetProfile, FleetScope, JournalTransition, MaintenanceOperation, NodeIntent, OperationId,
+    },
     identity::{
         ApplicationId, CellId, CellTarget, Digest, IncarnationId, NodeId, RequestId, SessionId,
         TenantId,
@@ -121,26 +130,70 @@ pub(super) struct ScenarioSummary {
     pub controller_epoch: u64,
     pub expired_receiver_cleanups: usize,
     pub blockers: Vec<cellule_runtime::fleet::operations::DrainBlocker>,
-    pub final_counts: [usize; 3],
+    pub final_counts: Vec<usize>,
+    pub maintenance_completed: bool,
+    pub maintenance_boot_withdrawn: bool,
+    pub receiver_process_closures: usize,
+    pub lost_activation_replies: usize,
+    pub routed_activation_replays: usize,
 }
 
 /// Owns the private directory until all runtime and journal jobs are joined.
 pub(super) async fn overload() -> JournalResult<ScenarioSummary> {
-    execute(false, false).await
+    execute(Scenario::Overload).await
 }
 
 pub(super) async fn controller_restart() -> JournalResult<ScenarioSummary> {
-    execute(true, false).await
+    execute(Scenario::ControllerRestart).await
 }
 
 pub(super) async fn count_balance() -> JournalResult<ScenarioSummary> {
-    execute(false, true).await
+    execute(Scenario::CountBalance).await
 }
 
-async fn execute(restart: bool, count_balance: bool) -> JournalResult<ScenarioSummary> {
+pub(super) async fn maintenance() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::Maintenance).await
+}
+
+pub(super) async fn maintenance_busy() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::MaintenanceBusy).await
+}
+
+pub(super) async fn maintenance_reader() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::MaintenanceReader).await
+}
+
+pub(super) async fn maintenance_follower() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::MaintenanceFollower).await
+}
+
+pub(super) async fn maintenance_roles() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::MaintenanceRoles).await
+}
+
+pub(super) async fn receiver_loss() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::ReceiverLoss).await
+}
+
+enum Scenario {
+    Overload,
+    ControllerRestart,
+    CountBalance,
+    Maintenance,
+    MaintenanceBusy,
+    MaintenanceReader,
+    MaintenanceFollower,
+    MaintenanceRoles,
+    ReceiverLoss,
+}
+
+async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
     let root = tempfile::tempdir()?;
     let path = root.path().join("fleet-journal.sqlite");
-    let profile = if restart {
+    let profile = if matches!(
+        scenario,
+        Scenario::ControllerRestart | Scenario::ReceiverLoss
+    ) {
         FleetProfile {
             controller_lease_ms: 3_000,
             reconcile_interval_ms: 500,
@@ -152,20 +205,21 @@ async fn execute(restart: bool, count_balance: bool) -> JournalResult<ScenarioSu
     let journal = Arc::new(SqliteJournal::open(path.clone(), scope(), profile, clock()?).await?);
     let mut nodes = Vec::new();
     let mut boots = Vec::new();
-    let result = if count_balance {
-        balance::run(&root, journal.clone(), &mut nodes, &mut boots, profile).await
-    } else {
-        run(
-            &root,
-            path,
-            journal.clone(),
-            &mut nodes,
-            &mut boots,
-            profile,
-            restart,
-        )
-        .await
+    let additional_enrollments = match scenario {
+        Scenario::MaintenanceReader => 2,
+        Scenario::MaintenanceFollower => 4,
+        Scenario::MaintenanceRoles => 7,
+        _ => 0,
     };
+    let result = run_scenario(
+        scenario,
+        &root,
+        journal.clone(),
+        &mut nodes,
+        &mut boots,
+        profile,
+    )
+    .await;
     let mut cleanup_error = None;
     for node in &nodes {
         if let Err(error) = node.shutdown().await
@@ -187,7 +241,7 @@ async fn execute(restart: bool, count_balance: bool) -> JournalResult<ScenarioSu
             let page = journal.enrollments_page(version, None, 128).await?;
             if boots.len() != nodes.len()
                 || page.next().is_some()
-                || page.entries().len() != boots.len()
+                || page.entries().len() != boots.len() + additional_enrollments
                 || page.entries().iter().any(|entry| {
                     entry.status() != cellule_runtime::fleet::operations::EnrollmentStatus::Retired
                 })
@@ -244,6 +298,99 @@ async fn execute(restart: bool, count_balance: bool) -> JournalResult<ScenarioSu
     Ok(summary)
 }
 
+// Construct the selected future before polling it. Native recovery and complete
+// observation must not share the stack with construction of every CLI variant;
+// execute retains the owners and joins cleanup regardless of the result.
+fn run_scenario<'a>(
+    scenario: Scenario,
+    root: &'a tempfile::TempDir,
+    journal: Arc<SqliteJournal>,
+    nodes: &'a mut Vec<Arc<CellNode>>,
+    boots: &'a mut Vec<startup::BootOwner>,
+    profile: FleetProfile,
+) -> FleetAdapterFuture<'a, ScenarioSummary> {
+    match scenario {
+        Scenario::CountBalance => Box::pin(balance::run(root, journal, nodes, boots, profile)),
+        Scenario::Maintenance => Box::pin(maintenance::run(
+            root, journal, nodes, boots, profile, false,
+        )),
+        Scenario::MaintenanceBusy => {
+            Box::pin(maintenance::run(root, journal, nodes, boots, profile, true))
+        }
+        Scenario::MaintenanceReader => Box::pin(reader_maintenance::run(
+            root, journal, nodes, boots, profile,
+        )),
+        Scenario::MaintenanceFollower => Box::pin(follower_maintenance::run(
+            root,
+            journal,
+            nodes,
+            boots,
+            profile,
+            follower_maintenance::Roles::Followers,
+        )),
+        Scenario::MaintenanceRoles => Box::pin(follower_maintenance::run(
+            root,
+            journal,
+            nodes,
+            boots,
+            profile,
+            follower_maintenance::Roles::ReadersAndFollowers,
+        )),
+        Scenario::ReceiverLoss => receiver_loss::run(root, journal, nodes, boots, profile),
+        other => Box::pin(run(
+            root,
+            root.path().join("fleet-journal.sqlite"),
+            journal,
+            nodes,
+            boots,
+            profile,
+            matches!(other, Scenario::ControllerRestart),
+        )),
+    }
+}
+
+#[cfg(test)]
+pub(super) async fn commit_test_role_settlement(
+    journal: &SqliteJournal,
+    now_ms: i64,
+) -> JournalResult<()> {
+    use cellule_host::fleet::{FleetActionAcceptance, FleetActionJournal};
+    use cellule_runtime::fleet::operations::{FleetActionOutcome, FleetOutcome, MaintenanceAction};
+
+    let snapshot = journal.load_snapshot(scope()).await?;
+    let operation = snapshot
+        .head()
+        .maintenance()
+        .ok_or_else(|| invalid("role settlement fixture has no maintenance operation"))?;
+    let action = snapshot
+        .head()
+        .maintenance_action(MaintenanceAction::SettleRoles, now_ms)?;
+    let accepted = match journal
+        .accept_action(&action, operation.node(), operation.session(), now_ms)
+        .await?
+    {
+        FleetActionAcceptance::New(accepted) | FleetActionAcceptance::Existing { accepted, .. } => {
+            accepted
+        }
+    };
+    let result = FleetActionOutcome {
+        scope: action.scope(),
+        action_key: action.key()?,
+        node: operation.node(),
+        session: operation.session(),
+        observed_at_ms: now_ms,
+        // This fixture tests journal ordering only; the real observer supplies
+        // the complete role inventory digest before SettleRoles is dispatched.
+        outcome: FleetOutcome::RolesSettledAt {
+            inventory: Digest::from_bytes([253; 32]),
+            head_revision: snapshot.head().revision(),
+            registry: snapshot.registry(),
+        },
+    };
+    journal.publish_action_result(&accepted, &result).await?;
+    Ok(())
+}
+
 /// The private reference profile provisions only catalog-backed SQL writers.
 /// Register every boot before readiness; retain partial owners for exit cleanup.
 async fn initialize(
@@ -252,6 +399,49 @@ async fn initialize(
     nodes: &mut Vec<Arc<CellNode>>,
     boots: &mut Vec<startup::BootOwner>,
     receipt_lifetime_ms: i64,
+) -> JournalResult<(Arc<HashMap<CellId, Record>>, HashMap<CellId, Acknowledged>)> {
+    initialize_inner(
+        root,
+        journal,
+        nodes,
+        boots,
+        receipt_lifetime_ms,
+        None,
+        false,
+    )
+    .await
+}
+
+#[cfg(test)]
+async fn initialize_without_boot_withdrawal(
+    root: &tempfile::TempDir,
+    journal: &Arc<SqliteJournal>,
+    nodes: &mut Vec<Arc<CellNode>>,
+    boots: &mut Vec<startup::BootOwner>,
+    receipt_lifetime_ms: i64,
+    unbound_index: usize,
+    recover_receiver: bool,
+) -> JournalResult<(Arc<HashMap<CellId, Record>>, HashMap<CellId, Acknowledged>)> {
+    initialize_inner(
+        root,
+        journal,
+        nodes,
+        boots,
+        receipt_lifetime_ms,
+        Some(unbound_index),
+        recover_receiver,
+    )
+    .await
+}
+
+async fn initialize_inner(
+    root: &tempfile::TempDir,
+    journal: &Arc<SqliteJournal>,
+    nodes: &mut Vec<Arc<CellNode>>,
+    boots: &mut Vec<startup::BootOwner>,
+    receipt_lifetime_ms: i64,
+    unbound_withdrawal_index: Option<usize>,
+    recover_receiver: bool,
 ) -> JournalResult<(Arc<HashMap<CellId, Record>>, HashMap<CellId, Acknowledged>)> {
     let application = application::compile()?;
     let code = *application
@@ -337,6 +527,7 @@ async fn initialize(
             node_id(index),
             journal.clone(),
             Arc::new(adapters::Cells {
+                receiver_directory: recover_receiver.then(|| directory.clone()),
                 records: records.clone(),
                 local: index,
                 root: root.path().into(),
@@ -363,7 +554,9 @@ async fn initialize(
             .load(session(index), clock()?)
             .await?
             .ok_or_else(|| invalid("example original boot is absent"))?;
-        node.install_fleet_boot_withdrawal(directory.clone(), observed, boot, journal.clone())?;
+        if unbound_withdrawal_index != Some(index) {
+            node.install_fleet_boot_withdrawal(directory.clone(), observed, boot, journal.clone())?;
+        }
         node.start()?;
     }
     let mut acknowledged = HashMap::new();
@@ -449,9 +642,11 @@ async fn run(
         journal: journal.clone(),
         boots: boots.clone(),
         records: records.clone(),
+        reader_verifier: None,
         capture_sequence: std::sync::atomic::AtomicU64::new(0),
         lose_release_replies: restart,
         lost_release_replies: std::sync::atomic::AtomicUsize::new(0),
+        drop_closed_finalize_replies: std::sync::atomic::AtomicUsize::new(0),
         expired_receiver_cleanups: std::sync::atomic::AtomicUsize::new(0),
     });
     let driver = FleetReconciler::new(
@@ -620,7 +815,12 @@ async fn settle(
         controller_epoch: 0,
         expired_receiver_cleanups: 0,
         blockers,
-        final_counts: [0; 3],
+        final_counts: vec![0; 3],
+        maintenance_completed: false,
+        maintenance_boot_withdrawn: false,
+        receiver_process_closures: 0,
+        lost_activation_replies: 0,
+        routed_activation_replays: 0,
     };
     let mut passes = Vec::new();
     for pass in 0..12 {
@@ -773,7 +973,8 @@ async fn verify_movement(
         receipt.source.query(64, 64, |_| Ok(Vec::new())).await,
         Err(cellule_runtime::Error::Fenced
             | cellule_runtime::Error::CellDraining
-            | cellule_runtime::Error::CellNotActive)
+            | cellule_runtime::Error::CellNotActive
+            | cellule_runtime::Error::RuntimeClosed)
     ) {
         return Err(invalid("old source handle still served after movement"));
     }

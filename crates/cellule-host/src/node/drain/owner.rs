@@ -81,6 +81,42 @@ impl DrainOwner {
         Ok(())
     }
 
+    pub(crate) fn has_boot_withdrawal(&self) -> cellule_runtime::Result<bool> {
+        self.resources
+            .boot_withdrawal
+            .lock()
+            .map(|binding| binding.is_some())
+            .map_err(|_| Error::Control("CellNode boot withdrawal lock poisoned"))
+    }
+
+    /// Confirms that the canonical retained host attempt joined successfully,
+    /// reached Stopped, and had an exact managed-boot withdrawal to execute.
+    pub(crate) fn confirms_fleet_terminal(&self) -> cellule_runtime::Result<bool> {
+        if *self
+            .resources
+            .state
+            .lock()
+            .map_err(|_| Error::Control("CellNode lifecycle lock poisoned"))?
+            != NodeState::Stopped
+            || !self.has_boot_withdrawal()?
+        {
+            return Ok(false);
+        }
+        let current = self
+            .bank
+            .lock()
+            .map_err(|_| Error::Control("CellNode drain bank poisoned"))?
+            .current
+            .clone();
+        let Some(current) = current else {
+            return Ok(false);
+        };
+        if !current.joined.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        Ok(matches!(current.returned.borrow().clone(), Some(Ok(()))))
+    }
+
     pub(crate) async fn drain(
         &self,
         shutdown: OwnedMutexGuard<()>,

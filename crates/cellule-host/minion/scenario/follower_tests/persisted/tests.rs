@@ -215,6 +215,9 @@ async fn follower_policy_publication_closing_and_deadline_refresh_preserve_origi
     let record = result.record().unwrap();
     result.confirmed().unwrap();
     let snapshot = fixture.native.journal.load_snapshot(scope()).await.unwrap();
+    crate::scenario::commit_test_role_settlement(&fixture.native.journal, clock().unwrap())
+        .await
+        .unwrap();
     let operation = snapshot.head().maintenance().unwrap();
     let after = fixture
         .native

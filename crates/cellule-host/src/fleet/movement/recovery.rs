@@ -171,6 +171,66 @@ impl FleetActionExecutor {
             return Err(Error::Fenced);
         }
         let inputs = self.inputs(attempt).await?;
+        if let Some(basis) = self
+            .journal
+            .load_recovery_basis(accepted)
+            .await
+            .map_err(journal_error)?
+        {
+            basis.validate_acceptance(accepted).map_err(operation)?;
+            let current = inputs
+                .authority
+                .load(attempt.spec().target.cell_id())
+                .await?
+                .ok_or(Error::Fenced)?;
+            if current.value().state == ControlState::Recovering
+                && current
+                    .value()
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.session == self.session)
+            {
+                let recovery =
+                    self.cells
+                        .recovery_inputs(attempt.spec())
+                        .await
+                        .map_err(|source| Error::Facility {
+                            name: "fleet-recovery-provider",
+                            source,
+                        })?;
+                let recorder: Arc<dyn AcquisitionObserver> = Arc::new(RecoveryRecorder {
+                    accepted: accepted.clone(),
+                    takeover: recovery.takeover,
+                    journal: self.journal.clone(),
+                });
+                self.runtime
+                    .resume_takeover_restored_observed(
+                        inputs.catalog.clone(),
+                        inputs.replica.clone(),
+                        inputs.authority.clone(),
+                        basis.control().clone(),
+                        current,
+                        recovery.takeover,
+                        recovery.manifests,
+                        inputs.destination.clone(),
+                        recorder,
+                    )
+                    .await?;
+                return self.recovered_serving(accepted, attempt, &inputs).await;
+            }
+            if current.value() != basis.control()
+                && (current.value().state == ControlState::Idle
+                    || current
+                        .value()
+                        .owner
+                        .as_ref()
+                        .is_some_and(|owner| owner.session == self.session))
+            {
+                return self
+                    .resume_source_recovery(accepted, attempt, &inputs, current)
+                    .await;
+            }
+        }
         if self
             .journal
             .load_recovery_evidence(accepted)

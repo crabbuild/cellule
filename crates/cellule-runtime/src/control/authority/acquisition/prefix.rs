@@ -46,6 +46,50 @@ impl CellAuthority {
         replica: &cellule_ltx::CellReplica,
         limit: usize,
     ) -> Result<VerifiedRecoveryPrefix> {
+        let first = self.recovered_prefix_start(required, root, replica, limit)?;
+        let selected = self.load(required.cell).await?.ok_or(Error::Fenced)?;
+        if selected.value().state != ControlState::Serving {
+            return Err(Error::Fenced);
+        }
+        self.verify_recovered_prefix_selected(required, root, replica, limit, selected, first)
+            .await
+    }
+
+    /// Verifies an exact unowned Idle rollback root against its original sealed
+    /// suffix and native acquisition history. This grants no ownership, actor
+    /// admission or serving proof. The complete selected control must still
+    /// equal the caller's observation before and after the bounded origin walk.
+    pub async fn verify_recovered_idle_prefix(
+        &self,
+        required: &PinnedRecoveryCell,
+        observed: &VersionedControl,
+        replica: &cellule_ltx::CellReplica,
+        limit: usize,
+    ) -> Result<VerifiedRecoveryPrefix> {
+        if observed.value().state != ControlState::Idle
+            || observed.value().owner.is_some()
+            || observed.value().recovery.is_some()
+            || observed.value().cell != required.cell
+        {
+            return Err(Error::Fenced);
+        }
+        let root = observed.value().ltx_root().ok_or(Error::Fenced)?;
+        let first = self.recovered_prefix_start(required, root, replica, limit)?;
+        let selected = self.load(required.cell).await?.ok_or(Error::Fenced)?;
+        if selected.value() != observed.value() {
+            return Err(Error::Fenced);
+        }
+        self.verify_recovered_prefix_selected(required, root, replica, limit, selected, first)
+            .await
+    }
+
+    fn recovered_prefix_start(
+        &self,
+        required: &PinnedRecoveryCell,
+        root: cellule_ltx::RootRef,
+        replica: &cellule_ltx::CellReplica,
+        limit: usize,
+    ) -> Result<u64> {
         if limit == 0 || limit > MAX_LINEAGE_ROOTS {
             return Err(Error::Capacity("invalid Cell root lineage traversal bound"));
         }
@@ -61,10 +105,20 @@ impl CellAuthority {
             .cell_epoch
             .checked_add(1)
             .ok_or(Error::Control("recovered acquisition epoch overflow"))?;
-        let selected = self.load(required.cell).await?.ok_or(Error::Fenced)?;
+        Ok(first)
+    }
+
+    async fn verify_recovered_prefix_selected(
+        &self,
+        required: &PinnedRecoveryCell,
+        root: cellule_ltx::RootRef,
+        replica: &cellule_ltx::CellReplica,
+        limit: usize,
+        selected: VersionedControl,
+        first: u64,
+    ) -> Result<VerifiedRecoveryPrefix> {
         if selected.value().incarnation != required.incarnation
             || selected.value().ltx_root() != Some(root)
-            || selected.value().state != ControlState::Serving
             || selected.value().epoch < first
         {
             return Err(Error::Fenced);
@@ -139,8 +193,10 @@ impl CellAuthority {
         if confirmed.value().owner != selected.value().owner
             || confirmed.value().epoch != selected.value().epoch
             || confirmed.value().incarnation != required.incarnation
-            || confirmed.value().state != ControlState::Serving
+            || confirmed.value().state != selected.value().state
             || confirmed.value().ltx_root() != Some(root)
+            || (selected.value().state == ControlState::Idle
+                && confirmed.value() != selected.value())
         {
             return Err(Error::Fenced);
         }

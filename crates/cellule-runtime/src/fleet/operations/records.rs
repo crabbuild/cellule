@@ -323,6 +323,8 @@ impl MaintenanceOperation {
             && (evidence.node != self.node
                 || evidence.session != self.session
                 || !evidence.ready_to_close()
+                || (self.phase == MaintenancePhase::Closing
+                    && (evidence.facilities_closed || evidence.stopped || evidence.withdrawn))
                 || (self.phase == MaintenancePhase::Completed
                     && !(evidence.facilities_closed && evidence.stopped && evidence.withdrawn)))
         {
@@ -350,6 +352,9 @@ impl MaintenanceOperation {
             MaintenanceEvent::ReadyToClose(e)
                 if matches(e)
                     && e.ready_to_close()
+                    && !e.facilities_closed
+                    && !e.stopped
+                    && !e.withdrawn
                     && matches!(
                         self.phase,
                         MaintenancePhase::Evacuating | MaintenancePhase::Closing

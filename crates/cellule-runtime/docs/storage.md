@@ -358,6 +358,7 @@ exactly. A matching endpoint without the original overlay is insufficient.
 | Bounds | The same caller limit caps both acquisition epochs and lineage traversal, at most 10,000. Excess refuses; storage/corrupt-record errors remain errors. |
 | Missing metadata | An absent original owner yields `OwnerHistoryIncomplete`. Without a matching materialization, missing acquisition records yield `AcquisitionHistoryIncomplete`; different recovery inputs refuse. No legacy rows are fabricated. |
 | Selected authority | Require Serving at the selected root and recheck owner, incarnation, epoch, state and exact root after origin verification. Lease renewal may continue. |
+| Idle rollback | `verify_recovered_idle_prefix` accepts a complete observed unowned Idle control with cleared overlay, rechecking its entire value before and after the same bounded suffix/origin walk. It proves materialization for pre-acquisition validation; it neither acquires nor certifies serving. The Serving verifier still refuses Idle. |
 | Resource ownership | Reuse the root verifier's shared memory reservation and configured LTX I/O host before metadata/origin I/O. The caller supplies the finite deadline; cancellation drops the reservation. |
 | Proof scope | `VerifiedRecoveryPrefix` retains the exact required row, materialization epoch and opaque root-prefix proof. It grants no native serving, root pin, authenticated physical boot/backend scope or aggregate settlement. |
 
@@ -389,6 +390,10 @@ before I/O and holds it through verification. After complete origin verification
 the same native actor through ordinary FIFO admission, selected root/owner/epoch
 and native ownership inventory before returning fresh serving evidence. Durable
 historical results remain historical; their replay does not refresh this proof.
+Accepted recovery effect replay can reconstruct missing journal evidence from
+the exact original native acquisition after safe Idle rollback. It uses the
+explicit Idle verifier before ordinary admitted acquisition, then rechecks
+current native serving. Read-only fleet inspection performs neither effect.
 Complete original-writer/suffix aggregation, physical boot/process scope, reader
 and follower replacement policy, and terminal action joining remain separate
 requirements before role settlement or finalization.

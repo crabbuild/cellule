@@ -13,6 +13,9 @@ async fn reader_policy_publication_can_refresh_redundancy_during_closing_without
     let record = publication.record().unwrap();
     let retired = fixture.original_row().await;
     let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    crate::scenario::commit_test_role_settlement(&fixture.journal, clock().unwrap())
+        .await
+        .unwrap();
     let snapshot = fixture
         .journal
         .compare_exchange(

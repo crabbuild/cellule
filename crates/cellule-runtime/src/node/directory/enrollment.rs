@@ -138,8 +138,13 @@ fn enrollment_digest(
 ) -> Result<Digest> {
     let mut digest = blake3::Hasher::new();
     digest.update(domain);
-    digest.update(&prepared.source.encode()?);
-    digest.update(&source.advertisement.encode()?);
+    // These private, immutable proof inputs were authenticated by preparation,
+    // canonical inspection, or the checked conditional write. Historical
+    // fingerprints serialize those exact bytes; every fresh provider read still
+    // authenticates independently. Re-verifying here repeated all boot signatures
+    // for each producer page without observing any new authority.
+    digest.update(&prepared.source.canonical_bytes()?);
+    digest.update(&source.advertisement.canonical_bytes()?);
     // Preserve the immutable conditional-write token as well as signed bytes.
     // Lengths and option markers keep arbitrary provider tokens unambiguous.
     for token in [&source.token.e_tag, &source.token.version] {
@@ -156,7 +161,7 @@ fn enrollment_digest(
     }
     digest.update(&prepared.log.epoch().to_le_bytes());
     for follower in &prepared.followers {
-        digest.update(&follower.encode()?);
+        digest.update(&follower.canonical_bytes()?);
     }
     Ok(Digest::from_bytes(*digest.finalize().as_bytes()))
 }

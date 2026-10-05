@@ -1,5 +1,70 @@
 //! Native closing owns canonical withdrawal and the original durable boot row.
 use super::*;
+use cellule_host::fleet::{
+    FleetActionCompletion, FleetAdapterFuture, FleetCellInputs, FleetCellProvider,
+    FleetObservation, FleetObserver, FleetRecoveryInputs, FleetRoster, FleetTransport,
+};
+
+struct NoCells;
+
+impl FleetCellProvider for NoCells {
+    fn cell_inputs<'a>(
+        &'a self,
+        _: &'a MoveAttemptSpec,
+    ) -> FleetAdapterFuture<'a, FleetCellInputs> {
+        Box::pin(async { Err(invalid("Finalize fixture has no movable Cells")) })
+    }
+
+    fn recovery_inputs<'a>(
+        &'a self,
+        _: &'a MoveAttemptSpec,
+    ) -> FleetAdapterFuture<'a, FleetRecoveryInputs> {
+        Box::pin(async { Err(invalid("Finalize fixture has no recovery work")) })
+    }
+}
+
+struct UnusedObserver;
+
+impl FleetObserver for UnusedObserver {
+    fn observe<'a>(
+        &'a self,
+        _: &'a FleetRoster,
+        _: i64,
+        _: Instant,
+    ) -> FleetAdapterFuture<'a, FleetObservation> {
+        Box::pin(async { Err(invalid("closing test does not observe Cells")) })
+    }
+}
+
+struct NodeTransport {
+    node: Arc<CellNode>,
+    actions: std::sync::Mutex<Vec<FleetAction>>,
+}
+
+impl FleetTransport for NodeTransport {
+    fn dispatch<'a>(
+        &'a self,
+        action: &'a FleetAction,
+        _: Instant,
+    ) -> FleetAdapterFuture<'a, Arc<FleetActionCompletion>> {
+        Box::pin(async move {
+            self.actions.lock().unwrap().push(action.clone());
+            self.node
+                .apply_fleet_action(action.clone(), clock()?)
+                .await
+                .map_err(|error| Box::new(error) as JournalError)
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        _: &'a cellule_runtime::fleet::operations::FleetInspectionRequest,
+        _: Instant,
+    ) -> FleetAdapterFuture<'a, Arc<cellule_runtime::fleet::operations::FleetInspectionObservation>>
+    {
+        Box::pin(async { Err(invalid("closing test does not inspect Cells")) })
+    }
+}
 
 async fn prepare(fixture: &Fixture) -> EnrollmentRecord {
     let original = enroll(
@@ -31,6 +96,15 @@ async fn prepare(fixture: &Fixture) -> EnrollmentRecord {
             fixture.journal.clone(),
         )
         .unwrap();
+    fixture
+        .node
+        .install_fleet_actions(
+            scope(),
+            node_id(0),
+            fixture.journal.clone(),
+            Arc::new(NoCells),
+        )
+        .unwrap();
     original
 }
 
@@ -52,6 +126,136 @@ async fn retired(fixture: &Fixture, original: &EnrollmentRecord) -> EnrollmentRe
     assert!(fixture.directory.is_retired(session(0)).await.unwrap());
     assert!(fixture.directory.is_withdrawn(session(0)).await.unwrap());
     record
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fleet_finalize_joins_the_node_and_publishes_only_after_exact_withdrawal() {
+    let fixture = fixture().await;
+    let original = prepare(&fixture).await;
+    fixture.node.start().unwrap();
+
+    let registry = fixture
+        .journal
+        .load_snapshot(scope())
+        .await
+        .unwrap()
+        .registry();
+    let registry = fixture.journal.bootstrap_registry(registry).await.unwrap();
+    fixture
+        .journal
+        .set_scheduling(registry, true)
+        .await
+        .unwrap();
+
+    let snapshot = maintenance(&fixture).await;
+    let now = clock().unwrap();
+    let cordon = snapshot
+        .head()
+        .maintenance_action(MaintenanceAction::Cordon, now)
+        .unwrap();
+    let cordoned = fixture.node.apply_fleet_action(cordon, now).await.unwrap();
+    assert!(cordoned.committed);
+    assert_eq!(cordoned.outcome.outcome, FleetOutcome::Cordoned);
+
+    let snapshot = fixture
+        .journal
+        .compare_exchange(
+            &snapshot,
+            snapshot.head().controller().unwrap().epoch,
+            clock().unwrap(),
+            &JournalTransition::Maintenance(MaintenanceEvent::Cordoned),
+        )
+        .await
+        .unwrap();
+    let snapshot = fixture
+        .journal
+        .compare_exchange(
+            &snapshot,
+            snapshot.head().controller().unwrap().epoch,
+            clock().unwrap(),
+            &JournalTransition::Maintenance(MaintenanceEvent::BeginEvacuation),
+        )
+        .await
+        .unwrap();
+    let operation = snapshot.head().maintenance().unwrap();
+    crate::scenario::commit_test_role_settlement(&fixture.journal, clock().unwrap())
+        .await
+        .unwrap();
+    let snapshot = fixture
+        .journal
+        .compare_exchange(
+            &snapshot,
+            snapshot.head().controller().unwrap().epoch,
+            clock().unwrap(),
+            &JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(DrainEvidence {
+                node: operation.node(),
+                session: operation.session(),
+                remaining_cells: 0,
+                unresolved_attempts: 0,
+                relocated: true,
+                readers_settled: true,
+                followers_settled: true,
+                facilities_closed: false,
+                stopped: false,
+                withdrawn: false,
+            })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Closing
+    );
+    let registry = fixture
+        .journal
+        .load_snapshot(scope())
+        .await
+        .unwrap()
+        .registry();
+    fixture
+        .journal
+        .set_scheduling(registry, false)
+        .await
+        .unwrap();
+
+    let transport = Arc::new(NodeTransport {
+        node: Arc::clone(&fixture.node),
+        actions: std::sync::Mutex::new(Vec::new()),
+    });
+    let reconciler = FleetReconciler::new(
+        scope(),
+        SessionId::from_bytes([206; 16]),
+        FleetProfile::default(),
+        fixture.journal.clone(),
+        Arc::new(UnusedObserver),
+        Arc::clone(&transport) as Arc<dyn FleetTransport>,
+    )
+    .unwrap();
+    let report = reconciler
+        .reconcile_once(clock, Instant::now() + Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(report.dispatched, 1);
+    assert_eq!(
+        report.snapshot.head().maintenance().unwrap().phase(),
+        MaintenancePhase::Completed
+    );
+    assert_eq!(fixture.node.state(), NodeState::Stopped);
+    retired(&fixture, &original).await;
+
+    let finalize = transport.actions.lock().unwrap()[0].clone();
+    let replay = fixture
+        .node
+        .apply_fleet_action(finalize, clock().unwrap())
+        .await
+        .unwrap();
+    assert!(replay.committed);
+    assert!(replay.execution_error.is_none());
+    let FleetOutcome::Stopped(evidence) = replay.outcome.outcome else {
+        panic!("Finalize replay did not prove terminal shutdown: {replay:?}")
+    };
+    assert!(evidence.facilities_closed && evidence.stopped && evidence.withdrawn);
+    close(fixture).await;
 }
 
 #[tokio::test]

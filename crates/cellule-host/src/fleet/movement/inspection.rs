@@ -3,10 +3,15 @@ use super::*;
 impl FleetActionExecutor {
     pub(super) async fn cancel(
         &self,
+        accepted: &AcceptedFleetAction,
         attempt: &MoveAttempt,
     ) -> cellule_runtime::Result<ActionResult> {
         if self.runtime.prepared_receiver(attempt.spec().id)?.is_none() {
-            return if self.confirmed_credit_settlement(attempt).await? {
+            let confirmed = self.confirmed_credit_settlement(attempt).await?;
+            let routed_empty = accepted.action().receiver_route().is_some()
+                && !confirmed
+                && self.routed_receiver_has_no_activation(attempt).await?;
+            return if confirmed || routed_empty {
                 Ok(ActionResult::checked(FleetOutcome::ReceiverCleaned))
             } else {
                 Err(Error::Peer(
@@ -27,6 +32,53 @@ impl FleetActionExecutor {
             _ => return Ok(ActionResult::checked(FleetOutcome::Unknown)),
         }
         Ok(ActionResult::checked(FleetOutcome::ReceiverCleaned))
+    }
+
+    async fn routed_receiver_has_no_activation(
+        &self,
+        attempt: &MoveAttempt,
+    ) -> cellule_runtime::Result<bool> {
+        for effect in [MovementAction::Activate, MovementAction::Recover] {
+            let retained = self
+                .journal
+                .load_movement_action(
+                    self.scope,
+                    attempt.spec().id,
+                    effect,
+                    self.node,
+                    self.session,
+                )
+                .await
+                .map_err(journal_error)?;
+            let Some(FleetActionAcceptance::Existing { accepted, result }) = retained else {
+                continue;
+            };
+            if accepted.node() != self.node || accepted.session() != self.session {
+                return Err(Error::Fenced);
+            }
+            accepted
+                .validate_replay(accepted.action(), self.node, self.session)
+                .map_err(operation)?;
+            let FleetActionKind::Movement {
+                action: accepted_effect,
+                attempt: accepted_attempt,
+            } = accepted.action().kind()
+            else {
+                return Err(Error::Fenced);
+            };
+            if *accepted_effect != effect || accepted_attempt.spec() != attempt.spec() {
+                return Err(Error::Fenced);
+            }
+            let Some(result) = result else {
+                return Ok(false);
+            };
+            accepted.validate_result(&result).map_err(operation)?;
+            // A route with no local acquisition record is settled. Any retained
+            // record must already be recognized by confirmed_credit_settlement;
+            // unresolved or nonterminal evidence stays charged.
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     pub(super) async fn confirmed_credit_settlement(

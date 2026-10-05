@@ -4,6 +4,83 @@ The [implementation plan](fleet-operations-plan.md) remains the full scope.
 This page records focused checkpoints; it does not establish complete fleet
 balancing, maintenance, or deployment qualification.
 
+## October 4 2026 managed-reader maintenance checkpoint
+
+The reference observer now accepts the full enrollment roster, including
+non-node roles, and retains the installed native role graph instead of rejecting
+readers or follower logs. It collects current reader and follower evacuation
+evidence separately from the maintenance replacement-policy check, so missing
+policy proof remains a blocker.
+
+A new minion end-to-end scenario starts with a managed reader on the maintenance
+node, activates a replacement on another managed node, publishes and verifies
+the durable evacuation policy, then drives SettleRoles and Finalize through the
+public reconciler and native node path. It confirms the source boot is stopped,
+withdrawn and retired, the old reader no longer serves, and the replacement still
+reads the expected value. The focused case passes; the full minion scenario
+suite passes (343 passed, 0 failed).
+
+The same reference observer now handles the four-boot follower fixture. Its
+global role coverage check validates an Established replacement lane that has
+not appended yet against the original producer and physical follower references;
+the generic per-node enrollment check alone rejected that valid empty lane. A
+new live-follower-only minion scenario verifies the two replacement members,
+reconciles SettleRoles and Finalize, confirms the donor boot is stopped,
+withdrawn and retired, and checks the new epoch's exact membership. Its focused
+case and formatting pass. At this checkpoint, dead-owner process closure was
+still open; the next checkpoint records that path.
+
+## October 4 2026 failed-owner maintenance checkpoint
+
+The reconciler now handles a maintenance target whose original boot has already
+been retired. `FleetRoleSettlement` binds settlement to the exact failed-boot
+closure, canonical fence, full journal head and registry. A dedicated transport
+path accepts and publishes the exact `RolesSettledAt` result without sending
+SettleRoles to the absent endpoint. Closing uses a matching closed-boot Finalize
+path; its default transport fails closed, while the reference SQLite adapter
+publishes Stopped only from the current retirement closure and exact maintenance
+evidence. Matching durable results are adopted idempotently.
+
+The new end-to-end case captures the failed process and recovered-follower
+closures, collects the original maintenance enrollment set and rechecks native
+role inventories plus physical follower references. It reconciles through
+Closing to Completed with an empty node endpoint list, proving the retired
+session is never contacted. The fixture uses a joined process-lifetime test
+stand-in. It also drops the Finalize reply after the exact `Stopped` result is
+durably published, waits for the real 2.5-second journal lease to expire, then
+starts a different controller session. The replacement replays the same
+accepted action from the retained SQLite result and completes the operation;
+provider and production process qualification remain open.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations --locked failed_owner_maintenance_settles_and_finalizes_only_from_fresh_process_closure` | 1 passed. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 344 passed; 0 failed; 68.26 seconds. |
+| `cargo check --workspace --all-targets --all-features --locked` | Passed. |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | Passed. |
+| `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked` | Passed. |
+| Format, boundary, module-layout, Rust-fence, Markdown-link, and SQL/peer-contract checks | Passed; 137 Rust snippets, 1307 local links, 28 protocol assertions and 570 validator links. |
+
+After adding the lost-Finalize/controller-restart assertion, the focused case,
+all 344 minion cases, formatting, and `git diff --check` passed again. The
+workspace-wide checks above predate this scenario-only change.
+
+GitHub reports PR #37 merged and PR #56 clean, mergeable, with all listed
+checks passing. The three newly reported conflict files are unchanged in this
+checkout and contain no conflict markers. These local changes remain uncommitted
+and are not included in PR #56.
+
+### Highest remaining work
+
+1. Qualify failed-owner and live role maintenance under cancellation, provider
+   failure, controller restart and real process loss; add missing role/fault
+   combinations.
+2. Complete receiver-session loss/recovery/adoption and add the canonical
+   receiver-loss executable scenario.
+3. Finish W9 physical process/provider faults, mixed-version and load/soak
+   qualification, then exercise W10 runbooks and staged rollout/rollback.
+4. Re-run the complete qualified source and hosted CI on the eventual PR head.
+
 ## October 4 2026 source reader policy checkpoint
 
 The canonical executable remains `crates/cellule-host/minion`, Cargo target
@@ -6561,3 +6638,1347 @@ assertions with 570 validator links.
 The remaining maintenance inspection gap is the full role, accepted-work,
 facility, Stopped, and withdrawal barrier. This local check is only a Cordon
 recovery step and cannot move the operation into Closing or Completed.
+
+## October 4 2026 writer-only end-to-end maintenance checkpoint
+
+The `maintenance` command now drives a real three-node reference fleet through
+the public reconciler and native node actions. It cordons node 0, moves all 12
+SQL Cells to nodes 1 and 2, observes the complete writer-only role inventory,
+commits `SettleRoles`, finalizes the drain, withdraws and retires the exact boot,
+and verifies each command receipt and final placement. The observer derives
+active node sessions from the unresolved Established enrollment rows, so the
+post-finalization check can still prove the stopped node is absent while
+checking follower references across all physical nodes.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations --locked maintenance_moves_every_cell_then_settles_roles_and_withdraws_the_node -- --nocapture` | 1 passed. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 340 passed; 0 failed; 68.34 seconds. |
+| `cargo run -p cellule-host --example fleet_operations --locked -- maintenance` | 12 released, activated and retired; 12 receipt checks; two receivers; final counts `[0, 6, 6]`; maintenance completed and boot withdrawn. |
+
+The workspace all-target/all-feature `cargo check`, warning-denied Clippy, and
+warning-denied API docs passed. Clippy prompted sharing the large settlement
+proof through `Arc`; the focused maintenance test passed again after that
+change. Format, boundaries, module layout, Rust fences, Markdown links,
+SQL/peer contracts, and `git diff --check` also passed. The full 340-test
+example run preceded only that proof-storage change. The PR #56 routing rerun
+and hosted checks for the current local diff have not completed.
+
+This establishes one runnable, real-node writer-only maintenance path. Its
+empty reader/follower inventory comes from the scenario's closed writer-only
+constructor. It does not qualify reader/follower-enabled maintenance, foreign
+live- or failed-owner obligations, receiver loss, controller restart during
+maintenance, provider/process failures or rollout operations. PR #56's hosted
+routing rerun still targets its earlier committed head and was in progress when
+this checkpoint was recorded; it does not cover these local changes.
+
+## October 4 2026 closed-boot role-settlement checkpoint
+
+Role settlement now distinguishes a live maintenance target from one whose
+original boot has already been retired. The opaque `FleetRoleSettlement`
+retains the exact failed-boot closure digest when the target process is closed,
+and verifies that the retired boot, canonical fence, closure digest, full head,
+and registry all match the settlement barrier. Missing or ambiguous live/closed
+target evidence refuses settlement.
+
+`FleetReconciler` sends that proof through a dedicated closed-boot transport
+method instead of dispatching SettleRoles to a stopped `CellNode`. The default
+transport refuses this case. The reference SQLite adapter accepts the exact
+maintenance action and publishes the checked `RolesSettledAt` result through
+the shared journal after validating both opaque proofs. The minion now exercises
+the full failed-owner path: complete follower-only role settlement, terminal
+`Finalize` from the same fresh failed-boot closure, and no transport call to the
+retired `CellNode`. The scenario drops the committed `Stopped` reply, waits
+beyond actual controller lease expiry, and completes under a different
+controller session replaying the same SQLite journal record.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo check -p cellule-host --example fleet_operations --locked` | Passed. |
+| `cargo test -p cellule-host --example fleet_operations --locked` | 344 passed; 0 failed at the prior full-suite checkpoint. |
+| `cargo test -p cellule-host --example fleet_operations --locked failed_owner_maintenance_settles_and_finalizes_only_from_fresh_process_closure` | 1 passed; 0 failed in 4.49s on this checkpoint. |
+| `cargo test -p cellule-host --lib role_settlement::tests --locked` | 3 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --locked -- -D warnings` | Passed. |
+| `cargo fmt --all --check` | Passed. |
+
+### Remaining W7 work after closed-boot settlement and finalization
+
+Exercise this transport path with the full role matrix, recovered follower
+closure and joined process evidence. Closed-boot terminal Finalize is now
+covered for a follower-only failed owner, including a lost durable reply and
+controller restart; extend that evidence to the remaining role and fault
+combinations. Then qualify provider and process faults. W4
+receiver-session-loss reconciliation, the W8 receiver-loss executable, and W9–W10
+qualification/rollout remain high-priority work. These local changes are
+uncommitted; PR #56 remains clean at its prior remote head and does not include
+this checkpoint.
+
+## October 4 2026 receiver-route acceptance checkpoint
+
+W4 now has a bounded post-release receiver-route record. Each hop names the
+previous and next exact node/session, a nonzero closed-process digest, and a
+bootstrapped registry version. The route limits retries to two handoffs,
+rejects source/repeated nodes and nonmonotonic registry revisions, and binds the
+ordered route into a separate routed-action key and action family. Ordinary
+movement action keys and encoded bytes remain unchanged.
+
+First acceptance checks the current head, endpoint and registry together. The
+reference SQLite journal rejects first acceptance through ordinary dispatch;
+its routed acceptance entry point requires the opaque `FleetFailedBootClosure`
+and compares its exact endpoint, digest, and full head/registry snapshot before
+publishing. Route history is bounded and rejects competing branches. The journal
+can enumerate accepted endpoints after a controller restart, and reconciliation
+chooses the unique deepest retained route.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo check -p cellule-runtime --lib --locked` | Passed. |
+| `cargo check -p cellule-host --example fleet_operations --locked` | Passed. |
+| `cargo test -p cellule-runtime --lib fleet::operations::tests::contracts::receiver_continuation_is_registry_bound_endpoint_bound_and_versioned --locked` | 1 passed; 0 failed. |
+| `cargo test -p cellule-host --example fleet_operations --locked routed_receiver_acceptance_requires_typed_closed_boot_proof` | 1 passed; 0 failed. |
+| `cargo clippy -p cellule-runtime --lib --locked -- -D warnings` | Passed. |
+| `cargo clippy -p cellule-host --example fleet_operations --locked -- -D warnings` | Passed. |
+| `cargo fmt --all --check`, `git diff --check`, boundary and documentation checks | Passed; 137 Rust snippets and 1,307 Markdown links/anchors checked. |
+
+This checkpoint establishes only the durable route contract and acceptance
+boundary. The reconciler still selects the original receiver, and the executor
+does not yet prepare or recover on a replacement boot. W4 still needs fresh
+eligible-node selection, closed-boot route creation before dispatch, new-session
+resource admission, takeover of a prior receiver that reached `Serving` or
+`Recovering`, and end-to-end unknown/refusal/restart tests. These local changes
+remain uncommitted and are not included in PR #56.
+
+## October 4 2026 routed receiver execution checkpoint
+
+The reconciler now consumes a fresh roster and placement capture before it
+routes `Activate` or `Cancel`. It requires the exact previous receiver's
+retired-process closure, confirms that current advertisements map to established
+active boots, excludes source and already visited nodes, projects other charged
+attempts, and checks signed headroom before choosing an activation target. It
+then first-accepts the routed action through the typed closed-boot journal API
+before transport dispatch. The reference minion sends the action to the route's
+exact node/session, and its journal validates that endpoint's current active
+intent.
+
+A replacement receiver does not inherit the old process's local reservation.
+Its routed activation uses ordinary runtime admission after reading canonical
+control. It proceeds only from an unowned `Idle` control with the exact released
+root and a valid acquisition basis; a same-boot serving result is rechecked
+through the actor. A routed retry rereads control under the same accepted route.
+Routed cleanup can settle the original receiver's lost credit only after the
+closed-process proof is recorded and the routed receiver has no unresolved
+local activation.
+
+The path remains fail-closed when the adapter omits process closures, the
+roster is incomplete, the replacement lacks advertised capacity, or a previous
+receiver may have reached `Serving` or `Recovering`. The latter still needs the
+separate canonical failed-owner recovery proof. The normal movement observer
+does not synthesize failed-receiver closures; the dedicated test scenario below
+uses an explicit test-only process provider. Controller reconstruction, the
+Serving/Recovering refusal boundary, app-specific Cell contracts, and network
+transport adapters remain to be qualified.
+
+| Check | Observed result |
+| --- | --- |
+| `cargo check -p cellule-host --example fleet_operations --locked` | Passed after routed dispatch, minion endpoint validation, and new-session activation changes. |
+| `cargo clippy -p cellule-host --example fleet_operations --locked -- -D warnings` | Passed after the same changes. |
+| `cargo fmt --all --check` | Passed. |
+| Process-failure routed execution scenario | Added below; focused test passed. |
+
+These local changes remain uncommitted and are not included in PR #56. The
+highest remaining W4 work is controller-reconstruction and refusal/fault
+coverage, followed by previous-receiver `Serving`/`Recovering` recovery,
+app-contract selection, and qualification of routed remote transports.
+
+## October 4 2026 routed receiver-loss scenario checkpoint
+
+The executable minion fixture now covers receiver loss after durable source
+release. It starts three real `CellNode`s, reserves the original receiver,
+releases the source, joins the original receiver shutdown, withdraws its exact
+canonical session, and publishes a typed failed-boot closure. The observer
+recaptures that closure against each current head. Reconciliation then accepts
+both `Activate` and receiver `Cancel` at the exact replacement node/session,
+restores the released root at the next epoch, retires the attempt, and reads
+back the acknowledged SQL receipt and committed value. It replays the exact
+accepted `Activate` after the reply is lost and confirms the receiver still has
+one active Cell. The test then lets the first controller lease expire and
+resumes with a new controller session that adopts the retained action and
+completes cleanup. It shuts down all nodes and verifies runtime and
+disk-reservation resources are released.
+
+The process provider is a test-only in-process stand-in that treats joined
+`CellNode` shutdown as retained evidence. It exercises the provider contract
+and routing barrier but is not process-supervision or multi-process
+qualification.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations driver_routes_activation_and_cleanup_after_receiver_boot_closure --locked -- --nocapture` | 1 passed; 0 failed. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests::driver_ --locked -- --nocapture` | 2 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --all-targets --locked -- -D warnings` | Passed. |
+| `cargo fmt --all --check`, `git diff --check`, Rust-fence and Markdown-link checks | Passed; 137 snippets and 1,307 links/anchors checked. |
+
+W4 still needs an explicit routed stale-generation check and refusal when the
+closed receiver's control has advanced to `Serving` or `Recovering`. Existing
+public cases cover pre-release capacity refusal, duplicate preparation,
+activation and cleanup, exact idle-release generation checks, and shutdown
+resource joins. App-specific Cell contract selection and routed network
+adapters also remain unqualified. PR #56 and PR #37 are merged; this follow-up
+work remains local until separately reviewed.
+
+## October 4 2026 accepted receiver activation continuation checkpoint
+
+An accepted activation whose receiver stopped before claiming authority no
+longer stalls at failed endpoint inspection. The reconciler can consult fresh
+typed process closure, durably accept the bounded replacement route, and invoke
+the ordinary receiver executor. A failed inspection or routing attempt keeps
+the first original error in the report, bounded to one error per attempt.
+Controller deadlines do not authorize this continuation.
+
+The shared real-node fixture now checks both unaccepted and already accepted
+activation from the unchanged Idle root, including lost replacement replies,
+duplicate replay, controller lease expiry, receipt readback and joined cleanup.
+Two further cases stop the original receiver after real authority transitions
+to Recovering or Serving but before actor/result publication. Routed execution
+leaves that control unchanged, records Unknown without an acquisition basis,
+installs no replacement writer, and retains the full fleet charge. Explicit
+receiver cancellation also stays unresolved rather than erasing that claim.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --locked -- --nocapture` | 5 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --all-targets --locked -- -D warnings` | Passed for the continuation and shared fixtures. |
+| Module ownership, crate boundaries, whitespace, Rust fences and Markdown links | Passed; 137 snippets and 1,307 links/anchors checked. |
+
+These are in-process scenarios with an explicit test-only stopped-process
+provider. The next implementation priorities remain canonical recovery of a
+previous receiver's failed ownership claim, routed stale-generation and
+provider-fault cases, complete maintenance/controller-restart combinations,
+app-specific contracts and production transport/process adapters. W9 measured
+provider and mixed-version qualification and W10 rollout evidence remain
+required. Narrow tests do not establish completion of W4–W10.
+
+## October 4 2026 canonical failed-receiver recovery checkpoint
+
+Routed activation can now recover a failed receiver that already claimed the
+Cell. It reads the exact failed control, requires a canonical NodeTakeoverProof
+for a process-closed boot in the accepted route, verifies the release prefix,
+then calls the existing observed runtime takeover. ReceiverRecoveryBasis is
+durably confirmed before the ownership CAS; ReceiverRecoveryEvidence is
+confirmed before actor admission. These bounded records use separate kinds 30
+and 31 and retain the original routed acceptance. Source recovery and clean
+source release keep their existing semantics and bytes.
+
+The SQLite reference adapter retains receiver records in a separate table,
+compares immutable inputs on replay, forbids mixing them with an Idle
+acquisition basis, and checks the exact retained basis/evidence before publishing
+Activated. Fresh serving binds the entire input and recovered control to native
+acquisition history, verifies any original pinned overlay suffix and the source
+release prefix, and rechecks the actor. Missing canonical proof returns Unknown
+without another ownership CAS; missing journal support refuses acquisition.
+
+Two new real-node cases stop the receiver after canonical Serving/Recovering
+transitions but before actor/result publication. They recover at the replacement
+node, lose and replay the committed reply, wait for controller lease expiry,
+reopen an independent SQLite journal client, then retire after exact cleanup.
+They preserve the release root, advance through both receiver epochs, read the
+original command receipt/value, and join all node resources. The original
+refusal tests still prove that an unconfigured recovery provider preserves the
+foreign claim and full fleet charge. These are in-process lifecycle cases, not
+actual OS crashes or provider-backed qualification.
+
+Hosted workspace CI on PR #57's prior head caught a regression in the earlier
+source RecoveryBasis validation: an arbitrary nonzero action key was accepted.
+This change restores the exact source Recover key and preferred endpoint checks.
+The existing mutation test passes unchanged. The local warning-denied lint also
+passes after replacing a newly deprecated atomic update in the reply-loss
+fixture with a bounded-count CAS loop supported by the declared Rust minimum.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-runtime --lib fleet::operations::tests:: --locked` | 75 passed; 0 failed, including the CI regression and both new codec cases. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --locked -- --nocapture` | 7 passed; 0 failed. |
+| `cargo test -p cellule-host --test node fleet_receivers:: --locked -- --test-threads=2` | 29 passed; 0 failed. |
+| `cargo clippy -p cellule-host --example fleet_operations --all-targets --locked -- -D warnings` | Passed after the final prefix/publication changes. |
+| Boundaries, module ownership, whitespace, Rust fences and Markdown links | Passed; 137 Rust snippets and 1,348 local links/anchors checked. |
+
+Highest next priorities are the standalone receiver-loss executable; interrupted
+receiver basis/evidence writes and inherited-overlay cases; routed generation
+and provider-fault coverage; and the remaining maintenance role/fault matrix.
+Production process/transport adapters, W9 measured provider and mixed-version
+qualification, and W10 rollout/runbook evidence remain required. PR #57 remains
+a draft while hosted CI verifies the updated implementation.
+
+## October 4 2026 standalone receiver-loss checkpoint
+
+Source: parent `b92b038`; implementation/CI diff SHA-256 `a3efc37e199cfd54b227cf322358848ac720c1dc19cab843bdeb470ef14b4954`.
+Reproduce this fingerprint from the checkpoint commit with
+`git diff --binary b92b038 HEAD -- .github/workflows/rust.yml crates/cellule-host/minion ':(exclude)*.md' | shasum -a 256`.
+
+Minion now exposes `receiver-loss` through the same finite owner used by the
+other commands. It reserves one native receiver, proves clean source release,
+joins the failed receiver, and publishes typed closure of the exact enrolled
+boot. Shared reference adapters supply that closure and lose one committed
+routed activation reply. The exported reconciler selects the replacement and
+uses ordinary host execution. The command replays the exact retained action,
+waits for controller lease expiry, reopens an independent SQLite client, and
+settles the unchanged release with controller epoch 2. The former controller
+returns Fenced and cannot change the successor journal.
+
+The command checks all twelve original receipts and SQL values, the moved
+source handle's fencing, one destination actor, final placement `[11, 0, 1]`,
+and unchanged release root/epoch progression. Both journal clients close on
+every exit; the outer owner joins all nodes, retires all boots and checks empty
+resource ledgers. The closure is joined in-process evidence, not OS crash or
+external-job supervision qualification. Other focused successor cases retain
+the separate failed Serving/Recovering receiver takeover coverage.
+
+The normal-stack focused test exposed excessive stack use when CLI future
+construction was nested with complete receiver observation. Scenario and
+continuation factories now construct heap-owned futures before polling them.
+The executable and ordinary two-worker tests pass without increasing the stack
+or changing deadlines. Hosted workspace CI on the preceding `b92b038` head also
+aborted during the overload command and failed an outdated observation-count
+assertion. That model now asserts the exact planning, activation and cleanup
+capture counts at each phase while retaining all movement assertions. CI now
+prints assertion details immediately so a later abort cannot hide them.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo run -p cellule-host --example fleet_operations --all-features --locked -- receiver-loss` | Exit 0; one release/activation/retirement, twelve receipt checks, epoch 2, one lost activation reply and replay, three joined nodes/retired boots. |
+| Same command with `overload` | Exit 0; two releases/activations/retirements, two receipt checks, three joined nodes/retired boots. |
+| Same command with `controller-restart` | Exit 0; two lost release replies, epoch 2, two receiver-credit cleanups, two receipt checks, three joined nodes/retired boots. |
+| Same command with `maintenance` | Exit 0; twelve releases/activations/retirements and receipt checks, final counts `[0, 6, 6]`, Completed and exact withdrawal, three joined nodes/retired boots. |
+| `cargo test -p cellule-host --example fleet_operations receiver_loss_command_preserves_every_receipt_and_joins_all_owners --locked -- --nocapture` | 1 passed; 0 failed. |
+| Same test command with `reconciler_tests:: --all-features` | 27 passed; 0 failed. |
+| Same test command with `successor_tests:: --all-features` | 7 passed; 0 failed. |
+| Same test command with `scenario::tests:: --all-features` | 3 passed; 0 failed. |
+| Host example/all-target/all-feature warning-denied Clippy, format, boundaries, module ownership, whitespace, documented Rust and local Markdown links | Passed; 137 snippets and 1,348 links/anchors checked. |
+
+The preceding hosted follower-only maintenance case failed before the abort;
+its two focused local reruns pass without changing its deadline, pass limit or
+required Completed/withdrawal/follower assertions. Its diagnostic assertion now
+retains the complete reconcile report. The broader hosted result remains
+unverified until CI runs this updated head. Focused success does not establish
+W4–W10 completion.
+
+Highest remaining priorities: explain any current-head CI failures; interrupted
+receiver basis/evidence persistence, inherited overlays and stale generations;
+the maintenance role/controller/fault matrix; production process/transport
+adapters and measured W9 fault/mixed-version qualification; and W10 rollout and
+runbook evidence. The four required CLI scenarios are available, while W8's
+complete application integration and qualification obligations remain open.
+
+## October 4 2026 interrupted receiver recovery checkpoint
+
+Source: parent `c61fc55`; implementation/CI diff SHA-256
+`e333a421e2ad6a98bfe10c459df6a6be0072366c85b7bc8284fd80eb7b6ae33a`.
+Reproduce from this checkpoint commit with
+`git diff --binary c61fc55 HEAD -- .github/workflows/rust.yml crates/cellule-host/src/fleet/movement crates/cellule-host/minion ':(exclude)*.md' | shasum -a 256`.
+
+Actual transaction-boundary faults exposed a liveness gap: an interrupted
+receiver evidence write left a safe native rollback root, but replay could not
+publish its result after ordinary acquisition because the recovery evidence was
+missing. The host now reconstructs that record only from the exact original
+canonical acquisition input/materialization. A retained record keeps its
+original capture time. Missing, corrupt or valid-but-substituted history cannot
+be replaced by current owner, root equality or epoch counters.
+
+Replay also resumes an Idle rollback itself through ordinary admitted native
+acquisition. It confirms the original recovery evidence and verifies its
+materialized prefix and the clean release prefix before another ownership CAS.
+The original routed acceptance, basis and movement charge remain unchanged;
+there is no second movement or replacement Idle basis. A same-session ordinary
+acquisition winner passes the same current-serving/history checks. Fresh
+inspection performs neither evidence repair nor acquisition.
+
+Nine new real-node cases pause SQLite basis/evidence writes before commit or
+after commit before reply. They cover both basis boundaries, both evidence
+boundaries, cancelled waiters before and after takeover, another interrupted
+reconstruction write, automatic Idle resumption and an ordinary acquisition
+winner. Missing/corrupt/substituted native records leave authority unchanged and
+retain the full charge; an already retained journal recovery record cannot
+replace missing native history. The substituted record comes from a different
+fully joined canonical acquisition and decodes successfully for the same
+Cell/incarnation/epoch. Each successful case reopens an independent journal
+client, compares immutable records, settles through the public reconciler,
+resolves the original command receipt/value and joins all node resources.
+While paused, active-cell credit is distinguished from actual Owned actor
+inventory. Original injected I/O errors remain in the source chain.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | 16 passed; 0 failed, including the 9 new fault cases. |
+| `cargo test -p cellule-host --test node fleet_receivers:: --all-features --locked -- --test-threads=2` | 29 passed; 0 failed. |
+| `cargo test -p cellule-host --example fleet_operations reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --nocapture --test-threads=1` | 1 passed; 0 failed with unchanged deadlines and completion assertions. |
+| `cargo run -p cellule-host --example fleet_operations --all-features --locked -- receiver-loss` | Exit 0; 12 receipt checks, one release/activation/retirement, controller epoch 2, final placement `[11, 0, 1]`, 3 joined nodes/retired boots and lost activation reply replay. |
+| Host example/all-target/all-feature Clippy with `-D warnings`, format, boundaries, module ownership, whitespace, documented Rust and local Markdown links | Passed; 137 Rust snippets and 1,348 local links/anchors checked. |
+
+Hosted Rust workspace CI on `c61fc55` ran all 352 minion cases: 351 passed and
+one follower-only maintenance collection hit its finite observer deadline.
+There was no stack abort or observation-count failure. The new CI scheduling
+isolates unrelated fixtures with one harness test thread; every case retains
+its native worker concurrency, races, deadlines and required evidence. This is
+a scheduling change, not a measured diagnosis or proof that the hosted timeout
+is resolved. Hosted current-head results must confirm it. Object-proof,
+follower-proof, MSRV, contract and quality checks passed on `c61fc55`; those
+results do not qualify this newer source.
+
+Highest next priorities:
+
+1. Verify current-head CI; qualify routed recovery with inherited overlays,
+   historical suffix loss/substitution and stale generation/provider faults.
+2. Complete maintenance controller loss during evacuation/closing and the
+   remaining reader/follower/primitive fault combinations, including external
+   Cron/Blob owners and accepted-work/process closure.
+3. Deliver production process/transport integration and the versioned W9 fleet
+   qualification profile/runner with actual provider, load, resource and
+   mixed-binary evidence; exercise W10 rollout, rollback and runbooks.
+
+This remains a focused W4/W5 increment. In-process process-closure providers
+and selected test success do not establish completion of W4–W10.
+
+## October 4 2026 interrupted native takeover continuation checkpoint
+
+Source: parent `8e11aca`; implementation diff SHA-256
+`18f546f8f5c515376c4d3873610556912bf7b7c5be665e98e21170cd1e536f28`.
+Reproduce from this checkpoint commit with
+`git diff --binary 8e11aca HEAD -- crates/cellule-runtime/src/cell/actor crates/cellule-host/src/fleet/movement crates/cellule-host/tests/node/fleet_receivers crates/cellule-host/minion ':(exclude)*.md' | shasum -a 256`.
+
+A failed overlay materialization can retain the target's own Recovering control
+and inherited suffix. Asking for another failed-owner takeover cannot resume
+that same accepted claim. The native runtime now exposes
+`resume_takeover_restored_observed`: validate the original fenced input and
+current claim, reconfirm the original recorder, then finish without another
+ownership CAS. A current materialized claim must equal the complete canonical
+result derived from the original pinned manifest. Changed scope, epoch, owner
+or publication is refused. It retains immutable native acquisition input/result
+before the recorder's pre-admission confirmation. Initial takeover and resume
+share one materialization/activation/rollback owner and the existing resource
+admission path. No persisted record format or action key changes.
+
+Failed-source Recover and routed receiver Activate now use this native
+continuation for their own interrupted claims. Routed resumption verifies the
+clean release prefix before native effects and obtains the failed predecessor's
+proof from the original basis. Fresh inspection remains read-only.
+
+Two new public host cases use an actual sealed follower suffix. One removes the
+manifest, dispatches and replays failed recovery, and confirms the exact owned
+Recovering claim/overlay with no actor or acquisition metadata. Restoring the
+manifest allows a cancelled replay waiter to join the same accepted native work.
+The other pauses a direct native embedding owner after real materialization and
+durable recording, interrupts that owner, refuses a changed original control,
+then resumes through the host. Both retain the original epoch in the suffix,
+activate one writer at the already claimed epoch, and resolve an acknowledged
+source command receipt. A historical manifest substitution remains a blocker
+while the live actor can still read its acknowledged state.
+
+The added minion routed case models the post-CAS interruption window with a
+real canonical authority transition after durable basis confirmation. Replay
+creates actual native acquisition/materialization history and activates without
+another epoch; independent journal readback and resource joining use the existing
+fixture. This model does not represent an OS crash or a complete routed overlay
+and controller succession campaign.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --test node fleet_receivers:: --all-features --locked -- --test-threads=2` | 31 passed; 0 failed, including both new public overlay cases. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | 17 passed; 0 failed, including the new exact routed-claim replay. |
+| `cargo test -p cellule-runtime --test runtime lifecycle::ownership::recovery:: --all-features --locked -- --test-threads=2` | 8 passed; 0 failed; 1 provider case remains explicitly ignored without its documented isolated RustFS environment. |
+| `cargo check -p cellule-host --all-targets --all-features --locked` | Passed. |
+| Runtime/host all-target/all-feature Clippy with `-D warnings`, format, boundaries, module ownership, whitespace, Rust fences and Markdown links | Passed; 137 snippets and 1,348 local links/anchors checked. |
+
+The previous checkpoint's hosted Rust run `37242017429` completed with failure:
+360 of 361 minion cases passed, and the follower-only maintenance observer again
+timed out in `fleet-follower-evacuation-deadline`. Serial harness scheduling did
+not resolve that failure. MSRV, workspace feature/target checks, API
+documentation, workspace unit/integration tests and the balanced three-process
+smoke steps passed on `8e11aca`. Those results do not qualify this newer native
+implementation. Reproduce and diagnose the observer timeout without changing
+its deadlines or required completion evidence; this checkpoint also requires
+its own broad CI after publication.
+
+Highest next priorities:
+
+1. Verify hosted CI and combine inherited overlays with routed boot/controller
+   succession, historical suffix/lineage faults and provider outages. Complete
+   missing-evidence continuation of safely rolled-back failed-source recovery.
+2. Complete maintenance controller/role/primitive fault combinations and actual
+   accepted external-job/process closure, including Cron/Blob obligations.
+3. Deliver the W9 versioned measured fleet profile/runner and provider/process,
+   mixed-binary and load/resource evidence; exercise W10 staged operations,
+   rollback and runbooks. These remain required for full plan completion.
+
+
+## 2026-10-05 — Failed-source evidence repair and bound Idle suffix proof
+
+Parent: `15b4f2923a8ea58cab3fcf0cf09cab5e546d3637`. The code-only diff from
+that parent, excluding Markdown, has SHA-256
+`fafc62ff7fdb11f4b27c9dcd0e46894fa443ecf856af90590a8f87913fde711b`.
+This checkpoint advances W4 recovery; it does not complete W4–W10.
+
+Accepted failed-source Recover replay now repairs a missing evidence write only
+from the exact original retained basis and immutable native acquisition
+input/materialization. A committed evidence reply lost in transport retains the
+original record and time. A safe Idle rollback can resume ordinary admitted
+acquisition after prefix/origin verification; an ordinary acquisition winner
+retains its actor and must satisfy the same original-history checks. Fresh
+inspection writes no metadata and starts no acquisition. Failed evidence writes
+keep the full attempt charged and preserve their original I/O source error.
+
+Actual sealed-suffix replay exposed a missing pre-acquisition contract: the
+Serving suffix verifier correctly rejects Idle. The new explicit
+`verify_recovered_idle_prefix` requires a complete unowned Idle control with
+cleared overlay, shares the bounded canonical-history/origin walk and runtime
+I/O/memory admission, and rechecks the complete control before and after I/O.
+It supplies no ownership, actor, retention, role or settlement rights. The
+existing Serving verifier retains its strict state requirement.
+
+Ten new public host cases cover lost evidence replies, failed and repeated
+writes, cancelled repair waiters, ordinary acquisition winners, missing/corrupt
+original history in both Idle and Serving states, valid substituted history,
+missing materialized origin, and actual sealed-suffix manifest faults. Restoring
+exact original bytes permits replay without another movement permit or rewritten
+basis. Completion checks current writer, original canonical evidence, repeated
+action identity, acknowledged command resolution and joined resources.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --test node fleet_receivers:: --all-features --locked -- --test-threads=2` | 41 passed; 0 failed, including all ten new cases. |
+| `cargo test -p cellule-runtime --lib control::authority::acquisition::tests:: --all-features --locked -- --test-threads=2` | 11 passed; 0 failed. Idle refusal by the Serving API, zero bound, missing acquisition and stale complete control covered. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | 17 passed; 0 failed after the temporary deadline probes were compiled. |
+| Exact minion `reference_observer_reconciles_follower_only_maintenance_to_completion` | 1 passed; 0 failed, 2.55 seconds locally. This does not establish a hosted CI fix. |
+| Runtime/host all-target/all-feature Clippy with `-D warnings`; API docs with `RUSTDOCFLAGS='-D warnings'` | Passed. |
+| Format, whitespace, boundaries, module ownership, Rust fences, Markdown links and runtime SQL/peer validator | Passed: 137 snippets, 1,348 Markdown links/anchors, 28 protocol/schema assertions and 571 validator links. |
+
+Authoritative hosted results for parent `15b4f29`: Rust run `37244070031`
+finished with workspace failure, 343 of 362 minion cases passing and 19 failing.
+Most failures were observation deadlines; the previously failing follower-only
+observer failed again. Workspace all-feature/target checks, workspace tests,
+API docs, MSRV and the balanced three-process smoke passed before that step.
+Follower and object proof checks also passed on the parent. These results do
+not qualify the new code. Contract run `37244070048` failed the unchanged
+paused-clock LTX compaction test: 500 ms observed versus the required 400 ms.
+Neither failure is resolved by this checkpoint.
+
+Temporary test-only `[DEBUG-fleet-57]` probes report failed/cancelled collection
+stages, native snapshot waits, policy verification and original elapsed budgets
+in the next hosted run. Normal successful observations print no probe output.
+No deadlines, qualification profiles or assertions were changed. Remove the
+probes after the hosted cause is confirmed and fixed. The isolated ARM64 Linux
+observer and LTX repetitions passed earlier; AMD64 emulation failed in native
+compiler/linker setup before tests and supplies no AMD64 test evidence.
+
+Highest next priorities:
+
+1. Diagnose the hosted observer and LTX failures with original deadlines and
+   evidence intact; verify this checkpoint in CI and keep PR #57 mergeable.
+2. Complete the routed inherited-overlay/boot/controller succession campaign,
+   historical suffix/lineage and provider faults, and the remaining maintenance
+   role/primitive fault combinations and accepted external-job/process closure.
+3. Deliver the W9 versioned measured fleet profile/runner, actual provider/process
+   and mixed-binary/load/resource evidence, then exercise W10 staged operations,
+   rollout/rollback and runbooks. These remain required for full plan completion.
+
+
+## 2026-10-05 — Routed inherited suffix and controller fault campaign
+
+Parent: `a509e2c1d087f39086c93802837060f0453ea81e`. The code-only diff, excluding
+Markdown, has SHA-256
+`5127a30bbfbe190133f197722bbde06029f85b14e51e69604ca0b1cc7c4cc7e5`.
+This checkpoint adds three selected W4/W5 fault models; full W4–W10 delivery
+remains open. Production authority, formats, action keys and profiles are unchanged.
+
+The routed fixture now acquires the released Cell through an actual earlier
+native owner, captures a SQLite tail and fsyncs it to every selected follower.
+Each original member request is durably Pending before canonical enrollment.
+Activation follows all first-append acknowledgments. Native recovery seals and
+pins the complete tail; complete member retirement and typed fleet publication
+retain every original request before the later receiver's process closure.
+
+Removing that original manifest makes a real preferred-receiver takeover commit
+its claim, then fail materialization. The current Recovering control inherits
+the exact earlier overlay; no successful acquisition record is fabricated.
+Routed recovery retains that control as its original basis while preserving the
+manifest's earlier Cell epoch. The additional runtime and all fleet runtimes
+join their jobs, actors, descriptors and admission credits before private paths
+are dropped. Process evidence remains the documented in-process reference.
+
+The new cases prove:
+
+- Evidence-write failure rolls back safely to Idle; replay confirms the original
+  canonical materialization before ordinary admitted reacquisition. The explicit
+  native suffix proof identifies the earlier manifest epoch and exact acquisition
+  that materialized it, despite a missing interrupted intermediate record.
+- Missing/corrupt historical manifests keep the attempt charged with original
+  storage/manifest errors and no writer or additional ownership claim. Restoring
+  original bytes resumes the same evidence. A replacement controller waits for
+  real lease expiry, opens an independent SQLite client, adopts the original route
+  and checked result, joins receiver credit and retires the attempt. The old
+  controller is fenced and leaves the journal unchanged.
+- A manifest outage after a routed ownership CAS preserves that exact Recovering
+  claim. Restored bytes permit native resumption without another epoch. A replay
+  waiter cancelled at the actual pre-admission evidence write cannot cancel
+  materialization or actor admission; the owned action retains exact native
+  evidence and the replacement controller joins its completion.
+
+Every completion resolves the original acknowledged command and reads the
+actual materialized suffix value. Retention and complete process/provider
+qualification remain separate.
+
+Sharing the larger fixture initially caused a reproducible stack overflow in
+an existing receiver evidence test, both alone and in the combined suite.
+Boxing the shared finite constructor and completion futures fixes that seam
+without increasing stack limits or changing test profiles. The same failing
+case and the full successor suite then pass. The existing member transport
+moved into one focused module and is reused by both fixture families.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=2` | Final code: 20 passed; 0 failed, 54.13 seconds. An intermediate repeated run hit controller Fenced in an existing history fixture while its journal write was paused; that timing debt remains recorded rather than weakening its expectation. |
+| `cargo test -p cellule-host --example fleet_operations successor_tests:: --all-features --locked -- --nocapture --test-threads=1` | Final code: 20 passed; 0 failed, 131.63 seconds using the serial CI harness. |
+| `cargo test -p cellule-host --example fleet_operations scenario::recovered_followers::tests:: --all-features --locked -- --nocapture --test-threads=2` | 7 passed; 0 failed after the shared transport move. |
+| Host all-target/all-feature Clippy with `-D warnings`; format, whitespace, architecture and module ownership | Passed. |
+
+Hosted parent Rust run `37246672617` is terminal Failure: 343 of 362 minion
+cases passed, 19 failed. Its test-only probes localize repeated routed failures
+to failed-boot closure with about 1.05 seconds of remaining budget versus about
+1.10 seconds elapsed. The follower-only case exhausted its roughly 2.50-second
+share during native collection and roster confirmation. No native snapshot hang
+is shown by those traces. The exact cause and correction for the consumed
+controller partitions remain open; do not extend deadlines or suppress failures.
+Contract run `37246672563`, follower/object proof, MSRV and cookbook quality
+checks passed on that parent. The intermittent earlier LTX timer failure is
+not established as fixed by this one green run. New-head CI remains required.
+
+Highest next priorities:
+
+1. Reproduce and fix the hosted collection/controller-budget failures with
+   original profiles and proof checks intact; remove temporary probes only after
+   confirming the cause and regression. Diagnose the observed fixture lease-expiry
+   race and retain broad CI evidence for each published head.
+2. Extend routed provider/backend/lineage faults and successive boot failures,
+   complete remaining maintenance role/primitive combinations, and qualify
+   actual accepted external-work/process providers, including Cron/Blob closure.
+3. Deliver W9's committed measured fleet profile/runner and actual provider/process,
+   mixed-version/load/resource campaign; exercise W10 rollout, rollback and
+   runbooks. Keep PR #57 synchronized with main and mergeable throughout.
+
+
+## 2026-10-05 — Native deadline reproduction and canonical signature boundaries
+
+Parent: `ed16bf9cade53c831242f34f3524c4084854c978`. The code-only diff,
+excluding Markdown, has SHA-256
+`503e4e80ad3ded04d265a36ee71651b51a27a748699cb636a0c475052e1dff2e`.
+This checkpoint fixes redundant authentication at specific directory boundaries;
+it does not claim green fleet CI or completion of W4–W10.
+
+An isolated native Ubuntu 24.04 workflow reproduced all three selected hosted
+failures with their original debug harness, deadlines, controller profile and
+assertions. Stage probes measured routed collection at 922 ms: foreign reference
+collection/rechecks consumed 631 ms, while journal confirmation used less than
+one millisecond. Follower collection took 2.69 seconds, including 1.61 seconds
+in those reference scans. This rules out journal confirmation as the principal
+cost in these captures; it does not establish a general provider latency bound.
+
+Canonical decoding had already authenticated identity and understood placement
+signatures before exact loads, live/advertised scans and follower inventories
+verified the same immutable bytes again. Those consumers now retain every fresh
+read, canonical-byte/path check and their existing scope/time policy, while
+using the decoder's original authentication. Create and heartbeat refresh still
+validate signatures before any CAS, then use the one canonical serializer on
+the unchanged candidate. Unverified producers retain the checked encode path.
+There is no signature cache across reads, changed bytes or directory scans;
+formats, signature inputs, error sources, action keys and budgets are unchanged.
+
+Seven regression cases cover all three advertisement forms, verification counts,
+canonical emission/readback, changed valid bytes, forged identity/placement
+signatures, expiry, future issue time, foreign scope and misplaced paths.
+Invalid producers retain their original signature errors and cannot create or
+change a canonical record. Three read/scan tests and the producer test failed
+with two verification passes before their respective fixes.
+
+Native diagnostics, each selecting one exact case per command:
+
+| Snapshot / run / job | Observed result |
+| --- | --- |
+| `573214e`; [run 37249579053 / job 111574292502](https://github.com/crabbuild/cellule/actions/runs/37249579053/job/111574292502) | Original routed claim, interrupted evidence write and follower-only maintenance each failed. Stage timings above come from this run. |
+| `80691d4`; [run 37250078568 / job 111575760319](https://github.com/crabbuild/cellule/actions/runs/37250078568/job/111575760319) | Both routed cases passed after the read-boundary change. Follower collection improved to 1.81 seconds but policy verification still exhausted its unchanged 2.50-second share. |
+| `8a73df3`; [run 37250615027 / job 111577285575](https://github.com/crabbuild/cellule/actions/runs/37250615027/job/111577285575) | Both routed cases passed after producer emission also stopped repeating verification: 6.14 and 4.51 seconds for the complete cases. Follower-only maintenance reached a different failure: native Host snapshot reported the original `fleet-action-journal` Conflict after 329 ms, with 2.17 seconds of observation budget remaining. This is a changed-barrier refusal, not a proven complete CI fix. |
+
+The diagnostic snapshots add only a temporary workflow and stage probes to the
+recorded code. They are not protected qualification receipts and do not replace
+current-head broad CI. Raw logs are retained in the linked workflow runs.
+Temporary probes remain because the follower conflict and broad failures still
+need diagnosis; no deadline, pass partition, assertion or qualification profile
+was relaxed.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-runtime --lib node:: --all-features --locked -- --test-threads=2` | 119 passed; 0 failed, including all seven new cases. |
+| Exact minion follower-only maintenance selector | 1 passed locally, 2.30 seconds; native changed-barrier failure above remains open. |
+| Serial minion successor suite after the read-boundary change | 20 passed; 0 failed, 127.62 seconds. |
+| Serial minion successor suite with the final producer change and probes | 20 passed; 0 failed, 97.32 seconds. |
+| Runtime/host all-target/all-feature Clippy and warning-denied API docs | Passed for the final producer change and test additions. |
+| Format, whitespace, boundaries, module ownership, document and SQL/peer gates | Passed: 137 snippets, 1,348 local Markdown links, 28 protocol/schema assertions and 571 validator links. |
+
+Highest next priorities:
+
+1. Diagnose the native follower registry conflict and preserve its original
+   changed-barrier refusal while making safe reconciliation resumable. Verify
+   the published head's complete CI, the observed controller-expiry timing debt
+   and the intermittent LTX timer case; remove probes after confirmed regression.
+2. Extend routed provider/backend/lineage and successive-boot faults, complete
+   remaining maintenance role/primitive combinations, and qualify actual external
+   work/process providers, including Cron/Blob closure.
+3. Deliver W9's measured profile/runner, provider/process and mixed-version/load
+   evidence; exercise W10 staged rollout, rollback and runbooks. Keep PR #57
+   synchronized with main and mergeable.
+
+
+## 2026-10-05 — Native role settlement after controller reconstruction
+
+Parent: `f42df6a6f0e7c0bb2e495e06f4c626d81d1b8aa0`. The Rust-only diff
+has SHA-256 `da4b6e40b2896bf2dc75cdbf7935304bedeed39d1cd2427585e95a96851a6199`.
+
+The new real-node regression drops the reply after the donor commits
+`RolesSettledAt`, then reconstructs the public driver over an independent SQLite
+client. It failed before the fix: the executor validated the new proof against
+the original accepted envelope's earlier head, then failed publication with
+`fleet-action-journal` Conflict and retained Evacuating. The executor now checks
+stable replay identity against the original acceptance, validates the refreshed
+opaque proof against the current request, and publishes through the existing
+atomic current-head/registry check. Movement still uses its original accepted
+inputs. No persisted format, action key, original deadline or qualification
+profile changed.
+
+The regression proves that acceptance stays byte-identical while the receipt
+covers the renewed head, then reaches Closing/Completed and checks Stopped,
+permanent withdrawal and unchanged follower policy history. Rotation drained
+the original actor, so final service evidence restores the authority-pinned
+canonical root and compares both the value and original `sys_requests` result
+with the acknowledged 29. Joined cleanup checks runtime/disk/enrollment ledgers.
+This is same-claimant reconstruction, not replacement after lease expiry or
+external process qualification. The new case has its own ten-second pass bound;
+existing five-second follower qualification and its partition remain unchanged.
+
+Earlier full-head evidence now has a terminal result:
+
+| Source / job | Observed result |
+| --- | --- |
+| `f42df6a`; [Rust workspace job 111578870302](https://github.com/crabbuild/cellule/actions/runs/37251146273/job/111578870302) | All 365 minion cases passed, 0 failed, 731.52 seconds; workspace tests, process smoke, Axum provider checks and local/replica LTX suites passed. The job later failed at warning-denied Clippy on one deprecated `fetch_update` in the public host fault fixture. |
+| `f42df6a`; [follower-proof job 111578923743](https://github.com/crabbuild/cellule/actions/runs/37251146389/job/111578923743) | Success. Object proof, MSRV, qualification contract, website and cookbook quality/scenario jobs also completed successfully. This does not qualify the new source checkpoint. |
+| `ffc7688`; [native diagnostic job 111580309609](https://github.com/crabbuild/cellule/actions/runs/37251638607/job/111580309609) | Both routed cases passed. Follower-only maintenance exceeded its original 2.50-second share: 1.675 seconds in collection and 0.824 seconds in policy checks. No journal-conflict probe fired in this reproduction. |
+| `0bf64cc`; [native repeated diagnostic job 111581716096](https://github.com/crabbuild/cellule/actions/runs/37252117116/job/111581716096) | Both routed cases and three independent executions of the unchanged follower-only case passed. Each command selected one exact test. This run adds collector logging and repetitions, not a deadline/profile change. |
+| `35e1b0c`; [native settlement diagnostic job 111582701148](https://github.com/crabbuild/cellule/actions/runs/37252452852/job/111582701148) | The new reconstructed-controller settlement/restore case passed, 1 selected test, 14.48 seconds. Both routed cases passed. All three unchanged follower-only repetitions failed at their original observation deadline; the job is Failure. This snapshot contains the settlement fix/test, but predates the separate public-fixture lint rename. |
+
+The CI lint failure used the newer stable compiler; local Rust is 1.97. The last
+`fetch_update` was changed to the already-supported `try_update` with identical
+ordering and closure. No lint suppression was added.
+
+Local verification of the final source:
+
+| Check | Result |
+| --- | --- |
+| New native restart/restore regression | 1 passed; before-fix failure was observed at the real node/journal seam. |
+| Opaque role-settlement binding/refusal unit cases | 3 passed. |
+| Public host maintenance actions | 6 passed. |
+| Public host action acceptance, cancellation and publication cases | 7 passed. |
+| Exact journal Closing reconstruction and enrollment-during-capture refusal | 1 passed each; changed-registry Conflict is still required before allocation. |
+| Host all-target/all-feature warning-denied Clippy | Passed on Rust 1.97 after the rename. Latest stable verification belongs to current-head CI. |
+
+Temporary test-only capture probes remain because the observed native
+changed-barrier refusal and timing variation require repeated campaign evidence.
+The strict snapshot refusal is unchanged. A green run alone does not establish
+that all timing or controller-expiry failure patterns are eliminated.
+
+Highest next priorities:
+
+1. Verify this checkpoint's complete CI and remove probes after confirmed native
+   regressions. Qualify actual new-claimant maintenance restart, unknown result
+   publication and changed-head/registry races without weakening refusal gates.
+2. Complete the role/primitive fault matrix, successive boot/provider/lineage
+   cases and actual external process, Cron and Blob ownership barriers.
+3. Deliver W9 measured load/profile/provider and mixed-version evidence, then
+   W10 staged rollout/rollback and exercised operator runbooks. W4–W10 remain
+   incomplete; keep PR #57 synchronized and mergeable.
+
+
+## October 4 2026 shared inventory and controller-expiry checkpoint
+
+Parent: `eba3b6c34c363ab40a707425a510ccb4ff6ed6b9`. The Rust-only diff
+has SHA-256 `92b66d2924d9c269dd488ddc713af1296981884e51d1d7cbdde9d654752dc99d`.
+
+Delivered:
+
+- `NodeDirectory::follower_logs_pages` supplies independent follower windows
+  from one fresh authenticated directory traversal. Requests are unique and
+  bounded; combined page rows stay at most 128, plus one lookahead per member.
+  The scalar API uses the same implementation. Existing topology domains,
+  48-byte cursors, exact rows and expired/fenced obligations are unchanged.
+- `FleetFollowerReferences::collect_all` and `recheck_all` preserve the complete
+  per-member inventories and original full roster. A failed recheck invalidates
+  every previous confirmation without changing any original row or interval.
+  Coverage remains invalid until every member is freshly confirmed. Minion uses
+  these APIs at its existing collection/recheck boundaries.
+- Immutable enrollment fingerprints serialize their already-authenticated
+  original private inputs through the canonical serializer. The regression was
+  red with four repeated signature passes, then green with zero and identical
+  original digest bytes for attempt, enrollment and refusal. Every fresh
+  canonical directory read still independently authenticates each record.
+- Maintenance restart now also waits for actual controller lease expiry while
+  the original boot owners publish real signed heartbeats. A new claimant gains
+  epoch 2, refreshes the same accepted settlement at its current head, and reaches
+  Completed/Stopped/withdrawn. The old claimant is fenced with an unchanged
+  journal; canonical-root value and original request-result readback remain 29.
+
+Native evidence:
+
+| Source / job | Result |
+| --- | --- |
+| Published parent `eba3b6c`; [workspace job 111583565455](https://github.com/crabbuild/cellule/actions/runs/37252756090/job/111583565455) | Failure: 364 minion cases passed, 2 observer cases failed, 1002.01 seconds. The failures exhausted the unchanged controller/observation deadlines. Follower proof, object proof, MSRV, contract, website and cookbook checks passed. |
+| Shared traversal snapshot `1c6f6c2`; [diagnostic job 111585942801](https://github.com/crabbuild/cellule/actions/runs/37253571241/job/111585942801) | Failure: all three original follower-only repetitions still exhausted their original share; policy/graph composition also refused changed accepted work during native capture. The strict refusal remains unchanged. |
+| Shared traversal plus immutable fingerprint snapshot `5d162c4`; [diagnostic job 111588516964](https://github.com/crabbuild/cellule/actions/runs/37254474648/job/111588516964) | Success: both routed cases, three original follower-only repetitions, same-claimant restart, policy/graph composition, 2 reference batch cases, 8 cursor cases, 8 canonical authentication cases, actual-expiry restart and 13 enrollment cases. Each command selected its expected cases. The actual-expiry case took 36.28 seconds. |
+
+In the final native reproduction, original follower collection took about
+0.66–0.67 seconds instead of 1.44 seconds in the preceding shared-scan-only
+snapshot. Repeated producer-page signature work was the remaining cost. Original
+five-second follower deadlines, their observation partition and qualification
+profiles were preserved. These are diagnostic observations, not a measured W9
+production capacity profile. The successful diagnostic snapshot includes tagged
+probes; they have now been removed from the source checkpoint.
+
+Local verification: 124 runtime node cases, 3 original observer cases, 2 shared
+reference cases and both controller restart cases passed. The 3 original observer
+cases also passed after probe removal. Host/runtime all-target/all-feature
+warning-denied Clippy and warning-denied API docs passed. Formatting, boundaries,
+module layout, 137 Rust snippets, 1348 Markdown links and 28 SQL/peer assertions
+passed; the runtime validator checked 571 links. Full cleaned-source workspace
+and process evidence belongs to the new PR head's CI.
+
+PR #37 is merged. The continuation PR #57 includes the latest fetched main and
+was mergeable when this checkpoint was prepared; none of the three reported
+conflict files has conflict markers.
+
+Highest next priorities:
+
+1. Complete the cleaned checkpoint's full PR CI and preserve strict changed-head,
+   changed-registry and accepted-work capture refusals.
+2. Qualify uncommitted SettleRoles publication across controller replacement,
+   successive boot/lineage cases and the remaining W4–W7 role/primitive faults,
+   including external Cron/Blob owners.
+3. Complete W9 recorded process/provider, load/soak and mixed-version campaigns,
+   then exercise W10 operator rollout, rollback and recovery runbooks. W4–W10
+   remain incomplete; these focused cases do not establish full fleet readiness.
+
+
+## October 5 2026 role-result publication and cancelled-owner checkpoint
+
+Parent: `ab5eb0bfe4a8dedcc62a7cb44528e250210c9512`. The Rust-only diff
+has SHA-256 `70aa7b017943121bed73faa6f9e1c4316a99ad55611dec6763002a372d3fdfd0`.
+
+A real-node regression reproduced an unpublished native `SettleRoles` proof
+that prevented every later complete observation. The joined executor retried
+the original proof after controller renewal; its old-head publication correctly
+returned Conflict, but its retained local job prevented fresh capture forever.
+The executor now returns that original publication error and retires only this
+joined, read-only local proof after its failed retry. Original durable acceptance
+and historical results remain unchanged. A later pass must collect complete fresh
+native and foreign-role evidence and commit through the existing atomic
+head/registry check before Closing. Physical-effect receipts remain retained
+across publication failures and are never reexecuted.
+
+Four new restart cases fault the actual journal write before commit or its reply
+after commit, under both same-claimant renewal and replacement after actual lease
+expiry. Two additional cases cancel the public controller while the original
+native publication owner is paused at those boundaries. Exact duplicates join
+that owner; competing fresh proofs are refused while it runs. After its original
+completion and failed stale-proof retry, fresh evidence advances Closing and
+Completed. All cases preserve original acceptance, errors and historical results,
+check canonical-root value and original request-result readback of 29, and join
+all runtime, disk and enrollment ledgers. No existing qualification profile,
+five-second deadline or expected evidence changed. These new restart/cancellation
+cases use their own ten-second pass bound.
+
+| Source / job | Observed result |
+| --- | --- |
+| Published parent `ab5eb0b`; [workspace job 111590038595](https://github.com/crabbuild/cellule/actions/runs/37254990107/job/111590038595) | Success: all 369 minion cases, 0 failures, 864.60 seconds; workspace, provider/process smoke, local/replica LTX, warning-denied lint and contract gates passed. Environment-specific ignored cloud suites are not qualified by this result. |
+| Snapshot `4b847c4`; [native publication job 111594331530](https://github.com/crabbuild/cellule/actions/runs/37256405859/job/111594331530) | Success on Rust 1.99: 6 restart cases (128.49 seconds), 2 cancelled owners (17.81 seconds), 3 unchanged observer contracts, 7 physical-action retention cases, 3 opaque-proof refusals, and host all-target/all-feature warning-denied Clippy. |
+
+The native snapshot contains the exact staged Rust source and no probes. Its
+21 selected tests establish the focused regression scope; the new published
+head still requires its full workspace and provider CI. Local verification also
+passed the six restart and two cancellation cases, seven physical-action cases,
+six public maintenance cases, three opaque-proof cases, host Clippy/API docs,
+format, boundaries/layout and document/SQL-peer gates.
+
+Highest next priorities:
+
+1. Verify this source checkpoint's full CI and preserve current main ancestry
+   and PR mergeability. Extend the maintenance executable beyond writer-only
+   coverage using the existing public reader/follower orchestration.
+2. Complete successive boot/lineage and remaining W4–W7 role/primitive faults,
+   including actual external Cron/Blob and failed-process ownership barriers.
+3. Deliver W9 recorded provider/process, load/soak and mixed-version campaigns,
+   then exercise W10 rollout, rollback and recovery runbooks. W4–W10 remain
+   incomplete; focused publication regressions do not establish fleet readiness.
+
+
+## October 5 2026 executable reader maintenance checkpoint
+
+Parent: `9257b18c825118db00518fd8b494a7bd9a75792b`. The Rust-only diff
+has SHA-256 `5045af8d1faba496434d2414631c62eb294e6f492e9efd15976d9c0ad9802aa5`.
+
+Delivered `maintenance-reader` through the canonical minion executable. Three
+managed boots retain Pending/Established before readiness, one real writer
+acknowledges a mutation from 17 to 29, and the public driver cordons the reader's
+physical node. A complete observation without replacement policy remains
+Evacuating, preserving the original Established reader and its usable value.
+The command opens a selected native replacement, performs canonical evacuation,
+publishes immutable policy evidence and lets fresh complete observation
+authorize SettleRoles and Finalize. It checks Completed, Stopped, exact boot
+withdrawal, retired/fenced original reader, receipt-bound replacement value 29,
+the original writer's stored mutation result and unchanged writer ownership.
+The shared exit path joins three nodes, both reader enrollments and boot rows,
+then checks every existing runtime resource ledger.
+
+The signed native peer verifier/dispatcher adapter moved from the private reader
+test tree into a shared production minion module. Existing cancellation/probe
+controls remain test-only; the executable and tests use the same routing. No
+framework transport, second scheduler or application authentication policy was
+added to the framework.
+
+The first executable regression failed because replacement activation still saw
+the original donor in the reader directory's bounded membership cache. It now
+waits within its deadline for canonical selection to observe the signed cordon
+and choose the spare, preserving the original reader during that interval.
+The reference heartbeat also waits for a newer actual classifier sample that
+matches the current local admission mode before signing. No mode, sample time
+or sequence is fabricated, and the canonical reader cache remains unchanged.
+All temporary diagnosis probes were removed.
+
+| Source / check | Observed result |
+| --- | --- |
+| Exact Rust snapshot `0409277`; [native reader job 111598959724](https://github.com/crabbuild/cellule/actions/runs/37257960935/job/111598959724) | Success on Rust 1.99: executable regression (1 test, 8.26 seconds), production `maintenance-reader` command, 10 unchanged reader fault cases, 2 existing public reader observer cases, 3 unchanged follower observer cases, and host all-target/all-feature warning-denied Clippy. The snapshot matches all nine changed Rust paths, including the old adapter deletion. |
+| Local executable and regression | Success: zero writer movement/permits, two receipt checks, one receiving reader node, three joined nodes and boot retirements, final writer counts `[1, 0, 0]`, maintenance Completed and exact withdrawal. |
+| Local existing reader faults | 10 passed, 0 failed, 32.70 seconds. Original profiles, deadlines and assertions remain unchanged. |
+| Local quality gates | Host all-target/all-feature warning-denied Clippy and API docs, format, boundaries/layout, 137 Rust snippets, 1348 Markdown links, and 28 SQL/peer assertions with 571 validator links passed. |
+| Parent `9257b18`; [Compose smoke job 111597096334](https://github.com/crabbuild/cellule/actions/runs/37257164322/job/111597096334) | Failure in the unchanged sustained mixed-reader load at three constrained nodes: `ReplicaUnavailable` at `process_scaling.rs:548`. Earlier smoke/fault cases and initial reader readiness passed. Captured containers show no OOM kill or unexpected node exit. Cause remains unproven; do not treat focused reader qualification as a full CI repair. |
+
+Raw Compose driver, node, provider, arrival/receipt and container evidence is in
+the failed run's `cell-reference-compose-37257164322-1` artifact. The parent Rust
+workspace job was still live at this checkpoint. Complete new-head workspace and
+provider CI remain required.
+
+Highest next priorities:
+
+1. Reproduce and fix the constrained mixed-reader `ReplicaUnavailable` failure
+   using the actual process/provider campaign and original availability gates.
+   Finish full current-head CI and keep PR #57 synchronized and mergeable.
+2. Deliver the live-follower maintenance CLI using the existing native supervisor,
+   then complete successive boot/lineage and the remaining W4–W7 role/primitive
+   faults, including external Cron/Blob and failed-process ownership barriers.
+3. Complete W9 measured profiles, provider/process, load/soak and mixed-version
+   campaigns, then exercise W10 rollout, rollback and recovery runbooks. W4–W10
+   remain incomplete; this finite reader executable is one W8 deliverable.
+
+
+## October 5 2026 executable live-follower maintenance checkpoint
+
+Parent: `f9a476e0be2bab8d076ac07745596f5ac0cf6e86`. The Rust-only diff
+has SHA-256 `b9b239290215d2a532e346cf69fac2f22bbad31ff89f2a9b0bb534490d72d333`.
+
+Delivered `maintenance-follower` through the canonical minion executable.
+Four managed boots retain enrollment before readiness: a live writer, two
+original follower stores and one spare. The donor has zero local writers but
+retains a foreign lane. A complete observation without replacement policy stays
+Evacuating and preserves its original Established row. The command enables the
+spare through a real signed heartbeat, drains the original writer to cover its
+acknowledged tail, and requests rotation through the existing durability
+supervisor. It checks nonzero original coverage, both original Retired members,
+exact replacement epoch 2 and two eligible replacement members. Immutable policy
+publication and fresh full native/foreign observation authorize SettleRoles and
+Finalize; completion requires Stopped and permanent exact-boot withdrawal.
+
+Canonical Idle acquisition resumes the writer on its original physical node,
+resolves the original outcome and value 29, acknowledges a new command, and
+resolves that new outcome. Canonical-root restoration must cover both command
+sequences and preserve the original request digest, expiry, sequence and exact
+stored outcome. Final writer counts include the spare: `[1, 0, 0, 0]`. The shared
+exit path joins all four nodes, retires all four follower-member rows across the
+two ensembles and all four boot rows, closes the journal, and checks every
+existing runtime resource ledger. Fleet writer release/activation/retirement and
+movement permits stay zero; five service/receipt checks and two replacement
+members are separate evidence.
+
+An initial scenario incorrectly expected the drained source to remain a live
+writer. The corrected command performs canonical acquisition before service
+checks. A subsequent added check incorrectly required a new command to activate
+the follower log: native object proof can win before that activation CAS. The
+command now checks the real installed ensemble independently through canonical
+native evacuation and requires a published root covering both acknowledgements.
+No runtime durability gate, original deadline or qualification profile changed.
+The finite embedding adapter retains exactly two original preparations and
+checked close barriers, authorizes live append/retire through the canonical
+directory and supplies no failed-owner seal/tail capability. It establishes no
+OS-crash, external-provider restart or mixed-role/primitive qualification.
+
+Current evidence:
+
+| Source / check | Observed result |
+| --- | --- |
+| Published parent `f9a476e`; [Rust workspace job 111600595261](https://github.com/crabbuild/cellule/actions/runs/37258527941/job/111600595261) | Success: 376 minion cases, 0 failures, 975.39 seconds; workspace tests, three-process smoke, provider checks, local/replica LTX and warning-denied lints passed. Environment-specific ignored cloud suites remain unqualified. Follower/object proof, MSRV, contract, website and cookbook quality also passed. |
+| Local final source | New follower regression and production command passed; 12 original native observation cases, original reader CLI and count-balance case passed. Host all-target/all-feature warning-denied Clippy/API docs, format, boundaries/layout, 137 Rust snippets, 1348 Markdown links and 28 SQL/peer assertions with 571 validator links passed. |
+| Exact Rust snapshot `fb5badf`; [native follower job 111605650581](https://github.com/crabbuild/cellule/actions/runs/37260209483/job/111605650581) | Success on Rust 1.99: 18 selected regressions (new follower CLI, existing reader CLI, count balance, 12 complete observation cases and 3 follower observer cases), production `maintenance-follower`, and host all-target/all-feature warning-denied Clippy. All 11 changed Rust paths match the staged source. The initial snapshot harness incorrectly expected 7 observation cases although all 12 passed; only that selector-count expectation was corrected. No test assertion or profile changed. |
+| Snapshot `03261c6`; [mixed-reader diagnostic](https://github.com/crabbuild/cellule/actions/runs/37258791194) | Both independent attempts succeeded with original 3/5/10/20-node scaling, resource limits, assertions and reader SIGKILL. Each scale's original 60-second mixed window committed all 300 scheduled writes with zero misses. Attempt 1 recorded 106808/104358/79189/42047 successful reads; attempt 2 recorded 128368/129112/102646/60227. The isolated snapshot contains tagged router/server/lease probes; no probe was added to the published source. |
+
+The earlier `9257b18` Compose failure remains unexplained. Two passing diagnostic
+attempts do not establish a repair. Raw driver/node/container/provider evidence,
+arrival/receipt TSVs and binary hashes are retained in the run's
+`mixed-reader-diagnosis-37258791194-1` and `-2` artifacts. These are existing
+reader-scaling profile measurements, not W9 fleet-movement qualification. The
+published parent's Compose smoke and 3/5/10/20 reader-scaling steps also passed;
+its entity/routing measurements were still live. The complete Compose result and
+the new follower head's complete CI remain required. PR #57 contains current fetched main and is mergeable.
+
+Highest next priorities:
+
+1. Finish native follower and full-head CI, investigate any recurrence of the
+   unexplained constrained-reader availability failure, and preserve main
+   ancestry and PR mergeability.
+2. Complete combined-role maintenance and remaining W4–W7 successive-boot,
+   lineage and primitive faults, including actual external Cron/Blob and
+   failed-process ownership barriers.
+3. Deliver W9's committed fleet profile/runner, provider/process, load/soak and
+   actual mixed-binary evidence, then exercise W10 rollout, rollback and recovery
+   runbooks. W4–W10 remain incomplete; this command is one further W8 deliverable.
+
+
+## October 5 2026 combined reader/follower maintenance checkpoint
+
+Parent: `fe8a96cee5464f9ef5002fc1d79ec5bc3cadaa5f`. The six changed Rust
+paths match snapshot `8f64d2f274ed4b7ce5c70385f03278d2c27c12f1` exactly;
+the Rust delta SHA-256 is
+`a336914718a77127c797a00ef91cc7e62c99e9ff19b14c2100082e1cb8d94dd8`.
+
+Delivered canonical minion `maintenance-roles`, sharing the existing four-boot
+follower setup, supervisor, native peer dispatcher, observer, public reconciler
+and cleanup path. Managed readers are installed and enrolled before readiness.
+The donor has zero local writers but holds both a reader and a foreign follower
+tail. Confirmed original tail coverage, both original member retirements and a
+durable follower policy alone cannot authorize Finalize. The operation remains
+Evacuating with its original reader Established and open. Native reader
+evacuation refuses the exact missing-Established replacement while one selected
+reader is absent, and another public pass must still retain the donor. Both
+eligible replacements must then establish native readers before original view
+closure, joined retirement and immutable reader-policy publication. Complete
+fresh observation must prove both roles before SettleRoles and Finalize.
+
+Readback checks both replacements against the captured minimum receipt, original
+reader join/retirement, both writer acknowledgements and the original stored
+request digest, expiry, sequence and outcome. Final counts are `[1, 0, 0, 0]`;
+eight service/receipt checks remain separate from zero fleet writer moves.
+Cleanup joins all four nodes, all eleven boot/reader/follower enrollment rows,
+the journal and every existing runtime resource ledger.
+
+The new composed async path initially overflowed the default test stack.
+Temporary boundary probes located nested complete reconciliation; separating
+reader preparation/completion and boxing reconciliation at the main scenario
+boundary fixed the original regression. Both final tests and production commands
+passed with normal stack limits and no probes. No profile, deadline, resource
+limit or assertion was relaxed.
+
+| Source / check | Observed result |
+| --- | --- |
+| Local final Rust 1.97 source | 18 selected regressions passed: 2 follower/combined CLI, 1 reader CLI, 12 complete observations, 3 follower observations. Production combined command, host all-target/all-feature warning-denied Clippy/API docs, format, boundaries/layout, 1348 Markdown links, 137 Rust snippets and 28 SQL/peer assertions with 571 validator links passed. |
+| Exact snapshot `8f64d2f`; [native job 111610477201](https://github.com/crabbuild/cellule/actions/runs/37261830490/job/111610477201) | Success on Rust 1.99: all 19 selected regressions, including count balance, passed with exact nonzero selector counts. Both production follower and combined commands exited zero; warning-denied host Clippy passed. The artifact `follower-maintenance-37261830490-1` retains source, binary hash, native environment, resource limits and raw regression/command logs. |
+| Earlier parent `f9a476e`; [complete Compose campaign](https://github.com/crabbuild/cellule/actions/runs/37258527934) | Success: smoke, original constrained 3/5/10/20 reader scaling, leased and object-only routing measurements and routing gate. This does not establish a cause or repair for the earlier intermittent `9257b18` failure. |
+| Published parent `fe8a96c`; [full Rust workspace](https://github.com/crabbuild/cellule/actions/runs/37260710441) | Success: workspace and MSRV. Follower/object capacity, contract, website and cookbook quality also passed. Other workflows were still live; full current-head CI remains required. |
+
+This is finite in-process reader/follower maintenance evidence, not completion of
+W4–W10. Busy primitive combinations, external Cron/Blob owners, successive boots,
+actual process/provider failures, measured fleet movement and mixed binaries
+remain unqualified. Highest next priorities:
+
+1. Finish current-head CI, investigate any recurrence of constrained-reader
+   availability failure, and keep current main ancestry and PR mergeability.
+2. Complete busy primitive/external-owner maintenance and successive-boot role,
+   lineage and unknown-result fault coverage through the existing public paths.
+3. Deliver W9's committed profile/runner and measured process/provider/load/mixed-
+   binary campaigns, then exercise W10 rollout, rollback and recovery runbooks.
+
+
+## October 5 2026 busy SQL maintenance checkpoint
+
+Parent: `ba50f650ae85be31e616338a52ab84d6b1139eb5`. The sixteen changed
+Rust paths match native snapshot `e3f6dac05e12500ca1f3b36eee895e3368d9b929`
+exactly. The Rust delta SHA-256 is
+`39d002eb02c35f888ad6e79e43e400ebc63672cf372aa0eda2a4071f4434878c`.
+
+Two reproducible gaps prevented controlled maintenance under continuous writes:
+publication temporarily borrowed the publisher needed by exact quiescence, and
+the reference observer discarded unchanged writer demand when the root advanced.
+A real root-CAS pause reproduced the first gap; an actual acknowledged mutation
+reproduced the second. Both regressions were observed failing before the fix.
+
+The actor's immutable admission fence now admits exact quiescence and busy
+release during publication borrowing. The returned native inventory retains the
+same owner fence independently of its optional published position. Host planning
+binds it in digest v15 and permits it only under exact Evacuating maintenance and
+the existing peak receiver envelope. The reference observer independently checks
+canonical owner/epoch, boot, native generation, executable contract and envelope.
+Root changes still invalidate complete counts and ordinary movement demand.
+Release still prepares the receiver first, joins accepted work/publication,
+refreshes readiness and obtains the exact final canonical root; role settlement
+and finalization keep their existing full barriers.
+
+Canonical minion `maintenance-busy` runs two continuously offering SQL command
+lanes on one original donor Cell through that same public driver. Each must
+receive native admission refusal before the finite 512-command bound. Every
+accepted request retains its digest, expiry, sequence and stored result, resolves
+exactly on its canonical successor, and contributes one exact audit row. All
+twelve original receipts/values survive movement. All clients join before shared
+node and journal cleanup on success or failure. A startup-refusal regression
+preserves the native source error and checks joined sibling tasks/resources.
+
+| Check | Observed result |
+| --- | --- |
+| Local Rust 1.97 source | 29 selected tests passed: 2 busy command/startup, 13 native observations, 6 host inventory/digest contracts, 3 runtime maintenance cases and 5 planner/quiet-maintenance cases. The earlier busy repeat and final production command also passed. |
+| Production busy command | 88 accepted commands, 2 admission refusals, 88 exact audit rows; 12 released/activated/retired Cells, 100 receipt checks, `[0, 6, 6]` ownership, 3 joined nodes and 3 retired boots; Completed and exact withdrawal confirmed. |
+| Static/API gates | Host/runtime all-target/all-feature warning-denied Clippy and API docs, format, architecture boundaries/layout, 1348 Markdown links, 137 Rust snippets and 28 SQL/peer assertions with 571 validator links passed. |
+| Native exact snapshot | [Job 111619387502](https://github.com/crabbuild/cellule/actions/runs/37264858825/job/111619387502) succeeded on Rust 1.99: all 36 nonzero-count regressions, three production commands and warning-denied host/runtime lint. The busy regression preserved 379 commands; production preserved 384 plus the twelve original receipts, with `[0, 6, 6]` ownership and joined/retired boots. Artifact `busy-maintenance-37264858825-1` retains exact source, binary digest, CPU/memory/limits and raw logs. |
+| Published parent `ba50f65` | Complete Rust workspace/MSRV, follower/object capacity, contract, website and cookbook campaigns succeeded. Compose run 37262366756 is live; smoke reader scaling and both routing measurements are running. The earlier `fe8a96c` Compose campaign completed successfully. |
+
+No profiles, deadlines, native stack limits or expected evidence were weakened.
+The earlier unexplained constrained-reader availability failure is still not
+claimed repaired by passing campaigns. Full W4–W10 completion remains unproven.
+Highest next priorities:
+
+1. Finish exact native and current-head CI, preserve source hashes, push the
+   qualified checkpoint and keep current main ancestry/PR mergeability.
+2. Complete the primitive/external-owner fault matrix, Blob stream/upload/pin
+   barriers, successive-boot lineage and original accepted-work ownership under
+   controller/owner/process failures.
+3. Deliver W9's versioned fleet profile/runner and measured provider/process,
+   sustained-load/soak and mixed-binary evidence, then exercise W10 rollout,
+   rollback, stuck-drain and recovery runbooks.
+
+
+## October 5 2026 maintenance test disk-budget isolation checkpoint
+
+Parent: `7dad25d0881527ba5a65d9b82cd7ff1aa3978e31`. PR #37 merged on
+October 4; continuation PR #57 is mergeable, and fetched main
+`80c4fd99c10fc7e91ab34c628ea61fcd488e0cea` is an ancestor. There are no
+unmerged paths. Canonical minion remains `crates/cellule-host/minion`.
+
+The full Rust workspace run
+[37265455102](https://github.com/crabbuild/cellule/actions/runs/37265455102)
+failed in the new publication/maintenance regression's final disk-zero
+assertion. Its runtime used the intentionally process-wide default disk budget,
+which reports other live fixtures' reservations too. Holding an unrelated 4096
+byte default-budget reservation reproduced the same assertion failure in one
+selected test, without timing or parallel-load dependence.
+
+The donor and successor test nodes now each use a separate disk budget of the
+unchanged default capacity. The unrelated reservation remains live throughout
+both native quiescence and release variants. Donor disk, worker, retained-memory
+and active-Cell zero assertions remain required; successor disk-zero is also
+asserted after exact receipt recovery and native shutdown. The unrelated
+reservation must retain all 4096 bytes. Production budget sharing, shutdown and
+publication behavior are unchanged.
+
+Local Rust 1.97: all three public runtime maintenance regressions passed with
+parallel selected execution. Format, module layout and architecture boundaries
+passed. Exact native snapshot `a3cfd497438614af1bba7f75bd0b570bde7bdfd7`
+contains only this test change over the published parent and isolated workflow.
+[Run 37267463895](https://github.com/crabbuild/cellule/actions/runs/37267463895)
+is running both complete parallel runtime integration suites and warning-denied
+runtime lint; success is not yet claimed. The snapshot deliberately excludes
+unpublished Blob lifecycle work.
+
+The published parent's follower/object capacity, contract, website and cookbook
+quality checks passed. The earlier Compose run
+[37262366756](https://github.com/crabbuild/cellule/actions/runs/37262366756)
+finished: reader smoke and object-only routing passed, leased routing failed its
+local expired-burst query p99 gate. Retained frozen-binary evidence reports
+candidate/baseline p99 ratio 2.13677 (3.059677 ms / 1.431917 ms), p95 ratio 1.06777,
+and unchanged paced throughput. Its cause remains open; no gate is weakened or
+performance fix claimed. Complete current-head checks are still required.
+
+Highest next priorities:
+
+1. Complete exact native cleanup and full PR CI; diagnose the retained leased
+   routing tail-latency failure and constrained-reader availability gap.
+2. Finish and qualify unpublished Blob accepted-I/O ownership and integrate
+   logical upload/range/pin lifetimes into the existing native role barriers.
+3. Complete remaining W4–W10 fault, boot-lineage, process/provider, load,
+   mixed-version and rollout/rollback/recovery evidence. The plan remains open.
+
+
+## October 5 2026 original Blob lifetime checkpoint
+
+Parent: `973e0eeaddb51158cdc7d075e06c2feb84795cd5`. PR #37 is merged;
+continuation #57 is mergeable and includes current main
+`80c4fd99c10fc7e91ab34c628ea61fcd488e0cea`. No unresolved index entries or
+conflict markers remain in the three reported files.
+
+The original Blob store now owns at most 64 accepted operations through shared,
+irreversible admission. A retained supervisor joins the original native future
+and preserves its first source-bearing failure, including provider panic
+JoinError. Caller loss or cancellation of a close waiter leaves original work
+running. Forced Tokio runtime loss records an unjoined original supervisor,
+closes admission and refuses local closure even after the provider eventually
+finishes. Known accepted counts alone cannot prove joining. The regression uses
+an actual paused spawn_blocking provider operation and observes its bytes
+published after runtime loss; removing the unjoined guard reproduced the false
+closure before restoring the passing implementation.
+
+Public namespace operations share that owner. Convenience mutation retains
+part staging through its normal Cell command response. Preparation retains
+staging/preparation and returns the existing caller-owned PreparedCommand;
+closure cannot revoke its later execution. Range queries retain metadata lookup
+and every bounded part read without readmission between parts. Head/list and
+non-part mutations use the same admission. Codec, ID, part digest/path, SQLite
+manifest and durable response contracts remain unchanged. GC accepts a complete
+Arc<BTreeSet<[u8; 32]>> retained through original listing and deletion, without
+truncation or unbounded copying.
+
+`CellNode::install_blob_artifact_store` installs the configured provider as an
+existing owned facility before readiness, after the task group. The returned
+clone configures the existing client. Canonical reverse facility drain closes
+and joins that original store before runtime shutdown. Duplicate, closed-store
+and late installation are refused. Lost original joining returns a drain error;
+cancelled waiters cannot fabricate Stopped or close an unrelated store.
+
+Public regressions hold actual SQLite work ahead of range metadata, close
+admission, cancel callers/close waiters and finish all original part reads under
+one lifetime. Removing whole-query ownership reproduced the admission failure
+after cleanup. Cancelled upload coverage resolves original prepared evidence as
+Committed before replay; sequence 2 and one upload are preserved. Host coverage
+pauses actual GC listing, cancels its caller/shutdown waiter, retains complete
+references and finishes one original sweep with joined drain and zero resources.
+Five provider cases cover original put/read/GC, failure and panic sources, all
+64 retained jobs, invalid inputs and forced runtime loss.
+
+The published parent's full Rust job passed workspace tests but failed one
+minion corruption test: it unwrapped construction of an inconsistent native
+identity that the strengthened constructor correctly refuses. The exact local
+case reproduced that failure. The fixture now accepts construction refusal and
+checks each exact error; corruption cases expand from eight to fourteen,
+including coherent wrong fences that must fail original-writer attachment.
+No production validation, profiles, deadlines or assertions are weakened.
+
+Verification:
+
+- Local Rust 1.97: 25 Blob unit/codec cases, five public Blob/Cron cases, two
+  public host Blob cases, ten successor observation cases and the existing typed
+  application consumer passed. Warning-denied host/runtime lint and API docs,
+  format, boundaries/layout and document gates passed.
+- Final Blob snapshot `7fd0a2e5172618b7ab90cd7918af42227ab4e1b8` passed
+  [run 37271127229](https://github.com/crabbuild/cellule/actions/runs/37271127229):
+  25 Blob cases, all 52 parallel public primitive cases and all 129 parallel
+  public node cases (206 total), warning-denied lint/API docs and static gates
+  on Rust 1.99. All 22 recorded snapshot paths matched current bytes before
+  this progress update; delta SHA-256
+  `966568654b6fb252f2fd6635265c14864034f67c0e607d5009a0513a17291398`.
+- Minion snapshot `9dad2e91d80bc9852bc2e638e663b5d58ba24eb2` passed
+  [run 37270034524](https://github.com/crabbuild/cellule/actions/runs/37270034524):
+  ten exact observation contracts, all 382 serial minion cases in 804.49 seconds,
+  the typed application consumer and warning-denied lint. This snapshot precedes
+  the forced-runtime-loss guard; it proves the minion fix at that source.
+  Delta SHA-256
+  `14c5313674464a9fed5e48a512ccfb42beac17f3a20f06e0fc5d948317c4f8dc`.
+- Earlier parallel maintenance cleanup passed two complete runtime suites, each
+  231 passed/4 ignored, in
+  [run 37267463895](https://github.com/crabbuild/cellule/actions/runs/37267463895).
+  Full CI on the newly published head remains required. The published parent
+  also passed follower/object capacity, contract, website, all 21 cookbook
+  scenarios, Compose smoke and leased routing. Object-only routing was still
+  running at the final observation; no outcome is inferred from that state.
+  Passing leased routing does not explain the retained earlier p99 failure.
+
+The sole dependency change adds already-resolved async-trait as a host test
+dependency for the real ObjectStore decorator; resolved versions are unchanged.
+This checkpoint supplies original local operation ownership. Returned prepared
+commands, Cell-scoped upload/stream/read/backup pins, migration, cross-Cell GC
+references and unknown remote outcomes still require canonical owner coverage.
+BlobInventory and missing Blob maintenance cost remain blocking. W4–W10 remain
+incomplete.
+
+Highest next priorities:
+
+1. Finish current-head CI and keep the continuation mergeable; diagnose the
+   retained leased routing p99 and constrained-reader availability failures.
+2. Add Cell-scoped Blob logical/pin and global retention proof through the
+   original owner, then qualify maintenance handoff and native role settlement.
+3. Complete remaining fault/boot-lineage, W9 process/provider/load and
+   mixed-version campaigns, then exercised W10 rollout/rollback/recovery.
+
+
+## October 5 2026 prepared Blob admission checkpoint
+
+Parent: `b8b99002143b15013069444f31000da5aae255ab`.
+Prepared command execution for a compiled Blob namespace with a configured
+artifact store now uses that same original admission and retained native owner.
+This applies to ordinary client commands, returned namespace commands, clones
+and restored snapshots without adding a wrapper, field or persisted codec.
+Closure refuses new dispatch; already accepted execution completes after caller
+loss. Convenience mutation calls the same native dispatch under its existing
+whole-operation owner, preserving accepted staging/publication across closure
+and using one slot. Original command identity, digest, body, snapshot bytes,
+request resolution and durability are unchanged.
+
+Three new public regressions prove closed originals/clones/restores cannot
+publish a manifest, cancelled accepted execution survives a held real SQLite
+worker and joins after closure, and open replay preserves exact receipt/output
+at sequence 2 with only one part upload. The cancelled close waiter is confirmed
+polled and Pending before it is aborted. Previously committed results remain
+resolvable after closure. The existing upload-cancellation case now reads exact
+original result bytes and sequence through resolution; open replay separately
+retains its deduplication assertions. Before production changes, the closed
+prepared-dispatch regression failed after complete fixture cleanup.
+
+Full parent Rust CI failed its upload job-count assertion with 2 rather than 1:
+[run 37271901314](https://github.com/crabbuild/cellule/actions/runs/37271901314).
+The fixture assumed the prior reply also meant its supervisor had joined.
+A temporary delayed-cleanup probe reproduced that exact result. Fixture setup
+now waits for prior original jobs to join before measuring the next paused job;
+the same probe passed with the exact one-job assertion. The probe is removed.
+Production ownership ordering and all qualification profiles/deadlines remain
+unchanged.
+
+Local Rust 1.97: all eight public Blob/Cron cases, all five command-snapshot
+contracts and the typed application consumer passed, along with warning-denied
+host/runtime lint/API docs, format, architecture/layout, document links/fences
+and SQL/peer contracts. Exact native snapshot
+`f817476440399c00302fc23227be8d8b656a8cfd` passed
+[run 37273384545](https://github.com/crabbuild/cellule/actions/runs/37273384545)
+on Rust 1.99: all 25 Blob cases, all 55 parallel primitive cases, all 129 parallel
+node cases, five snapshot contracts and one application consumer (215 total),
+plus warning-denied lint/API docs and static gates. All ten qualification paths
+matched current bytes before this final progress update; delta SHA-256
+`363fd210b356ce16ca81ec769e292a9cb0141068009162910b646b66e8515050`.
+The first qualification attempt passed 214 native cases before naming an
+unavailable application test target; its terminal failure was retained, the
+command was corrected to the existing integration target, and the final run
+passed. No live run was cancelled or profile weakened.
+
+The parent's follower/object capacity and Compose smoke passed; its leased and
+object-only routing jobs were still live at the final observation. Full CI on
+the newly published head remains required. Current main remains an ancestor and
+PR #57 is mergeable; no unresolved index entries exist.
+
+These are local dispatch barriers. Cell-scoped upload/stream/read/backup pins,
+complete cross-Cell and pinned-root retention, migration, unknown remote effects,
+and external client/provider capabilities still need original owner coverage.
+BlobInventory and missing Blob maintenance cost remain blocking. The full
+W4–W10 goal remains open.
+
+Highest next priorities:
+
+1. Complete exact native qualification and new-head CI; preserve main ancestry
+   and PR mergeability, and diagnose retained routing/availability failures.
+2. Bind Blob original-operation and pin inventories to exact Cell/boot scope,
+   then integrate complete retention and maintenance handoff barriers.
+3. Complete remaining primitive/role faults, successive boot lineage, W9
+   process/provider/load/mixed-version campaigns and W10 rollout/runbooks.

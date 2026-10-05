@@ -102,6 +102,7 @@ mod node {
     }
 
     pub mod application;
+    mod blob_artifacts;
     pub mod builder;
     pub mod components;
     pub mod durability;

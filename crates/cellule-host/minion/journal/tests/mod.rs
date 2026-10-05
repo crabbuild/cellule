@@ -128,9 +128,46 @@ fn drain_proof(node: u8) -> DrainEvidence {
         withdrawn: true,
     }
 }
+fn ready_drain_proof(node: u8) -> DrainEvidence {
+    let mut evidence = drain_proof(node);
+    evidence.facilities_closed = false;
+    evidence.stopped = false;
+    evidence.withdrawn = false;
+    evidence
+}
+
+async fn roles_settled(journal: &SqliteJournal, now_ms: i64) {
+    let snapshot = journal.load_snapshot(scope()).await.unwrap();
+    let operation = snapshot.head().maintenance().unwrap();
+    let action = snapshot
+        .head()
+        .maintenance_action(MaintenanceAction::SettleRoles, now_ms)
+        .unwrap();
+    let accepted = match journal
+        .accept_action(&action, operation.node(), operation.session(), now_ms)
+        .await
+        .unwrap()
+    {
+        FleetActionAcceptance::New(accepted) => accepted,
+        FleetActionAcceptance::Existing { .. } => panic!("first SettleRoles acceptance expected"),
+    };
+    let settled = result(
+        &accepted,
+        FleetOutcome::RolesSettledAt {
+            inventory: Digest::from_bytes([84; 32]),
+            head_revision: snapshot.head().revision(),
+            registry: snapshot.registry(),
+        },
+        now_ms,
+    );
+    journal
+        .publish_action_result(&accepted, &settled)
+        .await
+        .unwrap();
+}
 
 #[tokio::test]
-async fn closing_source_fences_new_roles_and_preserves_original_completion_after_reconstruction() {
+async fn closing_source_fences_new_roles_and_preserves_settled_roles_after_reconstruction() {
     for role in [
         EnrollmentRole::Follower { log_epoch: 7 },
         EnrollmentRole::Reader {
@@ -162,10 +199,32 @@ async fn closing_source_fences_new_roles_and_preserves_original_completion_after
             FleetEnrollmentAcceptance::New(record) => record,
             _ => panic!("first acceptance expected"),
         };
+        let established = fixture
+            .journal
+            .publish_enrollment_result(
+                &accepted,
+                EnrollmentEvent::Established(Digest::from_bytes([62; 32])),
+                2,
+            )
+            .await
+            .unwrap();
+        let retired = fixture
+            .journal
+            .publish_enrollment_result(
+                &established,
+                EnrollmentEvent::Retired(Digest::from_bytes([63; 32])),
+                3,
+            )
+            .await
+            .unwrap();
+        roles_settled(&fixture.journal, 4).await;
         fixture
-            .transition(JournalTransition::Maintenance(
-                MaintenanceEvent::ReadyToClose(drain_proof(3)),
-            ))
+            .transition_at(
+                JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(ready_drain_proof(
+                    3,
+                ))),
+                4,
+            )
             .await;
         fixture.journal.close().await.unwrap();
         let restarted = fixture.client().await;
@@ -185,24 +244,15 @@ async fn closing_source_fences_new_roles_and_preserves_original_completion_after
         );
         assert!(matches!(
             restarted.accept_enrollment(&original, 2).await.unwrap(),
-            FleetEnrollmentAcceptance::Existing(record) if record == accepted
+            FleetEnrollmentAcceptance::Existing(record) if record == retired
         ));
-        let established = restarted
-            .publish_enrollment_result(
-                &accepted,
-                EnrollmentEvent::Established(Digest::from_bytes([62; 32])),
-                3,
-            )
-            .await
-            .unwrap();
-        let retired = restarted
-            .publish_enrollment_result(
-                &established,
-                EnrollmentEvent::Retired(Digest::from_bytes([63; 32])),
-                4,
-            )
-            .await
-            .unwrap();
+        assert_eq!(
+            restarted
+                .load_enrollment(scope(), original.key().unwrap())
+                .await
+                .unwrap(),
+            Some(retired.clone())
+        );
         assert_eq!(retired.accepted_at_ms(), accepted.accepted_at_ms());
         assert!(!retired.unresolved());
         restarted.close().await.unwrap();
@@ -212,7 +262,7 @@ async fn closing_source_fences_new_roles_and_preserves_original_completion_after
             .compare_exchange(
                 &current,
                 1,
-                4,
+                5,
                 &JournalTransition::Maintenance(MaintenanceEvent::Stopped(drain_proof(3))),
             )
             .await
@@ -223,15 +273,15 @@ async fn closing_source_fences_new_roles_and_preserves_original_completion_after
             .compare_exchange(
                 &completed,
                 1,
-                4,
+                5,
                 &JournalTransition::BeginMaintenance(request(2, 4)),
             )
             .await
             .unwrap();
-        assert!(resumed.accept_enrollment(&fresh, 5).await.is_err());
+        assert!(resumed.accept_enrollment(&fresh, 6).await.is_err());
         assert_eq!(resumed.load_snapshot(scope()).await.unwrap(), later);
         assert!(matches!(
-            resumed.accept_enrollment(&original, 5).await.unwrap(),
+            resumed.accept_enrollment(&original, 6).await.unwrap(),
             FleetEnrollmentAcceptance::Existing(record) if record == retired
         ));
         resumed.close().await.unwrap();
@@ -252,6 +302,7 @@ async fn delayed_source_acceptance_checks_closing_in_its_original_transaction() 
             MaintenanceEvent::BeginEvacuation,
         ))
         .await;
+    roles_settled(&fixture.journal, 0).await;
     let independent = fixture.client().await;
     let mut spec = enrollment(64, 1);
     spec.source.as_mut().unwrap().intent_revision = 2;
@@ -261,9 +312,10 @@ async fn delayed_source_acceptance_checks_closing_in_its_original_transaction() 
     let task = tokio::spawn(async move { client.accept_enrollment(&original, 1).await });
     paused.await.unwrap();
     let closed = fixture
-        .transition(JournalTransition::Maintenance(
-            MaintenanceEvent::ReadyToClose(drain_proof(3)),
-        ))
+        .transition_at(
+            JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(ready_drain_proof(3))),
+            1,
+        )
         .await;
     resume.send(()).unwrap();
     assert!(task.await.unwrap().is_err());
@@ -292,11 +344,13 @@ async fn source_acceptance_and_closing_have_one_committed_registry_barrier() {
         fixture
             .transition(JournalTransition::Maintenance(MaintenanceEvent::Cordoned))
             .await;
-        let expected = fixture
+        fixture
             .transition(JournalTransition::Maintenance(
                 MaintenanceEvent::BeginEvacuation,
             ))
             .await;
+        roles_settled(&fixture.journal, 0).await;
+        let expected = fixture.journal.load_snapshot(scope()).await.unwrap();
         let independent = fixture.client().await;
         let mut enrollment_spec = enrollment(65, 1);
         enrollment_spec.source.as_mut().unwrap().intent_revision = 2;
@@ -307,7 +361,7 @@ async fn source_acceptance_and_closing_have_one_committed_registry_barrier() {
             };
         }
         let transition =
-            JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(drain_proof(3)));
+            JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(ready_drain_proof(3)));
         let (accepted, closing) = tokio::join!(
             independent.accept_enrollment(&enrollment_spec, 1),
             fixture
@@ -692,12 +746,19 @@ impl Fixture {
         }
     }
     async fn transition(&self, transition: JournalTransition) -> FleetJournalSnapshot {
+        self.transition_at(transition, 0).await
+    }
+    async fn transition_at(
+        &self,
+        transition: JournalTransition,
+        now_ms: i64,
+    ) -> FleetJournalSnapshot {
         let current = self.journal.load_snapshot(scope()).await.unwrap();
         self.journal
             .compare_exchange(
                 &current,
                 current.head().controller().unwrap().epoch,
-                0,
+                now_ms,
                 &transition,
             )
             .await
@@ -749,6 +810,44 @@ impl Fixture {
             _ => panic!("not first acceptance"),
         }
     }
+}
+
+#[tokio::test]
+async fn routed_receiver_acceptance_requires_typed_closed_boot_proof() {
+    let fixture = Fixture::new().await;
+    fixture.activating().await;
+    let snapshot = fixture.journal.load_snapshot(scope()).await.unwrap();
+    let route = ReceiverRoute::begin(
+        scope(),
+        &spec(1),
+        endpoint(3).node,
+        endpoint(3).session,
+        Digest::from_bytes([207; 32]),
+        snapshot.registry(),
+    )
+    .unwrap();
+    let action = snapshot
+        .head()
+        .movement_action_with_receiver_route(spec(1).id, MovementAction::Activate, route, 1)
+        .unwrap();
+    assert!(
+        fixture
+            .journal
+            .accept_action(&action, endpoint(3).node, endpoint(3).session, 1)
+            .await
+            .is_err()
+    );
+    let records = fixture
+        .journal
+        .load_movement_actions(
+            scope(),
+            &snapshot.head().attempts()[0],
+            MovementAction::Activate,
+        )
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    fixture.journal.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -1565,18 +1664,8 @@ async fn later_operations_retain_old_cordons_and_return_to_service_does_not_rewr
             MaintenanceEvent::BeginEvacuation,
         ))
         .await;
-    let proof = DrainEvidence {
-        node: endpoint(1).node,
-        session: endpoint(1).session,
-        remaining_cells: 0,
-        unresolved_attempts: 0,
-        relocated: true,
-        readers_settled: true,
-        followers_settled: true,
-        facilities_closed: true,
-        stopped: true,
-        withdrawn: true,
-    };
+    roles_settled(&fixture.journal, 0).await;
+    let proof = ready_drain_proof(1);
     fixture
         .transition(JournalTransition::Maintenance(
             MaintenanceEvent::ReadyToClose(proof),
@@ -1584,7 +1673,7 @@ async fn later_operations_retain_old_cordons_and_return_to_service_does_not_rewr
         .await;
     fixture
         .transition(JournalTransition::Maintenance(MaintenanceEvent::Stopped(
-            proof,
+            drain_proof(1),
         )))
         .await;
     let completed = fixture

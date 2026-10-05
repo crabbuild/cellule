@@ -98,6 +98,36 @@ still reports that original source and keeps lease maintenance and Draining.
 Dropping the task group aborts its remaining owned tasks. Stopped still requires
 successful joins through the canonical node drain lane.
 
+## Blob artifact ownership
+
+During startup, declare `BLOB_ARTIFACT_STORE_COMPONENT` in the required component
+set, install the task group, then call `install_blob_artifact_store` with the
+product-configured provider. Pass the returned clone into the typed client's
+existing Blob configuration. Duplicate installation, closed original admission
+and installation after startup are refused before retaining another facility.
+
+The store uses the existing reverse-order facility drain. Every clone closes
+admission and the drain joins original namespace/GC operations before runtime
+shutdown. Cancelling a shutdown waiter preserves both the original host drain
+and accepted Blob work. A deadline may return an incomplete drain; it cannot
+turn a still-running operation into closed-plus-zero or Stopped. The next drain
+joins the retained original work. An unrelated store has independent admission.
+
+The store's lifecycle observation distinguishes local joining from result
+success. Native source-bearing failures remain available through a retained
+clone. A returned prepared command holds no running job until execution through
+the configured client acquires this original store admission; closure refuses
+new dispatch from its clones and reconstructed snapshots. Already accepted
+commands still require their original result evidence. Complete uploads,
+external streams, read/backup
+pins, global references and unknown remote effects still require their original
+owners and fleet barriers. Installation does not remove `BlobInventory` or
+authorize Blob Cell release, global GC or physical-node finalization.
+An original supervisor lost during forced runtime teardown retains unjoined
+work and closes admission. Its later provider completion does not repair that
+join. Store drain returns an error, so the host cannot use a zero task count to
+claim Stopped or withdrawal.
+
 ## Requested node-log rotation
 
 Install the existing durability provider during startup, then call
@@ -594,8 +624,9 @@ in either attachment order; matching registry revisions alone are insufficient.
 This closure settles that boot's enrollment. It does not convert a recovered
 tombstone into planned withdrawal or prove replacement policy, affected-writer
 relocation, operation completion or permission to stop the physical node.
-`SettleRoles`/`Finalize` still require those additional barriers and the existing
-native shutdown handoff. The [focused example cases](../minion/README.md#failed-boot-process-evidence)
+`SettleRoles` and the complete role/movement evidence needed to enter Closing
+remain separate barriers. Finalize runs through the existing native shutdown
+handoff only after Closing is committed. The [focused example cases](../minion/README.md#failed-boot-process-evidence)
 exercise a joined child lifetime and independently reconstructed evidence;
 they do not qualify a complete multi-process fleet or provider deployment.
 
@@ -723,6 +754,48 @@ For failed-source recovery, `recovery_inputs` supplies an existing canonical
 `NodeTakeoverProof` and recovery manifest store. Ordinary node recovery first
 fences the failed session and seals/pins its required tail; the provider lookup
 performs none of those effects.
+For a process-closed receiver that claimed ownership after a proven release,
+`receiver_recovery_inputs` resolves prerequisites for the exact failed control
+and accepted route. Its default returns no proof. The host confirms a separate
+`ReceiverRecoveryBasis` before native takeover and `ReceiverRecoveryEvidence`
+before actor admission. The journal must persist both atomically against the
+original acceptance and reject mixing this basis with an Idle acquisition basis.
+The successful outcome remains Activated: the original clean release is retained.
+Fresh serving verifies canonical acquisition history, any pinned recovered
+suffix, and native derivation from the release root. Missing provider/journal
+evidence keeps the attempt charged. Deploy readers for record kinds 30 and 31
+before enabling this path; old source-recovery records keep their exact binding.
+
+An interrupted receiver evidence write may leave a safe Idle rollback root.
+Replay of the original accepted effect reconfirms the immutable takeover input
+and materialization from canonical acquisition history, then records the missing
+evidence. Before resuming ordinary admitted acquisition, it verifies that Idle
+root against the recovery and clean release prefixes. The original basis and
+capture times remain unchanged; no second movement permit or Idle basis replaces
+them. If ordinary acquisition already won, replay verifies the current actor
+against the same history. Missing, corrupt, or substituted history leaves Unknown
+and the full charge. Fresh inspection performs no evidence writes or acquisition.
+
+Failed-source Recover uses the same ordering after a failed evidence write or
+lost reply: confirm the original accepted `RecoveryBasis`, reconstruct missing
+`RecoveryEvidence` only from its exact immutable native acquisition, and retain
+the original materialization. Effect replay verifies the selected Idle root
+against that materialization and any original sealed suffix before ordinary
+admitted acquisition. An ordinary acquisition winner must pass the same native
+history, origin and actor checks. Missing or substituted history remains a
+charged blocker even when the current writer can read its local SQLite state.
+The suffix verifier for this pre-acquisition path requires an unowned Idle
+control with cleared overlay and rechecks its complete value before and after
+origin I/O; it grants no serving or settlement proof.
+
+If an interrupted takeover still owns a Recovering control with its pinned
+overlay, replay supplies the original retained control and failed-session proof
+to `resume_takeover_restored_observed`. That shared native path reconfirms the
+original basis, materializes the same suffix and records the result before actor
+admission, without another ownership epoch. Failed-source Recover and routed
+receiver Activate use this continuation. A current claim that does not derive
+exactly from the original checked input remains unresolved.
+
 The application authenticates management requests. The journal atomically
 checks the current controller epoch, head, permit, intent, endpoint, and
 deadline when first accepting an action. `AcceptedFleetAction` validates its
@@ -744,14 +817,16 @@ complete primitive maintenance coverage and role finalization remain under imple
 | Source preflight refusal | The actor returns `Error::CellReleaseRefused` only before this request begins canonical deactivation. Record Rejected with its original source error; the reconciler then cancels and joins unused receiver credit. Independent local eviction grants no release proof for this attempt. |
 | Prepare receiver | Validate catalog/Cell/incarnation and current release/schema support; reserve actual runtime/LTX resources before returning Reserved. A refusal preserves the original error and leaves the source serving. |
 | Maintenance Cordon | Apply retained Draining intent through the shared admission gate. Replays retain the exact acceptance/result; a dropped waiter leaves publication owned. This preserves existing obligations and uses no shutdown lane. |
-| Other maintenance effects | Refuse role settlement and finalization until their inventory and host barriers are implemented. Fresh maintenance inspection reads the exact local admission gate: only Draining reports Cordoned, while Active/Cordoned stays blocked. This inspection cannot establish role settlement, Stopped, or withdrawal. |
+| SettleRoles | Require the opaque complete role and replacement-policy proof through `apply_fleet_role_settlement`. A reconstructed controller refreshes the proof at its current request/head while retaining the original acceptance and stable action key. Publication compares the proof's head and registry atomically; an old proof cannot authorize Closing. |
+| Finalize | Require committed Closing evidence. Close finite-action admission and join accepted work through the canonical node drain; publish Stopped only after shutdown and exact boot withdrawal/retirement. |
+| Maintenance inspection | Read the exact local admission gate: only Draining reports Cordoned, while Active/Cordoned stays blocked. This inspection cannot establish role settlement, Stopped, or withdrawal. |
 | Activate receiver | Confirm the exact Idle acquisition basis is durably retained before ordinary ownership CAS; consume prepared credit through canonical restore and actor activation. |
 | Acquisition-basis reply lost | Keep authority untouched and the prepared credit charged. Repeating the same accepted action confirms the original basis and capture time before takeover. |
 | Unused credit after release | Journal CleaningReceiver, cancel/join that credit, and retain the source position and fleet permit. Cleanup returns to Released, with no claim of pre-release cancellation. After confirmed cleanup, ordinary admitted acquisition may resume. |
 | Ordinary acquisition on the preferred session | Free the unused preparation without closing the ordinary writer. Verify current authority, actor readiness, and the required release position. Matching session alone never proves prepared credit was consumed. |
 | Recover unresolved source release | Journal Recovering, cancel proved-unused preparation, validate canonical failed-session proof, and confirm `RecoveryBasis` before ownership CAS. Confirm `RecoveryEvidence` after exact recovery publication and before actor admission. Return Recovered only with current actor/authority proof. |
 | Recovery input reply lost | No ownership CAS starts. Retain the original input/time; an unchanged full canonical control permits confirming that basis and continuing the accepted action. |
-| Recovery position reply lost | No actor is admitted. Canonical rollback preserves the materialized root; the attempt stays charged and Unknown. Ordinary acquisition can restore serving, after which inspection verifies it against the retained recovery evidence. |
+| Recovery position write fails or reply is lost | No actor is admitted. Canonical rollback preserves the materialized root; the attempt stays charged and Unknown. Accepted effect replay reconfirms exact native history and retained evidence before admitted Idle reacquisition, or verifies an ordinary acquisition winner. Fresh inspection cannot repair metadata or acquire. |
 | Duplicate | Compare the full immutable specification, including cost and physical identities. Join current work or return its committed result. |
 | Dropped caller | Retain and finish execution plus journal publication independently of the caller. |
 | Result publication failure | Retain the original checked result. Result delivery joins the owned task, so an immediate subsequent dispatch can retry publication. Drain also retries; neither repeats source release. |
@@ -776,6 +851,21 @@ uses `AcquisitionObserver` recording points through the same ordinary acquisitio
 exact-root restoration, and rollback path. The journal atomically binds basis
 and evidence to original acceptance, rejects changed inputs, and returns the
 original time for identical writes.
+
+`SettleRoles` validates read-only evidence and starts no physical effect. If
+publication of its joined retained proof fails again, the executor returns the
+original publication error and removes that local observation. The durable
+acceptance and any already-committed historical result stay in the journal.
+The failed pass cannot authorize Closing: another pass must collect all native
+and foreign roles and replacement policies afresh, then commit a proof at the
+current full head/registry. Movement receipts keep their native evidence across
+every failed publication retry.
+
+A cancelled settlement waiter leaves its original native task owned. A changed
+head does not replace that running job; a competing request remains blocked with
+its original Conflict. After joining, a failed publication requires fresh
+capture as above. Neither local receipt removal nor an empty action bank proves
+physical role settlement or node closure.
 
 The executor uses at most two retained action jobs and charges their envelopes,
 results, and acquisition inputs to the existing node retained-byte ledger.
@@ -903,6 +993,20 @@ retained original requests; Pending requests without a current reference still
 require their original nonexecution or closure evidence. Applications account
 the bounded copied buffer, with at most 10,000 rows and 128 rows per page.
 
+For several physical followers, `FleetFollowerReferences::collect_all` shares
+one fresh canonical directory traversal per continuation round. Requests are
+unique, intent-bound and ordered; their combined page limit is 128 rows, with
+one lookahead per window. Each member keeps the same complete cursor, topology,
+exact rows and original interval as individual collection. Every new traversal
+authenticates all records before filtering, including expired obligations.
+
+`FleetFollowerReferences::recheck_all` first invalidates every earlier
+confirmation, then checks every member against a fresh traversal and the full
+roster. Only a wholly matching set advances confirmation intervals. Failure or
+cancellation preserves all original rows/times and leaves the whole set
+unconfirmed. A retry must freshly confirm every member before role coverage is
+valid again. Applications account the complete per-member copied buffers.
+
 After native and policy collection, `references.recheck(...)` traverses every
 page again and compares exact rows. Native topology fingerprints intentionally
 omit volatile coverage and leader liveness, so a first-page fingerprint cannot
@@ -975,8 +1079,9 @@ follower inventories. Persisted history, enrollment and transport codecs are unc
 `reader_evacuations()` and `follower_evacuations()` expose the retained originals;
 each check's `record()` supplies its immutable durable history. A supplied subset
 does not establish complete policy coverage or upgrade an incomplete observation.
-All remaining roles, failed-owner recovery, original accepted native/external work
-and terminal drain handoff are still required before SettleRoles/Finalize.
+All remaining roles, failed-owner recovery and original accepted native/external
+work must be settled before SettleRoles and before the operation can enter
+Closing. Finalize then owns the terminal drain handoff and exact withdrawal.
 
 ### Retain the complete original maintenance role set
 

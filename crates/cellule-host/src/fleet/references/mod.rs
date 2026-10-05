@@ -6,8 +6,9 @@ use cellule_runtime::{
     identity::{Digest, NodeId},
     node::{FollowerLogObservation, NodeDirectory, log_state::NodeLogPhase},
 };
-use tokio::time::{Instant, timeout_at};
+use tokio::time::Instant;
 
+mod batch;
 mod traversal;
 
 /// All authoritative log references to one physical follower, including failed
@@ -43,47 +44,18 @@ impl FleetFollowerReferences {
         deadline: Instant,
         mut clock: impl FnMut() -> Result<i64>,
     ) -> Result<Self> {
-        if roster.snapshot().registry().bootstrap_revision().is_none()
-            || directory.fleet() != roster.snapshot().head().scope().fleet
-            || !roster
-                .intents()
-                .iter()
-                .any(|intent| intent.node() == member)
-            || !(1..=128).contains(&page_limit)
-        {
-            return Err(Error::Fenced);
-        }
-        let mut scan = traversal::Scan::default();
-        loop {
-            if Instant::now() >= deadline {
-                return Err(Error::Deadline);
-            }
-            let now = clock()?;
-            let page = timeout_at(
-                deadline,
-                directory.follower_logs_page(member, scan.next, page_limit, now),
-            )
-            .await
-            .map_err(|source| Error::Facility {
-                name: "fleet-log-inventory-deadline",
-                source: Box::new(source),
-            })??;
-            let done = scan.accept(member, page, now, clock()?)?;
-            if done {
-                break;
-            }
-        }
-        Ok(Self {
-            member,
-            roster: roster.digest()?,
-            snapshot: roster.snapshot().clone(),
-            topology: scan.topology.ok_or(Error::Fenced)?,
-            started_at_ms: scan.started_at_ms.ok_or(Error::Fenced)?,
-            finished_at_ms: scan.finished_at_ms,
-            collected_at_ms: scan.finished_at_ms,
-            rechecked: None,
-            entries: scan.entries,
-        })
+        Self::collect_all(
+            directory,
+            roster,
+            &[member],
+            page_limit,
+            deadline,
+            &mut clock,
+        )
+        .await?
+        .into_iter()
+        .next()
+        .ok_or(Error::Fenced)
     }
 
     /// Physical follower node; no current boot substitutes an earlier lane.
@@ -180,22 +152,15 @@ impl FleetFollowerReferences {
         deadline: Instant,
         clock: impl FnMut() -> Result<i64>,
     ) -> Result<()> {
-        self.rechecked = None;
-        if roster.snapshot() != &self.snapshot || roster.digest()? != self.roster {
-            return Err(Error::Fenced);
-        }
-        let fresh =
-            Self::collect(directory, roster, self.member, page_limit, deadline, clock).await?;
-        if fresh.started_at_ms < self.finished_at_ms
-            || fresh.finished_at_ms - self.started_at_ms > 30_000
-            || fresh.topology != self.topology
-            || fresh.entries != self.entries
-        {
-            return Err(Error::Node("authoritative follower inventory changed"));
-        }
-        self.finished_at_ms = fresh.finished_at_ms;
-        self.rechecked = Some((fresh.started_at_ms, fresh.finished_at_ms));
-        Ok(())
+        Self::recheck_all(
+            std::slice::from_mut(self),
+            directory,
+            roster,
+            page_limit,
+            deadline,
+            clock,
+        )
+        .await
     }
 }
 

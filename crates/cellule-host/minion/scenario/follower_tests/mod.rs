@@ -35,6 +35,7 @@ mod inventory;
 mod nonexecution;
 mod observation;
 mod persisted;
+mod reference_batches;
 mod tests;
 
 async fn captured(reply: tokio::sync::oneshot::Receiver<()>) {

@@ -69,6 +69,12 @@ pub trait FleetJournal: FleetActionJournal + FleetEnrollmentJournal {
     /// loss of history after session adoption cannot become another first capture.
     /// For Retire, publish the exact progress page with permit retirement; a
     /// failed CAS cannot expose committed history or release either budget.
+    /// For ReadyToClose, require the exact operation/node/session's accepted
+    /// SettleRoles action and its committed RolesSettledAt result for the exact
+    /// current head revision and RegistryVersion in this same transaction.
+    /// Validate its original operation identity and result time; an accepted
+    /// action, stale head/registry, Unknown result, or caller-supplied drain
+    /// flags alone cannot enter Closing.
     /// Finalization must compare the observed registry version again here.
     /// ResolveUnaccepted must prove no accepted record exists for its exact
     /// effect/attempt/endpoint in this same transaction before changing the head.

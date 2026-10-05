@@ -58,6 +58,9 @@ pub struct OwnedCellObservation {
     pub generation: u64,
     /// Authority-pinned incarnation loaded by this activation.
     pub incarnation: IncarnationId,
+    /// Immutable activation identity, retained while a publication owns the
+    /// publisher. This is advisory and grants no release or durability proof.
+    pub owner_fence: crate::control::OwnerFence,
     /// Current executable contract identity.
     pub code: Digest,
     /// Current schema version.
@@ -296,6 +299,7 @@ fn observe_owned(active: &ActiveCell) -> crate::Result<OwnedCellObservation> {
         target: active.catalog.target()?,
         generation: active.generation,
         incarnation: active.incarnation,
+        owner_fence: active.admission.owner_fence,
         code: active.code,
         schema: active.schema,
         role: active.role,
