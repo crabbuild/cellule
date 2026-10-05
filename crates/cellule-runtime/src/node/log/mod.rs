@@ -369,13 +369,33 @@ impl DurabilityGate {
 
     /// Marks exactly the frame range now reachable through an authoritative root.
     pub fn prove_object(&self, ticket: CommitTicket) -> Result<u64> {
-        let mut state = self.lock()?;
+        self.prove_objects(&[ticket])
+    }
+
+    pub(crate) fn object_is_covered(&self, ticket: CommitTicket) -> Result<bool> {
+        let state = self.lock()?;
         validate_ticket(&state, ticket)?;
         if state.fenced {
             return Err(Error::Fenced);
         }
-        for sequence in ticket.first_sequence..=ticket.last_sequence {
-            state.object_covered.insert(sequence);
+        Ok((ticket.first_sequence..=ticket.last_sequence)
+            .all(|sequence| state.object_covered.contains(&sequence)))
+    }
+
+    pub(crate) fn prove_objects(&self, tickets: &[CommitTicket]) -> Result<u64> {
+        let mut state = self.lock()?;
+        // Validate the entire batch before changing any proof. One bad scope
+        // cannot release valid siblings before the caller observes an error.
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
+        }
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        for ticket in tickets {
+            for sequence in ticket.first_sequence..=ticket.last_sequence {
+                state.object_covered.insert(sequence);
+            }
         }
         while state.object_covered.contains(&(state.tiered_through + 1)) {
             state.tiered_through += 1;
@@ -386,17 +406,21 @@ impl DurabilityGate {
         Ok(tiered_through)
     }
 
-    pub(crate) fn preview_object(&self, ticket: CommitTicket) -> Result<u64> {
+    pub(crate) fn preview_objects(&self, tickets: &[CommitTicket]) -> Result<u64> {
         let state = self.lock()?;
-        validate_ticket(&state, ticket)?;
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
+        }
         if state.fenced {
             return Err(Error::Fenced);
         }
+        let covered = tickets
+            .iter()
+            .flat_map(|ticket| ticket.first_sequence..=ticket.last_sequence)
+            .collect::<BTreeSet<_>>();
         let mut tiered_through = state.tiered_through;
         while let Some(next) = tiered_through.checked_add(1) {
-            if state.object_covered.contains(&next)
-                || (ticket.first_sequence..=ticket.last_sequence).contains(&next)
-            {
+            if state.object_covered.contains(&next) || covered.contains(&next) {
                 tiered_through = next;
             } else {
                 break;

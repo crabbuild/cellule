@@ -15,6 +15,9 @@ use crate::node::log_shipper::{NodeLogShipper, NodeLogSubmission};
 use crate::node::log_transport::NodeLogTransport;
 use crate::{Error, Result};
 
+mod object_coverage;
+use object_coverage::ObjectCoverage;
+
 /// Authoritative node-session mutations required by follower durability.
 ///
 /// Implementations must serialize these mutations with heartbeat refreshes and
@@ -159,7 +162,7 @@ pub struct NodeDurability {
     transport: Arc<dyn NodeLogTransport>,
     node_lease: NodeLeaseGuard,
     activated: OnceCell<()>,
-    object_coverage: Mutex<()>,
+    object_coverage: ObjectCoverage,
     shutdown: Mutex<()>,
     retirement: std::sync::Mutex<Option<Arc<NodeLogRetirementObservation>>>,
     retirement_proof: OnceCell<Arc<NodeLogRetirementProof>>,
@@ -184,7 +187,7 @@ impl NodeDurability {
             transport,
             node_lease,
             activated: OnceCell::new(),
-            object_coverage: Mutex::new(()),
+            object_coverage: ObjectCoverage::default(),
             shutdown: Mutex::new(()),
             retirement: std::sync::Mutex::new(None),
             retirement_proof: OnceCell::new(),
@@ -276,20 +279,22 @@ impl NodeDurability {
     /// Records an already-published object root and persists its contiguous watermark.
     ///
     /// Callers must complete the exact Cell root CAS before invoking this method.
+    /// Concurrent completions share coverage updates; local proofs become visible
+    /// only after the batch's authority CAS succeeds under the original node lease.
     pub async fn prove_object(&self, ticket: CommitTicket) -> Result<DurabilityProof> {
-        // Publishers from different Cells share this watermark. Serialize the
-        // preview, authority CAS and local confirmation so concurrent completions
-        // cannot leave the persisted prefix behind the local truncation proof.
-        let _coverage = self.object_coverage.lock().await;
         self.node_lease.check()?;
-        let tiered_through = self.gate.preview_object(ticket)?;
-        tokio::select! {
-            result = self.authority.advance_coverage(ticket.log_epoch(), tiered_through) => result?,
-            () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
+        if self.object_coverage.stage(&self.gate, ticket)? {
+            self.object_coverage
+                .flush(
+                    &self.gate,
+                    self.authority.as_ref(),
+                    &self.node_lease,
+                    Some(ticket),
+                )
+                .await?;
         }
-        self.node_lease.check()?;
-        self.gate.prove_object(ticket)?;
         let proof = self.gate.prove(ticket).await?;
+        self.node_lease.check()?;
         if proof.source() != DurabilitySource::Object {
             return Err(Error::Node("object proof lost its durability race"));
         }
@@ -367,6 +372,9 @@ impl NodeDurability {
             return Ok(proof);
         }
         self.shipper.shutdown().await?;
+        self.object_coverage
+            .flush(&self.gate, self.authority.as_ref(), &self.node_lease, None)
+            .await?;
         let barrier = self.gate.begin_rotation()?;
         // A complete member fence precedes authority closure. Retain it before
         // awaiting that CAS: an accepted close with a lost reply makes further

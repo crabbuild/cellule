@@ -383,6 +383,13 @@ Heartbeat refresh, log activation, object coverage, and clean close share one
 mutex-protected authoritative observation, so their ETag CAS operations cannot
 race through stale local state.
 
+Completed roots from independent Cells queue their exact node-log tickets while
+an object-coverage CAS is in flight. The next publisher confirms the queued
+group with one serialized authority update, without a batching timer. Staging
+does not release a local proof or bridge an unpublished sequence gap. Failed or
+cancelled updates retain the original tickets for retry, including shutdown;
+local confirmation follows a successful CAS and a fresh node-lease check.
+
 **Retired lane collection.** Retired follower lanes keep their durable
 append-fence marker for ten minutes. The server then:
 

@@ -109,3 +109,7 @@ renewals at increasing Cell counts. Repeat longer matched runs and the
 [sustained qualification](node-capacity.md) before claiming scaling. Diagnostic
 instrumentation is removed from the working sources; no production runtime
 optimization is included in this benchmark change.
+
+The subsequent [coverage batching experiment](2026-10-04-object-coverage-batching.md)
+implements this queue and retains matched and reverse-order results. Capacity
+qualification remains open.

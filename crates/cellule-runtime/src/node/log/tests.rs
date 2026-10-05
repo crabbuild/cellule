@@ -161,6 +161,18 @@ fn fencing_rejects_late_object_coverage() {
 }
 
 #[test]
+fn mixed_scope_object_batch_rejects_every_ticket_before_mutation() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(3)]).unwrap();
+    let other = DurabilityGate::new(session(2), node(1), 2, [node(3)]).unwrap();
+    let valid = gate.issue(1).unwrap();
+    let foreign = other.issue(1).unwrap();
+    assert!(gate.preview_objects(&[valid, foreign]).is_err());
+    assert!(gate.prove_objects(&[valid, foreign]).is_err());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(gate.proof(valid).unwrap().is_none());
+}
+
+#[test]
 fn recovery_witness_splits_interleaved_cells_against_exact_bases() {
     let limits = cellule_ltx::Limits::default();
     let directory = tempfile::TempDir::new().unwrap();
