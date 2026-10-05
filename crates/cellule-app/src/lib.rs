@@ -52,6 +52,11 @@ const ENTITY_PARTITION_VERSION: u32 = 2;
 const UUID_PARTITION_VERSION: u32 = 3;
 const ENTITY_PARTITION_PREFIX: u8 = 1;
 
+mod binding;
+mod cell_binding;
+pub use binding::ApplicationBinding;
+pub use cell_binding::CellBinding;
+
 /// One application-owned Cell topology declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellType {
@@ -281,6 +286,50 @@ impl ApplicationBuilder {
         self.registry.register(module)
     }
 
+    /// Registers a module and one explicit Cell binding for each of its namespaces.
+    ///
+    /// Role, shards and schema range come from the module descriptor. Cell names,
+    /// namespace identities, partition modes and limits remain application-owned.
+    /// Topology errors are rejected before calling the module's registration hook.
+    /// [`Self::finish`] still verifies the complete registry and canonical descriptor.
+    /// As with [`Self::register`], a module registration failure aborts compilation;
+    /// its typed bindings are not rolled back.
+    pub fn module<M: CellModule>(
+        &mut self,
+        module: M,
+        bindings: impl IntoIterator<Item = CellBinding>,
+    ) -> Result<()> {
+        let descriptor = module.descriptor();
+        let mut cells = Vec::new();
+        for binding in bindings {
+            if self.cell_types.len() + cells.len() >= MAX_CELL_TYPES {
+                return Err(Error::Registry("Cell type count must be in 1..=128"));
+            }
+            let cell = binding.resolve(descriptor)?;
+            if self
+                .cell_types
+                .iter()
+                .chain(&cells)
+                .any(|existing: &CellType| {
+                    existing.namespace == cell.namespace || existing.name == cell.name
+                })
+            {
+                return Err(Error::Registry("duplicate Cell type identity"));
+            }
+            cells.push(cell);
+        }
+        if cells.len() != descriptor.namespaces.len() {
+            return Err(Error::Registry(
+                "module bindings must declare every namespace exactly once",
+            ));
+        }
+        self.register(module)?;
+        for cell in cells {
+            self.cell_type(cell)?;
+        }
+        Ok(())
+    }
+
     /// Adds one topology declaration and rejects duplicate stable identities.
     pub fn cell_type(&mut self, cell_type: CellType) -> Result<()> {
         cell_type.validate()?;
@@ -456,23 +505,7 @@ impl<A: CellApplication> ApplicationHandle<A> {
         tenant: TenantId,
         application: ApplicationId,
     ) -> Result<Self> {
-        if compiled.name() != A::NAME {
-            return Err(Error::Registry(
-                "application type differs from compiled application",
-            ));
-        }
-        if client.registry_digest() != compiled.registry.release_digest() {
-            return Err(Error::Registry(
-                "client registry differs from compiled application",
-            ));
-        }
-        Ok(Self {
-            client,
-            tenant,
-            application,
-            compiled,
-            marker: PhantomData,
-        })
+        Ok(ApplicationBinding::<A>::new(client, compiled, application)?.scope(tenant))
     }
 
     /// Returns an application capability with an explicit typed-query read policy.

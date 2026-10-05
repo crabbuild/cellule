@@ -34,6 +34,6 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sig
 tower = { version = "0.5", features = ["util"] }
 
 [[example]]
-name = "integration"
-path = "examples/integration.rs"
+name = "typed-api-service"
+path = "examples/typed-api-service/main.rs"
 required-features = ["openapi"]

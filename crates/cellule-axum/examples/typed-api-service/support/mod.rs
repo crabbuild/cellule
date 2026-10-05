@@ -162,7 +162,7 @@ pub async fn start() -> ExampleResult<ExampleNode> {
     let application = Arc::new(OrdersApp::compile(BuildDescriptor {
         source_revision: "local-axum-orders-example".into(),
         cargo_lock_digest: Digest::from_bytes(
-            *blake3::hash(include_bytes!("../../../../Cargo.lock")).as_bytes(),
+            *blake3::hash(include_bytes!("../../../../../Cargo.lock")).as_bytes(),
         ),
     })?);
     let tenant = TenantId::from_bytes([2; 16]);

@@ -10,8 +10,8 @@ including catalog provisioning and a local runtime.
 
 | You need to… | Start with | Ownership |
 | --- | --- | --- |
-| Declare modules and stable topology | [`CellApplication`, `ApplicationBuilder`, `CellType`](../crates/cellule-app/src/lib.rs) | Application author |
-| Select a Cell and call typed operations | [`ApplicationHandle`, `cell_client!`](../crates/cellule-app/src/lib.rs) | Application author |
+| Declare modules and stable topology | [`CellApplication`, `ApplicationBuilder::module`, `CellBinding`](../crates/cellule-app/README.md) | Application author |
+| Bind once, then select a Cell and call typed operations | [`ApplicationBinding`, `ApplicationHandle`, `cell_client!`](../crates/cellule-app/README.md) | Application author |
 | Use SQL, KV, Blob, Queue, Cron, or Workflow | [Typed primitive capabilities](#primitive-capabilities) | Application author |
 | Implement a custom operation | [`CellModule`, `Command`, `Query`, `WireValue`](../crates/cellule-runtime/docs/rust-api.md) | Module author |
 | Start and drain a serving node | [`CellNodeBuilder`, `CellNode`](../crates/cellule-host/README.md) | Service |
@@ -24,42 +24,44 @@ controls providers and network policy.
 ## 1. Compile a stable application
 
 A `CellModule` declares its schema migrations, namespace, operation IDs, codec
-versions, and bounds. `CellApplication::register` adds each module and a
-matching `CellType`. Compilation checks that every registry namespace has one
+versions, and bounds. In `CellApplication::register`, use
+`ApplicationBuilder::module(module, bindings)` to register the module and one
+explicit `CellBinding` per namespace together. The descriptor supplies role,
+shards, and schema range. Compilation checks that every registry namespace has one
 matching topology declaration and emits canonical descriptor bytes and a
 digest. It does not provision or start a Cell.
 
-This complete topology function is also compiled as a doctest in the
+This helper for an already declared single-namespace module is also compiled in the
 [`cellule-app` crate README](../crates/cellule-app/README.md):
 
-```rust
-use cellule_app::CellType;
-use cellule_runtime::{CatalogRole, NamespaceId};
+```rust,no_run
+use cellule_app::{ApplicationBuilder, CellBinding};
+use cellule_runtime::{CellModule, NamespaceId};
 
-fn orders_topology() -> cellule_runtime::Result<CellType> {
-    CellType::new(
-        "orders",
-        "orders",
-        NamespaceId::from_bytes([1; 16]),
-        CatalogRole::Sql,
-        1,
-    )?
-    .with_entity_partitions()
+fn register_orders<M: CellModule>(
+    builder: &mut ApplicationBuilder,
+    module: M,
+    namespace: NamespaceId,
+) -> cellule_runtime::Result<()> {
+    builder.module(
+        module,
+        [CellBinding::entity(namespace, "orders").with_limits(64 << 20, 16 << 20)],
+    )
 }
-
-assert!(orders_topology().is_ok());
 ```
 
-`CellType::new` takes the module name, Cell type name, stable namespace ID,
-catalog role, and shard count. Choose one partition scheme:
+Choose stable names and namespace IDs, limits, and one partition scheme:
 
 | Scheme | API | Target rule |
 | --- | --- | --- |
-| Fixed shards | `CellType::new(..., shards)` | `partition_for_scope` hashes scope bytes to one declared shard. |
-| Entity Cells | `.with_entity_partitions()` | `entity_partition` derives one 33-byte partition from a nonempty canonical key; the namespace declares one shard. |
+| Fixed shards | `CellBinding::sharded(namespace, name)` | `partition_for_scope` hashes scope bytes to one declared shard. |
+| Entity Cells | `CellBinding::entity(namespace, name)` | `entity_partition` derives one 33-byte partition from a nonempty canonical key; the namespace declares one shard. |
+| UUID SQL Cells | `CellBinding::entity_uuid(namespace, name)` | The partition is the canonical 16-byte UUID; the SQL namespace declares one shard. |
 
-`with_schema_range` sets the accepted schema interval; `with_limits` sets the
-per-Cell database and capture ceilings. Namespaces, roles, partition schemes,
+The lower-level `register` and `cell_type` methods accept explicit `CellType`
+declarations and emit the same descriptor bytes. With that path,
+`with_schema_range` must match the module's schema interval. `with_limits` sets
+the per-Cell database and capture ceilings. Namespaces, roles, partition schemes,
 shard counts, operation IDs, and descriptor bytes are compatibility contracts.
 Changing them can change routing or persisted identity. Read the
 [topology guide](../crates/cellule-app/docs/topology.md) before changing a
@@ -90,20 +92,33 @@ registration code.
 
 ## 2. Bind a client and select a Cell
 
-Once a service has provisioned a catalog entry, established an owner, and
-started a `CellClient`, bind that client to the compiled application and the
-service-selected tenant and application IDs. These lines come from the
-[runnable SQL example](../crates/cellule-app/examples/sql.rs):
+Bind the configured client to the compiled application and installation ID once
+with `ApplicationBinding::<A>::new`. A local serving node supplies the same
+factory with `node.bind_local_application::<A>(layout)`, deriving the installation
+ID from the supplied storage layout and using the existing runtime.
 
-```rust
-let client = CellClient::local(registry, handle);
-let typed = ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id)?;
-let sql = typed.sql::<Orders>(target)?;
+```rust,no_run
+use cellule_app::{ApplicationBinding, CellApplication};
+use cellule_host::CellNode;
+use cellule_runtime::ltx::CellStorageLayout;
+
+fn bind_service<A: CellApplication>(
+    node: &CellNode,
+    layout: CellStorageLayout,
+) -> cellule_runtime::Result<ApplicationBinding<A>> {
+    node.bind_local_application::<A>(layout)
+}
 ```
 
-`ApplicationHandle::new` rejects an author type or client registry that does
-not match the compiled artifact. Its calls also reject targets outside the
-bound tenant, application, namespace, or declared partition scheme.
+Keep this factory in trusted service state. After authenticating and authorizing
+the tenant, call `binding.scope(tenant)` to create its `ApplicationHandle<A>`.
+The factory validates the author type and client registry once; every handle
+still rejects targets outside its tenant, application, namespace, or declared
+partition scheme. `ApplicationHandle::new` remains available for directly binding
+one tenant through the same validation path. Binding alone does not activate
+Cells; the host must provision the catalog and establish an owner before calls.
+The [embedding service](../crates/cellule-axum/examples/application-builder-service/README.md) uses
+this flow with Axum/OpenAPI and ordered shutdown.
 
 Use `target_for_scope(namespace, scope)` to derive a target from the declared
 fixed-shard or entity scheme. The local SQL example selects its sole fixed
@@ -187,7 +202,7 @@ SQL and source effects select an explicit target.
 | `activities::<M>()` | `WorkflowActivities<M>` | Capability consumed by `ActivitySupervisor` for external work |
 | `effects::<M>(target)` | `EffectSource<M>` | `claim`, `validate`, `status`, `ack`, `retry` on a source Cell |
 
-Blob handles require `with_blob_artifact_store` on the application handle;
+Blob handles require `with_blob_artifact_store` on the binding or application handle;
 the [Blob example](../crates/cellule-app/examples/blob.rs) shows
 the complete upload and receipt-bound read. Queue and effect lease validation
 use the current owner even when ordinary queries use a replica. Activities and

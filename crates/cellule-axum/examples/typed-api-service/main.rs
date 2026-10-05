@@ -1,5 +1,5 @@
 //! Typed registration, authorization, OpenAPI, evidence custody and recovery.
-//! Run: cargo run -p cellule-axum --example integration --features openapi --locked
+//! Run: cargo run -p cellule-axum --example typed-api-service --features openapi --locked
 
 mod recovery;
 mod support;
@@ -9,12 +9,13 @@ use axum::{
     extract::{DefaultBodyLimit, FromRequestParts, Path, Request, State},
     http::{StatusCode, request::Parts},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use cellule_app::ApplicationHandle;
 use cellule_axum::{
     CellApi, CellEndpoint, CellJson, CommandEndpoint, EndpointSpec, HttpError, RequestCellule,
+    utoipa,
 };
 use cellule_runtime::{
     CellTarget, PreparedCommand, Receipt, Resolution,
@@ -25,7 +26,17 @@ use cellule_runtime::{
 use recovery::Journal;
 use serde_json::json;
 use support::{ExampleResult, ORDERS, OrdersApp, ReadTotal, SetTotal};
+use utoipa::OpenApi as _;
 use uuid::Uuid;
+
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(scope, recover, ready))]
+struct ManualRoutes;
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct AuthorizedScope {
+    cell: [u8; 32],
+}
 
 #[derive(Clone)]
 struct ServiceState {
@@ -92,11 +103,32 @@ impl CommandEndpoint<OrdersApp, SetTotal> for Authorized {
     }
 }
 
-async fn scope(app: RequestCellule<OrdersApp>) -> Result<Json<serde_json::Value>, HttpError> {
+#[utoipa::path(
+    get, path = "/scope", operation_id = "authorizedScope",
+    responses(
+        (status = 200, body = AuthorizedScope, description = "Cell selected by the authenticated scope"),
+        (status = 401, description = "Application authentication failed")
+    ),
+    security(("bearerAuth" = []))
+)]
+async fn scope(app: RequestCellule<OrdersApp>) -> Result<Json<AuthorizedScope>, HttpError> {
     let target = app.target_for_scope(ORDERS, b"orders")?;
-    Ok(Json(json!({"cell": target.cell_id().as_bytes()})))
+    Ok(Json(AuthorizedScope {
+        cell: *target.cell_id().as_bytes(),
+    }))
 }
 
+#[utoipa::path(
+    post, path = "/recovery/{request_id}", operation_id = "recoverTotal",
+    params(("request_id" = Uuid, Path, description = "Original command request ID")),
+    responses(
+        (status = 200, body = CellJson<i64>, description = "Committed original outcome or safely replayed command"),
+        (status = 404, description = "No retained evidence in the authorized Cell"),
+        (status = 409, description = "Durable rejection, request conflict, or expired original command"),
+        (status = 503, description = "Outcome remains unknown or the node is unavailable")
+    ),
+    security(("bearerAuth" = []))
+)]
 async fn recover(context: Authorized, Path(request): Path<Uuid>) -> Result<Response, HttpError> {
     let Some((snapshot, input)) = context
         .journal
@@ -155,6 +187,13 @@ async fn recover(context: Authorized, Path(request): Path<Uuid>) -> Result<Respo
     Ok(response)
 }
 
+#[utoipa::path(
+    get, path = "/ready", operation_id = "readiness",
+    responses(
+        (status = 204, description = "Initialized Cell can answer a query"),
+        (status = 503, description = "Cell is unavailable")
+    )
+)]
 async fn ready(State(state): State<ServiceState>) -> StatusCode {
     let Ok(target) = state.app.target_for_scope(ORDERS, b"orders") else {
         return StatusCode::SERVICE_UNAVAILABLE;
@@ -174,10 +213,23 @@ async fn main() -> ExampleResult<()> {
             journal: Journal::open(node._files.path().join("recovery.sqlite"))?,
         };
         let (routes, mut document) = CellApi::<OrdersApp, ServiceState>::new(node.app.compiled())?
-            .command::<SetTotal, Authorized>(ORDERS, EndpointSpec::new("/total", "setTotal"))?
-            .query::<ReadTotal, Authorized>(ORDERS, EndpointSpec::new("/total/read", "readTotal"))?
+            .command::<SetTotal, Authorized>(
+                ORDERS,
+                EndpointSpec::new("/total", "setTotal")
+                    .description("Set the total with a caller-created mutation identity. Retain the exact original body for retries and recovery. Negative totals are durable rejections."),
+            )?
+            .query::<ReadTotal, Authorized>(
+                ORDERS,
+                EndpointSpec::new("/total/read", "readTotal")
+                    .description("Read the total using JSON null as the body. Supply x-cellule-receipt to require observation of a previous write."),
+            )?
             .into_router()
             .split_for_parts();
+        document.merge(ManualRoutes::openapi());
+        document.info.title = "Typed Orders API".into();
+        document.info.description = Some(
+            "Local example: use Authorize with token `local-orders` (without the Bearer prefix). Queries take JSON `null`. Mutations require a UUID request_id and current issued_at_ms/expires_at_ms Unix timestamps in milliseconds; use a 60-second window and keep the same identity and input for every retry. Restarting this example resets its state.".into(),
+        );
         // Authorization metadata belongs to the app, beside its middleware.
         use cellule_axum::utoipa::openapi::{
             response::ResponseBuilder,
@@ -212,6 +264,7 @@ async fn main() -> ExampleResult<()> {
         let router = Router::new()
             .merge(protected)
             .route("/ready", get(ready))
+            .route("/docs", get(|| async { Html(include_str!("../openapi-ui.html")) }))
             .route(
                 "/openapi.json",
                 get(move || {
@@ -223,7 +276,7 @@ async fn main() -> ExampleResult<()> {
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3001").await?;
         println!(
-            "Integration service: http://{} (Ctrl-C to drain)",
+            "Typed API service: http://{} (API docs: /docs; Ctrl-C to drain)",
             listener.local_addr()?
         );
         let (signal_tx, signal_rx) = tokio::sync::oneshot::channel();

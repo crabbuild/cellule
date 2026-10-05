@@ -54,7 +54,7 @@ pub mod read_replicas;
 mod status;
 mod tasks;
 
-use cellule_app::{ApplicationHandle, CellApplication, CompiledApplication};
+use cellule_app::{ApplicationBinding, ApplicationHandle, CellApplication, CompiledApplication};
 use cellule_runtime::Error;
 use cellule_runtime::cell::actor::{CellRuntime, CellRuntimeStats};
 use cellule_runtime::cell::worker::SqlWorkerPool;

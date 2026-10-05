@@ -66,6 +66,7 @@ use ed25519_dalek::SigningKey;
 use object_store::memory::InMemory;
 
 mod application;
+mod bindings;
 mod commit;
 mod entities;
 mod fleet;
