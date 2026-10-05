@@ -111,6 +111,55 @@ async fn root_preparation_separates_admission_wait_and_preserves_admission_error
     writer.close().unwrap();
 }
 
+#[tokio::test]
+async fn root_preparation_admission_owns_only_dirty_and_preserves_cancellation_and_source() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    let (_directory, _faults, host, mut writer) = fixture();
+    let cuts = writer.capture().unwrap();
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(counted.clone()),
+            ObjectPath::from("root-admission"),
+            [211; 16],
+        ),
+        [212; 32],
+        [213; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(
+        host.with_dirty_slots(dirty.clone())
+            .with_recovery_slots(recovery.clone()),
+    );
+    let occupied = dirty.clone().acquire_owned().await.unwrap();
+    let mut waiting = Box::pin(replica.admit_root_preparation());
+    assert!(futures_util::poll!(&mut waiting).is_pending());
+    assert_eq!(recovery.available_permits(), 1);
+    assert_eq!(counted.put_requests(), 0);
+    drop(waiting);
+    drop(occupied);
+    let admitted = replica.admit_root_preparation().await.unwrap();
+    assert_eq!(dirty.available_permits(), 0);
+    assert_eq!(recovery.available_permits(), 1);
+    let prepared = admitted.prepare(None, &cuts, 1, 1).await.unwrap();
+    assert_eq!(prepared.root().position, cuts.position);
+    drop(admitted);
+    assert_eq!(dirty.available_permits(), 1);
+    dirty.close();
+    let error = replica.admit_root_preparation().await.err().unwrap();
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<tokio::sync::AcquireError>()
+    );
+    assert_eq!(dirty.available_permits(), 1);
+    writer.close().unwrap();
+}
+
 async fn verified_fixture(
     extra_bytes: i64,
 ) -> (tempfile::TempDir, Arc<Faults>, cellule_ltx::VerifiedRoot) {

@@ -388,14 +388,48 @@ pub(super) fn receive_publication_proof(
 pub(super) fn start_publication(
     cell: CellId,
     active: &mut ActiveCell,
-    pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
-    use crate::fleet::telemetry::PublicationTiming;
-
     let Some(mut publisher) = active.publisher.take() else {
         return;
     };
+    if active.publications.is_empty() {
+        active.publisher = Some(publisher);
+        return;
+    }
+    let generation = active.generation;
+    let effect_id = active.begin_task(CoordinationEffect::Publication);
+    let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
+    tasks.spawn(async move {
+        // Keep coverage in the bounded Cell queue while waiting. The publisher
+        // token prevents another root or compaction from overtaking admission.
+        let result = publisher.admit_publication().await.map(|replica| {
+            Box::new(PublicationAdmission {
+                replica,
+                fleet_deadline,
+            })
+        });
+        TaskResult::PublicationAdmitted {
+            cell,
+            generation,
+            effect_id,
+            publisher: Box::new(publisher),
+            result,
+        }
+    });
+}
+
+pub(super) fn start_admitted_publication(
+    cell: CellId,
+    active: &mut ActiveCell,
+    pool: &SqlWorkerPool,
+    tasks: &mut JoinSet<TaskResult>,
+    mut publisher: Box<CellPublisher>,
+    admission: Box<PublicationAdmission>,
+    effect_id: u64,
+) {
+    use crate::fleet::telemetry::PublicationTiming;
+
     // Coalescing publishes one root for every queued commit. It is only sound
     // once each covered commit reached its follower proof, because that proof is
     // what allowed the commits to queue behind an unpublished one.
@@ -410,7 +444,8 @@ pub(super) fn start_publication(
         match active.publications.pop_front() {
             Some(queued) => vec![queued],
             None => {
-                active.publisher = Some(publisher);
+                active.finish_task(effect_id, CoordinationEffect::Publication);
+                active.publisher = Some(*publisher);
                 return;
             }
         }
@@ -418,11 +453,13 @@ pub(super) fn start_publication(
     let Some(merged) =
         crate::cell::executor::merge_captures(coverage.iter().map(|queued| queued.pending.cuts()))
     else {
-        active.publisher = Some(publisher);
+        active.finish_task(effect_id, CoordinationEffect::Publication);
+        active.publisher = Some(*publisher);
         return;
     };
     let Some(newest) = coverage.last() else {
-        active.publisher = Some(publisher);
+        active.finish_task(effect_id, CoordinationEffect::Publication);
+        active.publisher = Some(*publisher);
         return;
     };
     let covered = coverage.len();
@@ -460,7 +497,6 @@ pub(super) fn start_publication(
         "Cell LTX publication started"
     );
     let generation = active.generation;
-    let effect_id = active.begin_task(CoordinationEffect::Publication);
     // Moving the publisher out of ActiveCell is the serialization token for
     // root preparation and CAS; no second object publisher can overtake it.
     let pool = pool.clone();
@@ -479,16 +515,22 @@ pub(super) fn start_publication(
         pendings.push(queued.pending);
     }
     tasks.spawn(async move {
+        let mut admitted = Some(admission.replica);
         let _retained_reservations = reservations;
         let mut publication_proofs = Some(proofs);
-        let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
+        // Admission delay cannot restart or extend the existing retry grace.
+        let fleet_deadline = admission.fleet_deadline;
         let mut retry_delay = std::time::Duration::from_millis(100);
         let mut preparation = std::time::Duration::ZERO;
         let mut authority = std::time::Duration::ZERO;
         let result = async {
             let preparation_started = std::time::Instant::now();
             let prepared = loop {
-                let attempt = if covered == 1 {
+                let attempt = if let Some(replica) = admitted.take() {
+                    publisher
+                        .prepare_admitted_batch(replica, &merged, published_commit_sequence)
+                        .await
+                } else if covered == 1 {
                     publisher.prepare(&pendings[0]).await
                 } else {
                     publisher
@@ -631,7 +673,7 @@ pub(super) fn start_publication(
             cell,
             generation,
             effect_id,
-            publisher: Box::new(publisher),
+            publisher,
             retained_bytes,
             node_log_bytes,
             covered: covered as u64,

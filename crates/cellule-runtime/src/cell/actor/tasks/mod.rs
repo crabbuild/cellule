@@ -122,6 +122,15 @@ pub(super) fn handle_task(
         } => publication::handle_proven(
             context, cell, generation, effect_id, command, result, fenced,
         ),
+        TaskResult::PublicationAdmitted {
+            cell,
+            generation,
+            effect_id,
+            publisher,
+            result,
+        } => publication::handle_publication_admitted(
+            context, cell, generation, effect_id, publisher, result,
+        ),
         TaskResult::Published {
             cell,
             generation,

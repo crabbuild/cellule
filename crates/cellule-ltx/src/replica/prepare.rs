@@ -369,6 +369,16 @@ impl CellReplica {
         result
     }
 
+    /// Waits for the existing dirty-memory reservation before selecting captures.
+    ///
+    /// The returned scoped clone retains admission. Prepare through that clone,
+    /// then drop it to release the reservation; dispatched native jobs retain
+    /// their own clones until completion. Waiting starts no work, grants no
+    /// authority and changes no resource ceiling. Cancellation releases admission.
+    pub async fn admit_root_preparation(&self) -> Result<Self> {
+        Ok(self.clone().with_host(self.host.for_dirty().await?))
+    }
+
     /// Tries to admit scheduled compaction without waiting for shared capacity.
     ///
     /// Returns a scoped clone retaining the existing dirty-memory and recovery

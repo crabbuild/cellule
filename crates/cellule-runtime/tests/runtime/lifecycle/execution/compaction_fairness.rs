@@ -218,3 +218,99 @@ async fn check_restored(fixture: &Fixture, value: u8) {
         value
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_waiting_for_compaction_recovery_leaves_independent_dirty_capacity_available() {
+    struct Admissions {
+        count: AtomicUsize,
+        changed: tokio::sync::Notify,
+    }
+    impl cellule_runtime::fleet::telemetry::CellTelemetry for Admissions {
+        fn ltx_phase(
+            &self,
+            phase: cellule_ltx::LtxPhase,
+            _elapsed: std::time::Duration,
+            succeeded: bool,
+        ) {
+            if phase == cellule_ltx::LtxPhase::DirtyAdmission && succeeded {
+                self.count.fetch_add(1, Ordering::AcqRel);
+                self.changed.notify_one();
+            }
+        }
+    }
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let observed = Arc::new(Admissions {
+        count: AtomicUsize::new(0),
+        changed: tokio::sync::Notify::new(),
+    });
+    let session = SessionId::from_bytes([63; 16]);
+    let runtime = CellRuntime::new_with_replica_host(
+        SqlWorkerPool::new(2, 4).unwrap(),
+        16 * 1024 * 1024,
+        session,
+        ReplicaHost::default()
+            .with_dirty_slots(dirty.clone())
+            .with_recovery_slots(recovery.clone()),
+    )
+    .unwrap();
+    runtime.install_telemetry(observed.clone()).unwrap();
+    let pressure = fixture_with_limits(
+        b"admission-compaction-pressure",
+        Limits {
+            max_segments: 4,
+            ..Limits::default()
+        },
+    );
+    let independent = fixture_for(b"admission-independent-writer");
+    let pressure_handle = bootstrap_on(&runtime, &pressure, session).await;
+    let independent_handle = bootstrap_on(&runtime, &independent, session).await;
+    write(&pressure_handle, 1).await;
+    write(&pressure_handle, 2).await;
+    let baseline = observed.count.load(Ordering::Acquire);
+    let occupied = recovery.clone().acquire_owned().await.unwrap();
+    let pressure_writer = tokio::spawn(async move {
+        write(&pressure_handle, 3).await;
+    });
+    let admission_observed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while observed.count.load(Ordering::Acquire) == baseline {
+            observed.changed.notified().await;
+        }
+    })
+    .await
+    .is_ok();
+    // The selected append now needs compaction. It must leave dirty available
+    // while recovery remains externally occupied, so an independent normal
+    // root can publish without waiting for that recovery permit.
+    let mut independent_writer = tokio::spawn(async move {
+        write(&independent_handle, 1).await;
+    });
+    let progress =
+        tokio::time::timeout(std::time::Duration::from_secs(1), &mut independent_writer).await;
+    let progressed = matches!(&progress, Ok(Ok(())));
+    drop(occupied);
+    let pressure_result = pressure_writer.await;
+    let independent_result = if progress.is_err() {
+        Some(independent_writer.await)
+    } else {
+        None
+    };
+    let shutdown = runtime.shutdown().await;
+    assert!(
+        admission_observed,
+        "pressure append never reached dirty admission"
+    );
+    pressure_result.unwrap();
+    if let Some(result) = independent_result {
+        result.unwrap();
+    }
+    shutdown.unwrap();
+    assert!(
+        progressed,
+        "recovery wait retained an unnecessary dirty cohort: {progress:?}"
+    );
+    assert_eq!(dirty.available_permits(), 1);
+    assert_eq!(recovery.available_permits(), 1);
+    check_restored(&pressure, 3).await;
+    check_restored(&independent, 1).await;
+}
