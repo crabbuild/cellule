@@ -11,6 +11,10 @@ recovery/resource evidence. It is not a supported capacity claim.
 The [node scaling probes](2026-10-04-node-scaling-probes.md) retain provider CPU
 comparisons and failed density admission attempts with a
 [dataset](2026-10-04-node-scaling-probes.json).
+The [object coverage batching report](2026-10-04-object-coverage-batching.md)
+tracks concurrent publication comparisons. The
+[coalesced root report](2026-10-04-coalesced-root-coverage.md) retains the next
+failed 64-Cell pair and identifies the conservative disk admission ceiling.
 
 Reports identify frozen measured revisions. The later CI fix preserves reader
 rotation across discovery changes and synchronizes a durability test with its
