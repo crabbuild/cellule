@@ -98,6 +98,29 @@ still reports that original source and keeps lease maintenance and Draining.
 Dropping the task group aborts its remaining owned tasks. Stopped still requires
 successful joins through the canonical node drain lane.
 
+## Blob artifact ownership
+
+During startup, declare `BLOB_ARTIFACT_STORE_COMPONENT` in the required component
+set, install the task group, then call `install_blob_artifact_store` with the
+product-configured provider. Pass the returned clone into the typed client's
+existing Blob configuration. Duplicate installation, closed original admission
+and installation after startup are refused before retaining another facility.
+
+The store uses the existing reverse-order facility drain. Every clone closes
+admission and the drain joins original namespace/GC operations before runtime
+shutdown. Cancelling a shutdown waiter preserves both the original host drain
+and accepted Blob work. A deadline may return an incomplete drain; it cannot
+turn a still-running operation into closed-plus-zero or Stopped. The next drain
+joins the retained original work. An unrelated store has independent admission.
+
+The store's lifecycle observation distinguishes local joining from result
+success. Native source-bearing failures remain available through a retained
+clone. A returned prepared command has its own normal Cell execution and is
+outside this local job count. Complete uploads, external streams, read/backup
+pins, global references and unknown remote effects still require their original
+owners and fleet barriers. Installation does not remove `BlobInventory` or
+authorize Blob Cell release, global GC or physical-node finalization.
+
 ## Requested node-log rotation
 
 Install the existing durability provider during startup, then call

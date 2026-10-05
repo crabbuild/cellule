@@ -7813,3 +7813,85 @@ Highest next priorities:
    logical upload/range/pin lifetimes into the existing native role barriers.
 3. Complete remaining W4–W10 fault, boot-lineage, process/provider, load,
    mixed-version and rollout/rollback/recovery evidence. The plan remains open.
+
+
+## October 5 2026 original Blob lifetime checkpoint
+
+Parent: `973e0eeaddb51158cdc7d075e06c2feb84795cd5`.
+The earlier disk-budget isolation passed exact native
+[run 37267463895](https://github.com/crabbuild/cellule/actions/runs/37267463895):
+two complete parallel runtime suites, each 231 passed/4 ignored, plus
+warning-denied runtime lint on Rust 1.99. The published parent's full Rust job
+has passed workspace tests and is running the minion controller model suite;
+complete head qualification remains required. PR #57 remains mergeable and
+current main is an ancestor.
+
+The original Blob store now owns at most 64 accepted operations through one
+irreversible admission word shared by every clone. Caller loss drops a waiter;
+a retained supervisor joins the original native future and preserves its first
+source-bearing failure, including provider panic JoinError. Cancellation of a
+close waiter leaves admission closed and the original work running. Counts only
+reach stable closed-plus-zero after inputs, native I/O and undelivered output
+have finished or dropped. A local join is distinct from remote outcome success.
+
+Public namespace operations use this same owner. Mutation convenience retains
+part staging through its normal Cell command response; preparation retains only
+staging/preparation and returns the existing caller-owned PreparedCommand.
+Range queries retain metadata lookup and every bounded part read without
+readmission between parts. Head/list and non-part mutations share original
+admission too. Native codec, ID, part digest/path, SQLite manifest and durable
+response contracts are unchanged. Complete GC reference sets are now supplied
+as Arc<BTreeSet<[u8; 32]>>, retained through original listing and deletion; no
+truncation or unbounded copying is introduced.
+
+`CellNode::install_blob_artifact_store` installs the configured provider as the
+existing named owned facility before readiness, after the task group. Its
+returned clone configures the existing client. The canonical reverse facility
+drain closes and joins the same original store before runtime shutdown. Duplicate,
+closed-store and late installation are refused. Caller/shutdown cancellation
+cannot fabricate Stopped or close an unrelated store.
+
+A public range regression holds actual SQLite work ahead of metadata lookup,
+then closes the store, cancels its caller and a close waiter, and gates original
+part I/O. Both requested parts complete under the one original lifetime; the
+uncancelled variant reads exact bytes. Temporarily omitting whole-query ownership
+reproduced its admission assertion failure after worker/provider cleanup, then
+the restored implementation passed. A cancelled upload waiter case proves its
+manifest command committed by resolving exact prepared evidence before any
+duplicate dispatch; replay preserves sequence 2 and one provider upload.
+A public host case pauses an actual GC listing, cancels both caller and shutdown
+waiter, retains the complete reference set, then confirms one original sweep,
+joined drain, deleted orphan, closed original store, unrelated open store and
+zero node resources. Four provider-level cases also cover cancelled put/read/GC,
+repeated close, native failure/panic sources, all 64 retained jobs and malformed
+inputs. Auth classification is preserved; source-chain injection uses the
+existing non-retried source-bearing NotSupported error.
+
+Local Rust 1.97: 24 Blob unit/codec/compatibility cases, all five selected public
+Blob/Cron cases and both host Blob cases passed. Warning-denied host/runtime
+Clippy and API docs, format, boundaries/layout and document gates passed.
+Exact snapshot `f58583d11d8fdec6705cb6e3f5ef544f42294599` retains the changed
+Rust, manifest/lock and subsystem documentation paths. Its delta SHA-256 is
+`1627093025d25bde705f6c63c56c17bb5422736a38a617bffb125705a823d535`.
+[Run 37269195078](https://github.com/crabbuild/cellule/actions/runs/37269195078)
+is qualifying all 24 Blob contracts, the complete parallel 52-case primitive
+and 129-case node suites, warning-denied lint and API docs. Success is not yet
+claimed. The only dependency change adds the existing async-trait package as a
+host test dependency for the real ObjectStore decorator; no resolved version
+changes.
+
+This is original local operation ownership, not complete Blob movement. Returned
+prepared commands, Cell-scoped upload/stream/read/backup pins, migration,
+cross-Cell GC references and unknown remote results still need canonical owner
+coverage. BlobInventory and missing Blob maintenance cost remain blocking.
+The full W4–W10 goal remains open.
+
+Highest next priorities:
+
+1. Complete exact native Blob qualification and current-head CI, keep source
+   provenance and main ancestry, and publish the qualified checkpoint.
+2. Complete Cell-scoped Blob logical/pin and global retention proof through the
+   original owner, then qualify maintenance handoff and native role settlement.
+3. Diagnose retained leased routing p99 and constrained-reader availability
+   failures; deliver remaining fault/boot-lineage, W9 process/provider/load and
+   mixed-version campaigns, then exercised W10 rollout/rollback/recovery.

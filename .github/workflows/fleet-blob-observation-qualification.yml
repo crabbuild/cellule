@@ -1,0 +1,53 @@
+name: Fleet Blob and observation full model qualification
+on:
+  push:
+    branches: [codex/fleet-blob-observation-qualification]
+permissions:
+  contents: read
+jobs:
+  native-models:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
+      - name: Record exact source and native environment
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source.txt
+          cat qualification-source.json > evidence/qualification-source.json
+          rustc -Vv > evidence/rustc.txt
+          lscpu > evidence/cpu.txt
+          cat /proc/meminfo > evidence/memory.txt
+          ulimit -a > evidence/limits.txt
+      - name: Exact original successor corruption contracts
+        run: |
+          set -euo pipefail
+          cargo test -p cellule-host --example fleet_operations --all-features --locked successors::observation:: -- --nocapture --test-threads=1 2>&1 | tee evidence/observation.log
+          python3 -c 'import re; assert re.search(r"test result: ok\. 10 passed; 0 failed",open("evidence/observation.log").read())'
+      - name: Entire serial minion suite with original profiles
+        run: |
+          set -euo pipefail
+          cargo test -p cellule-host --example fleet_operations --all-features --locked -- --nocapture --test-threads=1 2>&1 | tee evidence/minion.log
+          python3 -c 'import re; assert re.search(r"test result: ok\. 382 passed; 0 failed",open("evidence/minion.log").read())'
+      - name: Typed application consumer compatibility
+        run: |
+          set -euo pipefail
+          cargo test -p cellule-app --test integration --all-features --locked typed_application_executes_every_primitive_through_a_local_router -- --nocapture 2>&1 | tee evidence/application.log
+          python3 -c 'import re; assert re.search(r"test result: ok\. 1 passed; 0 failed",open("evidence/application.log").read())'
+      - name: Warning denied host and runtime lint
+        run: cargo clippy -p cellule-runtime -p cellule-host --all-targets --all-features --locked -- -D warnings
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: blob-observation-models-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7

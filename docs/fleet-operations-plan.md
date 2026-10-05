@@ -1549,9 +1549,21 @@ runs two continuous SQL lanes through the public reconciler: original owner-fenc
 inventory survives publisher borrowing, root changes invalidate count coverage,
 receiver preparation precedes native quiescence, and every acknowledged outcome
 and exact audit row survives restoration. Publication-paused runtime cases cover
-exact epoch/generation refusal and no premature release. Complete the remaining host fault cases,
-every primitive's acceptance matrix, Blob owners and process/provider
-qualification before claiming this work package complete.
+exact epoch/generation refusal and no premature release.
+
+Blob artifacts now have one shared original-operation admission and close/join
+lifecycle. Public mutations retain staging through command response; range reads
+retain metadata and all parts, including after caller cancellation or closure.
+The existing host facility drain owns the installed store and joins accepted
+namespace/GC work before runtime shutdown. GC retains its complete supplied
+reference set with shared ownership. Focused tests cover cancelled provider jobs,
+capacity, original failure/panic sources, metadata-paused ranges and manifest
+publication after upload waiter loss. This supplies local lifetime coverage;
+returned prepared commands, Cell-scoped stream/upload/pin coverage, global
+retention and unknown remote effects remain separate obligations. `BlobInventory`
+still blocks release. Complete the remaining host fault cases, every primitive's
+acceptance matrix, Blob owner/pin barriers and process/provider qualification
+before claiming this work package complete.
 
 Dependencies: W1, W3, W4.
 
