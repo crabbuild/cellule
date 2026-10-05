@@ -1,0 +1,47 @@
+name: Fleet maintenance cleanup qualification
+on:
+  push:
+    branches: [codex/fleet-maintenance-cleanup-qualification]
+permissions:
+  contents: read
+jobs:
+  native-cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
+      - name: Record exact source and native environment
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source.txt
+          sha256sum crates/cellule-runtime/tests/runtime/lifecycle/maintenance.rs > evidence/test-source.sha256
+          rustc -Vv > evidence/rustc.txt
+          uname -a > evidence/host.txt
+          lscpu > evidence/cpu.txt
+          ulimit -a > evidence/limits.txt
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Entire runtime integration suite with parallel fixtures twice
+        run: |
+          set -euo pipefail
+          for repetition in 1 2; do
+            cargo test -p cellule-runtime --test runtime --all-features --locked -- --nocapture 2>&1 | tee "evidence/runtime-$repetition.log"
+            python3 -c 'import re,sys; assert re.search(r"test result: ok\. 231 passed; 0 failed; 4 ignored",open(sys.argv[1]).read())' "evidence/runtime-$repetition.log"
+          done
+      - name: Warning denied runtime lint
+        run: cargo clippy -p cellule-runtime --all-targets --all-features --locked -- -D warnings
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: maintenance-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7
