@@ -56,13 +56,25 @@ second matched comparison checks at least two million free inodes and 15 GiB
 before each point, samples both throughout load, and archives each complete
 provider between points. The second baseline archive preserves all 1,005,447
 quiesced source entries with matching integrity and hash checks. The failed
-second candidate remains stopped and intact.
+second candidate is also archived with all 1,022,389 source entries verified;
+its owned volume was removed only after complete integrity and hash checks.
 
 The transport now distinguishes malformed, expired and excessively future
 deadlines, and records the validation phase and bounded envelope timing when
-a request fails. Limits, signatures, freshness checks and qualification gates
-are unchanged. Its adversarial transport tests pass; further reproduction is
-required to identify the failure condition.
+a request fails. The next diagnostic run reproduces a backward wall-clock step of at least
+82 ms during directory verification: its first check accepts the signed
+horizon, then the second check observes `now_ms=1791230316817` and
+`deadline_ms=1791230326899` and rejects it as excessively future-dated.
+This run also fails the unchanged follower-durability gate and reaches no cold
+audit; it supplies a causal diagnostic, not a performance result.
+
+The correction retains the initial signed horizon and uses the greater of
+current wall time and initial wall time plus monotonic elapsed time for the
+second check. Rollback cannot extend expiry; forward wall-clock steps still
+expire the request. All six SQL example tests and strict Clippy pass in the
+isolated snapshot, including backward/forward-clock and expiry-boundary cases.
+Signatures, frame limits and qualification gates are unchanged. Full-profile
+verification of the correction remains pending.
 
 The [dataset](2026-10-05-fair-admission.json) retains critical results and source
 identities. Full logs, original journals, TLS fixtures, binaries, verification

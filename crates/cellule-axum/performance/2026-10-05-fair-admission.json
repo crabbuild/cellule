@@ -204,7 +204,19 @@
       "follower_error": "PeerAuthorization invalid capacity log request; condition unknown; follower2",
       "minimum_free_inodes": 1193221,
       "originals_retained": true,
-      "no_performance_gain_claim": true
+      "no_performance_gain_claim": true,
+      "provider_archive": {
+        "volume": "cellule-node-scaling-rustfs-20261005-fair-admission-candidate-r5",
+        "container": "cellule-node-scaling-rustfs-fair-admission-candidate-r5",
+        "archive": "fair-admission-2000-candidate-r5-provider-volume.tar.gz",
+        "sha256": "fa4eccf9341c241bc28f11cce49aecee627ad736da4f7d39452b5752c969fb76",
+        "original_unique_inodes": 1022389,
+        "archive_entries": 1022389,
+        "producer_exit_code": 0,
+        "gzip_integrity": "passed",
+        "full_tar_list": "passed; matching source unique inode count"
+      },
+      "provider_volume_removed_after_complete_verification": true
     }
   },
   "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
@@ -239,5 +251,31 @@
       "follower-validation-diagnostic-tests.log": "b0915fb24fc487368bdd194e5c64a3faa6b78dbe428e6bcb1f936a3bf2608d03",
       "follower-validation-diagnostic-clippy.log": "aa8c04bde2040b53ab25beaf1bc0e68b115acfc0d875d2a9c22240b1db791630"
     }
+  },
+  "r6": {
+    "source_commit": "073e8b9d70ff09cc10539f59b3f5f3ac711f10fd",
+    "status": "invalid_follower_durability_gate; diagnostic_failure_reproduced",
+    "full_cold_audit": false,
+    "no_gain_claim": true,
+    "follower": 2,
+    "phase": "after directory verification",
+    "now_ms": 1791230316817,
+    "deadline_ms": 1791230326899,
+    "frames": 42,
+    "id_lengths_bytes": 16,
+    "epoch": 1,
+    "minimum_proven_backward_wall_clock_step_ms": 82,
+    "cause": "second signed-horizon check rejects a previously admitted request after wall clock rollback",
+    "original_journals_and_provider_retained": true
+  },
+  "clock_fix": {
+    "behavior": "post-directory request time is max observed wall time and initial validated wall time plus monotonic elapsed; same initial shape/signature/horizon limits and signed expiry",
+    "isolated_example_tests": 6,
+    "strict_example_clippy": "passed",
+    "validation_log_sha256": {
+      "follower-clock-rollback-tests.log": "c9c0b5979dc8cb6bc0f8b7e240f09f4db600101d0ebe81dc20230e240a2a194b",
+      "follower-clock-rollback-clippy.log": "40e315bc3d2a210468786b9860516db253fa98fd46b56dc1d27050840bf8d347"
+    },
+    "full_profile_rerun": "pending"
   }
 }

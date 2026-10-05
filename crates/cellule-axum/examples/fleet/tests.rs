@@ -72,3 +72,31 @@ fn stale_or_oversized_append_and_frames_on_retirement_are_refused() {
     request.frames.clear();
     assert!(wire::validate(&request, 1000).is_ok());
 }
+
+#[test]
+fn directory_verification_clock_rollback_preserves_horizon_without_extending_expiry() {
+    let request = wire::Request {
+        sender: vec![1; 16],
+        member: vec![2; 16],
+        leader: vec![1; 16],
+        epoch: 1,
+        operation: 1,
+        frames: vec![vec![3; 128]],
+        deadline_ms: 11_000,
+        ..Default::default()
+    };
+    assert!(wire::validate(&request, 1000).is_ok());
+    // Reproduces the follower's first successful check followed by a backward
+    // clock step during directory I/O; the previous second check rejects it.
+    assert!(wire::validate(&request, 918).is_err());
+    let now = wire::request_time(1000, 918, Duration::from_millis(25)).unwrap();
+    assert!(wire::validate(&request, now).is_ok());
+    let now = wire::request_time(1000, 918, Duration::from_secs(10)).unwrap();
+    assert!(matches!(
+        wire::validate(&request, now),
+        Err(Error::PeerAuthorization("expired capacity log request"))
+    ));
+    // A forward clock step still expires the signed deadline immediately.
+    let now = wire::request_time(1000, 11_000, Duration::from_millis(25)).unwrap();
+    assert!(wire::validate(&request, now).is_err());
+}

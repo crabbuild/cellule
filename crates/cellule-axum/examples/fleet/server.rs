@@ -139,7 +139,9 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
     let key = VerifyingKey::from_bytes(&peer.public_key()).map_err(Error::PeerSignature)?;
     let body = wire::verify(&encoded, &key, wire::REQUEST_DOMAIN)?;
     let request = wire::Request::decode(body.as_slice())?;
-    validate_request(&request, clock()?, "before directory verification")?;
+    let started_at = std::time::Instant::now();
+    let started_ms = clock()?;
+    validate_request(&request, started_ms, "before directory verification")?;
     let sender = SessionId::try_from(request.sender.as_slice())?;
     let leader = SessionId::try_from(request.leader.as_slice())?;
     if request.member != server.member.as_bytes() {
@@ -149,8 +151,10 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
         .directory
         .peer_verifier(sender, peer.certificate(), peer.public_key(), clock()?)
         .await?;
-    // Directory I/O consumed time; recheck the signed deadline before native work.
-    validate_request(&request, clock()?, "after directory verification")?;
+    // Directory I/O consumed time. Preserve the accepted horizon across wall
+    // clock rollback, while monotonic elapsed time still expires the request.
+    let now = wire::request_time(started_ms, clock()?, started_at.elapsed())?;
+    validate_request(&request, now, "after directory verification")?;
     server.lease.check()?;
     let mut reply = wire::Reply {
         member: server.member.as_bytes().to_vec(),
