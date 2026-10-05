@@ -1,6 +1,6 @@
 {
   "parent": "b8b99002143b15013069444f31000da5aae255ab",
-  "delta_sha256": "60c8fed6ec29b343cbeca2362debfc63e66844b5be41d4abe905cee37ab9b746",
+  "delta_sha256": "363fd210b356ce16ca81ec769e292a9cb0141068009162910b646b66e8515050",
   "paths": [
     {
       "path": "crates/cellule-host/docs/lifecycle.md",
@@ -46,6 +46,11 @@
       "path": "docs/fleet-operations-plan.md",
       "deleted": false,
       "sha256": "4b2ebfcc99f19e53bceb5fd5467beceb6bdfa7ec0b2f9dca000e9bb542d7fc12"
+    },
+    {
+      "path": "docs/fleet-operations-progress.md",
+      "deleted": false,
+      "sha256": "ed12e4c930ddbff7880cb75b91d39e39b48de4e56931083df3f53c8bde37f7fc"
     }
   ]
 }

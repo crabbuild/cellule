@@ -58,7 +58,7 @@ jobs:
       - name: Typed application consumer compatibility
         run: |
           set -euo pipefail
-          cargo test -p cellule-app --all-features --locked --test application typed_application_executes_every_primitive_through_a_local_router -- --nocapture 2>&1 | tee evidence/application.log
+          cargo test -p cellule-app --all-features --locked --test integration typed_application_executes_every_primitive_through_a_local_router -- --nocapture 2>&1 | tee evidence/application.log
           python3 -c 'import re; assert re.search(r"test result: ok\. 1 passed; 0 failed",open("evidence/application.log").read())'
       - name: Warning denied runtime and host lint
         run: cargo clippy -p cellule-runtime -p cellule-host --all-targets --all-features --locked -- -D warnings
