@@ -91,6 +91,70 @@ async fn object_proof_wins_independently_and_watermark_stays_contiguous() {
     assert_eq!(gate.tiered_through(), 2);
 }
 
+#[test]
+fn completed_history_does_not_accumulate_sparse_coverage_entries() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(3)]).unwrap();
+    let first = gate.issue(MAX_TICKET_FRAMES).unwrap();
+    gate.prove_object(first).unwrap();
+    for _ in 1..100 {
+        let ticket = gate.issue(MAX_TICKET_FRAMES).unwrap();
+        gate.prove_object(ticket).unwrap();
+    }
+    assert_eq!(gate.tiered_through(), 100 * MAX_TICKET_FRAMES);
+    assert_eq!(gate.lock().unwrap().object_covered.len(), 0);
+    assert_eq!(
+        gate.proof(first).unwrap().unwrap().source(),
+        DurabilitySource::Object
+    );
+    assert!(gate.uncovered_objects(&[first]).unwrap().is_empty());
+    // Retrying an old root must not allocate its completed history again.
+    gate.prove_object(first).unwrap();
+    assert_eq!(gate.lock().unwrap().object_covered.len(), 0);
+}
+
+#[test]
+fn sparse_coverage_preserves_exact_proofs_in_every_completion_order() {
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let gate = DurabilityGate::new(session(1), node(1), 2, [node(3)]).unwrap();
+        let tickets = [
+            gate.issue(3).unwrap(),
+            gate.issue(3).unwrap(),
+            gate.issue(3).unwrap(),
+        ];
+        let mut completed = [false; 3];
+        for index in order {
+            completed[index] = true;
+            let prefix = completed.iter().take_while(|done| **done).count() as u64 * 3;
+            assert_eq!(gate.preview_objects(&[tickets[index]]).unwrap(), prefix);
+            assert_eq!(gate.prove_object(tickets[index]).unwrap(), prefix);
+            assert_eq!(gate.prove_object(tickets[index]).unwrap(), prefix);
+            let sparse = completed.iter().filter(|done| **done).count() * 3 - prefix as usize;
+            assert_eq!(gate.lock().unwrap().object_covered.len(), sparse);
+            for (ticket, done) in tickets.iter().zip(completed) {
+                assert_eq!(gate.objects_are_covered(&[*ticket]).unwrap(), done);
+                assert_eq!(gate.proof(*ticket).unwrap().is_some(), done);
+            }
+            let expected = tickets
+                .iter()
+                .zip(completed)
+                .filter_map(|(ticket, done)| (!done).then_some(*ticket))
+                .collect::<Vec<_>>();
+            assert_eq!(gate.uncovered_objects(&tickets).unwrap(), expected);
+        }
+        assert!(gate.lock().unwrap().object_covered.is_empty());
+        assert_eq!(gate.begin_rotation().unwrap().covered_through(), 9);
+        gate.fence();
+        assert!(matches!(gate.proof(tickets[0]), Err(Error::Fenced)));
+    }
+}
+
 #[tokio::test]
 async fn proof_wakes_after_object_coverage_arrives() {
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(3)]).unwrap();

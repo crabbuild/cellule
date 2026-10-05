@@ -3,6 +3,115 @@
 use super::*;
 use std::time::Duration;
 
+#[tokio::test(flavor = "multi_thread")]
+async fn disk_refusal_with_a_follower_proven_head_preserves_the_owner() {
+    let store = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
+    let fixture = fixture_with_limits_and_store(
+        b"disk-refusal-with-follower-head",
+        Limits::default(),
+        Store::new(store.clone()),
+    );
+    let leader = SessionId::from_bytes([141; 16]);
+    let member = NodeId::from_bytes([142; 16]);
+    let disk = DiskBudget::new(1 << 30);
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        2 * 1024 * 1024,
+        leader,
+        ReplicaHost::default().with_local_disk_budget(disk.clone()),
+    )
+    .unwrap();
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let directory = tempfile::TempDir::new().unwrap();
+    let follower = cellule_runtime::FollowerStore::open(
+        directory.path().to_owned(),
+        Limits::default(),
+        DiskBudget::new(1 << 30),
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(
+        cellule_runtime::node::log_transport::LocalFollowerTransport::new(member, follower),
+    );
+    let gate =
+        DurabilityGate::new(leader, NodeId::from_bytes(*leader.as_bytes()), 1, [member]).unwrap();
+    let shipper = NodeLogShipper::new(gate.clone(), transport.clone(), Limits::default()).unwrap();
+    runtime
+        .install_node_durability(
+            fixture.target.application(),
+            Arc::new(NodeDurability::new(
+                gate,
+                shipper,
+                Arc::new(TestNodeAuthority::default()),
+                transport,
+                lease,
+            )),
+        )
+        .unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, leader).await;
+    store.arm_next_update();
+    let first = handle
+        .execute(
+            mutation_identity_window(141, 10, 10_000),
+            Digest::from_bytes([141; 32]),
+            20,
+            1_024,
+            1_024,
+            |tx| {
+                tx.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(vec![1]))
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.commit_sequence(), 1);
+    tokio::time::timeout(Duration::from_secs(5), store.wait_until_blocked())
+        .await
+        .unwrap();
+
+    // The first commit is on a real fsynced follower, but its object-root CAS
+    // is still paused. Refuse the next reservation before its SQL callback.
+    let pressure = disk.try_reserve(disk.available() - 1).unwrap();
+    let invoked = Arc::new(AtomicUsize::new(0));
+    let denied_calls = invoked.clone();
+    let identity = mutation_identity_window(143, 10, 10_000);
+    let digest = Digest::from_bytes([143; 32]);
+    let refused = handle
+        .execute(identity, digest, 21, 1_024, 1_024, move |tx| {
+            denied_calls.fetch_add(1, Ordering::SeqCst);
+            tx.execute("UPDATE counter SET value = value + 1", [])?;
+            Ok(HandlerOutcome::Success(vec![2]))
+        })
+        .await;
+    drop(pressure);
+    // Always release the injected pause before assertions or shutdown, so a
+    // failing regression cannot strand the accepted first publication.
+    store.release();
+    let query = read_counter(handle.clone()).await;
+    let retry_calls = invoked.clone();
+    let retried = handle
+        .execute(identity, digest, 22, 1_024, 1_024, move |tx| {
+            retry_calls.fetch_add(1, Ordering::SeqCst);
+            tx.execute("UPDATE counter SET value = value + 1", [])?;
+            Ok(HandlerOutcome::Success(vec![2]))
+        })
+        .await;
+    let shutdown = runtime.shutdown().await;
+
+    assert!(
+        matches!(
+            refused,
+            Err(cellule_runtime::Error::Capacity("local disk bytes"))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(query.unwrap(), 1_i64.to_be_bytes());
+    assert_eq!(retried.unwrap().commit_sequence(), 2);
+    assert_eq!(invoked.load(Ordering::SeqCst), 1);
+    shutdown.unwrap();
+    assert_eq!(disk.used(), 0);
+}
+
 struct ReplyHandoffGate {
     skip: AtomicUsize,
     entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,

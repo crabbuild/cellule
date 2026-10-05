@@ -656,6 +656,9 @@ earlier frame has an object-store proof:
   completions until the contiguous prefix advances.
 - It then CASes the session record and tells followers what they may truncate.
 - A single later Cell root cannot create a hole in this watermark.
+- The watermark replaces completed prefix entries. Sparse coverage retains
+  only completions above unresolved holes; old tickets remain provable without
+  retaining one entry per historical frame.
 
 <a id="extend-cell-control-with-a-recovery-overlay"></a>
 ## Extend Cell control with a recovery overlay

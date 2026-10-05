@@ -233,7 +233,8 @@ impl QueryMetrics {
         }
     }
 
-    // Called after HTTP and runtime drain, when the totals are stable.
+    // Atomic diagnostics can include in-flight background work. The final
+    // snapshot after HTTP and runtime drain has stable totals.
     pub(super) fn snapshot(&self) -> serde_json::Value {
         let queries = self.queries.load(Ordering::Relaxed);
         let primitives = self.primitives.load(Ordering::Relaxed);

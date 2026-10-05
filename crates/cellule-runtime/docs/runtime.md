@@ -178,6 +178,13 @@ Worker-job admission uses one slot per SQL worker:
 - **Dispatched.** Once dispatched, the job owns its slot and reservation until execution ends, including when its caller is canceled.
 - **Exempt messages.** Lifecycle and publication-confirmation messages retain their bounded worker queue and do not need a job permit.
 
+A follower-proven logical head may still have object publication pending. A
+later refusal before SQL or a rolled-back application error leaves that proven
+head reusable; publication lag alone does not make the failed command uncertain
+or fence its owner. An unproved commit, capture failure or ambiguous SQLite
+failure still requires fencing and reconciliation. Shutdown still drains the
+pending object publications before releasing ownership.
+
 Cancellation of a caller doesn't cancel accepted work. The actor still records and publishes the result, so a retry can resolve it.
 
 `CellClient::with_local_resolver` binds product owner selection before the

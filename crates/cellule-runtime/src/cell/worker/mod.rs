@@ -121,8 +121,16 @@ pub(crate) struct BootstrapExecution {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkerState {
     Ready,
+    /// Every logical commit has proof, but object publication still needs drain.
+    DurablePending,
     Pending,
     Fenced,
+}
+
+impl WorkerState {
+    pub(crate) fn is_reusable(self) -> bool {
+        matches!(self, Self::Ready | Self::DurablePending)
+    }
 }
 
 #[derive(Debug)]

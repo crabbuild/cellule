@@ -147,6 +147,8 @@ struct GateState {
     log_epoch: u64,
     members: HashSet<NodeId>,
     follower_through: HashMap<NodeId, u64>,
+    // Keep only completed sequences above the contiguous prefix. The prefix
+    // proves older tickets without one allocation per historical frame.
     object_covered: BTreeSet<u64>,
     tiered_through: u64,
     next_sequence: u64,
@@ -380,10 +382,7 @@ impl DurabilityGate {
         if state.fenced {
             return Err(Error::Fenced);
         }
-        Ok(tickets.iter().all(|ticket| {
-            (ticket.first_sequence..=ticket.last_sequence)
-                .all(|sequence| state.object_covered.contains(&sequence))
-        }))
+        Ok(tickets.iter().all(|ticket| object_covers(&state, *ticket)))
     }
 
     pub(crate) fn uncovered_objects(&self, tickets: &[CommitTicket]) -> Result<Vec<CommitTicket>> {
@@ -397,10 +396,7 @@ impl DurabilityGate {
         Ok(tickets
             .iter()
             .copied()
-            .filter(|ticket| {
-                (ticket.first_sequence..=ticket.last_sequence)
-                    .any(|sequence| !state.object_covered.contains(&sequence))
-            })
+            .filter(|ticket| !object_covers(&state, *ticket))
             .collect())
     }
 
@@ -416,11 +412,16 @@ impl DurabilityGate {
         }
         for ticket in tickets {
             for sequence in ticket.first_sequence..=ticket.last_sequence {
-                state.object_covered.insert(sequence);
+                if sequence > state.tiered_through {
+                    state.object_covered.insert(sequence);
+                }
             }
         }
-        while state.object_covered.contains(&(state.tiered_through + 1)) {
-            state.tiered_through += 1;
+        while let Some(next) = state.tiered_through.checked_add(1) {
+            if !state.object_covered.remove(&next) {
+                break;
+            }
+            state.tiered_through = next;
         }
         let tiered_through = state.tiered_through;
         drop(state);
@@ -516,9 +517,7 @@ impl DurabilityGate {
         if state.fenced {
             return Err(Error::Fenced);
         }
-        if (ticket.first_sequence..=ticket.last_sequence)
-            .all(|sequence| state.object_covered.contains(&sequence))
-        {
+        if object_covers(&state, ticket) {
             return Ok(Some(DurabilityProof {
                 ticket,
                 source: DurabilitySource::Object,
@@ -599,6 +598,13 @@ pub async fn close_node_log(
     let barrier = gate.begin_rotation()?;
     retire_node_log(transport, &barrier).await?;
     directory.close_log(observed, &barrier, now_ms).await
+}
+
+fn object_covers(state: &GateState, ticket: CommitTicket) -> bool {
+    ticket.last_sequence <= state.tiered_through
+        || (ticket.first_sequence..=ticket.last_sequence).all(|sequence| {
+            sequence <= state.tiered_through || state.object_covered.contains(&sequence)
+        })
 }
 
 fn validate_ticket(state: &GateState, ticket: CommitTicket) -> Result<()> {

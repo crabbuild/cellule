@@ -493,6 +493,9 @@ async fn main() -> ExampleResult<()> {
     .await;
     // HTTP finishes accepted handlers before the runtime drains its workers.
     // Setup and serving failures also pass through this runtime cleanup.
+    // Preserve diagnostics even if a failed runtime cannot complete its drain.
+    // Background work can still be live; only the final snapshot is quiescent.
+    println!("Query metrics before drain: {}", query_metrics.snapshot());
     let shutdown = runtime.shutdown().await;
     let fleet_shutdown = match fleet_owner {
         Some(owner) => owner.stop().await,

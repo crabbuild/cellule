@@ -266,7 +266,10 @@ pub(super) async fn execute_command(
         Err(error) => (
             Err(error),
             !deadline.cancelled()
-                && !matches!(pool.state(command.cell).await, Ok(WorkerState::Ready)),
+                && !pool
+                    .state(command.cell)
+                    .await
+                    .is_ok_and(WorkerState::is_reusable),
         ),
     };
     let fenced = must_fence && result.is_err();
@@ -714,7 +717,10 @@ pub(super) async fn execute_query(
         .query_execution(queue_wait, execution_started.elapsed(), result.is_ok());
     let fenced = result.is_err()
         && !deadline.cancelled()
-        && !matches!(pool.state(query.cell).await, Ok(WorkerState::Ready));
+        && !pool
+            .state(query.cell)
+            .await
+            .is_ok_and(WorkerState::is_reusable);
     if fenced {
         let _ = pool.fence(query.cell).await;
     }
@@ -798,7 +804,11 @@ pub(super) async fn execute_resolve(
         result
     };
     let fenced = timed_out && !deadline.cancelled()
-        || result.is_err() && !matches!(pool.state(resolve.cell).await, Ok(WorkerState::Ready));
+        || result.is_err()
+            && !pool
+                .state(resolve.cell)
+                .await
+                .is_ok_and(WorkerState::is_reusable);
     if fenced {
         let _ = pool.fence(resolve.cell).await;
     }
