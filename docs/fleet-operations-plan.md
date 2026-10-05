@@ -1571,9 +1571,11 @@ Controller reconstruction now refreshes a committed native `SettleRoles`
 receipt after a lost reply at the new request's head, retaining the original
 acceptance and action key. The minion case checks Closing/Completed, exact boot
 withdrawal, canonical-root and command-result readback, and joined resources.
-This focused case renews the same claimant; replacement after actual expiry,
-uncommitted publication races and external process/provider faults still need
-their full maintenance qualification.
+Two focused cases renew the same claimant and replace it after actual lease
+expiry. The latter renews the original signed boots while waiting, checks the
+new controller epoch, and requires the old controller to be fenced without
+changing the journal. Uncommitted publication races and external
+process/provider faults still need their full maintenance qualification.
 
 Extend host durability/read-replica orchestration and runtime follower
 inventory/retirement adapters to evacuate foreign obligations. Add an explicit

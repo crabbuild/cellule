@@ -29,8 +29,9 @@ pub struct FleetActionCompletion {
     pub committed: bool,
     /// Original runtime error, independently of result publication failure.
     pub execution_error: Option<Arc<Error>>,
-    /// Original result-publication error. Retry publishes the same retained
-    /// evidence and never executes the source release again.
+    /// Original result-publication error. Native effects retry the same retained
+    /// evidence without reexecution. A failed retry of joined read-only role
+    /// evidence retires that local proof; a fresh full capture must replace it.
     pub journal_error: Option<Arc<Error>>,
 }
 
@@ -854,12 +855,30 @@ impl FleetActionExecutor {
             && let JobCompletion::Effect(completion) = completion.as_ref()
         {
             if !completion.committed {
-                // Retry the retained proof, never the canonical effect. Keep
-                // this receipt if publication or resource settlement still fails.
-                self.journal
+                // Retry the retained proof, never the canonical effect. Native
+                // effect receipts stay retained across every publication failure.
+                if let Err(source) = self
+                    .journal
                     .publish_action_result(&completion.accepted, &completion.outcome)
                     .await
-                    .map_err(journal_error)?;
+                {
+                    if matches!(&job.request, JobRequest::Effect {
+                        action, settlement: Some(_), ..
+                    } if matches!(action.kind(), FleetActionKind::Maintenance {
+                        action: MaintenanceAction::SettleRoles, ..
+                    })) {
+                        // SettleRoles only validates a captured observation; it
+                        // starts no physical effect. A joined proof cannot be
+                        // restamped after its journal barrier changes. Return the
+                        // publication error and retire this local read so the
+                        // next pass can collect fresh opaque evidence. Its durable
+                        // acceptance remains unresolved until that proof commits.
+                        // Movement/native-effect receipts keep their original
+                        // evidence and retained owner on every publication error.
+                        self.remove_job(job)?;
+                    }
+                    return Err(journal_error(source));
+                }
             }
             self.retire_receiver_receipt(completion).await?;
         }

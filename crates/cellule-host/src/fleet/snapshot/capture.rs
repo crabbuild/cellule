@@ -7,7 +7,6 @@ impl FleetActionExecutor {
         request: FleetSnapshotRequest,
         owners: Arc<SnapshotOwners>,
     ) -> Result<Arc<FleetNodeSnapshot>, Arc<Error>> {
-        let debug_started = std::time::Instant::now();
         let admitted = wall_time_ms().map_err(Arc::new)?;
         self.journal
             .authorize_snapshot(&request, admitted)
@@ -22,7 +21,6 @@ impl FleetActionExecutor {
         }
         let state_before = owners.state().map_err(Arc::new)?;
         let action_work = self.observe_work(Some(&request)).map_err(Arc::new)?;
-        let debug_native_started = std::time::Instant::now();
         let page = match request.subject() {
             FleetSnapshotSubject::Host => FleetSnapshotNativePage::Host,
             FleetSnapshotSubject::Cells(cursor) => FleetSnapshotNativePage::Cells(
@@ -74,7 +72,6 @@ impl FleetActionExecutor {
                 None => FleetSnapshotNativePage::Unbound,
             },
         };
-        let debug_native_elapsed = debug_native_started.elapsed();
         // Keep the native read owned even if its RPC waiter or deadline expires.
         // Post-authorization refuses changed head/registry instead of restamping
         // the original page under a newer barrier. It can start no native effect.
@@ -99,9 +96,6 @@ impl FleetActionExecutor {
         let state_after = owners.state().map_err(Arc::new)?;
         let mode = self.runtime.node_admission().mode().map_err(Arc::new)?;
         let checked_work = self.observe_work(Some(&request)).map_err(Arc::new)?;
-        if debug_started.elapsed() >= std::time::Duration::from_millis(50) || !action_work.same_interval_work(&checked_work) {
-            eprintln!("[DEBUG-fleet-57] native page node={:?} subject={:?} elapsed={:?} page_elapsed={:?} digest_equal={} work_revision={}..{} before={:?} after={:?}", request.node(), request.subject(), debug_started.elapsed(), debug_native_elapsed, action_work.digest() == checked_work.digest(), action_work.work_revision(), checked_work.work_revision(), action_work.entries(), checked_work.entries());
-        }
         if !action_work.same_interval_work(&checked_work) {
             return Err(Arc::new(Error::Node(
                 "native snapshot accepted fleet work changed",

@@ -721,13 +721,7 @@ async fn immutable_enrollment_evidence_preserves_bytes_without_reauthenticating_
             b"cellule.node-log.attempt.v1\0",
         );
         let before = signature_passes();
-        let started = std::time::Instant::now();
         assert_eq!(attempt.evidence_digest().unwrap(), expected);
-        eprintln!(
-            "[DEBUG-fleet-57] immutable attempt digest elapsed={:?} authentication_passes={}",
-            started.elapsed(),
-            signature_passes() - before
-        );
         assert_eq!(signature_passes() - before, 0);
         if commit {
             let proof = directory

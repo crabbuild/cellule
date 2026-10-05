@@ -10,12 +10,56 @@ use cellule_runtime::fleet::operations::{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconstructed_controller_refreshes_native_settlement_after_a_lost_reply() {
-    run(Restart::Renew).await;
+    run(Restart::Renew, Publication::LostTransportReply).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn new_claimant_after_real_expiry_refreshes_settlement_and_fences_old_controller() {
-    run(Restart::ReplaceAfterExpiry).await;
+    run(Restart::ReplaceAfterExpiry, Publication::LostTransportReply).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_role_result_write_reconstructs_current_settlement() {
+    run(
+        Restart::Renew,
+        Publication::Failure(ResultWriteBoundary::BeforeCommit),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unconfirmed_role_result_commit_reconstructs_current_settlement() {
+    run(
+        Restart::Renew,
+        Publication::Failure(ResultWriteBoundary::AfterCommit),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_claimant_after_expiry_resumes_failed_role_result_write() {
+    run(
+        Restart::ReplaceAfterExpiry,
+        Publication::Failure(ResultWriteBoundary::BeforeCommit),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_claimant_after_expiry_resumes_unconfirmed_role_result_commit() {
+    run(
+        Restart::ReplaceAfterExpiry,
+        Publication::Failure(ResultWriteBoundary::AfterCommit),
+    )
+    .await;
+}
+
+use crate::journal::ResultWriteBoundary;
+
+#[derive(Clone, Copy)]
+enum Publication {
+    LostTransportReply,
+    Failure(ResultWriteBoundary),
 }
 
 #[derive(Clone, Copy)]
@@ -24,7 +68,7 @@ enum Restart {
     ReplaceAfterExpiry,
 }
 
-async fn run(restart: Restart) {
+async fn run(restart: Restart, publication_fault: Publication) {
     let (fixture, capture, policy) = setup().await;
     let publication = publish(&fixture, &capture, policy).await;
     let fleet = Arc::new(crate::scenario::adapters::LocalFleet {
@@ -39,8 +83,12 @@ async fn run(restart: Restart) {
         drop_closed_finalize_replies: AtomicUsize::new(0),
         expired_receiver_cleanups: AtomicUsize::new(0),
     });
+    if let Publication::Failure(boundary) = publication_fault {
+        fixture.native.journal.fail_next_role_result(boundary);
+    }
     let transport = Arc::new(LostSettlementReply {
         inner: fleet.clone(),
+        publication: publication_fault,
         original: Mutex::new(None),
     });
     let first = FleetReconciler::new(
@@ -63,13 +111,46 @@ async fn run(restart: Restart) {
     );
     let original = transport.original.lock().unwrap().take().unwrap();
     let action = original.accepted.action().clone();
-    assert!(original.committed);
+    assert_eq!(
+        original.committed,
+        matches!(publication_fault, Publication::LostTransportReply)
+    );
+    if let Publication::Failure(boundary) = publication_fault {
+        let expected = match boundary {
+            ResultWriteBoundary::BeforeCommit => "injected role result before commit",
+            ResultWriteBoundary::AfterCommit => "injected role result after commit",
+        };
+        assert!(
+            matches!(original.journal_error.as_deref(), Some(Error::Facility { name: "fleet-action-journal", source })
+            if source.downcast_ref::<std::io::Error>().is_some_and(|error| error.to_string() == expected))
+        );
+        let accepted = fixture
+            .native
+            .journal
+            .accept_action(&action, node_id(1), session(1), clock().unwrap())
+            .await
+            .unwrap();
+        let cellule_host::fleet::FleetActionAcceptance::Existing { result, .. } = accepted else {
+            panic!("original acceptance missing");
+        };
+        assert_eq!(
+            result.is_some(),
+            boundary == ResultWriteBoundary::AfterCommit
+        );
+        if let Some(result) = result {
+            assert_eq!(*result, original.outcome);
+        }
+        let work = fixture.nodes[1].fleet_action_work().unwrap().unwrap();
+        assert_eq!(work.entries().len(), 1);
+        assert_eq!(work.entries()[0].committed(), Some(false));
+        assert_eq!(work.entries()[0].outcome_known(), Some(true));
+        assert!(work.entries()[0].journal_error().is_some());
+    }
     assert!(
         matches!(original.outcome.outcome, FleetOutcome::RolesSettledAt { head_revision, .. } if head_revision == before.snapshot.head().revision())
     );
     // The transport dropped the successful reply before ReadyToClose. A fresh
     // driver over an independent client must renew and recheck the same intent.
-    drop(original);
     let claimant = match restart {
         Restart::Renew => session(9),
         Restart::ReplaceAfterExpiry => {
@@ -99,6 +180,32 @@ async fn run(restart: Restart) {
         fleet.clone(),
     )
     .unwrap();
+    if matches!(publication_fault, Publication::Failure(_)) {
+        // The old read-only proof cannot be published at this renewed head.
+        // Preserve that refusal, join its original owner, and require a wholly
+        // fresh observation on the next pass rather than restamping its rows.
+        let refused = driver
+            .reconcile_once(clock, restart_deadline())
+            .await
+            .unwrap_err();
+        assert!(
+            has_conflict(&refused),
+            "wrong publication refusal: {refused:?}"
+        );
+        let snapshot = client.load_snapshot(scope()).await.unwrap();
+        assert_eq!(
+            snapshot.head().maintenance().unwrap().phase(),
+            MaintenancePhase::Evacuating
+        );
+        let work = fixture.nodes[1].fleet_action_work().unwrap().unwrap();
+        assert!(
+            work.entries().is_empty(),
+            "joined stale role proof blocked fresh observation: {:?}",
+            work.entries()
+        );
+        assert!(work.failure().is_none());
+        assert_eq!(fixture.nodes[1].state(), NodeState::Ready);
+    }
     let next = driver
         .reconcile_once(clock, restart_deadline())
         .await
@@ -150,6 +257,7 @@ async fn run(restart: Restart) {
         panic!("settlement result missing")
     };
     assert_eq!(accepted.action(), &action);
+    assert_eq!(accepted, original.accepted);
     assert!(
         matches!(result.outcome, FleetOutcome::RolesSettledAt { head_revision, .. } if head_revision > before.snapshot.head().revision())
     );
@@ -174,6 +282,13 @@ async fn run(restart: Restart) {
             .await
             .unwrap()
     );
+    readback(&fixture).await;
+    drop((driver, fleet, capture, original));
+    client.close().await.unwrap();
+    fixture.finish().await;
+}
+
+pub(super) async fn readback(fixture: &ManagedFixture) {
     // Rotation drained the original actor. Restore the exact current canonical
     // root instead of reading a stale handle or bypassing its admission gate.
     assert_eq!(fixture.records.len(), 1);
@@ -219,9 +334,6 @@ async fn run(restart: Restart) {
         29i64.to_be_bytes()
     );
     drop(database);
-    drop((driver, fleet, capture));
-    client.close().await.unwrap();
-    fixture.finish().await;
 }
 
 fn restart_deadline() -> Instant {
@@ -230,6 +342,7 @@ fn restart_deadline() -> Instant {
 
 struct LostSettlementReply {
     inner: Arc<crate::scenario::adapters::LocalFleet>,
+    publication: Publication,
     original: Mutex<Option<Arc<FleetActionCompletion>>>,
 }
 impl FleetTransport for LostSettlementReply {
@@ -255,13 +368,51 @@ impl FleetTransport for LostSettlementReply {
     ) -> FleetAdapterFuture<'a, Arc<FleetActionCompletion>> {
         Box::pin(async move {
             let completion = self.inner.settle_roles(action, proof, end).await?;
-            assert!(completion.committed);
+            assert_eq!(
+                completion.committed,
+                matches!(self.publication, Publication::LostTransportReply)
+            );
             assert!(matches!(
                 completion.outcome.outcome,
                 FleetOutcome::RolesSettledAt { .. }
             ));
-            assert!(self.original.lock().unwrap().replace(completion).is_none());
-            Err(invalid("injected loss after committed role settlement"))
+            assert!(
+                self.original
+                    .lock()
+                    .unwrap()
+                    .replace(completion.clone())
+                    .is_none()
+            );
+            match self.publication {
+                Publication::LostTransportReply => {
+                    Err(invalid("injected loss after committed role settlement"))
+                }
+                Publication::Failure(_) => Ok(completion),
+            }
         })
+    }
+}
+
+pub(super) fn has_conflict(mut source: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if let Some(error) = source.downcast_ref::<Arc<Error>>() {
+            return has_conflict(error.as_ref());
+        }
+        if let Some(Error::FleetOperation(error)) = source.downcast_ref::<Error>() {
+            return matches!(
+                error.as_ref(),
+                cellule_runtime::fleet::operations::OperationError::Conflict
+            );
+        }
+        if matches!(
+            source.downcast_ref::<cellule_runtime::fleet::operations::OperationError>(),
+            Some(cellule_runtime::fleet::operations::OperationError::Conflict)
+        ) {
+            return true;
+        }
+        match source.source() {
+            Some(next) => source = next,
+            None => return false,
+        }
     }
 }

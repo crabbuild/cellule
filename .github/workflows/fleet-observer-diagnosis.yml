@@ -1,11 +1,11 @@
-name: Fleet observer diagnosis
+name: Fleet role publication diagnosis
 on:
   push:
     branches: [codex/fleet-observer-diagnosis-ed16bf9]
 permissions:
   contents: read
 jobs:
-  native-budget-reproduction:
+  native-role-restart:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -16,53 +16,29 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
-      - name: Build original debug harness
+      - name: Build native role harness
         run: |
           cargo test -p cellule-host --example fleet_operations --all-features --locked --no-run
-      - name: Routed original claim
+      - name: Six controller and publication restart cases
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::tests::closed_receiver_serving_claim_requires_canonical_recovery --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Routed evidence interruption
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Two cancelled original publication owners
         if: always()
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::recovery_faults::tests::evidence::interrupted_receiver_evidence_write_reconstructs_only_from_canonical_acquisition --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Follower-only maintenance repetition 1
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::cancelled_settlement:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Three unchanged observer contracts
         if: always()
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Follower-only maintenance repetition 2
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Physical action and resource retention
         if: always()
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Follower-only maintenance repetition 3
+          cargo test -p cellule-host --test node fleet_actions:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Opaque role binding refusals
         if: always()
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Reconstructed controller settlement
+          cargo test -p cellule-host --lib fleet::reconciler::observation::role_settlement:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Warning denied lint
         if: always()
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart::reconstructed_controller_refreshes_native_settlement_after_a_lost_reply --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Native policy and graph composition
-        if: always()
-        run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::follower_evacuation_observation_retains_native_policy_and_role_graph_in_both_orders --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Shared references and failed batch recheck
-        if: always()
-        run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::reference_batches:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Runtime directory cursor contracts
-        if: always()
-        run: |
-          cargo test -p cellule-runtime --lib node::directory::inventory --all-features --locked -- --nocapture --test-threads=1
-      - name: Runtime canonical authentication contracts
-        if: always()
-        run: |
-          cargo test -p cellule-runtime --lib node::tests::scanned_records --all-features --locked -- --nocapture --test-threads=1
-      - name: New claimant after real expiry
-        if: always()
-        run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart::new_claimant_after_real_expiry_refreshes_settlement_and_fences_old_controller --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Immutable enrollment evidence contract
-        if: always()
-        run: |
-          cargo test -p cellule-runtime --lib node::tests::enrollment --all-features --locked -- --nocapture --test-threads=1
+          cargo clippy -p cellule-host --all-targets --all-features --locked -- -D warnings
