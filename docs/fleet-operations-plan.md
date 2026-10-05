@@ -1620,10 +1620,12 @@ fences the transition, and
 the legacy inventory-only result remains readable but cannot authorize Closing.
 The host SettleRoles executor, its complete inventory/replacement-policy proof,
 and the reconciler path that supplies this evidence are now wired. Real reader-
-only and live-follower-only scenarios verify durable replacement policy, settle
-roles, finalize the source boot, and check service evidence afterward. Dead-owner
-follower maintenance through canonical process closure and recovery remains
-required.
+only, live-follower-only and combined reader/follower scenarios verify durable
+replacement policy, settle roles, finalize the source boot, and check service
+evidence afterward. The combined scenario requires both policies and refuses
+reader closure while a selected replacement lacks Established enrollment.
+Dead-owner follower maintenance still requires external process/provider
+qualification.
 
 Exit: maintenance with zero local writers but uncovered foreign follower
 tails remains blocked; live-owner rotation and dead-owner recovery both clear
@@ -1826,17 +1828,20 @@ node crates/cellule-runtime/docs/validate.mjs
 
 The following example commands are deliverables of W8. The current tree supports
 `overload`, `controller-restart`, `receiver-loss`, writer-only `maintenance`,
-reader-only `maintenance-reader`, and live-follower `maintenance-follower` with
+reader-only `maintenance-reader`, live-follower `maintenance-follower`, and
+combined reader/follower `maintenance-roles` with
 the evidence limits recorded in [execution evidence](fleet-operations-progress.md).
-Reader-only and live-follower-only maintenance each have focused end-to-end minion scenarios,
-as does failed-owner follower maintenance. A role-complete maintenance CLI and
-the full fault/provider qualification remain required:
+Reader-only, live-follower-only and combined reader/follower maintenance each
+have focused end-to-end minion scenarios, as does failed-owner follower
+maintenance. A role-complete maintenance CLI and the full fault/provider
+qualification remain required:
 
 ```sh
 cargo run -p cellule-host --example fleet_operations --locked -- overload
 cargo run -p cellule-host --example fleet_operations --locked -- maintenance
 cargo run -p cellule-host --example fleet_operations --locked -- maintenance-reader
 cargo run -p cellule-host --example fleet_operations --locked -- maintenance-follower
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-roles
 cargo run -p cellule-host --example fleet_operations --locked -- controller-restart
 cargo run -p cellule-host --example fleet_operations --locked -- receiver-loss
 ```

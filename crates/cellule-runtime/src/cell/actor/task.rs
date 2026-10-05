@@ -763,8 +763,10 @@ pub(super) fn handle_message(
                 if active.generation != generation || active.incarnation != incarnation {
                     return Err(Error::Fenced);
                 }
-                let publisher = active.publisher.as_ref().ok_or(Error::CellDraining)?;
-                if publisher.control().value().epoch != epoch {
+                // Publication temporarily owns the publisher. The activation's
+                // immutable admission fence still identifies this writer, so
+                // closing foreground admission must not wait for a quiet gap.
+                if active.admission.owner_fence.epoch != epoch {
                     return Err(Error::Fenced);
                 }
                 match active

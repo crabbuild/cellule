@@ -154,9 +154,11 @@ impl FleetReconciler {
                 report.blocked(*blocker);
                 continue;
             }
-            if row.position.as_ref().is_none_or(|position| {
-                position.incarnation != row.incarnation || position.epoch == 0
-            }) || (!maintenance && !settled)
+            if !maintenance
+                && (!settled
+                    || row.position.as_ref().is_none_or(|position| {
+                        position.incarnation != row.incarnation || position.epoch == 0
+                    }))
             {
                 continue;
             }
@@ -240,10 +242,6 @@ impl FleetReconciler {
                 .iter()
                 .find(|node| node.session == proposal.destination)
                 .ok_or(Error::Node("fleet proposal receiver absent"))?;
-            let position = row
-                .position
-                .as_ref()
-                .ok_or(Error::Node("fleet proposal position absent"))?;
             let maintenance = maintenance_for(head, owned, now);
             let cost = if maintenance.is_some() {
                 row.maintenance_cost
@@ -262,7 +260,7 @@ impl FleetReconciler {
                 source_node: owned.node,
                 source: owned.session,
                 generation: row.generation,
-                source_epoch: position.epoch,
+                source_epoch: row.owner_fence.epoch,
                 destination_node: destination.node,
                 destination: destination.session,
                 cost,

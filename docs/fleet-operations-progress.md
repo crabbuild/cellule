@@ -7652,3 +7652,57 @@ Highest next priorities:
 3. Deliver W9's committed fleet profile/runner, provider/process, load/soak and
    actual mixed-binary evidence, then exercise W10 rollout, rollback and recovery
    runbooks. W4–W10 remain incomplete; this command is one further W8 deliverable.
+
+
+## October 5 2026 combined reader/follower maintenance checkpoint
+
+Parent: `fe8a96cee5464f9ef5002fc1d79ec5bc3cadaa5f`. The six changed Rust
+paths match snapshot `8f64d2f274ed4b7ce5c70385f03278d2c27c12f1` exactly;
+the Rust delta SHA-256 is
+`a336914718a77127c797a00ef91cc7e62c99e9ff19b14c2100082e1cb8d94dd8`.
+
+Delivered canonical minion `maintenance-roles`, sharing the existing four-boot
+follower setup, supervisor, native peer dispatcher, observer, public reconciler
+and cleanup path. Managed readers are installed and enrolled before readiness.
+The donor has zero local writers but holds both a reader and a foreign follower
+tail. Confirmed original tail coverage, both original member retirements and a
+durable follower policy alone cannot authorize Finalize. The operation remains
+Evacuating with its original reader Established and open. Native reader
+evacuation refuses the exact missing-Established replacement while one selected
+reader is absent, and another public pass must still retain the donor. Both
+eligible replacements must then establish native readers before original view
+closure, joined retirement and immutable reader-policy publication. Complete
+fresh observation must prove both roles before SettleRoles and Finalize.
+
+Readback checks both replacements against the captured minimum receipt, original
+reader join/retirement, both writer acknowledgements and the original stored
+request digest, expiry, sequence and outcome. Final counts are `[1, 0, 0, 0]`;
+eight service/receipt checks remain separate from zero fleet writer moves.
+Cleanup joins all four nodes, all eleven boot/reader/follower enrollment rows,
+the journal and every existing runtime resource ledger.
+
+The new composed async path initially overflowed the default test stack.
+Temporary boundary probes located nested complete reconciliation; separating
+reader preparation/completion and boxing reconciliation at the main scenario
+boundary fixed the original regression. Both final tests and production commands
+passed with normal stack limits and no probes. No profile, deadline, resource
+limit or assertion was relaxed.
+
+| Source / check | Observed result |
+| --- | --- |
+| Local final Rust 1.97 source | 18 selected regressions passed: 2 follower/combined CLI, 1 reader CLI, 12 complete observations, 3 follower observations. Production combined command, host all-target/all-feature warning-denied Clippy/API docs, format, boundaries/layout, 1348 Markdown links, 137 Rust snippets and 28 SQL/peer assertions with 571 validator links passed. |
+| Exact snapshot `8f64d2f`; [native job 111610477201](https://github.com/crabbuild/cellule/actions/runs/37261830490/job/111610477201) | Success on Rust 1.99: all 19 selected regressions, including count balance, passed with exact nonzero selector counts. Both production follower and combined commands exited zero; warning-denied host Clippy passed. The artifact `follower-maintenance-37261830490-1` retains source, binary hash, native environment, resource limits and raw regression/command logs. |
+| Earlier parent `f9a476e`; [complete Compose campaign](https://github.com/crabbuild/cellule/actions/runs/37258527934) | Success: smoke, original constrained 3/5/10/20 reader scaling, leased and object-only routing measurements and routing gate. This does not establish a cause or repair for the earlier intermittent `9257b18` failure. |
+| Published parent `fe8a96c`; [full Rust workspace](https://github.com/crabbuild/cellule/actions/runs/37260710441) | Success: workspace and MSRV. Follower/object capacity, contract, website and cookbook quality also passed. Other workflows were still live; full current-head CI remains required. |
+
+This is finite in-process reader/follower maintenance evidence, not completion of
+W4–W10. Busy primitive combinations, external Cron/Blob owners, successive boots,
+actual process/provider failures, measured fleet movement and mixed binaries
+remain unqualified. Highest next priorities:
+
+1. Finish current-head CI, investigate any recurrence of constrained-reader
+   availability failure, and keep current main ancestry and PR mergeability.
+2. Complete busy primitive/external-owner maintenance and successive-boot role,
+   lineage and unknown-result fault coverage through the existing public paths.
+3. Deliver W9's committed profile/runner and measured process/provider/load/mixed-
+   binary campaigns, then exercise W10 rollout, rollback and recovery runbooks.

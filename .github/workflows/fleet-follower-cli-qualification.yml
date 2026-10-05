@@ -1,11 +1,11 @@
-name: Fleet executable follower maintenance qualification
+name: Fleet busy maintenance qualification
 on:
   push:
     branches: [codex/fleet-follower-cli-qualification]
 permissions:
   contents: read
 jobs:
-  native-follower-maintenance:
+  native-busy-maintenance:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -36,21 +36,35 @@ jobs:
           selected scenario::follower_maintenance::tests:: follower-cli 2
           selected scenario::reader_maintenance::tests:: reader-cli 1
           selected scenario::balance::tests:: count-balance 1
-          selected scenario::observation::tests:: native-observation 12
+          selected scenario::observation::tests:: native-observation 13
+          selected scenario::maintenance::tests:: busy-maintenance 2
+          selected scenario::tests::maintenance_moves_every_cell quiet-maintenance 1
+          selected reconciler_tests::explicit_maintenance_can_prepare retained-fence-planning 1
+          selected reconciler_tests::maintenance_planning_keeps_blob role-guards 1
+          selected reconciler_tests::draining_advertisement_or_pressure ordinary-guards 1
+          selected reconciler_tests::busy_maintenance_plans_peak_cost lost-busy-release 1
           selected scenario::follower_tests::persisted::observation:: follower-observation 3
-      - name: Production follower and combined maintenance commands
+      - name: Native runtime publication and inventory contracts
         run: |
           set -euo pipefail
+          cargo test -p cellule-runtime --test runtime --all-features --locked runtime::lifecycle::maintenance:: -- --nocapture --test-threads=1 2>&1 | tee evidence/runtime-maintenance.log
+          cargo test -p cellule-host --lib --all-features --locked fleet::reconciler::observation::tests:: -- --nocapture --test-threads=1 2>&1 | tee evidence/host-observation.log
+          python3 -c 'import re; assert re.search(r"test result: ok\. 3 passed; 0 failed",open("evidence/runtime-maintenance.log").read())'
+          python3 -c 'import re; assert re.search(r"test result: ok\. 6 passed; 0 failed",open("evidence/host-observation.log").read())'
+      - name: Production busy, follower and combined maintenance commands
+        run: |
+          set -euo pipefail
+          cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-busy 2>&1 | tee evidence/production-busy-command.log
           cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-follower 2>&1 | tee evidence/production-command.log
           cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-roles 2>&1 | tee evidence/production-combined-command.log
           sha256sum target/debug/examples/fleet_operations > evidence/binary.sha256
       - name: Warning denied lint
         if: always()
-        run: cargo clippy -p cellule-host --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy -p cellule-host -p cellule-runtime --all-targets --all-features --locked -- -D warnings
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: follower-maintenance-${{ github.run_id }}-${{ github.run_attempt }}
+          name: busy-maintenance-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/
           if-no-files-found: error
           retention-days: 7
