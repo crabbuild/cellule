@@ -12,6 +12,7 @@ use cellule_runtime::fleet::operations::{FollowerEvacuationRecord, FollowerRepla
 mod maintenance;
 mod observation;
 mod races;
+mod restart;
 mod tests;
 
 fn deadline() -> Instant {

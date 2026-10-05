@@ -32,3 +32,6 @@ jobs:
       - name: Follower-only maintenance repetition 3
         if: always()
         run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Reconstructed controller settlement
+        if: always()
+        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart::reconstructed_controller_refreshes_native_settlement_after_a_lost_reply --all-features --locked -- --exact --nocapture --test-threads=1

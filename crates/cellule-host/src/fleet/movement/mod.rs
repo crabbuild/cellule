@@ -121,7 +121,7 @@ impl FleetActionExecutor {
             accepted.action().kind(),
             FleetActionKind::Maintenance { .. }
         ) {
-            return self.perform_maintenance(accepted, None);
+            return self.perform_maintenance(accepted, accepted.action(), None);
         }
         let FleetActionKind::Movement { action, attempt } = accepted.action().kind() else {
             return Err(Error::Control("accepted fleet effect is not movement"));

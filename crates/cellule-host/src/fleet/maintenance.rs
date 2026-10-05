@@ -3,7 +3,7 @@
 use super::actions::{ActionResult, FleetActionExecutor};
 use cellule_runtime::Error;
 use cellule_runtime::fleet::operations::{
-    AcceptedFleetAction, FleetActionKind, FleetOutcome, MaintenanceAction,
+    AcceptedFleetAction, FleetAction, FleetActionKind, FleetOutcome, MaintenanceAction,
 };
 use cellule_runtime::node::NodeMode;
 
@@ -11,12 +11,13 @@ impl FleetActionExecutor {
     pub(super) async fn perform_action(
         &self,
         accepted: &AcceptedFleetAction,
+        request: &FleetAction,
         settlement: Option<std::sync::Arc<crate::fleet::FleetRoleSettlement>>,
     ) -> cellule_runtime::Result<ActionResult> {
         match accepted.action().kind() {
             FleetActionKind::Movement { .. } => self.perform_movement(accepted).await,
             FleetActionKind::Maintenance { .. } => {
-                self.perform_maintenance(accepted, settlement.as_deref())
+                self.perform_maintenance(accepted, request, settlement.as_deref())
             }
         }
     }
@@ -24,9 +25,16 @@ impl FleetActionExecutor {
     pub(super) fn perform_maintenance(
         &self,
         accepted: &AcceptedFleetAction,
+        request: &FleetAction,
         settlement: Option<&crate::fleet::FleetRoleSettlement>,
     ) -> cellule_runtime::Result<ActionResult> {
-        let FleetActionKind::Maintenance { action, operation } = accepted.action().kind() else {
+        // Acceptance retains the original endpoint/key and execution identity.
+        // A read-only role refresh covers the current request's journal barrier;
+        // publication atomically checks that barrier before replacing its receipt.
+        accepted
+            .validate_replay(request, self.node, self.session)
+            .map_err(super::actions::operation)?;
+        let FleetActionKind::Maintenance { action, operation } = request.kind() else {
             return Err(Error::Control("unsupported fleet maintenance effect"));
         };
         if accepted.action().scope() != self.scope
@@ -51,7 +59,7 @@ impl FleetActionExecutor {
                 let proof = settlement.ok_or(Error::Control(
                     "role settlement requires fresh complete host evidence",
                 ))?;
-                proof.validate_for(accepted.action())?;
+                proof.validate_for(request)?;
                 Ok(ActionResult::checked(FleetOutcome::RolesSettledAt {
                     inventory: proof.inventory(),
                     head_revision: proof.head_revision(),
