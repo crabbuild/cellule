@@ -1,0 +1,118 @@
+{
+  "status": "storage readiness verified; throughput target remains unqualified",
+  "cleanup_scope": {
+    "removed": [
+      "task-owned cellule-node-scaling-rustfs container and complete fixture volume",
+      "rebuildable /candidate-target/debug artifacts, including earlier incremental cache cleanup"
+    ],
+    "preserved": [
+      "unrelated Docker containers, images and volumes",
+      "source snapshots, journals, test logs and benchmark release binaries"
+    ]
+  },
+  "before_fixture_reset": {
+    "available_disk_human": "13 GiB",
+    "total_inodes": 5242880,
+    "used_inodes": 5232885,
+    "free_inodes": 9995,
+    "raw": [
+      {
+        "args": [
+          "exec",
+          "cellule-node-scaling-assets",
+          "df",
+          "-h",
+          "/evidence"
+        ],
+        "exit_code": 0,
+        "output": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/vdb1        79G   62G   13G  83% /evidence\n"
+      },
+      {
+        "args": [
+          "exec",
+          "cellule-node-scaling-assets",
+          "df",
+          "-i",
+          "/evidence"
+        ],
+        "exit_code": 0,
+        "output": "Filesystem      Inodes   IUsed IFree IUse% Mounted on\n/dev/vdb1      5242880 5232885  9995  100% /evidence\n"
+      }
+    ]
+  },
+  "after": {
+    "available_disk_bytes": 36930154496,
+    "total_inodes": 5242880,
+    "used_inodes": 2537382,
+    "free_inodes": 2705498,
+    "raw": [
+      {
+        "args": [
+          "exec",
+          "cellule-node-scaling-assets",
+          "df",
+          "-h",
+          "/evidence"
+        ],
+        "output": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/vdb1        79G   40G   35G  54% /evidence\n"
+      },
+      {
+        "args": [
+          "exec",
+          "cellule-node-scaling-assets",
+          "df",
+          "-i",
+          "/evidence"
+        ],
+        "output": "Filesystem      Inodes   IUsed   IFree IUse% Mounted on\n/dev/vdb1      5242880 2537382 2705498   49% /evidence\n"
+      },
+      {
+        "args": [
+          "exec",
+          "cellule-node-scaling-assets",
+          "df",
+          "-B1",
+          "/evidence"
+        ],
+        "output": "Filesystem       1B-blocks        Used   Available Use% Mounted on\n/dev/vdb1      83953606656 42711814144 36930154496  54% /evidence\n"
+      }
+    ]
+  },
+  "fixture": {
+    "time": "2026-10-05T03:39:15.338426+00:00",
+    "container": "cellule-node-scaling-rustfs",
+    "image": "sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858",
+    "network": "cellule-node-scaling",
+    "volume": "cellule-node-scaling-rustfs",
+    "cpus": 4.0,
+    "memory_bytes": 2147483648,
+    "configuration_matches": true
+  },
+  "readiness": {
+    "time": "2026-10-05T03:39:49.286818+00:00",
+    "bucket": "cellule-node-capacity",
+    "bucket_created": true,
+    "write_read_delete_passed": true,
+    "payload_bytes": 1984,
+    "payload_sha256": "43ba72fb558e10355deeb588bb6424a4969c8e5023caf703b2b0d5b1ad3353d0"
+  },
+  "archive": {
+    "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/docker-evidence-before-cleanup",
+    "files": 2948,
+    "bytes": 1444355779
+  },
+  "preserved_release_binaries": [
+    {
+      "name": "sql",
+      "bytes": 29084008,
+      "sha256": "606e985f2e051eec67703518be6cecd76998d5025ddafd4fe6bae957570920a7"
+    },
+    {
+      "name": "http_capacity",
+      "bytes": 6355440,
+      "sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc"
+    }
+  ],
+  "excluded_probe": "durable-pending-16: VM inode exhaustion and Docker ENOSPC prevent a valid performance comparison",
+  "raw_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence"
+}
