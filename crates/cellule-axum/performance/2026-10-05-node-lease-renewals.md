@@ -28,6 +28,7 @@ points. The development VM also hosts the owner, driver and followers.
 | r1 | `5d00d10` | Provider hits its 1,024-file soft limit; owner fences; zero successful measured writes or reads |
 | r2 | `5d00d10` | Provider soft limit raised to 32,768; 2,000 SQLite paths observed; seed 89 returns an uncertain outcome after 88 valid seeds; no measured window |
 | r3 | `19752ad` | All 2,000 seeds validate; measured window begins, then provider is OOM-killed with exit 137 |
+| r4 | `19752ad` | Fresh empty provider volume; zero request errors; follower checks pass; cold startup fails with node pressure |
 
 r2 records 81,616 owner PUTs across startup/setup/drain, not all attributable to
 renewals. Provider logs show 59 slow rename operations, 50 on Cell controls,
@@ -43,8 +44,25 @@ sustained residency, larger databases or the combined target. Successful-write
 HTTP p50/p95/p99 is 208.7/3,271.7/14,917.2 ms. These exact journal percentiles
 exclude fast failed responses, which otherwise make the failed run look faster.
 
+r4 keeps the same image, CPU/memory limits, descriptors, workload and Cellule
+budgets on a fresh empty provider volume. It measures 117.356 writes/sec and
+0.906 reads/sec, with write HTTP p50/p95/p99 of 117.2/2,036.0/9,322.8 ms. It drops
+158,554 write offers and 1,634 read offers and leaves six write offers unissued.
+All 2,000 original Cells drain to Idle. The cold-start attempt records 978 root
+opens before `Capacity("node pressure")`; that counter does not prove 978 completed
+restores. The full cold audit and recovery qualification remain incomplete.
+
+Healthy r4 publication telemetry records mean root-admission wait 3,408.6 ms,
+admitted preparation work 45.9 ms, worker round trip 31.5 ms and quiet compaction
+11,625.6 ms. These populations have different boundaries and must not be added
+as causal shares. Investigate compaction's shared admission wait before it
+claims a Cell, and instrument the actual recovery pressure ledger. Keep the
+existing budgets, exact-root checks and response gates.
+
 The [dataset](2026-10-05-node-lease-renewals.json) retains populations, latency,
 source/binary hashes and external evidence references. Original receipts,
 uncertain identities, provider logs and follower stores remain outside the
-checkout. A fresh provider volume is the next controlled diagnostic; the old
-volume is retained. The [full qualification](node-capacity.md) remains open.
+checkout. The historical provider volume remains retained; r4 uses a separate
+fresh volume. r4 supplies a healthy-provider diagnostic, but its cold
+pressure refusal still prevents qualification. The
+[full qualification](node-capacity.md) remains open.

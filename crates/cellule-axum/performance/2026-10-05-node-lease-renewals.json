@@ -333,6 +333,260 @@
       "sampled_sqlite_main_paths_max": 2000,
       "sampled_owner_rss_max_bytes": 717201408,
       "sampled_owner_fd_max": 16147
+    },
+    {
+      "id": "actual-growth-2000-c1k-r4",
+      "status": "failed cold startup",
+      "source_commit": "19752ad",
+      "server_sha256": "3469b201470bda8eec31d17006a846cc0a2a2d2ef4769e0044ee0ec7f628c95e",
+      "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+      "raw_run_external": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/actual-growth-2000-c1k-r4-run",
+      "fresh_provider_volume": "cellule-node-scaling-rustfs-20261005-lease-r4",
+      "provider_image_cpu_memory_nofile_unchanged": true,
+      "window_seconds": 180,
+      "metrics": {
+        "writes": {
+          "attempts": 21440,
+          "errors": 0,
+          "generated_offers": 179994,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 4306033,
+          "planned_offers": 180000,
+          "producer_unissued": 6,
+          "queue_dropped": 158554,
+          "request_histogram_overflow": 186,
+          "request_latency_ms_all_attempts": {
+            "max": 20991.537409,
+            "p50": 117.2,
+            "p95": 2036.0,
+            "p99": 9322.8
+          },
+          "scheduled_histogram_overflow": 398,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 25859.445185999997,
+            "p50": 2025.1,
+            "p95": 7262.0,
+            "p99": null
+          },
+          "successes_after_deadline": 316,
+          "successes_in_window": 21124,
+          "successes_including_drain": 21440,
+          "successful_requests_per_second": 117.35555555555555,
+          "target_requests_per_second": 1000,
+          "warmup_attempts": 4713,
+          "warmup_errors": 0,
+          "warmup_queue_dropped": 25287
+        },
+        "reads": {
+          "attempts": 166,
+          "errors": 0,
+          "generated_offers": 1800,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 32622,
+          "planned_offers": 1800,
+          "producer_unissued": 0,
+          "queue_dropped": 1634,
+          "request_histogram_overflow": 3,
+          "request_latency_ms_all_attempts": {
+            "max": 15184.871162,
+            "p50": 2.2,
+            "p95": 5412.5,
+            "p99": null
+          },
+          "scheduled_histogram_overflow": 4,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 16732.797627,
+            "p50": 1815.1,
+            "p95": 7924.6,
+            "p99": null
+          },
+          "successes_after_deadline": 3,
+          "successes_in_window": 163,
+          "successes_including_drain": 166,
+          "successful_requests_per_second": 0.9055555555555556,
+          "target_requests_per_second": 10,
+          "warmup_attempts": 56,
+          "warmup_errors": 0,
+          "warmup_queue_dropped": 244
+        }
+      },
+      "validated_seed_writes": 2000,
+      "activation_ms": 128038,
+      "setup_seconds": 56.40933651499998,
+      "initial_cells_released_idle": 2000,
+      "cold_audit_completed": false,
+      "target_established": false,
+      "failure": "cold startup returns Capacity(\"node pressure\"); pressure component not yet instrumented",
+      "initial_sqlite_main_paths_max": 2000,
+      "initial_owner_sampled_rss_max_bytes": 722006016,
+      "initial_owner_sampled_fd_max": 16142,
+      "cold_owner_sampled_rss_max_bytes": 926687232,
+      "cold_owner_sampled_sqlite_paths_max": 827,
+      "owner_operations": {
+        "submission_sources": {
+          "fleet": 28153,
+          "rejected": 0,
+          "unavailable": 0,
+          "unsupported": 0
+        },
+        "node_log_append": {
+          "bytes": 88694856,
+          "failures": 0,
+          "successes": 5615
+        },
+        "response_sources": {
+          "fleet": 26135,
+          "object": 2018,
+          "recorded": 0
+        },
+        "publication_failures": 0,
+        "writes": {
+          "actor_queue": {
+            "count": 28153,
+            "mean_ms": 265.05043519724364,
+            "overflow": 1064,
+            "p50_ms": 0.1,
+            "p95_ms": 15.9,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "authority": {
+            "count": 26652,
+            "mean_ms": 32.14962075397719,
+            "overflow": 0,
+            "p50_ms": 22.8,
+            "p95_ms": 84.9,
+            "p99_ms": 181.6,
+            "resolution_us": 100
+          },
+          "compaction": {
+            "count": 2629,
+            "mean_ms": 11625.610390293648,
+            "overflow": 2629,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "directory": {
+            "count": 29281,
+            "mean_ms": 0.20568396817048598,
+            "overflow": 0,
+            "p50_ms": 0.1,
+            "p95_ms": 0.1,
+            "p99_ms": 5.9,
+            "resolution_us": 100
+          },
+          "dirty_admission": {
+            "count": 31281,
+            "mean_ms": 3123.8523782253446,
+            "overflow": 9383,
+            "p50_ms": 38.8,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "preparation": {
+            "count": 26652,
+            "mean_ms": 3712.774802930287,
+            "overflow": 9388,
+            "p50_ms": 127.6,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "publication": {
+            "count": 26652,
+            "mean_ms": 4550.258987475837,
+            "overflow": 9435,
+            "p50_ms": 220.0,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "publication_failures": 0,
+          "recovery_admission": {
+            "count": 3250,
+            "mean_ms": 30.191340561230767,
+            "overflow": 0,
+            "p50_ms": 16.5,
+            "p95_ms": 101.7,
+            "p99_ms": 213.1,
+            "resolution_us": 100
+          },
+          "root_admission": {
+            "count": 28652,
+            "mean_ms": 3408.6109781837567,
+            "overflow": 9380,
+            "p50_ms": 58.6,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_open": {
+            "count": 29281,
+            "mean_ms": 7.001014296403811,
+            "overflow": 0,
+            "p50_ms": 4.2,
+            "p95_ms": 21.2,
+            "p99_ms": 45.4,
+            "resolution_us": 100
+          },
+          "root_preparation": {
+            "count": 28652,
+            "mean_ms": 3454.480917261797,
+            "overflow": 9388,
+            "p50_ms": 105.2,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_preparation_work": {
+            "count": 28652,
+            "mean_ms": 45.85944668515287,
+            "overflow": 0,
+            "p50_ms": 34.1,
+            "p95_ms": 122.8,
+            "p99_ms": 228.0,
+            "resolution_us": 100
+          },
+          "uploaded_bytes": 188348135,
+          "uploaded_objects": 141336,
+          "worker": {
+            "count": 28153,
+            "mean_ms": 31.465970977231553,
+            "overflow": 0,
+            "p50_ms": 15.4,
+            "p95_ms": 110.6,
+            "p99_ms": 250.5,
+            "resolution_us": 100
+          }
+        }
+      },
+      "validated_live_responses_including_setup_warmup_drain": {
+        "writes": 28153,
+        "reads": 222
+      },
+      "successful_http_latency_ms": {
+        "writes": {
+          "count": 21124,
+          "p50": 113.162932,
+          "p95": 1660.673793,
+          "p99": 8712.997977,
+          "max": 18462.661145,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        },
+        "reads": {
+          "count": 163,
+          "p50": 2.113579,
+          "p95": 4779.270865,
+          "p99": 12495.628132,
+          "max": 15184.871162,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        }
+      },
+      "cold_root_open_observations": 978,
+      "completed_cold_restore_count": null
     }
   ],
   "causal_regression": {
@@ -361,5 +615,5 @@
     "isolated_source_mismatches": 0,
     "source_archive_external": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/node-lease-renewal-source"
   },
-  "next_probe": "same workload and budgets on a fresh empty provider volume; retain the old volume and follower stores as failure evidence; qualify repeated steady windows and recovery separately"
+  "next_probe": "Instrument actual pressure ledger during cold recovery under the unchanged budgets. Investigate quiet compaction tasks claiming the Cell before waiting for shared admission; preserve the response and recovery gates."
 }
