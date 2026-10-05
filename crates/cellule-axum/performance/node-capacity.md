@@ -77,6 +77,17 @@ and backlog stability. Bound and observe all accepted work through drain.
 Provider and follower resource costs must be reported separately from owner
 capacity; a shared development VM cannot prove independent-node capacity.
 
+Provision evidence storage separately from owner SQLite/cache I/O. The retained
+r4 journals average 579 bytes per write and 430 bytes per read. At the target
+rates, one 30-minute window plus warmup would retain about 46.5 GiB of journals
+(about 26 MiB/s), or 139.5 GiB for three windows, before provider/follower data,
+logs and binaries. This is a projection from the
+[observed journal sizes](node-capacity-journal-storage.json), not a target-rate
+measurement or a bound on future records. The last measured development VM
+free space, 21.7 GiB, cannot hold even one such projected window. Check current
+free bytes on the actual evidence filesystem before running; retain every
+original outcome and budget additional space for the other evidence.
+
 Performance success alone is insufficient. Independently audit all retained
 acknowledgments, verify every Cell after fresh cold recovery and exact identity
 replay, and exercise owner loss, fencing and a next recovered write. Existing
