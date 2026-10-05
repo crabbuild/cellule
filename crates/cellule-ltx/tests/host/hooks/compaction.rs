@@ -2,6 +2,58 @@
 
 use super::*;
 
+#[tokio::test]
+async fn waiting_compaction_admission_cancels_without_work_and_preserves_closed_source() {
+    for block_dirty in [false, true] {
+        let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+        let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+        let replica = CellReplica::new(
+            CellStorageLayout::new(
+                Store::new(Arc::new(InMemory::new())),
+                ObjectPath::from("waiting-compaction-admission"),
+                [201; 16],
+            ),
+            [202; 32],
+            [203; 16],
+            Limits::default(),
+        )
+        .unwrap()
+        .with_host(
+            Host::default()
+                .with_dirty_slots(dirty.clone())
+                .with_recovery_slots(recovery.clone()),
+        );
+        let occupied_pool = if block_dirty { &dirty } else { &recovery };
+        let occupied = occupied_pool.clone().acquire_owned().await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                replica.admit_scheduled_compaction()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(dirty.available_permits(), usize::from(!block_dirty));
+        assert_eq!(recovery.available_permits(), usize::from(block_dirty));
+        drop(occupied);
+        let admitted = replica.admit_scheduled_compaction().await.unwrap();
+        assert_eq!(dirty.available_permits(), 0);
+        assert_eq!(recovery.available_permits(), 0);
+        drop(admitted);
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+        occupied_pool.close();
+        let error = replica.admit_scheduled_compaction().await.err().unwrap();
+        assert!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .is::<tokio::sync::AcquireError>()
+        );
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+    }
+}
+
 #[cfg(feature = "replica")]
 async fn compaction_case_inputs(
     replica: &CellReplica,
@@ -689,7 +741,7 @@ async fn verify_canceled_compaction(pre_admitted: bool) {
         *faults.pause.lock().unwrap() = Some(pause.clone());
         *faults.forbidden_thread.lock().unwrap() = Some(std::thread::current().id());
         let task_replica = if pre_admitted {
-            replica.try_admit_scheduled_compaction().unwrap().unwrap()
+            replica.admit_scheduled_compaction().await.unwrap()
         } else {
             replica.clone()
         };

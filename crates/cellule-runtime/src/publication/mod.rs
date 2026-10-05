@@ -169,13 +169,19 @@ impl CellPublisher {
             && self.appends_since_compaction_check >= COMPACTION_CHECK_INTERVAL
     }
 
-    pub(crate) fn try_admit_compaction(&self) -> Result<Option<cellule_ltx::CellReplica>> {
-        self.check_node_lease()?;
-        match self.replica.try_admit_scheduled_compaction() {
-            Ok(admitted) => Ok(admitted),
-            Err(error) if retryable_ltx_error(&error) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+    pub(crate) fn compaction_admission(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<Option<cellule_ltx::CellReplica>>> {
+        let lease = self.check_node_lease();
+        let replica = self.replica.clone();
+        Box::pin(async move {
+            lease?;
+            match replica.admit_scheduled_compaction().await {
+                Ok(admitted) => Ok(Some(admitted)),
+                Err(error) if retryable_ltx_error(&error) => Ok(None),
+                Err(error) => Err(error.into()),
+            }
+        })
     }
 
     /// Runs at most one promotion while the actor owns the publisher token.

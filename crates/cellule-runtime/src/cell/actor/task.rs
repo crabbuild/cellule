@@ -300,6 +300,7 @@ pub(super) fn start_shutdown_drain(
     shutdown.draining = true;
     let mut ready = Vec::new();
     for (cell, active) in cells.iter_mut() {
+        active.cancel_compaction_admission();
         if let Some(transfer) = active.transfer.take() {
             active.coordination.step(CoordinationInput::AbortTransfer);
             transfer

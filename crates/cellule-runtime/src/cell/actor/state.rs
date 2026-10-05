@@ -296,6 +296,7 @@ pub(super) struct ActiveCell {
     pub(super) last_used_ms: i64,
     pub(super) last_work_at: std::time::Instant,
     pub(super) compaction_retry_at: std::time::Instant,
+    pub(super) compaction_admission: Option<CompactionAdmission>,
     pub(super) hydration_retry_at: std::time::Instant,
     // The published head's due time and commit sequence, mirrored from the
     // authoritative control so a resident Cell can be ticked without a
@@ -303,6 +304,19 @@ pub(super) struct ActiveCell {
     // control, so a stale reader only produces a `Stale` Tick.
     pub(super) next_due_ms: Option<i64>,
     pub(super) published_sequence: u64,
+}
+
+/// Only admission is cancellable. Once dispatched, compaction owns its native
+/// work and reservations until completion, even if this guard is cancelled.
+pub(super) struct CompactionAdmission {
+    pub(super) cancel: tokio_util::sync::CancellationToken,
+    pub(super) pending: bool,
+}
+
+impl Drop for CompactionAdmission {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
 }
 
 pub(super) struct TransferPreflight {
@@ -390,6 +404,14 @@ impl ActiveCell {
                 .step(CoordinationInput::CompleteEffect { effect_id, effect }),
             CoordinationDecision::EffectCompleted
         )
+    }
+
+    pub(super) fn cancel_compaction_admission(&self) {
+        if let Some(admission) = &self.compaction_admission
+            && admission.pending
+        {
+            admission.cancel.cancel();
+        }
     }
 }
 
@@ -494,6 +516,11 @@ pub(super) enum TaskResult {
         commit_sequence: u64,
         result: crate::Result<()>,
         fenced: bool,
+    },
+    CompactionAdmitted {
+        cell: CellId,
+        generation: u64,
+        result: crate::Result<Option<Box<cellule_ltx::CellReplica>>>,
     },
     Compacted {
         cell: CellId,

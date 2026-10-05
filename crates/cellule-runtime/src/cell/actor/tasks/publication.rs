@@ -130,6 +130,74 @@ pub(super) fn handle_published(
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
 }
 
+/// Rechecks the current Cell before converting shared admission into work.
+pub(super) fn handle_compaction_admitted(
+    context: TaskContext<'_>,
+    cell: CellId,
+    generation: u64,
+    result: crate::Result<Option<Box<cellule_ltx::CellReplica>>>,
+) {
+    let TaskContext {
+        pool,
+        cells,
+        transitioning,
+        tasks,
+        node_lease,
+        ..
+    } = context;
+    let Some(active) = cells.get_mut(&cell) else {
+        return;
+    };
+    if active.generation != generation {
+        return;
+    }
+    let Some(admission) = active.compaction_admission.as_mut() else {
+        return;
+    };
+    if !admission.pending {
+        return;
+    }
+    let now = std::time::Instant::now();
+    let replica = match result {
+        Ok(Some(replica)) if !admission.cancel.is_cancelled() => Some(replica),
+        Err(error) => {
+            tracing::warn!(cell = ?cell, error = ?error, "Cell compaction admission fenced its owner");
+            fence_active(active);
+            None
+        }
+        _ => None,
+    };
+    if let Some(replica) = replica {
+        let due = now.duration_since(active.last_work_at) >= COMPACTION_QUIET
+            && active
+                .publisher
+                .as_ref()
+                .is_some_and(CellPublisher::compaction_due);
+        let decision = active
+            .coordination
+            .step(CoordinationInput::BeginCompaction {
+                queue_empty: active.queue.is_empty(),
+                publication_idle: active.coordination.publication_count() == 0,
+                publisher_ready: active.publisher.is_some(),
+                due,
+                lease_live: node_lease.check().is_ok(),
+            });
+        if matches!(decision, CoordinationDecision::Started) {
+            if let Some(admission) = &mut active.compaction_admission {
+                admission.pending = false;
+            }
+            start_admitted_compaction(cell, active, *replica, pool, tasks);
+            return;
+        }
+        if matches!(decision, CoordinationDecision::Fence) {
+            fence_active(active);
+        }
+    }
+    active.compaction_admission = None;
+    active.compaction_retry_at = now + COMPACTION_RETRY;
+    continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+}
+
 /// Applies a compaction result and returns the publisher to the Cell.
 pub(super) fn handle_compacted(
     context: TaskContext<'_>,
@@ -158,6 +226,7 @@ pub(super) fn handle_compacted(
         return;
     }
     active.finish_task(effect_id, CoordinationEffect::Compaction);
+    active.compaction_admission = None;
     if let Err(error) = &result {
         tracing::warn!(cell = ?cell, error = ?error, "Cell compaction fenced its owner");
     }

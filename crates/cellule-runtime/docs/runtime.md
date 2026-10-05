@@ -379,7 +379,7 @@ The actor never reruns a handler after SQLite may have started it. `Resolve` rea
 
 - Root preparation also overlaps independent content-addressed uploads. The LTX body and index, changed and initial directory nodes, and root metadata use bounded concurrency under the runtime's shared I/O permits.
 - When foreground compaction clears the segment-debt bound, its successor append retains the original authority predecessor. One fenced CAS selects the final root after all dependencies upload; the unchanged intermediate root stays private. Compaction cascades and quiet-period publication keep their existing bounds.
-- Quiet compaction tries the existing dirty-memory and recovery admission before taking the publisher token. If unavailable, the actor defers it without a task or busy Cell, so foreground commands and queries can continue. Queued preparation cohorts keep priority. An admitted compaction still excludes conflicting Cell work until its exact-root publication or cleanup completes.
+- Quiet compaction waits fairly for the existing dirty-memory and recovery admission before taking the publisher token. Pending and dispatched quiet cohorts are bounded by the node's recovery capacity. Waiting leaves the Cell available; new work, fencing, drain, and shutdown cancel only admission. The actor rechecks the generation, lease, queue, and compaction eligibility when permits arrive. An admitted compaction still excludes conflicting Cell work until its exact-root publication or cleanup completes.
 - Initial directory construction retains at most eight encoded nodes awaiting upload.
 - The proposal remains private until every dependency upload completes, so authority cannot observe a partial root.
 

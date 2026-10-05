@@ -150,6 +150,11 @@ pub(super) fn handle_task(
             result,
             fenced,
         ),
+        TaskResult::CompactionAdmitted {
+            cell,
+            generation,
+            result,
+        } => publication::handle_compaction_admitted(context, cell, generation, result),
         TaskResult::Compacted {
             cell,
             generation,
