@@ -1,0 +1,28 @@
+name: Fleet observer diagnosis
+on:
+  push:
+    branches: [codex/fleet-observer-diagnosis-ed16bf9]
+permissions:
+  contents: read
+jobs:
+  native-budget-reproduction:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
+      - name: Build original debug harness
+        run: cargo test -p cellule-host --example fleet_operations --all-features --locked --no-run
+      - name: Routed original claim
+        run: cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::tests::closed_receiver_serving_claim_requires_canonical_recovery --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Routed evidence interruption
+        if: always()
+        run: cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::recovery_faults::tests::evidence::interrupted_receiver_evidence_write_reconstructs_only_from_canonical_acquisition --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Follower-only maintenance
+        if: always()
+        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
