@@ -144,6 +144,7 @@ pub(super) fn handle_activated(
                     last_used_ms: resident_since_ms,
                     last_work_at: std::time::Instant::now(),
                     compaction_retry_at: std::time::Instant::now(),
+                    compaction_admission: None,
                     hydration_retry_at: std::time::Instant::now(),
                     next_due_ms,
                     published_sequence,

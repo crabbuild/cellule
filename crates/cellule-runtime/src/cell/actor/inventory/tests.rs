@@ -118,6 +118,7 @@ async fn stale_actor_probe_cannot_clear_newer_mutation_markers_or_replace_newer_
         last_used_ms: 1,
         last_work_at: now,
         compaction_retry_at: now,
+        compaction_admission: None,
         hydration_retry_at: now,
         next_due_ms: None,
         published_sequence: 0,

@@ -932,6 +932,9 @@ impl CellExecutor {
             Ok(value) => value,
             Err(TransactionError::Operation(error)) => return Err(error),
             Err(TransactionError::Admission(error)) => return Err(admission_error(error)),
+            Err(TransactionError::RolledBack { resource, .. }) => {
+                return Err(admission_error(resource));
+            }
             Err(error) => {
                 self.fenced = true;
                 return Err(transaction_error(error));
@@ -1218,7 +1221,11 @@ impl CellExecutor {
         if self.fenced {
             crate::cell::worker::WorkerState::Fenced
         } else if self.has_pending() {
-            crate::cell::worker::WorkerState::Pending
+            if self.pending_migration.is_none() && self.logical_head_is_durable() {
+                crate::cell::worker::WorkerState::DurablePending
+            } else {
+                crate::cell::worker::WorkerState::Pending
+            }
         } else {
             crate::cell::worker::WorkerState::Ready
         }
@@ -1251,6 +1258,7 @@ impl CellExecutor {
             Ok(value) => Ok(value),
             Err(TransactionError::Operation(error)) => Err(error),
             Err(TransactionError::Admission(error)) => Err(admission_error(error)),
+            Err(TransactionError::RolledBack { resource, .. }) => Err(admission_error(resource)),
             Err(error) => {
                 self.fenced = true;
                 Err(transaction_error(error))
@@ -1287,10 +1295,16 @@ impl CellExecutor {
                     prepared: None,
                     durable: false,
                 };
-                self.pending_bytes = self
-                    .pending_bytes
-                    .checked_add(pending.retained_bytes())
-                    .ok_or(Error::Capacity("pending publication bytes"))?;
+                self.pending_bytes = match self.pending_bytes.checked_add(pending.retained_bytes())
+                {
+                    Some(bytes) => bytes,
+                    None => {
+                        // SQL already committed. Never classify this untracked
+                        // cut as a safe refusal based on an older durable head.
+                        self.fenced = true;
+                        return Err(Error::Capacity("pending publication bytes"));
+                    }
+                };
                 self.pending.push_back(pending);
                 Ok(CommandExecution::Pending)
             }
@@ -1432,6 +1446,7 @@ fn runtime_metadata(
 fn transaction_error(error: TransactionError<Error>) -> Error {
     match error {
         TransactionError::Admission(error) => admission_error(error),
+        TransactionError::RolledBack { resource, .. } => admission_error(resource),
         TransactionError::Operation(error) => error,
         TransactionError::Sqlite(error) => error.into(),
         TransactionError::Capture(error) => error.into(),

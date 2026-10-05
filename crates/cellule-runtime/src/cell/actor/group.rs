@@ -123,7 +123,10 @@ pub(super) async fn execute(
         Err(error) => (
             Err(error),
             !deadline.cancelled()
-                && !matches!(pool.state(command.cell).await, Ok(WorkerState::Ready)),
+                && !pool
+                    .state(command.cell)
+                    .await
+                    .is_ok_and(WorkerState::is_reusable),
         ),
     };
     let fenced = must_fence && result.is_err();

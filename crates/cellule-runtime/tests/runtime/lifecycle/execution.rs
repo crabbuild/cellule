@@ -4,6 +4,7 @@ use super::*;
 
 mod admission;
 mod capacity;
+mod compaction_fairness;
 mod dispatcher;
 mod handlers;
 mod resolve;

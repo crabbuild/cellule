@@ -99,6 +99,40 @@ impl NodeLogAuthority for BlockingAuthority {
 
 struct ImmediateTransport;
 
+struct PausedFirstCoverage {
+    started: Notify,
+    resume: Notify,
+    calls: Mutex<Vec<(u64, u64)>>,
+}
+
+impl NodeLogAuthority for PausedFirstCoverage {
+    fn activate<'a>(&'a self, _epoch: u64) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn advance_coverage<'a>(&'a self, epoch: u64, through: u64) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let first = {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push((epoch, through));
+                calls.len() == 1
+            };
+            if first {
+                self.started.notify_one();
+                self.resume.notified().await;
+            }
+            Ok(())
+        })
+    }
+
+    fn close<'a>(
+        &'a self,
+        _retirement: &'a NodeLogRetirementObservation,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 impl NodeLogTransport for ImmediateTransport {
     fn append<'a>(
         &'a self,
@@ -339,6 +373,157 @@ async fn concurrent_object_proofs_persist_the_complete_contiguous_prefix() {
 
         assert_eq!(gate.tiered_through(), 2);
         assert_eq!(authority.0.lock().unwrap().coverage.last(), Some(&(2, 2)));
+    }
+}
+
+#[tokio::test]
+async fn independent_publications_batch_behind_one_in_flight_coverage_cas() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(ImmediateTransport);
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let authority = Arc::new(PausedFirstCoverage {
+        started: Notify::new(),
+        resume: Notify::new(),
+        calls: Mutex::new(Vec::new()),
+    });
+    let durability =
+        NodeDurability::new(gate.clone(), shipper, authority.clone(), transport, lease());
+    let tickets = (0..64).map(|_| gate.issue(1).unwrap()).collect::<Vec<_>>();
+    // join_all polls every publisher before the controller releases the first
+    // CAS. This models independent roots completing during authority I/O.
+    let (proofs, ()) = tokio::join!(
+        futures_util::future::join_all(
+            tickets
+                .iter()
+                .map(|ticket| durability.prove_object(*ticket))
+        ),
+        async {
+            authority.started.notified().await;
+            authority.resume.notify_one();
+        },
+    );
+    for (ticket, proof) in tickets.iter().zip(proofs) {
+        let proof = proof.unwrap();
+        assert_eq!(proof.ticket(), *ticket);
+        assert_eq!(proof.source(), DurabilitySource::Object);
+    }
+    assert_eq!(gate.tiered_through(), 64);
+    assert_eq!(*authority.calls.lock().unwrap(), vec![(2, 1), (2, 64)]);
+}
+
+#[tokio::test]
+async fn cancelled_coverage_cas_is_retained_and_completed_by_shutdown() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(ImmediateTransport);
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let authority = Arc::new(PausedFirstCoverage {
+        started: Notify::new(),
+        resume: Notify::new(),
+        calls: Mutex::new(Vec::new()),
+    });
+    let durability =
+        NodeDurability::new(gate.clone(), shipper, authority.clone(), transport, lease());
+    let ticket = gate.issue(1).unwrap();
+    // Drop the exact publisher future after the authority callback starts.
+    // Its root was already published; the original ticket must survive this
+    // cancellation, without being treated as a confirmed local proof.
+    tokio::select! {
+        result = durability.prove_object(ticket) => panic!("unexpected completion: {result:?}"),
+        () = authority.started.notified() => {},
+    }
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(10), gate.prove(ticket))
+            .await
+            .is_err()
+    );
+    durability.shutdown().await.unwrap();
+    assert_eq!(
+        gate.prove(ticket).await.unwrap().source(),
+        DurabilitySource::Object
+    );
+    assert_eq!(*authority.calls.lock().unwrap(), vec![(2, 1), (2, 1)]);
+}
+
+#[tokio::test]
+async fn batching_out_of_order_roots_preserves_unpublished_gaps() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(ImmediateTransport);
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let authority = Arc::new(RecordingAuthority::default());
+    let durability =
+        NodeDurability::new(gate.clone(), shipper, authority.clone(), transport, lease());
+    let first = gate.issue(2).unwrap();
+    let gap = gate.issue(2).unwrap();
+    let last = gate.issue(2).unwrap();
+    let (left, right) = tokio::join!(
+        durability.prove_object(last),
+        durability.prove_object(first)
+    );
+    left.unwrap();
+    right.unwrap();
+    assert_eq!(gate.tiered_through(), 2);
+    assert!(matches!(
+        gate.begin_rotation(),
+        Err(Error::PendingPublication)
+    ));
+    durability.prove_object(gap).await.unwrap();
+    assert_eq!(gate.tiered_through(), 6);
+    assert_eq!(authority.0.lock().unwrap().coverage.last(), Some(&(2, 6)));
+}
+
+#[tokio::test]
+async fn rejected_batch_retains_original_roots_without_releasing_proofs() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(ImmediateTransport);
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let authority = Arc::new(RecordingAuthority(Mutex::new(AuthorityState {
+        reject_coverage: true,
+        yield_coverage: true,
+        ..AuthorityState::default()
+    })));
+    let durability =
+        NodeDurability::new(gate.clone(), shipper, authority.clone(), transport, lease());
+    let tickets = (0..64).map(|_| gate.issue(1).unwrap()).collect::<Vec<_>>();
+    let results = futures_util::future::join_all(
+        tickets
+            .iter()
+            .map(|ticket| durability.prove_object(*ticket)),
+    )
+    .await;
+    assert!(results.iter().all(Result::is_err));
+    assert_eq!(gate.tiered_through(), 0);
+    for ticket in &tickets {
+        assert!(!gate.objects_are_covered(&[*ticket]).unwrap());
+    }
+    authority.0.lock().unwrap().reject_coverage = false;
+    durability.prove_object(tickets[0]).await.unwrap();
+    assert_eq!(authority.0.lock().unwrap().coverage, vec![(2, 64)]);
+    for ticket in tickets {
+        assert_eq!(
+            gate.prove(ticket).await.unwrap().source(),
+            DurabilitySource::Object
+        );
     }
 }
 

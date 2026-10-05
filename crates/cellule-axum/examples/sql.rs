@@ -44,10 +44,14 @@ use object_store::{memory::InMemory, path::Path};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod fleet;
+mod order_response;
 mod sql_metrics;
 
 const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
-const MAX_CELLS: u32 = 16;
+const MAX_CELLS: u32 = 2_000;
+// Manifest shard counts are powers of two; a probe activates a bounded subset.
+const DECLARED_SHARDS: u32 = 2_048;
 const SCHEMA: &str = "CREATE TABLE orders (id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
 const COMMANDS: [OperationDescriptor; 1] = [operation(1)];
 const QUERIES: [OperationDescriptor; 1] = [operation(2)];
@@ -88,7 +92,7 @@ impl CellModule for Orders {
                 id: ORDERS,
                 name: Self::NAME,
                 role: CatalogRole::Sql,
-                shards: MAX_CELLS,
+                shards: DECLARED_SHARDS,
                 effect_targets: &[],
                 dead_letter: None,
             }],
@@ -123,7 +127,7 @@ impl CellApplication for OrdersApp {
             "orders",
             ORDERS,
             CatalogRole::Sql,
-            MAX_CELLS,
+            DECLARED_SHARDS,
         )?)?;
         Ok(())
     }
@@ -199,17 +203,11 @@ async fn create_order(
             },
         )
         .await?;
-    // A success reply follows publication and a read proving this receipt.
-    let observed = read_order(&app, target, input.id, Some(committed.receipt)).await?;
-    let order = observed
-        .output
-        .ok_or(Error::Control("committed order is missing"))?;
+    // A success reply follows durable proof and a read proving this receipt.
+    let observed = read_order(&app, target, input.id, Some(committed.receipt)).await;
     Ok((
         StatusCode::CREATED,
-        CellJson {
-            output: order,
-            receipt: committed.receipt,
-        },
+        order_response::after_commit(committed.receipt, observed)?,
     ))
 }
 
@@ -262,14 +260,14 @@ async fn read_order(
     })
 }
 
-fn example_count(name: &str, default: u32) -> ExampleResult<u32> {
+fn example_count(name: &str, default: u32, maximum: u32) -> ExampleResult<u32> {
     let count = match std::env::var(name) {
         Ok(value) => value.parse()?,
         Err(std::env::VarError::NotPresent) => default,
         Err(error) => return Err(error.into()),
     };
-    if !(1..=MAX_CELLS).contains(&count) {
-        return Err(format!("{name} must be in 1..={MAX_CELLS}").into());
+    if !(1..=maximum).contains(&count) {
+        return Err(format!("{name} must be in 1..={maximum}").into());
     }
     Ok(count)
 }
@@ -320,8 +318,9 @@ async fn example_storage() -> ExampleResult<(Store, Path)> {
 
 #[tokio::main]
 async fn main() -> ExampleResult<()> {
-    let cells = example_count("CELLULE_AXUM_CELLS", 1)?;
-    let workers = example_count("CELLULE_AXUM_WORKERS", 1)?;
+    let fleet_config = fleet::Config::from_env()?;
+    let cells = example_count("CELLULE_AXUM_CELLS", 1, MAX_CELLS)?;
+    let workers = example_count("CELLULE_AXUM_WORKERS", 1, 16)?;
     let bind: SocketAddr = std::env::var("CELLULE_AXUM_BIND")
         .unwrap_or_else(|_| "127.0.0.1:3000".into())
         .parse()?;
@@ -353,22 +352,51 @@ async fn main() -> ExampleResult<()> {
         .ok_or(Error::Registry("orders module is missing"))?;
     let catalog = CellCatalog::new(layout.clone(), tenant);
     let authority = CellAuthority::new(layout.clone());
+    if let Some(config) = &fleet_config
+        && config.index != 0
+    {
+        config.serve_follower(layout, code, bind).await?;
+        return Ok(());
+    }
     let session = SessionId::from_bytes(*Uuid::now_v7().as_bytes());
-    let owner = Owner {
+    let mut owner = Owner {
         session,
         endpoint: "https://orders.local".into(),
     };
     let files = tempfile::TempDir::new()?;
-    let runtime = CellRuntime::new_with_replica_host(
-        SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(MAX_CELLS)?)?,
-        16 * 1024 * 1024,
-        session,
-        host,
-    )?;
+    // Native reservations need headroom below the node's pressure threshold;
+    // sizing this ceiling exactly to the writer count closes dense admission.
+    // This is an admission ceiling, not allocated memory or an RSS limit.
+    let pool = SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(cells)?)?
+        .with_native_memory_limit(512 * 1024 * 1024)?;
+    let runtime = if fleet_config.is_some() {
+        CellRuntime::new_with_replica_host_requiring_node_lease(
+            pool,
+            16 * 1024 * 1024,
+            session,
+            host,
+        )?
+    } else {
+        CellRuntime::new_with_replica_host(pool, 16 * 1024 * 1024, session, host)?
+    };
+    let mut fleet_owner = None;
     let result: ExampleResult<()> = async {
         runtime.install_telemetry(query_metrics.clone())?;
+        if let Some(config) = &fleet_config {
+            fleet_owner = Some(
+                config
+                    .start_owner(layout.clone(), code, session, application_id, &runtime)
+                    .await?,
+            );
+            owner.endpoint = fleet_owner
+                .as_ref()
+                .ok_or(Error::Node("capacity owner enrollment missing"))?
+                .endpoint
+                .clone();
+        }
         let mut handles = Vec::with_capacity(targets.len());
         let mut restored = 0;
+        let activation_started = std::time::Instant::now();
         for (shard, target) in targets.iter().enumerate() {
             // Publish the catalog entry and fenced owner before bootstrapping each Cell.
             let proof = catalog
@@ -445,6 +473,10 @@ async fn main() -> ExampleResult<()> {
             files.path().display()
         );
         println!(
+            "Cells activation milliseconds: {}",
+            activation_started.elapsed().as_millis()
+        );
+        println!(
             "Orders service: http://{} (Ctrl-C to drain)",
             listener.local_addr()?
         );
@@ -461,9 +493,17 @@ async fn main() -> ExampleResult<()> {
     .await;
     // HTTP finishes accepted handlers before the runtime drains its workers.
     // Setup and serving failures also pass through this runtime cleanup.
+    // Preserve diagnostics even if a failed runtime cannot complete its drain.
+    // Background work can still be live; only the final snapshot is quiescent.
+    println!("Query metrics before drain: {}", query_metrics.snapshot());
     let shutdown = runtime.shutdown().await;
+    let fleet_shutdown = match fleet_owner {
+        Some(owner) => owner.stop().await,
+        None => Ok(()),
+    };
     result?;
     shutdown?;
+    fleet_shutdown?;
     println!("Query metrics: {}", query_metrics.snapshot());
     for (shard, target) in targets.iter().enumerate() {
         let drained = authority

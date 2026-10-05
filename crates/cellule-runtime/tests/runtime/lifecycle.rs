@@ -66,6 +66,7 @@ pub(super) struct PausingStore {
     update_armed: AtomicBool,
     failing: AtomicBool,
     transient_put_failures: AtomicUsize,
+    put_delay_ms: AtomicUsize,
     lost_update_response: AtomicBool,
     acquisition_fault: AtomicUsize,
     failed: AtomicBool,
@@ -93,6 +94,7 @@ impl PausingStore {
             update_armed: AtomicBool::new(false),
             failing: AtomicBool::new(false),
             transient_put_failures: AtomicUsize::new(0),
+            put_delay_ms: AtomicUsize::new(0),
             lost_update_response: AtomicBool::new(false),
             acquisition_fault: AtomicUsize::new(0),
             failed: AtomicBool::new(false),
@@ -131,6 +133,10 @@ impl PausingStore {
 
     fn fail_next_put_transiently(&self) {
         self.transient_put_failures.store(1, Ordering::Release);
+    }
+
+    fn delay_puts(&self, milliseconds: usize) {
+        self.put_delay_ms.store(milliseconds, Ordering::Release);
     }
 
     fn lose_next_update_response(&self) {
@@ -196,6 +202,10 @@ impl ObjectStore for PausingStore {
         payload: PutPayload,
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
+        let delay = self.put_delay_ms.load(Ordering::Acquire);
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
+        }
         let acquisition_fault = if location.as_ref().contains("/acquisitions/") {
             self.acquisition_fault.swap(0, Ordering::AcqRel)
         } else {

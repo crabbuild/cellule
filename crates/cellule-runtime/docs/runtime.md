@@ -178,6 +178,13 @@ Worker-job admission uses one slot per SQL worker:
 - **Dispatched.** Once dispatched, the job owns its slot and reservation until execution ends, including when its caller is canceled.
 - **Exempt messages.** Lifecycle and publication-confirmation messages retain their bounded worker queue and do not need a job permit.
 
+A follower-proven logical head may still have object publication pending. A
+later refusal before SQL or a rolled-back application error leaves that proven
+head reusable; publication lag alone does not make the failed command uncertain
+or fence its owner. An unproved commit, capture failure or ambiguous SQLite
+failure still requires fencing and reconciliation. Shutdown still drains the
+pending object publications before releasing ownership.
+
 Cancellation of a caller doesn't cancel accepted work. The actor still records and publishes the result, so a retry can resolve it.
 
 `CellClient::with_local_resolver` binds product owner selection before the
@@ -372,6 +379,7 @@ The actor never reruns a handler after SQLite may have started it. `Resolve` rea
 
 - Root preparation also overlaps independent content-addressed uploads. The LTX body and index, changed and initial directory nodes, and root metadata use bounded concurrency under the runtime's shared I/O permits.
 - When foreground compaction clears the segment-debt bound, its successor append retains the original authority predecessor. One fenced CAS selects the final root after all dependencies upload; the unchanged intermediate root stays private. Compaction cascades and quiet-period publication keep their existing bounds.
+- Quiet compaction waits fairly for the existing dirty-memory and recovery admission before taking the publisher token. Pending and dispatched quiet cohorts are bounded by the node's recovery capacity. Waiting leaves the Cell available; new work, fencing, drain, and shutdown cancel only admission. The actor rechecks the generation, lease, queue, and compaction eligibility when permits arrive. An admitted compaction still excludes conflicting Cell work until its exact-root publication or cleanup completes.
 - Initial directory construction retains at most eight encoded nodes awaiting upload.
 - The proposal remains private until every dependency upload completes, so authority cannot observe a partial root.
 

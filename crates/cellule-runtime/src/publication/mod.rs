@@ -157,7 +157,7 @@ impl CellPublisher {
     }
 
     pub(crate) fn renewal_due(&self, now: std::time::Instant) -> bool {
-        now >= self.renew_at
+        self.node_lease.is_none() && now >= self.renew_at
     }
 
     pub(crate) fn renewal_at(&self) -> std::time::Instant {
@@ -169,15 +169,32 @@ impl CellPublisher {
             && self.appends_since_compaction_check >= COMPACTION_CHECK_INTERVAL
     }
 
+    pub(crate) fn compaction_admission(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<Option<cellule_ltx::CellReplica>>> {
+        let lease = self.check_node_lease();
+        let replica = self.replica.clone();
+        Box::pin(async move {
+            lease?;
+            match replica.admit_scheduled_compaction().await {
+                Ok(admitted) => Ok(Some(admitted)),
+                Err(error) if retryable_ltx_error(&error) => Ok(None),
+                Err(error) => Err(error.into()),
+            }
+        })
+    }
+
     /// Runs at most one promotion while the actor owns the publisher token.
     /// Retryable preparation failures leave the debt for a later quiet period.
-    pub(crate) async fn compact_one_quiet(&mut self) -> Result<Option<bool>> {
+    pub(crate) async fn compact_one_quiet(
+        &mut self,
+        replica: cellule_ltx::CellReplica,
+    ) -> Result<Option<bool>> {
         self.check_node_lease()?;
         let Some(base) = self.observed.value().ltx_root() else {
             self.appends_since_compaction_check = 0;
             return Ok(Some(false));
         };
-        let replica = self.replica.clone();
         let scratch_directory = self.scratch_directory.clone();
         let attempt = replica.prepare_scheduled_compaction(&base, &scratch_directory);
         tokio::pin!(attempt);
@@ -205,9 +222,16 @@ impl CellPublisher {
         Ok(Some(true))
     }
 
-    /// Advances owner progress or fences when the renewal cannot be proven in time.
+    /// Checks the node lease, or advances unleased owner progress within its deadline.
     pub(crate) async fn renew(&mut self) -> Result<()> {
         self.check_node_lease()?;
+        if self.node_lease.is_some() {
+            // Takeover of a leased owner requires expiry of its exact node
+            // session, not a quiet Cell's progress. Long preparation still
+            // checks that shared lease at this cadence without a Cell CAS.
+            self.renew_at = std::time::Instant::now() + RENEW_INTERVAL;
+            return Ok(());
+        }
         let deadline = std::time::Instant::now() + SELF_FENCE_TIMEOUT;
         let deadline_at = tokio::time::Instant::from_std(deadline);
         let mut backoff = Backoff::default();
@@ -943,6 +967,40 @@ impl PendingDurability {
         self.telemetry
             .durability_proof(proof.source(), self.submitted_at.elapsed());
         Ok(())
+    }
+
+    pub(crate) async fn prove_objects(pendings: &[Option<Self>]) -> Result<bool> {
+        let mut groups: Vec<Vec<&Self>> = Vec::new();
+        for pending in pendings.iter().flatten() {
+            if let Some(group) = groups.iter_mut().find(|group| {
+                group.first().is_some_and(|first| {
+                    std::sync::Arc::ptr_eq(&first.durability, &pending.durability)
+                })
+            }) {
+                group.push(pending);
+            } else {
+                groups.push(vec![pending]);
+            }
+        }
+        let logged = !groups.is_empty();
+        // A root covers every queued Cell commit, even if its captured cuts
+        // were submitted under different original node-log bindings. Never
+        // combine those bindings just because their epoch numbers match.
+        for group in groups {
+            let Some(first) = group.first() else { continue };
+            let tickets = group
+                .iter()
+                .map(|pending| pending.ticket)
+                .collect::<Vec<_>>();
+            first.durability.confirm_objects(&tickets).await?;
+            for pending in group {
+                pending.telemetry.durability_proof(
+                    crate::node::log::DurabilitySource::Object,
+                    pending.submitted_at.elapsed(),
+                );
+            }
+        }
+        Ok(logged)
     }
 }
 

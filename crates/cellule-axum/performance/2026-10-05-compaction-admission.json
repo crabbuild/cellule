@@ -1,0 +1,131 @@
+{
+  "baseline_production_commit": "e5c9956c9a86b846f2e845c436619a13fb64ecde",
+  "fixed_source": {
+    "change": "Nonblocking quiet compaction admission before publisher exclusion",
+    "manifest": "compaction-admission-source.json",
+    "changed_files": [
+      {
+        "path": "crates/cellule-ltx/docs/publication.md",
+        "sha256": "6ce1552b84a6ee546c73aeadd6a216c09208e39360df887391aff6d7939557f1"
+      },
+      {
+        "path": "crates/cellule-ltx/src/environment/host/admission.rs",
+        "sha256": "39ecb07f15961323962a5c439afd7cbea8c4e703e4d56dd370f725ba96b62867"
+      },
+      {
+        "path": "crates/cellule-ltx/src/environment/tests.rs",
+        "sha256": "1e30c84db012b98e5cc10e55ad8c345534793f104a6fe402628a21904ba9f096"
+      },
+      {
+        "path": "crates/cellule-ltx/src/replica/prepare.rs",
+        "sha256": "700c963b32658d324eab9c76f3c495aa410bf28a6994297e3ff39aa5cbace7dc"
+      },
+      {
+        "path": "crates/cellule-ltx/tests/host/hooks/compaction.rs",
+        "sha256": "a153ee1655e06194ade08960ef464e4580e5053ce5117d835c058e28d293b131"
+      },
+      {
+        "path": "crates/cellule-runtime/docs/runtime.md",
+        "sha256": "5d2028c1985e19e3f49006bb061fbd4881c28d5ed66f5b87fc7b02ebfee90019"
+      },
+      {
+        "path": "crates/cellule-runtime/src/cell/actor/lifecycle/background.rs",
+        "sha256": "3b0e1db976a731f09bad2ea7e28da5fc413dcd3dcb6ecc55f391e3315283218d"
+      },
+      {
+        "path": "crates/cellule-runtime/src/publication/mod.rs",
+        "sha256": "0d4ce8d10774f7e6bad43321e472aee960e4972a72830b44b0587dea1e4366ed"
+      },
+      {
+        "path": "crates/cellule-runtime/src/publication/tests.rs",
+        "sha256": "6f4401790141f0423dfeb78bde04d6c9b365e512a59a7699fe9ac0e7abaf26da"
+      },
+      {
+        "path": "crates/cellule-runtime/tests/runtime/lifecycle/execution/dispatcher.rs",
+        "sha256": "d8f1fe7ac61037c8ee1d736a7c344295d591b05debc31e42786d07e760fae5a5"
+      }
+    ]
+  },
+  "baseline_context": {
+    "report": "2026-10-05-node-lease-renewals.json",
+    "run": "node-capacity-20261004-actual-growth-2000-c1k-r4/cells-2000-rate-1000",
+    "write_tps": 117.3556,
+    "write_http_ms": {
+      "p50": 117.2,
+      "p95": 2036,
+      "p99": 9322.8
+    },
+    "quiet_compaction_mean_ms": 11625.610390293648,
+    "root_admission_mean_ms": 3408.6109781837567,
+    "admitted_root_mean_ms": 45.859,
+    "cold_audit_passed": false,
+    "phase_population_warning": "Different phase boundaries; not additive latency shares"
+  },
+  "regression": {
+    "test": "quiet_compaction_waiters_leave_independent_cells_available",
+    "cells": 4,
+    "native_workers": 2,
+    "recovery_capacity": 2,
+    "held_recovery_slots": 2,
+    "dirty_capacity": 8,
+    "io_capacity": 32,
+    "blocking_capacity": 8,
+    "quiet_wait_ms": 600,
+    "foreground_timeout_ms": 1000,
+    "initial_acknowledged_sequence_per_cell": 8,
+    "next_acknowledged_sequence_per_cell": 9,
+    "baseline": "Elapsed deadline; unadmitted compactions block foreground work",
+    "fixed": "Passed; queries see 8, ninth writes acknowledge 9; drained Idle, exact restored value 9 on all four Cells",
+    "red_fixture_sha256": "56179332c3c9c523be3a36e14af5e41b731c1652a5a1bb4898aabc3ba5e7c812",
+    "final_fixture_sha256": "d8f1fe7ac61037c8ee1d736a7c344295d591b05debc31e42786d07e760fae5a5",
+    "fixture_revision": "Final fixture selects private dirty/IO/blocking pools at unchanged existing capacities to avoid process-wide test interference; timeout and assertions unchanged",
+    "existing_admitted_compaction_exclusion_test": "command_arriving_during_quiet_compaction_waits_for_publisher",
+    "baseline_final_fixture_sha256": "d8f1fe7ac61037c8ee1d736a7c344295d591b05debc31e42786d07e760fae5a5",
+    "baseline_final_fixture": "Same final fixture revalidated against e5c9956 production: foreground timeout Elapsed; budgets and assertions identical"
+  },
+  "validation": {
+    "ltx_units_passed": 124,
+    "ltx_cells_passed": 75,
+    "ltx_host_passed": 73,
+    "ltx_local_units_passed": 47,
+    "runtime_units_passed": 619,
+    "runtime_integration_passed": 235,
+    "all_ltx_and_runtime_suites": "passed",
+    "clippy": "LTX/runtime/Axum all targets/features, warnings denied; passed",
+    "api_docs": "LTX/runtime/Axum all features, no dependencies, warnings denied; passed",
+    "pre_admitted_cancellation_cases": 12,
+    "existing_ignored_tests_preserved": true,
+    "resource_caps_and_qualification_gates_unchanged": true
+  },
+  "qualification": {
+    "post_fix_rustfs_tps": 136.795,
+    "post_fix_rustfs_latency_ms": {
+      "p50": 316.283534,
+      "p95": 1293.098581,
+      "p99": 3305.440153
+    },
+    "all_cell_cold_audit": true,
+    "owner_loss": false,
+    "target_established": false,
+    "environment": "Colima resumed; one fresh 6-GiB-provider 600-second pair passes original development audits; target and owner loss unqualified",
+    "timing_boundary": "Quiet compaction timer now starts after admission; deferred attempts are not completed compactions",
+    "local_resume_dataset": "2026-10-05-local-resume.json"
+  },
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "raw_evidence": [
+    "compaction-admission-red-source.json",
+    "compaction-admission-red.log",
+    "compaction-admission-green.log",
+    "compaction-admission-source.json",
+    "compaction-admission-ltx.log",
+    "compaction-admission-ltx-local.log",
+    "compaction-admission-runtime.log",
+    "compaction-admission-clippy.log",
+    "compaction-admission-api-doc.log",
+    "compaction-admission-verification-status.json",
+    "compaction-admission-final-red.log",
+    "compaction-admission-final-green.log",
+    "compaction-admission-final-fixture-status.json"
+  ],
+  "next": "Reproduce shared publication admission and maintenance starvation; profile native capture using bounded observer; preserve all original audits before sustained target qualification"
+}

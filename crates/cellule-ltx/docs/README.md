@@ -877,9 +877,11 @@ These are per-operation correctness bounds, not an RSS quota.
   persistent cache membership on an admitted blocking job. Restart reads at most
   16 MiB of index input and retains at most 16,384 entries within the shared disk
   budget.
-- **Cache ownership.** The runtime creates one cache owner beside the
-  activation's database and shares its host through recovery, SQLite and
-  publication. Cancellation keeps dispatched work and its reservations alive
+- **Cache ownership.** Clones of a node's host share one live cache owner for
+  the same directory, filesystem and disk budget. Activating another Cell reuses
+  its membership and charges each physical entry once. After the last owner
+  drops, reopening reads persistent membership through admitted blocking work.
+  Each activation shares its host through recovery, SQLite and publication. Cancellation keeps dispatched work and its reservations alive
   until completion. Local capture APIs remain synchronous and retain their
   caller-owned worker contract.
 - **Fill admission.** Verified directory reads release object-store admission

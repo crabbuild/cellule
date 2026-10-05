@@ -23,6 +23,8 @@ sequenceDiagram
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
 | `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
+| `try_admit_scheduled_compaction` | Returns a scoped clone with existing dirty/recovery admission, or defers without waiting behind a queued cohort. |
+| `admit_scheduled_compaction` | Waits for the same reservations without dispatching work; the host bounds waiters and rechecks authority and scheduling before preparation. |
 | `prepare_scheduled_compaction_append` | Composes a bounded promotion and append without uploading intermediate root metadata. |
 | `with_root_metadata` | Joins caller-supplied verified derivation metadata with immutable uploads; both must succeed before `PreparedRoot` returns. |
 | Runtime CAS | Names the authoritative owner and exact root. |

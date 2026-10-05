@@ -36,6 +36,7 @@ pub(in crate::cell::actor) fn start_next(
     let Some(work) = active.queue.pop_front() else {
         return;
     };
+    active.cancel_compaction_admission();
     if matches!(&work, QueuedWork::Command(_) | QueuedWork::Migration(_)) {
         // Durable command outcomes, effects, Queue rows, and Workflow runs
         // remain release obligations until a fresh inventory proves otherwise.
@@ -304,6 +305,7 @@ pub(in crate::cell::actor) fn start_deactivate(
     let Some(active) = cells.remove(&cell) else {
         return;
     };
+    active.cancel_compaction_admission();
     transitioning.insert(cell);
     let generation = active.generation;
     let pool = pool.clone();
@@ -371,6 +373,7 @@ pub(in crate::cell::actor) fn start_fenced_deactivate(
     let Some(active) = cells.remove(&cell) else {
         return;
     };
+    active.cancel_compaction_admission();
     transitioning.insert(cell);
     let generation = active.generation;
     let pool = pool.clone();

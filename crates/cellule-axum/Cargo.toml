@@ -24,13 +24,19 @@ utoipa-axum = { version = "0.3", optional = true }
 [dev-dependencies]
 axum = { workspace = true, features = ["http1", "tokio"] }
 blake3.workspace = true
+bytes.workspace = true
+cellule-peer-http.workspace = true
 cellule-ltx = { workspace = true, features = ["replica"] }
 cellule-store.workspace = true
 object_store.workspace = true
-reqwest.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+prost.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 rusqlite.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio-util = { workspace = true, features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 
 [[example]]

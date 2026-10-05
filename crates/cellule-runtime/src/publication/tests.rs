@@ -15,6 +15,234 @@ use crate::identity::IncarnationId;
 use crate::identity::{CellId, Digest, SessionId};
 
 #[tokio::test]
+async fn leased_preparation_checkpoint_checks_liveness_without_cell_cas() {
+    let cell = CellId::from_bytes([91; 32]);
+    let incarnation = IncarnationId::from_bytes([92; 16]);
+    let layout = CellStorageLayout::new(
+        Store::new(Arc::new(InMemory::new())),
+        Path::from("leased-preparation-checkpoint"),
+        [93; 16],
+    );
+    let control = Control::initial(
+        cell,
+        incarnation,
+        Owner {
+            session: SessionId::from_bytes([94; 16]),
+            endpoint: "https://node.internal:8081".into(),
+        },
+        Digest::from_bytes([95; 32]),
+        1,
+    )
+    .unwrap();
+    layout
+        .store()
+        .create_strict(
+            &layout.control_path(cell.as_bytes()),
+            Bytes::from(control.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout.clone());
+    let before = authority.load(cell).await.unwrap().unwrap();
+    let replica = CellReplica::new(
+        layout,
+        *cell.as_bytes(),
+        *incarnation.as_bytes(),
+        Limits::default(),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let lease = crate::NodeLeaseGuard::new(0, 60_000).unwrap();
+    let mut publisher = CellPublisher::new(
+        replica,
+        authority.clone(),
+        before.clone(),
+        directory.path().to_owned(),
+    )
+    .with_node_lease(lease.clone());
+    publisher.renew_at = std::time::Instant::now();
+    assert!(!publisher.renewal_due(std::time::Instant::now()));
+    publisher.renew().await.unwrap();
+    assert!(publisher.renewal_at() > std::time::Instant::now());
+    assert_eq!(publisher.control().value(), before.value());
+    assert_eq!(
+        authority.load(cell).await.unwrap().unwrap().value(),
+        before.value()
+    );
+    lease.fence();
+    assert!(matches!(publisher.renew().await, Err(Error::Fenced)));
+    assert_eq!(
+        authority.load(cell).await.unwrap().unwrap().value(),
+        before.value()
+    );
+}
+
+#[derive(Default)]
+struct CoverageAuthority(std::sync::Mutex<Vec<(u64, u64)>>);
+
+#[derive(Default)]
+struct CoverageTelemetry(std::sync::atomic::AtomicUsize);
+
+impl crate::fleet::telemetry::CellTelemetry for CoverageTelemetry {
+    fn durability_proof(
+        &self,
+        source: crate::node::log::DurabilitySource,
+        _waited: std::time::Duration,
+    ) {
+        assert_eq!(source, crate::node::log::DurabilitySource::Object);
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl crate::node::durability::NodeLogAuthority for CoverageAuthority {
+    fn activate<'a>(
+        &'a self,
+        _epoch: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn advance_coverage<'a>(
+        &'a self,
+        epoch: u64,
+        through: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push((epoch, through));
+            Ok(())
+        })
+    }
+    fn close<'a>(
+        &'a self,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn coverage_binding(
+    byte: u8,
+) -> (
+    Arc<crate::node::durability::NodeDurability>,
+    crate::node::log::DurabilityGate,
+    Arc<CoverageAuthority>,
+) {
+    use crate::node::{
+        durability::NodeDurability, log::DurabilityGate, log_shipper::NodeLogShipper,
+        log_transport::NodeLogTransport,
+    };
+    let gate = DurabilityGate::new(
+        SessionId::from_bytes([byte; 16]),
+        crate::identity::NodeId::from_bytes([byte; 16]),
+        2,
+        [crate::identity::NodeId::from_bytes([byte + 1; 16])],
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(RefusingTransport);
+    let shipper = NodeLogShipper::new(gate.clone(), transport.clone(), Limits::default()).unwrap();
+    let authority = Arc::new(CoverageAuthority::default());
+    let durability = Arc::new(NodeDurability::new(
+        gate.clone(),
+        shipper,
+        authority.clone(),
+        transport,
+        crate::NodeLeaseGuard::new(0, 30_000).unwrap(),
+    ));
+    (durability, gate, authority)
+}
+
+fn coverage_pending(
+    durability: &Arc<crate::node::durability::NodeDurability>,
+    ticket: crate::node::log::CommitTicket,
+) -> Option<super::PendingDurability> {
+    Some(super::PendingDurability {
+        durability: durability.clone(),
+        ticket,
+        submitted_at: std::time::Instant::now(),
+        telemetry: Default::default(),
+    })
+}
+
+#[tokio::test]
+async fn one_coalesced_root_confirms_all_covered_tickets_with_one_authority_update() {
+    let (durability, gate, authority) = coverage_binding(1);
+    let mut pendings = (0..64)
+        .map(|_| coverage_pending(&durability, gate.issue(1).unwrap()))
+        .collect::<Vec<_>>();
+    let recording = Arc::new(CoverageTelemetry::default());
+    let telemetry = crate::fleet::telemetry::CellTelemetryHandle::default();
+    telemetry.install(recording.clone()).unwrap();
+    for pending in pendings.iter_mut().flatten() {
+        pending.telemetry = telemetry.clone();
+    }
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .unwrap()
+    );
+    assert_eq!(gate.tiered_through(), 64);
+    assert_eq!(*authority.0.lock().unwrap(), vec![(2, 64)]);
+    assert_eq!(recording.0.load(std::sync::atomic::Ordering::Relaxed), 64);
+    durability.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn coalesced_root_keeps_original_bindings_with_equal_epoch_numbers_separate() {
+    let (left, left_gate, left_authority) = coverage_binding(1);
+    let (right, right_gate, right_authority) = coverage_binding(3);
+    let pendings = vec![
+        coverage_pending(&left, left_gate.issue(1).unwrap()),
+        coverage_pending(&right, right_gate.issue(1).unwrap()),
+        None,
+        coverage_pending(&left, left_gate.issue(1).unwrap()),
+        coverage_pending(&right, right_gate.issue(1).unwrap()),
+    ];
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .unwrap()
+    );
+    assert_eq!(*left_authority.0.lock().unwrap(), vec![(2, 2)]);
+    assert_eq!(*right_authority.0.lock().unwrap(), vec![(2, 2)]);
+    assert_eq!(left_gate.tiered_through(), 2);
+    assert_eq!(right_gate.tiered_through(), 2);
+    assert!(
+        !super::PendingDurability::prove_objects(&[None, None])
+            .await
+            .unwrap()
+    );
+    left.shutdown().await.unwrap();
+    right.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_ticket_in_root_group_stages_no_siblings() {
+    let (durability, gate, authority) = coverage_binding(1);
+    let (other, foreign, _) = coverage_binding(3);
+    let valid = gate.issue(1).unwrap();
+    let wrong = foreign.issue(1).unwrap();
+    let pendings = vec![
+        coverage_pending(&durability, valid),
+        coverage_pending(&durability, wrong),
+    ];
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .is_err()
+    );
+    assert!(authority.0.lock().unwrap().is_empty());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(matches!(
+        durability.shutdown().await,
+        Err(Error::PendingPublication)
+    ));
+    assert!(authority.0.lock().unwrap().is_empty());
+    durability.prove_object(valid).await.unwrap();
+    other.prove_object(wrong).await.unwrap();
+    durability.shutdown().await.unwrap();
+    other.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
     verify_compaction_append(1).await;
 }
@@ -222,7 +450,10 @@ async fn verify_compaction_append(schema: u32) {
     assert!(publisher.compaction_due());
     let before = publisher.control().value().ltx_root().unwrap();
     assert_eq!(replica.open_root(&before).await.unwrap().segment_count(), 8);
-    assert_eq!(publisher.compact_one_quiet().await.unwrap(), Some(true));
+    assert_eq!(
+        publisher.compact_one_quiet(replica.clone()).await.unwrap(),
+        Some(true)
+    );
     let after = publisher.control().value().ltx_root().unwrap();
     assert_eq!(after.position, before.position);
     assert_eq!(after.commit_sequence, before.commit_sequence);
@@ -236,7 +467,10 @@ async fn verify_compaction_append(schema: u32) {
     assert_eq!(proof.prefix(), prefix);
     assert_eq!(proof.root(), after);
     assert!(proof.inspected_roots() >= 8 && proof.dependency_count() > 0);
-    assert_eq!(publisher.compact_one_quiet().await.unwrap(), Some(false));
+    assert_eq!(
+        publisher.compact_one_quiet(replica.clone()).await.unwrap(),
+        Some(false)
+    );
     assert!(!publisher.compaction_due());
 
     let mut segments = Vec::new();

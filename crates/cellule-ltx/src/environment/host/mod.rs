@@ -284,6 +284,9 @@ impl Host {
     /// and job admission until that dispatched work completes.
     /// Admission or dispatch failure returns an error. Invalid optional cache
     /// membership is ignored and subsequent reads verify origin objects.
+    /// Clones using the same root, filesystem and budget reuse live membership
+    /// and reservations after joining its fills. The last owner releases those
+    /// reservations; a later open reconstructs membership on a blocking job.
     #[cfg(feature = "replica")]
     pub async fn with_directory_cache(mut self, root: PathBuf) -> crate::Result<Self> {
         let capacity = (self.local_disk.capacity() / 8).clamp(1, 8 << 30);
@@ -292,11 +295,26 @@ impl Host {
         // Reopening cleans private temporaries. An earlier activation's fill
         // may outlive its reader, so exclude fills until construction finishes.
         let opening = self.cache_fills.open(root.clone()).await;
+        // A live owner or another opener may already have installed this cache.
+        // Reuse its membership and reservations instead of charging each Cell
+        // for the same physical files. Weak registration retains no idle cache.
+        if let Some(cache) = self
+            .cache_fills
+            .cached(&root, &self.filesystem, &self.local_disk)
+        {
+            self.directory_cache = Some(cache);
+            drop(opening);
+            return Ok(self);
+        }
+        let fills = Arc::clone(&self.cache_fills);
         let (cache, opening) = self
             .run(move || {
                 let cache = Arc::new(DirectoryCache::with_budget(
                     filesystem, root, capacity, budget,
                 ));
+                // Register inside the dispatched job: cancellation must not
+                // let another opener reconstruct an in-flight cache index.
+                fills.remember(&cache);
                 (cache, opening)
             })
             .await?;

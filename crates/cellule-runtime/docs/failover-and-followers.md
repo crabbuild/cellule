@@ -383,6 +383,17 @@ Heartbeat refresh, log activation, object coverage, and clean close share one
 mutex-protected authoritative observation, so their ETag CAS operations cannot
 race through stale local state.
 
+Completed roots from independent Cells queue their exact node-log tickets while
+an object-coverage CAS is in flight. The next publisher confirms the queued
+group with one serialized authority update, without a batching timer. Staging
+does not release a local proof or bridge an unpublished sequence gap. Failed or
+cancelled updates retain the original tickets for retry, including shutdown;
+local confirmation follows a successful CAS and a fresh node-lease check.
+One coalesced Cell root stages its entire covered ticket set before that flush.
+Tickets are grouped by the original durability binding; equal epoch numbers
+alone cannot combine different bindings. Per-command proof telemetry remains
+scoped to every covered commit.
+
 **Retired lane collection.** Retired follower lanes keep their durable
 append-fence marker for ten minutes. The server then:
 
@@ -613,6 +624,12 @@ longer infers owner death from a quiet Cell. A quiet repository can be healthy
 for months. Only the exact owner session's lease, or a graceful release, permits
 takeover.
 
+An owner with an installed node lease does not write periodic per-Cell control
+renewals. Idle Cells share the node heartbeat; long preparation checks the same
+monotonic lease without advancing Cell progress. Publications still conditionally
+update each Cell's exact owner, epoch and root, and node expiry fences all local
+admission and output. Runtimes without a node lease retain per-Cell renewals.
+
 ### Open the node log before its first fleet proof
 
 A fresh session is strict-created with `log=null`. That is a durable statement
@@ -652,6 +669,9 @@ earlier frame has an object-store proof:
   completions until the contiguous prefix advances.
 - It then CASes the session record and tells followers what they may truncate.
 - A single later Cell root cannot create a hole in this watermark.
+- The watermark replaces completed prefix entries. Sparse coverage retains
+  only completions above unresolved holes; old tickets remain provable without
+  retaining one entry per historical frame.
 
 <a id="extend-cell-control-with-a-recovery-overlay"></a>
 ## Extend Cell control with a recovery overlay
