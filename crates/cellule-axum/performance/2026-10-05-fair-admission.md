@@ -13,7 +13,7 @@ and returned permits are checked. Full runtime/LTX suites passed before the
 final replica boxing; the frozen boxed source passes the five compaction cases,
 strict Clippy and API docs.
 
-Two matched 600-second comparisons are invalid. The first candidate exhausts
+The first two matched 600-second comparisons are invalid. The first candidate exhausts
 Docker ext4 inodes with roughly 47 GiB still free. After verified archive cleanup,
 the second candidate has ample inodes but fails the original follower-durability
 gate: one append fails, stopping shipping; 43,367 later submissions are rejected.
@@ -23,7 +23,7 @@ Its commands switch from follower to object publication, so it cannot support
 a performance gain claim. Both failed providers and original journals remain
 preserved. Neither candidate reaches the canonical cold audit.
 
-| Latest fully audited baseline (`03b9002`) | Value |
+| Earlier R5 baseline (`03b9002`) | Value |
 | --- | ---: |
 | Resident Cells | 2,000 |
 | Write TPS | 129.10 |
@@ -73,8 +73,58 @@ current wall time and initial wall time plus monotonic elapsed time for the
 second check. Rollback cannot extend expiry; forward wall-clock steps still
 expire the request. All six SQL example tests and strict Clippy pass in the
 isolated snapshot, including backward/forward-clock and expiry-boundary cases.
-Signatures, frame limits and qualification gates are unchanged. Full-profile
-verification of the correction remains pending.
+Signatures, frame limits and qualification gates are unchanged. The correction
+also passes all six SQL example tests and strict Axum Clippy for all targets and
+features on current main plus the fix (`3290ec8`), in a fresh isolated snapshot.
+
+With the same application clock correction in both frozen sources, R7 completes
+both 600-second points and passes the original follower, receipt, cold replay,
+next-write and epoch gates for all 2,000 Cells. The control (`1672a95`) is
+`03b9002` plus only the three follower application files from candidate
+`4277e16`; the candidate includes fair framework admission. Source archives,
+binaries, compiler, unchanged driver and SQL identity are pinned in the dataset.
+These historical sources differ from current main, which has additional changes.
+
+| R7 metric | Control | Fair admission |
+| --- | ---: | ---: |
+| Write TPS | 134.06 | 102.78 |
+| Write HTTP p50 / p95 / p99, ms | 342.99 / 1,426.71 / 2,678.19 | 435.58 / 1,874.38 / 3,741.12 |
+| Write response-body throughput, MiB/s | 0.0258 | 0.0198 |
+| Read TPS (sparse mixed load) | 1.035 | 0.793 |
+| Read HTTP p50 / p95 / p99, ms | 7.45 / 102.64 / 320.94 | 9.20 / 144.73 / 474.65 |
+| Read response-body throughput, MiB/s | 0.000194 | 0.000149 |
+| Write / read offers dropped | 519,245 / 5,378 | 538,014 / 5,523 |
+| Request errors / follower failures / rejected submissions | 0 / 0 / 0 | 0 / 0 / 0 |
+| Original writes / reads cold-audited | 88,908 / 680 | 70,469 / 543 |
+| Owner peak RSS, MiB | 721.68 | 705.57 |
+| Owner peak file descriptors | 16,165 | 16,163 |
+| All-Cell startup, seconds | 47.29 | 84.35 |
+
+TPS counts completions inside the window; raw nearest-rank request percentiles
+include drain. The dataset retains per-minute TPS, scheduled latency including
+queue delay and separate drain counts. High offer drops mean this fixture did
+not sustain the offered rate. Sparse reads share the loaded queue and do not
+measure read capacity.
+
+The pair shows a 23.33% write-TPS regression. Lifetime root admission averages
+3,999 / 5,802 ms, admitted root work 56.7 / 71.5 ms, SQL worker time 31.1 /
+54.2 ms, capture 7.13 / 13.26 ms and provider PUT 34.4 / 44.3 ms (control /
+candidate). Completed compactions are 2,279 / 1,990. Root-admission and
+compaction histogram quantiles overflow and are unavailable. These phases
+include setup, warmup and drain, overlap and have different populations; their
+means cannot be subtracted to explain HTTP latency.
+
+Root admission and provider I/O remain the bottlenecks. Startup, capture,
+worker and provider timings also worsen, so one ordered pair on a shared VM
+cannot attribute the whole regression to admission fairness. A subsequent
+causal test must distinguish foreground/background admission and provider
+variation while preserving the original resource caps and qualification gates.
+This result supports no performance gain or target-capacity claim.
+
+Both complete R7 providers were archived with matching source entry counts
+(1,043,266 / 859,158), gzip/tar integrity and SHA-256 before removing their owned
+containers and volumes. Original journals and all evidence remain outside
+Docker. Inode preflight and sampling remain enabled.
 
 The [dataset](2026-10-05-fair-admission.json) retains critical results and source
 identities. Full logs, original journals, TLS fixtures, binaries, verification
