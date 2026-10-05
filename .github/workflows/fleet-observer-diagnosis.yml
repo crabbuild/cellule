@@ -1,11 +1,11 @@
-name: Fleet role publication diagnosis
+name: Fleet executable reader maintenance diagnosis
 on:
   push:
     branches: [codex/fleet-observer-diagnosis-ed16bf9]
 permissions:
   contents: read
 jobs:
-  native-role-restart:
+  native-reader-maintenance:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -16,28 +16,24 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
-      - name: Build native role harness
+      - name: Reader maintenance executable regression
         run: |
-          cargo test -p cellule-host --example fleet_operations --all-features --locked --no-run
-      - name: Six controller and publication restart cases
+          cargo test -p cellule-host --example fleet_operations scenario::reader_maintenance::tests:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Production reader command
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Two cancelled original publication owners
+          cargo run -p cellule-host --example fleet_operations --all-features --locked -- maintenance-reader
+      - name: Existing native reader fault cases
         if: always()
         run: |
-          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::cancelled_settlement:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Three unchanged observer contracts
+          cargo test -p cellule-host --example fleet_operations scenario::reader_tests::evacuation::tests:: --all-features --locked -- --nocapture --test-threads=1
+      - name: Existing reader public observer contracts
+        if: always()
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::reader_tests::evacuation::persisted::observation::reference_observer --all-features --locked -- --nocapture --test-threads=1
+      - name: Existing follower observer contracts
         if: always()
         run: |
           cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Physical action and resource retention
-        if: always()
-        run: |
-          cargo test -p cellule-host --test node fleet_actions:: --all-features --locked -- --nocapture --test-threads=1
-      - name: Opaque role binding refusals
-        if: always()
-        run: |
-          cargo test -p cellule-host --lib fleet::reconciler::observation::role_settlement:: --all-features --locked -- --nocapture --test-threads=1
       - name: Warning denied lint
         if: always()
         run: |

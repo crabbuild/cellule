@@ -18,7 +18,7 @@ mod inventory_tests;
 mod persisted;
 mod source;
 mod tests;
-mod transport;
+use crate::scenario::native_peers as transport;
 
 struct Fixture {
     layout: CellStorageLayout,

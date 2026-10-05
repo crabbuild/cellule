@@ -822,6 +822,21 @@ exact-root restoration, and rollback path. The journal atomically binds basis
 and evidence to original acceptance, rejects changed inputs, and returns the
 original time for identical writes.
 
+`SettleRoles` validates read-only evidence and starts no physical effect. If
+publication of its joined retained proof fails again, the executor returns the
+original publication error and removes that local observation. The durable
+acceptance and any already-committed historical result stay in the journal.
+The failed pass cannot authorize Closing: another pass must collect all native
+and foreign roles and replacement policies afresh, then commit a proof at the
+current full head/registry. Movement receipts keep their native evidence across
+every failed publication retry.
+
+A cancelled settlement waiter leaves its original native task owned. A changed
+head does not replace that running job; a competing request remains blocked with
+its original Conflict. After joining, a failed publication requires fresh
+capture as above. Neither local receipt removal nor an empty action bank proves
+physical role settlement or node closure.
+
 The executor uses at most two retained action jobs and charges their envelopes,
 results, and acquisition inputs to the existing node retained-byte ledger.
 Unknown work retains its fleet permit in the journal. A missing local receipt,

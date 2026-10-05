@@ -1574,8 +1574,12 @@ withdrawal, canonical-root and command-result readback, and joined resources.
 Two focused cases renew the same claimant and replace it after actual lease
 expiry. The latter renews the original signed boots while waiting, checks the
 new controller epoch, and requires the old controller to be fenced without
-changing the journal. Uncommitted publication races and external
-process/provider faults still need their full maintenance qualification.
+changing the journal. Before-write and after-commit result failures now require
+the old proof's Conflict, original join/retirement and fresh complete evidence
+before Closing. Cancelled-controller cases retain the actual paused native
+publication owner and refuse replacement while it is running. Original journal
+acceptance and historical receipts remain unchanged. External process/provider
+faults and the complete role/primitive matrix still require qualification.
 
 Extend host durability/read-replica orchestration and runtime follower
 inventory/retirement adapters to evacuate foreign obligations. Add an explicit
