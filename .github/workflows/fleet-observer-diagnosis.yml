@@ -17,33 +17,44 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler sqlite3
       - name: Build original debug harness
-        run: cargo test -p cellule-host --example fleet_operations --all-features --locked --no-run
+        run: |
+          cargo test -p cellule-host --example fleet_operations --all-features --locked --no-run
       - name: Routed original claim
-        run: cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::tests::closed_receiver_serving_claim_requires_canonical_recovery --all-features --locked -- --exact --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::tests::closed_receiver_serving_claim_requires_canonical_recovery --all-features --locked -- --exact --nocapture --test-threads=1
       - name: Routed evidence interruption
         if: always()
-        run: cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::recovery_faults::tests::evidence::interrupted_receiver_evidence_write_reconstructs_only_from_canonical_acquisition --all-features --locked -- --exact --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::recovery_faults::tests::evidence::interrupted_receiver_evidence_write_reconstructs_only_from_canonical_acquisition --all-features --locked -- --exact --nocapture --test-threads=1
       - name: Follower-only maintenance repetition 1
         if: always()
-        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
       - name: Follower-only maintenance repetition 2
         if: always()
-        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
       - name: Follower-only maintenance repetition 3
         if: always()
-        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
       - name: Reconstructed controller settlement
         if: always()
-        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart::reconstructed_controller_refreshes_native_settlement_after_a_lost_reply --all-features --locked -- --exact --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::restart::reconstructed_controller_refreshes_native_settlement_after_a_lost_reply --all-features --locked -- --exact --nocapture --test-threads=1
       - name: Native policy and graph composition
         if: always()
-        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::follower_evacuation_observation_retains_native_policy_and_role_graph_in_both_orders --all-features --locked -- --exact --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::follower_evacuation_observation_retains_native_policy_and_role_graph_in_both_orders --all-features --locked -- --exact --nocapture --test-threads=1
       - name: Shared references and failed batch recheck
         if: always()
-        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::reference_batches:: --all-features --locked -- --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-host --example fleet_operations scenario::follower_tests::reference_batches:: --all-features --locked -- --nocapture --test-threads=1
       - name: Runtime directory cursor contracts
         if: always()
-        run: cargo test -p cellule-runtime --lib node::directory::inventory --all-features --locked -- --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-runtime --lib node::directory::inventory --all-features --locked -- --nocapture --test-threads=1
       - name: Runtime canonical authentication contracts
         if: always()
-        run: cargo test -p cellule-runtime --lib node::tests::scanned_records --all-features --locked -- --nocapture --test-threads=1
+        run: |
+          cargo test -p cellule-runtime --lib node::tests::scanned_records --all-features --locked -- --nocapture --test-threads=1
