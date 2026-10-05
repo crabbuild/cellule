@@ -1,4 +1,40 @@
+use super::registry::{read_version, write_version};
 use super::*;
+
+fn write_receiver_route(e: &mut BoundedEncoder, route: &ReceiverRoute) -> Result<()> {
+    e.write_u8(
+        u8::try_from(route.hops.len())
+            .map_err(|_| OperationError::Invalid("receiver route length overflow"))?,
+    )?;
+    for hop in &route.hops {
+        e.write_bytes(hop.previous_node.as_bytes())?;
+        e.write_bytes(hop.previous_session.as_bytes())?;
+        e.write_bytes(hop.target_node.as_bytes())?;
+        e.write_bytes(hop.target_session.as_bytes())?;
+        e.write_bytes(hop.process_closure.as_bytes())?;
+        write_version(e, hop.registry)?;
+    }
+    Ok(())
+}
+
+fn read_receiver_route(d: &mut BoundedDecoder<'_>) -> Result<ReceiverRoute> {
+    let count = usize::from(d.read_u8()?);
+    if count == 0 || count > MAX_RECEIVER_HANDOFFS {
+        return Err(OperationError::Invalid("invalid receiver route length"));
+    }
+    let mut hops = Vec::with_capacity(count);
+    for _ in 0..count {
+        hops.push(ReceiverHandoff {
+            previous_node: NodeId::from_bytes(fixed(d)?),
+            previous_session: SessionId::from_bytes(fixed(d)?),
+            target_node: NodeId::from_bytes(fixed(d)?),
+            target_session: SessionId::from_bytes(fixed(d)?),
+            process_closure: Digest::from_bytes(fixed(d)?),
+            registry: read_version(d)?,
+        });
+    }
+    Ok(ReceiverRoute { hops })
+}
 
 fn movement(d: &mut BoundedDecoder<'_>) -> Result<MovementAction> {
     match d.read_u8()? {
@@ -34,6 +70,14 @@ impl FleetAction {
         e.write_u64(self.controller_epoch)?;
         e.write_i64(self.issued_at_ms)?;
         match &self.kind {
+            FleetActionKind::Movement { action, attempt }
+                if let Some(route) = &self.receiver_route =>
+            {
+                e.write_u8(3)?;
+                e.write_u8(*action as u8)?;
+                write_attempt(&mut e, attempt)?;
+                write_receiver_route(&mut e, route)?;
+            }
             FleetActionKind::Movement { action, attempt } => {
                 e.write_u8(1)?;
                 e.write_u8(*action as u8)?;
@@ -57,15 +101,28 @@ impl FleetAction {
         let controller = SessionId::from_bytes(fixed(&mut d)?);
         let controller_epoch = d.read_u64()?;
         let issued_at_ms = d.read_i64()?;
-        let kind = match d.read_u8()? {
-            1 => FleetActionKind::Movement {
-                action: movement(&mut d)?,
-                attempt: Box::new(read_attempt(&mut d)?),
-            },
-            2 => FleetActionKind::Maintenance {
-                action: maintenance(&mut d)?,
-                operation: Box::new(read_maintenance(&mut d)?),
-            },
+        let (kind, receiver_route) = match d.read_u8()? {
+            1 => (
+                FleetActionKind::Movement {
+                    action: movement(&mut d)?,
+                    attempt: Box::new(read_attempt(&mut d)?),
+                },
+                None,
+            ),
+            2 => (
+                FleetActionKind::Maintenance {
+                    action: maintenance(&mut d)?,
+                    operation: Box::new(read_maintenance(&mut d)?),
+                },
+                None,
+            ),
+            3 => (
+                FleetActionKind::Movement {
+                    action: movement(&mut d)?,
+                    attempt: Box::new(read_attempt(&mut d)?),
+                },
+                Some(read_receiver_route(&mut d)?),
+            ),
             _ => return Err(OperationError::Invalid("unknown fleet action family")),
         };
         d.finish()?;
@@ -76,6 +133,7 @@ impl FleetAction {
             controller_epoch,
             issued_at_ms,
             kind,
+            receiver_route,
         };
         action.validate()?;
         Ok(action)
@@ -123,6 +181,16 @@ impl FleetActionOutcome {
                 e.write_u8(9)?;
                 e.write_bytes(inventory.as_bytes())?;
             }
+            FleetOutcome::RolesSettledAt {
+                inventory,
+                head_revision,
+                registry,
+            } => {
+                e.write_u8(12)?;
+                e.write_bytes(inventory.as_bytes())?;
+                e.write_u64(*head_revision)?;
+                write_version(&mut e, *registry)?;
+            }
             FleetOutcome::Recovered(evidence) => {
                 e.write_u8(11)?;
                 super::recovery::write_recovered(&mut e, evidence)?;
@@ -168,6 +236,11 @@ impl FleetActionOutcome {
             },
             10 => FleetOutcome::Stopped(read_drain_evidence(&mut d)?),
             11 => FleetOutcome::Recovered(Box::new(super::recovery::read_recovered(&mut d)?)),
+            12 => FleetOutcome::RolesSettledAt {
+                inventory: Digest::from_bytes(fixed(&mut d)?),
+                head_revision: d.read_u64()?,
+                registry: read_version(&mut d)?,
+            },
             _ => return Err(OperationError::Invalid("unknown fleet action outcome")),
         };
         d.finish()?;

@@ -9,6 +9,7 @@ impl FleetReconciler {
         &self,
         clock: &PassClock<'_>,
         report: &mut FleetReconcileReport,
+        pass_observation: &mut Option<FleetObservation>,
     ) -> Result<()> {
         if report.snapshot.head().attempts().len() >= self.profile.max_inflight {
             report.blocked(DrainBlocker::MovementBudget);
@@ -18,30 +19,46 @@ impl FleetReconciler {
             report.blocked(DrainBlocker::IncompleteObservation);
             return Ok(());
         }
-        let roster = crate::fleet::FleetRoster::collect(
-            self.journal.as_ref(),
-            &report.snapshot,
-            clock.deadline,
-        )
-        .await?;
-        let observation = call(
-            clock.deadline,
-            "fleet-observer",
-            self.observer.observe(&roster, clock.now()?, clock.deadline),
-        )
-        .await?;
-        if observation.scope != self.scope || observation.registry != report.snapshot.registry() {
-            return Err(operation(OperationError::Conflict));
-        }
-        roster
-            .confirm(self.journal.as_ref(), clock.deadline)
+        let cached = pass_observation.take().filter(|observation| {
+            observation.scope == self.scope
+                && observation.registry == report.snapshot.registry()
+                && observation.roster().is_some_and(|roster| {
+                    roster.snapshot().head().revision() == report.snapshot.head().revision()
+                        && roster.snapshot().registry() == report.snapshot.registry()
+                })
+        });
+        let observation = if let Some(observation) = cached {
+            observation
+        } else {
+            let roster = crate::fleet::FleetRoster::collect(
+                self.journal.as_ref(),
+                &report.snapshot,
+                clock.deadline,
+            )
             .await?;
+            let observation = call(
+                clock.deadline,
+                "fleet-observer",
+                self.observer.observe(&roster, clock.now()?, clock.deadline),
+            )
+            .await?;
+            if observation.scope != self.scope || observation.registry != report.snapshot.registry()
+            {
+                return Err(operation(OperationError::Conflict));
+            }
+            roster
+                .confirm(self.journal.as_ref(), clock.deadline)
+                .await?;
+            observation.with_roster(roster)?
+        };
+        let roster = observation
+            .roster()
+            .ok_or(Error::Control("fleet roster was not retained"))?;
         let now = clock.now()?;
         let boot_complete = roster.covers_advertisements(&observation.nodes, now)?;
         let enrollment_settled = roster.enrollments().iter().all(|record| {
             record.status() != cellule_runtime::fleet::operations::EnrollmentStatus::Pending
         });
-        let observation = observation.with_roster(roster)?;
         let mut placements = observation.placements(now)?;
         report.maintenance_policy = observation
             .maintenance_policy_coverage()
@@ -70,11 +87,7 @@ impl FleetReconciler {
             report.blocked(DrainBlocker::StaleObservation);
         }
         // Retained intents take precedence over cached signed advertisements.
-        for intent in observation
-            .roster()
-            .ok_or(Error::Control("fleet roster was not retained"))?
-            .intents()
-        {
+        for intent in roster.intents() {
             if let Some(node) = placements
                 .iter_mut()
                 .find(|node| node.node == intent.node())
@@ -141,9 +154,11 @@ impl FleetReconciler {
                 report.blocked(*blocker);
                 continue;
             }
-            if row.position.as_ref().is_none_or(|position| {
-                position.incarnation != row.incarnation || position.epoch == 0
-            }) || (!maintenance && !settled)
+            if !maintenance
+                && (!settled
+                    || row.position.as_ref().is_none_or(|position| {
+                        position.incarnation != row.incarnation || position.epoch == 0
+                    }))
             {
                 continue;
             }
@@ -227,10 +242,6 @@ impl FleetReconciler {
                 .iter()
                 .find(|node| node.session == proposal.destination)
                 .ok_or(Error::Node("fleet proposal receiver absent"))?;
-            let position = row
-                .position
-                .as_ref()
-                .ok_or(Error::Node("fleet proposal position absent"))?;
             let maintenance = maintenance_for(head, owned, now);
             let cost = if maintenance.is_some() {
                 row.maintenance_cost
@@ -249,7 +260,7 @@ impl FleetReconciler {
                 source_node: owned.node,
                 source: owned.session,
                 generation: row.generation,
-                source_epoch: position.epoch,
+                source_epoch: row.owner_fence.epoch,
                 destination_node: destination.node,
                 destination: destination.session,
                 cost,

@@ -122,6 +122,16 @@ impl SuccessorFixture {
         cells: Vec<FleetOwnedCell>,
         complete: bool,
     ) -> FleetObservation {
+        self.try_observation(inventory, nodes, cells, complete)
+            .unwrap()
+    }
+    fn try_observation(
+        &self,
+        inventory: &FleetOriginalWriterSuccessorInventory,
+        nodes: Vec<NodeAdvertisement>,
+        cells: Vec<FleetOwnedCell>,
+        complete: bool,
+    ) -> cellule_runtime::Result<FleetObservation> {
         FleetObservation::new(
             scope(),
             inventory.original().snapshot().registry(),
@@ -132,7 +142,6 @@ impl SuccessorFixture {
             nodes,
             cells,
         )
-        .unwrap()
     }
 }
 
@@ -197,7 +206,7 @@ async fn original_writer_observation_retains_all_applications_and_refuses_duplic
 #[tokio::test]
 async fn original_writer_observation_refuses_changed_native_rows_and_complete_omission() {
     let fixture = fixture().await;
-    for field in 0..8 {
+    for field in 0..14 {
         let inventory = fixture.collect_current().await.unwrap();
         let (nodes, mut cells) = fixture.observation_parts(&inventory).await;
         let row = &mut cells[0];
@@ -215,15 +224,35 @@ async fn original_writer_observation_refuses_changed_native_rows_and_complete_om
             4 => row.observation.incarnation = IncarnationId::from_bytes([99; 16]),
             5 => row.observation.code = Digest::from_bytes([99; 32]),
             6 => row.observation.schema += 1,
-            _ => row.observation.role = CatalogRole::Blob,
+            7 => row.observation.role = CatalogRole::Blob,
+            8 => row.observation.owner_fence.epoch += 1,
+            9 => row.observation.owner_fence.epoch = 0,
+            10 => row.observation.owner_fence.incarnation = IncarnationId::from_bytes([99; 16]),
+            11 => row.observation.position.as_mut().unwrap().epoch += 1,
+            12 => {
+                row.observation.owner_fence.epoch += 1;
+                row.observation.position.as_mut().unwrap().epoch += 1;
+            }
+            _ => {
+                let incarnation = IncarnationId::from_bytes([99; 16]);
+                row.observation.incarnation = incarnation;
+                row.observation.owner_fence.incarnation = incarnation;
+                row.observation.position.as_mut().unwrap().incarnation = incarnation;
+            }
         }
+        // Inconsistent native identity is refused by construction. Coherent
+        // but substituted writer identity must still fail attachment against
+        // the original independently collected serving proof.
+        let expected = if matches!(field, 4 | 8..=11) {
+            "fleet ownership observation identity mismatch"
+        } else {
+            "original writer successor row differs"
+        };
+        let refused = fixture
+            .try_observation(&inventory, nodes, cells, false)
+            .and_then(|observation| observation.with_original_writer_successors(inventory));
         assert!(
-            matches!(
-                fixture
-                    .observation(&inventory, nodes, cells, false)
-                    .with_original_writer_successors(inventory),
-                Err(Error::Node("original writer successor row differs"))
-            ),
+            matches!(refused, Err(Error::Node(actual)) if actual == expected),
             "field {field}"
         );
     }

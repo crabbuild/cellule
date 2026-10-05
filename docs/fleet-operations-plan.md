@@ -4,7 +4,7 @@ Status: design and execution plan; partial foundations exist, fleet execution
 and qualification remain incomplete.
 Source baseline: `e07670e2348231ed401cc7280a47e3ab97596ffe`.
 Prepared: September 30, 2026, America/Vancouver.
-Updated: October 3, 2026, America/Vancouver.
+Updated: October 4, 2026, America/Vancouver.
 
 Build one reusable fleet reconciliation path for automatic ownership balancing,
 sustained pressure relief, and planned node maintenance. Reuse Cellule's fenced
@@ -37,7 +37,7 @@ same action and evidence contracts.
 | Which external facilities are required? | A linearizable journal, complete enrollment registry, authenticated management transport, and trusted local Cell inputs. The reference example supplies these behind the same contracts. |
 | What keeps operations simple? | One operation ID, one status contract, one application loop, bounded defaults, and one canonical host drain lane. |
 | What proves success? | Receipt-preserving actor activation on another node. Maintenance additionally requires settled role obligations, host Stopped, and session withdrawal. |
-| What is the next concrete change? | Qualify the current head, including both routing profiles. Complete durable provider/process retention and remaining failed-owner role succession. Native source reader policy now composes exact joining/final-root verification with an actual managed writer and current reader policy. Exact reader removal now guards the original request under the native activation lane and retains its joined prefix; the local source collector supplies current policy while durable process evidence remains separate. Fresh nonexecution confirmation now consumes independently joined original witnesses; terminal rows alone remain unknown. Native donor policy lookup discovers latest history through the existing authenticated reader/follower verifiers. Canonical recovered-follower retirement plus exact failed-boot closure now closes the matching source-side follower request, but a recovered log alone stays blocked. Complete observation around original-writer successors, failed-boot closures and durable unknown work. Connect reader/follower replacement policy and accepted-work barriers to SettleRoles/Finalize. Keep cross-session recovery, process/provider and remaining failure/inspection gates in scope. |
+| What is the next concrete change? | Qualify routed receiver recovery with inherited overlays and stale generations. Real-node cases now cover interrupted basis/evidence writes and replies, cancellation before/after takeover, safe Idle resumption, an ordinary acquisition winner, immutable reconstruction and refusal with missing/corrupt/substituted native history. Complete the maintenance role/fault matrix, production process and transport adapters, W9 load and mixed-version qualification, and W10 rollout/runbooks. |
 
 Start with the [first slice commit sequence](#first-slice-commit-sequence).
 Every increment must expose a reviewable public behavior and retain its test
@@ -102,12 +102,12 @@ package, reuse matching work, and run its gates before marking it complete.
 | Package | Implemented foundation | Remaining exit evidence |
 | --- | --- | --- |
 | W1 | Pure controller/maintenance/movement transitions; bounded versioned journal codecs; unknown-outcome permit retention; action envelopes, physical-node intent, progress pages, immutable accepted-action records, and distinct recovery basis/evidence/outcomes with complete replay comparisons. Registry records carry boot-bound enrollment, retained intent pages, a bootstrap revision, stop/resume state, and transactional allocation gates. The embedding example supplies one SQLite transaction domain for all three journal contracts, with independent-client races, lost replies and reconstruction tests. Fresh inspection requests/observations bind nonce, complete action, registry revision, endpoint and original capture interval. | Complete fleet/role observation envelopes and enrollment producer wiring; consume fresh inspections and the durable adapter through the public reconciler. Process/fault/provider qualification remains required. |
-| W2 | Schema 3 operational decoding/signing; schema 2 bridge serializer and signing checks; canonical byte comparison after one decoder verification pass; monotonic sample checks; shared sticky cordon/reversible pressure gate; writer/read/follower/recovery candidate filtering; host follower gate installation; public pressure/cordon lifecycle test. | Complete signed-snapshot production, broader public node admission scenarios, and the mixed-binary rollout campaign. |
+| W2 | Schema 3 operational decoding/signing; schema 2 bridge serializer and signing checks; canonical byte comparison after one decoder verification pass; fresh directory reads and create/heartbeat emission reuse that exact immutable authentication; monotonic sample checks; shared sticky cordon/reversible pressure gate; writer/read/follower/recovery candidate filtering; host follower gate installation; public pressure/cordon lifecycle test. | Complete signed-snapshot production, broader public node admission scenarios, and the mixed-binary rollout campaign. |
 | W3 | Bounded actor ownership pages; worker measurements and conservative costs; residence and stable samples; mutation revision checks; persisted follower-lane pages; expired/fenced log-reference discovery; host managed-reader pages with canonical accepted-work lifetimes, local closure observations and complete bounded native-state continuation fingerprints. | Complete the observer's membership/enrollment barrier and host action consumption, including accepted queries and retained peer views. Run all W3 gates against the current diff before marking the package complete. |
 | W4 | Runtime receiver preparation reserves actual Cell, memory, descriptor, affine SQL-job, and scoped LTX disk credit. The host journals source/receiver effects, confirms acquisition/recovery input before CAS and recovery position before actor admission, checks current serving, and owns work across dropped waiters. CleaningReceiver preserves release evidence and charged permits; unused credit can retire before ordinary admitted activation resumes. Public local tests cover receipt preservation, refusal, duplicates, basis faults, post-release cleanup, source loss, and ordinary-acquisition races. A separate fresh inspection path bypasses historical Inspect results and cannot start recovery; its finite jobs share the existing action bound and drain. Canonical runtime acquisition retains immutable exact claim input/materialization before admission. Native prepared-root lineage proves an exact per-movement released/recovered prefix across publication and compaction; complete bounded origin verification and fresh actor/authority checks gate serving evidence. Full original-writer/suffix aggregation remains required. | Complete recovery across receiver sessions and refusal/unknown reconciliation, complete observer consumption, maintenance role actions, durable production adapters, and all process/provider and W4 exit assertions. |
 | W5 | Public caller-driven reconciler and observation/transport contracts; production calls to the existing planner and reducer; phase CAS before dispatch, fresh serving checks, cooldown/post-batch journal reads, and permit projections. SQLite-backed sequencing tests exercise simulated effects, lost replies, deadlines and competing drivers. The overload executable moves two real Cells across three leased runtimes; controller-restart changes claimant after actual lease expiry and adopts lost releases. Maintenance now dispatches exact journal-bound Cordon, commits Cordoned then BeginEvacuation, and applies retained intent before donor selection. Partial fresh observations can evacuate settled normal-pressure donors; operation deadlines bound new moves. | Complete producer/observer wiring and the full W5 failure/concurrency evidence; source/receiver failure adoption, cross-session recovery, busy maintenance and all W5 exit evidence. |
 | W6 | Node-owned monotonic Cordon closes the shared role gate. Driver retries/adopts lost results and dispatches explicit busy maintenance release using the peak receiver envelope. Canonical quiescence retains accepted foreground and native primitive completion. Public SQL, Queue, Effect, Activity and Workflow cases cover selected receipt/lease/expiry/waiter faults. Configured host startup holds all new roles until atomic Established boot/current intent confirmation and required probes; retained drain exposes management without serving. The example wires actual signed canonical boot enrollment and joined withdrawal/retirement. The existing reader loop now repairs retained producer requests and fenced views without another hint; metadata collection survives pre-lease startup and local fencing while native admission remains lease checked. | Complete primitive/fault matrix, Cron and Blob external owners, failed-owner producer reconciliation; complete reader replacement/failed-process evidence, ongoing intent supervision, sustained traffic, and all W6 assertions. |
-| W7–W10 | Prepared follower ensembles retain signed boots before their original-token CAS; conditional refusal competes with that same write, while absence remains unknown. Confirmed member retirement retains original fences across ambiguous authority closure and shares canonical object coverage and authority closure. Epoch-bound host requests wake the existing supervisor, retain strict retries, reject stale/foreign replacement bindings and preserve accepted cleanup across cancellation and host deadlines. Bounded weak inspection handles expose local completion without certifying fleet settlement. The managed follower producer accepts every original member Pending before its one CAS, retains unknown results in the existing supervisor, and publishes original establishment/confirmed retirement events before releasing inventory. Atomic nonexecution exclusions fence delayed reader/follower acceptance. | Complete role observation, replacement-policy and failed-owner evidence, role evacuation/finalization, complete maintenance and failure examples, fault qualification, and runbooks. |
+| W7–W10 | Prepared follower ensembles retain signed boots before their original-token CAS; conditional refusal competes with that same write, while absence remains unknown. Confirmed member retirement retains original fences across ambiguous authority closure and shares canonical object coverage and authority closure. Epoch-bound host requests wake the existing supervisor, retain strict retries, reject stale/foreign replacement bindings and preserve accepted cleanup across cancellation and host deadlines. Bounded weak inspection handles expose local completion without certifying fleet settlement. The managed follower producer accepts every original member Pending before its one CAS, retains unknown results in the existing supervisor, and publishes original establishment/confirmed retirement events before releasing inventory. Atomic nonexecution exclusions fence delayed reader/follower acceptance. Fleet Finalize closes admission, joins accepted action work through the canonical drain, and publishes Stopped only after node shutdown and exact boot withdrawal. Closing-phase reconciliation reloads after boot retirement advances the registry and revalidates the operation/evidence before completion. Minion scenarios now cover writer-only, managed-reader, live-follower and failed-owner follower-only maintenance through the public reconciler; dead-owner SettleRoles and Finalize require exact failed-boot/recovered-follower closures and never contact the retired endpoint. | Complete controller-restart maintenance scenarios; expand role and fault combinations, including cancellation/provider/process failure; qualify broad provider/process behavior and both routing profiles; finish W9 load/mixed-version qualification and W10 rollout/runbooks. |
 
 This planning pass does not certify the Rust implementation or provider/process
 behavior. Record verification against the exact revision and diff that ran;
@@ -120,12 +120,16 @@ its source fingerprint, selected commands, and limits; it does not mark an
 entire work package complete.
 
 The [fleet journal example](../crates/cellule-host/minion/README.md)
-currently supports `inspect-journal <database-path>`, `overload`, and
-`controller-restart`. The first reopens the local durable reference journal.
-The latter commands exercise real bounded movement, including a new controller
-epoch after lost source replies and actual lease expiry. Maintenance and
-receiver-loss scenarios, complete production observations, and the full W8
-exit requirements remain deliverables.
+currently supports `inspect-journal <database-path>`, `overload`,
+`controller-restart`, `receiver-loss`, count `balance`, writer-only
+`maintenance`, and reader-only `maintenance-reader`. The first reopens the local durable reference journal. Movement
+commands exercise real bounded placement,
+including a new controller epoch after lost source replies and actual lease
+expiry. Live-reader maintenance is runnable through the CLI; follower and failed-owner
+maintenance have focused minion scenarios. Receiver loss joins the failed receiver, publishes exact boot
+closure, routes the original release, loses and replays activation, and rebuilds
+the controller from retained state before checking all twelve receipts. Complete
+production observations and the full W8 exit requirements remain deliverables.
 
 | Start here | Contents |
 | --- | --- |
@@ -290,11 +294,11 @@ present API; the pseudocode below specifies the remaining orchestration.
 | `FollowerEvacuationRecord` / `FleetFollowerEvacuationJournal` / `FleetFollowerEvacuationVerifier` | Present bounded durable live-owner ensemble history, revisioned application policy, atomic latest pointers and canonical/native revalidation/refresh. | Bind every original Retired member and replacement request, confirm current canonical ensemble plus the actual source/member native owners through `FleetSnapshotTransport`. Refresh after policy/epoch/operation changes without repeating original retirement. Complete failed-owner cases outside the recovered-log path, full observer and SettleRoles/Finalize integration; this per-owner evidence cannot finish maintenance. |
 | `FleetObservation::with_role_coverage` | Present retained graph attachment and planner-input binding. | Preserve the original interval and reject replacement or scope/registry mismatches. The reconciler rechecks the graph's exact head/registry and full roster digest; unchanged registry alone cannot admit an earlier controller head. Attachment never upgrades partial adapter coverage. |
 | `MaintenanceEnrollmentInventory`, `FleetJournal::maintenance_enrollments` and `FleetMaintenanceEnrollments::collect` | Present bounded original Pending/Established reader/follower pages frozen with the first BeginEvacuation CAS, at either physical endpoint including earlier boots. | Retain exact pretransition head, registry, operation and acceptance times. Traverse every page, match original acceptances against the fresh full roster, and attach with `FleetObservation::with_maintenance_enrollments`. Missing history remains unknown; zero requires a committed empty manifest. New source replacement work after capture remains in the current graph. All original and current policy/work obligations remain required before settlement. |
-| `FleetObservation::with_role_evacuations` | Present retention of freshly rechecked durable reader/follower policy history, current authority/prefixes and native source/member evidence. Planner digest v14 binds complete original checks and the immutable maintenance enrollment manifest. | Require one exact full head, registry and roster, with every original fresh interval inside the outer observation. Compare signed replacement boots with the existing producer identities and refuse duplicate obligations. Public minion reconciliation consumes actual ready readers and rotated ensembles without upgrading partial coverage. Complete authenticated policy coverage and accepted-work/finalization barriers remain required. |
-| `FleetMaintenanceNonexecution` / `FleetEnrollmentNonexecution` | Present independent read-only confirmation of retained original nonexecution, exact terminal witnesses and the complete original/current request set. Whole-capture clocks/deadlines and full head/registry rechecks refuse missing or changed evidence; planner digest v14 binds checked results. | Applications authenticate original endpoints, earlier native/external joining and durable exclusion evidence. Actual reader/follower cases consume joined original witnesses; production provider/process retention, installed-role succession, other accepted work and finalization remain required. |
-| `FleetObservation::check_maintenance_policies` / `FleetReconcileReport::maintenance_policy` | Present bounded matching of every immutable original request and every currently unresolved related reader/follower against all supplied native policy checks. Exact current rows and Established donor original digests are required. Planner digest v14 binds source inputs and every explicit result. An exact canonical recovered-follower closure joined with its failed-boot process closure closes only the corresponding failed-owner source requests. | Attach original capture and all policy checks before matching. Missing history refuses matching; missing policy, Pending/Established, source succession and unproven nonexecution remain explicit gaps. Advisory counts retain their own full head/registry/interval; absent coverage stays unknown. Complete accepted-work and finalization evidence remain required. |
+| `FleetObservation::with_role_evacuations` | Present retention of freshly rechecked durable reader/follower policy history, current authority/prefixes and native source/member evidence. Planner digest v15 binds complete original checks and the immutable maintenance enrollment manifest. | Require one exact full head, registry and roster, with every original fresh interval inside the outer observation. Compare signed replacement boots with the existing producer identities and refuse duplicate obligations. Public minion reconciliation consumes actual ready readers and rotated ensembles without upgrading partial coverage. Complete authenticated policy coverage and accepted-work/finalization barriers remain required. |
+| `FleetMaintenanceNonexecution` / `FleetEnrollmentNonexecution` | Present independent read-only confirmation of retained original nonexecution, exact terminal witnesses and the complete original/current request set. Whole-capture clocks/deadlines and full head/registry rechecks refuse missing or changed evidence; planner digest v15 binds checked results. | Applications authenticate original endpoints, earlier native/external joining and durable exclusion evidence. Actual reader/follower cases consume joined original witnesses; production provider/process retention, installed-role succession, other accepted work and finalization remain required. |
+| `FleetObservation::check_maintenance_policies` / `FleetReconcileReport::maintenance_policy` | Present bounded matching of every immutable original request and every currently unresolved related reader/follower against all supplied native policy checks. Exact current rows and Established donor original digests are required. Planner digest v15 binds source inputs and every explicit result. An exact canonical recovered-follower closure joined with its failed-boot process closure closes only the corresponding failed-owner source requests. | Attach original capture and all policy checks before matching. Missing history refuses matching; missing policy, Pending/Established, source succession and unproven nonexecution remain explicit gaps. Advisory counts retain their own full head/registry/interval; absent coverage stays unknown. Complete accepted-work and finalization evidence remain required. |
 | `FleetReaderEvacuationVerifier::collect_maintenance` / `FleetFollowerEvacuationVerifier::collect_maintenance` | Present complete eligible donor history lookup from the canonical original/current request set, followed by existing authenticated native/current-policy confirmation. Exact original digest/current row and full head/registry/roster checks are retained. | Collect original history first and construct the outer observation after both role collections. Missing latest history supplies no check and stays MissingPolicy in the matcher. One monotonic 30-second capture and caller deadline bound collection; changed heads/policies during native capture fail closed. Source/failed-owner succession, nonexecution, unknown native/external work and finalization remain required. |
-| `FleetReaderEvacuationVerifier::collect_source_readers` / `FleetSourceReaderPolicies` / `FleetObservation::with_source_reader_policies` | Present exact native reader joins or failed-process reader closures composed with an actual managed native writer successor, minimum-prefix/origin verification, current reader policy and ready enrolled replacement prefixes. The complete original/current request set, full head/registry/roster, repeated provider allocation/presence and monotonic capture are retained in planner identity v14. | Authenticate both endpoints and canonical backend mappings. Retain the original native capsule or durable process closure through the application's existing accepted-work owner. Missing evidence stays SourceSuccessor; checked exact source requests become SourceReader. Local SQLite client reconstruction/public reconciliation cannot qualify OS/process restart exclusion or durable provider retention. Other accepted work and SettleRoles/Finalize remain required. |
+| `FleetReaderEvacuationVerifier::collect_source_readers` / `FleetSourceReaderPolicies` / `FleetObservation::with_source_reader_policies` | Present exact native reader joins or failed-process reader closures composed with an actual managed native writer successor, minimum-prefix/origin verification, current reader policy and ready enrolled replacement prefixes. The complete original/current request set, full head/registry/roster, repeated provider allocation/presence and monotonic capture are retained in planner identity v15. | Authenticate both endpoints and canonical backend mappings. Retain the original native capsule or durable process closure through the application's existing accepted-work owner. Missing evidence stays SourceSuccessor; checked exact source requests become SourceReader. Local SQLite client reconstruction/public reconciliation cannot qualify OS/process restart exclusion or durable provider retention. Other accepted work and SettleRoles/Finalize remain required. |
 | `CellNode::follower_evacuation` | Present per-live-owner replacement and retirement check after the original requested rotation. | Require the declared member minimum, donor exclusion, complete Established replacement rows, pinned signed boots, current authority and full journal rechecks. Retain the original completion/error history and publish/revalidate its interval. This does not settle failed owners, Pending producers or the physical node's other obligations. |
 | Recovered-log authorization, member retirement and canonical Retired CAS | Present runtime tail closure after canonical recovery pinning. | Use `RecoveredNodeLogTransport`, receiver-side `authorize_recovered_log_retire` and `FollowerStore::retire_recovered`; confirm every original member before `retire_recovered_log`. Adopt exact committed closure with `retired_recovered_log` before repeating effects. Publish original enrollments through the host capsule, then complete failed-process barriers and maintenance orchestration; native closure alone cannot finish W7. |
 | `RecoveryManifestStore::load_manifest` | Complete digest-verified recovered-suffix metadata across every original application, retained after successor materialization. | Read the identity from canonical sealed-log authority, then verify each bundle through its application's ordinary store. Retain the complete original writer set separately, including object-covered Cells without a suffix; check current successor authority, acknowledged prefixes and serving. This metadata read cannot settle roles or finalize a node. |
@@ -745,6 +749,84 @@ Public W4 tests must race ordinary acquisition against preparation on the same
 ledger, expire credit immediately after confirmed release, and drop a cleanup
 reply. Each test must reach current serving plus confirmed resource settlement,
 or retain an inspectable charged blocker without claiming cancellation.
+
+### Receiver session loss after release
+
+The original `MoveAttemptSpec` remains immutable: it records the preferred
+receiver boot that admitted the original reservation. A successor receiver is
+a separate, journaled continuation of the same charged attempt, never a rewrite
+of that spec or a second movement permit.
+
+1. Reconfirm the exact retired receiver boot against the full roster and durable
+   process provider. Lease expiry, a missing endpoint, a reboot, or an empty
+   local ledger is not a cleanup proof.
+2. Bind a bounded receiver handoff to the exact previous and next node/session,
+   the original attempt, the previous boot's closure digest, and the current
+   registry barrier. Commit it before dispatch. Keep the original release and
+   all prior accepted action results.
+3. Select only an Established, live, Active-intent receiver with fresh capacity
+   and compatible Cell support. The target runtime performs ordinary resource
+   admission before any authority CAS; the fleet permit remains charged during
+   this continuation.
+4. Read the current authority before resuming. Idle at or beyond a clean release
+   uses exact-root acquisition. Serving or Recovering under a closed prior
+   receiver requires a matching takeover proof and retains the new recovery
+   basis before successor publication. These outcomes remain distinct.
+5. Give the continuation a stable target-bound action identity. A lost reply
+   replays only at that target. A controller restart recovers the accepted
+   target/closure chain from durable journal records. A second receiver failure
+   may continue only after its own fresh process closure; bound the chain and
+leave an inspectable charged blocker when the bound is exhausted.
+
+An interrupted evidence write after native materialization can roll the target
+back to a safe Idle root. Replay reconfirms or reconstructs the original receiver
+evidence only from the exact canonical acquisition record. It verifies both the
+original recovery prefix and clean release prefix before ordinary admitted
+acquisition. The retained acceptance, original recovery input/materialization,
+capture times and charged permit remain unchanged. A same-session ordinary
+acquisition winner must pass those same current-serving checks. Missing or
+substituted history remains Unknown; inspection cannot repair records or acquire.
+
+Failed-source Recover now applies this continuation to its original retained
+`RecoveryBasis` and exact native materialization as well. Missing metadata is
+reconstructed only from the original immutable acquisition input/result, never
+from the current Idle root or a newer owner. For sealed suffixes, the explicit
+Idle verifier checks the complete unowned selected control before and after
+the bounded original-history/origin walk. Ordinary acquisition winners still
+require original native history and fresh actor proof. Public host cases cover
+lost replies, repeated write failure, cancelled repair waiters, missing/corrupt
+or substituted history, and real sealed suffixes with receipt readback. The full
+routed inherited-overlay and controller/provider fault campaign remains open.
+
+Three selected routed reference cases now inherit an actual sealed follower tail
+through an interrupted earlier native claim. They combine evidence-write failure,
+safe Idle reacquisition, historical manifest absence/corruption, cancelled replay
+waiters, and real controller expiry with an independently reconstructed journal.
+They retain the manifest epoch, exact native materialization and original command
+receipts, and join original receiver credit before retiring the attempt. Original
+follower requests are Pending before canonical enrollment; complete native
+retirement and typed publication precede receiver process closure. These are
+in-process fault models. Exhaustive provider/backend/lineage faults, successive
+receiver-boot failures and measured process/provider qualification remain required.
+
+An interrupted target may instead retain its own Recovering claim and attached
+overlay. Effect replay reconfirms the original fenced input and uses the shared
+native takeover continuation without another ownership CAS. The current control
+must be the exact original claim or canonical materialized successor. Pinned
+suffixes retain their manifest's original Cell epoch, even after takeover
+advances the current epoch. Selected public host cases cover repeated manifest
+failure, replay waiter cancellation, committed materialization before admission,
+changed-input refusal, receipt readback and later historical manifest corruption.
+The routed integration/fault campaign still must combine these overlay cases
+with boot and controller succession.
+
+Tests must kill the original receiver after confirmed release, preserve the
+acknowledged root, recover on a different live receiver, and verify current
+actor/authority, exact action replay, one writer, one charged attempt, resource
+settlement, and no dispatch to either retired session. Add pre- and post-CAS
+failures, a lost continuation reply, controller restart during handoff, an
+ineligible/full receiver, and repeated receiver failure. Provider errors and
+cancellation must retain the original source and blocker.
 
 ## Durable controller state and bounded execution
 
@@ -1255,6 +1337,7 @@ The current additions preserve previous layouts and discriminants:
 | Recover remote action | 7; Retire 6 remains journal-local. |
 | Recovered outcome | 11 |
 | RecoveryBasis and RecoveryEvidence record kinds | 10 and 11 |
+| ReceiverRecoveryBasis and ReceiverRecoveryEvidence record kinds | 30 and 31; separate from original source recovery. |
 | RegistryVersion, IntentPage, EnrollmentRecord, EnrollmentPage, and EnrollmentSpec record kinds | 12 through 16 |
 
 Only the new Recovered phase carries its recovery evidence extension. Old strict
@@ -1461,9 +1544,29 @@ and pure action contracts have focused coverage in the
 [execution evidence](fleet-operations-progress.md). The driver now accepts
 busy maintenance demand with a separate configured peak envelope under exact
 Evacuating intent and fresh source/receiver evidence; ordinary pressure/count
-moves still require settled samples. Complete the remaining host fault cases,
-every primitive's acceptance matrix, Blob owners and process/provider
-qualification before claiming this work package complete.
+moves still require settled samples. Canonical minion `maintenance-busy` now
+runs two continuous SQL lanes through the public reconciler: original owner-fence
+inventory survives publisher borrowing, root changes invalidate count coverage,
+receiver preparation precedes native quiescence, and every acknowledged outcome
+and exact audit row survives restoration. Publication-paused runtime cases cover
+exact epoch/generation refusal and no premature release.
+
+Blob artifacts now have one shared original-operation admission and close/join
+lifecycle. Public mutations retain staging through command response; range reads
+retain metadata and all parts, including after caller cancellation or closure.
+The existing host facility drain owns the installed store and joins accepted
+namespace/GC work before runtime shutdown. GC retains its complete supplied
+reference set with shared ownership. Focused tests cover cancelled provider jobs,
+capacity, original failure/panic sources, metadata-paused ranges and manifest
+publication after upload waiter loss. This supplies local lifetime coverage;
+Prepared command dispatch through the configured client now acquires that same
+original admission, including clones and restored snapshots; closure refuses
+new dispatch without changing request identity or snapshot bytes. Cell-scoped
+stream/upload/pin coverage, global retention and unknown remote effects remain
+separate obligations. `BlobInventory`
+still blocks release. Complete the remaining host fault cases, every primitive's
+acceptance matrix, Blob owner/pin barriers and process/provider qualification
+before claiming this work package complete.
 
 Dependencies: W1, W3, W4.
 
@@ -1483,6 +1586,20 @@ blockers and prevent declaring general maintenance support complete.
 ### W7 Complete role evacuation and resumable node finalization
 
 Dependencies: W2, W3, W5, W6.
+
+Controller reconstruction now refreshes a committed native `SettleRoles`
+receipt after a lost reply at the new request's head, retaining the original
+acceptance and action key. The minion case checks Closing/Completed, exact boot
+withdrawal, canonical-root and command-result readback, and joined resources.
+Two focused cases renew the same claimant and replace it after actual lease
+expiry. The latter renews the original signed boots while waiting, checks the
+new controller epoch, and requires the old controller to be fenced without
+changing the journal. Before-write and after-commit result failures now require
+the old proof's Conflict, original join/retirement and fresh complete evidence
+before Closing. Cancelled-controller cases retain the actual paused native
+publication owner and refuse replacement while it is running. Original journal
+acceptance and historical receipts remain unchanged. External process/provider
+faults and the complete role/primitive matrix still require qualification.
 
 Extend host durability/read-replica orchestration and runtime follower
 inventory/retirement adapters to evacuate foreign obligations. Add an explicit
@@ -1509,8 +1626,26 @@ for terminal action handoff. Managed boots can bind their original authenticated
 directory version and Established registry row before readiness. The native
 closing task checks canonical withdrawal and committed boot retirement before
 Stopped, retaining its original evidence across a deadline or ambiguous reply.
-This is wired into the reference example. Complete role settlement, the original
-action's join before handoff, and committed operation completion remain required.
+The Finalize handoff is wired through the native node boundary and reference
+transport. It requires the committed Closing evidence and a bound managed-boot
+withdrawal, accepts outside the ordinary finite action bank, closes that bank,
+joins its accepted work through the canonical drain owner, and publishes Stopped
+only after the retained drain confirms shutdown and withdrawal. Retirement
+advances the enrollment registry, so Closing-phase reconciliation reloads the
+snapshot and revalidates the same operation/evidence before committing
+Completed. The reference SQLite journal now refuses ReadyToClose unless the
+exact operation/session has a committed SettleRoles result bound to the current
+head revision and RegistryVersion. A head or registry change after settlement
+fences the transition, and
+the legacy inventory-only result remains readable but cannot authorize Closing.
+The host SettleRoles executor, its complete inventory/replacement-policy proof,
+and the reconciler path that supplies this evidence are now wired. Real reader-
+only, live-follower-only and combined reader/follower scenarios verify durable
+replacement policy, settle roles, finalize the source boot, and check service
+evidence afterward. The combined scenario requires both policies and refuses
+reader closure while a selected replacement lacks Established enrollment.
+Dead-owner follower maintenance still requires external process/provider
+qualification.
 
 Exit: maintenance with zero local writers but uncovered foreign follower
 tails remains blocked; live-owner rotation and dead-owner recovery both clear
@@ -1712,13 +1847,21 @@ node crates/cellule-runtime/docs/validate.mjs
 ```
 
 The following example commands are deliverables of W8. The current tree supports
-`overload` and `controller-restart` with the evidence limits recorded in
-[execution evidence](fleet-operations-progress.md); `maintenance` and
-`receiver-loss` remain unimplemented:
+`overload`, `controller-restart`, `receiver-loss`, writer-only `maintenance`,
+reader-only `maintenance-reader`, live-follower `maintenance-follower`, and
+combined reader/follower `maintenance-roles` with
+the evidence limits recorded in [execution evidence](fleet-operations-progress.md).
+Reader-only, live-follower-only and combined reader/follower maintenance each
+have focused end-to-end minion scenarios, as does failed-owner follower
+maintenance. A role-complete maintenance CLI and the full fault/provider
+qualification remain required:
 
 ```sh
 cargo run -p cellule-host --example fleet_operations --locked -- overload
 cargo run -p cellule-host --example fleet_operations --locked -- maintenance
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-reader
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-follower
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-roles
 cargo run -p cellule-host --example fleet_operations --locked -- controller-restart
 cargo run -p cellule-host --example fleet_operations --locked -- receiver-loss
 ```

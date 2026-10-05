@@ -75,6 +75,8 @@ const MAX_NODE_TASKS: usize = 256;
 
 /// Stable host-owned component name for the follower store.
 pub const FOLLOWER_STORE_COMPONENT: &str = "follower-store";
+/// Stable host-owned component name for the Blob artifact store.
+pub const BLOB_ARTIFACT_STORE_COMPONENT: &str = "blob-artifact-store";
 /// Stable host-owned component name for the node-log enrollment provider.
 pub const NODE_DURABILITY_PROVIDER_COMPONENT: &str = "node-durability-provider";
 pub(crate) const NODE_DURABILITY_SUPERVISOR_COMPONENT: &str = "node-durability-supervisor";

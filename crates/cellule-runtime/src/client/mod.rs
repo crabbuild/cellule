@@ -365,7 +365,28 @@ impl<C: Command> PreparedCommand<C> {
     /// Executes the prepared request once against its validated owner incarnation.
     ///
     /// Returns pending evidence when acceptance is unknown and rejects an expired identity.
+    /// A configured Blob namespace also requires the original artifact store's
+    /// admission. Clones and restored requests cannot dispatch after its closure;
+    /// accepted dispatch remains owned through native completion after waiter loss.
     pub async fn execute(
+        self,
+    ) -> std::result::Result<Committed<C::Output>, InvocationError<C::Output>> {
+        if self
+            .client
+            .registry
+            .namespace_contract(self.evidence.target.namespace())
+            .is_some_and(|(_, namespace)| namespace.role == crate::cell::catalog::CatalogRole::Blob)
+            && let Some(store) = self.client.blob_artifact_store()
+        {
+            return store.run_invocation(self.execute_native()).await;
+        }
+        self.execute_native().await
+    }
+
+    // Namespace convenience mutation already owns staging and dispatch in one
+    // original artifact lifetime. Re-admission here could refuse its accepted
+    // manifest write after closure or consume a second slot at the job bound.
+    pub(crate) async fn execute_native(
         mut self,
     ) -> std::result::Result<Committed<C::Output>, InvocationError<C::Output>> {
         let now_ms = unix_time_ms().map_err(InvocationError::NotStarted)?;

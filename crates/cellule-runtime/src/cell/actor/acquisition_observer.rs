@@ -16,6 +16,8 @@ pub trait AcquisitionObserver: Send + Sync + 'static {
     /// Records the exact canonical input before its ownership CAS. Takeover may
     /// retry a changed predecessor, so an adapter must explicitly accept or
     /// reject each input; it must never silently overwrite an earlier basis.
+    /// Resuming an already claimed takeover reconfirms the original input here
+    /// before materialization; it performs no additional ownership CAS.
     fn before_claim<'a>(&'a self, input: &'a Control) -> AcquisitionObservation<'a>;
 
     /// Records the exact published recovery/root position before actor activation.

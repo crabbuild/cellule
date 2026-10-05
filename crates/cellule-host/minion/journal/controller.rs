@@ -61,6 +61,81 @@ impl FleetJournal for SqliteJournal {
                     // deadline/session progress. Replays cannot start it again.
                     return Ok(current);
             }
+            if matches!(
+                transition,
+                JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(_))
+            ) {
+                let operation = current
+                    .head()
+                    .maintenance()
+                    .ok_or(OperationError::NotFound)?;
+                let key = FleetAction::maintenance_action_key(
+                    current.head().scope(),
+                    MaintenanceAction::SettleRoles,
+                    operation,
+                )?;
+                let (accepted, result) = db
+                    .accepted(
+                        key,
+                        operation.node(),
+                        operation.session(),
+                    )?
+                    .ok_or(OperationError::Invalid(
+                        "ready-to-close lacks committed role settlement",
+                    ))?;
+                let accepted_operation = match accepted.action().kind() {
+                    FleetActionKind::Maintenance {
+                        action: MaintenanceAction::SettleRoles,
+                        operation,
+                    } => operation,
+                    _ => {
+                        return Err(OperationError::Invalid(
+                            "ready-to-close action is not SettleRoles",
+                        )
+                        .into());
+                    }
+                };
+                if accepted_operation.id() != operation.id()
+                    || accepted_operation.request_digest() != operation.request_digest()
+                    || accepted_operation.node() != operation.node()
+                    || accepted_operation.session() != operation.session()
+                    || accepted_operation.intent_revision() != operation.intent_revision()
+                    || accepted_operation.phase() != MaintenancePhase::Evacuating
+                {
+                    return Err(OperationError::Invalid(
+                        "ready-to-close SettleRoles identity differs",
+                    )
+                    .into());
+                }
+                let result = result.ok_or(OperationError::Invalid(
+                    "ready-to-close lacks committed role settlement",
+                ))?;
+                let (result_registry, result_head_revision) = match result.outcome {
+                    FleetOutcome::RolesSettledAt {
+                        registry,
+                        head_revision,
+                        ..
+                    } => (registry, head_revision),
+                    _ => {
+                        return Err(OperationError::Invalid(
+                            "ready-to-close lacks current successful role settlement",
+                        )
+                        .into());
+                    }
+                };
+                if result_registry != current.registry() {
+                    return Err(OperationError::Conflict.into());
+                }
+                if result_head_revision != current.head().revision() {
+                    return Err(OperationError::Conflict.into());
+                }
+                if result.observed_at_ms > now_ms {
+                    return Err(OperationError::Invalid(
+                        "ready-to-close lacks current successful role settlement",
+                    )
+                    .into());
+                }
+            }
             let head = current.head().transition(db.profile, current.head().revision(), epoch, now_ms, transition.clone())?;
             if head == *current.head() { return Ok(current); }
             if matches!(transition, JournalTransition::Maintenance(MaintenanceEvent::BeginEvacuation)) {

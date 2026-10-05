@@ -1,16 +1,18 @@
+//! Trusted local routing through the canonical signed peer verifier/dispatcher.
 use super::*;
+use cellule_host::read_replicas::ReadReplicaManager;
 use cellule_runtime::peer::{
     PeerAuthorizer, PeerDispatcher, PeerRoundTrip, ResidentPeerCellResolver, VerifiedPeerRequest,
-    wire,
 };
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+use cellule_runtime::{Error, node::NodeDirectory};
+use ed25519_dalek::SigningKey;
+#[cfg(test)]
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
+use std::{future::Future, pin::Pin};
+#[cfg(test)]
 use tokio::sync::oneshot;
 
 #[derive(Clone)]
@@ -18,9 +20,12 @@ pub(super) struct NativePeers {
     directory: NodeDirectory,
     origin: usize,
     dispatchers: Vec<Arc<PeerDispatcher>>,
+    #[cfg(test)]
     pub(super) probes: Arc<AtomicUsize>,
+    #[cfg(test)]
     pause: Arc<Mutex<Option<Pause>>>,
 }
+#[cfg(test)]
 struct Pause {
     number: usize,
     captured: oneshot::Sender<()>,
@@ -41,7 +46,7 @@ impl PeerAuthorizer for Authorizer {
                 .any(|action| action == "replica-maintenance")
         {
             return Err(Error::PeerAuthorization(
-                "maintenance fixture principal differs",
+                "maintenance example principal differs",
             ));
         }
         Ok(())
@@ -89,10 +94,13 @@ impl NativePeers {
             directory,
             origin,
             dispatchers,
+            #[cfg(test)]
             probes: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
             pause: Arc::new(Mutex::new(None)),
         }
     }
+    #[cfg(test)]
     pub(super) fn pause_probe(
         &self,
         number: usize,
@@ -115,7 +123,7 @@ impl PeerRoundTrip for NativePeers {
         _: Vec<u8>,
         _: u32,
     ) -> Pin<Box<dyn Future<Output = cellule_runtime::Result<Vec<u8>>> + Send + 'static>> {
-        Box::pin(async { Err(Error::Peer("fixture requires explicit replica routing")) })
+        Box::pin(async { Err(Error::Peer("example requires explicit replica routing")) })
     }
     fn send_to_node(
         &self,
@@ -126,7 +134,7 @@ impl PeerRoundTrip for NativePeers {
     ) -> Pin<Box<dyn Future<Output = cellule_runtime::Result<Vec<u8>>> + Send + 'static>> {
         let peers = self.clone();
         Box::pin(async move {
-            let index = (0..3)
+            let index = (0..peers.dispatchers.len())
                 .find(|index| node.node() == node_id(*index) && node.session() == session(*index))
                 .ok_or(Error::Fenced)?;
             let now = clock()?;
@@ -151,16 +159,24 @@ impl PeerRoundTrip for NativePeers {
             if verified.target() != &target {
                 return Err(Error::Fenced);
             }
+            #[cfg(test)]
             let status = matches!(
                 verified.operation(),
-                Some(wire::peer_request::Operation::Read(wire::ReadRequest {
-                    operation: Some(wire::read_request::Operation::ReplicaStatus(true)),
-                    ..
-                }))
+                Some(cellule_runtime::peer::wire::peer_request::Operation::Read(
+                    cellule_runtime::peer::wire::ReadRequest {
+                        operation: Some(
+                            cellule_runtime::peer::wire::read_request::Operation::ReplicaStatus(
+                                true
+                            )
+                        ),
+                        ..
+                    }
+                ))
             );
             let reply = peers.dispatchers[index]
                 .dispatch_bytes(&verified, clock()?)
                 .await?;
+            #[cfg(test)]
             let pause = if status {
                 let number = peers.probes.fetch_add(1, Ordering::SeqCst) + 1;
                 let mut pending = peers.pause.lock().unwrap();
@@ -172,6 +188,7 @@ impl PeerRoundTrip for NativePeers {
             } else {
                 None
             };
+            #[cfg(test)]
             if let Some(pause) = pause {
                 let _ = pause.captured.send(());
                 let _ = pause.resume.await;

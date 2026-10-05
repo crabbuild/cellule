@@ -114,7 +114,7 @@ async fn inspect_suffix(corrupt: bool) {
     movement.shutdown().await;
 }
 
-async fn start_suffix_recovery(movement: &Movement) {
+pub(super) async fn start_suffix_recovery(movement: &Movement) {
     let prepared = movement.prepare().await;
     let FleetOutcome::Reserved(reservation) = prepared.outcome.outcome else {
         panic!("not prepared")

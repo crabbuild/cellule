@@ -2,10 +2,9 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use cellule_runtime::fleet::operations::AttemptId;
 use cellule_runtime::fleet::operations::{
-    DrainBlocker, FleetAction, FleetInspectionObservation, FleetInspectionRequest, FleetProfile,
-    FleetScope, JournalTransition, MaintenancePhase, OperationError,
+    AttemptId, DrainBlocker, FleetAction, FleetInspectionObservation, FleetInspectionRequest,
+    FleetProfile, FleetScope, JournalTransition, MaintenancePhase, OperationError,
 };
 use cellule_runtime::identity::SessionId;
 use cellule_runtime::{Error, Result};
@@ -22,7 +21,7 @@ mod movement;
 mod observation;
 mod planning;
 mod successor;
-pub use observation::{FleetObservation, FleetOwnedCell};
+pub use observation::{FleetObservation, FleetOwnedCell, FleetRoleSettlement};
 
 /// Application-owned complete roster and authenticated paginated observation.
 ///
@@ -53,6 +52,62 @@ pub trait FleetTransport: Send + Sync + 'static {
         action: &'a FleetAction,
         deadline: Instant,
     ) -> FleetAdapterFuture<'a, Arc<FleetActionCompletion>>;
+
+    /// Publishes a fresh complete role settlement at the exact action barrier.
+    /// Network adapters authenticate the action and carry the opaque proof to
+    /// the bound target node. The default keeps adapters that do not support
+    /// role settlement fail closed.
+    fn settle_roles<'a>(
+        &'a self,
+        _action: &'a FleetAction,
+        _settlement: &'a super::FleetRoleSettlement,
+        _deadline: Instant,
+    ) -> FleetAdapterFuture<'a, Arc<FleetActionCompletion>> {
+        Box::pin(async {
+            Err(Box::new(Error::Control(
+                "fleet role settlement transport is not configured",
+            )) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
+
+    /// Publishes SettleRoles after the exact maintenance boot has already
+    /// stopped. Implementations must validate the opaque host settlement and
+    /// matching retained process-closure proof, then durably accept and publish
+    /// the exact RolesSettledAt result through the fleet journal. They must not
+    /// dispatch to, or infer completion from, the stopped endpoint. The default
+    /// refuses closed-boot settlement.
+    fn settle_roles_after_process_closure<'a>(
+        &'a self,
+        _action: &'a FleetAction,
+        _settlement: &'a super::FleetRoleSettlement,
+        _closure: &'a crate::fleet::FleetFailedBootClosure,
+        _deadline: Instant,
+    ) -> FleetAdapterFuture<'a, Arc<FleetActionCompletion>> {
+        Box::pin(async {
+            Err(Box::new(Error::Control(
+                "closed-boot role settlement transport is not configured",
+            )) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
+
+    /// Publishes terminal Finalize evidence after the operation's exact boot
+    /// has already been retired. Implementations must verify that the fresh
+    /// closure matches the Closing action and exact current journal snapshot,
+    /// then durably accept and publish `Stopped` using the committed ready-to-
+    /// close evidence. They must not contact the stopped endpoint. The default
+    /// refuses this path.
+    fn finalize_after_process_closure<'a>(
+        &'a self,
+        _action: &'a FleetAction,
+        _closure: &'a crate::fleet::FleetFailedBootClosure,
+        _deadline: Instant,
+    ) -> FleetAdapterFuture<'a, Arc<FleetActionCompletion>> {
+        Box::pin(async {
+            Err(Box::new(Error::Control(
+                "closed-boot finalization transport is not configured",
+            )) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
 
     /// Captures current authority and actor evidence for the entire request.
     /// Cached effect receipts cannot satisfy this boundary.
@@ -110,6 +165,21 @@ pub struct FleetReconcileReport {
 }
 
 impl FleetReconcileReport {
+    fn failed(&mut self, attempt: AttemptId, error: Error) {
+        // A fallback may progress after an endpoint fails. Preserve the first
+        // source for that attempt without exceeding the per-attempt bound.
+        if !self
+            .failures
+            .iter()
+            .any(|failure| failure.attempt == attempt)
+        {
+            self.failures.push(FleetAttemptFailure {
+                attempt,
+                error: Arc::new(error),
+            });
+        }
+    }
+
     fn blocked(&mut self, reason: DrainBlocker) {
         if !self.blockers.contains(&reason) {
             self.blockers.push(reason);
@@ -264,14 +334,12 @@ impl FleetReconciler {
                     report.snapshot = snapshot;
                 }
                 report.blocked(DrainBlocker::OutcomeUnknown);
-                report.failures.push(FleetAttemptFailure {
-                    attempt: id,
-                    error: Arc::new(error),
-                });
+                report.failed(id, error);
             }
         }
+        let mut pass_observation = None;
         if let Err(error) = self
-            .advance_maintenance(&clock.partition(2), &mut report)
+            .advance_maintenance(&clock.partition(2), &mut report, &mut pass_observation)
             .await
         {
             let timed_out = matches!(
@@ -308,7 +376,8 @@ impl FleetReconciler {
             report.maintenance_failure = Some(Arc::new(error));
         }
         if report.snapshot.registry().scheduling_enabled() {
-            self.plan(&clock, &mut report).await?;
+            self.plan(&clock, &mut report, &mut pass_observation)
+                .await?;
         }
         // Proven cancellation keeps the periodic retry interval, avoiding an
         // immediate allocation/refusal loop when a receiver cannot admit work.

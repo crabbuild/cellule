@@ -18,7 +18,7 @@ mod inventory_tests;
 mod persisted;
 mod source;
 mod tests;
-mod transport;
+use crate::scenario::native_peers as transport;
 
 struct Fixture {
     layout: CellStorageLayout,
@@ -28,6 +28,7 @@ struct Fixture {
     directory: NodeDirectory,
     nodes: Vec<Arc<CellNode>>,
     managers: Vec<ReadReplicaManager>,
+    records: Arc<HashMap<CellId, Record>>,
     boots: Vec<startup::BootOwner>,
     handle: CellHandle,
     target: CellTarget,

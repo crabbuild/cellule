@@ -167,7 +167,7 @@ fn node_intent_retains_cordon_until_exact_completed_revision_and_new_boot() {
         .apply(MaintenanceEvent::BeginEvacuation, 0)
         .unwrap();
     operation
-        .apply(MaintenanceEvent::ReadyToClose(drain_evidence()), 0)
+        .apply(MaintenanceEvent::ReadyToClose(closing_evidence()), 0)
         .unwrap();
     operation
         .apply(MaintenanceEvent::Stopped(drain_evidence()), 0)
@@ -414,9 +414,45 @@ fn maintenance_actions_and_results_require_exact_phase_and_terminal_proof() {
         .to_bytes()
         .is_err()
     );
+    let registry = RegistryVersion::new(settle.scope())
+        .unwrap()
+        .bootstrap(0)
+        .unwrap();
+    let settled = reply(
+        &settle,
+        true,
+        FleetOutcome::RolesSettledAt {
+            inventory: Digest::from_bytes([88; 32]),
+            head_revision: settle.journal_revision(),
+            registry,
+        },
+    );
+    assert_eq!(
+        FleetActionOutcome::from_bytes(&settled.to_bytes().unwrap()).unwrap(),
+        settled
+    );
+    assert!(
+        reply(
+            &settle,
+            true,
+            FleetOutcome::RolesSettledAt {
+                inventory: Digest::from_bytes([88; 32]),
+                head_revision: settle.journal_revision(),
+                registry: RegistryVersion::new(FleetScope {
+                    fleet: Digest::from_bytes([17; 32]),
+                    application: ApplicationId::from_bytes([18; 16]),
+                })
+                .unwrap()
+                .bootstrap(0)
+                .unwrap(),
+            },
+        )
+        .to_bytes()
+        .is_err()
+    );
     let head = transition(
         &head,
-        JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(drain_evidence())),
+        JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(closing_evidence())),
     );
     let finalize = head
         .maintenance_action(MaintenanceAction::Finalize, 0)
@@ -437,6 +473,32 @@ fn maintenance_actions_and_results_require_exact_phase_and_terminal_proof() {
             })
         )
         .to_bytes()
+        .is_err()
+    );
+}
+
+#[test]
+fn ready_to_close_cannot_claim_host_shutdown_or_withdrawal_before_finalize() {
+    let head = transition(&head(), JournalTransition::BeginMaintenance(maintenance()));
+    let head = transition(
+        &head,
+        JournalTransition::Maintenance(MaintenanceEvent::Cordoned),
+    );
+    let head = transition(
+        &head,
+        JournalTransition::Maintenance(MaintenanceEvent::BeginEvacuation),
+    );
+    let mut evidence = drain_evidence();
+    evidence.facilities_closed = true;
+    let epoch = head.controller().unwrap().epoch;
+    assert!(
+        head.transition(
+            FleetProfile::default(),
+            head.revision(),
+            epoch,
+            0,
+            JournalTransition::Maintenance(MaintenanceEvent::ReadyToClose(evidence)),
+        )
         .is_err()
     );
 }
@@ -472,4 +534,128 @@ fn action_and_intent_codecs_reject_truncation_extra_bytes_and_other_record_famil
     }
     assert!(FleetAction::from_bytes(&intent.to_bytes().unwrap()).is_err());
     assert!(NodeIntent::from_bytes(&action.to_bytes().unwrap()).is_err());
+}
+
+#[test]
+fn receiver_continuation_is_registry_bound_endpoint_bound_and_versioned() {
+    let original = spec(1);
+    let head = transition(&head(), JournalTransition::Allocate(original.clone()));
+    let head = attempt(&head, original.id, AttemptEvent::BeginPrepare);
+    let head = attempt(
+        &head,
+        original.id,
+        AttemptEvent::Reserved(ReceiverReservation {
+            session: original.destination,
+            expires_at_ms: 5_000,
+        }),
+    );
+    let head = attempt(&head, original.id, AttemptEvent::BeginRelease);
+    let head = attempt(&head, original.id, AttemptEvent::Released(release()));
+    let head = attempt(&head, original.id, AttemptEvent::BeginActivate);
+    let registry = RegistryVersion::new(head.scope())
+        .unwrap()
+        .bootstrap(0)
+        .unwrap();
+    let first = ReceiverRoute::begin(
+        head.scope(),
+        &original,
+        NodeId::from_bytes([7; 16]),
+        SessionId::from_bytes([77; 16]),
+        Digest::from_bytes([31; 32]),
+        registry,
+    )
+    .unwrap();
+    let next_registry = registry.advance(registry.revision()).unwrap();
+    let route = first
+        .extend(
+            head.scope(),
+            &original,
+            NodeId::from_bytes([8; 16]),
+            SessionId::from_bytes([78; 16]),
+            Digest::from_bytes([32; 32]),
+            next_registry,
+        )
+        .unwrap();
+    assert_eq!(
+        route.target(&original),
+        (NodeId::from_bytes([8; 16]), SessionId::from_bytes([78; 16]))
+    );
+    assert!(
+        route
+            .extend(
+                head.scope(),
+                &original,
+                NodeId::from_bytes([9; 16]),
+                SessionId::from_bytes([79; 16]),
+                Digest::from_bytes([33; 32]),
+                next_registry.advance(next_registry.revision()).unwrap(),
+            )
+            .is_err()
+    );
+
+    let action = head
+        .movement_action_with_receiver_route(
+            original.id,
+            MovementAction::Activate,
+            route.clone(),
+            0,
+        )
+        .unwrap();
+    assert!(action.authorize_against(&head, 1).is_err());
+    action
+        .authorize_against_registry(&head, next_registry, 1)
+        .unwrap();
+    assert!(
+        action
+            .authorize_against_registry(&head, registry, 1)
+            .is_err()
+    );
+    let unknown_head = attempt(&head, original.id, AttemptEvent::OutcomeUnknown);
+    let adopted = unknown_head
+        .movement_action_with_receiver_route(original.id, MovementAction::Activate, route, 0)
+        .unwrap();
+    adopted
+        .authorize_against_registry(&unknown_head, next_registry, 1)
+        .unwrap();
+    assert!(
+        action
+            .validate_endpoint(NodeId::from_bytes([2; 16]), original.destination)
+            .is_err()
+    );
+    assert!(
+        action
+            .validate_endpoint(NodeId::from_bytes([8; 16]), SessionId::from_bytes([78; 16]))
+            .is_ok()
+    );
+    assert_eq!(
+        FleetAction::from_bytes(&action.to_bytes().unwrap()).unwrap(),
+        action
+    );
+
+    let accepted = AcceptedFleetAction::new_with_registry(
+        action.clone(),
+        &head,
+        next_registry,
+        NodeId::from_bytes([8; 16]),
+        SessionId::from_bytes([78; 16]),
+        1,
+    )
+    .unwrap();
+    let result = FleetActionOutcome {
+        scope: head.scope(),
+        action_key: action.key().unwrap(),
+        node: NodeId::from_bytes([8; 16]),
+        session: SessionId::from_bytes([78; 16]),
+        observed_at_ms: 2,
+        outcome: FleetOutcome::Activated(ActivationEvidence {
+            node: NodeId::from_bytes([8; 16]),
+            session: SessionId::from_bytes([78; 16]),
+            position: PublishedPosition {
+                incarnation: original.incarnation,
+                epoch: original.source_epoch + 1,
+                root: release().root,
+            },
+        }),
+    };
+    accepted.validate_result(&result).unwrap();
 }

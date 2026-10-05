@@ -12,12 +12,21 @@ use cellule_runtime::node::NodeMode;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use tokio::sync::{Notify, Semaphore};
 
+#[cfg(test)]
+mod action_result_faults;
 mod actions;
+#[cfg(test)]
+pub(crate) use action_result_faults::ResultWriteBoundary;
 mod controller;
 mod enrollment;
 mod follower_evacuation;
 mod maintenance_enrollments;
 mod reader_evacuation;
+mod receiver_recovery;
+#[cfg(test)]
+mod receiver_recovery_faults;
+#[cfg(test)]
+pub(crate) use receiver_recovery_faults::{RecoveryWrite, RecoveryWriteBoundary};
 mod records;
 mod writer_inventory;
 use records::{Db, blob, profile_bytes, scope_bytes};
@@ -39,6 +48,8 @@ struct Inner {
     scope: FleetScope,
     profile: FleetProfile,
     #[cfg(test)]
+    role_result_fault: Mutex<Option<action_result_faults::RoleResultFault>>,
+    #[cfg(test)]
     lose_commit_reply: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     boot_reply: Mutex<Option<BootReplyPause>>,
@@ -50,6 +61,8 @@ struct Inner {
     follower_evacuation_reply: Mutex<Option<EnrollmentReplyPause>>,
     #[cfg(test)]
     original_writer_reply: Mutex<Option<BootReplyPause>>,
+    #[cfg(test)]
+    receiver_recovery_reply: Mutex<Option<receiver_recovery_faults::RecoveryWritePause>>,
 }
 
 #[cfg(test)]
@@ -136,6 +149,8 @@ impl SqliteJournal {
                 scope,
                 profile,
                 #[cfg(test)]
+                role_result_fault: Mutex::new(None),
+                #[cfg(test)]
                 lose_commit_reply: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 boot_reply: Mutex::new(None),
@@ -147,6 +162,8 @@ impl SqliteJournal {
                 follower_evacuation_reply: Mutex::new(None),
                 #[cfg(test)]
                 original_writer_reply: Mutex::new(None),
+                #[cfg(test)]
+                receiver_recovery_reply: Mutex::new(None),
             }),
         })
     }

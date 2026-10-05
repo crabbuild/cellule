@@ -31,67 +31,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(unix)]
 mod failed_boot;
+mod members;
 mod tests;
+pub(in crate::scenario) use members::Members;
 
 const NOW: i64 = 1_000_000;
 const CHECK: i64 = NOW + 10_005;
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(5)
-}
-
-struct Members {
-    peers: Vec<(NodeId, LocalRecoveredFollowerTransport)>,
-    retirements: AtomicUsize,
-}
-impl Members {
-    fn peer(&self, member: NodeId) -> &LocalRecoveredFollowerTransport {
-        &self
-            .peers
-            .iter()
-            .find(|(node, _)| *node == member)
-            .unwrap()
-            .1
-    }
-}
-impl NodeLogTransport for Members {
-    fn append<'a>(
-        &'a self,
-        member: NodeId,
-        request: AppendRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.peer(member).append(member, request)
-    }
-    fn seal<'a>(
-        &'a self,
-        member: NodeId,
-        request: SealRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.peer(member).seal(member, request)
-    }
-    fn retire<'a>(
-        &'a self,
-        member: NodeId,
-        request: RetireRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.peer(member).retire(member, request)
-    }
-    fn tail<'a>(
-        &'a self,
-        member: NodeId,
-        request: TailRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<Vec<Bytes>>> {
-        self.peer(member).tail(member, request)
-    }
-}
-impl RecoveredNodeLogTransport for Members {
-    fn retire_recovered<'a>(
-        &'a self,
-        member: NodeId,
-        request: RecoveredRetireRequest,
-    ) -> BoxFuture<'a, cellule_runtime::Result<FollowerReceipt>> {
-        self.retirements.fetch_add(1, Ordering::AcqRel);
-        self.peer(member).retire_recovered(member, request)
-    }
 }
 
 struct Fixture {
@@ -136,6 +83,16 @@ impl Fixture {
         Self::with_recovered_boot_at(observe, cells, frames, now, 0, 1).await
     }
 
+    async fn with_recovery_inputs_at_profile(
+        observe: bool,
+        cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
+        frames: Vec<Bytes>,
+        now: i64,
+        profile: FleetProfile,
+    ) -> Self {
+        Self::with_recovered_boot_at_profile(observe, cells, frames, now, 0, 1, profile).await
+    }
+
     async fn with_recovered_boot_at(
         observe: bool,
         cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
@@ -143,6 +100,27 @@ impl Fixture {
         now: i64,
         leader: usize,
         claimant: usize,
+    ) -> Self {
+        Self::with_recovered_boot_at_profile(
+            observe,
+            cells,
+            frames,
+            now,
+            leader,
+            claimant,
+            FleetProfile::default(),
+        )
+        .await
+    }
+
+    async fn with_recovered_boot_at_profile(
+        observe: bool,
+        cells: Vec<cellule_runtime::node::log_recovery::RecoveryCell>,
+        frames: Vec<Bytes>,
+        now: i64,
+        leader: usize,
+        claimant: usize,
+        profile: FleetProfile,
     ) -> Self {
         assert!(leader < 3 && claimant < 3 && leader != claimant);
         let check = now + 10_005;
@@ -152,7 +130,7 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("journal.sqlite");
         let journal = Arc::new(
-            SqliteJournal::open(path.clone(), scope(), FleetProfile::default(), now)
+            SqliteJournal::open(path.clone(), scope(), profile, now)
                 .await
                 .unwrap(),
         );

@@ -6,19 +6,17 @@ impl FleetActionExecutor {
         accepted: &AcceptedFleetAction,
         attempt: &MoveAttempt,
     ) -> cellule_runtime::Result<ActionResult> {
+        let closed_receiver_route = accepted.action().receiver_route().is_some();
         let prepared = match self.runtime.prepared_receiver(attempt.spec().id)? {
             Some(_) => {
                 let prepared = self.prepared(attempt)?;
                 match prepared.state()? {
                     ReceiverState::Prepared => Some(prepared),
-                    ReceiverState::Cancelled
-                        if self.confirmed_credit_settlement(attempt).await? =>
-                    {
-                        None
-                    }
+                    ReceiverState::Cancelled => None,
                     _ => return Ok(ActionResult::checked(FleetOutcome::Unknown)),
                 }
             }
+            None if closed_receiver_route => None,
             None if self.confirmed_credit_settlement(attempt).await? => None,
             None => {
                 return Err(Error::Peer(
@@ -33,6 +31,28 @@ impl FleetActionExecutor {
             .await?
             .ok_or(Error::Control("fleet activation authority is absent"))?;
         self.check_contract(attempt, &inputs, &observed)?;
+        if closed_receiver_route
+            && prepared.is_none()
+            && !(observed.value().state == ControlState::Idle
+                && observed.value().owner.is_none()
+                && observed.value().root.is_some())
+            && !(observed.value().state == ControlState::Serving
+                && observed
+                    .value()
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.session == self.session))
+        {
+            if matches!(
+                observed.value().state,
+                ControlState::Serving | ControlState::Recovering
+            ) {
+                return self
+                    .recover_receiver(accepted, attempt, &inputs, observed)
+                    .await;
+            }
+            return Ok(ActionResult::checked(FleetOutcome::Unknown));
+        }
         if prepared.is_none()
             && observed.value().state == ControlState::Serving
             && observed
@@ -41,12 +61,36 @@ impl FleetActionExecutor {
                 .as_ref()
                 .is_some_and(|owner| owner.session == self.session)
         {
+            if closed_receiver_route
+                && self
+                    .journal
+                    .load_receiver_recovery_basis(accepted)
+                    .await
+                    .map_err(journal_error)?
+                    .is_some()
+            {
+                return self
+                    .receiver_recovered_serving(accepted, attempt, &inputs)
+                    .await;
+            }
             // Ordinary acquisition can win after unused credit was joined. It
             // needs current serving proof, not a second ownership CAS.
             return self
                 .serving(attempt, &inputs)
                 .await
                 .map(ActionResult::checked);
+        }
+        if closed_receiver_route
+            && self
+                .journal
+                .load_receiver_recovery_basis(accepted)
+                .await
+                .map_err(journal_error)?
+                .is_some()
+        {
+            return self
+                .resume_receiver_recovery(accepted, attempt, &inputs, observed)
+                .await;
         }
         let basis =
             AcquisitionBasis::new(accepted.clone(), observed.value().clone(), wall_time_ms()?)

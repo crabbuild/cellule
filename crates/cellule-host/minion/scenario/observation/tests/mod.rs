@@ -42,10 +42,12 @@ impl Fixture {
                 nodes,
                 boots,
                 records,
+                reader_verifier: None,
                 journal,
                 capture_sequence: std::sync::atomic::AtomicU64::new(0),
                 lose_release_replies: false,
                 lost_release_replies: std::sync::atomic::AtomicUsize::new(0),
+                drop_closed_finalize_replies: std::sync::atomic::AtomicUsize::new(0),
                 expired_receiver_cleanups: std::sync::atomic::AtomicUsize::new(0),
             },
         }
@@ -522,7 +524,13 @@ async fn one_canonical_release_keeps_other_native_writers_available_for_pressure
     assert_ne!(after_page.topology(), topology);
     assert_eq!(after_page.owned_cells(), CELL_COUNT - 1);
     let mut candidates = original.cells;
-    retain_unchanged_writers(&mut candidates, 0, after_page.entries());
+    retain_unchanged_writers(
+        &mut candidates,
+        &roster,
+        0,
+        after_page.entries(),
+        clock().unwrap(),
+    );
     assert_eq!(candidates.len(), CELL_COUNT - 1);
     assert!(
         candidates

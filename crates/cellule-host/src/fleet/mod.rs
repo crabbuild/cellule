@@ -67,7 +67,7 @@ pub use inventory::{FleetNodeInventory, FleetNodeInventoryRecheck, FleetNodeInve
 pub use journal::{FleetActionAcceptance, FleetActionJournal, FleetAdapterFuture};
 pub use reconciler::{
     FleetAttemptFailure, FleetObservation, FleetObserver, FleetOwnedCell, FleetReconcileReport,
-    FleetReconciler, FleetTransport,
+    FleetReconciler, FleetRoleSettlement, FleetTransport,
 };
 pub use recovered::{
     FleetRecoveredFollowerClosure, FleetRecoveredFollowerMember, FleetRecoveredFollowerPublication,
@@ -80,8 +80,8 @@ pub use snapshot::{
     FleetSnapshotSubject, FleetSnapshotTransport,
 };
 
-pub(crate) use actions::FleetActionExecutor;
 pub(crate) use actions::operation;
+pub(crate) use actions::{FinalizeActionAdmission, FleetActionExecutor, wall_time_ms};
 
 /// Stable name of the node-owned finite fleet-action executor.
 pub const FLEET_ACTION_COMPONENT: &str = "fleet-actions";

@@ -1,6 +1,7 @@
 use super::*;
 use cellule_host::fleet::FleetActionJournal;
 use cellule_runtime::fleet::operations::*;
+mod routed;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver_adopts_ordinary_winner_and_joins_original_receiver_before_retirement() {
@@ -26,9 +27,11 @@ async fn driver_adopts_ordinary_winner_and_joins_original_receiver_before_retire
         journal: journal.clone(),
         boots: boots.clone(),
         records: records.clone(),
+        reader_verifier: None,
         capture_sequence: std::sync::atomic::AtomicU64::new(0),
         lose_release_replies: false,
         lost_release_replies: std::sync::atomic::AtomicUsize::new(0),
+        drop_closed_finalize_replies: std::sync::atomic::AtomicUsize::new(0),
         expired_receiver_cleanups: std::sync::atomic::AtomicUsize::new(0),
     });
     let driver = FleetReconciler::new(

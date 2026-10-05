@@ -61,9 +61,9 @@ impl NodeDirectory {
             return Err(Error::Node("node advertisement path and session differ"));
         }
         if let NodeRecord::Advertisement(advertisement) = &record {
+            // load_record_at already verified this exact canonical body.
             self.validate_scope(advertisement)?;
             advertisement.validate_shape()?;
-            advertisement.verify_signature()?;
         }
         Ok(record
             .log()

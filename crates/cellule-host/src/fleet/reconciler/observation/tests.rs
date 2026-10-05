@@ -77,6 +77,10 @@ fn observation() -> FleetObservation {
                 .unwrap(),
                 generation: 1,
                 incarnation: IncarnationId::from_bytes([11; 16]),
+                owner_fence: cellule_runtime::control::OwnerFence {
+                    incarnation: IncarnationId::from_bytes([11; 16]),
+                    epoch: 1,
+                },
                 code: Digest::from_bytes([12; 32]),
                 schema: 1,
                 role: CatalogRole::Sql,
@@ -173,4 +177,22 @@ fn busy_envelope_cannot_refresh_an_expired_collection_barrier() {
     let observation = observation();
     assert!(observation.digest(30_101).is_err());
     assert!(observation.placements(30_101).is_err());
+}
+
+#[test]
+fn owner_fence_is_bound_and_invalid_or_conflicting_identity_refuses_planning() {
+    let baseline = observation().digest(100).unwrap();
+    let mut changed = observation();
+    changed.cells[0].observation.owner_fence.epoch += 1;
+    assert_ne!(changed.digest(100).unwrap(), baseline);
+    for incarnation in [true, false] {
+        let mut invalid = observation();
+        let fence = &mut invalid.cells[0].observation.owner_fence;
+        if incarnation {
+            fence.incarnation = IncarnationId::from_bytes([99; 16]);
+        } else {
+            fence.epoch = 0;
+        }
+        assert!(invalid.digest(100).is_err());
+    }
 }

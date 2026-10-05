@@ -166,6 +166,10 @@ impl FleetObserver for Observer {
                             target: target(n),
                             generation: u64::from(n),
                             incarnation: position(1).incarnation,
+                            owner_fence: cellule_runtime::control::OwnerFence {
+                                incarnation: position(1).incarnation,
+                                epoch: 1,
+                            },
                             code: Digest::from_bytes([9; 32]),
                             schema: 1,
                             role: CatalogRole::Sql,
@@ -860,12 +864,7 @@ async fn draining_advertisement_or_pressure_alone_cannot_plan_busy_work() {
 
 #[tokio::test]
 async fn maintenance_planning_keeps_blob_role_and_missing_evidence_blocked() {
-    for state in [
-        CellState::Blob,
-        CellState::RoleBlocked,
-        CellState::NoCost,
-        CellState::NoPosition,
-    ] {
+    for state in [CellState::Blob, CellState::RoleBlocked, CellState::NoCost] {
         let fixture = Fixture::new(false, false, false).await;
         *fixture.observer.cell_state.lock().unwrap() = state;
         fixture.request_maintenance(NOW + 20_000).await;
@@ -1038,16 +1037,21 @@ async fn public_reconciler_drives_durable_phases_fresh_activation_cleanup_and_re
     assert_eq!(first.dispatched, 0);
     assert!(first.next_wake_at_ms < NOW + 100);
     assert_eq!(first.snapshot.head().reserved_restore_bytes(), 8192);
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 1);
     fixture.stop().await;
     assert_eq!(fixture.step(&driver, 1).await.dispatched, 2); // prepare
     let released = fixture.step(&driver, 2).await;
     assert_eq!(released.dispatched, 2);
     assert_eq!(released.released, 2);
     assert_eq!(released.activated, 0);
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 1);
     let activated = fixture.step(&driver, 3).await;
     assert_eq!(activated.inspected, 2);
     assert_eq!(activated.activated, 2);
     assert_eq!(activated.released, 0);
+    // Stop-new-moves suppresses planning, but each receiver effect still needs
+    // a fresh complete observation to decide whether its boot has closed.
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 3);
     assert!(
         activated
             .snapshot
@@ -1057,6 +1061,7 @@ async fn public_reconciler_drives_durable_phases_fresh_activation_cleanup_and_re
             .all(|a| a.phase() == AttemptPhase::Activated)
     );
     assert_eq!(fixture.step(&driver, 4).await.dispatched, 2); // independent resource proof
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 5);
     let retired = fixture.step(&fixture.driver(206), 5).await;
     assert_eq!(retired.retired, 2);
     assert_eq!(retired.inspected, 2);
@@ -1089,7 +1094,7 @@ async fn public_reconciler_drives_durable_phases_fresh_activation_cleanup_and_re
             entry.completed_at_ms()
         );
     }
-    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.observer.calls.load(Ordering::SeqCst), 5);
     fixture.journal.close().await.unwrap();
 }
 
@@ -1773,4 +1778,21 @@ async fn unknown_enrollment_disables_counts_and_keeps_pressure_relief_available(
         assert_eq!(record.updated_at_ms(), 0);
         fixture.journal.close().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn explicit_maintenance_can_prepare_from_retained_fence_without_borrowed_publisher_position()
+{
+    let fixture = Fixture::new(false, false, false).await;
+    *fixture.observer.cell_state.lock().unwrap() = CellState::NoPosition;
+    fixture.request_maintenance(NOW + 20_000).await;
+    let driver = fixture.driver(206);
+    fixture.step(&driver, 1).await;
+    let planned = fixture.step(&driver, 2).await;
+    assert_eq!(planned.allocated, 2);
+    assert_eq!(fixture.transport.released.load(Ordering::SeqCst), 0);
+    assert!(planned.snapshot.head().attempts().iter().all(|attempt| {
+        attempt.spec().source_epoch == 1 && attempt.spec().cost.disk_bytes == 8192
+    }));
+    fixture.journal.close().await.unwrap();
 }

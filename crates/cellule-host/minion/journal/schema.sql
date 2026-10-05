@@ -29,9 +29,16 @@ CREATE TABLE IF NOT EXISTS actions (
     PRIMARY KEY(key,node,session)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS movement_index ON actions(operation,sequence,effect,node,session) WHERE length(sequence)=8;
+DROP INDEX IF EXISTS maintenance_action_index;
 CREATE TABLE IF NOT EXISTS bases (
     key BLOB NOT NULL, node BLOB NOT NULL, session BLOB NOT NULL, kind INTEGER NOT NULL CHECK (kind IN (1,2,3)),
     body BLOB NOT NULL CHECK (length(body)<=65536), PRIMARY KEY(key,node,session,kind),
+    FOREIGN KEY(key,node,session) REFERENCES actions(key,node,session)
+);
+CREATE TABLE IF NOT EXISTS receiver_recoveries (
+    key BLOB NOT NULL CHECK(length(key)=32), node BLOB NOT NULL CHECK(length(node)=16),
+    session BLOB NOT NULL CHECK(length(session)=16), kind INTEGER NOT NULL CHECK(kind IN (1,2)),
+    body BLOB NOT NULL CHECK(length(body)<=65536), PRIMARY KEY(key,node,session,kind),
     FOREIGN KEY(key,node,session) REFERENCES actions(key,node,session)
 );
 

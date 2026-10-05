@@ -4,6 +4,8 @@ use super::*;
 use crate::builder::append_required_components;
 use crate::durability::DurabilitySupervisor;
 
+mod finalize;
+
 pub(crate) struct FleetStartup {
     pub(crate) intent: cellule_runtime::fleet::operations::NodeIntent,
     pub(crate) boot: Option<cellule_runtime::fleet::operations::EnrollmentRecord>,
@@ -18,6 +20,7 @@ pub struct CellNode {
     pub(super) lease_installed: AtomicBool,
     pub(super) shutdown_lock: Arc<tokio::sync::Mutex<()>>,
     pub(super) drain_owner: Arc<drain::DrainOwner>,
+    pub(super) fleet_finalize: Arc<finalize::FleetFinalizeOwner>,
     pub(super) facilities: Arc<Mutex<Vec<CellNodeFacility>>>,
     pub(super) required_components: Arc<Mutex<Vec<&'static str>>>,
     pub(super) task_group: Arc<Mutex<Option<Arc<CellNodeTaskGroup>>>>,
@@ -40,6 +43,7 @@ impl CellNode {
             Arc::clone(&facilities),
             Arc::clone(&task_group),
         ));
+        let fleet_finalize = Arc::new(finalize::FleetFinalizeOwner::new());
         Self {
             application,
             runtime,
@@ -48,6 +52,7 @@ impl CellNode {
             lease_installed: AtomicBool::new(false),
             shutdown_lock: Arc::new(tokio::sync::Mutex::new(())),
             drain_owner,
+            fleet_finalize,
             facilities,
             required_components: Arc::new(Mutex::new(required_components)),
             task_group,
@@ -132,6 +137,7 @@ impl CellNode {
     }
 }
 
+mod blob_artifacts;
 mod components;
 mod drain;
 mod fleet;

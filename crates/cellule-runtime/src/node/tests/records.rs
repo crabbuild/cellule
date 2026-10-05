@@ -224,7 +224,7 @@ fn canonical_advertisement_decode_verifies_each_immutable_signature_set_once() {
     }
 }
 
-fn canonical_advertisements() -> [NodeAdvertisement; 3] {
+pub(super) fn canonical_advertisements() -> [NodeAdvertisement; 3] {
     let key = SigningKey::from_bytes(&[7; 32]);
     let legacy = advertisement(&key, 1, NOW_MS);
     let placement = NodePlacementCapacity {

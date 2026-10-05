@@ -61,6 +61,28 @@ impl CellRuntime {
         Ok(proof)
     }
 
+    /// Verifies a selected unowned Idle root against the original sealed suffix
+    /// through the same bounded lineage/origin walk and shared I/O admission.
+    /// The complete Idle control is rechecked before and after origin I/O.
+    /// This does not acquire a writer or certify current serving or settlement.
+    pub async fn verify_recovered_idle_prefix(
+        &self,
+        catalog: &CatalogProof,
+        authority: &CellAuthority,
+        replica: cellule_ltx::CellReplica,
+        required: &crate::recovery::manifest::PinnedRecoveryCell,
+        observed: &VersionedControl,
+        limit: usize,
+    ) -> crate::Result<crate::control::authority::VerifiedRecoveryPrefix> {
+        let root = observed.value().ltx_root().ok_or(Error::Fenced)?;
+        let (_metadata, replica) = self.prefix_replica(catalog, replica, root, limit)?;
+        let proof = authority
+            .verify_recovered_idle_prefix(required, observed, &replica, limit)
+            .await?;
+        self.ensure_running()?;
+        Ok(proof)
+    }
+
     fn prefix_replica(
         &self,
         catalog: &CatalogProof,

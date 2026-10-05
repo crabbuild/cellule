@@ -277,7 +277,7 @@ fn source_maintenance_phase_fences_new_roles_without_invalidating_replay() {
             .unwrap();
         assert!(admit(&operation).is_ok());
         operation
-            .apply(MaintenanceEvent::ReadyToClose(drain_evidence()), 3)
+            .apply(MaintenanceEvent::ReadyToClose(closing_evidence()), 3)
             .unwrap();
         assert!(matches!(admit(&operation), Err(OperationError::Conflict)));
         assert_eq!(source.advance_maintenance(&operation).unwrap(), source);

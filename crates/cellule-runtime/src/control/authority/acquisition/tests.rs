@@ -461,3 +461,66 @@ async fn matching_endpoint_cannot_replace_a_sealed_recovery_input() {
         ))
     ));
 }
+
+#[tokio::test]
+async fn idle_suffix_verification_requires_exact_control_and_does_not_certify_serving() {
+    let authority = authority(Arc::new(InMemory::new()));
+    let required = suffix();
+    let mut selected = successor(&input());
+    selected.state = ControlState::Idle;
+    selected.owner = None;
+    selected.recovery = None;
+    selected.root = Some(RootRef {
+        digest: Digest::from_bytes([8; 32]),
+        txid: required.recovery.final_txid,
+        checksum: required.recovery.final_checksum,
+        commit_sequence: required.recovery.final_commit_sequence,
+    });
+    original_suffix_scope(&authority, &required, &selected).await;
+    let observed = authority.load(required.cell).await.unwrap().unwrap();
+    let root = observed.value().ltx_root().unwrap();
+    let replica = cellule_ltx::CellReplica::new(
+        authority.layout.clone(),
+        root.cell,
+        root.incarnation,
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        authority
+            .verify_recovered_prefix(&required, root, &replica, 8)
+            .await,
+        Err(Error::Fenced)
+    ));
+    assert!(matches!(
+        authority
+            .verify_recovered_idle_prefix(&required, &observed, &replica, 0)
+            .await,
+        Err(Error::Capacity(_))
+    ));
+    assert!(matches!(
+        authority
+            .verify_recovered_idle_prefix(&required, &observed, &replica, 8)
+            .await,
+        Err(Error::AcquisitionHistoryIncomplete { epoch: 2, .. })
+    ));
+    // Even an unchanged root at a newer revision cannot replace the complete
+    // originally selected Idle control. No origin read or acquisition follows.
+    selected.revision += 1;
+    let path = authority.layout.control_path(required.cell.as_bytes());
+    authority.layout.store().delete(&path).await.unwrap();
+    authority
+        .layout
+        .store()
+        .create_strict(&path, Bytes::from(selected.encode().unwrap()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        authority
+            .verify_recovered_idle_prefix(&required, &observed, &replica, 8)
+            .await,
+        Err(Error::Fenced)
+    ));
+    let latest = authority.load(required.cell).await.unwrap().unwrap();
+    assert_eq!(latest.value(), &selected);
+}

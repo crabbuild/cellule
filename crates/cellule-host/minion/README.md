@@ -1,12 +1,83 @@
 # Minion fleet operations reference
 
-Status: durable journal and public-driver models, plus a finite real three-node
-admission-overload and controller-restart scenarios with receipt readback.
-The `balance` command exercises real count convergence. Complete maintenance,
-receiver-loss, production observations and
-qualification remain required by the [fleet plan](../../../docs/fleet-operations-plan.md).
+Status: durable journal and public-driver models, plus finite real-node
+overload, maintenance, controller-restart, receiver-loss, and count-balance
+scenarios with receipt readback. Reader and follower maintenance use three or
+four managed boots with native role evacuation. Role-enabled production
+observations and qualification remain required by the [fleet plan](../../../docs/fleet-operations-plan.md).
 
 ## Run
+
+Maintenance restart tests lose the reply after a real follower donor commits
+`SettleRoles`, fail its result write, or lose acknowledgement after that write
+commits, then reconstruct the driver over an independent SQLite client. The original acceptance/key remains unchanged; a fresh complete proof
+must cover the current head before Closing. Six cases renew the same claimant
+and replace it after the real controller lease expires. They check final
+withdrawal, canonical-root restoration, the original command result, and joined
+resources:
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::follower_tests::persisted::restart:: -- --test-threads=1
+```
+
+The expiry case keeps the original boots live with actual signed heartbeats,
+then checks the new claimant/epoch and the old controller's fenced refusal.
+The result-write cases require the old proof's Conflict, joined local retirement
+and a fresh complete capture before Closing. The original acceptance, native
+error and any committed historical receipt remain unchanged.
+
+Cancellation cases pause the actual result transaction/reply, cancel its
+controller waiter, and join an exact duplicate to the retained native owner:
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::follower_tests::persisted::cancelled_settlement:: -- --test-threads=1
+```
+
+A new head cannot replace the running original or authorize closure with its old
+proof. External process/provider failures and the complete W7 fault matrix still
+require separate evidence.
+
+The focused receiver-loss tests cover both unchanged Idle authority and a failed
+receiver that reached Recovering or Serving after clean source release:
+
+```sh
+cargo test -p cellule-host --example fleet_operations successor_tests:: --locked
+```
+
+They use real nodes, canonical directory takeover proof, immutable receiver
+recovery records, lost reply replay and an independently reopened journal after
+controller lease expiry. No configured takeover proof keeps the failed claim
+unresolved. The stopped-process witness is an explicit in-process reference
+provider; process/provider qualification remains required.
+
+The `recovery_faults::` cases pause actual receiver basis/evidence transactions
+before commit or after commit before reply. They check cancellation on both
+sides of takeover, repeated evidence-write failure, safe Idle resumption and an
+ordinary acquisition winner. Missing, corrupt and valid substituted native
+history cannot authorize continuation. Each completed case verifies the original
+receipt/value, immutable records through an independent journal client, and
+joined node resources. These selected cases retain two-worker native races;
+CI runs unrelated minion fixtures serially to isolate their finite deadlines.
+
+Run receiver loss after clean source release through the public reconciler:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- receiver-loss
+```
+
+This reserves a receiver, releases one Cell, joins the receiver's runtime, and
+publishes typed closure of its exact enrolled boot. The reconciler retains the
+original release and routes activation and cleanup to the third node. The
+command loses a committed activation reply, replays the exact accepted action,
+reopens an independent journal client after controller lease expiry, and checks
+that the previous controller is fenced. It verifies all twelve command receipts
+and SQL values, fences the moved source handle, and checks final Cell counts
+`[11, 0, 1]`. Exit joins all three nodes, retires their boots, closes both journal
+clients, and checks empty resource ledgers. Failures preserve their original
+error through the same cleanup. This finite command uses joined in-process
+lifecycle evidence; it does not qualify OS crash or external-job supervision.
 
 Run the real-node scenario from the workspace root:
 
@@ -14,8 +85,118 @@ Run the real-node scenario from the workspace root:
 cargo run -p cellule-host --example fleet_operations --locked -- overload
 ```
 
-It creates three independently leased CellNodes over shared strict in-memory
-object storage, initializes twelve real SQLite Cells, and acknowledges a command
+Run planned maintenance through the public reconciler and native node actions:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance
+```
+
+This cordons the first node, moves all twelve Cells to the two eligible nodes,
+settles the complete writer-only role inventory, finalizes and withdraws the
+exact boot, and verifies every command receipt on its destination. The example
+proves an empty reader/follower obligation set for its closed writer-only
+constructor; role-enabled deployments and provider/process failures remain
+separate qualification requirements.
+
+Run planned maintenance under continuous SQL command admission:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-busy
+```
+
+Two client lanes continuously mutate one original donor Cell while the same
+public reconciler cordons the node, prepares receiver reservations and dispatches
+native busy release. The actor's immutable owner fence remains observable while
+publication owns its publisher. Root advancement invalidates complete counts;
+explicit maintenance can retain demand for that independently verified writer.
+Source quiescence follows receiver preparation and joins accepted publication
+before canonical release. No extra application quiescence call is used.
+
+Each lane must receive an admission refusal before its finite 512-command bound;
+exhausting that load is failure. The command resolves every acknowledged request
+on its canonical successor and compares the exact digest, sequence and stored
+result. An audit table must contain exactly one row per acknowledgement. All
+twelve original receipts and SQL values also survive movement. Output reports
+accepted commands, both admission refusals and exact audit rows. Success and
+failure join every client task before node/journal cleanup; all three boots
+retire and runtime resource ledgers empty. This finite in-process workload does
+not qualify external primitive owners, process crashes or measured provider load.
+
+Run reader-only maintenance with a live foreign writer:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-reader
+```
+
+This registers three managed boots and a real reader, acknowledges a mutation
+to 29, then submits maintenance for the reader's physical node through the same
+public driver. Missing replacement policy keeps the operation Evacuating and
+the original reader usable. After signed reader selection observes the cordon,
+the command opens a replacement, performs canonical reader evacuation and
+publishes immutable policy evidence. Fresh complete observation authorizes
+SettleRoles and native Finalize. It checks Completed, Stopped, exact withdrawal,
+fenced original reader, receipt-bound replacement readback and the original
+writer's stored mutation result. Cleanup joins all three nodes, both reader
+enrollments and boot rows, and checks the existing resource ledgers. Output
+keeps zero writer releases/activations separate from two receipt checks and
+reader replacement. This finite in-process example does not qualify external
+process failure or the remaining follower/primitive combinations.
+
+Run live-follower maintenance with two-member durability:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-follower
+```
+
+Four managed boots provide a writer, two original follower stores and one spare.
+The donor has no writers but retains a foreign follower lane. A complete pass
+without replacement policy stays Evacuating and retains its original enrollment.
+The command enables the spare through a real signed heartbeat, covers the old
+acknowledged tail through canonical writer drain, and requests rotation from the
+existing durability supervisor. Both original member retirements and exact old
+coverage must be confirmed before epoch 2 with the two eligible members can
+settle the donor obligation. Canonical acquisition resumes the writer on its
+original node. A new command is acknowledged through the existing durability
+gate while the installed replacement ensemble is rechecked. Object proof may win before the
+directory activation CAS; Active alone is not required to prove installation.
+Fresh durable policy and complete role observation authorize native Finalize.
+The command checks Completed, Stopped, permanent withdrawal, original retirement
+history and canonical-root SQL readback of 29, covering both acknowledgements.
+The original request keeps its digest, sequence, expiry and stored outcome. Cleanup joins all four nodes and
+retires both ensembles and every boot; final writer counts include the spare:
+`[1, 0, 0, 0]`. Release/activation counts describe fleet writer movement and remain
+zero. Five service/receipt checks and two replacement members are reported
+separately.
+
+The finite live-owner adapter retains exactly two prepared epochs and exact
+original close barriers in memory. It uses fresh canonical append/retire
+authorization and offers no failed-owner seal/tail capability. External process
+restart, remote authentication and the complete primitive maintenance matrix
+remain separate qualification requirements.
+
+Run combined reader and live-follower maintenance on one physical donor:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-roles
+```
+
+This extends the same four-boot follower scenario with managed readers installed
+before readiness. The donor owns a reader and a foreign follower tail. A durable
+follower evacuation policy alone must leave maintenance Evacuating. The native
+reader evacuation then refuses while one selected replacement has no Established
+reader, preserving the original enrollment and open view. After both eligible
+receivers establish real readers, native evacuation closes and joins the donor
+view and publishes immutable reader policy evidence. Complete fresh observation
+must prove both roles before SettleRoles and Finalize. The command checks both
+replacement readers against the captured receipt, preserves the original
+mutation and renewed writer acknowledgement, and joins all four nodes, eleven
+enrollment rows, and every resource ledger. Writer counts remain `[1, 0, 0, 0]`;
+eight service/receipt checks are reported separately from zero fleet writer
+moves. This qualifies an in-process reader/follower combination; busy primitive
+owners, process/provider failures and reboot remain required by the fleet plan.
+
+The overload command creates three independently leased CellNodes over shared
+strict in-memory object storage, initializes twelve real SQLite Cells, and acknowledges a command
 on each. A held seven-GiB disk admission token causes the existing actor's
 measured ledger classifier to enter Shedding after its normal dwell. The public
 reconciler allocates its bounded two-move batch; the scenario releases that
@@ -312,8 +493,10 @@ BeginEvacuation binds it to the manifest. Session adoption cannot erase that
 anchor, and a missing anchor refuses capture. Phase replay cannot repair a missing manifest by
 inserting zero; missing or corrupt pages retain their original errors. Newly
 accepted remote replacements after capture remain visible in the current roster
-and native graph. Complete policy/work coverage and terminal joining remain
-required; this historical set does not enable SettleRoles or Finalize.
+and native graph. Complete policy/work coverage remains required before
+SettleRoles. This historical set alone grants neither SettleRoles nor Finalize;
+Finalize requires a separately committed Closing operation and the node's bound
+managed-boot withdrawal.
 
 ## Exact original reader joining
 
@@ -366,9 +549,10 @@ phase publication before dispatch, fresh activation/retirement, independent
 cleanup, retained permits after lost replies/timeouts, competing controllers,
 stop-new-moves behavior, and pressure relief using remaining shared budget.
 The separate `scenario::tests` cases invoke the same real-node implementations
-as the `overload` and `controller-restart` commands. The model tests do not create Cell actors. Planned
-maintenance and receiver-loss scenarios still require their complete barriers;
-controller replacement here retains all three live node sessions.
+as the `overload`, `maintenance`, and `controller-restart` commands. The model
+tests do not create Cell actors. Foreign follower evacuation, receiver loss,
+and provider/process qualification remain incomplete; controller replacement
+here retains all three live node sessions.
 
 The host now owns each whole closing attempt after a shutdown waiter disappears.
 It retains the same lane through facility/runtime/lease cleanup and exposes local
@@ -379,8 +563,9 @@ version and SQLite enrollment row into that owner before readiness. Native
 shutdown checks canonical withdrawal and committed boot retirement before
 Stopped; a lost retirement reply retains Draining until an exact replay confirms
 the original evidence. Partial startup still uses the retained application's
-boot cleanup. These local observations supply no relocation or redundancy proof
-and do not enable the still-refused fleet Finalize action.
+boot cleanup. These local observations supply no relocation or redundancy
+proof. Fleet Finalize consumes separately committed Closing evidence and uses
+this same retained shutdown and withdrawal owner.
 Publish native rotation/reader proofs before starting terminal shutdown: weak
 native handles can disappear when an autonomous successful stop clears owners.
 
@@ -579,8 +764,23 @@ cargo test -p cellule-host --example fleet_operations --all-features --locked sc
 ```
 
 Complete authenticated lookup, source/failed-owner successor policy, checked
-nonexecution, accepted-work joining and SettleRoles/Finalize remain delivery
-requirements. See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
+nonexecution and complete SettleRoles behavior remain delivery requirements.
+Finalize runs after the journal commits Closing; it joins accepted action work
+and publishes Stopped only after exact withdrawal.
+See the [host matching recipe](../docs/lifecycle.md#match-every-required-maintenance-policy).
+
+## Native source reader succession
+
+The [source reader recipe](../docs/source-readers.md) composes exact retained
+native retirement with an actual managed writer successor and current ready
+reader policy. It consumes the complete original/current request set and is
+retained through the public observer and matcher. Missing evidence remains an
+explicit source obligation. A checked local request does not finish maintenance.
+
+```sh
+cargo test -p cellule-host --example fleet_operations --all-features --locked \
+  scenario::reader_tests::evacuation::source:: -- --test-threads=2
+```
 
 ## Native source reader succession
 
