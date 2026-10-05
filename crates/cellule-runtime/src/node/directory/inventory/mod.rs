@@ -150,8 +150,9 @@ impl NodeDirectory {
             }
             let (node, leader_state) = match &record {
                 NodeRecord::Advertisement(advertisement) => {
+                    // load_record_at authenticated this fresh immutable body,
+                    // including signatures on expired and foreign-release logs.
                     advertisement.validate_shape()?;
-                    advertisement.verify_signature()?;
                     if advertisement.fleet != self.fleet
                         || advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
                     {

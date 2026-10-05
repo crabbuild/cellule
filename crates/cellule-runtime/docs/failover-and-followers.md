@@ -588,6 +588,13 @@ CAS-protected mutable authority:
 - A recoverer may change only recovery-owned fields after expiry.
 - Every transition validates all unchanged fields before conditional overwrite.
 
+Canonical directory reads authenticate the identity and understood placement
+signatures on each freshly decoded body. Exact loads and membership/follower
+scans then apply their time, path, fleet and release policies to that same
+immutable value. A later read authenticates its bytes again; an earlier
+signature decision does not carry across versions or scans. Expired signed logs
+remain visible obligations, and forged or noncanonical records fail closed.
+
 | Session state | May route application work? | May append to its follower log? | May a peer recover it? |
 | --- | --- | --- | --- |
 | `live` before published expiry | Yes | Yes | No |

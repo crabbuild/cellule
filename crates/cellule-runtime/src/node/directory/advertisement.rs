@@ -376,16 +376,18 @@ impl NodeDirectory {
                         return Ok(None);
                     };
                     validate_record_path(&self.layout, advertisement.session, &meta.location)?;
+                    // Canonical decoding above verifies the signatures on each
+                    // fresh body. These policies neither mutate nor reuse it.
                     match scan {
                         AdvertisementScan::LiveRelease => {
                             if advertisement.expires_at_ms <= now_ms {
                                 return Ok(None);
                             }
-                            self.validate(&advertisement, now_ms)?;
+                            advertisement.validate_at(now_ms)?;
+                            self.validate_scope(&advertisement)?;
                         }
                         AdvertisementScan::AdvertisedFleet => {
                             advertisement.validate_shape()?;
-                            advertisement.verify_signature()?;
                             if advertisement.fleet != self.fleet
                                 || advertisement.issued_at_ms
                                     > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
@@ -668,11 +670,13 @@ impl NodeDirectory {
             candidate.log.clone_from(&base.advertisement.log);
             self.validate(&candidate, now_ms)?;
             validate_successor(&base.advertisement, &candidate)?;
+            // The validated candidate remains immutable through its CAS body.
+            let encoded = candidate.canonical_bytes()?;
             let path = self.layout.node_path(candidate.session.as_bytes());
             match self
                 .layout
                 .store()
-                .update(&path, Bytes::from(candidate.encode()?), base.token.clone())
+                .update(&path, Bytes::from(encoded), base.token.clone())
                 .await
             {
                 Ok(token) => {

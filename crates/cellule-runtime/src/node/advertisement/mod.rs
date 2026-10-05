@@ -291,10 +291,10 @@ impl NodeAdvertisement {
         self.canonical_bytes()
     }
 
-    // Both callers first verify this immutable value. Re-encoding for canonical
-    // byte equality needs the same serializer, without a second signature pass.
-    // Storage producers still enter through encode and verify before emission.
-    fn canonical_bytes(&self) -> Result<Vec<u8>> {
+    // Callers first verify this immutable value. Decoding and directory
+    // create/refresh use the same serializer after authentication; no field may
+    // change between that check and emission. Unverified producers use encode.
+    pub(super) fn canonical_bytes(&self) -> Result<Vec<u8>> {
         let encoded = serde_json::to_vec(&RawAdvertisement::from(self))?;
         if encoded.len() as u64 > MAX_NODE_BYTES {
             return Err(Error::Node("advertisement exceeds 64 KiB"));
