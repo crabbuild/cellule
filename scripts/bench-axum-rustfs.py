@@ -294,6 +294,10 @@ def steady_reads(args, directory, service, concurrency, acknowledged):
 
 def verify_active_owner_refused(binary, directory, prefix, cells, workers):
     env = os.environ.copy()
+    # Exercise the same Cell authority refusal without trying to enroll another
+    # boot for the fixture's already-live physical leader identity.
+    env.pop("CELLULE_AXUM_FLEET_DIR", None)
+    env.pop("CELLULE_AXUM_FOLLOWER", None)
     env.update(CELLULE_TEST_PREFIX=prefix, CELLULE_AXUM_BIND="127.0.0.1:0",
                CELLULE_AXUM_CELLS=str(cells), CELLULE_AXUM_WORKERS=str(workers))
     log = directory / "active-owner-refused.log"

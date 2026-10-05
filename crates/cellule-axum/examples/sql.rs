@@ -44,6 +44,8 @@ use object_store::{memory::InMemory, path::Path};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod fleet;
+mod order_response;
 mod sql_metrics;
 
 const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
@@ -201,17 +203,11 @@ async fn create_order(
             },
         )
         .await?;
-    // A success reply follows publication and a read proving this receipt.
-    let observed = read_order(&app, target, input.id, Some(committed.receipt)).await?;
-    let order = observed
-        .output
-        .ok_or(Error::Control("committed order is missing"))?;
+    // A success reply follows durable proof and a read proving this receipt.
+    let observed = read_order(&app, target, input.id, Some(committed.receipt)).await;
     Ok((
         StatusCode::CREATED,
-        CellJson {
-            output: order,
-            receipt: committed.receipt,
-        },
+        order_response::after_commit(committed.receipt, observed)?,
     ))
 }
 
@@ -322,6 +318,7 @@ async fn example_storage() -> ExampleResult<(Store, Path)> {
 
 #[tokio::main]
 async fn main() -> ExampleResult<()> {
+    let fleet_config = fleet::Config::from_env()?;
     let cells = example_count("CELLULE_AXUM_CELLS", 1, MAX_CELLS)?;
     let workers = example_count("CELLULE_AXUM_WORKERS", 1, 16)?;
     let bind: SocketAddr = std::env::var("CELLULE_AXUM_BIND")
@@ -355,8 +352,14 @@ async fn main() -> ExampleResult<()> {
         .ok_or(Error::Registry("orders module is missing"))?;
     let catalog = CellCatalog::new(layout.clone(), tenant);
     let authority = CellAuthority::new(layout.clone());
+    if let Some(config) = &fleet_config
+        && config.index != 0
+    {
+        config.serve_follower(layout, code, bind).await?;
+        return Ok(());
+    }
     let session = SessionId::from_bytes(*Uuid::now_v7().as_bytes());
-    let owner = Owner {
+    let mut owner = Owner {
         session,
         endpoint: "https://orders.local".into(),
     };
@@ -366,9 +369,31 @@ async fn main() -> ExampleResult<()> {
     // This is an admission ceiling, not allocated memory or an RSS limit.
     let pool = SqlWorkerPool::new(usize::try_from(workers)?, usize::try_from(cells)?)?
         .with_native_memory_limit(512 * 1024 * 1024)?;
-    let runtime = CellRuntime::new_with_replica_host(pool, 16 * 1024 * 1024, session, host)?;
+    let runtime = if fleet_config.is_some() {
+        CellRuntime::new_with_replica_host_requiring_node_lease(
+            pool,
+            16 * 1024 * 1024,
+            session,
+            host,
+        )?
+    } else {
+        CellRuntime::new_with_replica_host(pool, 16 * 1024 * 1024, session, host)?
+    };
+    let mut fleet_owner = None;
     let result: ExampleResult<()> = async {
         runtime.install_telemetry(query_metrics.clone())?;
+        if let Some(config) = &fleet_config {
+            fleet_owner = Some(
+                config
+                    .start_owner(layout.clone(), code, session, application_id, &runtime)
+                    .await?,
+            );
+            owner.endpoint = fleet_owner
+                .as_ref()
+                .ok_or(Error::Node("capacity owner enrollment missing"))?
+                .endpoint
+                .clone();
+        }
         let mut handles = Vec::with_capacity(targets.len());
         let mut restored = 0;
         let activation_started = std::time::Instant::now();
@@ -469,8 +494,13 @@ async fn main() -> ExampleResult<()> {
     // HTTP finishes accepted handlers before the runtime drains its workers.
     // Setup and serving failures also pass through this runtime cleanup.
     let shutdown = runtime.shutdown().await;
+    let fleet_shutdown = match fleet_owner {
+        Some(owner) => owner.stop().await,
+        None => Ok(()),
+    };
     result?;
     shutdown?;
+    fleet_shutdown?;
     println!("Query metrics: {}", query_metrics.snapshot());
     for (shard, target) in targets.iter().enumerate() {
         let drained = authority

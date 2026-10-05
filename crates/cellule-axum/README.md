@@ -445,10 +445,10 @@ The same example can use real S3 objects. Set `CELLULE_TEST_ENDPOINT`,
 `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. `AWS_DEFAULT_REGION`
 defaults to `us-east-1`; `AWS_SESSION_TOKEN` is optional.
 `CELLULE_AXUM_BIND` selects a loopback listener (default `127.0.0.1:3000`).
-`CELLULE_AXUM_CELLS` selects 1–16 active SQL Cells, and
+`CELLULE_AXUM_CELLS` selects 1–2,000 active SQL Cells, and
 `CELLULE_AXUM_WORKERS` selects 1–16 SQL workers; both default to one.
 Order IDs route to shard `id mod active_cells` (Euclidean remainder).
-The application declares 16 fixed shards and activates the selected prefix
+The application declares 2,048 fixed shards and activates the selected prefix
 of that topology. Each active Cell has its own database, writer, publication
 root, and request ledger; handlers use `CellClient::local_many` through the
 same typed application handle and `Cellule` extractor.
@@ -461,6 +461,16 @@ Changing the Cell count changes order routing, so use a fresh prefix for
 each performance point. An active owner is refused;
 this tutorial demonstrates graceful restart, not failed-owner takeover.
 Keep the binary unchanged so its application code digest matches the catalog.
+
+The optional follower fixture uses this same SQL service and adapter with two
+separate processes, pinned mTLS, signed directory enrollment, and fsynced
+`FollowerStore` logs. Its application-owned wire protocol leaves canonical
+Cellule commit frames unchanged. See the [node capacity runner](performance/node-capacity.md)
+for setup, proof-source checks, resource evidence, and remaining qualification
+requirements. HTTP endpoints and transport wiring remain application-owned.
+If the follow-up read fails after a command commits, the example retains the
+committed receipt in its published-failure response. Resolve the original
+mutation before issuing a replacement.
 
 The [performance runner](../../scripts/bench-axum-rustfs.py) measures real
 HTTP POST and GET requests, using the adapter, application handles, SQL

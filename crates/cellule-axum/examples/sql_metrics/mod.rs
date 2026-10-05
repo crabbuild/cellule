@@ -1,6 +1,7 @@
 //! Finite, nonblocking runtime and provider measurements for this application.
 use cellule_runtime::fleet::telemetry::{
-    CellTelemetry, PrimitiveOperationKind, PrimitiveOperationOutcome, PublicationTiming,
+    CellTelemetry, CommandResponseSource, DurabilitySubmissionOutcome, PrimitiveOperationKind,
+    PrimitiveOperationOutcome, PublicationTiming,
 };
 use cellule_store::{StorageObservation, StorageObserver, StorageOperation, StorageOutcome};
 use std::{
@@ -19,6 +20,11 @@ pub(super) struct QueryMetrics {
     writes: WriteMetrics,
     storage: [StorageMetrics; StorageOperation::ALL.len()],
     host_capacity: serde_json::Value,
+    response_sources: [AtomicU64; 3],
+    submission_sources: [AtomicU64; 4],
+    log_append_successes: AtomicU64,
+    log_append_failures: AtomicU64,
+    log_append_bytes: AtomicU64,
 }
 
 // Application-owned instrumentation: fixed histograms, 100-us upper
@@ -132,6 +138,36 @@ fn nanos(elapsed: Duration) -> u64 {
 }
 
 impl CellTelemetry for QueryMetrics {
+    fn command_response(
+        &self,
+        source: CommandResponseSource,
+        _elapsed: Duration,
+        _confirmation: Duration,
+    ) {
+        let index = match source {
+            CommandResponseSource::Recorded => 0,
+            CommandResponseSource::Fleet => 1,
+            CommandResponseSource::Object => 2,
+        };
+        self.response_sources[index].fetch_add(1, Ordering::Relaxed);
+    }
+    fn durability_submission(&self, outcome: DurabilitySubmissionOutcome) {
+        let index = match outcome {
+            DurabilitySubmissionOutcome::Fleet => 0,
+            DurabilitySubmissionOutcome::Unsupported => 1,
+            DurabilitySubmissionOutcome::Unavailable => 2,
+            DurabilitySubmissionOutcome::Rejected => 3,
+        };
+        self.submission_sources[index].fetch_add(1, Ordering::Relaxed);
+    }
+    fn node_log_append(&self, acknowledged: bool, bytes: u64) {
+        if acknowledged {
+            self.log_append_successes.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.log_append_failures.fetch_add(1, Ordering::Relaxed);
+        }
+        self.log_append_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
     fn command_execution(&self, queue: Duration, worker: Duration, _succeeded: bool) {
         self.writes.queue.observe(queue);
         self.writes.worker.observe(worker);
@@ -236,6 +272,22 @@ impl QueryMetrics {
             .collect();
         serde_json::json!({
             "host_capacity": self.host_capacity,
+            "response_sources": {
+                "recorded": self.response_sources[0].load(Ordering::Relaxed),
+                "fleet": self.response_sources[1].load(Ordering::Relaxed),
+                "object": self.response_sources[2].load(Ordering::Relaxed)
+            },
+            "submission_sources": {
+                "fleet": self.submission_sources[0].load(Ordering::Relaxed),
+                "unsupported": self.submission_sources[1].load(Ordering::Relaxed),
+                "unavailable": self.submission_sources[2].load(Ordering::Relaxed),
+                "rejected": self.submission_sources[3].load(Ordering::Relaxed)
+            },
+            "node_log_append": {
+                "successes": self.log_append_successes.load(Ordering::Relaxed),
+                "failures": self.log_append_failures.load(Ordering::Relaxed),
+                "bytes": self.log_append_bytes.load(Ordering::Relaxed)
+            },
             "storage_operations": storage,
             "queries": queries,
             "failures": self.failures.load(Ordering::Relaxed),

@@ -22,6 +22,9 @@ import time
 spec = importlib.util.spec_from_file_location("axum_bench", Path(__file__).with_name("bench-axum-rustfs.py"))
 bench = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bench)
+fleet_spec = importlib.util.spec_from_file_location("fleet_bench", Path(__file__).with_name("bench-fleet-fixture.py"))
+fleet = importlib.util.module_from_spec(fleet_spec)
+fleet_spec.loader.exec_module(fleet)
 
 
 def records(directory):
@@ -144,6 +147,8 @@ def point(args, cells, rate, directory):
             interval["read_tps"] = interval["reads"]/interval["seconds"]
         drained = service.stop()
         service = None
+        if args.fleet_directory is not None:
+            fleet.verify_durability(drained["query_metrics"], bench)
         cold = bench.Service(args.binary, directory, prefix, "recovered", cells, args.workers, args.startup_timeout)
         service = cold
         bench.require(cold.restored == cells, "not every Cell cold-restored")
@@ -203,6 +208,7 @@ def main():
     parser.add_argument("--warmup-seconds", type=int, default=5)
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--startup-timeout", type=int, default=120, help="bootstrap/restore deadline; existing profiles keep 120 seconds")
+    parser.add_argument("--fleet-directory", type=Path, help="three Ed25519 mTLS identities and persistent private follower directories")
     args = parser.parse_args()
     bench.require(os.sys.platform.startswith("linux"), "node capacity resource evidence requires Linux; run in an isolated container/host")
     bench.require(all(1 <= cells <= 2000 for cells in args.cells), "Cell counts must be 1..2000")
@@ -226,7 +232,8 @@ def main():
     (args.output / "profile.json").write_text(json.dumps(dict(arguments={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()}, binary_sha256=binary_hashes),indent=2)+"\n")
     for cells in args.cells:
         for rate in args.write_rates:
-            result = point(args, cells, rate, args.output / f"cells-{cells}-rate-{rate}")
+            with fleet.followers(args, cells, rate, bench):
+                result = point(args, cells, rate, args.output / f"cells-{cells}-rate-{rate}")
             print(json.dumps({k:result[k] for k in ("cells","write_rate","metrics","cold_audit","owner_rss_after_bytes","owner_cpu_cores_including_setup_warmup_drain")}),flush=True)
 
 

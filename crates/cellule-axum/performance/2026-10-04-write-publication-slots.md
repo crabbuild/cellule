@@ -63,6 +63,9 @@ are not established by this write probe. Every Cell releases to Idle on shutdown
 The coordinator stops before cold audit, so neither point qualifies recovery or
 supported throughput. Read TPS here reflects the overloaded mixed workload.
 
+The [real follower-backed probes](2026-10-04-follower-write-probes.md) now
+exercise this path and retain its overload, admission and drain failures.
+
 ## Write scaling direction
 
 - Keep each Cell's SQLite, sequence, mutation identity and fenced writer

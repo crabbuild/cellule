@@ -80,6 +80,52 @@ capacity; a shared development VM cannot prove independent-node capacity.
 Performance success alone is insufficient. Independently audit all retained
 acknowledgments, verify every Cell after fresh cold recovery and exact identity
 replay, and exercise owner loss, fencing and a next recovered write. Existing
-qualification profiles remain unchanged. The current SQL example uses object
-proofs; adding a follower-backed HTTP assembly is a separate required step,
-using the existing framework durability gate and real fsynced follower logs.
+qualification profiles remain unchanged. The default SQL example uses object
+proofs. The optional follower fixture uses the existing framework durability
+gate and real fsynced follower logs.
+
+## Follower-backed HTTP fixture
+
+Build the same release examples with the locked dependencies. With the real-S3
+environment above configured, generate a fresh private fixture outside the
+checkout and pass its directory to the coordinator:
+
+```sh
+python3 scripts/generate-capacity-tls.py "$task_dir/fleet"
+python3 scripts/bench-node-capacity.py \
+  --binary "$CARGO_TARGET_DIR/release/examples/sql" \
+  --driver "$CARGO_TARGET_DIR/release/examples/http_capacity" \
+  --output "$task_dir/follower-results" \
+  --fleet-directory "$task_dir/fleet" \
+  --cells 16 64 --write-rates 100 500 --read-rate 50 \
+  --workers 8 --concurrency 128 --queue-capacity 1024 \
+  --warmup-seconds 30 --seconds 120 --startup-timeout 600
+```
+
+Python 3.11+, OpenSSL, Linux process resource reporting, and real S3 are required.
+Certificates expire after one day. Do not commit private keys. The coordinator
+owns two loopback follower processes, keeps their independent persistent stores
+under `fleet/data-1` and `fleet/data-2`, and drains accepted work before their
+enrollments withdraw. It retains logs and sampled peer resources beside each
+owner point. Original follower boot sessions and certificates are pinned;
+another boot cannot silently replace a selected follower.
+
+The Cell-authority contender runs without enrolling another boot for the
+already-live fixture leader. It still must fail at the canonical active-Cell
+authority check. Cold audit uses a fresh owner boot and empty temporary SQLite
+files after graceful drain. This is object-root recovery; it does not establish
+recovery from follower-only acknowledgments after an owner crash.
+
+`Query metrics` includes `response_sources`, `submission_sources`, and
+`node_log_append`. Those counters include seed, warmup, measured traffic and
+drain. Object publication may win the durability race; record its response
+share. Rejected/unavailable submissions and failed log appends must remain
+visible. Never report object fallback as follower throughput. Memory and disk
+advertisement hints are fixture admission ceilings; follower free/retained bytes
+come from its real store. They do not prove physical resource headroom.
+
+Run matched object/follower points from the same binary, budgets and workload
+with fresh prefixes, then qualify sustained rates, stable retained bytes and
+tiering backlog. This fixture shares the development VM with its provider and
+followers; the target still requires isolated owner hardware and independent
+follower failure domains, owner-loss recovery and fencing evidence.

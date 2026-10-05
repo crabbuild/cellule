@@ -30,5 +30,27 @@ class ColdAuditTests(unittest.TestCase):
             self.assertEqual(CAPACITY.audit(SimpleNamespace(address="127.0.0.1:1"), Path("unused"), 1), dict(writes=1, reads=0))
 
 
+class FollowerEvidenceTests(unittest.TestCase):
+    def metrics(self):
+        return dict(response_sources=dict(fleet=10, object=2, recorded=0),
+                    submission_sources=dict(fleet=12, unsupported=0, unavailable=0, rejected=0),
+                    node_log_append=dict(successes=4, failures=0))
+
+    def test_object_winner_is_allowed_with_real_follower_proofs(self):
+        CAPACITY.fleet.verify_durability(self.metrics(), CAPACITY.bench)
+
+    def test_only_object_responses_or_failed_follower_paths_are_rejected(self):
+        for section, key, value in [("response_sources", "fleet", 0),
+                                    ("submission_sources", "unavailable", 1),
+                                    ("submission_sources", "unsupported", 1),
+                                    ("submission_sources", "rejected", 1),
+                                    ("node_log_append", "failures", 1)]:
+            with self.subTest(section=section, key=key):
+                metrics = self.metrics()
+                metrics[section][key] = value
+                with self.assertRaises(RuntimeError):
+                    CAPACITY.fleet.verify_durability(metrics, CAPACITY.bench)
+
+
 if __name__ == "__main__":
     unittest.main()
