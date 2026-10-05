@@ -22,11 +22,13 @@ The [node lease report](2026-10-05-node-lease-renewals.md) records the redundant
 idle renewal regression, observed 2,000-Cell residency and failed provider-bound
 density runs. These failures do not establish throughput qualification.
 The [shared-cache report](2026-10-05-shared-directory-cache.md) identifies duplicate
-cold-start disk accounting and retains the causal regression. The fixed RustFS
-replay and throughput measurements remain pending.
+cold-start disk accounting and retains the causal regression. The
+[resumed local runs](2026-10-05-local-resume.md) now pass the original
+2,000-Cell cold replay checks; throughput qualification remains open.
 The [compaction admission report](2026-10-05-compaction-admission.md) records
 foreground exclusion by unadmitted quiet compactions and a four-Cell causal
-regression. Post-fix sustained throughput and latency remain unverified.
+regression. The resumed report retains the first provider OOM and a longer
+fresh-provider comparison, including every regression.
 
 Reports identify frozen measured revisions. The later CI fix preserves reader
 rotation across discovery changes and synchronizes a durability test with its
@@ -34,6 +36,7 @@ telemetry callback; those changes are outside the reported benchmark comparisons
 
 | Comparison | Clients | Cells | Measured duration | Report and dataset |
 | --- | ---: | --- | --- | --- |
+| Quiet compaction admission on resumed Colima | 64 | 2,000 | 180-second pair (candidate failed); 600-second fresh-provider pair | [Report](2026-10-05-local-resume.md) · [JSON](2026-10-05-local-resume.json) |
 | Full change versus main | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-inline-root-main-writes.md) · [JSON](2026-10-04-rustfs-inline-root-main-writes.json) |
 | Inline roots versus composed preparation | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-inline-root-writes.md) · [JSON](2026-10-04-rustfs-inline-root-writes.json) |
 | Grouped writes | 16 | 1 / 4 / 16 | Three alternating 120-second pairs per Cell count | [Report](2026-10-04-rustfs-grouped-paired-writes.md) · [JSON](2026-10-04-rustfs-grouped-paired-writes.json) |

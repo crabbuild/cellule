@@ -604,6 +604,11 @@ histograms after drain, including warmup and correctness checks. Root preparatio
 separates dirty-memory admission from admitted work; its total includes both.
 Dirty and recovery semaphore waits are also measured across replica operations.
 These phases overlap with preparation and compaction totals; do not add them.
+The capture snapshot retains native WAL parsing, encoding, local write, fsync,
+parent sync and checkpoint timings, plus logical/physical WAL bytes and read
+strategy counts. It includes failed attempts; unvisited phases contribute zero.
+The largest WAL image is a per-attempt maximum, not node peak memory. Capture
+and worker measurements have different boundaries; do not subtract quantiles.
 It also records effective host capacities and fixed provider-operation duration,
 outcome, and byte counters. Provider counts include startup, verification, and
 maintenance, so they are not steady-window write request counts. Histogram

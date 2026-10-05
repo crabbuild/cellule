@@ -98,13 +98,18 @@
     "resource_caps_and_qualification_gates_unchanged": true
   },
   "qualification": {
-    "post_fix_rustfs_tps": null,
-    "post_fix_rustfs_latency_ms": null,
-    "all_cell_cold_audit": false,
+    "post_fix_rustfs_tps": 136.795,
+    "post_fix_rustfs_latency_ms": {
+      "p50": 316.283534,
+      "p95": 1293.098581,
+      "p99": 3305.440153
+    },
+    "all_cell_cold_audit": true,
     "owner_loss": false,
     "target_established": false,
-    "environment": "Colima stopped; start approval pending",
-    "timing_boundary": "Quiet compaction timer now starts after admission; deferred attempts are not completed compactions"
+    "environment": "Colima resumed; one fresh 6-GiB-provider 600-second pair passes original development audits; target and owner loss unqualified",
+    "timing_boundary": "Quiet compaction timer now starts after admission; deferred attempts are not completed compactions",
+    "local_resume_dataset": "2026-10-05-local-resume.json"
   },
   "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
   "raw_evidence": [
@@ -122,5 +127,5 @@
     "compaction-admission-final-green.log",
     "compaction-admission-final-fixture-status.json"
   ],
-  "next": "Archive retained probe; restore canonical isolated source; build frozen Linux binary; rerun same 2,000-Cell offers and budgets with original acknowledgment/cold audits before sustained target hardware qualification"
+  "next": "Reproduce shared publication admission and maintenance starvation; profile native capture using bounded observer; preserve all original audits before sustained target qualification"
 }

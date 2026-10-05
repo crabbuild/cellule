@@ -36,8 +36,10 @@ and two composition modes: reservations and scratch survive dispatched work
 and release after cleanup. Existing ignored tests and qualification gates remain.
 
 The [dataset](2026-10-05-compaction-admission.json) retains source hashes and
-red/green evidence references. Post-fix RustFS TPS, latency, all-Cell cold audit
-and owner-loss qualification are unverified while Colima is stopped. Compaction
+red/green evidence references. The [resumed local comparison](2026-10-05-local-resume.md) passes all-Cell cold
+audits in one fresh-provider 600-second pair. Write TPS and p99 improve while
+median latency regresses; the target and owner-loss qualification remain open.
+The first candidate point failed after provider OOM. Compaction
 timing now starts after admission, so it cannot be compared directly with the
 old admission-inclusive duration. Compare HTTP journals under the same workload
 and budgets; deferred attempts are not completed compactions. The full

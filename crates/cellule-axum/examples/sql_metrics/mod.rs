@@ -9,6 +9,12 @@ use std::{
     time::Duration,
 };
 
+mod capture;
+use capture::CaptureMetrics;
+
+#[cfg(test)]
+mod tests;
+
 #[derive(Default)]
 pub(super) struct QueryMetrics {
     queries: AtomicU64,
@@ -18,6 +24,7 @@ pub(super) struct QueryMetrics {
     primitives: AtomicU64,
     primitive_ns: AtomicU64,
     writes: WriteMetrics,
+    capture: CaptureMetrics,
     storage: [StorageMetrics; StorageOperation::ALL.len()],
     host_capacity: serde_json::Value,
     response_sources: [AtomicU64; 3],
@@ -138,6 +145,10 @@ fn nanos(elapsed: Duration) -> u64 {
 }
 
 impl CellTelemetry for QueryMetrics {
+    fn ltx_capture(&self, timing: &cellule_ltx::CaptureTiming, succeeded: bool) {
+        self.capture.observe(timing, succeeded);
+    }
+
     fn command_response(
         &self,
         source: CommandResponseSource,
@@ -296,6 +307,7 @@ impl QueryMetrics {
             "mean_worker_round_trip_us": mean_us(&self.worker_ns, queries),
             "primitive_queries": primitives,
             "mean_primitive_query_us": mean_us(&self.primitive_ns, primitives),
+            "capture": self.capture.snapshot(),
             "writes": {
                 "actor_queue": self.writes.queue.snapshot(),
                 "worker": self.writes.worker.snapshot(),
