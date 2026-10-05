@@ -47,7 +47,7 @@ impl Drop for Trace {
     fn drop(&mut self) {
         let elapsed = self.started.elapsed();
         let budget = self.deadline.saturating_duration_since(self.started);
-        if !self.completed || (self.detail == "collector" && elapsed >= budget.mul_f32(0.75)) {
+        if !self.completed || self.detail == "collector" {
             self.record_stage();
             eprintln!(
                 "[DEBUG-fleet-57] completed={} {} stage={} elapsed={:?} stage_elapsed={:?} original_budget={:?} stages={:?}",

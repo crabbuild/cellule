@@ -23,6 +23,12 @@ jobs:
       - name: Routed evidence interruption
         if: always()
         run: cargo test -p cellule-host --example fleet_operations scenario::successor_tests::routed::recovery_faults::tests::evidence::interrupted_receiver_evidence_write_reconstructs_only_from_canonical_acquisition --all-features --locked -- --exact --nocapture --test-threads=1
-      - name: Follower-only maintenance
+      - name: Follower-only maintenance repetition 1
+        if: always()
+        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Follower-only maintenance repetition 2
+        if: always()
+        run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
+      - name: Follower-only maintenance repetition 3
         if: always()
         run: cargo test -p cellule-host --example fleet_operations scenario::follower_tests::persisted::observation::reference_observer_reconciles_follower_only_maintenance_to_completion --all-features --locked -- --exact --nocapture --test-threads=1
