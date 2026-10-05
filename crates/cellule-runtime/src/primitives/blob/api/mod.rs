@@ -139,7 +139,7 @@ impl<M: BlobModule> BlobNamespace<M> {
                 namespace
                     .prepare_mutation_native(identity, mutation)
                     .await?
-                    .execute()
+                    .execute_native()
                     .await
             })
             .await
@@ -151,8 +151,10 @@ impl<M: BlobModule> BlobNamespace<M> {
     /// manifest reference or make an object visible. Retain the returned
     /// command's evidence before executing; resolve it after cancellation or
     /// an uncertain reply before deciding whether to retry the same command.
-    /// The returned command is caller-owned and no longer a store job. Store
-    /// closure cannot revoke it or prove its future manifest write is absent.
+    /// The returned command is caller-owned and no longer a store job. Its
+    /// execution acquires the same original store's admission, so closure refuses
+    /// new dispatch while already accepted dispatch remains owned through its
+    /// response. This does not settle unknown results from earlier execution.
     pub async fn prepare_mutation(
         &self,
         identity: crate::cell::executor::MutationIdentity,

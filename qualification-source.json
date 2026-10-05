@@ -1,0 +1,51 @@
+{
+  "parent": "b8b99002143b15013069444f31000da5aae255ab",
+  "delta_sha256": "60c8fed6ec29b343cbeca2362debfc63e66844b5be41d4abe905cee37ab9b746",
+  "paths": [
+    {
+      "path": "crates/cellule-host/docs/lifecycle.md",
+      "deleted": false,
+      "sha256": "6a26f00b9b04fdd8abbd33bd23e095d29e41cb72d84ed52a308957cdb5f169e1"
+    },
+    {
+      "path": "crates/cellule-runtime/docs/primitives.md",
+      "deleted": false,
+      "sha256": "c5c41f12b286a60b1f86cebc653b2c916c984b27d6df6e78a35c6ec591cf3d30"
+    },
+    {
+      "path": "crates/cellule-runtime/src/client/mod.rs",
+      "deleted": false,
+      "sha256": "8a559803f48ce205e7e9ee120fd0c18fee1faba711d7bbbfb782135791bdb318"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/api/mod.rs",
+      "deleted": false,
+      "sha256": "9f34ecb83cd6aa9f9f33a857a9f5329916311053c321762e4bfa828fab34f80d"
+    },
+    {
+      "path": "crates/cellule-runtime/src/primitives/blob/store/mod.rs",
+      "deleted": false,
+      "sha256": "f9670385ef809b9880753ccd5d563dcd4bed16d71c640338618eaae015d29684"
+    },
+    {
+      "path": "crates/cellule-runtime/tests/primitives/blob_cron/lifecycle.rs",
+      "deleted": true,
+      "sha256": "b9a5df6d9ea5067d39a8d7114e6d6e5101b8160522aff0d0e85544d454fe03f7"
+    },
+    {
+      "path": "crates/cellule-runtime/tests/primitives/blob_cron/lifecycle/mod.rs",
+      "deleted": false,
+      "sha256": "40a815521fa9ed7b48b428519957633fff5f230d14f40548909ba8f75736b357"
+    },
+    {
+      "path": "crates/cellule-runtime/tests/primitives/blob_cron/lifecycle/prepared.rs",
+      "deleted": false,
+      "sha256": "f69615f3ebcf127cf41230f60f5ddc0830fd45768c54d49d54ae66f91f45a7e7"
+    },
+    {
+      "path": "docs/fleet-operations-plan.md",
+      "deleted": false,
+      "sha256": "4b2ebfcc99f19e53bceb5fd5467beceb6bdfa7ec0b2f9dca000e9bb542d7fc12"
+    }
+  ]
+}

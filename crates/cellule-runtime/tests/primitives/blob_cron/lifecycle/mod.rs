@@ -1,5 +1,7 @@
 //! Original public Blob operations across metadata, provider I/O and caller loss.
 use super::*;
+
+mod prepared;
 use cellule_runtime::BlobArtifactStore;
 use cellule_runtime::client::InvocationError;
 use futures_util::stream::BoxStream;
@@ -211,10 +213,13 @@ impl Fixture {
         mutation: BlobMutation,
     ) -> cellule_runtime::Committed<BlobMutationOutcome> {
         let now = now_ms();
-        self.blobs
+        let committed = self
+            .blobs
             .mutate(mutation_identity_window(id, now, now + 60_000), mutation)
             .await
-            .unwrap()
+            .unwrap();
+        idle(&self.artifacts).await;
+        committed
     }
     async fn begin(&self) {
         self.mutate(
@@ -239,6 +244,19 @@ impl Fixture {
         assert_eq!(self.runtime.stats().local_disk_reserved_bytes(), 0);
     }
 }
+// A reply can arrive before its original supervisor drops undelivered output
+// and releases its job. Join prior fixture work before attributing a later
+// paused job's exact count; no other producer is running during this setup.
+async fn idle(store: &BlobArtifactStore) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while store.lifecycle_observation().unwrap().accepted_jobs() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 async fn joined(
     store: &BlobArtifactStore,
 ) -> cellule_runtime::primitives::blob::BlobArtifactLifecycleObservation {
@@ -448,16 +466,25 @@ async fn original_part_mutation_joins_manifest_publication_after_cancelled_uploa
         fixture.client.resolve(&evidence).await.unwrap(),
         cellule_runtime::Resolution::Committed(_)
     ));
-    let committed = prepared.execute().await.unwrap();
+    // Closure fences even retained exact prepared replays. Original committed
+    // bytes and sequence are still resolved through the canonical request log.
     assert!(matches!(
-        committed.output,
-        BlobMutationOutcome::PartStored { .. }
+        prepared.execute().await,
+        Err(InvocationError::NotStarted(
+            cellule_runtime::Error::CellDraining
+        ))
     ));
-    assert!(matches!(
-        fixture.client.resolve(&evidence).await.unwrap(),
-        cellule_runtime::Resolution::Committed(_)
-    ));
-    assert_eq!(committed.receipt.commit_sequence, 2);
+    let cellule_runtime::Resolution::Committed(outcome) =
+        fixture.client.resolve(&evidence).await.unwrap()
+    else {
+        panic!("original accepted manifest outcome");
+    };
+    let mut decoder = cellule_runtime::codec::BoundedDecoder::new(outcome.result(), 1024).unwrap();
+    let output =
+        <BlobMutationOutcome as cellule_runtime::codec::WireValue>::decode(&mut decoder).unwrap();
+    decoder.finish().unwrap();
+    assert!(matches!(output, BlobMutationOutcome::PartStored { .. }));
+    assert_eq!(outcome.commit_sequence(), 2);
     assert_eq!(fixture.provider.gate.entered.load(Ordering::Acquire), 1);
     assert!(matches!(
         fixture

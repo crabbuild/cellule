@@ -342,10 +342,15 @@ clear it; `locally_joined()` remains false and repeated close/join returns an
 error. Native joining cannot be reconstructed from a later object-store read.
 Retained diagnostics preserve the original source; they do not establish remote
 absence or success. Preparing a mutation still returns a caller-owned
-`PreparedCommand`: after return, its later execution is outside the store job
-count and uses normal Cell admission and durability. Retain its evidence and
-resolve uncertain execution. Store closure cannot revoke that command or prove
-all writes in the object-store scope are quiesced.
+`PreparedCommand`: after return it holds no running store job. Execution through
+that configured client acquires the same store admission and retains dispatch
+through its response, including after caller cancellation. Closed admission
+refuses new execution from clones and reconstructed snapshots. Convenience
+mutation already holds its original operation and does not reacquire admission
+between staging and dispatch. Request digests, snapshot bytes, normal Cell
+admission and durability are unchanged. Retain evidence and resolve uncertain
+earlier execution; local closure cannot prove its outcome or that writes through
+other client/provider capabilities in the object-store scope are quiesced.
 
 Install the same store with `CellNode::install_blob_artifact_store` before
 readiness, after the task group, and pass its returned clone to

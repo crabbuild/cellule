@@ -74,8 +74,10 @@ impl BlobArtifactStore {
     /// Cancelling this waiter never cancels accepted work or reopens admission.
     /// This proves local joining, not cross-Cell reachability, remote operation
     /// success, Cell release, pin retirement or permission to finalize a node.
-    /// Already returned prepared commands are caller-owned; this does not
-    /// revoke or count their later execution through normal Cell admission.
+    /// Returned prepared commands acquire this same owner's admission when
+    /// executed by its configured client. Closure refuses new dispatch; it does
+    /// not prove absence of uncertain earlier commands or writes through other
+    /// client/provider capabilities.
     pub async fn close_and_join(&self) -> Result<BlobArtifactLifecycleObservation> {
         self.close();
         self.lifetime.join().await?;
@@ -88,7 +90,7 @@ impl BlobArtifactStore {
         self.lifetime.observe()
     }
 
-    pub(super) async fn run_invocation<T, U, F>(
+    pub(crate) async fn run_invocation<T, U, F>(
         &self,
         work: F,
     ) -> std::result::Result<T, InvocationError<U>>
