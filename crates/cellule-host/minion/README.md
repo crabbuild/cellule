@@ -117,8 +117,40 @@ keeps zero writer releases/activations separate from two receipt checks and
 reader replacement. This finite in-process example does not qualify external
 process failure or the remaining follower/primitive combinations.
 
-It creates three independently leased CellNodes over shared strict in-memory
-object storage, initializes twelve real SQLite Cells, and acknowledges a command
+Run live-follower maintenance with two-member durability:
+
+```sh
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-follower
+```
+
+Four managed boots provide a writer, two original follower stores and one spare.
+The donor has no writers but retains a foreign follower lane. A complete pass
+without replacement policy stays Evacuating and retains its original enrollment.
+The command enables the spare through a real signed heartbeat, covers the old
+acknowledged tail through canonical writer drain, and requests rotation from the
+existing durability supervisor. Both original member retirements and exact old
+coverage must be confirmed before epoch 2 with the two eligible members can
+settle the donor obligation. Canonical acquisition resumes the writer on its
+original node. A new command is acknowledged through the existing durability
+gate while the installed replacement ensemble is rechecked. Object proof may win before the
+directory activation CAS; Active alone is not required to prove installation.
+Fresh durable policy and complete role observation authorize native Finalize.
+The command checks Completed, Stopped, permanent withdrawal, original retirement
+history and canonical-root SQL readback of 29, covering both acknowledgements.
+The original request keeps its digest, sequence, expiry and stored outcome. Cleanup joins all four nodes and
+retires both ensembles and every boot; final writer counts include the spare:
+`[1, 0, 0, 0]`. Release/activation counts describe fleet writer movement and remain
+zero. Five service/receipt checks and two replacement members are reported
+separately.
+
+The finite live-owner adapter retains exactly two prepared epochs and exact
+original close barriers in memory. It uses fresh canonical append/retire
+authorization and offers no failed-owner seal/tail capability. External process
+restart, remote authentication and mixed reader/follower/primitive maintenance
+remain separate qualification requirements.
+
+The overload command creates three independently leased CellNodes over shared
+strict in-memory object storage, initializes twelve real SQLite Cells, and acknowledges a command
 on each. A held seven-GiB disk admission token causes the existing actor's
 measured ledger classifier to enter Shedding after its normal dwell. The public
 reconciler allocates its bounded two-move batch; the scenario releases that

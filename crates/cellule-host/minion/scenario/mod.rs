@@ -6,6 +6,7 @@ mod adapters;
 mod application;
 mod balance;
 mod failure;
+mod follower_maintenance;
 #[cfg(test)]
 mod follower_tests;
 mod native_peers;
@@ -128,7 +129,7 @@ pub(super) struct ScenarioSummary {
     pub controller_epoch: u64,
     pub expired_receiver_cleanups: usize,
     pub blockers: Vec<cellule_runtime::fleet::operations::DrainBlocker>,
-    pub final_counts: [usize; 3],
+    pub final_counts: Vec<usize>,
     pub maintenance_completed: bool,
     pub maintenance_boot_withdrawn: bool,
     pub receiver_process_closures: usize,
@@ -157,6 +158,10 @@ pub(super) async fn maintenance_reader() -> JournalResult<ScenarioSummary> {
     execute(Scenario::MaintenanceReader).await
 }
 
+pub(super) async fn maintenance_follower() -> JournalResult<ScenarioSummary> {
+    execute(Scenario::MaintenanceFollower).await
+}
+
 pub(super) async fn receiver_loss() -> JournalResult<ScenarioSummary> {
     execute(Scenario::ReceiverLoss).await
 }
@@ -167,6 +172,7 @@ enum Scenario {
     CountBalance,
     Maintenance,
     MaintenanceReader,
+    MaintenanceFollower,
     ReceiverLoss,
 }
 
@@ -188,7 +194,11 @@ async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
     let journal = Arc::new(SqliteJournal::open(path.clone(), scope(), profile, clock()?).await?);
     let mut nodes = Vec::new();
     let mut boots = Vec::new();
-    let reader_maintenance = matches!(scenario, Scenario::MaintenanceReader);
+    let additional_enrollments = match scenario {
+        Scenario::MaintenanceReader => 2,
+        Scenario::MaintenanceFollower => 4,
+        _ => 0,
+    };
     let result = run_scenario(
         scenario,
         &root,
@@ -219,7 +229,7 @@ async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
             let page = journal.enrollments_page(version, None, 128).await?;
             if boots.len() != nodes.len()
                 || page.next().is_some()
-                || page.entries().len() != boots.len() + if reader_maintenance { 2 } else { 0 }
+                || page.entries().len() != boots.len() + additional_enrollments
                 || page.entries().iter().any(|entry| {
                     entry.status() != cellule_runtime::fleet::operations::EnrollmentStatus::Retired
                 })
@@ -291,6 +301,9 @@ fn run_scenario<'a>(
         Scenario::CountBalance => Box::pin(balance::run(root, journal, nodes, boots, profile)),
         Scenario::Maintenance => Box::pin(run_maintenance(root, journal, nodes, boots, profile)),
         Scenario::MaintenanceReader => Box::pin(reader_maintenance::run(
+            root, journal, nodes, boots, profile,
+        )),
+        Scenario::MaintenanceFollower => Box::pin(follower_maintenance::run(
             root, journal, nodes, boots, profile,
         )),
         Scenario::ReceiverLoss => receiver_loss::run(root, journal, nodes, boots, profile),
@@ -808,7 +821,7 @@ async fn run_maintenance(
         controller_epoch: 0,
         expired_receiver_cleanups: 0,
         blockers: Vec::new(),
-        final_counts: [0; 3],
+        final_counts: vec![0; 3],
         maintenance_completed: false,
         maintenance_boot_withdrawn: false,
         receiver_process_closures: 0,
@@ -996,7 +1009,7 @@ async fn settle(
         controller_epoch: 0,
         expired_receiver_cleanups: 0,
         blockers,
-        final_counts: [0; 3],
+        final_counts: vec![0; 3],
         maintenance_completed: false,
         maintenance_boot_withdrawn: false,
         receiver_process_closures: 0,

@@ -92,7 +92,7 @@ impl FleetCellProvider for Cells {
     }
 }
 
-/// Fixed three-boot in-process transport. Trusted composition pins identities;
+/// Finite managed-boot in-process transport. Trusted composition pins identities;
 /// production endpoints must provide equivalent authentication independently.
 pub(super) struct LocalFleet {
     pub nodes: Vec<Arc<CellNode>>,

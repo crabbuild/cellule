@@ -14,7 +14,7 @@ use journal::{JournalResult, SqliteJournal};
 async fn main() -> JournalResult<()> {
     let mut args = std::env::args_os().skip(1);
     let command = args.next();
-    if matches!(command.as_deref(), Some(value) if value == "overload" || value == "controller-restart" || value == "balance" || value == "maintenance" || value == "maintenance-reader" || value == "receiver-loss")
+    if matches!(command.as_deref(), Some(value) if value == "overload" || value == "controller-restart" || value == "balance" || value == "maintenance" || value == "maintenance-reader" || value == "maintenance-follower" || value == "receiver-loss")
         && args.next().is_none()
     {
         let summary = if command.as_deref() == Some(std::ffi::OsStr::new("controller-restart")) {
@@ -25,6 +25,8 @@ async fn main() -> JournalResult<()> {
             scenario::maintenance().await?
         } else if command.as_deref() == Some(std::ffi::OsStr::new("maintenance-reader")) {
             scenario::maintenance_reader().await?
+        } else if command.as_deref() == Some(std::ffi::OsStr::new("maintenance-follower")) {
+            scenario::maintenance_follower().await?
         } else if command.as_deref() == Some(std::ffi::OsStr::new("receiver-loss")) {
             scenario::receiver_loss().await?
         } else {
@@ -61,7 +63,7 @@ async fn main() -> JournalResult<()> {
         || args.next().is_some()
     {
         return Err(std::io::Error::other(
-            "usage: fleet_operations overload | controller-restart | balance | maintenance | maintenance-reader | receiver-loss | inspect-journal <database-path>",
+            "usage: fleet_operations overload | controller-restart | balance | maintenance | maintenance-reader | maintenance-follower | receiver-loss | inspect-journal <database-path>",
         )
         .into());
     }

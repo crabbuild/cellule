@@ -7581,3 +7581,74 @@ Highest next priorities:
 3. Complete W9 measured profiles, provider/process, load/soak and mixed-version
    campaigns, then exercise W10 rollout, rollback and recovery runbooks. W4–W10
    remain incomplete; this finite reader executable is one W8 deliverable.
+
+
+## October 5 2026 executable live-follower maintenance checkpoint
+
+Parent: `f9a476e0be2bab8d076ac07745596f5ac0cf6e86`. The Rust-only diff
+has SHA-256 `b9b239290215d2a532e346cf69fac2f22bbad31ff89f2a9b0bb534490d72d333`.
+
+Delivered `maintenance-follower` through the canonical minion executable.
+Four managed boots retain enrollment before readiness: a live writer, two
+original follower stores and one spare. The donor has zero local writers but
+retains a foreign lane. A complete observation without replacement policy stays
+Evacuating and preserves its original Established row. The command enables the
+spare through a real signed heartbeat, drains the original writer to cover its
+acknowledged tail, and requests rotation through the existing durability
+supervisor. It checks nonzero original coverage, both original Retired members,
+exact replacement epoch 2 and two eligible replacement members. Immutable policy
+publication and fresh full native/foreign observation authorize SettleRoles and
+Finalize; completion requires Stopped and permanent exact-boot withdrawal.
+
+Canonical Idle acquisition resumes the writer on its original physical node,
+resolves the original outcome and value 29, acknowledges a new command, and
+resolves that new outcome. Canonical-root restoration must cover both command
+sequences and preserve the original request digest, expiry, sequence and exact
+stored outcome. Final writer counts include the spare: `[1, 0, 0, 0]`. The shared
+exit path joins all four nodes, retires all four follower-member rows across the
+two ensembles and all four boot rows, closes the journal, and checks every
+existing runtime resource ledger. Fleet writer release/activation/retirement and
+movement permits stay zero; five service/receipt checks and two replacement
+members are separate evidence.
+
+An initial scenario incorrectly expected the drained source to remain a live
+writer. The corrected command performs canonical acquisition before service
+checks. A subsequent added check incorrectly required a new command to activate
+the follower log: native object proof can win before that activation CAS. The
+command now checks the real installed ensemble independently through canonical
+native evacuation and requires a published root covering both acknowledgements.
+No runtime durability gate, original deadline or qualification profile changed.
+The finite embedding adapter retains exactly two original preparations and
+checked close barriers, authorizes live append/retire through the canonical
+directory and supplies no failed-owner seal/tail capability. It establishes no
+OS-crash, external-provider restart or mixed-role/primitive qualification.
+
+Current evidence:
+
+| Source / check | Observed result |
+| --- | --- |
+| Published parent `f9a476e`; [Rust workspace job 111600595261](https://github.com/crabbuild/cellule/actions/runs/37258527941/job/111600595261) | Success: 376 minion cases, 0 failures, 975.39 seconds; workspace tests, three-process smoke, provider checks, local/replica LTX and warning-denied lints passed. Environment-specific ignored cloud suites remain unqualified. Follower/object proof, MSRV, contract, website and cookbook quality also passed. |
+| Local final source | New follower regression and production command passed; 12 original native observation cases, original reader CLI and count-balance case passed. Host all-target/all-feature warning-denied Clippy/API docs, format, boundaries/layout, 137 Rust snippets, 1348 Markdown links and 28 SQL/peer assertions with 571 validator links passed. |
+| Exact Rust snapshot `fb5badf`; [native follower job 111605650581](https://github.com/crabbuild/cellule/actions/runs/37260209483/job/111605650581) | Success on Rust 1.99: 18 selected regressions (new follower CLI, existing reader CLI, count balance, 12 complete observation cases and 3 follower observer cases), production `maintenance-follower`, and host all-target/all-feature warning-denied Clippy. All 11 changed Rust paths match the staged source. The initial snapshot harness incorrectly expected 7 observation cases although all 12 passed; only that selector-count expectation was corrected. No test assertion or profile changed. |
+| Snapshot `03261c6`; [mixed-reader diagnostic](https://github.com/crabbuild/cellule/actions/runs/37258791194) | Both independent attempts succeeded with original 3/5/10/20-node scaling, resource limits, assertions and reader SIGKILL. Each scale's original 60-second mixed window committed all 300 scheduled writes with zero misses. Attempt 1 recorded 106808/104358/79189/42047 successful reads; attempt 2 recorded 128368/129112/102646/60227. The isolated snapshot contains tagged router/server/lease probes; no probe was added to the published source. |
+
+The earlier `9257b18` Compose failure remains unexplained. Two passing diagnostic
+attempts do not establish a repair. Raw driver/node/container/provider evidence,
+arrival/receipt TSVs and binary hashes are retained in the run's
+`mixed-reader-diagnosis-37258791194-1` and `-2` artifacts. These are existing
+reader-scaling profile measurements, not W9 fleet-movement qualification. The
+published parent's Compose smoke and 3/5/10/20 reader-scaling steps also passed;
+its entity/routing measurements were still live. The complete Compose result and
+the new follower head's complete CI remain required. PR #57 contains current fetched main and is mergeable.
+
+Highest next priorities:
+
+1. Finish native follower and full-head CI, investigate any recurrence of the
+   unexplained constrained-reader availability failure, and preserve main
+   ancestry and PR mergeability.
+2. Complete combined-role maintenance and remaining W4–W7 successive-boot,
+   lineage and primitive faults, including actual external Cron/Blob and
+   failed-process ownership barriers.
+3. Deliver W9's committed fleet profile/runner, provider/process, load/soak and
+   actual mixed-binary evidence, then exercise W10 rollout, rollback and recovery
+   runbooks. W4–W10 remain incomplete; this command is one further W8 deliverable.

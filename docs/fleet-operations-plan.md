@@ -1826,9 +1826,9 @@ node crates/cellule-runtime/docs/validate.mjs
 
 The following example commands are deliverables of W8. The current tree supports
 `overload`, `controller-restart`, `receiver-loss`, writer-only `maintenance`,
-and reader-only `maintenance-reader` with the evidence limits recorded in
-[execution evidence](fleet-operations-progress.md). Reader-only
-and live-follower-only maintenance each have focused end-to-end minion scenarios,
+reader-only `maintenance-reader`, and live-follower `maintenance-follower` with
+the evidence limits recorded in [execution evidence](fleet-operations-progress.md).
+Reader-only and live-follower-only maintenance each have focused end-to-end minion scenarios,
 as does failed-owner follower maintenance. A role-complete maintenance CLI and
 the full fault/provider qualification remain required:
 
@@ -1836,6 +1836,7 @@ the full fault/provider qualification remain required:
 cargo run -p cellule-host --example fleet_operations --locked -- overload
 cargo run -p cellule-host --example fleet_operations --locked -- maintenance
 cargo run -p cellule-host --example fleet_operations --locked -- maintenance-reader
+cargo run -p cellule-host --example fleet_operations --locked -- maintenance-follower
 cargo run -p cellule-host --example fleet_operations --locked -- controller-restart
 cargo run -p cellule-host --example fleet_operations --locked -- receiver-loss
 ```
