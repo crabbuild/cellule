@@ -1567,6 +1567,14 @@ blockers and prevent declaring general maintenance support complete.
 
 Dependencies: W2, W3, W5, W6.
 
+Controller reconstruction now refreshes a committed native `SettleRoles`
+receipt after a lost reply at the new request's head, retaining the original
+acceptance and action key. The minion case checks Closing/Completed, exact boot
+withdrawal, canonical-root and command-result readback, and joined resources.
+This focused case renews the same claimant; replacement after actual expiry,
+uncommitted publication races and external process/provider faults still need
+their full maintenance qualification.
+
 Extend host durability/read-replica orchestration and runtime follower
 inventory/retirement adapters to evacuate foreign obligations. Add an explicit
 requested rotation trigger to the existing durability supervisor so maintenance

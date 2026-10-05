@@ -668,7 +668,8 @@ impl FleetActionExecutor {
                     }));
                 }
                 let result = if let Some(settlement) = settlement {
-                    self.perform_action(&accepted, Some(settlement)).await
+                    self.perform_action(&accepted, &action, Some(settlement))
+                        .await
                 } else {
                     self.inspect_accepted(&accepted).await
                 };
@@ -682,7 +683,7 @@ impl FleetActionExecutor {
                 if accepted.action() != &action || accepted.accepted_at_ms() != now_ms {
                     return Err(Arc::new(operation(OperationError::Conflict)));
                 }
-                let result = self.perform_action(&accepted, settlement).await;
+                let result = self.perform_action(&accepted, &action, settlement).await;
                 (accepted, result)
             }
         };

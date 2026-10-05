@@ -354,7 +354,25 @@ impl FleetActionJournal for SqliteJournal {
             db.check_scope(request.expected().head().scope())?;
             let snapshot = db.snapshot()?;
             let intent = db.required_intent(request.node())?;
-            request.authorize_against(&snapshot, &intent, now_ms)?;
+            let authorization = request.authorize_against(&snapshot, &intent, now_ms);
+            #[cfg(test)]
+            if matches!(authorization, Err(OperationError::Conflict)) {
+                eprintln!(
+                    "[DEBUG-fleet-57] snapshot conflict node={:?} subject={:?} head_equal={} registry_equal={} expected_head={} current_head={} expected_registry={} current_registry={} intent_scope_equal={} intent_node_equal={} intent_session_equal={}",
+                    request.node(),
+                    request.subject(),
+                    snapshot.head() == request.expected().head(),
+                    snapshot.registry() == request.expected().registry(),
+                    request.expected().head().revision(),
+                    snapshot.head().revision(),
+                    request.expected().registry().revision(),
+                    snapshot.registry().revision(),
+                    intent.scope() == snapshot.head().scope(),
+                    intent.node() == request.node(),
+                    intent.session() == request.session(),
+                );
+            }
+            authorization?;
             Ok(())
         }))
     }
