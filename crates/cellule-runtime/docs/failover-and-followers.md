@@ -617,6 +617,12 @@ longer infers owner death from a quiet Cell. A quiet repository can be healthy
 for months. Only the exact owner session's lease, or a graceful release, permits
 takeover.
 
+An owner with an installed node lease does not write periodic per-Cell control
+renewals. Idle Cells share the node heartbeat; long preparation checks the same
+monotonic lease without advancing Cell progress. Publications still conditionally
+update each Cell's exact owner, epoch and root, and node expiry fences all local
+admission and output. Runtimes without a node lease retain per-Cell renewals.
+
 ### Open the node log before its first fleet proof
 
 A fresh session is strict-created with `log=null`. That is a durable statement

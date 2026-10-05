@@ -157,7 +157,7 @@ impl CellPublisher {
     }
 
     pub(crate) fn renewal_due(&self, now: std::time::Instant) -> bool {
-        now >= self.renew_at
+        self.node_lease.is_none() && now >= self.renew_at
     }
 
     pub(crate) fn renewal_at(&self) -> std::time::Instant {
@@ -205,9 +205,16 @@ impl CellPublisher {
         Ok(Some(true))
     }
 
-    /// Advances owner progress or fences when the renewal cannot be proven in time.
+    /// Checks the node lease, or advances unleased owner progress within its deadline.
     pub(crate) async fn renew(&mut self) -> Result<()> {
         self.check_node_lease()?;
+        if self.node_lease.is_some() {
+            // Takeover of a leased owner requires expiry of its exact node
+            // session, not a quiet Cell's progress. Long preparation still
+            // checks that shared lease at this cadence without a Cell CAS.
+            self.renew_at = std::time::Instant::now() + RENEW_INTERVAL;
+            return Ok(());
+        }
         let deadline = std::time::Instant::now() + SELF_FENCE_TIMEOUT;
         let deadline_at = tokio::time::Instant::from_std(deadline);
         let mut backoff = Backoff::default();

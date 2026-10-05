@@ -14,6 +14,69 @@ use crate::control::{Control, Owner};
 use crate::identity::IncarnationId;
 use crate::identity::{CellId, Digest, SessionId};
 
+#[tokio::test]
+async fn leased_preparation_checkpoint_checks_liveness_without_cell_cas() {
+    let cell = CellId::from_bytes([91; 32]);
+    let incarnation = IncarnationId::from_bytes([92; 16]);
+    let layout = CellStorageLayout::new(
+        Store::new(Arc::new(InMemory::new())),
+        Path::from("leased-preparation-checkpoint"),
+        [93; 16],
+    );
+    let control = Control::initial(
+        cell,
+        incarnation,
+        Owner {
+            session: SessionId::from_bytes([94; 16]),
+            endpoint: "https://node.internal:8081".into(),
+        },
+        Digest::from_bytes([95; 32]),
+        1,
+    )
+    .unwrap();
+    layout
+        .store()
+        .create_strict(
+            &layout.control_path(cell.as_bytes()),
+            Bytes::from(control.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout.clone());
+    let before = authority.load(cell).await.unwrap().unwrap();
+    let replica = CellReplica::new(
+        layout,
+        *cell.as_bytes(),
+        *incarnation.as_bytes(),
+        Limits::default(),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let lease = crate::NodeLeaseGuard::new(0, 60_000).unwrap();
+    let mut publisher = CellPublisher::new(
+        replica,
+        authority.clone(),
+        before.clone(),
+        directory.path().to_owned(),
+    )
+    .with_node_lease(lease.clone());
+    publisher.renew_at = std::time::Instant::now();
+    assert!(!publisher.renewal_due(std::time::Instant::now()));
+    publisher.renew().await.unwrap();
+    assert!(publisher.renewal_at() > std::time::Instant::now());
+    assert_eq!(publisher.control().value(), before.value());
+    assert_eq!(
+        authority.load(cell).await.unwrap().unwrap().value(),
+        before.value()
+    );
+    lease.fence();
+    assert!(matches!(publisher.renew().await, Err(Error::Fenced)));
+    assert_eq!(
+        authority.load(cell).await.unwrap().unwrap().value(),
+        before.value()
+    );
+}
+
 #[derive(Default)]
 struct CoverageAuthority(std::sync::Mutex<Vec<(u64, u64)>>);
 

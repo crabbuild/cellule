@@ -2,6 +2,127 @@
 
 use super::*;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_leased_idle_cells_do_not_publish_per_cell_renewals() {
+    let session = SessionId::from_bytes([47; 16]);
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(2, 4).unwrap(),
+        2 * 1024 * 1024,
+        session,
+        ReplicaHost::default(),
+    )
+    .unwrap();
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let fixtures: Vec<_> = (0..4_u8).map(|index| fixture_for(&[47, index])).collect();
+    let mut handles = Vec::new();
+    let mut before = Vec::new();
+    for fixture in &fixtures {
+        handles.push(bootstrap_on(&runtime, fixture, session).await);
+        before.push(
+            CellAuthority::new(fixture.layout.clone())
+                .load(fixture.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(3_400)).await;
+    let mut after = Vec::new();
+    for (fixture, handle) in fixtures.iter().zip(&handles) {
+        assert_eq!(
+            handle.query(1, 1, |_| Ok(Vec::new())).await.unwrap(),
+            Vec::<u8>::new()
+        );
+        after.push(
+            CellAuthority::new(fixture.layout.clone())
+                .load(fixture.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    assert_eq!(runtime.stats().active_cells(), 4);
+    // A quiet control still permits an ordinary exact-root publication.
+    let write = handles[0]
+        .execute(
+            mutation_identity_window(47, 10, 10_000),
+            Digest::from_bytes([47; 32]),
+            20,
+            1,
+            16,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(vec![1]))
+            },
+        )
+        .await
+        .unwrap();
+    lease.fence();
+    let mut fenced = Vec::new();
+    for handle in &handles {
+        fenced.push(handle.query(1, 1, |_| Ok(Vec::new())).await);
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let called = calls.clone();
+    let refused = handles[0]
+        .execute(
+            mutation_identity_window(48, 10, 10_000),
+            Digest::from_bytes([48; 32]),
+            21,
+            1,
+            16,
+            move |_| {
+                called.fetch_add(1, Ordering::SeqCst);
+                Ok(HandlerOutcome::Success(vec![2]))
+            },
+        )
+        .await;
+    let shutdown = runtime.shutdown().await;
+
+    // Compare after closing the runtime, so a failed regression cannot strand
+    // its accepted jobs or native handles.
+    for (before, after) in before.iter().zip(&after) {
+        assert_eq!(after.value(), before.value(), "idle Cell wrote a renewal");
+    }
+    assert_eq!(write.commit_sequence(), 1);
+    assert!(
+        fenced
+            .iter()
+            .all(|result| matches!(result, Err(cellule_runtime::Error::Fenced)))
+    );
+    assert!(refused.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(shutdown, Err(cellule_runtime::Error::Fenced)));
+    assert_eq!(runtime.stats().active_cells(), 0);
+}
+
+#[tokio::test]
+async fn unleased_idle_cell_keeps_its_control_renewal() {
+    let fixture = fixture_for(b"unleased-idle-renewal");
+    let session = SessionId::from_bytes([49; 16]);
+    let runtime =
+        CellRuntime::new(SqlWorkerPool::new(1, 1).unwrap(), 2 * 1024 * 1024, session).unwrap();
+    let _handle = bootstrap_on(&runtime, &fixture, session).await;
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let before = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(3_400)).await;
+    let after = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    runtime.shutdown().await.unwrap();
+    assert!(after.value().progress > before.value().progress);
+    assert_eq!(after.value().root, before.value().root);
+    assert_eq!(after.value().owner, before.value().owner);
+    assert_eq!(after.value().epoch, before.value().epoch);
+}
+
 #[tokio::test]
 async fn lifecycle_metadata_uses_shared_credit_without_opening_fenced_native_work() {
     let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
