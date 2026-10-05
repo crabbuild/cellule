@@ -190,6 +190,22 @@ pub(in crate::cell::actor) fn start_background_compaction(
         if !matches!(decision, CoordinationDecision::Started) {
             continue;
         }
+        let admission = match active.publisher.as_ref().map_or_else(
+            || Err(Error::Control("compaction publisher unavailable")),
+            CellPublisher::try_admit_compaction,
+        ) {
+            Ok(Some(replica)) => Ok(replica),
+            Ok(None) => {
+                // Undo the synchronous grant before the actor accepts another
+                // message. A waiter has no publisher token, task, or busy Cell.
+                active
+                    .coordination
+                    .step(CoordinationInput::FinishCompaction { fenced: false });
+                active.compaction_retry_at = now + COMPACTION_RETRY;
+                continue;
+            }
+            Err(error) => Err(error),
+        };
         let Some(mut publisher) = active.publisher.take() else {
             active
                 .coordination
@@ -203,7 +219,10 @@ pub(in crate::cell::actor) fn start_background_compaction(
         let pool = pool.clone();
         tasks.spawn(async move {
             let started = std::time::Instant::now();
-            let result = publisher.compact_one_quiet().await;
+            let result = match admission {
+                Ok(replica) => publisher.compact_one_quiet(replica).await,
+                Err(error) => Err(error),
+            };
             tracing::debug!(
                 elapsed_ms = started.elapsed().as_millis(),
                 promoted = matches!(result, Ok(Some(true))),

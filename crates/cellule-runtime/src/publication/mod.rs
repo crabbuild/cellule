@@ -169,15 +169,26 @@ impl CellPublisher {
             && self.appends_since_compaction_check >= COMPACTION_CHECK_INTERVAL
     }
 
+    pub(crate) fn try_admit_compaction(&self) -> Result<Option<cellule_ltx::CellReplica>> {
+        self.check_node_lease()?;
+        match self.replica.try_admit_scheduled_compaction() {
+            Ok(admitted) => Ok(admitted),
+            Err(error) if retryable_ltx_error(&error) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Runs at most one promotion while the actor owns the publisher token.
     /// Retryable preparation failures leave the debt for a later quiet period.
-    pub(crate) async fn compact_one_quiet(&mut self) -> Result<Option<bool>> {
+    pub(crate) async fn compact_one_quiet(
+        &mut self,
+        replica: cellule_ltx::CellReplica,
+    ) -> Result<Option<bool>> {
         self.check_node_lease()?;
         let Some(base) = self.observed.value().ltx_root() else {
             self.appends_since_compaction_check = 0;
             return Ok(Some(false));
         };
-        let replica = self.replica.clone();
         let scratch_directory = self.scratch_directory.clone();
         let attempt = replica.prepare_scheduled_compaction(&base, &scratch_directory);
         tokio::pin!(attempt);

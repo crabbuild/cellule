@@ -450,7 +450,10 @@ async fn verify_compaction_append(schema: u32) {
     assert!(publisher.compaction_due());
     let before = publisher.control().value().ltx_root().unwrap();
     assert_eq!(replica.open_root(&before).await.unwrap().segment_count(), 8);
-    assert_eq!(publisher.compact_one_quiet().await.unwrap(), Some(true));
+    assert_eq!(
+        publisher.compact_one_quiet(replica.clone()).await.unwrap(),
+        Some(true)
+    );
     let after = publisher.control().value().ltx_root().unwrap();
     assert_eq!(after.position, before.position);
     assert_eq!(after.commit_sequence, before.commit_sequence);
@@ -464,7 +467,10 @@ async fn verify_compaction_append(schema: u32) {
     assert_eq!(proof.prefix(), prefix);
     assert_eq!(proof.root(), after);
     assert!(proof.inspected_roots() >= 8 && proof.dependency_count() > 0);
-    assert_eq!(publisher.compact_one_quiet().await.unwrap(), Some(false));
+    assert_eq!(
+        publisher.compact_one_quiet(replica.clone()).await.unwrap(),
+        Some(false)
+    );
     assert!(!publisher.compaction_due());
 
     let mut segments = Vec::new();

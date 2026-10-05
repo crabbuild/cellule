@@ -24,6 +24,9 @@ density runs. These failures do not establish throughput qualification.
 The [shared-cache report](2026-10-05-shared-directory-cache.md) identifies duplicate
 cold-start disk accounting and retains the causal regression. The fixed RustFS
 replay and throughput measurements remain pending.
+The [compaction admission report](2026-10-05-compaction-admission.md) records
+foreground exclusion by unadmitted quiet compactions and a four-Cell causal
+regression. Post-fix sustained throughput and latency remain unverified.
 
 Reports identify frozen measured revisions. The later CI fix preserves reader
 rotation across discovery changes and synchronizes a durability test with its

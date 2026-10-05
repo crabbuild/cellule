@@ -369,6 +369,20 @@ impl CellReplica {
         result
     }
 
+    /// Tries to admit scheduled compaction without waiting for shared capacity.
+    ///
+    /// Returns a scoped clone retaining the existing dirty-memory and recovery
+    /// reservations, or `None` when unavailable or a new cohort is already queued.
+    /// Prepare through the returned clone and retain it through publication;
+    /// dropping its last owner releases admission. This grants no authority and
+    /// changes no resource ceiling. Closed admission preserves its source error.
+    pub fn try_admit_scheduled_compaction(&self) -> Result<Option<Self>> {
+        Ok(self
+            .host
+            .try_for_recovery()?
+            .map(|host| self.clone().with_host(host)))
+    }
+
     /// Prepares one bounded level promotion, or an emergency full compaction.
     ///
     /// Normal promotions require eight contiguous inputs from the preceding

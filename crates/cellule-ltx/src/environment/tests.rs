@@ -1059,6 +1059,47 @@ async fn mixed_memory_admission_progresses_with_one_slot_per_pool() {
 
 #[cfg(feature = "replica")]
 #[tokio::test]
+async fn nonblocking_recovery_yields_to_queued_work_and_releases_partial_pairs() {
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let host = Host::default()
+        .with_dirty_slots(dirty.clone())
+        .with_recovery_slots(recovery.clone());
+    let occupied = recovery.clone().acquire_owned().await.unwrap();
+    for _ in 0..32 {
+        assert!(host.try_for_recovery().unwrap().is_none());
+        assert_eq!(dirty.available_permits(), 1);
+    }
+    drop(occupied);
+    let occupied = dirty.clone().acquire_owned().await.unwrap();
+    for _ in 0..32 {
+        assert!(host.try_for_recovery().unwrap().is_none());
+        assert_eq!(recovery.available_permits(), 1);
+    }
+    let mut queued = Box::pin(host.for_recovery());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut queued)
+            .await
+            .is_err()
+    );
+    assert!(host.try_for_recovery().unwrap().is_none());
+    assert_eq!(recovery.available_permits(), 1);
+    drop(occupied);
+    let admitted = queued.await.unwrap();
+    assert!(host.try_for_recovery().unwrap().is_none());
+    drop(admitted);
+    let admitted = host.try_for_recovery().unwrap().unwrap();
+    let nested = admitted.for_recovery().await.unwrap();
+    drop(admitted);
+    assert_eq!(dirty.available_permits(), 0);
+    assert_eq!(recovery.available_permits(), 0);
+    drop(nested);
+    assert_eq!(dirty.available_permits(), 1);
+    assert_eq!(recovery.available_permits(), 1);
+}
+
+#[cfg(feature = "replica")]
+#[tokio::test]
 async fn rejected_memory_pairs_preserve_errors_and_release_both_slots_and_charges() {
     struct Charge(Arc<AtomicUsize>);
     impl HostResourcePermit for Charge {}
@@ -1106,8 +1147,18 @@ async fn rejected_memory_pairs_preserve_errors_and_release_both_slots_and_charge
         assert_eq!(dirty.available_permits(), 1);
         assert_eq!(recovery.available_permits(), 1);
         assert_eq!(admission.charges.load(Ordering::SeqCst), 0);
+        assert!(
+            matches!(host.try_for_recovery(), Err(crate::LtxError::Io(source)) if source.kind() == io::ErrorKind::StorageFull && source.to_string() == "memory admission rejected")
+        );
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+        assert_eq!(admission.charges.load(Ordering::SeqCst), 0);
         admission.enabled.store(false, Ordering::SeqCst);
         let admitted = host.for_recovery().await.unwrap();
+        assert_eq!(admission.charges.load(Ordering::SeqCst), 2);
+        assert!(host.try_for_recovery().unwrap().is_none());
+        drop(admitted);
+        let admitted = host.try_for_recovery().unwrap().unwrap();
         assert_eq!(admission.charges.load(Ordering::SeqCst), 2);
         drop(admitted);
         assert_eq!(admission.charges.load(Ordering::SeqCst), 0);
@@ -1133,6 +1184,10 @@ async fn closed_memory_pairs_preserve_acquire_error_sources() {
         let error = host.for_recovery().await.err().unwrap();
         assert!(
             matches!(error, crate::LtxError::Other(source) if source.downcast_ref::<tokio::sync::AcquireError>().is_some())
+        );
+        let error = host.try_for_recovery().err().unwrap();
+        assert!(
+            matches!(error, crate::LtxError::Other(source) if source.downcast_ref::<tokio::sync::TryAcquireError>() == Some(&tokio::sync::TryAcquireError::Closed))
         );
         assert_eq!(dirty.available_permits(), 1);
         assert_eq!(recovery.available_permits(), 1);

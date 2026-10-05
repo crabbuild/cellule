@@ -634,6 +634,15 @@ async fn cell_compaction_uses_injected_filesystem_and_cleans_failed_scratch() {
 
 #[tokio::test]
 async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
+    verify_canceled_compaction(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn canceled_pre_admitted_compaction_retains_files_and_admission_through_cleanup() {
+    verify_canceled_compaction(true).await;
+}
+
+async fn verify_canceled_compaction(pre_admitted: bool) {
     for (composed, operation) in [false, true].into_iter().flat_map(|composed| {
         [
             "create",
@@ -679,7 +688,11 @@ async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
         let release = Release(pause.clone());
         *faults.pause.lock().unwrap() = Some(pause.clone());
         *faults.forbidden_thread.lock().unwrap() = Some(std::thread::current().id());
-        let task_replica = replica.clone();
+        let task_replica = if pre_admitted {
+            replica.try_admit_scheduled_compaction().unwrap().unwrap()
+        } else {
+            replica.clone()
+        };
         let destination = directory.path().to_owned();
         let task_cuts = cuts.clone();
         let task = tokio::spawn(async move {

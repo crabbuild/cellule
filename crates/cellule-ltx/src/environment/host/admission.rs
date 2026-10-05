@@ -41,6 +41,55 @@ pub(super) fn shared_pair_gate(dirty: &Arc<Semaphore>, recovery: &Arc<Semaphore>
 }
 
 impl Host {
+    pub(crate) fn try_for_recovery(&self) -> crate::Result<Option<Self>> {
+        // Optional background work must not overtake a queued foreground
+        // cohort, or retain half a new pair while waiting for the other slot.
+        let _gate = if self.dirty.is_none() && self.recovery.is_none() {
+            let Ok(gate) = self.memory_pair_gate.queue.try_lock() else {
+                return Ok(None);
+            };
+            Some(gate)
+        } else {
+            None
+        };
+        let mut host = self.clone();
+        if host.recovery.is_none() {
+            let Some(permit) =
+                self.try_memory_slot(&self.recovery_slots, LtxPhase::RecoveryAdmission)?
+            else {
+                return Ok(None);
+            };
+            host.recovery = Some(self.reserve_memory_permit(HostResourceKind::Recovery, permit)?);
+        }
+        if host.dirty.is_none() {
+            let Some(permit) = self.try_memory_slot(&self.dirty_slots, LtxPhase::DirtyAdmission)?
+            else {
+                return Ok(None);
+            };
+            host.dirty = Some(self.reserve_memory_permit(HostResourceKind::Dirty, permit)?);
+        }
+        Ok(Some(host))
+    }
+
+    fn try_memory_slot(
+        &self,
+        slots: &Arc<Semaphore>,
+        phase: LtxPhase,
+    ) -> crate::Result<Option<OwnedSemaphorePermit>> {
+        let started = self.now_monotonic();
+        match slots.clone().try_acquire_owned() {
+            Ok(permit) => {
+                self.observe_ltx_phase(phase, started, true);
+                Ok(Some(permit))
+            }
+            Err(tokio::sync::TryAcquireError::NoPermits) => Ok(None),
+            Err(error) => {
+                self.observe_ltx_phase(phase, started, false);
+                Err(crate::LtxError::Other(Box::new(error)))
+            }
+        }
+    }
+
     pub(crate) async fn for_dirty(&self) -> crate::Result<Self> {
         let mut host = self.clone();
         if host.dirty.is_none() {
