@@ -351,3 +351,46 @@ async fn authenticated_reads_keep_path_scope_and_time_policies() {
         );
     }
 }
+
+#[tokio::test]
+async fn invalid_producer_signatures_never_reach_create_or_refresh_cas() {
+    for original in records::canonical_advertisements() {
+        for placement in [false, true] {
+            if placement && !original.has_signed_placement() {
+                continue;
+            }
+            let directory = directory();
+            let mut invalid = original.clone();
+            if placement {
+                invalid.placement_signature[0] ^= 1;
+            } else {
+                invalid.signature[0] ^= 1;
+            }
+            assert!(matches!(
+                directory.create(invalid.clone(), NOW_MS).await,
+                Err(Error::PeerSignature(_))
+            ));
+            assert!(
+                directory
+                    .load(original.session(), NOW_MS)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            let current = directory.create(original.clone(), NOW_MS).await.unwrap();
+            invalid.issued_at_ms += 1_000;
+            invalid.expires_at_ms += 1_000;
+            assert!(matches!(
+                directory.refresh(&current, invalid, NOW_MS + 1_000).await,
+                Err(Error::PeerSignature(_))
+            ));
+            let loaded = directory
+                .load(original.session(), NOW_MS + 1_000)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(loaded.advertisement(), &original);
+            assert_eq!(loaded.token, current.token);
+        }
+    }
+}

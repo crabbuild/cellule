@@ -7263,3 +7263,74 @@ Highest next priorities:
 3. Deliver W9's committed measured fleet profile/runner and actual provider/process,
    mixed-version/load/resource campaign; exercise W10 rollout, rollback and
    runbooks. Keep PR #57 synchronized with main and mergeable throughout.
+
+
+## 2026-10-05 — Native deadline reproduction and canonical signature boundaries
+
+Parent: `ed16bf9cade53c831242f34f3524c4084854c978`. The code-only diff,
+excluding Markdown, has SHA-256
+`503e4e80ad3ded04d265a36ee71651b51a27a748699cb636a0c475052e1dff2e`.
+This checkpoint fixes redundant authentication at specific directory boundaries;
+it does not claim green fleet CI or completion of W4–W10.
+
+An isolated native Ubuntu 24.04 workflow reproduced all three selected hosted
+failures with their original debug harness, deadlines, controller profile and
+assertions. Stage probes measured routed collection at 922 ms: foreign reference
+collection/rechecks consumed 631 ms, while journal confirmation used less than
+one millisecond. Follower collection took 2.69 seconds, including 1.61 seconds
+in those reference scans. This rules out journal confirmation as the principal
+cost in these captures; it does not establish a general provider latency bound.
+
+Canonical decoding had already authenticated identity and understood placement
+signatures before exact loads, live/advertised scans and follower inventories
+verified the same immutable bytes again. Those consumers now retain every fresh
+read, canonical-byte/path check and their existing scope/time policy, while
+using the decoder's original authentication. Create and heartbeat refresh still
+validate signatures before any CAS, then use the one canonical serializer on
+the unchanged candidate. Unverified producers retain the checked encode path.
+There is no signature cache across reads, changed bytes or directory scans;
+formats, signature inputs, error sources, action keys and budgets are unchanged.
+
+Seven regression cases cover all three advertisement forms, verification counts,
+canonical emission/readback, changed valid bytes, forged identity/placement
+signatures, expiry, future issue time, foreign scope and misplaced paths.
+Invalid producers retain their original signature errors and cannot create or
+change a canonical record. Three read/scan tests and the producer test failed
+with two verification passes before their respective fixes.
+
+Native diagnostics, each selecting one exact case per command:
+
+| Snapshot / run / job | Observed result |
+| --- | --- |
+| `573214e`; [run 37249579053 / job 111574292502](https://github.com/crabbuild/cellule/actions/runs/37249579053/job/111574292502) | Original routed claim, interrupted evidence write and follower-only maintenance each failed. Stage timings above come from this run. |
+| `80691d4`; [run 37250078568 / job 111575760319](https://github.com/crabbuild/cellule/actions/runs/37250078568/job/111575760319) | Both routed cases passed after the read-boundary change. Follower collection improved to 1.81 seconds but policy verification still exhausted its unchanged 2.50-second share. |
+| `8a73df3`; [run 37250615027 / job 111577285575](https://github.com/crabbuild/cellule/actions/runs/37250615027/job/111577285575) | Both routed cases passed after producer emission also stopped repeating verification: 6.14 and 4.51 seconds for the complete cases. Follower-only maintenance reached a different failure: native Host snapshot reported the original `fleet-action-journal` Conflict after 329 ms, with 2.17 seconds of observation budget remaining. This is a changed-barrier refusal, not a proven complete CI fix. |
+
+The diagnostic snapshots add only a temporary workflow and stage probes to the
+recorded code. They are not protected qualification receipts and do not replace
+current-head broad CI. Raw logs are retained in the linked workflow runs.
+Temporary probes remain because the follower conflict and broad failures still
+need diagnosis; no deadline, pass partition, assertion or qualification profile
+was relaxed.
+
+| Command | Observed result |
+| --- | --- |
+| `cargo test -p cellule-runtime --lib node:: --all-features --locked -- --test-threads=2` | 119 passed; 0 failed, including all seven new cases. |
+| Exact minion follower-only maintenance selector | 1 passed locally, 2.30 seconds; native changed-barrier failure above remains open. |
+| Serial minion successor suite after the read-boundary change | 20 passed; 0 failed, 127.62 seconds. |
+| Serial minion successor suite with the final producer change and probes | 20 passed; 0 failed, 97.32 seconds. |
+| Runtime/host all-target/all-feature Clippy and warning-denied API docs | Passed for the final producer change and test additions. |
+| Format, whitespace, boundaries, module ownership, document and SQL/peer gates | Passed: 137 snippets, 1,348 local Markdown links, 28 protocol/schema assertions and 571 validator links. |
+
+Highest next priorities:
+
+1. Diagnose the native follower registry conflict and preserve its original
+   changed-barrier refusal while making safe reconciliation resumable. Verify
+   the published head's complete CI, the observed controller-expiry timing debt
+   and the intermittent LTX timer case; remove probes after confirmed regression.
+2. Extend routed provider/backend/lineage and successive-boot faults, complete
+   remaining maintenance role/primitive combinations, and qualify actual external
+   work/process providers, including Cron/Blob closure.
+3. Deliver W9's measured profile/runner, provider/process and mixed-version/load
+   evidence; exercise W10 staged rollout, rollback and runbooks. Keep PR #57
+   synchronized with main and mergeable.
