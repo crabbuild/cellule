@@ -1,0 +1,243 @@
+{
+  "status": "no_valid_fair_admission_performance_comparison",
+  "cells": 2000,
+  "window_seconds": 600,
+  "warmup_seconds": 30,
+  "offered_writes_per_second": 1000,
+  "offered_reads_per_second": 10,
+  "regression": {
+    "baseline_32_writers_failures": 3,
+    "candidate_passes": 3,
+    "cancellation_under_held_recovery_passed": true,
+    "full_runtime_tests_passed_before_replica_boxing": true,
+    "final_boxed_source_compaction_subset_passed": 5,
+    "strict_clippy_and_docs_passed": true
+  },
+  "framework_change": "Bounded fair quiet-compaction admission before publisher exclusion; unchanged recovery/native limits and durable response gate",
+  "frozen_inputs": {
+    "build_command": "cargo build -p cellule-axum --example sql --release --locked",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "points": {
+      "baseline": {
+        "commit": "03b9002953133a3dfe90986805882c696e3e072e",
+        "archive_sha256": "b84817bb100b14b3bce5248bd3eca622e6b97574155968a8692d79c750747fdb",
+        "binary_sha256": "2ac9e0d210a44ea185321c6adc0eee6d8d3cdefcba06b10c10e972bf82c38a24",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      },
+      "candidate": {
+        "commit": "8fb50acb40ea50b08a2bed1135283449cc12c76a",
+        "archive_sha256": "1de8f3116da65232197de98b9f75ed5801ec8930f0ef2015bd911097f35b0c68",
+        "binary_sha256": "d0ade47b42b7ed87952a970032a8362c810042f52e40ce1b9e42a4f9d44d213f",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      }
+    },
+    "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc"
+  },
+  "r4": {
+    "status": "comparison_invalid_candidate_inode_exhaustion",
+    "baseline": {
+      "raw_journal_audit": {
+        "writes": 72474,
+        "reads": 529
+      },
+      "raw_metrics": {
+        "reads": {
+          "attempts_including_drain": 478,
+          "completion_tps_per_60_seconds": [
+            1.3166666666666667,
+            1.1166666666666667,
+            1.1666666666666667,
+            0.9833333333333333,
+            0.7666666666666667,
+            0.4666666666666667,
+            0.43333333333333335,
+            0.2,
+            0.2833333333333333,
+            1.1833333333333333
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 5.9856240000000005,
+            "0.95": 78.78165800000001,
+            "0.99": 207.43018999999998
+          },
+          "response_body_bytes_in_window": 93419,
+          "response_body_mib_s_in_window": 0.0001484855016072591,
+          "window_successes": 475
+        },
+        "writes": {
+          "attempts_including_drain": 64495,
+          "completion_tps_per_60_seconds": [
+            135.15,
+            138.18333333333334,
+            134.78333333333333,
+            118.85,
+            113.53333333333333,
+            96.83333333333333,
+            59.266666666666666,
+            59.35,
+            79.66666666666667,
+            134.01666666666668
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 398.146124,
+            "0.95": 1871.301171,
+            "0.99": 4315.075622
+          },
+          "response_body_bytes_in_window": 12938457,
+          "response_body_mib_s_in_window": 0.020565123558044435,
+          "window_successes": 64178
+        }
+      },
+      "owner_peak_rss_bytes": 762621952,
+      "owner_peak_file_descriptors": 16149,
+      "owner_cpu_cores_including_setup_warmup_drain": 0.9457188027398961,
+      "drops": {
+        "writes": 535505,
+        "reads": 5522
+      },
+      "errors": {
+        "writes": 0,
+        "reads": 0
+      }
+    },
+    "candidate": {
+      "exit_code": 1,
+      "summary_exists": false,
+      "cold_audit_exists": false,
+      "cause": "Docker ext4 inode exhaustion: 3311 free of5242880; about47GiB free bytes",
+      "provider_oom": false,
+      "no_performance_result": true,
+      "original_journals_and_provider_volume_retained": true
+    }
+  },
+  "r5": {
+    "status": "comparison_invalid_candidate_follower_durability_gate",
+    "baseline": {
+      "raw_journal_audit": {
+        "writes": 85503,
+        "reads": 702
+      },
+      "raw_metrics": {
+        "reads": {
+          "attempts_including_drain": 647,
+          "completion_tps_per_60_seconds": [
+            1.5166666666666666,
+            1.9666666666666666,
+            2.066666666666667,
+            0.75,
+            0.31666666666666665,
+            0.3,
+            0.3,
+            1.3333333333333333,
+            1.0333333333333334,
+            1.2
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 5.719269,
+            "0.95": 70.203188,
+            "0.99": 516.439889
+          },
+          "response_body_bytes_in_window": 127421,
+          "response_body_mib_s_in_window": 0.0002025302251180013,
+          "window_successes": 647
+        },
+        "writes": {
+          "attempts_including_drain": 77778,
+          "completion_tps_per_60_seconds": [
+            159.51666666666668,
+            204.58333333333334,
+            198.91666666666666,
+            117.2,
+            65.65,
+            49.18333333333333,
+            73.18333333333334,
+            175.78333333333333,
+            116.86666666666666,
+            130.08333333333334
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 320.826459,
+            "0.95": 1722.740765,
+            "0.99": 3611.510166
+          },
+          "response_body_bytes_in_window": 15618228,
+          "response_body_mib_s_in_window": 0.024824504852294923,
+          "window_successes": 77458
+        }
+      },
+      "write_tps": 129.09666666666666,
+      "read_tps": 1.0783333333333334,
+      "owner_peak_rss_bytes": 769036288,
+      "owner_peak_file_descriptors": 16162,
+      "owner_cpu_cores_including_setup_warmup_drain": 0.8647859469949153,
+      "drops": {
+        "writes": 522222,
+        "reads": 5353
+      },
+      "errors": {
+        "writes": 0,
+        "reads": 0
+      }
+    },
+    "candidate": {
+      "exit_code": 1,
+      "load_completed": true,
+      "canonical_result_exists": false,
+      "cold_audit_exists": false,
+      "node_log_append": {
+        "successes": 3333,
+        "failures": 1
+      },
+      "submission_sources": {
+        "fleet": 46124,
+        "rejected": 43367,
+        "unsupported": 0,
+        "unavailable": 0
+      },
+      "response_sources": {
+        "fleet": 41849,
+        "object": 47642,
+        "recorded": 0
+      },
+      "follower_error": "PeerAuthorization invalid capacity log request; condition unknown; follower2",
+      "minimum_free_inodes": 1193221,
+      "originals_retained": true,
+      "no_performance_gain_claim": true
+    }
+  },
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "evidence_sha256": {
+    "fair-admission-r5-source-preflight.json": "8410fbcdd4aa4fe464ed9c576facbe66c28c8000997ef92b28db285b3bfb051f",
+    "fair-admission-8fb50ac-verification.json": "a5e71ef952a1158c604a930b74fb5d0201d9fd78ce74180e981dcba3efb93035",
+    "fair-admission-2000-baseline-r4-reverified.json": "d192aa365ac6c15b9e16a7b2ba70bef12ede9518a2ead4feca6116f6c63802f6",
+    "rustfs-resumed-pair-volume-archive.json": "4cd6b1b0768b9c55d2688c8cb4fea39c4babd32c7c9d7c0b534370e834035bb5",
+    "rustfs-long-candidate-r2-volume-archive.json": "c6b7d937b566ac5e074f951d37333514cbb8c1ae7552c4c9fea1c46f58cce4d3",
+    "fair-admission-2000-baseline-r5-reverified.json": "19e4c145a2a934290bb14ef87716fd536402c89d112f7d765b25b82aa61d8d17",
+    "fair-admission-2000-baseline-r5-provider-volume-archive.json": "0b93d0b7c77761544c5d0e76e6c5144e8185325c0732d83276ed1b644f68484f",
+    "fair-admission-2000-candidate-r5-console.log": "549a7f67761e0cff6bed03ee5de938168c08a1ba1c23b7d6ceb0f6fbf7a708fe",
+    "fair-admission-2000-candidate-r5-exit.json": "5ace58fdac447b10ae7402f16202a0b8a5710ac5c27e56385924293251a4ed92"
+  },
+  "qualification": {
+    "target_established": false,
+    "required_original_profiles_unchanged": true
+  },
+  "transport_diagnostics": {
+    "behavior": "distinguish expired and future horizon validation failures; bounded phase and envelope timing; unchanged guards",
+    "tests": {
+      "adversarial_transport_tests": 2,
+      "isolated_snapshot": true,
+      "strict_example_clippy": "passed"
+    },
+    "changed_file_sha256": {
+      "crates/cellule-axum/examples/fleet/wire.rs": "68c894c37a0a021114eb4fd848b339e1f14cf03dec38a8ce03ce6fabfa06ccfd",
+      "crates/cellule-axum/examples/fleet/server.rs": "fc24b42a6049592fc7137b5f71868d9cdc9b13131aa42cf15d6d6a852802a206",
+      "crates/cellule-axum/examples/fleet/tests.rs": "1176c98f24dc715d78adb98c018bd13fa04f872ad1f45ff2d0ef664d235b6cac"
+    },
+    "verification_log_sha256": {
+      "follower-validation-diagnostic-tests.log": "b0915fb24fc487368bdd194e5c64a3faa6b78dbe428e6bcb1f936a3bf2608d03",
+      "follower-validation-diagnostic-clippy.log": "aa8c04bde2040b53ab25beaf1bc0e68b115acfc0d875d2a9c22240b1db791630"
+    }
+  }
+}

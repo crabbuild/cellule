@@ -54,8 +54,16 @@ fn stale_or_oversized_append_and_frames_on_retirement_are_refused() {
         ..Default::default()
     };
     assert!(wire::validate(&request, 1000).is_ok());
-    assert!(wire::validate(&request, 2000).is_err());
-    assert!(wire::validate(&request, -9000).is_err());
+    assert!(matches!(
+        wire::validate(&request, 2000),
+        Err(Error::PeerAuthorization("expired capacity log request"))
+    ));
+    assert!(matches!(
+        wire::validate(&request, -9000),
+        Err(Error::PeerAuthorization(
+            "capacity log request deadline exceeds allowed horizon"
+        ))
+    ));
     request.frames = vec![vec![3; 128]; 65];
     assert!(wire::validate(&request, 1000).is_err());
     request.frames.truncate(1);

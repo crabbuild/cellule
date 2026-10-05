@@ -139,7 +139,7 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
     let key = VerifyingKey::from_bytes(&peer.public_key()).map_err(Error::PeerSignature)?;
     let body = wire::verify(&encoded, &key, wire::REQUEST_DOMAIN)?;
     let request = wire::Request::decode(body.as_slice())?;
-    wire::validate(&request, clock()?)?;
+    validate_request(&request, clock()?, "before directory verification")?;
     let sender = SessionId::try_from(request.sender.as_slice())?;
     let leader = SessionId::try_from(request.leader.as_slice())?;
     if request.member != server.member.as_bytes() {
@@ -150,7 +150,7 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
         .peer_verifier(sender, peer.certificate(), peer.public_key(), clock()?)
         .await?;
     // Directory I/O consumed time; recheck the signed deadline before native work.
-    wire::validate(&request, clock()?)?;
+    validate_request(&request, clock()?, "after directory verification")?;
     server.lease.check()?;
     let mut reply = wire::Reply {
         member: server.member.as_bytes().to_vec(),
@@ -239,4 +239,21 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
         return Err(Error::Capacity("capacity follower response bytes"));
     }
     Ok(reply)
+}
+
+fn validate_request(request: &wire::Request, now: i64, phase: &str) -> Result<()> {
+    wire::validate(request, now).inspect_err(|error| {
+        // Keep rejected-envelope diagnostics bounded; never log frame payloads,
+        // signatures or credentials. Both checks retain the signed deadline.
+        eprintln!(
+            "Follower request validation failed: {error:?}; phase={phase}; now_ms={now}; deadline_ms={}; operation={}; frames={}; sender_bytes={}; member_bytes={}; leader_bytes={}; epoch={}",
+            request.deadline_ms,
+            request.operation,
+            request.frames.len(),
+            request.sender.len(),
+            request.member.len(),
+            request.leader.len(),
+            request.epoch,
+        );
+    })
 }

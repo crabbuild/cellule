@@ -82,13 +82,19 @@ pub(super) fn validate(request: &Request, now: i64) -> Result<()> {
         || request.member.len() != 16
         || request.leader.len() != 16
         || request.epoch == 0
-        || request.deadline_ms <= now
-        || request.deadline_ms > now.saturating_add(10_000)
         || !(1..=4).contains(&request.operation)
         || (request.operation == 1 && (request.frames.is_empty() || request.frames.len() > 64))
         || (request.operation != 1 && !request.frames.is_empty())
     {
         return Err(Error::PeerAuthorization("invalid capacity log request"));
+    }
+    if request.deadline_ms <= now {
+        return Err(Error::PeerAuthorization("expired capacity log request"));
+    }
+    if request.deadline_ms > now.saturating_add(10_000) {
+        return Err(Error::PeerAuthorization(
+            "capacity log request deadline exceeds allowed horizon",
+        ));
     }
     Ok(())
 }
