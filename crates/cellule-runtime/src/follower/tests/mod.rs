@@ -24,4 +24,6 @@ fn frame(sequence: u64, segment: &cellule_ltx::LocalSegment, limits: cellule_ltx
 
 mod append;
 mod budget;
+mod integrity;
+mod rotation;
 mod scan;

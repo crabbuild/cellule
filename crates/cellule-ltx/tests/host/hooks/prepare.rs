@@ -111,6 +111,55 @@ async fn root_preparation_separates_admission_wait_and_preserves_admission_error
     writer.close().unwrap();
 }
 
+#[tokio::test]
+async fn root_preparation_admission_owns_only_dirty_and_preserves_cancellation_and_source() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    let (_directory, _faults, host, mut writer) = fixture();
+    let cuts = writer.capture().unwrap();
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(counted.clone()),
+            ObjectPath::from("root-admission"),
+            [211; 16],
+        ),
+        [212; 32],
+        [213; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(
+        host.with_dirty_slots(dirty.clone())
+            .with_recovery_slots(recovery.clone()),
+    );
+    let occupied = dirty.clone().acquire_owned().await.unwrap();
+    let mut waiting = Box::pin(replica.admit_root_preparation());
+    assert!(futures_util::poll!(&mut waiting).is_pending());
+    assert_eq!(recovery.available_permits(), 1);
+    assert_eq!(counted.put_requests(), 0);
+    drop(waiting);
+    drop(occupied);
+    let admitted = replica.admit_root_preparation().await.unwrap();
+    assert_eq!(dirty.available_permits(), 0);
+    assert_eq!(recovery.available_permits(), 1);
+    let prepared = admitted.prepare(None, &cuts, 1, 1).await.unwrap();
+    assert_eq!(prepared.root().position, cuts.position);
+    drop(admitted);
+    assert_eq!(dirty.available_permits(), 1);
+    dirty.close();
+    let error = replica.admit_root_preparation().await.err().unwrap();
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<tokio::sync::AcquireError>()
+    );
+    assert_eq!(dirty.available_permits(), 1);
+    writer.close().unwrap();
+}
+
 async fn verified_fixture(
     extra_bytes: i64,
 ) -> (tempfile::TempDir, Arc<Faults>, cellule_ltx::VerifiedRoot) {
@@ -464,9 +513,109 @@ async fn prepare_opens_captured_segments_concurrently() {
 
     replica.prepare(None, &captured, 1, 1).await.unwrap();
 
-    // One open wave plus size/read/size upload jobs. Serial opens would add
-    // two more delay intervals before the already-concurrent uploads begin.
-    assert_eq!(started.elapsed(), delay * 4);
+    // One parallel open wave, one read/verification/merge job per original cut,
+    // then one encoding job. The frozen upload needs no further file jobs.
+    // Serial opens would still add two delay intervals to these five.
+    assert_eq!(started.elapsed(), delay * 5);
+    writer.close().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn captured_merge_retains_dispatched_admission_and_preserves_read_errors() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    let (_directory, faults, host, mut writer) = fixture();
+    let mut captured = writer.capture().unwrap();
+    writer
+        .transaction(|tx| tx.execute("INSERT INTO t VALUES(2)", []))
+        .unwrap();
+    let next = writer.capture().unwrap();
+    captured.segments.extend(next.segments);
+    captured.position = next.position;
+    let jobs = Arc::new(tokio::sync::Semaphore::new(1));
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(counted.clone()),
+            ObjectPath::from("merge-dispatched-admission"),
+            [91; 16],
+        ),
+        [92; 32],
+        [93; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(
+        host.with_job_slots(jobs.clone())
+            .with_dirty_slots(dirty.clone()),
+    );
+    let pause = Arc::new(Pause {
+        operation: "read_exact_at",
+        entered: tokio::sync::Notify::new(),
+        released: Mutex::new(false),
+        wake: std::sync::Condvar::new(),
+    });
+    *faults.pause.lock().unwrap() = Some(pause.clone());
+    let release = Release(pause.clone());
+    let mut preparation = Box::pin(replica.prepare(None, &captured, 1, 1));
+    tokio::select! {
+        () = pause.entered.notified() => {}
+        result = &mut preparation => panic!("prepare escaped paused input read: {:?}", result.err()),
+    }
+    drop(preparation);
+    assert_eq!(jobs.available_permits(), 0);
+    assert_eq!(dirty.available_permits(), 0);
+    assert_eq!(counted.put_requests(), 0);
+    drop(release);
+    let reclaimed = tokio::time::timeout(Duration::from_secs(5), jobs.clone().acquire_owned())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(dirty.available_permits(), 1);
+    drop(reclaimed);
+    *faults.pause.lock().unwrap() = None;
+
+    faults.arm(Some("read_exact_at"));
+    let error = replica.prepare(None, &captured, 1, 1).await.err().unwrap();
+    let LtxError::Storage(cellule_store::StorageError::ReadRejected { source }) = error else {
+        panic!("pinned read source was lost: {error}");
+    };
+    assert_eq!(
+        source.downcast_ref::<io::Error>().unwrap().kind(),
+        io::ErrorKind::StorageFull
+    );
+    assert_eq!(counted.put_requests(), 0);
+    assert_eq!(jobs.available_permits(), 1);
+    assert_eq!(dirty.available_permits(), 1);
+    faults.arm(None);
+
+    // Grow the already pinned file after its first length check. The second
+    // check must reject trailing bytes even though the requested read succeeds.
+    let path = captured.segments[0].path();
+    let original = std::fs::read(path).unwrap();
+    let pause = Arc::new(Pause {
+        operation: "read_exact_at",
+        entered: tokio::sync::Notify::new(),
+        released: Mutex::new(false),
+        wake: std::sync::Condvar::new(),
+    });
+    *faults.pause.lock().unwrap() = Some(pause.clone());
+    let release = Release(pause.clone());
+    let mut preparation = Box::pin(replica.prepare(None, &captured, 1, 1));
+    tokio::select! {
+        () = pause.entered.notified() => {}
+        result = &mut preparation => panic!("prepare escaped paused input read: {:?}", result.err()),
+    }
+    let mut grown = original.clone();
+    grown.push(0);
+    std::fs::write(path, grown).unwrap();
+    drop(release);
+    assert!(matches!(preparation.await, Err(LtxError::ChecksumMismatch)));
+    assert_eq!(counted.put_requests(), 0);
+    *faults.pause.lock().unwrap() = None;
+    std::fs::write(path, original).unwrap();
+    replica.prepare(None, &captured, 1, 1).await.unwrap();
     writer.close().unwrap();
 }
 #[cfg(feature = "replica")]

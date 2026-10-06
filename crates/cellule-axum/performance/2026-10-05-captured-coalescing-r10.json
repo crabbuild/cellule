@@ -1,0 +1,508 @@
+{
+  "status": "matched_local_diagnostic_complete; target_unestablished",
+  "profile": {
+    "cells": 2000,
+    "window_seconds": 600,
+    "warmup_seconds": 30,
+    "offered_write_tps": 1000,
+    "offered_read_tps": 10,
+    "clients": 64,
+    "queue_capacity": 256,
+    "sql_workers": 16,
+    "tokio_workers": 8,
+    "order": [
+      "candidate",
+      "baseline"
+    ],
+    "environment": "shared 8-CPU/16-GiB Colima VM with owner, two followers and RustFS; provider 4 CPUs/6 GiB; fresh data per point"
+  },
+  "mechanism": "Merge eligible small pinned captured deltas into one fully verified immutable delta before append; bound retained decoded page images and output, preserve original chain admission and large-source file-backed path. Both sources share private final compaction directory, deferred coverage, admission caps, original retry grace, fenced response gates and clock correction.",
+  "frozen_inputs": {
+    "build_command": "cargo build -p cellule-axum --example sql --release --locked",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "points": {
+      "baseline": {
+        "commit": "9f43416c4e0b3f171d70baa29122244c4aa9243b",
+        "archive_sha256": "35776f5f382bcbfc6c168207b34366f96dc238ac52e4df200cddd8ff69e4f516",
+        "binary_sha256": "b6446da001414fff0ee790a079cb9ee3bd6836b723e0096d093171018a9fb6c5",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      },
+      "candidate": {
+        "commit": "581946b038d574d2dd328b1f16ff6c863a523c6f",
+        "archive_sha256": "63b80d021fab5af846735d61751ec51912072706e7ca217a8c1768d7ed21c709",
+        "binary_sha256": "b812b11a335d2fe175481940651c4975a098e040219ec3af4307731de9e92b53",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      }
+    },
+    "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc"
+  },
+  "latency_population": "Raw nearest-rank request latencies for measured attempts including drain; TPS and response-body throughput count only completions within the 600-second window. Scheduled latency also includes driver queue delay.",
+  "phase_population": "Lifetime phases include setup, warmup and drain. Phases overlap, differ in population and overflow; do not subtract their means.",
+  "points": {
+    "baseline": {
+      "write_tps": 68.80833333333334,
+      "mixed_read_tps": 0.49333333333333335,
+      "raw_metrics": {
+        "reads": {
+          "attempts_including_drain": 297,
+          "completion_tps_per_60_seconds": [
+            0.5166666666666667,
+            0.5,
+            0.9666666666666667,
+            0.5166666666666667,
+            0.35,
+            0.5166666666666667,
+            0.48333333333333334,
+            0.3333333333333333,
+            0.4166666666666667,
+            0.3333333333333333
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 22.62444,
+            "0.95": 471.85046600000004,
+            "0.99": 1151.648142
+          },
+          "response_body_bytes_in_window": 58236,
+          "response_body_mib_s_in_window": 9.256362915039063e-05,
+          "window_successes": 296
+        },
+        "writes": {
+          "attempts_including_drain": 41604,
+          "completion_tps_per_60_seconds": [
+            67.53333333333333,
+            55.233333333333334,
+            115.16666666666667,
+            66.68333333333334,
+            63.166666666666664,
+            62.583333333333336,
+            53.06666666666667,
+            58.7,
+            78.2,
+            67.75
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 720.758161,
+            "0.95": 2346.0951059999998,
+            "0.99": 3527.251675
+          },
+          "response_body_bytes_in_window": 8319608,
+          "response_body_mib_s_in_window": 0.013223660786946615,
+          "window_successes": 41285
+        }
+      },
+      "drops": {
+        "writes": 558396,
+        "reads": 5703
+      },
+      "errors": {
+        "writes": 0,
+        "reads": 0
+      },
+      "scheduled_latency_ms_including_queue_and_drain": {
+        "writes": {
+          "max": 19775.608863999998,
+          "p50": 4373.8,
+          "p95": 7712.9,
+          "p99": null
+        },
+        "reads": {
+          "max": 9569.663738,
+          "p50": 3623.5,
+          "p95": 6402.2,
+          "p99": 8290.1
+        }
+      },
+      "startup_ms": 89328.46399600021,
+      "activation_ms": 89264,
+      "owner_peak_rss_bytes": 678998016,
+      "owner_peak_file_descriptors": 16164,
+      "owner_cpu_cores_including_setup_warmup_drain": 0.9606236640185576,
+      "original_audit": {
+        "writes": 47836,
+        "reads": 340
+      },
+      "all_cells_idle_restore_next_write_epoch_checks_passed": 2000,
+      "original_follower_gate_passed": true,
+      "critical_lifetime_phases": {
+        "dirty_admission": {
+          "count": 41631,
+          "mean_ms": 6363.561068974875,
+          "overflow": 22060,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "root_admission": {
+          "count": 40362,
+          "mean_ms": 1309.4545302237004,
+          "overflow": 1243,
+          "p50_ms": 0.1,
+          "p95_ms": 0.1,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "root_preparation_work": {
+          "count": 40362,
+          "mean_ms": 124.8781005301769,
+          "overflow": 1,
+          "p50_ms": 94.4,
+          "p95_ms": 335.2,
+          "p99_ms": 585.2,
+          "resolution_us": 100
+        },
+        "publication": {
+          "count": 38362,
+          "mean_ms": 7747.429497477504,
+          "overflow": 22710,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "compaction": {
+          "count": 1269,
+          "mean_ms": 41938.99347505753,
+          "overflow": 1243,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "worker": {
+          "count": 47836,
+          "mean_ms": 123.37070964727401,
+          "overflow": 18,
+          "p50_ms": 60.5,
+          "p95_ms": 449.8,
+          "p99_ms": 842.9,
+          "resolution_us": 100
+        }
+      },
+      "capture": {
+        "count": 49836,
+        "mean_ms": 33.13813636110442,
+        "overflow": 0,
+        "p50_ms": 5.1,
+        "p95_ms": 153.1,
+        "p99_ms": 326.3,
+        "resolution_us": 100
+      },
+      "provider_put": {
+        "count": 318436,
+        "mean_ms": 69.40346289285131,
+        "overflow": 0,
+        "p50_ms": 52.4,
+        "p95_ms": 186.6,
+        "p99_ms": 359.0,
+        "resolution_us": 100
+      },
+      "host_capacity": {
+        "dirty": 8,
+        "io": 32,
+        "jobs": 8,
+        "local_disk_bytes": 1073741824,
+        "recovery": 2,
+        "scratch_mib": 65536
+      },
+      "publication_count_per_audited_write": 0.8019483234384146,
+      "provider_put_count_per_audited_write": 6.65682749393762,
+      "node_log_append": {
+        "bytes": 204139952,
+        "failures": 0,
+        "successes": 3435
+      },
+      "submission_sources": {
+        "fleet": 47836,
+        "rejected": 0,
+        "unavailable": 0,
+        "unsupported": 0
+      },
+      "response_sources": {
+        "fleet": 35911,
+        "object": 11925,
+        "recorded": 0
+      },
+      "provider_archive": {
+        "volume": "cellule-node-scaling-rustfs-20261005-captured-coalescing-baseline-r10",
+        "container": "cellule-node-scaling-rustfs",
+        "archive": "captured-coalescing-2000-baseline-r10-provider-volume.tar.gz",
+        "sha256": "b3bb18817cba3fc64c352347589298e2756e0434b2d652942010c742c95baac0",
+        "original_unique_inodes": 594820,
+        "archive_entries": 594820,
+        "producer_exit_code": 0,
+        "gzip_integrity": "passed",
+        "full_tar_list": "passed; matching source unique inode count"
+      },
+      "owned_provider_removed_after_complete_archive_verification": true
+    },
+    "candidate": {
+      "write_tps": 136.80833333333334,
+      "mixed_read_tps": 1.15,
+      "raw_metrics": {
+        "reads": {
+          "attempts_including_drain": 691,
+          "completion_tps_per_60_seconds": [
+            2.1333333333333333,
+            1.0666666666666667,
+            1.6333333333333333,
+            2.2666666666666666,
+            1.1166666666666667,
+            0.5,
+            0.4666666666666667,
+            0.7166666666666667,
+            0.5333333333333333,
+            1.0666666666666667
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 8.151466,
+            "0.95": 91.773142,
+            "0.99": 338.88533
+          },
+          "response_body_bytes_in_window": 135684,
+          "response_body_mib_s_in_window": 0.00021566390991210936,
+          "window_successes": 690
+        },
+        "writes": {
+          "attempts_including_drain": 82404,
+          "completion_tps_per_60_seconds": [
+            221.63333333333333,
+            138.81666666666666,
+            177.43333333333334,
+            226.58333333333334,
+            104.45,
+            99.38333333333334,
+            80.43333333333334,
+            119.91666666666667,
+            64.51666666666667,
+            134.91666666666666
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 317.53893700000003,
+            "0.95": 1123.1065950000002,
+            "0.99": 3091.1797669999996
+          },
+          "response_body_bytes_in_window": 16549092,
+          "response_body_mib_s_in_window": 0.026304073333740234,
+          "window_successes": 82085
+        }
+      },
+      "drops": {
+        "writes": 517595,
+        "reads": 5309
+      },
+      "errors": {
+        "writes": 0,
+        "reads": 0
+      },
+      "scheduled_latency_ms_including_queue_and_drain": {
+        "writes": {
+          "max": 20676.556373,
+          "p50": 1952.2,
+          "p95": 4749.8,
+          "p99": 6689.1
+        },
+        "reads": {
+          "max": 6998.629847,
+          "p50": 1519.0,
+          "p95": 3748.1,
+          "p99": 4661.0
+        }
+      },
+      "startup_ms": 64352.76122199866,
+      "activation_ms": 64271,
+      "owner_peak_rss_bytes": 718241792,
+      "owner_peak_file_descriptors": 16182,
+      "owner_cpu_cores_including_setup_warmup_drain": 1.0062725022450325,
+      "original_audit": {
+        "writes": 94017,
+        "reads": 791
+      },
+      "all_cells_idle_restore_next_write_epoch_checks_passed": 2000,
+      "original_follower_gate_passed": true,
+      "critical_lifetime_phases": {
+        "dirty_admission": {
+          "count": 84773,
+          "mean_ms": 2153.775626396801,
+          "overflow": 42762,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "root_admission": {
+          "count": 82793,
+          "mean_ms": 540.904726227797,
+          "overflow": 1901,
+          "p50_ms": 0.1,
+          "p95_ms": 0.1,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "root_preparation_work": {
+          "count": 82793,
+          "mean_ms": 59.31214123989951,
+          "overflow": 1,
+          "p50_ms": 45.2,
+          "p95_ms": 142.2,
+          "p99_ms": 284.2,
+          "resolution_us": 100
+        },
+        "publication": {
+          "count": 80793,
+          "mean_ms": 2732.2863318807695,
+          "overflow": 37635,
+          "p50_ms": 1750.0,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "compaction": {
+          "count": 1979,
+          "mean_ms": 22839.659529458313,
+          "overflow": 1901,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "worker": {
+          "count": 94017,
+          "mean_ms": 31.822678498452408,
+          "overflow": 0,
+          "p50_ms": 18.5,
+          "p95_ms": 99.4,
+          "p99_ms": 226.6,
+          "resolution_us": 100
+        }
+      },
+      "capture": {
+        "count": 96017,
+        "mean_ms": 7.565219341460367,
+        "overflow": 0,
+        "p50_ms": 1.6,
+        "p95_ms": 33.7,
+        "p99_ms": 75.7,
+        "resolution_us": 100
+      },
+      "provider_put": {
+        "count": 528952,
+        "mean_ms": 37.477343527399455,
+        "overflow": 0,
+        "p50_ms": 29.7,
+        "p95_ms": 87.4,
+        "p99_ms": 169.7,
+        "resolution_us": 100
+      },
+      "host_capacity": {
+        "dirty": 8,
+        "io": 32,
+        "jobs": 8,
+        "local_disk_bytes": 1073741824,
+        "recovery": 2,
+        "scratch_mib": 65536
+      },
+      "publication_count_per_audited_write": 0.8593445866173139,
+      "provider_put_count_per_audited_write": 5.626131444313263,
+      "node_log_append": {
+        "bytes": 601578852,
+        "failures": 0,
+        "successes": 4560
+      },
+      "submission_sources": {
+        "fleet": 94017,
+        "rejected": 0,
+        "unavailable": 0,
+        "unsupported": 0
+      },
+      "response_sources": {
+        "fleet": 68770,
+        "object": 25247,
+        "recorded": 0
+      },
+      "provider_archive": {
+        "volume": "cellule-node-scaling-rustfs-20261005-captured-coalescing-candidate-r10",
+        "container": "cellule-node-scaling-rustfs",
+        "archive": "captured-coalescing-2000-candidate-r10-provider-volume.tar.gz",
+        "sha256": "31d3fa9de21405f03f86003990c9873006bd9cc4fffe83ae4583569a41e15344",
+        "original_unique_inodes": 911233,
+        "archive_entries": 911233,
+        "producer_exit_code": 0,
+        "gzip_integrity": "passed",
+        "full_tar_list": "passed; matching source unique inode count"
+      },
+      "owned_provider_removed_after_complete_archive_verification": true
+    }
+  },
+  "evidence_sha256": {
+    "captured-coalescing-2000-baseline-r10-run/cells-2000-rate-1000/result.json": "bd52685a9393be1dd43065405e036198965b0cab8bc3023c48931432b46ecf30",
+    "captured-coalescing-2000-baseline-r10-reverified.json": "d81b3039966fec090f8f364dd37ea4dd491d583b94d49408b9da5299dbd4bcda",
+    "captured-coalescing-2000-baseline-r10-provider-volume-archive.json": "0d3b641b5b8e34b726c47b2874f01be1047653afcdf50ae205f05e1728f1fb4a",
+    "captured-coalescing-2000-baseline-r10-command.json": "c0a175d9d1bf29fc503951af524e23d80d7524194a319d9bbd6592fc87c08d05",
+    "captured-coalescing-2000-baseline-r10-disk-preflight.json": "bcc4fce401b85325ccef3f2b331cee4954307d65f7d9c8b977ec7d6d7fcda5d9",
+    "captured-coalescing-2000-candidate-r10-run/cells-2000-rate-1000/result.json": "585cdd1c6192976b59ba403ca7fc3500fdbd729e9490a87152f99ba7d8e902e6",
+    "captured-coalescing-2000-candidate-r10-reverified.json": "a18f93e179e57e23d7c11c484a81c8da8849f01174506faa5bfff7c0b9255555",
+    "captured-coalescing-2000-candidate-r10-provider-volume-archive.json": "366f9a26e66ea3c8706c26c94b0239880468545216c9d3f0fbb521bcbb11c7e4",
+    "captured-coalescing-2000-candidate-r10-command.json": "b687aa9e4ed0c62fdd0b7aae838e81b99e23d88f304f35b52d4d9a4a07979ecf",
+    "captured-coalescing-2000-candidate-r10-disk-preflight.json": "4fd27c497eaa5775574c95a326c6c63f585875ff9b7b0cc665ba60ee6bdf4b52"
+  },
+  "qualification": {
+    "target_established": false,
+    "original_profiles_unchanged": true,
+    "remaining": "Three original 30-minute target-hardware windows, 10K durable write TPS, 50K owner-ordered read TPS, original owner-loss/follower-only recovery qualification; mixed reads here do not establish read capacity."
+  },
+  "write_tps_change_percent": 98.82523919098946,
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "interpretation": "Candidate completed more writes and lowered request percentiles in one candidate-first shared-VM pair. Provider PUT duration and same-source control performance also varied substantially. Fixed-latency native evidence establishes the per-cut upload reduction; this pair does not establish a consistent capacity gain or attribute the full TPS difference to the framework.",
+  "validation_source": {
+    "source_commit": "581946b038d574d2dd328b1f16ff6c863a523c6f",
+    "all_1232_rust_and_cargo_sources_match_isolated_snapshot": true,
+    "manifest_sha256": "26f3b8ce77a3eae2e48aea701d70a69eccb713a9606ec0c00afa1e04f0941549"
+  },
+  "validation": {
+    "all_rust_cargo_files_match": 1232,
+    "passed": [
+      "runtime-tests",
+      "local-tests",
+      "clippy",
+      "docs",
+      "fmt",
+      "boundaries",
+      "module-layout",
+      "doc-rust-fences",
+      "doc-links",
+      "sql-docs"
+    ],
+    "prior_ltx_all_features_passed": true,
+    "evidence_sha256": {
+      "captured-coalescing-ltx-tests-final2.log": "5cf00d1d1e882cbd3e4f34ed95977d7595f4dcef2e1cc3034a9bfae381a9df76",
+      "captured-coalescing-batch-cost-final.log": "0d348717981fe13d2eb24f164d29f4230961f097d609bc9b928fd3b3d03dc6fc",
+      "captured-coalescing-validation-source.json": "26f3b8ce77a3eae2e48aea701d70a69eccb713a9606ec0c00afa1e04f0941549",
+      "captured-coalescing-control-red.log": "52b5a8e7a27bef29b79160969703818d297476d9b253e087a0e78cedfd39037a",
+      "captured-coalescing-green2.log": "448fe0d94feaab2c948343f7b656050042494ca7157d49b6e9a262fb7ef3e307",
+      "pr62-9f-workspace-failure.log": "8b95e4798c6cca2582f19e2ec6c737596f6ab07326865303ab471b4210a7fc06",
+      "captured-coalescing-runtime-tests-final3.log": "6cce34c2812471563a6e261b3de9af95bba9ca09ddf5ad3cb34a7a8b3022bf0b",
+      "captured-coalescing-local-tests-final3.log": "e8e0a927e7696f67459826d4ad44b851ea8aac884ffffac6a9d544ce8add0c14",
+      "captured-coalescing-clippy-final3.log": "30e57c002ac2dc8dc8af39f1aa62bf399688638ba65b3fc6f715fc719381bfd1",
+      "captured-coalescing-docs-final3.log": "aaa37cef86d29ddef988a9219848bbbb27346fcdb19bcfc2a6b2fa6e30185ae1",
+      "captured-coalescing-fmt-final3.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured-coalescing-boundaries-final3.log": "5bb6622d24b0e87117e5a9e352d6596500b74555f947fc827ec1f25caeabf135",
+      "captured-coalescing-module-layout-final3.log": "c73aa019cf3727a1856a8c9ca7bbfc4982b321d96890216a1ac691fa9abbb3e6",
+      "captured-coalescing-doc-rust-fences-final3.log": "08dfdc9de7c4dbeadb5b88af6a31505cfecbf0aa4474a063e74bd5d3e66fa4fe",
+      "captured-coalescing-doc-links-final3.log": "aa241cd5f19ce8fec81a6a867efcc5a46fadd1e59ef3172dbbcbb026a4af11bd",
+      "captured-coalescing-sql-docs-final3.log": "e943bd2029dec31a2b2bb2b3f5d22434767f87b8accb220959aacc77f20355e2"
+    }
+  },
+  "attribution_limits": {
+    "provider_put_mean_ms": {
+      "baseline": 69.40346289285131,
+      "candidate": 37.477343527399455
+    },
+    "same_control_source_prior_r9_write_tps": 119.34,
+    "prior_r9_same_executable_source_commit": "3eb41c494c23439672b5eabb2cbe2f22423521d4",
+    "comparison": "R10 control 9f differs from R9 candidate 3eb only in tracked performance reports, not Rust/Cargo source; control TPS variation prevents assigning the full R10 difference to the merge.",
+    "provider_puts_per_audited_write_change_percent": -15.483292162265194
+  }
+}

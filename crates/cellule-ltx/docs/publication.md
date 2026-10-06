@@ -19,6 +19,7 @@ sequenceDiagram
 
 | Step | Contract |
 | --- | --- |
+| `admit_root_preparation` | Waits for the existing dirty reservation before capture selection; the scoped clone starts no work and grants no authority. |
 | `CellReplica::prepare` | Verifies cuts and writes immutable root dependencies. |
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
@@ -61,6 +62,20 @@ proposal returns. This is the one current development format, updated together
 with its readers and writers under the [format policy](../../cellule-runtime/docs/storage.md#format-policy).
 Authority publication is unchanged.
 
+An append with several small native captures can publish one combined delta.
+Every original segment first passes chain and byte admission, then its pinned
+body, checksum and index are verified. Merging retains at most 256 KiB of changed
+page images under the existing host job admission. Each small cut's pinned
+length/read/length checks and merge verification
+run in one admitted blocking job, retaining its source and admission through
+completion even if the preparation future is cancelled. Truncation removes earlier
+images; regrowth requires complete replacement coverage. The combined LTX keeps
+the original first transaction and final position, and uses the existing body,
+index and root formats. Larger working sets, oversized output and representations
+outside the existing capture bound retain the file-backed upload path. All
+dependencies still finish before a proposal returns; original follower receipts
+and the authority CAS continue to govern acknowledgement.
+
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the
 predecessor's position, commit sequence, Cell and incarnation. The runtime selects
@@ -76,6 +91,13 @@ Only final descriptor pages and root metadata are constructed; the proposal
 retains the original authority predecessor and the same persisted bytes as the
 two-step path. `None` leaves the caller's existing cascade policy in charge.
 No unuploaded intermediate state can be used as a `PreparedRoot`.
+
+When the verified relocation and final append each fit one directory leaf, the
+preparation retains that bounded leaf privately and uploads only the final
+directory. The same digest, locator, truncation and checksum checks still run.
+Larger directories stream their required nodes through bounded uploads; growth
+outside one leaf uses that path. Original root and selected source verification
+remain required before a proposal can escape.
 
 The verified compaction composition sets the original predecessor in the native
 factory before derivation metadata runs. Metadata and the complete proposal name

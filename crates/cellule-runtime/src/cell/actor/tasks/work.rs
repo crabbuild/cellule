@@ -102,7 +102,7 @@ pub(super) fn handle_executed(
                 active.unpublished_node_logs += 1;
                 unpublished_node_log_bytes.fetch_add(retained_bytes, Ordering::AcqRel);
             }
-            start_publication(cell, active, pool, tasks);
+            start_publication(cell, active, tasks);
             let pool = pool.clone();
             let generation = active.generation;
             let effect_id = active.begin_task(CoordinationEffect::Proof);

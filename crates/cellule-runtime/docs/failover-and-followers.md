@@ -833,6 +833,35 @@ also required when creating, rotating, renaming, or removing a chunk. A disk
 error, short write, checksum mismatch, gap, or sync error returns a typed NACK
 and never advances `durable_through`.
 
+The live lane index retains digests from fully verified frames, scoped to that
+lane and its immutable validation bounds. Warm scans still read and hash every
+encoded byte. An exact digest match reuses the previous LTX-body validation;
+unknown bytes, changed bounds and cold scans perform full validation. The index
+does not retain frame bodies or persist a verification shortcut.
+
+Pruning reconciles observed file and record changes before releasing another
+receipt. Every previously indexed uncovered frame must still exist with its
+original digest and length. Missing, repaired or substituted history cannot
+silently advance the cached durable range. Authoritative object coverage may
+release its original covered prefix.
+
+An append, seal, tail-read or failed retirement keeps the existing indexed
+witnesses after an error and marks derived locations for reconciliation.
+Repeated retries cannot turn a previously rejected missing or substituted frame
+into accepted history. Reconciliation verifies every still-uncovered witness
+and syncs valid records left by interrupted appends before advancing an index
+or seal watermark. Exact byte repair permits retry; fresh authority-checked
+object coverage releases only the covered prefix. Successful retirement and
+store shutdown release the index reservations.
+
+The live chunk rotates at a 1 MiB target to bound warm scanning and coverage
+rewrites. A single larger valid frame remains accepted and occupies its own
+chunk. Immutable closed chunks retain covered prefixes until their last
+sequence is covered, then pruning removes the whole file. Rotation changes
+chunk sizing only; historical larger chunks use the same record format and
+remain readable. A batch spanning multiple rotations preserves each pending
+record's original closed-chunk location.
+
 `FollowerStore::open` walks every retained lane before the management listener
 starts. It verifies directory shape, closed-chunk names and records, frame
 scope and digest, sequence continuity, and seal/retire watermarks. Then:

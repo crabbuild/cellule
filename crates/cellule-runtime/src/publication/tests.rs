@@ -313,7 +313,10 @@ async fn pressure_append_avoids_intermediate_root_metadata() {
                 })
                 .unwrap();
             let cuts = database.capture_deferred().unwrap();
-            let prepared = publisher.prepare_append(&cuts, sequence, 1).await.unwrap();
+            let prepared = publisher
+                .prepare_append(&cuts, sequence, 1, None)
+                .await
+                .unwrap();
             publisher.publish_prepared(&prepared, None).await.unwrap();
         }
         let before = publisher.control().value().ltx_root().unwrap();
@@ -326,7 +329,10 @@ async fn pressure_append_avoids_intermediate_root_metadata() {
             .unwrap();
         let cuts = database.capture_deferred().unwrap();
         counted.reset();
-        let composed = publisher.prepare_append(&cuts, 32, schema).await.unwrap();
+        let composed = publisher
+            .prepare_append(&cuts, 32, schema, None)
+            .await
+            .unwrap();
         let requests = (counted.put_requests(), counted.counts().heads);
         assert_eq!(composed.predecessor(), Some(before));
         assert_eq!(publisher.lineage_confirmed, Some(composed.preparation()));
@@ -378,8 +384,8 @@ async fn pressure_append_avoids_intermediate_root_metadata() {
         database.close().unwrap();
         assert_eq!(
             requests,
-            (8, 1),
-            "only final root and lineage metadata is retained"
+            (7, 1),
+            "only final directory, root and lineage metadata is retained"
         );
     }
 }
@@ -441,7 +447,10 @@ async fn verify_compaction_append(schema: u32) {
             })
             .unwrap();
         let cuts = database.capture_deferred().unwrap();
-        let prepared = publisher.prepare_append(&cuts, sequence, 1).await.unwrap();
+        let prepared = publisher
+            .prepare_append(&cuts, sequence, 1, None)
+            .await
+            .unwrap();
         publisher.publish_prepared(&prepared, None).await.unwrap();
         if sequence == 1 {
             prefix = Some(prepared.root());
@@ -492,16 +501,18 @@ async fn verify_compaction_append(schema: u32) {
         timing: Default::default(),
     };
     assert_eq!(cuts.segments.len(), 2);
-    let prepared = publisher.prepare_append(&cuts, 9, 1).await.unwrap();
+    let prepared = publisher.prepare_append(&cuts, 9, 1, None).await.unwrap();
     publisher.publish_prepared(&prepared, None).await.unwrap();
     let extended = publisher.control().value().ltx_root().unwrap();
     assert_eq!(extended.position, position);
     assert_eq!(
         replica.open_root(&extended).await.unwrap().segment_count(),
-        3
+        2
     );
 
-    for sequence in 10..=37_u64 {
+    // The two captured writes now share one delta. Add another individually
+    // published cut so the foreground test still reaches the same ceiling.
+    for sequence in 10..=38_u64 {
         database
             .transaction(|transaction| {
                 transaction.execute("INSERT INTO events VALUES (?1)", [sequence + 1])?;
@@ -509,7 +520,10 @@ async fn verify_compaction_append(schema: u32) {
             })
             .unwrap();
         let cuts = database.capture_deferred().unwrap();
-        let prepared = publisher.prepare_append(&cuts, sequence, 1).await.unwrap();
+        let prepared = publisher
+            .prepare_append(&cuts, sequence, 1, None)
+            .await
+            .unwrap();
         publisher.publish_prepared(&prepared, None).await.unwrap();
     }
     let at_ceiling = publisher.control().value().ltx_root().unwrap();
@@ -523,14 +537,14 @@ async fn verify_compaction_append(schema: u32) {
     );
     database
         .transaction(|transaction| {
-            transaction.execute("INSERT INTO events VALUES (39)", [])?;
+            transaction.execute("INSERT INTO events VALUES (40)", [])?;
             Ok(())
         })
         .unwrap();
     let cuts = database.capture_deferred().unwrap();
     let before_revision = publisher.control().value().revision;
     assert!(matches!(
-        publisher.prepare_append(&cuts, 37, schema).await,
+        publisher.prepare_append(&cuts, 38, schema, None).await,
         Err(Error::Ltx(cellule_ltx::LtxError::InvalidState(_)))
     ));
     assert_eq!(publisher.control().value().revision, before_revision);
@@ -545,7 +559,10 @@ async fn verify_compaction_append(schema: u32) {
         publisher.control().value(),
         "a rejected successor must leave its compaction private"
     );
-    let prepared = publisher.prepare_append(&cuts, 38, schema).await.unwrap();
+    let prepared = publisher
+        .prepare_append(&cuts, 39, schema, None)
+        .await
+        .unwrap();
     assert_eq!(publisher.control().value().ltx_root(), Some(at_ceiling));
     assert_eq!(
         publisher

@@ -111,9 +111,9 @@ impl CellReplica {
         );
         self.validate_chain(&descriptors, cuts.position)?;
 
-        // Keep each exact capture handle open through verification and upload.
-        // A path replacement cannot redirect retries, while the inspected LTX
-        // digest still rejects in-place mutation before authority may publish.
+        // Keep each exact capture handle open through verification. Upload
+        // retains either that handle or a verified immutable merged body;
+        // path replacement cannot redirect a proposal or its retries.
         self.prepare_append(
             base,
             base_graph.map(AppendBaseState::from),
@@ -182,7 +182,7 @@ impl CellReplica {
     /// image: its encoded index has to cover every page the commit published.
     /// The capture writer already escalates an oversized delta to that
     /// representation, so a large partial index is a corrupt or foreign cut.
-    fn admit_segment_representation(
+    pub(super) fn admit_segment_representation(
         &self,
         info: &crate::SegmentInfo,
         index_bytes: usize,
@@ -367,6 +367,16 @@ impl CellReplica {
         self.host
             .observe_ltx_phase(crate::LtxPhase::Compaction, started, result.is_ok());
         result
+    }
+
+    /// Waits for the existing dirty-memory reservation before selecting captures.
+    ///
+    /// The returned scoped clone retains admission. Prepare through that clone,
+    /// then drop it to release the reservation; dispatched native jobs retain
+    /// their own clones until completion. Waiting starts no work, grants no
+    /// authority and changes no resource ceiling. Cancellation releases admission.
+    pub async fn admit_root_preparation(&self) -> Result<Self> {
+        Ok(self.clone().with_host(self.host.for_dirty().await?))
     }
 
     /// Tries to admit scheduled compaction without waiting for shared capacity.
@@ -560,7 +570,7 @@ impl CellReplica {
         schema: u32,
         bundle: Option<&crate::bundle::Bundle>,
     ) -> Result<PreparedRoot> {
-        let prepared = inputs
+        let mut prepared = inputs
             .into_iter()
             .map(|input| {
                 let digest = *blake3::hash(&input.index).as_bytes();
@@ -589,7 +599,19 @@ impl CellReplica {
             .map(|graph| graph.descriptors.clone())
             .unwrap_or_default();
         descriptors.extend(prepared.iter().map(|segment| segment.descriptor.clone()));
+        // Admit every original cut before reducing its representation. A merge
+        // cannot rescue a gap, invalid endpoint, or over-budget original chain.
         self.validate_chain(&descriptors, target)?;
+        if bundle.is_none() {
+            prepared = coalesce::run(self, prepared).await?;
+            descriptors.truncate(
+                base_graph
+                    .as_ref()
+                    .map_or(0, |graph| graph.descriptors.len()),
+            );
+            descriptors.extend(prepared.iter().map(|segment| segment.descriptor.clone()));
+            self.validate_chain(&descriptors, target)?;
+        }
         let directory_inputs = prepared
             .iter()
             .map(|segment| DirectoryInput {
@@ -660,9 +682,11 @@ impl CellReplica {
                     host: &self.host,
                     origin: crate::LtxReadOrigin::Cold,
                 },
-                graph.directory_digest,
-                graph.directory_height,
-                graph.aggregate,
+                directory::DirectoryRoot {
+                    digest: graph.directory_digest,
+                    height: graph.directory_height,
+                    aggregate: graph.aggregate,
+                },
                 changes,
                 retain_through,
                 directory::Verification {
@@ -676,6 +700,7 @@ impl CellReplica {
                     origin: crate::LtxReadOrigin::Cold,
                 },
                 target.checksum,
+                graph.private_directory.as_ref(),
             )
             .await?
         } else {

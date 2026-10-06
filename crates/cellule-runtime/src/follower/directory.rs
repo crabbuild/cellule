@@ -130,7 +130,7 @@ fn validate_stored_lane(root: &Path, lane: Lane, limits: cellule_ltx::Limits) ->
             return Err(Error::Node("follower lane contains an invalid entry"));
         }
     }
-    let records = scan_lane(&directory.join("chunks"), lane, limits)?;
+    let records = scan_lane(&directory.join("chunks"), lane, limits, None)?;
     let durable_through = records.keys().next_back().copied().unwrap_or(0);
     let sealed = directory.join("sealed");
     if sealed.exists()

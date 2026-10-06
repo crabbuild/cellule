@@ -1,0 +1,400 @@
+{
+  "status": "single_candidate_original_development_gates_passed; target_unestablished",
+  "profile": {
+    "cells": 2000,
+    "window_seconds": 600,
+    "warmup_seconds": 30,
+    "offered_write_tps": 1000,
+    "offered_read_tps": 10,
+    "clients": 64,
+    "queue_capacity": 256,
+    "sql_workers": 16,
+    "tokio_workers": 8,
+    "order": [
+      "candidate"
+    ],
+    "environment": "shared 8-CPU/16-GiB Colima VM with owner, two followers and RustFS; provider 4 CPUs/6 GiB; fresh data per point"
+  },
+  "mechanism": "Scoped current-byte-hash validation reuse plus retry witness retention/reconciliation; original caps, format, response and recovery gates unchanged.",
+  "frozen_inputs": {
+    "build_command": "cargo build -p cellule-axum --example sql --release --locked",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "points": {
+      "candidate": {
+        "commit": "ff0d79b211a18ed64d3b89b4996bcaf3a4370ac6",
+        "archive_sha256": "73e070db06e639af9e4affbc1c4088491418ab8c6fccfe4d340d71b4d7d385f2",
+        "binary_sha256": "2abfbe1651b5e367e571d9fdc6f73805cdc64ae7fdfaf99160d456b1620c738c",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      }
+    },
+    "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+    "workload_identity": {
+      "scripts/bench-node-capacity.py": "c8f0aa7c2e9cd996e1e59733782c6bf79a3ac032dd0ed3e70eeae8768ef4fba9",
+      "scripts/bench-axum-rustfs.py": "f160cb454ccf2507aecd158dc891d1f78247b469a5803cc4d21ce2990e73d55e",
+      "scripts/generate-capacity-tls.py": "921bc9d55a68f7ee631418f67f6ab4be979fb92584dd202db111b3fcf782995c",
+      "crates/cellule-axum/examples/sql.rs": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+      "crates/cellule-axum/examples/capacity/mod.rs": "8a45557bd30a317c4947465fec9f9ceebba5b29ec77205360177645f601b1e77",
+      "crates/cellule-axum/examples/capacity/metrics.rs": "4e867ac4874fba25b443209743ab018d45fe4d5ef2208a764d3b1843ddf8facd",
+      "crates/cellule-axum/examples/capacity/request.rs": "29720c4e5ebffcd3226bdd094e87c7c4db9e25eef84071d8640705c5af66bbde"
+    }
+  },
+  "latency_population": "Raw nearest-rank request latencies for measured attempts including drain; TPS and response-body throughput count only completions within the 600-second window. Scheduled latency also includes driver queue delay.",
+  "phase_population": "Lifetime phases include setup, warmup and drain. Phases overlap, differ in population and overflow; do not subtract their means.",
+  "points": {
+    "candidate": {
+      "write_tps": 158.085,
+      "mixed_read_tps": 1.5833333333333333,
+      "raw_metrics": {
+        "reads": {
+          "attempts_including_drain": 950,
+          "completion_tps_per_60_seconds": [
+            1.5,
+            1.5333333333333334,
+            1.45,
+            1.5,
+            1.7666666666666666,
+            1.7833333333333334,
+            1.7,
+            2.3833333333333333,
+            1.2166666666666666,
+            1.0
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 13.241081,
+            "0.95": 98.94831699999999,
+            "0.99": 266.92913200000004
+          },
+          "response_body_bytes_in_window": 187092,
+          "response_body_mib_s_in_window": 0.00029737472534179687,
+          "window_successes": 950
+        },
+        "writes": {
+          "attempts_including_drain": 95171,
+          "completion_tps_per_60_seconds": [
+            168.83333333333334,
+            144.71666666666667,
+            129.58333333333334,
+            141.53333333333333,
+            167.3,
+            176.06666666666666,
+            184.73333333333332,
+            218.15,
+            145.06666666666666,
+            104.86666666666666
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 332.67152799999997,
+            "0.95": 875.33551,
+            "0.99": 1698.105257
+          },
+          "response_body_bytes_in_window": 19130005,
+          "response_body_mib_s_in_window": 0.03040632406870524,
+          "window_successes": 94851
+        }
+      },
+      "drops": {
+        "writes": 504829,
+        "reads": 5050
+      },
+      "errors": {
+        "writes": 0,
+        "reads": 0
+      },
+      "scheduled_latency_ms_including_queue_and_drain": {
+        "writes": {
+          "max": 12248.599908999999,
+          "p50": 1750.4,
+          "p95": 3954.7,
+          "p99": 5976.4
+        },
+        "reads": {
+          "max": 7290.255473,
+          "p50": 1388.7,
+          "p95": 3061.2,
+          "p99": 4929.0
+        }
+      },
+      "startup_ms": 119867.10290599876,
+      "activation_ms": 119794,
+      "owner_peak_rss_bytes": 718745600,
+      "owner_peak_file_descriptors": 16156,
+      "owner_cpu_cores_including_setup_warmup_drain": 1.0018722592159213,
+      "original_audit": {
+        "writes": 103180,
+        "reads": 1014
+      },
+      "all_cells_idle_restore_next_write_epoch_checks_passed": 2000,
+      "original_follower_gate_passed": true,
+      "critical_lifetime_phases": {
+        "dirty_admission": {
+          "count": 64260,
+          "mean_ms": 8476.957025359477,
+          "overflow": 53293,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "root_admission": {
+          "count": 63007,
+          "mean_ms": 1040.3712031631724,
+          "overflow": 1225,
+          "p50_ms": 0.1,
+          "p95_ms": 0.1,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "root_preparation_work": {
+          "count": 63007,
+          "mean_ms": 80.68989281881379,
+          "overflow": 2,
+          "p50_ms": 65.1,
+          "p95_ms": 180.0,
+          "p99_ms": 352.6,
+          "resolution_us": 100
+        },
+        "publication": {
+          "count": 61007,
+          "mean_ms": 7388.564224304097,
+          "overflow": 46182,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "compaction": {
+          "count": 1253,
+          "mean_ms": 52487.82666782123,
+          "overflow": 1225,
+          "p50_ms": null,
+          "p95_ms": null,
+          "p99_ms": null,
+          "resolution_us": 100
+        },
+        "worker": {
+          "count": 103180,
+          "mean_ms": 40.82914361514828,
+          "overflow": 19,
+          "p50_ms": 26.5,
+          "p95_ms": 117.1,
+          "p99_ms": 239.1,
+          "resolution_us": 100
+        }
+      },
+      "capture": {
+        "count": 105180,
+        "mean_ms": 8.874994953070926,
+        "overflow": 0,
+        "p50_ms": 2.5,
+        "p95_ms": 36.6,
+        "p99_ms": 80.8,
+        "resolution_us": 100
+      },
+      "provider_put": {
+        "count": 405534,
+        "mean_ms": 53.23832074814688,
+        "overflow": 9,
+        "p50_ms": 42.2,
+        "p95_ms": 124.9,
+        "p99_ms": 251.0,
+        "resolution_us": 100
+      },
+      "host_capacity": {
+        "dirty": 8,
+        "io": 32,
+        "jobs": 8,
+        "local_disk_bytes": 1073741824,
+        "recovery": 2,
+        "scratch_mib": 65536
+      },
+      "per_cell_writes_including_drain": {
+        "cells": 2000,
+        "total": 95171,
+        "min": 32,
+        "median": 47.0,
+        "max": 67,
+        "mean": 47.5855,
+        "coefficient_of_variation": 0.1329253935747044,
+        "max_cell_share": 0.0007039959651574534
+      },
+      "publication_count_per_audited_write": 0.5912676875363443,
+      "provider_put_count_per_audited_write": 3.930354719906959,
+      "node_log_append": {
+        "bytes": 694653222,
+        "failures": 0,
+        "successes": 5123
+      },
+      "submission_sources": {
+        "fleet": 103180,
+        "rejected": 0,
+        "unavailable": 0,
+        "unsupported": 0
+      },
+      "response_sources": {
+        "fleet": 99075,
+        "object": 4105,
+        "recorded": 0
+      },
+      "provider_archive": {
+        "volume": "cellule-node-scaling-rustfs-20261005-follower-retry-candidate-r13",
+        "container": "cellule-node-scaling-rustfs",
+        "archive": "follower-retry-2000-candidate-r13-provider-volume.tar.gz",
+        "sha256": "28cd0c17bdc8378f4f823bf5838a7a46abd0b8dd3f724c58223b6b2070396ee0",
+        "original_unique_inodes": 711541,
+        "archive_entries": 711541,
+        "producer_exit_code": 0,
+        "gzip_integrity": "passed",
+        "full_tar_list": "passed; matching source unique inode count"
+      },
+      "owned_provider_removed_after_complete_archive_verification": true
+    }
+  },
+  "evidence_sha256": {
+    "follower-retry-2000-candidate-r13-run/cells-2000-rate-1000/result.json": "8af4f959d559b31c0779515585bc2cbc0446a3f9bf932f616adea7d1660ebb3e",
+    "follower-retry-2000-candidate-r13-reverified.json": "eb2f4cea3e59bc28d84351e79a714b9494108ab81686067c3b8c45ed270c2e8b",
+    "follower-retry-2000-candidate-r13-provider-volume-archive.json": "d478682d1258bdf695d8b0b1caf8e17c077c56514fe66c3ea0ddcf7aff46a173",
+    "follower-retry-2000-candidate-r13-command.json": "7e8ce9e18d7ff8fe835fa118b3837b7f49c999173430d87e0bb70b79b321098c",
+    "follower-retry-2000-candidate-r13-disk-preflight.json": "760d378f26b04e2055f56f1ad9c3fa21b2d4d439afd1992cfb68908250f2e7ed",
+    "follower-verified-r12-workload-identity.json": "898361626e32b6f8cd767d2c56522022a12bb5953ee6005d164d3833f333abc2",
+    "follower-retry-integrity-validation-v3.json": "989725aa172d0c848c7d0f321aa72467aa6a0d1de12642d17263f984a675be98",
+    "follower-retry-r13-same-process-io-deltas.json": "fffab5aad14000c614c3c8880c1cf7f7e8020ba328819d4e90b167618fef3984",
+    "follower-retry-r13-candidate-middle-io.json": "7328f68629643a8ae76f4229b8a2029b3db6853ad5d12d54310b044168f36060",
+    "follower-retry-r13-candidate-end-io.json": "1f6c6561b38a7b4550f665424a1357c05bd1ce80d8fe1629f99f92bb7c49ef96",
+    "follower-retry-r13-build-inputs.json": "8ca203705312579226803540a91581d8d5edc6cd475fbbc237a44a6cff3802d9"
+  },
+  "qualification": {
+    "target_established": false,
+    "original_profiles_unchanged": true,
+    "remaining": "Three original 30-minute target-hardware windows, 10K durable write TPS, 50K owner-ordered read TPS, original owner-loss/follower-only recovery qualification; mixed reads here do not establish read capacity."
+  },
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "interpretation": "Candidate-only shared-VM development evidence. Prior R12 control failed and is not a passing paired baseline. No end-to-end gain or target qualification claim.",
+  "validation": {
+    "runtime": 0,
+    "clippy": 0,
+    "docs": 0
+  },
+  "validation_source": {
+    "source_commit": "ff0d79b211a18ed64d3b89b4996bcaf3a4370ac6",
+    "matched_rust_cargo_files": 1233,
+    "manifest_sha256": "989725aa172d0c848c7d0f321aa72467aa6a0d1de12642d17263f984a675be98"
+  },
+  "attribution": "Offered writes round-robin across 2000 Cells; admission drops may skew completions. Lifetime phase populations overlap; do not subtract means. Original dedicated-node capacity and owner-loss/follower-only recovery qualification remain open.",
+  "workload_identity": {
+    "scripts/bench-node-capacity.py": "c8f0aa7c2e9cd996e1e59733782c6bf79a3ac032dd0ed3e70eeae8768ef4fba9",
+    "scripts/bench-axum-rustfs.py": "f160cb454ccf2507aecd158dc891d1f78247b469a5803cc4d21ce2990e73d55e",
+    "scripts/generate-capacity-tls.py": "921bc9d55a68f7ee631418f67f6ab4be979fb92584dd202db111b3fcf782995c",
+    "crates/cellule-axum/examples/sql.rs": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+    "crates/cellule-axum/examples/capacity/mod.rs": "8a45557bd30a317c4947465fec9f9ceebba5b29ec77205360177645f601b1e77",
+    "crates/cellule-axum/examples/capacity/metrics.rs": "4e867ac4874fba25b443209743ab018d45fe4d5ef2208a764d3b1843ddf8facd",
+    "crates/cellule-axum/examples/capacity/request.rs": "29720c4e5ebffcd3226bdd094e87c7c4db9e25eef84071d8640705c5af66bbde"
+  },
+  "auxiliary_proc_observation": {
+    "same_process_deltas": {
+      "elapsed_seconds": 297.217816,
+      "scope": "same-process auxiliary I/O/CPU deltas only; no phase attribution or passing comparison",
+      "processes": {
+        "follower-1": {
+          "pid": 115734,
+          "rchar_delta": 54667178060,
+          "wchar_delta": 8722702831,
+          "user_system_cpu_seconds_delta": 130.69
+        },
+        "follower-2": {
+          "pid": 115744,
+          "rchar_delta": 54667178060,
+          "wchar_delta": 8722703023,
+          "user_system_cpu_seconds_delta": 130.56
+        },
+        "owner": {
+          "pid": 115756,
+          "rchar_delta": 4735797784,
+          "wchar_delta": 2617374437,
+          "user_system_cpu_seconds_delta": 314.42999999999995
+        }
+      }
+    },
+    "near_end_lifetime": {
+      "observed_utc": "2026-10-06T05:06:44.499050+00:00",
+      "cpu_hz": 100,
+      "processes": {
+        "follower-1": {
+          "pid": 115734,
+          "cpu_user_seconds": 122.54,
+          "cpu_system_seconds": 122.71,
+          "start_time_ticks": 4619166,
+          "io": {
+            "rchar": 82450925162,
+            "wchar": 15742609337,
+            "syscr": 50584663,
+            "syscw": 29631221,
+            "read_bytes": 1093632,
+            "write_bytes": 15761457152,
+            "cancelled_write_bytes": 0
+          }
+        },
+        "follower-2": {
+          "pid": 115744,
+          "cpu_user_seconds": 122.48,
+          "cpu_system_seconds": 121.85,
+          "start_time_ticks": 4619222,
+          "io": {
+            "rchar": 82450925162,
+            "wchar": 15742609513,
+            "syscr": 50584663,
+            "syscw": 29631243,
+            "read_bytes": 159744,
+            "write_bytes": 15761457152,
+            "cancelled_write_bytes": 0
+          }
+        },
+        "owner": {
+          "pid": 115756,
+          "cpu_user_seconds": 384.14,
+          "cpu_system_seconds": 354.77,
+          "start_time_ticks": 4619227,
+          "io": {
+            "rchar": 9826394230,
+            "wchar": 4866621000,
+            "syscr": 2210954,
+            "syscw": 2314273,
+            "read_bytes": 6426624,
+            "write_bytes": 4700155904,
+            "cancelled_write_bytes": 603238400
+          }
+        }
+      },
+      "cgroup_cpu_stat": "usage_usec 38967418625\nuser_usec 27255641285\nsystem_usec 11711777339\ncore_sched.force_idle_usec 0\nnr_periods 221582\nnr_throttled 75\nthrottled_usec 7358504\nnr_bursts 0\nburst_usec 0\n",
+      "label": "candidate",
+      "phase": "end",
+      "scope": "auxiliary proc I/O and process CPU observation; no profiler; lifetime values include setup; compare only matching retained-PID deltas"
+    },
+    "interpretation": "Large repeated reads and writes are consistent with open-log scanning/pruning rewrites. Process counters include setup/warmup and the sampled interval; they do not identify exclusive phase costs or a paired capacity gain."
+  },
+  "prior_control_passed": false,
+  "candidate_source_archive": {
+    "commit": "ff0d79b211a18ed64d3b89b4996bcaf3a4370ac6",
+    "source_archive_sha256": "73e070db06e639af9e4affbc1c4088491418ab8c6fccfe4d340d71b4d7d385f2",
+    "all_tracked_files_match": true,
+    "tracked_file_count": 1784,
+    "source": "/follower-verified-candidate-source",
+    "target": "/follower-verified-candidate-target",
+    "build_command": "cargo build -p cellule-axum --example sql --release --locked",
+    "build_exit_code": 0,
+    "binary_sha256": "2abfbe1651b5e367e571d9fdc6f73805cdc64ae7fdfaf99160d456b1620c738c"
+  },
+  "environment_budgets": {
+    "owner_followers_driver_shared_container_cpus": 8,
+    "owner_followers_driver_shared_container_memory_gib": 12,
+    "provider_cpus": 4,
+    "provider_memory_gib": 6,
+    "shared_vm_cpus": 8,
+    "shared_vm_memory_gib": 16
+  },
+  "critical_remaining_bottlenecks": [
+    "repeated open-log scan and prefix rewrite work",
+    "shared publication/dirty admission backlog"
+  ],
+  "next_probe": "Bound live open-log history and prefix rewrite work under unchanged durability/identity/recovery gates; investigate publication admission lifetime."
+}

@@ -1,0 +1,201 @@
+{
+  "scope": "native Linux aarch64 debug/unoptimized append stage, not node capacity or request TPS/latency",
+  "profile": {
+    "repetitions": 3,
+    "batch_frames": 64,
+    "frame_counts": [
+      1024,
+      4096
+    ],
+    "retained_lag_frames": [
+      null,
+      256
+    ],
+    "timing_excludes": [
+      "fixture setup",
+      "seal",
+      "cold reopen and every-frame comparison"
+    ]
+  },
+  "checks": {
+    "exact_input_bytes_reused": true,
+    "each_source_12_points_exact_cold_tail": true,
+    "source_diff_only": "crates/cellule-runtime/src/follower/records/scan.rs",
+    "candidate_fresh_build": true,
+    "candidate_uses_separate_target": true
+  },
+  "cases": [
+    {
+      "frames": 1024,
+      "retained_lag_frames": null,
+      "control": {
+        "elapsed_ms_median": 871.939261,
+        "elapsed_ms_range": [
+          869.251073,
+          876.913545
+        ],
+        "append_p50_ms_median": 49.579047,
+        "append_p95_ms_median": 103.781316,
+        "read_calls_median": 15379,
+        "read_characters_median": 4770009,
+        "write_calls_median": 5152,
+        "write_characters_median": 666832,
+        "frame_bytes": 613328,
+        "retained_bytes": 666576,
+        "exact_cold_tail_checks": true
+      },
+      "candidate": {
+        "elapsed_ms_median": 1243.813344,
+        "elapsed_ms_range": [
+          969.283247,
+          2193.174106
+        ],
+        "append_p50_ms_median": 70.245093,
+        "append_p95_ms_median": 153.758289,
+        "read_calls_median": 100,
+        "read_characters_median": 4770010,
+        "write_calls_median": 5152,
+        "write_characters_median": 666832,
+        "frame_bytes": 613328,
+        "retained_bytes": 666576,
+        "exact_cold_tail_checks": true
+      },
+      "elapsed_percent_change": 42.649081149701765,
+      "read_call_percent_change": -99.34976266337213
+    },
+    {
+      "frames": 1024,
+      "retained_lag_frames": 256,
+      "control": {
+        "elapsed_ms_median": 979.8227929999999,
+        "elapsed_ms_range": [
+          967.275236,
+          1046.389252
+        ],
+        "append_p50_ms_median": 74.312105,
+        "append_p95_ms_median": 80.521955,
+        "read_calls_median": 18475,
+        "read_characters_median": 6571433,
+        "write_calls_median": 16672,
+        "write_characters_median": 2162865,
+        "frame_bytes": 613328,
+        "retained_bytes": 183054,
+        "exact_cold_tail_checks": true
+      },
+      "candidate": {
+        "elapsed_ms_median": 1911.6802019999998,
+        "elapsed_ms_range": [
+          1273.723823,
+          3194.534071
+        ],
+        "append_p50_ms_median": 103.875361,
+        "append_p95_ms_median": 498.876506,
+        "read_calls_median": 2442,
+        "read_characters_median": 6571434,
+        "write_calls_median": 16672,
+        "write_characters_median": 2162865,
+        "frame_bytes": 613328,
+        "retained_bytes": 183054,
+        "exact_cold_tail_checks": true
+      },
+      "elapsed_percent_change": 95.1046878739021,
+      "read_call_percent_change": -86.78213802435724
+    },
+    {
+      "frames": 4096,
+      "retained_lag_frames": null,
+      "control": {
+        "elapsed_ms_median": 15150.669346,
+        "elapsed_ms_range": [
+          15083.215286,
+          15331.892813999999
+        ],
+        "append_p50_ms_median": 223.18091800000002,
+        "append_p95_ms_median": 470.272729,
+        "read_calls_median": 258115,
+        "read_characters_median": 101100947,
+        "write_calls_median": 20608,
+        "write_characters_median": 3545456,
+        "frame_bytes": 3331440,
+        "retained_bytes": 3544432,
+        "exact_cold_tail_checks": true
+      },
+      "candidate": {
+        "elapsed_ms_median": 23844.178563,
+        "elapsed_ms_range": [
+          15714.743991000001,
+          29484.935266
+        ],
+        "append_p50_ms_median": 338.10675699999996,
+        "append_p95_ms_median": 818.009899,
+        "read_calls_median": 1644,
+        "read_characters_median": 101100948,
+        "write_calls_median": 20608,
+        "write_characters_median": 3545456,
+        "frame_bytes": 3331440,
+        "retained_bytes": 3544432,
+        "exact_cold_tail_checks": true
+      },
+      "elapsed_percent_change": 57.38036398566915,
+      "read_call_percent_change": -99.36307459853167
+    },
+    {
+      "frames": 4096,
+      "retained_lag_frames": 256,
+      "control": {
+        "elapsed_ms_median": 5773.2377369999995,
+        "elapsed_ms_range": [
+          5721.086402,
+          5865.540626
+        ],
+        "append_p50_ms_median": 94.79455,
+        "append_p95_ms_median": 109.760532,
+        "read_calls_median": 89275,
+        "read_characters_median": 43148464,
+        "write_calls_median": 78208,
+        "write_characters_median": 13599319,
+        "frame_bytes": 3331440,
+        "retained_bytes": 235967,
+        "exact_cold_tail_checks": true
+      },
+      "candidate": {
+        "elapsed_ms_median": 6498.002359,
+        "elapsed_ms_range": [
+          6016.29771,
+          12219.561328
+        ],
+        "append_p50_ms_median": 101.371648,
+        "append_p95_ms_median": 151.804193,
+        "read_calls_median": 12313,
+        "read_characters_median": 43148465,
+        "write_calls_median": 78208,
+        "write_characters_median": 13599319,
+        "frame_bytes": 3331440,
+        "retained_bytes": 235967,
+        "exact_cold_tail_checks": true
+      },
+      "elapsed_percent_change": 12.553867604569092,
+      "read_call_percent_change": -86.2077849341921
+    }
+  ],
+  "pins": {
+    "frozen_fixture_sha256": "c94031b5e0726dd4ba9d017931c31f19c8da7d3fb4429833b2a603ee057146d7",
+    "frozen_fixture_bytes": 3364208,
+    "control_binary_sha256": "e2ceaa6e91fcfcc730c581afce234c537e3a19312b3dedc109ff8cddfb45c84c",
+    "candidate_binary_sha256": "9914cd49d52bf20cae9ce4b615756030f89a25293f28c0220933c5e42839e093",
+    "control_log_sha256": "eb2e4db2d144b0da46a138b64fb5999f7734ddfa617f37bb5c2925ef16337d3f",
+    "candidate_log_sha256": "e78c95e21c91e3b026f5bebe11fdd9223335dffa81796684bee28bc8bfd8b787"
+  },
+  "evidence": {
+    "raw_results": "follower-cost-v4-results.json",
+    "raw_results_sha256": "103b26067db0951a093ab0b4da1edf33b8ab34c11869534dd0e771443e819aaf",
+    "prior_invalid_candidate": "v3 reused control binary; explicitly excluded; log and invalid result retained"
+  },
+  "remaining_bottleneck": "Read buffering reduces syscall overhead; repeated verified history scans and coverage rewrites remain. No node throughput gain or target qualification follows.",
+  "framework_commit": "a405e8994631bad9fe0ed1e31a8e8e258c1e56fa",
+  "source_archive_sha256": "52cafb27e74d6a7f7c20b6b3a2b28c5c5f458d9d2343b82686091e324c671c78",
+  "diagnostic_fixture_sha256": "b6d3eaf8429f0891c501612b32f7ca4ad642879d9c9361f45a5f05f20bb4fb53",
+  "candidate_scan_sha256": "484229d40c39f767af361c25320764741f6a8f07ca0efac4463d8e7947c8558a",
+  "candidate_adopted": false,
+  "elapsed_result": "All four median elapsed times regressed; larger candidate variability. Do not claim throughput or latency gain from fewer read syscalls."
+}

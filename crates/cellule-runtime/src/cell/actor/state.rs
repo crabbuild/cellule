@@ -443,6 +443,12 @@ pub(super) struct DueResidentCell {
     pub(super) next_due_ms: i64,
 }
 
+/// Preparation admission carries the retry boundary from original dispatch.
+pub(super) struct PublicationAdmission {
+    pub(super) replica: cellule_ltx::CellReplica,
+    pub(super) fleet_deadline: std::time::Instant,
+}
+
 pub(super) enum TaskResult {
     Activated {
         cell: CellId,
@@ -498,6 +504,13 @@ pub(super) enum TaskResult {
         command: Box<QueuedCommand>,
         result: crate::Result<StoredOutcome>,
         fenced: bool,
+    },
+    PublicationAdmitted {
+        cell: CellId,
+        generation: u64,
+        effect_id: u64,
+        publisher: Box<CellPublisher>,
+        result: crate::Result<Box<PublicationAdmission>>,
     },
     Published {
         cell: CellId,

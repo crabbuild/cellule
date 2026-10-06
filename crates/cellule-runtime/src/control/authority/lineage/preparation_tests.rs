@@ -97,8 +97,23 @@ impl NativePreparation {
 async fn lineage_and_native_uploads_overlap_but_ready_and_authority_wait_for_both() {
     // Both layouts must finish all native root objects while metadata is
     // paused, and neither may expose readiness or advance authority early.
-    for (segments, native_root_objects) in [(1, 1), (33, 2)] {
+    for (segments, native_root_objects) in [(1, 1), (33, 1), (33, 2)] {
         let mut fixture = NativePreparation::new().await;
+        if native_root_objects == 2 {
+            // Retain external descriptors by exceeding the decoded merge
+            // bound; the other multi-cut case verifies the merged layout.
+            fixture
+                .database
+                .transaction(|tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE padding(v); INSERT INTO padding VALUES(zeroblob(300000))",
+                    )
+                })
+                .unwrap();
+            let next = fixture.database.capture_deferred().unwrap();
+            fixture.cuts.position = next.position;
+            fixture.cuts.segments.extend(next.segments);
+        }
         for _ in 1..segments {
             fixture
                 .database

@@ -1,0 +1,123 @@
+{
+  "kind": "fixed-latency native diagnostic; not node qualification",
+  "control_commit": "4d22ebb0846d276e7c216682fe439487d5a53ae6",
+  "points_per_source": 18,
+  "repetitions": 3,
+  "get_delay_ms": 7,
+  "put_delay_ms": 40,
+  "exact_restore": "all original cuts replayed and byte-identical for every point",
+  "sources": {
+    "control": {
+      "raw_log": "batch-cost-4d22ebb-control.log",
+      "sha256": "08098769f2c77d66103c3237953798b362377d16753145eb6b5354a380383100"
+    },
+    "candidate": {
+      "raw_log": "batch-cost-final-directory-final-candidate.log",
+      "sha256": "9f4ccdb6b5cf22d1a17d73a9f746ebfb44ff416166101b0a81644f5337b2591d"
+    }
+  },
+  "critical_metrics": [
+    {
+      "cuts": 1,
+      "compaction": false,
+      "control": {
+        "puts": 4,
+        "median_prepare_ms": 52.406334
+      },
+      "candidate": {
+        "puts": 4,
+        "median_prepare_ms": 54.291916
+      }
+    },
+    {
+      "cuts": 1,
+      "compaction": true,
+      "control": {
+        "puts": 7,
+        "median_prepare_ms": 127.15166699999999
+      },
+      "candidate": {
+        "puts": 6,
+        "median_prepare_ms": 80.65725
+      }
+    },
+    {
+      "cuts": 4,
+      "compaction": false,
+      "control": {
+        "puts": 10,
+        "median_prepare_ms": 53.806709
+      },
+      "candidate": {
+        "puts": 10,
+        "median_prepare_ms": 53.584959000000005
+      }
+    },
+    {
+      "cuts": 4,
+      "compaction": true,
+      "control": {
+        "puts": 13,
+        "median_prepare_ms": 123.81275
+      },
+      "candidate": {
+        "puts": 12,
+        "median_prepare_ms": 79.98825
+      }
+    },
+    {
+      "cuts": 16,
+      "compaction": false,
+      "control": {
+        "puts": 34,
+        "median_prepare_ms": 181.5385
+      },
+      "candidate": {
+        "puts": 34,
+        "median_prepare_ms": 180.61112500000002
+      }
+    },
+    {
+      "cuts": 16,
+      "compaction": true,
+      "control": {
+        "puts": 37,
+        "median_prepare_ms": 253.15658299999998
+      },
+      "candidate": {
+        "puts": 36,
+        "median_prepare_ms": 210.83195800000001
+      }
+    }
+  ],
+  "candidate_scope": "verified private leaf for combined compaction and append; original and final directories fit one leaf",
+  "external_evidence_directory": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "candidate_commit": "afd034a7525fd9b091c8106841093c53d60c18a1",
+  "validation": {
+    "isolated_snapshot_matched_rust_cargo_files": 1230,
+    "passed": [
+      "LTX all features",
+      "Runtime all features",
+      "LTX no default features",
+      "strict Clippy LTX/Runtime/Axum all targets/features",
+      "strict API docs LTX/Runtime/Axum",
+      "SQL example tests",
+      "format",
+      "boundaries",
+      "module layout",
+      "Rust fences",
+      "doc links",
+      "SQL/peer contracts"
+    ],
+    "evidence_sha256": {
+      "final-directory-upload-ltx-final-tests.log": "d27e43eaece13b3391139e1558843fb90d922fb2d3f4c583e21efca39f2f629a",
+      "final-directory-upload-runtime-final-tests.log": "a97382d29f690199eca8e9969e2135066bd78b44f51645718437e33dcb036d46",
+      "final-directory-upload-local-ltx.log": "6f9d8ec1e461d935f318aef65102c4c4845706f3e550c88183cf4a9dae26a322",
+      "final-directory-upload-clippy.log": "1230bef79c3118e90548939995e5487c4acf55f0848032b9b33cef2f3c6ebc6c",
+      "final-directory-upload-docs.log": "8de5b710cb3765897d7035f339bfa2357c337dcfda217d2142beb9857e2e5481",
+      "final-directory-upload-sql-example.log": "01a64b74fa391e5ef694858f53efd7b39efdd05e45c029fbd655e1af41a68bf4",
+      "final-directory-upload-final-gates-corrected.log": "20d45a188caf61091e094d365fd3e2c891aaa1f04e6f839465bce812f67fd866",
+      "final-directory-validation-source.json": "0e2658a3bbb88c829df7f5bc60c41de1d36c3ecfa3da4ae854010f07349d9ec6"
+    }
+  }
+}
