@@ -854,6 +854,14 @@ or seal watermark. Exact byte repair permits retry; fresh authority-checked
 object coverage releases only the covered prefix. Successful retirement and
 store shutdown release the index reservations.
 
+The live chunk rotates at a 1 MiB target to bound warm scanning and coverage
+rewrites. A single larger valid frame remains accepted and occupies its own
+chunk. Immutable closed chunks retain covered prefixes until their last
+sequence is covered, then pruning removes the whole file. Rotation changes
+chunk sizing only; historical larger chunks use the same record format and
+remain readable. A batch spanning multiple rotations preserves each pending
+record's original closed-chunk location.
+
 `FollowerStore::open` walks every retained lane before the management listener
 starts. It verifies directory shape, closed-chunk names and records, frame
 scope and digest, sequence continuity, and seal/retire watermarks. Then:

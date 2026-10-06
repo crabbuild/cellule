@@ -1,0 +1,260 @@
+{
+  "scope": "native follower stage only; debug build; shared Colima; no node capacity claim",
+  "cases": [
+    {
+      "frames": 1024,
+      "lag": null,
+      "control": {
+        "elapsed_ms": 302.60197900000003,
+        "process_cpu_ms": 270.0,
+        "append_p50_ms": 18.256491,
+        "append_p95_ms": 35.37312,
+        "retained_bytes_before_seal": 666576,
+        "io": {
+          "rchar": 4770351,
+          "wchar": 666832,
+          "syscr": 15385,
+          "syscw": 5152
+        }
+      },
+      "candidate": {
+        "elapsed_ms": 377.85363,
+        "process_cpu_ms": 330.0,
+        "append_p50_ms": 25.254593,
+        "append_p95_ms": 35.714603,
+        "retained_bytes_before_seal": 666576,
+        "io": {
+          "rchar": 4770349,
+          "wchar": 666832,
+          "syscr": 15385,
+          "syscw": 5152
+        }
+      },
+      "elapsed_ratio": 1.2486819526054718
+    },
+    {
+      "frames": 1024,
+      "lag": 256,
+      "control": {
+        "elapsed_ms": 397.671518,
+        "process_cpu_ms": 340.0,
+        "append_p50_ms": 28.427922000000002,
+        "append_p95_ms": 36.833617,
+        "retained_bytes_before_seal": 183054,
+        "io": {
+          "rchar": 6571775,
+          "wchar": 2162865,
+          "syscr": 18481,
+          "syscw": 16672
+        }
+      },
+      "candidate": {
+        "elapsed_ms": 541.639696,
+        "process_cpu_ms": 400.0,
+        "append_p50_ms": 31.261544,
+        "append_p95_ms": 74.18728800000001,
+        "retained_bytes_before_seal": 183054,
+        "io": {
+          "rchar": 6571774,
+          "wchar": 2162865,
+          "syscr": 18481,
+          "syscw": 16672
+        }
+      },
+      "elapsed_ratio": 1.3620278835257194
+    },
+    {
+      "frames": 4096,
+      "lag": null,
+      "control": {
+        "elapsed_ms": 4150.841264000001,
+        "process_cpu_ms": 3990.0,
+        "append_p50_ms": 59.116187000000004,
+        "append_p95_ms": 119.307744,
+        "retained_bytes_before_seal": 3544432,
+        "io": {
+          "rchar": 101101289,
+          "wchar": 3545456,
+          "syscr": 258121,
+          "syscw": 20608
+        }
+      },
+      "candidate": {
+        "elapsed_ms": 1943.3256970000002,
+        "process_cpu_ms": 1690.0,
+        "append_p50_ms": 27.274988999999998,
+        "append_p95_ms": 49.650957000000005,
+        "retained_bytes_before_seal": 3544432,
+        "io": {
+          "rchar": 29813741,
+          "wchar": 3545456,
+          "syscr": 74077,
+          "syscw": 20608
+        }
+      },
+      "elapsed_ratio": 0.468176346287763
+    },
+    {
+      "frames": 4096,
+      "lag": 256,
+      "control": {
+        "elapsed_ms": 2334.832939,
+        "process_cpu_ms": 1900.0,
+        "append_p50_ms": 36.000306,
+        "append_p95_ms": 47.694937,
+        "retained_bytes_before_seal": 235967,
+        "io": {
+          "rchar": 43148807,
+          "wchar": 13599319,
+          "syscr": 89282,
+          "syscw": 78208
+        }
+      },
+      "candidate": {
+        "elapsed_ms": 2482.213616,
+        "process_cpu_ms": 2130.0,
+        "append_p50_ms": 35.37933,
+        "append_p95_ms": 62.802437000000005,
+        "retained_bytes_before_seal": 235967,
+        "io": {
+          "rchar": 43148806,
+          "wchar": 13599319,
+          "syscr": 89281,
+          "syscw": 78208
+        }
+      },
+      "elapsed_ratio": 1.0631225791525465
+    },
+    {
+      "frames": 4096,
+      "lag": 2048,
+      "control": {
+        "elapsed_ms": 8741.199227,
+        "process_cpu_ms": 8300.0,
+        "append_p50_ms": 54.670260999999996,
+        "append_p95_ms": 259.003382,
+        "retained_bytes_before_seal": 2041419,
+        "io": {
+          "rchar": 246292021,
+          "wchar": 60200030,
+          "syscr": 512138,
+          "syscw": 338048
+        }
+      },
+      "candidate": {
+        "elapsed_ms": 1796.40768,
+        "process_cpu_ms": 1660.0,
+        "append_p50_ms": 24.213715999999998,
+        "append_p95_ms": 49.643368,
+        "retained_bytes_before_seal": 2495995,
+        "io": {
+          "rchar": 32674519,
+          "wchar": 3545456,
+          "syscr": 79776,
+          "syscw": 20608
+        }
+      },
+      "elapsed_ratio": 0.20551043779567663
+    }
+  ],
+  "all_30_cold_byte_exact_points_passed": true,
+  "diagnostic_sha256": "7344d4c06d84eac8f25fc3e32a9e69739225c0d8e994bcf806987e8eec5334f5",
+  "frozen_frame_corpus_sha256": "c94031b5e0726dd4ba9d017931c31f19c8da7d3fb4429833b2a603ee057146d7",
+  "control_commit": "35cd16ad7b52c257ff478df03495bdc605615412",
+  "candidate_production_files": {
+    "crates/cellule-runtime/src/follower/mod.rs": "99b835243213c59c48077132f72439bf9d04dce27b88629ea019b36f3f1ac5c0",
+    "crates/cellule-runtime/src/follower/records/append.rs": "1842ca9802c6bfb796c81d47a210aa00810224197e660e14e28ceab0b08e6d5e"
+  },
+  "live_chunk_target_bytes": {
+    "control": 67108864,
+    "candidate": 1048576
+  },
+  "repetitions_per_case": 3,
+  "batch_frames": 64,
+  "measurement": "Median of three native debug-build runs. Append time and process CPU/I/O exclude seal and cold recovery checks. rchar/wchar are process bytes, not physical disk traffic.",
+  "limitations": [
+    "Shared Colima; unrelated workloads can affect timings.",
+    "Short-history cases did not reduce I/O and were slower. No universal gain claim.",
+    "Partially covered immutable chunks retain covered bytes until whole-chunk coverage.",
+    "No HTTP capacity, dedicated-node, owner-loss or follower-only qualification."
+  ],
+  "external_evidence_directory": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "external_evidence_files": [
+    "follower-bounded-r14-native-results.json",
+    "follower-bounded-r14-control-source.tar.gz",
+    "follower-bounded-r14-control-inputs.json",
+    "follower-bounded-r14-control-initial-input-capture.json",
+    "follower-bounded-r14-control-actual-source.json",
+    "follower-bounded-r14-candidate-native-inputs.json",
+    "follower-bounded-r14-control-native.log",
+    "follower-bounded-r14-candidate-native.log",
+    "follower-bounded-r14-original-red.log",
+    "follower-bounded-r14-small-chunk-red.log"
+  ],
+  "input_capture_correction": "Control production hashes were recaptured from the actual unchanged isolated snapshot; the initial mutable-main capture is preserved separately. Control diagnostic executable was not frozen before candidate overwrite; its executable hash is not claimed.",
+  "target_achieved": false,
+  "validation": {
+    "scope": "Isolated candidate snapshot; cellule-runtime all features; no temporary diagnostic integration source",
+    "runtime_unit_passed": 650,
+    "runtime_integration_passed": 408,
+    "original_environment_ignored": 10,
+    "checks": [
+      {
+        "name": "runtime",
+        "exit_code": 0,
+        "elapsed_seconds": 315.5302929878235,
+        "log_sha256": "67b77a41260846894cdd6bb623e88e2bd3b69d8b42dd6f8f27f04d7b3fce5789",
+        "command": [
+          "docker",
+          "--context",
+          "colima",
+          "exec",
+          "-w",
+          "/follower-bounded-r14-source",
+          "cellule-node-scaling-assets",
+          "bash",
+          "-c",
+          "CARGO_HOME=/cargo-home CARGO_TARGET_DIR=/follower-bounded-r14-target cargo test -p cellule-runtime --all-features --locked"
+        ]
+      },
+      {
+        "name": "clippy",
+        "exit_code": 0,
+        "elapsed_seconds": 35.328550815582275,
+        "log_sha256": "9caac36e865f751ab340e841daceff4b494d5024205385b714b67fb4435bd8a1",
+        "command": [
+          "docker",
+          "--context",
+          "colima",
+          "exec",
+          "-w",
+          "/follower-bounded-r14-source",
+          "cellule-node-scaling-assets",
+          "bash",
+          "-c",
+          "CARGO_HOME=/cargo-home CARGO_TARGET_DIR=/follower-bounded-r14-target cargo clippy -p cellule-runtime --all-targets --all-features --locked -- -D warnings"
+        ]
+      },
+      {
+        "name": "docs",
+        "exit_code": 0,
+        "elapsed_seconds": 15.766948699951172,
+        "log_sha256": "be33479ebb6e91a283438eecfde2a64d4904baea3295d7284e4a457413920fa3",
+        "command": [
+          "docker",
+          "--context",
+          "colima",
+          "exec",
+          "-w",
+          "/follower-bounded-r14-source",
+          "cellule-node-scaling-assets",
+          "bash",
+          "-c",
+          "CARGO_HOME=/cargo-home CARGO_TARGET_DIR=/follower-bounded-r14-target RUSTDOCFLAGS='-D warnings' cargo doc -p cellule-runtime --all-features --no-deps --locked"
+        ]
+      }
+    ],
+    "matched_rust_cargo_files": 1234,
+    "inputs_manifest_sha256": "e03e1574245beaa1a7fac919cd31c775f72242808d15c4cb3173e1bc7f8dcc4b"
+  }
+}

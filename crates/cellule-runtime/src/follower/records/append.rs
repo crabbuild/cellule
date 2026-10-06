@@ -115,7 +115,11 @@ pub(in crate::follower) fn append_sync(
             );
             let destination: Arc<Path> = Arc::from(destination.as_path());
             for record in &mut pending {
-                record.path = Arc::clone(&destination);
+                // A batch may rotate more than once. Earlier immutable chunks
+                // keep their locations; only this open chunk moves now.
+                if record.path.as_ref() == open_path.as_path() {
+                    record.path = Arc::clone(&destination);
+                }
             }
             file = open_append(&open_path)?;
             open_first = None;

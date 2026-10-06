@@ -24,7 +24,9 @@ use records::*;
 
 const RECORD_MAGIC: &[u8; 4] = b"CFR1";
 const RECORD_HEADER_BYTES: usize = 52;
-const ROTATE_BYTES: u64 = 64 << 20;
+// Warm scans and coverage rewrites touch the live chunk. Keep that work
+// bounded; a single larger valid frame still occupies its own chunk.
+const ROTATE_BYTES: u64 = 1 << 20;
 const MAX_APPEND_FRAMES: usize = 64;
 const MAX_TAIL_PAGE_BYTES: usize = 1 << 20;
 const MAX_TAIL_PAGE_FRAMES: usize = 4096;
