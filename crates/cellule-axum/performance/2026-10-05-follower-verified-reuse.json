@@ -1,0 +1,236 @@
+{
+  "scope": "Linux aarch64 debug/unoptimized native follower append stage; not node TPS or request latency",
+  "profile": {
+    "frame_counts": [
+      1024,
+      4096
+    ],
+    "batch_frames": 64,
+    "retained_lag_frames": [
+      null,
+      256
+    ],
+    "repetitions": 3,
+    "timing_excludes": [
+      "setup",
+      "seal",
+      "cold reopen and byte-exact tail verification"
+    ],
+    "process_cpu_clock": "/proc/self/stat user+system ticks; getconf CLK_TCK"
+  },
+  "cases": [
+    {
+      "frames": 1024,
+      "retained_lag_frames": null,
+      "control": {
+        "elapsed_ms": 987.118543,
+        "process_cpu_ms": 970.0,
+        "full_scan_body_inspections": 7680,
+        "append_p50_ms": 64.15240399999999,
+        "append_p95_ms": 110.221379,
+        "elapsed_ms_range": [
+          919.474247,
+          1120.647751
+        ],
+        "io": {
+          "rchar": 4770341,
+          "wchar": 666832,
+          "syscr": 15385,
+          "syscw": 5152
+        },
+        "retained_bytes": 666576
+      },
+      "candidate": {
+        "elapsed_ms": 278.133776,
+        "process_cpu_ms": 270.0,
+        "full_scan_body_inspections": 0,
+        "append_p50_ms": 17.156247,
+        "append_p95_ms": 27.271606000000002,
+        "elapsed_ms_range": [
+          272.520964,
+          860.186721
+        ],
+        "io": {
+          "rchar": 4770340,
+          "wchar": 666832,
+          "syscr": 15385,
+          "syscw": 5152
+        },
+        "retained_bytes": 666576
+      },
+      "elapsed_reduction_percent": 71.82367021951485,
+      "cpu_reduction_percent": 72.16494845360825
+    },
+    {
+      "frames": 1024,
+      "retained_lag_frames": 256,
+      "control": {
+        "elapsed_ms": 1231.6588749999999,
+        "process_cpu_ms": 1070.0,
+        "full_scan_body_inspections": 8064,
+        "append_p50_ms": 83.73433299999999,
+        "append_p95_ms": 112.52034900000001,
+        "elapsed_ms_range": [
+          1029.853247,
+          1274.426002
+        ],
+        "io": {
+          "rchar": 6571765,
+          "wchar": 2162865,
+          "syscr": 18481,
+          "syscw": 16672
+        },
+        "retained_bytes": 183054
+      },
+      "candidate": {
+        "elapsed_ms": 361.89036200000004,
+        "process_cpu_ms": 340.0,
+        "full_scan_body_inspections": 0,
+        "append_p50_ms": 25.721726,
+        "append_p95_ms": 29.015678,
+        "elapsed_ms_range": [
+          353.24084100000005,
+          396.593807
+        ],
+        "io": {
+          "rchar": 6571764,
+          "wchar": 2162865,
+          "syscr": 18481,
+          "syscw": 16672
+        },
+        "retained_bytes": 183054
+      },
+      "elapsed_reduction_percent": 70.6176467083875,
+      "cpu_reduction_percent": 68.22429906542055
+    },
+    {
+      "frames": 4096,
+      "retained_lag_frames": null,
+      "control": {
+        "elapsed_ms": 16063.292426,
+        "process_cpu_ms": 15780.0,
+        "full_scan_body_inspections": 129024,
+        "append_p50_ms": 233.71820400000001,
+        "append_p95_ms": 487.279231,
+        "elapsed_ms_range": [
+          15499.401418,
+          18141.065163
+        ],
+        "io": {
+          "rchar": 101101280,
+          "wchar": 3545456,
+          "syscr": 258121,
+          "syscw": 20608
+        },
+        "retained_bytes": 3544432
+      },
+      "candidate": {
+        "elapsed_ms": 3818.003187,
+        "process_cpu_ms": 3730.0,
+        "full_scan_body_inspections": 0,
+        "append_p50_ms": 55.989681,
+        "append_p95_ms": 106.533574,
+        "elapsed_ms_range": [
+          3706.276404,
+          3879.552567
+        ],
+        "io": {
+          "rchar": 101101278,
+          "wchar": 3545456,
+          "syscr": 258121,
+          "syscw": 20608
+        },
+        "retained_bytes": 3544432
+      },
+      "elapsed_reduction_percent": 76.23150294630638,
+      "cpu_reduction_percent": 76.36248415716096
+    },
+    {
+      "frames": 4096,
+      "retained_lag_frames": 256,
+      "control": {
+        "elapsed_ms": 5878.958618000001,
+        "process_cpu_ms": 5620.0,
+        "full_scan_body_inspections": 38784,
+        "append_p50_ms": 97.45558799999999,
+        "append_p95_ms": 114.661157,
+        "elapsed_ms_range": [
+          5720.357459,
+          6155.107169
+        ],
+        "io": {
+          "rchar": 43148797,
+          "wchar": 13599319,
+          "syscr": 89281,
+          "syscw": 78208
+        },
+        "retained_bytes": 235967
+      },
+      "candidate": {
+        "elapsed_ms": 1906.917374,
+        "process_cpu_ms": 1780.0,
+        "full_scan_body_inspections": 0,
+        "append_p50_ms": 31.045652999999998,
+        "append_p95_ms": 36.498864,
+        "elapsed_ms_range": [
+          1906.392103,
+          1913.839757
+        ],
+        "io": {
+          "rchar": 43148796,
+          "wchar": 13599319,
+          "syscr": 89281,
+          "syscw": 78208
+        },
+        "retained_bytes": 235967
+      },
+      "elapsed_reduction_percent": 67.56368775651076,
+      "cpu_reduction_percent": 68.32740213523132
+    }
+  ],
+  "gates": {
+    "all_24_original_cold_tail_points": true,
+    "every_original_receipt_and_retained_byte_count_checked": true,
+    "every_current_scanned_disk_byte_hashed": true,
+    "incoming_and_cold_frames_fully_decoded": true,
+    "all_candidate_warm_scan_redecodes_zero": true,
+    "follower_tests": "17 passed, 1 diagnostic ignored; two new integrity tests",
+    "uninstrumented_validation": {
+      "runtime_all_features": "passed; 643 unit and 241 public runtime scenarios plus other integration suites",
+      "clippy_all_targets_all_features": "passed",
+      "strict_api_docs": "passed",
+      "fmt": "passed",
+      "boundaries": "passed",
+      "module_layout": "passed",
+      "doc_links": "passed; 1444",
+      "rust_fences": "passed; 138",
+      "sql_peer_contracts": "passed; 28 assertions"
+    }
+  },
+  "source": {
+    "control_commit": "a4840c8c8836df0419dbc6766d69385423246ced",
+    "control_archive_sha256": "f8324377690fa8486dd50ecfe6ec42a0d91ee1049bb66d8c1464134ccad406ac",
+    "candidate_production_sha256": {
+      "crates/cellule-runtime/src/follower/records/mod.rs": "ca77eeab5ff78c0d054d25a2759d392467fc73dc58b837cffd88824123503c82",
+      "crates/cellule-runtime/src/follower/records/append.rs": "6cc2757ff54952e2036d56581183ebbc5d2844ed1215eeeb46b5ef7e39dc24ec",
+      "crates/cellule-runtime/src/follower/records/scan.rs": "9654945ec70d329afd8311911f0e1231ef80cdbde8911cdb5921a4b040fac0b0",
+      "crates/cellule-runtime/src/follower/directory.rs": "f8e9ba68c6d23f3953de58703148b5b88499b5b2c00eb41c5746c134a71f87e4",
+      "crates/cellule-runtime/src/follower/tests/mod.rs": "dc2891965a52facf6a210d06a4302eb5999118f485f6d13da539b8cae1786ab0",
+      "crates/cellule-runtime/src/follower/tests/integrity.rs": "c52630516b715afa29ef42e9f71a3b2eb5fd589dcf20b7ebaeb158c38bdb84c5"
+    },
+    "candidate_instrumented_source_archive_sha256": "90fa37d0234600ae795966eaefe614af7bd5a65bc8dca5d16963c9e03da47a7a",
+    "diagnostic_fixture_sha256": "8f22f9c2647fddba46c8fde951185bf1d9810a51ee175ce98b01a46738aebe33",
+    "frozen_frames_sha256": "c94031b5e0726dd4ba9d017931c31f19c8da7d3fb4429833b2a603ee057146d7",
+    "matched_rust_cargo_files": 1233
+  },
+  "evidence": {
+    "results": "follower-verified-results.json",
+    "results_sha256": "7e9b958beef1aff1ddcc70de6bda83405864f2621cdbdedefc4ee9e5293685ec",
+    "control_binary_hash_at_measurement": "7e0078789ff8d4d67e1e398507755b14055fb72cc88e0a75aed7b5b5e75765e8",
+    "candidate_binary_hash_at_measurement": "59e832f0842c50456112896edbbf9f73bfb5a4efa3eddd7e54fb2d2f776f5759",
+    "candidate_unit_log_sha256": "1b088230c5b5093242db13b29ae62683bace926b338be9f5097a99f8da419a5b",
+    "original_integrity_red_log_sha256": "203a77eac70d6ebbdb6f2a37561568f887def0a81885f624b78b9871b595947d",
+    "first_candidate_compile_failure": "private test field access; corrected without widening visibility; original log retained"
+  },
+  "remaining": "Original multicell HTTP release comparison and full target-hardware qualification remain pending; byte traversal, rewrites and peer/provider I/O remain."
+}

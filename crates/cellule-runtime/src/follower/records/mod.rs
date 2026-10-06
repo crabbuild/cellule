@@ -92,6 +92,8 @@ impl Drop for IndexReservation {
     }
 }
 pub(in crate::follower) struct LaneMemory {
+    lane: Lane,
+    limits: cellule_ltx::Limits,
     records: BTreeMap<u64, StoredRecord>,
     open_first: Option<u64>,
     open_last: Option<u64>,

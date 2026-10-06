@@ -24,10 +24,12 @@ pub(in crate::follower) fn read_tail_sync(
         return Err(Error::Node("follower lane is not sealed"));
     }
     if state.is_none() {
-        let retained = scan_lane_counted(&directory.join("chunks"), lane, limits, scan_counter)?;
-        let open_records = scan_chunk(&directory.join("chunks/open.log"), lane, limits, true)?;
+        let retained =
+            scan_lane_counted(&directory.join("chunks"), lane, limits, None, scan_counter)?;
+        let open_records =
+            scan_chunk(&directory.join("chunks/open.log"), lane, limits, true, None)?;
         let scan_only = retained.clone();
-        match lane_memory(retained, &open_records, index_used) {
+        match lane_memory(lane, limits, retained, &open_records, index_used) {
             Ok(memory) => *state = Some(memory),
             Err(Error::Capacity(_)) => {
                 return read_tail_records(
@@ -141,6 +143,8 @@ pub(in crate::follower) fn read_indexed_record(
     Ok(Bytes::from(encoded))
 }
 pub(in crate::follower) fn lane_memory(
+    lane: Lane,
+    limits: cellule_ltx::Limits,
     records: BTreeMap<u64, StoredRecord>,
     open_records: &[StoredRecord],
     index_used: &Arc<Mutex<u64>>,
@@ -151,6 +155,8 @@ pub(in crate::follower) fn lane_memory(
         .checked_mul(INDEX_BYTES_PER_RECORD)
         .ok_or(Error::Capacity("follower lane index"))?;
     Ok(LaneMemory {
+        lane,
+        limits,
         open_first: open_records.first().map(|record| record.sequence),
         open_last: open_records.last().map(|record| record.sequence),
         index: IndexReservation::new(index_used, bytes)?,
@@ -161,6 +167,7 @@ pub(in crate::follower) fn scan_lane(
     chunks: &Path,
     lane: Lane,
     limits: cellule_ltx::Limits,
+    known: Option<&LaneMemory>,
 ) -> Result<BTreeMap<u64, StoredRecord>> {
     if !chunks.exists() {
         return Ok(BTreeMap::new());
@@ -181,7 +188,7 @@ pub(in crate::follower) fn scan_lane(
         } else {
             Some(parse_chunk_name(name).ok_or(Error::Node("invalid follower chunk name"))?)
         };
-        let chunk = scan_chunk(&path, lane, limits, open)?;
+        let chunk = scan_chunk(&path, lane, limits, open, known)?;
         if let Some((first, last)) = expected
             && (chunk.first().map(|record| record.sequence) != Some(first)
                 || chunk.last().map(|record| record.sequence) != Some(last))
@@ -215,10 +222,11 @@ pub(in crate::follower) fn scan_lane_counted(
     chunks: &Path,
     lane: Lane,
     limits: cellule_ltx::Limits,
+    known: Option<&LaneMemory>,
     counter: &ScanCounter,
 ) -> Result<BTreeMap<u64, StoredRecord>> {
     count_scan(counter);
-    scan_lane(chunks, lane, limits)
+    scan_lane(chunks, lane, limits, known)
 }
 pub(in crate::follower) fn read_watermark(path: &Path, invalid: &'static str) -> Result<u64> {
     let bytes = std::fs::read(path)?;
@@ -234,6 +242,7 @@ pub(in crate::follower) fn scan_chunk(
     lane: Lane,
     limits: cellule_ltx::Limits,
     truncate_suffix: bool,
+    known: Option<&LaneMemory>,
 ) -> Result<Vec<StoredRecord>> {
     let mut file = match std::fs::OpenOptions::new()
         .read(true)
@@ -284,27 +293,46 @@ pub(in crate::follower) fn scan_chunk(
             return Err(error.into());
         }
         let encoded = Bytes::from(encoded);
-        let frame = match cellule_ltx::inspect_node_frame(encoded.clone(), limits) {
-            Ok(frame) if frame.digest() == digest => frame,
-            Ok(_) | Err(_) if truncate_suffix => {
-                file.set_len(valid_bytes)?;
-                file.sync_data()?;
-                return Ok(records);
+        let previous = verified_record(known, lane, limits, sequence);
+        // The indexed digest comes from complete envelope/LTX validation.
+        // Reuse requires hashing every current disk byte under the same lane
+        // and bounds. Cold scans have no witness and always decode the body.
+        let unchanged = previous.is_some_and(|record| {
+            record.sequence == sequence
+                && record.length == encoded.len()
+                && record.digest == digest
+                && *blake3::hash(&encoded).as_bytes() == digest
+        });
+        if !unchanged {
+            let frame = match cellule_ltx::inspect_node_frame(encoded.clone(), limits) {
+                Ok(frame) if frame.digest() == digest => frame,
+                Ok(_) | Err(_) if truncate_suffix => {
+                    file.set_len(valid_bytes)?;
+                    file.sync_data()?;
+                    return Ok(records);
+                }
+                Ok(_) => return Err(Error::Node("stored follower record digest differs")),
+                Err(error) => return Err(error.into()),
+            };
+            let scope = frame.scope();
+            if scope.node_sequence != sequence
+                || scope.leader_session != *lane.leader.as_bytes()
+                || scope.log_epoch != lane.epoch
+            {
+                if truncate_suffix {
+                    file.set_len(valid_bytes)?;
+                    file.sync_data()?;
+                    return Ok(records);
+                }
+                return Err(Error::Node("stored follower record scope differs"));
             }
-            Ok(_) => return Err(Error::Node("stored follower record digest differs")),
-            Err(error) => return Err(error.into()),
-        };
-        let scope = frame.scope();
-        if scope.node_sequence != sequence
-            || scope.leader_session != *lane.leader.as_bytes()
-            || scope.log_epoch != lane.epoch
-        {
-            if truncate_suffix {
-                file.set_len(valid_bytes)?;
-                file.sync_data()?;
-                return Ok(records);
+            if previous.is_some_and(|record| {
+                record.sequence != sequence
+                    || record.length != encoded.len()
+                    || record.digest != digest
+            }) {
+                return Err(Error::Node("stored follower record changed after index"));
             }
-            return Err(Error::Node("stored follower record scope differs"));
         }
         // Keep only verified locations, not every body in the lane. Restart,
         // seal and paged reads must not allocate the entire retained log.
@@ -319,6 +347,36 @@ pub(in crate::follower) fn scan_chunk(
             .checked_add(RECORD_HEADER_BYTES as u64 + length)
             .ok_or(Error::Node("follower chunk length overflow"))?;
     }
+}
+
+fn verified_record(
+    known: Option<&LaneMemory>,
+    lane: Lane,
+    limits: cellule_ltx::Limits,
+    sequence: u64,
+) -> Option<&StoredRecord> {
+    let known = known?;
+    if known.lane != lane || verification_bounds(known.limits) != verification_bounds(limits) {
+        return None;
+    }
+    known.records.get(&sequence)
+}
+
+fn verification_bounds(limits: cellule_ltx::Limits) -> (u64, u64, u64, u64, usize) {
+    let cellule_ltx::Limits {
+        max_database_bytes,
+        max_capture_bytes,
+        max_file_bytes,
+        max_plan_bytes,
+        max_segments,
+    } = limits;
+    (
+        max_database_bytes,
+        max_capture_bytes,
+        max_file_bytes,
+        max_plan_bytes,
+        max_segments,
+    )
 }
 pub(in crate::follower) fn finish_scan(
     mut file: std::fs::File,

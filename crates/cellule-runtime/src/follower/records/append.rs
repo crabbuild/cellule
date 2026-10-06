@@ -1,6 +1,7 @@
 //! Lane appends, seals, retirements, and chunk rewrites.
 
 use super::*;
+use std::collections::BTreeSet;
 
 pub(in crate::follower) fn append_sync(
     root: &Path,
@@ -23,23 +24,41 @@ pub(in crate::follower) fn append_sync(
         return Err(Error::Node("follower lane is sealed"));
     }
     if state.is_none() {
-        let retained = scan_lane_counted(&chunks, lane, limits, scan_counter)?;
-        let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true)?;
-        *state = Some(lane_memory(retained, &open_records, index_used)?);
+        let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
+        let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true, None)?;
+        *state = Some(lane_memory(
+            lane,
+            limits,
+            retained,
+            &open_records,
+            index_used,
+        )?);
     }
-    let pruned_through = prune_covered(&chunks, lane, covered_through, limits)?;
+    let changed = prune_covered(&chunks, lane, covered_through, limits, state.as_ref())?;
     let state = state
         .as_mut()
         .ok_or(Error::Node("follower lane state did not initialize"))?;
-    if pruned_through.is_some() {
-        let records = scan_lane_counted(&chunks, lane, limits, scan_counter)?;
+    if changed {
+        let records = scan_lane_counted(&chunks, lane, limits, Some(&*state), scan_counter)?;
+        // Coverage may remove an original prefix. Repair, deletion or a valid
+        // substitution must never erase an indexed uncovered durability proof.
+        for (sequence, original) in state.records.range((
+            std::ops::Bound::Excluded(covered_through),
+            std::ops::Bound::Unbounded,
+        )) {
+            if !records.get(sequence).is_some_and(|record| {
+                record.digest == original.digest && record.length == original.length
+            }) {
+                return Err(Error::Node("follower lane lost an uncovered indexed frame"));
+            }
+        }
         let index_bytes = u64::try_from(records.len())
             .map_err(|_| Error::Capacity("follower lane index"))?
             .checked_mul(INDEX_BYTES_PER_RECORD)
             .ok_or(Error::Capacity("follower lane index"))?;
         state.index.resize_to(index_bytes)?;
         state.records = records;
-        let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true)?;
+        let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true, Some(&*state))?;
         state.open_first = open_records.first().map(|record| record.sequence);
         state.open_last = open_records.last().map(|record| record.sequence);
     }
@@ -177,8 +196,8 @@ pub(in crate::follower) fn seal_sync(
         });
     }
     if state.is_none() {
-        let retained = scan_lane_counted(&chunks, lane, limits, scan_counter)?;
-        *state = Some(lane_memory(retained, &[], index_used)?);
+        let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
+        *state = Some(lane_memory(lane, limits, retained, &[], index_used)?);
     }
     let state = state
         .as_ref()
@@ -216,7 +235,7 @@ pub(in crate::follower) fn retire_sync(
     ensure_lane_directories(root, lane)?;
     let directory = lane_directory(root, lane);
     let chunks = directory.join("chunks");
-    let retained = scan_lane_counted(&chunks, lane, limits, scan_counter)?;
+    let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
     let durable_through = retained.keys().next_back().copied().unwrap_or(0);
     let covered_through = match watermark {
         RetirementWatermark::Covered(value) => value,
@@ -357,13 +376,15 @@ pub(in crate::follower) fn prune_covered(
     lane: Lane,
     covered_through: u64,
     limits: cellule_ltx::Limits,
-) -> Result<Option<u64>> {
+    known: Option<&LaneMemory>,
+) -> Result<bool> {
     if !chunks.exists() {
-        return Ok(None);
+        return Ok(known.is_some_and(|known| !known.records.is_empty()));
     }
     let mut removed = false;
     let mut open_removed = false;
-    let mut pruned_through = None;
+    let mut changed;
+    let mut retained_paths = BTreeSet::new();
     for entry in std::fs::read_dir(chunks)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -379,21 +400,33 @@ pub(in crate::follower) fn prune_covered(
         if last <= covered_through {
             std::fs::remove_file(entry.path())?;
             removed = true;
-            pruned_through = Some(pruned_through.map_or(last, |current: u64| current.max(last)));
+        } else {
+            if !entry.file_type()?.is_file() {
+                return Err(Error::Node("follower chunk is not a regular file"));
+            }
+            retained_paths.insert(entry.path());
         }
     }
     let open_path = chunks.join("open.log");
     if open_path.exists() {
-        let records = scan_chunk(&open_path, lane, limits, true)?;
+        let records = scan_chunk(&open_path, lane, limits, true, known)?;
+        changed = known.is_some_and(|known| {
+            known.open_first != records.first().map(|record| record.sequence)
+                || known.open_last != records.last().map(|record| record.sequence)
+                || records.iter().any(|record| {
+                    !known.records.get(&record.sequence).is_some_and(|previous| {
+                        previous.digest == record.digest
+                            && previous.length == record.length
+                            && previous.offset == record.offset
+                            && previous.path == record.path
+                    })
+                })
+        });
         let mut retained = Vec::with_capacity(records.len());
         for record in records {
             if record.sequence <= covered_through {
                 removed = true;
                 open_removed = true;
-                pruned_through = Some(
-                    pruned_through
-                        .map_or(record.sequence, |current: u64| current.max(record.sequence)),
-                );
             } else {
                 retained.push(record);
             }
@@ -401,11 +434,18 @@ pub(in crate::follower) fn prune_covered(
         if open_removed {
             rewrite_open_chunk(&open_path, retained)?;
         }
+    } else {
+        changed = known.is_some_and(|known| known.open_first.is_some());
     }
+    changed |= known.is_some_and(|known| {
+        known.records.values().any(|record| {
+            record.path.as_ref() != open_path && !retained_paths.contains(record.path.as_ref())
+        })
+    });
     if removed {
         sync_directory(chunks)?;
     }
-    Ok(pruned_through)
+    Ok(removed || changed)
 }
 pub(in crate::follower) fn rewrite_open_chunk(
     path: &Path,

@@ -833,6 +833,18 @@ also required when creating, rotating, renaming, or removing a chunk. A disk
 error, short write, checksum mismatch, gap, or sync error returns a typed NACK
 and never advances `durable_through`.
 
+The live lane index retains digests from fully verified frames, scoped to that
+lane and its immutable validation bounds. Warm scans still read and hash every
+encoded byte. An exact digest match reuses the previous LTX-body validation;
+unknown bytes, changed bounds and cold scans perform full validation. The index
+does not retain frame bodies or persist a verification shortcut.
+
+Pruning reconciles observed file and record changes before releasing another
+receipt. Every previously indexed uncovered frame must still exist with its
+original digest and length. Missing, repaired or substituted history cannot
+silently advance the cached durable range. Authoritative object coverage may
+release its original covered prefix.
+
 `FollowerStore::open` walks every retained lane before the management listener
 starts. It verifies directory shape, closed-chunk names and records, frame
 scope and digest, sequence continuity, and seal/retire watermarks. Then:
