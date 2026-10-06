@@ -68,8 +68,9 @@ per follower, with 13.83 million read and 8.73 million write calls while the
 open log was about 8.89 MB. These counters include setup and warmup, are not a
 matched steady-state measurement, and do not prove causality. The current
 follower pruning path repeatedly scans open history, rewrites retained records
-and rescans the lane. A native append/reopen diagnostic will distinguish syscall
-amplification from repeated verification/copying cost. Frame checks and fsync
+and rescans the lane. The completed [native follower diagnostic](2026-10-05-follower-history-cost.md)
+separates read syscall count from bytes traversed: buffering reduces calls,
+but its elapsed medians regress and it was not adopted. Frame checks and fsync
 ordering remain required.
 
 The target remains unestablished: three 30-minute windows on dedicated
