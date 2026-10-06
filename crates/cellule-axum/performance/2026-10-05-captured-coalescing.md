@@ -19,4 +19,4 @@ Isolated LTX and runtime suites, local-only LTX, strict Clippy and API docs, for
 
 The prior PR head failed a host substituted-history test during fenced source-node shutdown. Its original failure remains recorded; this optimization does not claim a CI fix.
 
-The [dataset](2026-10-05-captured-coalescing.json) records frozen source identities, critical metrics and evidence hashes. Raw evidence remains outside Git. The next comparison uses the original 2,000-Cell development profile with fresh RustFS per point and 600-second windows, candidate before control. The [original target](node-capacity.md) and all qualification gates remain unchanged.
+The [dataset](2026-10-05-captured-coalescing.json) records frozen source identities, critical metrics and evidence hashes. Raw evidence remains outside Git. The [completed R10 comparison](2026-10-05-captured-coalescing-r10.md) uses the original 2,000-Cell development profile with fresh RustFS per point and 600-second windows, candidate before control. The [original target](node-capacity.md) and all qualification gates remain unchanged.
