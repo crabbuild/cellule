@@ -270,6 +270,11 @@
     "production_change": false,
     "failure_log": "pr62-464dad2-workspace-failure.log",
     "failure_log_sha256": "ba0358277d65d269013f1d883a007339fef8fd11513d04ba7f3024f3c784149f",
-    "verification": "Formatting passed; corrected tests require fresh CI verification. HTTP binary and source frozen at 464dad2."
+    "verification": "Corrected tests passed the ca2f8f8 workspace CI Test step; overall workflow remains in progress.",
+    "test_fix_revision": "ca2f8f8bc050a7c51a9a4bd76a7e8c3eee9e089e",
+    "test_fix_job": "https://github.com/crabbuild/cellule/actions/runs/37422524555/job/112134831787",
+    "test_step_conclusion": "success",
+    "test_step_completed_at": "2026-10-06T06:20:11Z",
+    "progress_evidence_sha256": "4f89df16d7bf8d3033970f8ac75a9e86215b20b82c138b7d22857bccb22602b1"
   }
 }

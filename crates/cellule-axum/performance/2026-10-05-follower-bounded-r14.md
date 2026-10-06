@@ -47,7 +47,8 @@ each selected an arbitrary `.log` directory entry, which can belong to frame 1
 after rotation while the assertion requests frame 2. The correction explicitly
 damages the live chunk containing the last appended frame, retaining the
 original rejection and scan-count assertions. Production code is unchanged;
-corrected tests await fresh CI verification. The HTTP input stays frozen at
+corrected tests passed the `ca2f8f8` workspace CI Test step; the full workflow
+remains in progress. The HTTP input stays frozen at
 `464dad2`. The adjacent JSON preserves the CI failure and log hash.
 
 The [adjacent JSON](2026-10-05-follower-bounded-r14.json) records exact medians,

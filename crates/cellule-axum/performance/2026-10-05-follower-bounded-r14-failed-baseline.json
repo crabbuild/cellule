@@ -1,0 +1,161 @@
+{
+  "status": "baseline_failed_original_shutdown_deadline; comparison_stopped; candidate_not_dispatched_in_R14",
+  "source": {
+    "commit": "ff0d79b211a18ed64d3b89b4996bcaf3a4370ac6",
+    "source": "/follower-verified-candidate-source",
+    "binary": "/evidence/follower-retry-r13-candidate-sql",
+    "archive_sha256": "73e070db06e639af9e4affbc1c4088491418ab8c6fccfe4d340d71b4d7d385f2",
+    "binary_sha256": "2abfbe1651b5e367e571d9fdc6f73805cdc64ae7fdfaf99160d456b1620c738c",
+    "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+    "all_tracked_files_match_archive": true
+  },
+  "profile": {
+    "cells": 2000,
+    "window_seconds": 600,
+    "warmup_seconds": 30,
+    "write_offers_per_second": 1000,
+    "read_offers_per_second": 10,
+    "clients": 64,
+    "queue_capacity": 256,
+    "sql_workers": 16,
+    "tokio_workers": 8,
+    "original_shutdown_deadline_seconds": 60,
+    "environment": "Shared 8-CPU/16-GiB Colima; owner, two followers and driver share 8-CPU/12-GiB container; RustFS 4-CPU/6-GiB on same VM; unrelated workerd containers active."
+  },
+  "failure": {
+    "phase": "Service.stop initial shutdown; TimeoutExpired after original 60 seconds",
+    "exit_code": 1,
+    "cold_recovery_and_identity_audit": "not reached",
+    "cells_printed_idle_before_cleanup_returned": 2000,
+    "sqlite_directory_after_harness_cleanup": "absent: /tmp/.tmpuIcY7b",
+    "all_required_development_gates_passed": false,
+    "candidate_started": false
+  },
+  "load_only_not_qualified": {
+    "writes": {
+      "attempts": 71683,
+      "errors": 0,
+      "successes_in_window": 71365,
+      "successes_including_drain": 71683,
+      "queue_dropped": 528317,
+      "successful_requests_per_second": 118.94166666666666,
+      "request_latency_ms_all_attempts": {
+        "max": 6437.270794999999,
+        "p50": 408.1,
+        "p95": 1250.5,
+        "p99": 2368.6
+      },
+      "scheduled_latency_ms_all_attempts": {
+        "max": 10701.606734,
+        "p50": 2248.2,
+        "p95": 5740.5,
+        "p99": 8294.4
+      },
+      "request_histogram_overflow": 0,
+      "scheduled_histogram_overflow": 13
+    },
+    "reads": {
+      "attempts": 639,
+      "errors": 0,
+      "successes_in_window": 637,
+      "successes_including_drain": 639,
+      "queue_dropped": 5361,
+      "successful_requests_per_second": 1.0616666666666668,
+      "request_latency_ms_all_attempts": {
+        "max": 1331.967832,
+        "p50": 14.8,
+        "p95": 208.7,
+        "p99": 478.0
+      },
+      "scheduled_latency_ms_all_attempts": {
+        "max": 7965.927481,
+        "p50": 1741.8,
+        "p95": 4458.3,
+        "p99": 6243.5
+      },
+      "request_histogram_overflow": 0,
+      "scheduled_histogram_overflow": 0
+    }
+  },
+  "owner_peak_rss_bytes": 690225152,
+  "owner_peak_file_descriptors": 16219,
+  "critical_lifetime_phases": {
+    "dirty_admission": {
+      "count": 45905,
+      "mean_ms": 14480.786227546236,
+      "overflow": 41674,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "resolution_us": 100
+    },
+    "root_preparation_work": {
+      "count": 45865,
+      "mean_ms": 121.61309702056035,
+      "overflow": 54,
+      "p50_ms": 84.6,
+      "p95_ms": 321.2,
+      "p99_ms": 629.4,
+      "resolution_us": 100
+    },
+    "publication": {
+      "count": 43865,
+      "mean_ms": 10578.390016335303,
+      "overflow": 36699,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "resolution_us": 100
+    },
+    "worker": {
+      "count": 78461,
+      "mean_ms": 80.41896469681753,
+      "overflow": 80,
+      "p50_ms": 38.9,
+      "p95_ms": 272.5,
+      "p99_ms": 661.9,
+      "resolution_us": 100
+    }
+  },
+  "node_log_append": {
+    "bytes": 451321350,
+    "failures": 0,
+    "successes": 4489
+  },
+  "response_sources": {
+    "fleet": 78091,
+    "object": 370,
+    "recorded": 0
+  },
+  "provider_archive": {
+    "volume": "cellule-node-scaling-rustfs-20261005-follower-bounded-baseline-r14",
+    "container": "cellule-node-scaling-rustfs",
+    "archive": "follower-bounded-2000-baseline-r14-provider-volume.tar.gz",
+    "sha256": "08659f670aaec3fa80199e4ead763a93ebfcb791479891f8648007c8b771cbf2",
+    "original_unique_inodes": 495804,
+    "archive_entries": 495804,
+    "producer_exit_code": 0,
+    "gzip_integrity": "passed",
+    "full_tar_list": "passed; matching source unique inode count"
+  },
+  "owned_provider_removed_after_archive_verification": true,
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "evidence_sha256": {
+    "follower-bounded-2000-baseline-r14-run/cells-2000-rate-1000/load/summary.json": "13c930eec614e7465c55c4f35f7cc2b1a40de244e5379a1abccb2aeac5326306",
+    "follower-bounded-2000-baseline-r14-run/cells-2000-rate-1000/initial.log": "1a239b6ce67510199915c23fecdd51cf284202969ac4db1d94fbb3f0ecd3b073",
+    "follower-bounded-2000-baseline-r14-command.json": "4072d34a4e0a15cbd2be7d7f9d2bd894202c3cc34ef7e86a4fe7163d57656452",
+    "follower-bounded-2000-baseline-r14-exit.json": "68b268d784b81b3c54101fc27ce1a368d53808c481235ec4e1c23e103762dbce",
+    "follower-bounded-2000-baseline-r14-provider-volume-archive.json": "20615c34c71315026606138cb9c1f481851e05e6869a2dbbcdc4dbed6903c493",
+    "follower-bounded-2000-baseline-r14-environment.json": "19b7d7f477c4f5b73333913972de3eaa920eb6bceb67d9e82fb7e430b72c5bce",
+    "follower-bounded-r14-preflight.json": "b113223f076a8fe4fe6e1cb289812a6238a8fd3580dabcca8bfb156c048227a7"
+  },
+  "target_achieved": false,
+  "interpretation": "The driver completed its 600-second load with zero request errors. It is a failed baseline: printed Idle rows do not satisfy the original successful deadline or all-Cell cold recovery/identity audit. No passing paired throughput gain may be claimed. Lifetime phase populations overlap and differ from request latency; process I/O is not physical disk traffic.",
+  "per_cell_measured_writes_including_drain": {
+    "cells": 2000,
+    "min": 18,
+    "max": 54,
+    "mean": 35.8415,
+    "max_share": 0.0007533166859645941
+  }
+}
