@@ -2,13 +2,12 @@
 
 use std::{collections::BTreeMap, io};
 
-use bytes::Bytes;
-use cellule_store::MultipartUploadSource as _;
-
 use super::{
-    AppendBody, CellReplica, PreparedSegment, SegmentDescriptor, upload::SINGLE_PUT_BYTES,
+    AppendBody, CellReplica, PreparedSegment, SegmentDescriptor,
+    upload::{SINGLE_PUT_BYTES, pinned_storage_error},
 };
 use crate::{LtxError, Result, SegmentInfo, codec, ltx};
+use bytes::Bytes;
 
 pub(super) async fn run(
     replica: &CellReplica,
@@ -34,25 +33,16 @@ pub(super) async fn run(
             return Err(LtxError::LTXCorrupted);
         };
         let info = segment.descriptor.info.clone();
-        if source.byte_len().await? != info.size_bytes {
-            return Err(LtxError::ChecksumMismatch);
-        }
-        let bytes = cellule_store::MultipartUploadSource::read_exact(
-            source.as_ref(),
-            0,
-            info.size_bytes as usize,
-        )
-        .await?;
-        if source.byte_len().await? != info.size_bytes {
-            return Err(LtxError::ChecksumMismatch);
-        }
+        let source = source.clone();
         let index = segment.index.clone();
-        // Read outside the blocking callback: pinned sources use the same job
-        // pool, so nested admitted file jobs could exhaust its entire cohort.
+        // One admitted job owns the pinned read and verification. Synchronous
+        // access avoids nesting file jobs in the same bounded pool, and the
+        // dispatched closure retains the source and admission on cancellation.
         let merged = replica
             .host
-            .run(move || state.apply(bytes, &info, &index))
-            .await??;
+            .run(move || state.apply(source.read_small(info.size_bytes)?, &info, &index))
+            .await
+            .map_err(pinned_storage_error)??;
         let Some(merged) = merged else {
             return Ok(segments);
         };

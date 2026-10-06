@@ -65,7 +65,10 @@ Authority publication is unchanged.
 An append with several small native captures can publish one combined delta.
 Every original segment first passes chain and byte admission, then its pinned
 body, checksum and index are verified. Merging retains at most 256 KiB of changed
-page images under the existing host job admission. Truncation removes earlier
+page images under the existing host job admission. Each small cut's pinned
+length/read/length checks and merge verification
+run in one admitted blocking job, retaining its source and admission through
+completion even if the preparation future is cancelled. Truncation removes earlier
 images; regrowth requires complete replacement coverage. The combined LTX keeps
 the original first transaction and final position, and uses the existing body,
 index and root formats. Larger working sets, oversized output and representations

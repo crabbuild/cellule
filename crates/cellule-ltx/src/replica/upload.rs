@@ -240,6 +240,31 @@ impl PinnedCapture {
             .map_err(|_| io::Error::other("capture file lock poisoned"))?;
         file.read_exact_at(offset, length)
     }
+
+    // Called only inside an admitted job. Keep the pinned handle and both
+    // length checks with the bounded read; never dispatch another host job.
+    pub(super) fn read_small(&self, expected_size: u64) -> Result<Bytes> {
+        if expected_size > SINGLE_PUT_BYTES {
+            return Err(LtxError::InvalidState("small capture read exceeds bound"));
+        }
+        let rejected = |error| cellule_store::StorageError::ReadRejected {
+            source: Box::new(error),
+        };
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| rejected(io::Error::other("capture file lock poisoned")))?;
+        if file.file_len().map_err(rejected)? != expected_size {
+            return Err(LtxError::ChecksumMismatch);
+        }
+        let bytes = file
+            .read_exact_at(0, expected_size as usize)
+            .map_err(rejected)?;
+        if file.file_len().map_err(rejected)? != expected_size {
+            return Err(LtxError::ChecksumMismatch);
+        }
+        Ok(Bytes::from(bytes))
+    }
 }
 
 pub(super) struct PinnedCaptureReader {
@@ -322,7 +347,7 @@ pub(super) async fn inspect_segment_source(
         .await?
 }
 
-fn pinned_storage_error(error: LtxError) -> cellule_store::StorageError {
+pub(super) fn pinned_storage_error(error: LtxError) -> cellule_store::StorageError {
     cellule_store::StorageError::ReadRejected {
         source: Box::new(error),
     }
