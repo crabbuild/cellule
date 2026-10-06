@@ -1,0 +1,356 @@
+{
+  "status": "failed_original_control_gate; not a valid paired comparison",
+  "profile": {
+    "cells": 2000,
+    "warmup_seconds": 30,
+    "window_seconds": 600,
+    "clients": 64,
+    "queue_capacity": 256,
+    "sql_workers": 16,
+    "tokio_workers": 8,
+    "offered_write_tps": 1000,
+    "offered_read_tps": 10,
+    "environment": "shared 8-CPU/16-GiB Colima VM; assets 8 CPUs/12 GiB shared by owner, two followers and driver; RustFS 4 CPUs/6 GiB; fresh owned provider"
+  },
+  "frozen_inputs": {
+    "build_command": "cargo build -p cellule-axum --example sql --release --locked",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "points": {
+      "baseline": {
+        "commit": "738595e699dfe0ab63047b87c121eaa777f36bef",
+        "archive_sha256": "28b24cb4043426ac453a2d9b1ce17d7abb4141b03f737df1f16b1891d5b4bb2e",
+        "binary_sha256": "1e686a65b7a0f90afb2ee50d72e9e8522fc8d85141dee64417a0e14c1ffc246b",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      },
+      "candidate": {
+        "commit": "6ef00dfbfbd4cfeeb66338261dd77baa5c317ba8",
+        "archive_sha256": "20dcede182150b7cb011cc367cadaf2d52ad39307e4ecb3d43df4eaa7e06645c",
+        "binary_sha256": "45aa1939e6e14fb591865e250ca46b76c8799dc398fca7967b720e7e222ce4aa",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      }
+    },
+    "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc"
+  },
+  "metrics": {
+    "writes": {
+      "offered_tps": 1000,
+      "completed_tps": 66.73333333333333,
+      "errors": 41,
+      "queue_dropped": 559602,
+      "request_latency_ms_raw_nearest_rank": {
+        "0.5": 691.329861,
+        "0.95": 2314.2867730000003,
+        "0.99": 4099.8887079999995
+      },
+      "completion_tps_per_60_seconds": [
+        91.16666666666667,
+        87.53333333333333,
+        87.53333333333333,
+        94.18333333333334,
+        61.45,
+        35.45,
+        36.983333333333334,
+        48.21666666666667,
+        44.8,
+        80.01666666666667
+      ],
+      "successes_in_window": 40040,
+      "attempts_including_drain": 40398,
+      "per_cell_successes_including_drain": {
+        "min": 3,
+        "median": 20.0,
+        "max": 38,
+        "mean": 20.1785,
+        "max_cell_share": 0.0009415962534380653
+      }
+    },
+    "reads": {
+      "offered_tps": 10,
+      "completed_tps": 0.48833333333333334,
+      "errors": 1,
+      "queue_dropped": 5704,
+      "request_latency_ms_raw_nearest_rank": {
+        "0.5": 7.458937,
+        "0.95": 274.798488,
+        "0.99": 2161.327621
+      },
+      "completion_tps_per_60_seconds": [
+        0.9166666666666666,
+        0.5666666666666667,
+        0.7666666666666667,
+        0.65,
+        0.36666666666666664,
+        0.2,
+        0.23333333333333334,
+        0.3,
+        0.26666666666666666,
+        0.6166666666666667
+      ],
+      "successes_in_window": 293,
+      "attempts_including_drain": 296,
+      "per_cell_successes_including_drain": {
+        "min": 0,
+        "median": 0.0,
+        "max": 3,
+        "mean": 0.1475,
+        "max_cell_share": 0.010169491525423728
+      }
+    }
+  },
+  "error_classes": [
+    {
+      "kind": "reads",
+      "code": "unavailable",
+      "count": 1
+    },
+    {
+      "kind": "writes",
+      "code": "deadline_exceeded",
+      "count": 4
+    },
+    {
+      "kind": "writes",
+      "code": "invalid_published_result",
+      "count": 1
+    },
+    {
+      "kind": "writes",
+      "code": "outcome_unknown",
+      "count": 3
+    },
+    {
+      "kind": "writes",
+      "code": "unavailable",
+      "count": 33
+    }
+  ],
+  "all_original_journal_rows": {
+    "writes": 44995,
+    "reads": 317
+  },
+  "journal_sha256": {
+    "client-0.jsonl": "d59b19a5a9f6c24e545972e404e2d451ce7340309192d168e385027babfbbe88",
+    "client-1.jsonl": "3a8b0ad59f727517f326e133487262cb6b54642073fcd248cdbcec32026413e2",
+    "client-10.jsonl": "c694c927fa8d57668f179e0e96aec66a4752b6db839fb4e3cdb885b548336c63",
+    "client-11.jsonl": "67a1aa365b13a715353b510ca47964232b78304022ed18094bbc129f7deee384",
+    "client-12.jsonl": "17cdb69097324dbfda258b7934e92cec0e2bcd6572b5d20007d7b1cd549163ca",
+    "client-13.jsonl": "399451657967e7733704ce58b25dc851a4472a276f56a0ad645698ba3edebb6e",
+    "client-14.jsonl": "a96bb42f7eb38f53099c830271e45944d60aaaf02eaf9da55fa819df2be8d197",
+    "client-15.jsonl": "2a4c272e86c75c93453a3bd3a3d4fa523081eabd13a8c862cc37d88476e8397f",
+    "client-16.jsonl": "1cc5d347e63df6c683b0dacd95da2f5d81a81333b024a5f8174ef14b5c3fafa0",
+    "client-17.jsonl": "e6d37b0191655ca57ae4ca7e4ade103d2d2be4305d5480c60520a3883370fdbc",
+    "client-18.jsonl": "afc9675a77c81a7a708a4afa5a42c6aa0a1be4a80ecb8b0ecbc701f5073c6408",
+    "client-19.jsonl": "e94562d5017a049e062226334ddba49526b98ab25b43d16de7872f20b1113e09",
+    "client-2.jsonl": "74b764d826fb7e4496c9efa3abfa85b14b5f4abd3190c2fbcc1df270bcfaa0bc",
+    "client-20.jsonl": "0d3bce8bb171bfeae4be2a1c004ae7bb70a86d9f36b1f020eeb7e7206e9794c1",
+    "client-21.jsonl": "e64c192304d453c9745fb3bcba605983be7d0b5941c65d40db41f6890a79aa66",
+    "client-22.jsonl": "fb80d81df605d1f51bb69cccbff6b6c3b6c9873fcea1848f1b220b30bece2b3d",
+    "client-23.jsonl": "d6cdaf1783bdca3f0a2bb246c45c88bf5c57d3739d9bcb457ea7c11717bb5e47",
+    "client-24.jsonl": "87c1f266ec660835c83cf7ef93a95b9757fd3b379fbca752b4a4c8a67c706255",
+    "client-25.jsonl": "ba120562708e20bc78055305c0b1eee119d8c0765a398dc50c191a1880ffa5df",
+    "client-26.jsonl": "d89649d84bf27822d893bc731fb324b01364c3e5e4ee5e73e6be2c7f585946b2",
+    "client-27.jsonl": "c021ca1177d578b8cb4153f216dc6c2586cab2425c2b21bed05ee2b45f2c2ec4",
+    "client-28.jsonl": "eab85f499b8c09c0dccd4ed5d3f16fccacf06fe84c6c15b5930a662f8512cac0",
+    "client-29.jsonl": "7e9304ace0f0e34a63f7fb9b6e085b69e84d7cde940c890aa4a5d3dd40b45318",
+    "client-3.jsonl": "f25d6f5f537fdc05cc4aabbb02ee4cc0c16212099b66e63a40d6d37836f053ae",
+    "client-30.jsonl": "38dc5a6993bff3a733bae2220361a31353b76034b1842315d60966df3f629936",
+    "client-31.jsonl": "7b30b505afd6d3377a7da4d2ed2760eb07261037384e13186078f133d5587d01",
+    "client-32.jsonl": "850ba3487591bf7a8436e0fdf329a31797c944001fe551e3dca9f4fbbea435f5",
+    "client-33.jsonl": "fdc7a26e17506aa5bf2a7bd180b9be1a7d38fc50a10186467af67be74eec1cec",
+    "client-34.jsonl": "8ef5c0931b44931532397f76d49c4d41e5b75e5f710aa4882a9f71721c9f62b6",
+    "client-35.jsonl": "d9444a2bda0d8ae401dbe6504e52200d3085b6fa933748f5e5c1a84ead29609e",
+    "client-36.jsonl": "b01f034b0694f8545ced1053aab275197297d997bd15e0c9ac59ba4836180bf2",
+    "client-37.jsonl": "eb0c7257e99d678f094a686fb7b865b7eb09090104068da63146f6cccbba35df",
+    "client-38.jsonl": "55334b0434176a66a9a783fa3dfa910c82955e5fe419ca6dfbe77038b96c0b53",
+    "client-39.jsonl": "67fbbaa0b61dfda8da35bfe50314eb02baa595d316a8f1dec8f0e98c14d8bc07",
+    "client-4.jsonl": "0fb6415bbefd359dd803fbf9eb63cb93039ffa861eadb5bdab3cbf1c235347eb",
+    "client-40.jsonl": "2c0cfd92e553e98d3943ac907eb0a72cc4f9bdc347f80de66daa64efa4b3b4cf",
+    "client-41.jsonl": "bb5945ebde197c57c7b83f3c524c9c85c42a9cc71dbfca1a9d00062c17de9b6f",
+    "client-42.jsonl": "3fc1e3c93c23a4445f46e318905f311f9ac27ae36ac6c4e6337c983374544706",
+    "client-43.jsonl": "5cbea73b88d23e06ec7b520cd80714d29b4ae8d16b94f5de00a39f67d776b83b",
+    "client-44.jsonl": "cc9f910617e2eb5f15a694c74f04cf1f69aa3f0742940558a20511e384da9421",
+    "client-45.jsonl": "1ec30cb2c8001138d7d7f12e9f49c52e5b2302a67e1eb7d04aa2b5ca3f4b5e38",
+    "client-46.jsonl": "55edc017ce548724b30f029a826d89f59f65aad7e64acc15ff7a8dbcceeb19a7",
+    "client-47.jsonl": "452e2095eb5dcfc62a866eed7ff65b5fc318eafd48ad6e6303367c5529b619f5",
+    "client-48.jsonl": "35bcfd96d64f287ea3498e6c7a55177b3c1d985b8a62daeb21d5e5e55d9a503b",
+    "client-49.jsonl": "4af1b0974a8cc315031897b1d7ac6bc6d23c46bdf0f16977be67b18abed7ed60",
+    "client-5.jsonl": "64a7b759ac9e3c882a05c243bf5c2d8d0237e1f9c0d03ee2009cd505ce839030",
+    "client-50.jsonl": "8b596025e6e14b9e98e66aac259561ccc1cbe0ab12113a8b817e402c9e19666d",
+    "client-51.jsonl": "890959d96b177dd4184ecedf45f2e66e1159901e8e5d262e16371e400b546822",
+    "client-52.jsonl": "405324e45dd835d00300250b2049cfe7e6e0c3185831f1bd5fb9d4453fd2f343",
+    "client-53.jsonl": "ae998a5801460148efbd91ef323c7543755a0d72289fa18917e7b2a55f345a4f",
+    "client-54.jsonl": "6d59eb3f6c383e611a5a6d3ec32d84b25678fc2bbf334c8580aa66cfa8640b8d",
+    "client-55.jsonl": "cae22f906e01c1902292d3f8d31af48342712bebd116539b949106f4918bfa0f",
+    "client-56.jsonl": "0cd37e820e09e25a7c5c51ef3ca4ea85d3188ec0b747e8858d793c31cedb46cf",
+    "client-57.jsonl": "a54648ac10da0f314a742d1811986b431cefe789c1e8dd45bb78dada0b795ef4",
+    "client-58.jsonl": "03133e0b81e3753fc1de6ed179166f525ca04d51632584483beb06558995bb7c",
+    "client-59.jsonl": "829e410c4a4931bd8e1ddf495f90bcd40d374ad0ff75092f220b2367888b9bfc",
+    "client-6.jsonl": "566edceb6b22a0c43355e7ec92def02d3ba0733ccc77058d0ce22fd6b53a8ae8",
+    "client-60.jsonl": "b0f6dcbefc13e75d893a52796874c65558d28f0b6c0ffe052d961f0a1a90ea05",
+    "client-61.jsonl": "4c459e1ef446824f0e24f40081adbd9e27a5451f650da988c50e4e5276ae120b",
+    "client-62.jsonl": "2e27aee79dcad402bd071c2a893be73ea95e766c0a2c1bca0f9d14cb3da543f2",
+    "client-63.jsonl": "f2ff16f187afab24117770cd403dac2f23c685a7c1b3ddf2ecb7730e2465d2a5",
+    "client-7.jsonl": "73b01da32c16e0ea9dccfa160bf6d3b0141024d944bd6a763534b2f4c406ba51",
+    "client-8.jsonl": "cfdf1da5818b2ca50749864088ee1355751bb09b42b57cb494319dfd1949a57f",
+    "client-9.jsonl": "27aa01f7b3b205f3bbfaffa8950d27aa7da7016e3220083cd85c61ea5f34e8f7",
+    "setup.jsonl": "0e58c9f914de46d3a58028a47dca9958450578cfa67a5ec03a93ade3555cf285"
+  },
+  "source_telemetry_before_abort": {
+    "node_log_append": {
+      "bytes": 185820362,
+      "failures": 0,
+      "successes": 3245
+    },
+    "submission_sources": {
+      "fleet": 44955,
+      "rejected": 0,
+      "unavailable": 0,
+      "unsupported": 0
+    },
+    "response_sources": {
+      "fleet": 25431,
+      "object": 19524,
+      "recorded": 0
+    },
+    "capture_total": {
+      "count": 46958,
+      "mean_ms": 30.431177126900636,
+      "overflow": 32,
+      "p50_ms": 5.8,
+      "p95_ms": 115.9,
+      "p99_ms": 274.7,
+      "resolution_us": 100
+    },
+    "provider_put": {
+      "count": 256909,
+      "mean_ms": 76.99927203421834,
+      "overflow": 181,
+      "p50_ms": 53.1,
+      "p95_ms": 202.2,
+      "p99_ms": 438.4,
+      "resolution_us": 100
+    },
+    "host_capacity": {
+      "dirty": 8,
+      "io": 32,
+      "jobs": 8,
+      "local_disk_bytes": 1073741824,
+      "recovery": 2,
+      "scratch_mib": 65536
+    },
+    "critical_lifetime_phases": {
+      "dirty_admission": {
+        "count": 40492,
+        "mean_ms": 4321.559724656771,
+        "overflow": 16033,
+        "p50_ms": 819.1,
+        "p95_ms": null,
+        "p99_ms": null,
+        "resolution_us": 100
+      },
+      "worker": {
+        "count": 44962,
+        "mean_ms": 106.83520203382857,
+        "overflow": 213,
+        "p50_ms": 44.2,
+        "p95_ms": 332.9,
+        "p99_ms": 1239.3,
+        "resolution_us": 100
+      },
+      "publication": {
+        "count": 37337,
+        "mean_ms": 4052.338716509361,
+        "overflow": 15991,
+        "p50_ms": 1428.7,
+        "p95_ms": null,
+        "p99_ms": null,
+        "resolution_us": 100
+      },
+      "root_preparation_work": {
+        "count": 39351,
+        "mean_ms": 114.10074342768925,
+        "overflow": 44,
+        "p50_ms": 82.7,
+        "p95_ms": 277.1,
+        "p99_ms": 582.4,
+        "resolution_us": 100
+      },
+      "compaction": {
+        "count": 1124,
+        "mean_ms": 212.09163238078293,
+        "overflow": 8,
+        "p50_ms": 117.8,
+        "p95_ms": 636.3,
+        "p99_ms": 1697.9,
+        "resolution_us": 100
+      }
+    }
+  },
+  "auxiliary_proc_observation": {
+    "scope": "same retained PIDs; interval from lifetime midpoint to end snapshot can include drain; not causal phase shares; no profiler",
+    "deltas": {
+      "follower-1": {
+        "interval_seconds": 336.820744,
+        "cpu_seconds": 228.32999999999998,
+        "rchar_bytes": 14107210678,
+        "wchar_bytes": 46291151,
+        "read_syscalls": 16630723,
+        "end_lifetime_rchar_bytes": 22124195012,
+        "end_lifetime_wchar_bytes": 500647473
+      },
+      "follower-2": {
+        "interval_seconds": 336.820744,
+        "cpu_seconds": 227.32000000000002,
+        "rchar_bytes": 14093512765,
+        "wchar_bytes": 46293109,
+        "read_syscalls": 16612989,
+        "end_lifetime_rchar_bytes": 22124195184,
+        "end_lifetime_wchar_bytes": 500647537
+      },
+      "owner": {
+        "interval_seconds": 336.820744,
+        "cpu_seconds": 255.07999999999998,
+        "rchar_bytes": 2093654652,
+        "wchar_bytes": 966493211,
+        "read_syscalls": 489700,
+        "end_lifetime_rchar_bytes": 5550930510,
+        "end_lifetime_wchar_bytes": 2443852693
+      }
+    }
+  },
+  "provider_archive": {
+    "volume": "cellule-node-scaling-rustfs-20261005-follower-verified-baseline-r12",
+    "container": "cellule-node-scaling-rustfs",
+    "archive": "follower-verified-2000-baseline-r12-provider-volume.tar.gz",
+    "sha256": "343075237ffc0c1fdf58fefc39aaf666ee5db55f37d85b6d37f3d01ea58405e2",
+    "original_unique_inodes": 446872,
+    "archive_entries": 446872,
+    "producer_exit_code": 0,
+    "gzip_integrity": "passed",
+    "full_tar_list": "passed; matching source unique inode count",
+    "owned_fixture_removed_after_complete_archive_verification": true
+  },
+  "evidence_sha256": {
+    "follower-verified-2000-baseline-r12-run/cells-2000-rate-1000/load/summary.json": "873b4b551bf192c714102d28383271256aeb17f9c7c2da31c1896db262ee0592",
+    "follower-verified-2000-baseline-r12-run/cells-2000-rate-1000/initial.log": "66c74cb378d48a27712b5717b5514dfe5e4d93a43eac1eddf56179632c380886",
+    "follower-verified-2000-baseline-r12-exit.json": "dd7a88ff00917327cf92c3ed09708d4ee9de2cfcfef9aeca61e5f1481dfad26b",
+    "follower-verified-2000-baseline-r12-command.json": "8a4ade6cb62a74021a3129428c3657ba2fb9c568a40b9ff8c147f247a4ee183b",
+    "follower-verified-2000-baseline-r12-provider-volume-archive.json": "28e981a4d0289edf17ae33a02f409bcb368590f0f6365005f970078ee6e187d3",
+    "follower-verified-r12-baseline-middle-io.json": "817b058307ffb42dbe524f9a194348ffd4ee3adf999cb6075fbef8181dfef875",
+    "follower-verified-r12-baseline-end-io.json": "e0d3f01ae1bf0737efebf9d18fc236a747e5a47699ef38a61f2ac61377524dbe",
+    "follower-verified-r12-assets-inspect.json": "471ad1f2a34176dbc7975dc5e29ff422084fb791bb85750859b2a88571c227f9"
+  },
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "qualification": {
+    "target_established": false,
+    "original_gate_passed": false,
+    "cold_audit_performed": false,
+    "original_profiles_and_gates_unchanged": true,
+    "candidate_started": false,
+    "remaining": "Original all-Cell recovery proof, three 30-minute target-hardware windows, 10K durable writes/s, 50K owner-ordered reads/s and owner-loss/follower-only recovery qualification"
+  },
+  "interpretation": "The preserved R11 candidate control failed this longer local repeat with deadline, unavailable, unknown-outcome and durable-receipt/follow-up-read errors. No end-to-end gain claim can use this failed control. Journals and provider state are preserved; cold gate was not reached. Candidate requires its own unchanged complete audit.",
+  "runner_terminal_exit_code": 1
+}
