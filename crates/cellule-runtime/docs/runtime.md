@@ -46,8 +46,11 @@ waiting does not restart retry grace. Admission is released before provider
 backoff, authority CAS or paired compaction recovery. Publication queue timing
 includes the admission wait; LTX root timing measures preparation after admission.
 
-Without a node log, the actor groups up to four already-queued, consecutive
-native mutations into one SQLite transaction and WAL capture. Each member
+Without a node log, the actor groups up to sixteen already-queued, consecutive
+native mutations into one SQLite transaction and WAL capture. The ceiling only
+bounds commands already waiting behind the head, so it adds no wait of its own:
+a shallow queue groups few, and a deep queue amortizes one published root over
+more acknowledged commands. Each member
 uses its own savepoint and request-ledger identity; successful and rejected
 outcomes retain separate logical commit sequences. One fenced object-root
 publication covers the complete group before any new outcome is returned.

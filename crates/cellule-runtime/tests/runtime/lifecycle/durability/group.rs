@@ -350,7 +350,11 @@ async fn grouped_errors_and_rejections_preserve_each_command_savepoint() {
             .iter()
             .map(|timing| timing.commit_sequence)
             .collect::<Vec<_>>(),
-        vec![1, 3, 5]
+        // The head publishes alone, then the whole queued backlog fills one
+        // group. The group's commit sequence is its last member's, so the two
+        // publications record 1 and 5 whatever the group ceiling is; the
+        // per-member outcomes above are what prove savepoint isolation.
+        vec![1, 5]
     );
     assert!(
         responses
