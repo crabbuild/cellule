@@ -147,7 +147,8 @@ pub(super) async fn execute_command(
 ) -> TaskResult {
     let execution_started = std::time::Instant::now();
     if command.group.is_some() {
-        return super::group::execute(pool, command, interrupt, generation, effect_id).await;
+        return super::group::execute(pool, durability, command, interrupt, generation, effect_id)
+            .await;
     }
     let queue_wait = command.queued_at.elapsed();
     tracing::debug!(
@@ -296,7 +297,10 @@ pub(super) fn reserve_pending_publication(
     pool: &SqlWorkerPool,
     pending: &PendingCommit,
 ) -> crate::Result<ResourceReservation> {
-    let bytes = usize::try_from(pending.retained_bytes())
+    // The host already owns the LTX file's disk reservation. Retain RAM for
+    // shared indexes and live outcome/descriptor copies, not the on-disk body.
+    // Physical backlog counters and their per-Cell limits remain unchanged.
+    let bytes = usize::try_from(pending.retained_memory_bytes())
         .map_err(|_| Error::Capacity("pending publication bytes"))?;
     pool.resource_ledger()
         .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))

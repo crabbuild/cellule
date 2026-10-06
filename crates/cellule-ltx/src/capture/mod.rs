@@ -161,6 +161,10 @@ impl CaptureEngine {
             .map_err(LtxError::Sqlite)?;
         conn.pragma_update(None, "wal_autocheckpoint", 0)
             .map_err(LtxError::Sqlite)?;
+        // Release obsolete physical WAL slack only after SQLite safely resets
+        // its generation; capture's read mark still protects uncaptured pages.
+        conn.pragma_update(None, "journal_size_limit", 0)
+            .map_err(LtxError::Sqlite)?;
         conn.pragma_update(None, "synchronous", "FULL")
             .map_err(LtxError::Sqlite)?;
         conn.pragma_update(None, "foreign_keys", true)

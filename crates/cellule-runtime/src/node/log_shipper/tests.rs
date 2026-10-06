@@ -302,9 +302,9 @@ async fn covered_queued_prefix_keeps_the_uncovered_suffix_fleet_durable() {
         .into_iter()
         .flat_map(|ticket| {
             submission(&cuts)
-                .load(limits)
+                .load(ticket.leader_session(), ticket.log_epoch(), limits)
                 .unwrap()
-                .encode(ticket, limits)
+                .encode(ticket)
                 .unwrap()
         })
         .enumerate()

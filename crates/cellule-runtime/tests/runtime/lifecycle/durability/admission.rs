@@ -101,7 +101,7 @@ async fn disk_refusal_with_a_follower_proven_head_preserves_the_owner() {
     assert!(
         matches!(
             refused,
-            Err(cellule_runtime::Error::Capacity("local disk bytes"))
+            Err(cellule_runtime::Error::Capacity("publication backlog"))
         ),
         "{refused:?}"
     );

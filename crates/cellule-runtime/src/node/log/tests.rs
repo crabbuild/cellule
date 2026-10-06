@@ -8,7 +8,25 @@ fn verified_frame(
     incarnation: [u8; 16],
     segment: &cellule_ltx::LocalSegment,
 ) -> cellule_ltx::VerifiedNodeFrame {
-    cellule_ltx::encode_node_frame(
+    verified_range(
+        sequence,
+        commit_sequence,
+        commit_sequence,
+        cell,
+        incarnation,
+        segment,
+    )
+}
+
+fn verified_range(
+    sequence: u64,
+    first_commit: u64,
+    last_commit: u64,
+    cell: [u8; 32],
+    incarnation: [u8; 16],
+    segment: &cellule_ltx::LocalSegment,
+) -> cellule_ltx::VerifiedNodeFrame {
+    cellule_ltx::encode_node_frame_range(
         cellule_ltx::NodeFrameScope {
             leader_session: [1; 16],
             log_epoch: 2,
@@ -17,13 +35,95 @@ fn verified_frame(
             cell,
             incarnation,
             cell_epoch: 3,
-            commit_sequence,
+            commit_sequence: last_commit,
         },
+        first_commit,
         segment.info().clone(),
         Bytes::from(std::fs::read(segment.path()).unwrap()),
         cellule_ltx::Limits::default(),
     )
     .unwrap()
+}
+
+#[test]
+fn grouped_recovery_requires_complete_ranges_in_both_overlay_builders() {
+    let limits = cellule_ltx::Limits::default();
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut database =
+        cellule_ltx::Db::open(&directory.path().join("groups.sqlite"), limits).unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("CREATE TABLE events(v)"))
+        .unwrap();
+    let base = database.capture().unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("INSERT INTO events VALUES (2), (3), (4)"))
+        .unwrap();
+    let first = database.capture().unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("INSERT INTO events VALUES (5), (6), (7)"))
+        .unwrap();
+    let second = database.capture().unwrap();
+    let cell = [4; 32];
+    let incarnation = [5; 16];
+    let frames = vec![
+        verified_range(1, 2, 4, cell, incarnation, &first.segments[0]),
+        verified_range(2, 5, 7, cell, incarnation, &second.segments[0]),
+    ];
+    let bases = [RecoveryBase {
+        application: [9; 16],
+        cell_epoch: 3,
+        root: cellule_ltx::RootRef {
+            cell,
+            incarnation,
+            digest: [10; 32],
+            position: base.position,
+            commit_sequence: 1,
+        },
+    }];
+    for file_backed in [false, true] {
+        let build = |frames, bases: &[RecoveryBase]| {
+            if file_backed {
+                build_recovery_overlays_file_backed(frames, bases, limits, directory.path())
+            } else {
+                build_recovery_overlays(frames, bases, limits)
+            }
+        };
+        let recovered = build(frames.clone(), &bases).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].overlay.final_commit_sequence(), 7);
+        assert_eq!(recovered[0].overlay.final_position(), second.position);
+        let checkpoint_range = vec![
+            verified_range(1, 2, 7, cell, incarnation, &first.segments[0]),
+            verified_range(2, 2, 7, cell, incarnation, &second.segments[0]),
+        ];
+        let recovered = build(checkpoint_range, &bases).unwrap();
+        assert_eq!(recovered[0].overlay.final_commit_sequence(), 7);
+        assert_eq!(recovered[0].overlay.final_position(), second.position);
+        let mut advanced = bases;
+        advanced[0].root.commit_sequence = 4;
+        advanced[0].root.position = first.position;
+        let recovered = build(frames.clone(), &advanced).unwrap();
+        assert_eq!(recovered[0].first_node_sequence, 2);
+
+        advanced[0].root.commit_sequence = 3;
+        assert!(
+            build(frames.clone(), &advanced).is_err(),
+            "base must not split a transaction"
+        );
+        let mut gap = frames.clone();
+        gap[1] = verified_range(2, 6, 7, cell, incarnation, &second.segments[0]);
+        assert!(
+            build(gap, &bases).is_err(),
+            "missing logical command must fail closed"
+        );
+        let mut overlap = frames.clone();
+        overlap[1] = verified_range(2, 4, 7, cell, incarnation, &second.segments[0]);
+        assert!(
+            build(overlap, &bases).is_err(),
+            "overlapping groups must fail closed"
+        );
+    }
+    database.close().unwrap();
 }
 
 fn session(byte: u8) -> SessionId {

@@ -246,3 +246,68 @@ fn placement_projection_saturates_large_node_counters() {
     assert_eq!(stats.placement_running_jobs(), u32::MAX);
     assert_eq!(stats.placement_job_capacity(), u32::MAX);
 }
+
+#[tokio::test]
+async fn publication_pressure_preserves_fenced_and_draining_admission_errors() {
+    use super::*;
+    use crate::identity::{ApplicationId, IncarnationId, NamespaceId, TenantId};
+
+    let runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        1 << 20,
+        SessionId::from_bytes([66; 16]),
+    )
+    .unwrap();
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        ApplicationId::from_bytes([3; 16]),
+        NamespaceId::from_bytes([6; 16]),
+        b"admission-errors",
+    )
+    .unwrap();
+    let incarnation = IncarnationId::from_bytes([2; 16]);
+    let code = Digest::from_bytes([5; 32]);
+    let handle = CellHandle {
+        cell: target.cell_id(),
+        incarnation,
+        code,
+        schema: 1,
+        catalog: CatalogProof::local(
+            CatalogEntry::new(&target, CatalogRole::Application, code, 1).unwrap(),
+            &target,
+        ),
+        inner: runtime.inner.clone(),
+        admission: admission::new_cell_admission(crate::control::OwnerFence {
+            incarnation,
+            epoch: 1,
+        }),
+    };
+    let retained = runtime
+        .inner
+        .resources
+        .try_reserve(ResourceCost::zero().with_retained_bytes(3 * (1 << 20) / 4))
+        .unwrap();
+    runtime
+        .inner
+        .unpublished_node_log_bytes
+        .store(1, Ordering::Release);
+    assert!(matches!(
+        handle.reserve_work(1, 1),
+        Err(Error::Capacity("publication backlog"))
+    ));
+    handle.admission.fenced.store(true, Ordering::Release);
+    assert!(matches!(handle.reserve_work(1, 1), Err(Error::Fenced)));
+    handle.admission.fenced.store(false, Ordering::Release);
+    handle.admission.draining.store(true, Ordering::Release);
+    assert!(matches!(
+        handle.reserve_work(1, 1),
+        Err(Error::CellDraining)
+    ));
+    runtime
+        .inner
+        .unpublished_node_log_bytes
+        .store(0, Ordering::Release);
+    drop(retained);
+    drop(handle);
+    runtime.shutdown().await.unwrap();
+}

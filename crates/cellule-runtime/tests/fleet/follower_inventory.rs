@@ -42,7 +42,7 @@ fn advertisement(id: u8, at: i64) -> NodeAdvertisement {
             follower_free_bytes: if id == 1 { 0 } else { 1 << 30 },
             follower_retained_bytes: 0,
             job_credits: 3,
-            log_protocol: 1,
+            log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
         },
     )
     .unwrap()

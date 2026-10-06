@@ -72,10 +72,7 @@ pub(in crate::cell::actor) fn start_next(
     let interrupt = active.interrupt.clone();
     match work {
         QueuedWork::Command(mut command) => {
-            if active.coordination.publication_count() == 0
-                && active.durability_submitter.object_only()
-                && matches!(command.operation, QueuedOperation::Mutation { .. })
-            {
+            if matches!(command.operation, QueuedOperation::Mutation { .. }) {
                 let mut members = Vec::new();
                 while members.len() + 1 < MAX_NATIVE_GROUP
                     && active.queue.front().is_some_and(|work| {

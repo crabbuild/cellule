@@ -1,4 +1,4 @@
-//! Preserve an already-durable receipt across the application's follow-up read.
+//! Preserve an already-durable receipt while decoding the application's row.
 use super::{CellJson, Error, HttpError, Order};
 
 #[cfg(test)]

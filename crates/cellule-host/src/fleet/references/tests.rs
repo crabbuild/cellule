@@ -53,7 +53,7 @@ async fn directory() -> NodeDirectory {
                         free_memory_bytes: 1 << 20,
                         free_disk_bytes: 1 << 20,
                         job_credits: 4,
-                        log_protocol: 1,
+                        log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
                         ..Default::default()
                     },
                 )

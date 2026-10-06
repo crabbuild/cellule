@@ -3,7 +3,7 @@
 //! Run: `cargo run -p cellule-axum --example sql --locked`
 //!
 //!   POST /orders -> scoped Cellule extractor -> SQL command -> publication
-//!   command receipt -> verified SELECT -> CellJson order + receipt
+//!   INSERT + SELECT in one command -> durable row outcome + receipt
 //!   GET /orders/{id} -> owner-ordered SELECT -> CellJson optional order
 //!   Ctrl-C -> drain HTTP handlers -> drain runtime and SQLite workers
 //!
@@ -182,7 +182,7 @@ async fn create_order(
     Json(input): Json<CreateOrder>,
 ) -> Result<(StatusCode, CellJson<Order>), HttpError> {
     let target = state.target(input.id)?;
-    let sql = app.sql::<Orders>(target.clone())?;
+    let sql = app.sql::<Orders>(target)?;
     // Retries must retain all three identity fields and the exact input. The
     // service accepts them explicitly instead of inventing an ID per attempt.
     let committed = sql
@@ -193,18 +193,33 @@ async fn create_order(
                 expires_at_ms: input.expires_at_ms,
             },
             SqlBatch {
-                statements: vec![SqlStatement {
-                    sql: "INSERT INTO orders (id, total_cents) VALUES (?1, ?2)".into(),
-                    parameters: vec![
-                        SqlValue::Integer(input.id),
-                        SqlValue::Integer(input.total_cents),
-                    ],
-                }],
+                statements: vec![
+                    SqlStatement {
+                        sql: "INSERT INTO orders (id, total_cents) VALUES (?1, ?2)".into(),
+                        parameters: vec![
+                            SqlValue::Integer(input.id),
+                            SqlValue::Integer(input.total_cents),
+                        ],
+                    },
+                    SqlStatement {
+                        sql: "SELECT total_cents FROM orders WHERE id = ?1".into(),
+                        parameters: vec![SqlValue::Integer(input.id)],
+                    },
+                ],
             },
         )
         .await?;
-    // A success reply follows durable proof and a read proving this receipt.
-    let observed = read_order(&app, target, input.id, Some(committed.receipt)).await;
+    // Store the selected row in the command's durable outcome. Its existing
+    // proof gate covers both mutation and output, without another actor job.
+    let observed = committed
+        .output
+        .get(1)
+        .ok_or_else(|| HttpError::from(Error::Control("expected command row result")))
+        .and_then(|result| order_from_result(input.id, result))
+        .map(|output| CellJson {
+            output,
+            receipt: committed.receipt,
+        });
     Ok((
         StatusCode::CREATED,
         order_response::after_commit(committed.receipt, observed)?,
@@ -241,6 +256,16 @@ async fn read_order(
     let [result] = observed.output.as_slice() else {
         return Err(Error::Control("expected one query result").into());
     };
+    Ok(CellJson {
+        output: order_from_result(id, result)?,
+        receipt: observed.receipt,
+    })
+}
+
+fn order_from_result(
+    id: i64,
+    result: &cellule_runtime::primitives::sql::SqlResultSet,
+) -> Result<Option<Order>, HttpError> {
     let output = match result.rows.as_slice() {
         [] => None,
         [row] => {
@@ -254,10 +279,7 @@ async fn read_order(
         }
         _ => return Err(Error::Control("expected at most one order").into()),
     };
-    Ok(CellJson {
-        output,
-        receipt: observed.receipt,
-    })
+    Ok(output)
 }
 
 fn example_count(name: &str, default: u32, maximum: u32) -> ExampleResult<u32> {

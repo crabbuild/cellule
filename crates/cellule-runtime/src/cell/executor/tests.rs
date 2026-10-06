@@ -93,7 +93,9 @@ fn full_pending_publication_budget_refuses_new_commands() {
                         "UPDATE sys_meta SET logical_time_ms = logical_time_ms + 1",
                         [],
                     )?;
-                    Ok(HandlerOutcome::Success(vec![sequence as u8]))
+                    let mut result = Vec::with_capacity(4_096);
+                    result.push(sequence as u8);
+                    Ok(HandlerOutcome::Success(result))
                 },
             )
             .unwrap();
@@ -101,6 +103,13 @@ fn full_pending_publication_budget_refuses_new_commands() {
             matches!(execution, CommandExecution::Pending),
             "sequence {sequence}"
         );
+        match &executor.latest_pending().unwrap().outcome {
+            StoredOutcome::Success { result, .. } => {
+                assert_eq!(result.as_slice(), &[sequence as u8]);
+                assert_eq!(result.capacity(), result.len());
+            }
+            StoredOutcome::Rejected { .. } => panic!("expected success"),
+        }
         executor.confirm_durable(sequence).unwrap();
     }
 

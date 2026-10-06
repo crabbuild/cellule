@@ -556,6 +556,26 @@ impl CellHandle {
         {
             return Err(Error::CellDraining);
         }
+        // Leave progress headroom for captures from work already accepted.
+        // Refuse before dispatch: a post-commit capacity failure must never be
+        // the ordinary way a slow object publisher sheds incoming writes.
+        if kind == AdmissionKind::Command
+            && self
+                .inner
+                .unpublished_node_log_bytes
+                .load(Ordering::Acquire)
+                != 0
+        {
+            let snapshot = self.inner.resources.snapshot()?;
+            let retained = snapshot.used.retained_bytes();
+            let limit = snapshot.limit.retained_bytes();
+            let disk = self.inner.replica_host.local_disk_budget();
+            if retained >= limit.saturating_sub(limit / 4)
+                || disk.used() >= disk.capacity().saturating_sub(disk.capacity() / 4)
+            {
+                return Err(Error::Capacity("publication backlog"));
+            }
+        }
         let admission = WorkAdmission {
             kind,
             _request: Some(try_one(

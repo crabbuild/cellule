@@ -1056,14 +1056,18 @@ impl PendingDurability {
 }
 
 impl CellDurabilitySubmitter {
-    pub(crate) fn object_only(&self) -> bool {
-        self.node_durability
-            .as_ref()
-            .is_none_or(|slot| slot.read().is_ok_and(|binding| binding.is_none()))
-    }
-
     pub(crate) async fn submit(
         &self,
+        commit_sequence: u64,
+        cuts: &cellule_ltx::CaptureBatch,
+    ) -> Result<Option<PendingDurability>> {
+        self.submit_range(commit_sequence, commit_sequence, cuts)
+            .await
+    }
+
+    pub(crate) async fn submit_range(
+        &self,
+        first_commit_sequence: u64,
         commit_sequence: u64,
         cuts: &cellule_ltx::CaptureBatch,
     ) -> Result<Option<PendingDurability>> {
@@ -1082,11 +1086,12 @@ impl CellDurabilitySubmitter {
             return Ok(None);
         };
         self.check_node_lease()?;
-        let submission = NodeLogSubmission::new(
+        let submission = NodeLogSubmission::new_range(
             application,
             self.cell,
             self.incarnation,
             self.epoch,
+            first_commit_sequence,
             commit_sequence,
             cuts,
         )?;

@@ -202,7 +202,10 @@ impl Iterator for WitnessReader {
             return Some(Err(error.into()));
         }
         let length = u64::from_le_bytes(header[..8].try_into().ok()?);
-        let max_encoded = self.limits.max_capture_bytes.saturating_add(240);
+        let max_encoded = self
+            .limits
+            .max_capture_bytes
+            .saturating_add(cellule_ltx::MAX_NODE_FRAME_HEADER_BYTES as u64);
         if length > max_encoded || length > usize::MAX as u64 {
             return Some(Err(Error::Node("recovery witness frame exceeds limit")));
         }
