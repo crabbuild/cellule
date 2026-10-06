@@ -1,6 +1,7 @@
 //! Lane tails, indexed records, and chunk scans.
 
 use super::*;
+use std::collections::BTreeSet;
 
 #[expect(
     clippy::too_many_arguments,
@@ -46,8 +47,11 @@ pub(in crate::follower) fn read_tail_sync(
         }
     }
     let state = state
-        .as_ref()
+        .as_mut()
         .ok_or(Error::Node("follower lane state did not initialize"))?;
+    if state.needs_reconciliation {
+        reconcile_lane_memory(&directory.join("chunks"), lane, limits, state, scan_counter)?;
+    }
     read_tail_records(
         root,
         lane,
@@ -161,7 +165,65 @@ pub(in crate::follower) fn lane_memory(
         open_last: open_records.last().map(|record| record.sequence),
         index: IndexReservation::new(index_used, bytes)?,
         records,
+        needs_reconciliation: false,
+        covered_through: 0,
     })
+}
+
+pub(in crate::follower) fn reconcile_lane_memory(
+    chunks: &Path,
+    lane: Lane,
+    limits: cellule_ltx::Limits,
+    state: &mut LaneMemory,
+    scan_counter: &ScanCounter,
+) -> Result<()> {
+    let records = scan_lane_counted(chunks, lane, limits, Some(state), scan_counter)?;
+    // Only authority-proven object coverage may release an original witness.
+    for (sequence, original) in state.records.range((
+        std::ops::Bound::Excluded(state.covered_through),
+        std::ops::Bound::Unbounded,
+    )) {
+        if !records.get(sequence).is_some_and(|record| {
+            record.digest == original.digest && record.length == original.length
+        }) {
+            return Err(Error::Node("follower lane lost an uncovered indexed frame"));
+        }
+    }
+    let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true, Some(state))?;
+    if state.needs_reconciliation {
+        // A failed append may leave valid, unacknowledged records or a renamed
+        // chunk. Persist their bytes and directory before promoting the index.
+        persist_lane_records(chunks, &records, &open_records)?;
+    }
+    let bytes = u64::try_from(records.len())
+        .map_err(|_| Error::Capacity("follower lane index"))?
+        .checked_mul(INDEX_BYTES_PER_RECORD)
+        .ok_or(Error::Capacity("follower lane index"))?;
+    state.index.resize_to(bytes)?;
+    state.records = records;
+    state.open_first = open_records.first().map(|record| record.sequence);
+    state.open_last = open_records.last().map(|record| record.sequence);
+    state.needs_reconciliation = false;
+    Ok(())
+}
+
+pub(in crate::follower) fn persist_lane_records(
+    chunks: &Path,
+    records: &BTreeMap<u64, StoredRecord>,
+    open_records: &[StoredRecord],
+) -> Result<()> {
+    let paths = records
+        .values()
+        .chain(open_records.iter())
+        .map(|record| &record.path)
+        .collect::<BTreeSet<_>>();
+    for path in paths {
+        std::fs::File::open(path)?.sync_data()?;
+    }
+    if chunks.exists() {
+        sync_directory(chunks)?;
+    }
+    Ok(())
 }
 pub(in crate::follower) fn scan_lane(
     chunks: &Path,
@@ -330,7 +392,8 @@ pub(in crate::follower) fn scan_chunk(
                 record.sequence != sequence
                     || record.length != encoded.len()
                     || record.digest != digest
-            }) {
+            }) && known.is_none_or(|memory| sequence > memory.covered_through)
+            {
                 return Err(Error::Node("stored follower record changed after index"));
             }
         }

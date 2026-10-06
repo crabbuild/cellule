@@ -281,9 +281,13 @@ impl FollowerStore {
             })();
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
+            let result = settle_disk_reservation(result, resize);
             if result.is_err() {
-                *state = None;
+                if let Some(memory) = state.as_mut() {
+                    memory.invalidate();
+                }
                 if !lane_directory(&root, lane).exists()
+                    && state.as_ref().is_none_or(LaneMemory::is_empty)
                     && let Ok(mut lanes) = lanes.lock()
                 {
                     // Cordon may win after the precheck but before enrollment.
@@ -291,11 +295,12 @@ impl FollowerStore {
                     if lanes.get(&lane).is_some_and(|registered| {
                         Arc::ptr_eq(registered, &lock) && Arc::strong_count(registered) == 2
                     }) {
+                        *state = None;
                         lanes.remove(&lane);
                     }
                 }
             }
-            settle_disk_reservation(result, resize)
+            result
         })
         .await
         .map_err(Error::FollowerWorkerJoin)?
@@ -324,10 +329,13 @@ impl FollowerStore {
             let result = seal_sync(&root, lane, limits, &index_used, &mut state, &scan_counter);
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
-            if result.is_err() {
-                *state = None;
+            let result = settle_disk_reservation(result, resize);
+            if result.is_err()
+                && let Some(memory) = state.as_mut()
+            {
+                memory.invalidate();
             }
-            settle_disk_reservation(result, resize)
+            result
         })
         .await
         .map_err(Error::FollowerWorkerJoin)?
@@ -394,8 +402,13 @@ impl FollowerStore {
             let result = retire_sync(&root, lane, watermark, limits, &scan_counter);
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
-            *state = None;
-            settle_disk_reservation(result, resize)
+            let result = settle_disk_reservation(result, resize);
+            if result.is_ok() {
+                *state = None;
+            } else if let Some(memory) = state.as_mut() {
+                memory.invalidate();
+            }
+            result
         })
         .await
         .map_err(Error::FollowerWorkerJoin)?
@@ -430,8 +443,10 @@ impl FollowerStore {
                 &scan_counter,
             )
             .map(|page| page.frames);
-            if result.is_err() {
-                *state = None;
+            if result.is_err()
+                && let Some(memory) = state.as_mut()
+            {
+                memory.invalidate();
             }
             result
         })
@@ -470,8 +485,10 @@ impl FollowerStore {
                 MAX_TAIL_PAGE_FRAMES,
                 &scan_counter,
             );
-            if result.is_err() {
-                *state = None;
+            if result.is_err()
+                && let Some(memory) = state.as_mut()
+            {
+                memory.invalidate();
             }
             result
         })

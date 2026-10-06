@@ -98,4 +98,22 @@ pub(in crate::follower) struct LaneMemory {
     open_first: Option<u64>,
     open_last: Option<u64>,
     index: IndexReservation,
+    needs_reconciliation: bool,
+    covered_through: u64,
+}
+
+impl LaneMemory {
+    pub(in crate::follower) fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub(in crate::follower) fn invalidate(&mut self) {
+        // An error invalidates derived locations, not the original byte proof.
+        // Keep its witnesses so retry cannot bless missing or substituted data.
+        self.needs_reconciliation = true;
+        if let Ok(count) = u64::try_from(self.records.len()) {
+            self.index
+                .shrink_to(count.saturating_mul(INDEX_BYTES_PER_RECORD));
+        }
+    }
 }

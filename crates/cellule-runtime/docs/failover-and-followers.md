@@ -845,6 +845,15 @@ original digest and length. Missing, repaired or substituted history cannot
 silently advance the cached durable range. Authoritative object coverage may
 release its original covered prefix.
 
+An append, seal, tail-read or failed retirement keeps the existing indexed
+witnesses after an error and marks derived locations for reconciliation.
+Repeated retries cannot turn a previously rejected missing or substituted frame
+into accepted history. Reconciliation verifies every still-uncovered witness
+and syncs valid records left by interrupted appends before advancing an index
+or seal watermark. Exact byte repair permits retry; fresh authority-checked
+object coverage releases only the covered prefix. Successful retirement and
+store shutdown release the index reservations.
+
 `FollowerStore::open` walks every retained lane before the management listener
 starts. It verifies directory shape, closed-chunk names and records, frame
 scope and digest, sequence continuity, and seal/retire watermarks. Then:

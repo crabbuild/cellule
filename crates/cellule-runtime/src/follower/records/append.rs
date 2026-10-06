@@ -26,6 +26,7 @@ pub(in crate::follower) fn append_sync(
     if state.is_none() {
         let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
         let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true, None)?;
+        persist_lane_records(&chunks, &retained, &open_records)?;
         *state = Some(lane_memory(
             lane,
             limits,
@@ -34,33 +35,16 @@ pub(in crate::follower) fn append_sync(
             index_used,
         )?);
     }
+    if let Some(memory) = state.as_mut() {
+        // Only the caller's authority-checked object proof releases witnesses.
+        memory.covered_through = memory.covered_through.max(covered_through);
+    }
     let changed = prune_covered(&chunks, lane, covered_through, limits, state.as_ref())?;
     let state = state
         .as_mut()
         .ok_or(Error::Node("follower lane state did not initialize"))?;
-    if changed {
-        let records = scan_lane_counted(&chunks, lane, limits, Some(&*state), scan_counter)?;
-        // Coverage may remove an original prefix. Repair, deletion or a valid
-        // substitution must never erase an indexed uncovered durability proof.
-        for (sequence, original) in state.records.range((
-            std::ops::Bound::Excluded(covered_through),
-            std::ops::Bound::Unbounded,
-        )) {
-            if !records.get(sequence).is_some_and(|record| {
-                record.digest == original.digest && record.length == original.length
-            }) {
-                return Err(Error::Node("follower lane lost an uncovered indexed frame"));
-            }
-        }
-        let index_bytes = u64::try_from(records.len())
-            .map_err(|_| Error::Capacity("follower lane index"))?
-            .checked_mul(INDEX_BYTES_PER_RECORD)
-            .ok_or(Error::Capacity("follower lane index"))?;
-        state.index.resize_to(index_bytes)?;
-        state.records = records;
-        let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true, Some(&*state))?;
-        state.open_first = open_records.first().map(|record| record.sequence);
-        state.open_last = open_records.last().map(|record| record.sequence);
+    if changed || state.needs_reconciliation {
+        reconcile_lane_memory(&chunks, lane, limits, state, scan_counter)?;
     }
     let mut durable_through = state
         .records
@@ -197,11 +181,15 @@ pub(in crate::follower) fn seal_sync(
     }
     if state.is_none() {
         let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
+        persist_lane_records(&chunks, &retained, &[])?;
         *state = Some(lane_memory(lane, limits, retained, &[], index_used)?);
     }
     let state = state
-        .as_ref()
+        .as_mut()
         .ok_or(Error::Node("follower lane state did not initialize"))?;
+    if state.needs_reconciliation {
+        reconcile_lane_memory(&chunks, lane, limits, state, scan_counter)?;
+    }
     let durable_through = state.records.keys().next_back().copied().unwrap_or(0);
     let base_sequence = state.records.keys().next().copied().unwrap_or(0);
     let marker = directory.join("sealed");
