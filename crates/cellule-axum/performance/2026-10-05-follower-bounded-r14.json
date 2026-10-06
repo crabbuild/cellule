@@ -255,6 +255,21 @@
       }
     ],
     "matched_rust_cargo_files": 1234,
-    "inputs_manifest_sha256": "e03e1574245beaa1a7fac919cd31c775f72242808d15c4cb3173e1bc7f8dcc4b"
+    "inputs_manifest_sha256": "e03e1574245beaa1a7fac919cd31c775f72242808d15c4cb3173e1bc7f8dcc4b",
+    "source_commit": "464dad24561ccda2b976b594a0b5a33991a460eb"
+  },
+  "ci_followup": {
+    "revision": "464dad24561ccda2b976b594a0b5a33991a460eb",
+    "job": "https://github.com/crabbuild/cellule/actions/runs/37421930214/job/112132964607",
+    "failed_tests": [
+      "cached_tail_rechecks_mutated_frame_bytes",
+      "cached_tail_fails_when_its_chunk_is_deleted"
+    ],
+    "cause": "Fault injection selected an arbitrary .log entry; smaller chunks can place the requested second frame in a different file. The requested page validates its own indexed records.",
+    "correction": "Explicitly mutate/delete the live chunk holding the last appended frame; retain both original error and scan-count assertions.",
+    "production_change": false,
+    "failure_log": "pr62-464dad2-workspace-failure.log",
+    "failure_log_sha256": "ba0358277d65d269013f1d883a007339fef8fd11513d04ba7f3024f3c784149f",
+    "verification": "Formatting passed; corrected tests require fresh CI verification. HTTP binary and source frozen at 464dad2."
   }
 }
