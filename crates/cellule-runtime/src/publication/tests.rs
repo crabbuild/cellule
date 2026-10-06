@@ -507,10 +507,12 @@ async fn verify_compaction_append(schema: u32) {
     assert_eq!(extended.position, position);
     assert_eq!(
         replica.open_root(&extended).await.unwrap().segment_count(),
-        3
+        2
     );
 
-    for sequence in 10..=37_u64 {
+    // The two captured writes now share one delta. Add another individually
+    // published cut so the foreground test still reaches the same ceiling.
+    for sequence in 10..=38_u64 {
         database
             .transaction(|transaction| {
                 transaction.execute("INSERT INTO events VALUES (?1)", [sequence + 1])?;
@@ -535,14 +537,14 @@ async fn verify_compaction_append(schema: u32) {
     );
     database
         .transaction(|transaction| {
-            transaction.execute("INSERT INTO events VALUES (39)", [])?;
+            transaction.execute("INSERT INTO events VALUES (40)", [])?;
             Ok(())
         })
         .unwrap();
     let cuts = database.capture_deferred().unwrap();
     let before_revision = publisher.control().value().revision;
     assert!(matches!(
-        publisher.prepare_append(&cuts, 37, schema, None).await,
+        publisher.prepare_append(&cuts, 38, schema, None).await,
         Err(Error::Ltx(cellule_ltx::LtxError::InvalidState(_)))
     ));
     assert_eq!(publisher.control().value().revision, before_revision);
@@ -558,7 +560,7 @@ async fn verify_compaction_append(schema: u32) {
         "a rejected successor must leave its compaction private"
     );
     let prepared = publisher
-        .prepare_append(&cuts, 38, schema, None)
+        .prepare_append(&cuts, 39, schema, None)
         .await
         .unwrap();
     assert_eq!(publisher.control().value().ltx_root(), Some(at_ceiling));

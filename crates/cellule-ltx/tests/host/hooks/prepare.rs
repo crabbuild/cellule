@@ -513,9 +513,10 @@ async fn prepare_opens_captured_segments_concurrently() {
 
     replica.prepare(None, &captured, 1, 1).await.unwrap();
 
-    // One open wave plus size/read/size upload jobs. Serial opens would add
-    // two more delay intervals before the already-concurrent uploads begin.
-    assert_eq!(started.elapsed(), delay * 4);
+    // One parallel open wave, four verification/merge jobs per original cut,
+    // then one encoding job. The frozen upload needs no further file jobs.
+    // Serial opens would still add two delay intervals to these fourteen.
+    assert_eq!(started.elapsed(), delay * 14);
     writer.close().unwrap();
 }
 #[cfg(feature = "replica")]

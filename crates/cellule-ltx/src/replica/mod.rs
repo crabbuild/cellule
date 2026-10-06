@@ -14,6 +14,7 @@ use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use crate::{CaptureBatch, Host, Limits, LtxError, Position, Result};
 
 mod cache;
+mod coalesce;
 mod compaction;
 pub(crate) mod directory;
 mod merge;
@@ -937,6 +938,7 @@ struct AppendInput {
 
 enum AppendBody {
     Native(Arc<upload::PinnedCapture>),
+    Frozen(Bytes),
     Bundle,
 }
 

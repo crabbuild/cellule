@@ -484,16 +484,15 @@ async fn compaction_reservation_covers_all_coexisting_scratch_files() {
 #[tokio::test(start_paused = true)]
 async fn compaction_overlaps_independent_remote_transfers() {
     let (_directory, _faults, _host, mut writer) = fixture();
-    let mut captured = writer.capture().unwrap();
+    let mut batches = vec![writer.capture().unwrap()];
     for value in [2, 3, 4] {
         writer
             .transaction(|tx| tx.execute("INSERT INTO t VALUES(?1)", [value]))
             .unwrap();
         let next = writer.capture().unwrap();
-        captured.segments.extend(next.segments);
-        captured.position = next.position;
+        batches.push(next);
     }
-    assert_eq!(captured.segments.len(), 4);
+    assert_eq!(batches.len(), 4);
     let delay = Duration::from_millis(100);
     let backend = InMemory::new();
     let replica = CellReplica::new(
@@ -514,7 +513,19 @@ async fn compaction_overlaps_independent_remote_transfers() {
         Limits::default(),
     )
     .unwrap();
-    let root = replica.prepare(None, &captured, 1, 1).await.unwrap().root();
+    // Publish individually so four independent remote sources exist even when
+    // small captures in one publication are merged before upload.
+    let mut root = None;
+    for (index, captured) in batches.iter().enumerate() {
+        root = Some(
+            replica
+                .prepare(root.as_ref(), captured, index as u64 + 1, 1)
+                .await
+                .unwrap()
+                .root(),
+        );
+    }
+    let root = root.unwrap();
     let scratch = tempfile::TempDir::new().unwrap();
     let started = tokio::time::Instant::now();
 

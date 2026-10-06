@@ -288,9 +288,11 @@ async fn composed_append_checks_external_descriptor_origin_with_an_inline_capabl
     let mut writer = Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
     writer
         .transaction(|transaction| {
-            transaction.execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")
+            transaction.execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0); CREATE TABLE padding(v); INSERT INTO padding VALUES(zeroblob(300000))")
         })
         .unwrap();
+    // Keep the decoded working set beyond the small-delta merge bound so
+    // this fixture still exercises external descriptor origin verification.
     let mut cuts = writer.capture_deferred().unwrap();
     for _ in 1..33 {
         writer

@@ -62,6 +62,17 @@ proposal returns. This is the one current development format, updated together
 with its readers and writers under the [format policy](../../cellule-runtime/docs/storage.md#format-policy).
 Authority publication is unchanged.
 
+An append with several small native captures can publish one combined delta.
+Every original segment first passes chain and byte admission, then its pinned
+body, checksum and index are verified. Merging retains at most 256 KiB of changed
+page images under the existing host job admission. Truncation removes earlier
+images; regrowth requires complete replacement coverage. The combined LTX keeps
+the original first transaction and final position, and uses the existing body,
+index and root formats. Larger working sets, oversized output and representations
+outside the existing capture bound retain the file-backed upload path. All
+dependencies still finish before a proposal returns; original follower receipts
+and the authority CAS continue to govern acknowledgement.
+
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the
 predecessor's position, commit sequence, Cell and incarnation. The runtime selects

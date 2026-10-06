@@ -422,7 +422,7 @@ async fn warm_root_cache_does_not_mask_missing_metadata() {
     let directory = tempfile::TempDir::new().unwrap();
     let mut writer = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
     writer
-        .transaction(|transaction| transaction.execute_batch("CREATE TABLE values_(v)"))
+        .transaction(|transaction| transaction.execute_batch("CREATE TABLE values_(v); CREATE TABLE padding(v); INSERT INTO padding VALUES(zeroblob(300000))"))
         .unwrap();
     let backend = Arc::new(InMemory::new());
     let cell = [41; 32];
@@ -432,6 +432,8 @@ async fn warm_root_cache_does_not_mask_missing_metadata() {
     let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
     // An external tail exercises descriptor-page origin checks independently
     // of the small-root inline representation.
+    // Keep the decoded working set beyond the small-delta merge bound so
+    // this fixture still exercises external descriptor origin verification.
     let mut cuts = writer.capture_deferred().unwrap();
     for value in 0..32 {
         writer

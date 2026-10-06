@@ -71,8 +71,12 @@ impl CellReplica {
             if descriptor.object_kind() != CellObjectKind::Ltx {
                 return Ok(());
             }
-            let AppendBody::Native(source) = body else {
-                return Err(LtxError::InvalidState("native Cell body source missing"));
+            let source: Arc<dyn cellule_store::MultipartUploadSource> = match body {
+                AppendBody::Native(source) => source,
+                AppendBody::Frozen(bytes) => Arc::new(FrozenCapture(bytes)),
+                AppendBody::Bundle => {
+                    return Err(LtxError::InvalidState("native Cell body source missing"));
+                }
             };
             compaction::upload_source(
                 self,
@@ -131,7 +135,30 @@ impl CellReplica {
 const MULTIPART_BYTES: usize = 8 << 20;
 // Each caller holds a shared host I/O permit. Keep small-object buffering well
 // below one multipart chunk so many publishing Cells stay within node memory.
-const SINGLE_PUT_BYTES: u64 = 256 << 10;
+pub(super) const SINGLE_PUT_BYTES: u64 = 256 << 10;
+
+struct FrozenCapture(Bytes);
+
+#[async_trait::async_trait]
+impl cellule_store::MultipartUploadSource for FrozenCapture {
+    async fn byte_len(&self) -> cellule_store::Result<u64> {
+        Ok(self.0.len() as u64)
+    }
+
+    async fn read_exact(&self, offset: u64, length: usize) -> cellule_store::Result<Bytes> {
+        let range = usize::try_from(offset)
+            .ok()
+            .and_then(|start| start.checked_add(length).map(|end| start..end))
+            .filter(|range| range.end <= self.0.len())
+            .ok_or_else(|| cellule_store::StorageError::ReadRejected {
+                source: Box::new(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "frozen capture range",
+                )),
+            })?;
+        Ok(self.0.slice(range))
+    }
+}
 
 pub(super) async fn put_source(
     replica: &CellReplica,
