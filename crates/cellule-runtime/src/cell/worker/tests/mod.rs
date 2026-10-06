@@ -182,6 +182,7 @@ async fn sparse_fault_pool_progresses_under_saturated_sql_workers() {
                         .query_row("SELECT length(value) FROM payload", [], |row| row.get(0))?;
                 Ok(length.to_le_bytes().to_vec())
             }),
+            None,
         )
         .await
         .unwrap();
@@ -260,6 +261,7 @@ async fn background_hydration_leaves_both_workers_query_admission_available() {
                             .query_row("SELECT length(value) FROM payload", [], |row| row.get(0))?;
                     Ok(length.to_le_bytes().to_vec())
                 }),
+                None,
             ),
         )
     };
@@ -393,6 +395,7 @@ async fn rustfs_worker_interference(worker_count: usize) {
                         let _ = timing.send((entered.duration_since(started), entered.elapsed()));
                         Ok(length.to_le_bytes().to_vec())
                     }),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -490,6 +493,7 @@ async fn rustfs_worker_interference(worker_count: usize) {
                         32,
                         SqlDeadline::new(demand_started + Duration::from_secs(30)),
                         Box::new(payload_digest),
+                        None,
                     )
                     .await
                     .unwrap();
@@ -516,6 +520,7 @@ async fn rustfs_worker_interference(worker_count: usize) {
                 32,
                 SqlDeadline::new(warm_started + Duration::from_secs(10)),
                 Box::new(payload_digest),
+                None,
             )
             .await
             .unwrap();
@@ -569,4 +574,5 @@ async fn rustfs_worker_interference(worker_count: usize) {
     );
 }
 
+mod dispatch;
 mod hydration;

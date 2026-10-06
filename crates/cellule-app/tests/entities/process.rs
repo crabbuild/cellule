@@ -19,6 +19,7 @@ use tokio::net::TcpListener;
 
 mod driver;
 mod observation;
+mod population;
 
 async fn endpoints(sync: &Path, count: usize) -> Vec<SocketAddr> {
     let mut endpoints = Vec::new();
@@ -53,6 +54,7 @@ fn boot_ms() -> u64 {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "Compose entity node: Linux cgroups, private disk and real RustFS required"]
 async fn entity_process_node() {
+    assert!(!write_workload::population_enabled());
     tracing_subscriber::fmt()
         .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
         .with_ansi(false)
@@ -66,7 +68,12 @@ async fn entity_process_node() {
     let follower_enabled = env::var("CELLULE_PERF_PROCESS_FOLLOWER").as_deref() == Ok("1");
     let sync = env::var("CELLULE_PERF_PROCESS_SYNC").unwrap();
     let sync = Path::new(&sync);
-    let application = compiled_entities();
+    let primary = write_workload::enabled();
+    let application = if primary {
+        write_workload::compiled()
+    } else {
+        compiled_entities()
+    };
     let registry = application.registry();
     let storage = Arc::new(observation::StorageCounters::default());
     let store = rustfs_store().with_storage_observer(storage.clone());
@@ -112,15 +119,30 @@ async fn entity_process_node() {
         )
     });
     let mut handles = Vec::new();
-    for entity in node * ENTITIES_PER_NODE..(node + 1) * ENTITIES_PER_NODE {
+    let owned = (0..write_workload::cell_count(3))
+        .filter(|entity| write_workload::owner(*entity) == node)
+        .collect::<Vec<_>>();
+    // Legacy scaling can add owners beyond the initial three nodes.
+    let owned = if primary {
+        owned
+    } else {
+        (node * ENTITIES_PER_NODE..(node + 1) * ENTITIES_PER_NODE).collect()
+    };
+    let expected_active = owned.len();
+    for entity in owned {
         handles.push(
-            provision_entity(
+            provision_entity_with_schema(
                 &host,
                 &layout,
                 directory.path(),
                 node,
                 entity,
                 endpoint.clone(),
+                if primary {
+                    write_workload::schema
+                } else {
+                    super::super::performance_fixture::install_sql_tables
+                },
             )
             .await,
         );
@@ -171,11 +193,11 @@ async fn entity_process_node() {
             if count > stage && node < count {
                 assert!([3, 5, 10, 20].contains(&count));
                 let addresses = endpoints(sync, count).await;
-                let expanded = (0..count * ENTITIES_PER_NODE)
+                let expanded = (0..write_workload::cell_count(count))
                     .map(|entity| {
                         (
                             entity_target(&application, entity).cell_id(),
-                            addresses[entity / ENTITIES_PER_NODE],
+                            addresses[write_workload::owner(entity)],
                         )
                     })
                     .collect();
@@ -187,15 +209,48 @@ async fn entity_process_node() {
             }
         }
         if Instant::now() >= next_sample {
-            observations.sample(stage, &host, directory.path(), &storage, &stats);
+            observations.sample(
+                stage,
+                &host,
+                directory.path(),
+                &storage,
+                &durability,
+                &stats,
+            );
             next_sample = Instant::now() + Duration::from_secs(1);
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    observations.sample(stage, &host, directory.path(), &storage, &stats);
-    assert_eq!(host.stats().active_cells(), ENTITIES_PER_NODE);
-    host.shutdown().await.unwrap();
+    observations.sample(
+        stage,
+        &host,
+        directory.path(),
+        &storage,
+        &durability,
+        &stats,
+    );
+    assert_eq!(host.stats().active_cells(), expected_active);
+    let shutdown_started = Instant::now();
+    let shutdown_result = host.shutdown().await;
+    let shutdown_elapsed = shutdown_started.elapsed();
+    if primary {
+        observations.sample(
+            stage,
+            &host,
+            directory.path(),
+            &storage,
+            &durability,
+            &stats,
+        );
+    }
+    // Keep the final counters and queued phase observations when drain fails.
+    // The original shutdown error still fails this process qualification.
     observations.finish(&storage, &durability);
+    println!(
+        "PERF node_{node}_shutdown: elapsed_us={} result={shutdown_result:?}",
+        shutdown_elapsed.as_micros()
+    );
+    shutdown_result.unwrap();
     let (local, forwarded) = stats.counts();
     assert!(local > 0 && forwarded > 0);
     publish_marker(

@@ -27,6 +27,12 @@ service authenticates the authority record that selects a root.
 admission bound local scratch, retained cuts, and remote I/O. The host owns
 scheduling and cancellation; see [cellule-host](../../cellule-host/docs/README.md).
 
+Each admitted host operation pairs its semaphore permit with the node ledger
+charge. The charge releases before the semaphore wakes another operation.
+Recovery, dirty-memory and scratch cohorts retain the pair in every clone and
+dispatched job, including after caller cancellation. Rejection and job teardown
+release the same pair; a temporary slot handoff must not appear as exhaustion.
+
 ```sh
 cargo test -p cellule-ltx --no-default-features --locked
 cargo test -p cellule-ltx --features replica --locked

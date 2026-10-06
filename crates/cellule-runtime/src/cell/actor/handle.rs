@@ -248,6 +248,10 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Query(Box::new(QueuedQuery {
+                timing: crate::cell::worker::QueryTrace::new(
+                    &self.inner.telemetry,
+                    &self.inner.resources,
+                )?,
                 cell: self.cell,
                 admission: self.admission.clone(),
                 max_result_bytes,

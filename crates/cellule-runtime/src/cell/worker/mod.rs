@@ -30,7 +30,11 @@ use crate::primitives::maintenance::TransferWorkInventory;
 use crate::registry::MigrationPlan;
 use crate::{Error, Result};
 
+mod admission;
+mod query_timing;
 mod run;
+mod slot;
+pub(crate) use query_timing::QueryTrace;
 
 const MAX_WORKERS: usize = 16;
 const MAX_ACTIVE_CELLS: usize = 10_000;
@@ -163,15 +167,23 @@ impl SqlWorkerPool {
                 )
                 .with_worker_jobs(worker_count)
                 .with_primitive_jobs(worker_count)
-                .with_hydration_jobs(HYDRATION_JOB_CAPACITY),
+                .with_hydration_jobs(HYDRATION_JOB_CAPACITY)
+                .with_retained_bytes(
+                    worker_count * (WORKER_QUEUE + 1) * admission::QueuedJob::retained_bytes(true),
+                ),
         );
+        let slots = Arc::new(admission::ExecutionSlots::new(
+            worker_count,
+            resources.clone(),
+        ));
         let mut workers = Vec::with_capacity(worker_count);
         let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(worker_count);
         for index in 0..worker_count {
             let (sender, receiver) = mpsc::channel(WORKER_QUEUE);
+            let admission = slots.clone();
             let thread = match std::thread::Builder::new()
                 .name(format!("cellule-sql-{index}"))
-                .spawn(move || run::run_worker(receiver))
+                .spawn(move || run::run_worker(receiver, admission, index))
             {
                 Ok(thread) => thread,
                 Err(error) => {
@@ -195,9 +207,7 @@ impl SqlWorkerPool {
                 resources,
                 max_active_cells,
                 worker_count,
-                worker_permits: (0..worker_count)
-                    .map(|_| Arc::new(Semaphore::new(1)))
-                    .collect(),
+                slots,
             }),
         })
     }
@@ -433,6 +443,7 @@ impl SqlWorkerPool {
         max_result_bytes: usize,
         deadline: SqlDeadline,
         handler: QueryHandler,
+        timing: Option<Arc<QueryTrace>>,
     ) -> Result<Vec<u8>> {
         let (reply, response) = oneshot::channel();
         self.send_worker_job(
@@ -442,6 +453,7 @@ impl SqlWorkerPool {
                 max_result_bytes,
                 deadline,
                 handler,
+                timing,
                 reply,
             },
         )
@@ -473,7 +485,9 @@ impl SqlWorkerPool {
         // Preparation only selects pages. Abandoning its waiter cannot install
         // bytes or release foreground ownership, even if it was dispatched.
         let read = match tokio::time::timeout_at(deadline.into(), preparation).await {
-            Ok(Err(Error::Deadline)) => return Ok(HydrationStep::Deferred(Duration::ZERO)),
+            Ok(Err(Error::Deadline | Error::Capacity(_))) => {
+                return Ok(HydrationStep::Deferred(Duration::ZERO));
+            }
             Ok(result) => result?,
             Err(_) => return Ok(HydrationStep::Deferred(Duration::ZERO)),
         };
@@ -534,6 +548,11 @@ impl SqlWorkerPool {
             }
         };
         match result {
+            Err(Error::Capacity(_)) if install_deadline.cancel_queued() => {
+                // Descriptor admission yields to foreground retained bytes;
+                // a queued install has not touched the writable database.
+                Ok(HydrationStep::Deferred(Duration::ZERO))
+            }
             Err(Error::Deadline) if install_deadline.cancelled() => {
                 Ok(HydrationStep::Deferred(Duration::ZERO))
             }
@@ -770,7 +789,7 @@ impl SqlWorkerPool {
     pub(crate) async fn interrupt_handle(
         &self,
         cell: CellId,
-    ) -> Result<cellule_ltx::rusqlite::InterruptHandle> {
+    ) -> Result<cellule_ltx::DbInterruptHandle> {
         let (reply, response) = oneshot::channel();
         self.send(cell, WorkerCommand::InterruptHandle { cell, reply })
             .await?;
@@ -841,9 +860,7 @@ impl SqlWorkerPool {
                 ));
             }
             lifecycle.closing = true;
-            for permits in &self.inner.worker_permits {
-                permits.close();
-            }
+            self.inner.slots.close();
             lifecycle.workers.clear();
             std::mem::take(&mut lifecycle.threads)
         };
@@ -889,10 +906,17 @@ impl SqlWorkerPool {
     }
 
     async fn send_worker_job(&self, cell: CellId, command: WorkerCommand) -> Result<()> {
-        let reservation = self.reserve_job(cell).await?;
+        let reservation = self
+            .inner
+            .slots
+            .queued(
+                worker_index(cell, self.inner.worker_count),
+                command.job_kind(),
+            )
+            .await?;
         self.send(
             cell,
-            WorkerCommand::Reserved {
+            WorkerCommand::Queued {
                 command: Box::new(command),
                 reservation,
             },
@@ -901,18 +925,33 @@ impl SqlWorkerPool {
     }
 
     pub(crate) async fn reserve_snapshot_job(&self) -> Result<WorkerJobReservation> {
+        let requested = self.inner.slots.probe.request();
         // Immutable connections have no writer-thread affinity. Borrow any SQL
         // slot so refresh can progress beside an old view, within the node cap.
         let permits = self
             .inner
-            .worker_permits
+            .slots
+            .permits
             .iter()
             .map(|permit| Box::pin(Arc::clone(permit).acquire_owned()));
-        let (permit, _, _) = futures_util::future::select_all(permits).await;
-        self.job_reservation(permit.map_err(|_| Error::RuntimeClosed)?)
+        let (permit, shard, _) = futures_util::future::select_all(permits).await;
+        self.inner.slots.finish(
+            permit.map_err(|_| Error::RuntimeClosed)?,
+            requested,
+            shard,
+            crate::fleet::telemetry::SqlJobKind::Snapshot,
+            None,
+        )
     }
 
-    async fn reserve_job(&self, cell: CellId) -> Result<WorkerJobReservation> {
+    #[cfg(test)]
+    async fn reserve_job(
+        &self,
+        cell: CellId,
+        kind: crate::fleet::telemetry::SqlJobKind,
+    ) -> Result<WorkerJobReservation> {
+        let requested = self.inner.slots.probe.request();
+        let shard = worker_index(cell, self.inner.worker_count);
         let worker_permits = {
             let lifecycle = self
                 .inner
@@ -924,34 +963,19 @@ impl SqlWorkerPool {
             }
             // A queued job must wait for its own shard, without consuming
             // the admission capacity an idle worker needs to make progress.
-            Arc::clone(&self.inner.worker_permits[worker_index(cell, self.inner.worker_count)])
+            Arc::clone(&self.inner.slots.permits[worker_index(cell, self.inner.worker_count)])
         };
         let permit = worker_permits
             .acquire_owned()
             .await
             .map_err(|_| Error::RuntimeClosed)?;
-        self.job_reservation(permit)
+        self.inner
+            .slots
+            .finish(permit, requested, shard, kind, None)
     }
 
-    fn job_reservation(&self, permit: OwnedSemaphorePermit) -> Result<WorkerJobReservation> {
-        let lifecycle = self
-            .inner
-            .lifecycle
-            .lock()
-            .map_err(|_| Error::RuntimeClosed)?;
-        if lifecycle.closing {
-            return Err(Error::RuntimeClosed);
-        }
-        // Serialize the final admission with shutdown's close. A permit won
-        // just before closure must not create work after the drain barrier.
-        let reservation = self
-            .inner
-            .resources
-            .try_reserve(ResourceCost::zero().with_worker_jobs(1))?;
-        Ok(WorkerJobReservation {
-            _reservation: reservation,
-            _permit: permit,
-        })
+    pub(crate) fn telemetry_handle(&self) -> crate::fleet::telemetry::CellTelemetryHandle {
+        self.inner.slots.probe.telemetry()
     }
 
     pub(crate) fn reserve_activation(&self) -> Result<CellReservation> {
@@ -998,11 +1022,11 @@ impl SqlWorkerPool {
 }
 
 struct PoolInner {
+    slots: Arc<admission::ExecutionSlots>,
     lifecycle: Mutex<WorkerLifecycle>,
     resources: ResourceLedger,
     max_active_cells: usize,
     worker_count: usize,
-    worker_permits: Vec<Arc<Semaphore>>,
 }
 
 struct WorkerLifecycle {
@@ -1013,9 +1037,7 @@ struct WorkerLifecycle {
 
 impl Drop for PoolInner {
     fn drop(&mut self) {
-        for permits in &self.worker_permits {
-            permits.close();
-        }
+        self.slots.close();
         let lifecycle = match self.lifecycle.get_mut() {
             Ok(lifecycle) => lifecycle,
             Err(poisoned) => poisoned.into_inner(),
@@ -1037,9 +1059,9 @@ pub(crate) enum RestoredDatabase {
 }
 
 enum WorkerCommand {
-    Reserved {
+    Queued {
         command: Box<WorkerCommand>,
-        reservation: WorkerJobReservation,
+        reservation: admission::QueuedJob,
     },
     Activate {
         cell: CellId,
@@ -1093,6 +1115,7 @@ enum WorkerCommand {
         max_result_bytes: usize,
         deadline: SqlDeadline,
         handler: QueryHandler,
+        timing: Option<Arc<QueryTrace>>,
         reply: oneshot::Sender<Result<Vec<u8>>>,
     },
     PrepareHydration {
@@ -1197,7 +1220,7 @@ enum WorkerCommand {
     },
     InterruptHandle {
         cell: CellId,
-        reply: oneshot::Sender<Result<cellule_ltx::rusqlite::InterruptHandle>>,
+        reply: oneshot::Sender<Result<cellule_ltx::DbInterruptHandle>>,
     },
     Deactivate {
         cell: CellId,
@@ -1216,8 +1239,40 @@ enum WorkerCommand {
 }
 
 pub(crate) struct WorkerJobReservation {
-    _reservation: ResourceReservation,
-    _permit: OwnedSemaphorePermit,
+    reservation: Option<ResourceReservation>,
+    queued: Option<ResourceReservation>,
+    permit: Option<OwnedSemaphorePermit>,
+    trace: Option<slot::JobTrace>,
+}
+
+impl Drop for WorkerJobReservation {
+    fn drop(&mut self) {
+        let timing = self.trace.as_ref().map(slot::JobTrace::release);
+        drop(self.reservation.take());
+        drop(self.queued.take());
+        drop(self.permit.take());
+        // Operational observation cannot hold the released execution slot.
+        if let (Some(trace), Some(timing)) = (&self.trace, timing) {
+            trace.emit(timing);
+        }
+    }
+}
+
+impl WorkerCommand {
+    fn job_kind(&self) -> crate::fleet::telemetry::SqlJobKind {
+        use crate::fleet::telemetry::SqlJobKind;
+        match self {
+            Self::Query { .. } => SqlJobKind::Query,
+            Self::Execute { .. } => SqlJobKind::Command,
+            Self::Migrate { .. } => SqlJobKind::Migration,
+            Self::DeliverEffect { .. } => SqlJobKind::Effect,
+            Self::PrepareHydration { .. } => SqlJobKind::HydrationPrepare,
+            Self::InstallHydration { .. } => SqlJobKind::HydrationInstall,
+            Self::PersistedWork { .. } | Self::TransferWork { .. } => SqlJobKind::Inventory,
+            Self::Resolve { .. } | Self::ResolveEffect { .. } => SqlJobKind::Resolve,
+            _ => SqlJobKind::Control,
+        }
+    }
 }
 
 struct WorkerBootstrap {

@@ -2,9 +2,18 @@ use super::*;
 use cellule_ltx::{Db, NodeFrameScope, encode_node_frame};
 
 fn frame(sequence: u64, segment: &cellule_ltx::LocalSegment, limits: cellule_ltx::Limits) -> Bytes {
+    scoped_frame(SessionId::from_bytes([1; 16]), sequence, segment, limits)
+}
+
+fn scoped_frame(
+    leader: SessionId,
+    sequence: u64,
+    segment: &cellule_ltx::LocalSegment,
+    limits: cellule_ltx::Limits,
+) -> Bytes {
     encode_node_frame(
         NodeFrameScope {
-            leader_session: [1; 16],
+            leader_session: *leader.as_bytes(),
             log_epoch: 2,
             node_sequence: sequence,
             application: [3; 16],
@@ -24,4 +33,6 @@ fn frame(sequence: u64, segment: &cellule_ltx::LocalSegment, limits: cellule_ltx
 
 mod append;
 mod budget;
+mod performance;
 mod scan;
+mod telemetry;

@@ -142,7 +142,7 @@ impl CellRuntime {
             replica_host.dirty_capacity(),
             replica_host.scratch_capacity() as usize,
         )?;
-        let telemetry = crate::fleet::telemetry::CellTelemetryHandle::default();
+        let telemetry = pool.telemetry_handle();
         let mut replica_host = replica_host.with_ltx_telemetry(Arc::new(telemetry.clone()));
         replica_host.install_resource_admission(Arc::new(LedgerHostResourceAdmission::new(
             session, &resources,

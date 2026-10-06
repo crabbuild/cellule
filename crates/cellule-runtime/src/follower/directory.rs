@@ -70,7 +70,19 @@ pub(super) fn scrub_followers(root: &Path, limits: cellule_ltx::Limits) -> Resul
                 }
             };
             let lane = Lane { leader, epoch };
-            let prune_temp = epoch_path.join("open.log.tmp");
+            let chunks = epoch_path.join("chunks");
+            match std::fs::symlink_metadata(&chunks) {
+                Ok(metadata) if metadata.file_type().is_dir() => {}
+                Ok(_) => {
+                    // Do not traverse a changed chunks component while looking
+                    // for a rewrite temporary; lane validation fails closed.
+                    quarantine_entry(root, &epoch_path)?;
+                    continue;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            let prune_temp = chunks.join("open.log.tmp");
             if prune_temp.exists() {
                 // A crashed rewrite leaves the old open lane authoritative;
                 // discard only the uncommitted temporary before validation.
@@ -79,7 +91,7 @@ pub(super) fn scrub_followers(root: &Path, limits: cellule_ltx::Limits) -> Resul
                     .is_file()
                 {
                     std::fs::remove_file(&prune_temp)?;
-                    sync_directory(&epoch_path)?;
+                    sync_directory(&chunks)?;
                 } else {
                     quarantine_entry(root, &epoch_path)?;
                     continue;
@@ -148,7 +160,7 @@ fn validate_stored_lane(root: &Path, lane: Lane, limits: cellule_ltx::Limits) ->
 }
 
 fn quarantine_entry(root: &Path, source: &Path) -> Result<()> {
-    let quarantine = ensure_child(root, FOLLOWER_QUARANTINE)?;
+    let quarantine = ensure_child(root, FOLLOWER_QUARANTINE, None)?;
     let mut index = quarantine_entry_count(root)? as u64;
     let destination = loop {
         index = index
@@ -300,36 +312,48 @@ fn parse_epoch_directory(path: &Path) -> Result<u64> {
     Ok(epoch)
 }
 
-pub(super) fn settle_disk_reservation(
-    result: Result<FollowerReceipt>,
-    resize: Result<()>,
-) -> Result<FollowerReceipt> {
-    // Reconcile the shared admission even when the filesystem operation
-    // failed.  Returning early on `result` would retain the preflight growth
-    // forever and eventually make unrelated Cells fail closed for capacity.
-    resize?;
-    result
-}
-
 pub(super) fn lane_directory(root: &Path, lane: Lane) -> PathBuf {
     root.join("followers")
         .join(encode_hex(lane.leader.as_bytes()))
         .join(lane.epoch.to_string())
 }
 
-pub(super) fn ensure_lane_directories(root: &Path, lane: Lane) -> Result<()> {
-    let followers = ensure_child(root, "followers")?;
-    let leader = ensure_child(&followers, &encode_hex(lane.leader.as_bytes()))?;
-    let epoch = ensure_child(&leader, &lane.epoch.to_string())?;
-    ensure_child(&epoch, "chunks")?;
+pub(super) fn ensure_lane_directories(
+    root: &Path,
+    lane: Lane,
+    namespace: &Mutex<()>,
+    mut observation: Option<&mut AppendObservation>,
+) -> Result<()> {
+    // Existence alone cannot prove that another lane's newly created shared
+    // parent has completed its directory barrier. Serialize creation through
+    // that barrier; warmed append caches bypass this path entirely.
+    let _namespace = namespace
+        .lock()
+        .map_err(|_| Error::Node("follower namespace lock poisoned"))?;
+    let followers = ensure_child(root, "followers", observation.as_deref_mut())?;
+    let leader = ensure_child(
+        &followers,
+        &encode_hex(lane.leader.as_bytes()),
+        observation.as_deref_mut(),
+    )?;
+    let epoch = ensure_child(&leader, &lane.epoch.to_string(), observation.as_deref_mut())?;
+    ensure_child(&epoch, "chunks", observation)?;
     Ok(())
 }
 
-fn ensure_child(parent: &Path, name: &str) -> Result<PathBuf> {
+fn ensure_child(
+    parent: &Path,
+    name: &str,
+    observation: Option<&mut AppendObservation>,
+) -> Result<PathBuf> {
     let child = parent.join(name);
     if !child.exists() {
         std::fs::create_dir(&child)?;
-        sync_directory(parent)?;
+        if let Some(observation) = observation {
+            observation.sync_directory(parent)?;
+        } else {
+            sync_directory(parent)?;
+        }
     }
     Ok(child)
 }

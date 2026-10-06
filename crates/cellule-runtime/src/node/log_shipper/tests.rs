@@ -19,11 +19,25 @@ struct RecordingTransport {
 #[derive(Default)]
 struct RecordingTelemetry {
     appends: Mutex<Vec<(bool, u64)>>,
+    batches: Mutex<Vec<crate::fleet::telemetry::NodeLogBatchTiming>>,
+    submissions: Mutex<Vec<(CellId, crate::fleet::telemetry::NodeLogSubmissionTiming)>>,
 }
 
 impl crate::fleet::telemetry::CellTelemetry for RecordingTelemetry {
     fn node_log_append(&self, acknowledged: bool, bytes: u64) {
         self.appends.lock().unwrap().push((acknowledged, bytes));
+    }
+
+    fn node_log_batch(&self, timing: crate::fleet::telemetry::NodeLogBatchTiming) {
+        self.batches.lock().unwrap().push(timing);
+    }
+
+    fn node_log_submission(
+        &self,
+        cell: CellId,
+        timing: crate::fleet::telemetry::NodeLogSubmissionTiming,
+    ) {
+        self.submissions.lock().unwrap().push((cell, timing));
     }
 }
 
@@ -242,9 +256,36 @@ async fn append_telemetry_records_one_result_for_each_batch() {
     shipper.submit(submission(&cuts)).await.unwrap();
     shipper.shutdown().await.unwrap();
 
+    let submissions = telemetry.submissions.lock().unwrap();
+    assert_eq!(submissions.len(), 1);
+    let (cell, timing) = submissions[0];
+    assert_eq!(cell, submission(&cuts).cell);
+    assert_eq!(timing.commit_sequence, 4);
+    assert_eq!(timing.first_sequence, Some(1));
+    assert_eq!(timing.enqueued, Some(true));
+    let phases = [
+        timing.byte_admission,
+        timing.queue_admission,
+        timing.capture_load,
+        timing.ticket_order,
+        timing.encoding,
+    ];
+    assert!(phases.iter().all(Option::is_some));
+    assert!(phases.into_iter().flatten().sum::<Duration>() <= timing.total);
+
     assert_eq!(telemetry.appends.lock().unwrap().len(), 1);
     assert!(telemetry.appends.lock().unwrap()[0].0);
     assert!(telemetry.appends.lock().unwrap()[0].1 > 0);
+    let batches = telemetry.batches.lock().unwrap();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].completed_captures, 1);
+    assert_eq!(batches[0].frames, cuts.segments.len() as u64);
+    assert_eq!(batches[0].members, 1);
+    assert!(batches[0].succeeded);
+    assert_eq!(
+        batches[0].encoded_bytes * batches[0].members,
+        telemetry.appends.lock().unwrap()[0].1
+    );
 }
 
 #[tokio::test]
@@ -312,6 +353,8 @@ async fn covered_queued_prefix_keeps_the_uncovered_suffix_fleet_durable() {
             sequence: offset as u64 + 1,
             encoded,
             _reservation: Arc::clone(&reservation),
+            enqueued_at: None,
+            completed_capture: true,
         })
         .collect();
 
@@ -496,10 +539,14 @@ async fn encoding_failure_does_not_consume_a_node_sequence() {
         cellule_ltx::LocalSegment::new(invalid.segments[0].path().to_owned(), info);
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
     gate.activate_fleet().unwrap();
-    let shipper = NodeLogShipper::new(
+    let telemetry = Arc::new(RecordingTelemetry::default());
+    let handle = crate::fleet::telemetry::CellTelemetryHandle::default();
+    handle.install(telemetry.clone()).unwrap();
+    let shipper = NodeLogShipper::new_with_telemetry(
         gate.clone(),
         Arc::new(RecordingTransport::default()),
         cellule_ltx::Limits::default(),
+        handle,
     )
     .unwrap();
 
@@ -511,5 +558,57 @@ async fn encoding_failure_does_not_consume_a_node_sequence() {
         gate.prove(ticket).await.unwrap().source(),
         crate::node::log::DurabilitySource::Fleet
     );
+    shipper.shutdown().await.unwrap();
+    let traces = telemetry.submissions.lock().unwrap();
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0].1.enqueued, Some(false));
+    assert_eq!(traces[0].1.first_sequence, None);
+    assert!(traces[0].1.ticket_order.is_some());
+    assert!(traces[0].1.encoding.is_none());
+    assert_eq!(traces[1].1.enqueued, Some(true));
+    assert_eq!(traces[1].1.first_sequence, Some(1));
+}
+
+#[tokio::test]
+async fn cancelled_byte_wait_reports_once_without_fabricating_completed_phases() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let telemetry = Arc::new(RecordingTelemetry::default());
+    let handle = crate::fleet::telemetry::CellTelemetryHandle::default();
+    handle.install(telemetry.clone()).unwrap();
+    let shipper = NodeLogShipper::new_with_telemetry(
+        gate.clone(),
+        Arc::new(RecordingTransport::default()),
+        cellule_ltx::Limits::default(),
+        handle,
+    )
+    .unwrap();
+    let held = Arc::clone(&shipper.bytes)
+        .acquire_many_owned(shipper.max_outstanding_bytes as u32)
+        .await
+        .unwrap();
+    let mut attempt = Box::pin(shipper.submit(submission(&cuts)));
+    assert!(futures_util::poll!(&mut attempt).is_pending());
+    drop(attempt);
+    let timing = {
+        let traces = telemetry.submissions.lock().unwrap();
+        assert_eq!(traces.len(), 1);
+        traces[0].1
+    };
+    assert_eq!(timing.enqueued, None);
+    assert_eq!(timing.first_sequence, None);
+    assert!(
+        [
+            timing.byte_admission,
+            timing.queue_admission,
+            timing.capture_load,
+            timing.ticket_order,
+            timing.encoding
+        ]
+        .iter()
+        .all(Option::is_none)
+    );
+    drop(held);
+    assert_eq!(gate.preview(1).unwrap().first_sequence(), 1);
     shipper.shutdown().await.unwrap();
 }

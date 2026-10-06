@@ -50,14 +50,25 @@ pub(super) async fn start_configured(
     cellule_host::read_replicas::ReadReplicaManager,
 ) {
     let registry = application.registry();
-    // Keep writer admission at 32 Cells while charging both the old and new
-    // immutable snapshots during a refresh under the same node ledger.
-    let pool = SqlWorkerPool::new(4, 32)
+    let primary = super::entities::primary_write_profile();
+    let population = super::entities::population_management_profile();
+    let (workers, active_cells, resident_limit, sqlite_limit) = if population {
+        (8, 2000, 12 << 30, 8 << 30)
+    } else if super::entities::small_kv_write_profile() {
+        (8, 334, 12 << 30, 8 << 30)
+    } else if primary {
+        (4, 32, 4 << 30, 2 << 30)
+    } else {
+        (4, 32, 64 << 20, 32 << 20)
+    };
+    // These finite qualification profiles charge old and new snapshots to the
+    // same ledger. Raising admission is not evidence of measured capacity.
+    let pool = SqlWorkerPool::new(workers, active_cells)
         .unwrap()
-        .with_native_memory_limit(32 << 20)
+        .with_native_memory_limit(sqlite_limit)
         .unwrap();
     let mut builder = CellNodeBuilder::new(application)
-        .with_runtime(pool, 64 * 1024 * 1024)
+        .with_runtime(pool, resident_limit)
         .with_session(node_session(node))
         .with_replica_host(reference_host());
     if follower_enabled {
@@ -90,9 +101,9 @@ pub(super) async fn start_configured(
             vec![1],
             NodeFailureDomain::default(),
             NodeCapacity {
-                free_memory_bytes: 64 * 1024 * 1024,
+                free_memory_bytes: resident_limit as u64,
                 free_disk_bytes: 1 << 30,
-                job_credits: 32,
+                job_credits: u32::try_from(active_cells).unwrap(),
                 follower_free_bytes: if follower_enabled { 1 << 30 } else { 0 },
                 log_protocol: if follower_enabled {
                     cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION
@@ -175,6 +186,10 @@ pub(super) async fn start_configured(
                 Ok(())
             }
             .await;
+            println!(
+                "PERF node_{node}_lease_stopped: remaining_us={} result={result:?}",
+                lease.remaining().as_micros()
+            );
             lease.fence();
             result
         })

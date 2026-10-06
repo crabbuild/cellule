@@ -1131,7 +1131,7 @@ counting.
 
 | Consumer | Required accounting |
 | --- | --- |
-| SQLite main, WAL, and SHM | Active Cell disk and descriptors; the runtime ledger reserves eight descriptors per active Cell and exports used/capacity gauges |
+| SQLite main, WAL, and SHM | Active Cell disk and descriptors; the runtime ledger reserves eleven descriptors per active Cell, including its owner reader, and exports used/capacity gauges |
 | Retained captured LTX and checksum sidecar | Managed session disk |
 | Sparse materialized pages | Incremental Cell disk |
 | Directory-node and immutable-page cache | Evictable cache disk |

@@ -4,18 +4,22 @@ use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use bytes::Bytes;
 
 use crate::identity::SessionId;
 use crate::{Error, Result};
 
+mod accounting;
 mod directory;
 mod records;
+mod timing;
 
+use accounting::{DiskAccounting, LaneAccounting};
 use directory::*;
 use records::*;
+use timing::AppendObservation;
 
 const RECORD_MAGIC: &[u8; 4] = b"CFR1";
 const RECORD_HEADER_BYTES: usize = 52;
@@ -133,10 +137,15 @@ pub struct FollowerStore {
     limits: cellule_ltx::Limits,
     lanes: LaneMap,
     disk: cellule_ltx::DiskBudget,
-    retained: Arc<Mutex<cellule_ltx::DiskReservation>>,
+    retained: Arc<Mutex<DiskAccounting>>,
+    // Collection can remove a leader directory shared by several epochs.
+    // Normal lane work holds a shared barrier; collection takes it exclusively.
+    maintenance: Arc<RwLock<()>>,
+    namespace: Arc<Mutex<()>>,
     index_used: Arc<Mutex<u64>>,
     quarantined_entries: usize,
     scan_counter: ScanCounter,
+    telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
 impl FollowerStore {
@@ -145,6 +154,16 @@ impl FollowerStore {
         root: PathBuf,
         limits: cellule_ltx::Limits,
         disk: cellule_ltx::DiskBudget,
+    ) -> Result<Self> {
+        Self::open_with_telemetry(root, limits, disk, Default::default())
+    }
+
+    /// Opens the same durable store with the node's bounded operational sink.
+    pub fn open_with_telemetry(
+        root: PathBuf,
+        limits: cellule_ltx::Limits,
+        disk: cellule_ltx::DiskBudget,
+        telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     ) -> Result<Self> {
         let existed = root.exists();
         std::fs::create_dir_all(&root).map_err(cellule_ltx::LtxError::from)?;
@@ -163,10 +182,13 @@ impl FollowerStore {
             limits,
             lanes: Arc::new(Mutex::new(HashMap::new())),
             disk,
-            retained: Arc::new(Mutex::new(retained)),
+            retained: Arc::new(Mutex::new(DiskAccounting::new(retained))),
+            maintenance: Arc::new(RwLock::new(())),
+            namespace: Arc::new(Mutex::new(())),
             index_used: Arc::new(Mutex::new(0)),
             quarantined_entries,
             scan_counter: new_scan_counter(),
+            telemetry,
         })
     }
 
@@ -175,7 +197,7 @@ impl FollowerStore {
         self.scan_counter.load(Ordering::Relaxed)
     }
 
-    /// Returns the bytes the store currently retains.
+    /// Returns retained bytes plus conservative charges for dispatched work.
     #[must_use]
     pub fn retained_bytes(&self) -> u64 {
         match self.retained.lock() {
@@ -219,35 +241,55 @@ impl FollowerStore {
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
+        let maintenance = Arc::clone(&self.maintenance);
+        let namespace = Arc::clone(&self.namespace);
         let index_used = Arc::clone(&self.index_used);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         let growth = encoded_bytes
             .and_then(|bytes| bytes.checked_add((frames.len() * RECORD_HEADER_BYTES) as u64))
             .ok_or(Error::Node("follower append byte count overflow"))?;
+        let mut observation = AppendObservation::new(
+            self.telemetry.clone(),
+            leader,
+            epoch,
+            frames.len() as u64,
+            encoded_bytes.ok_or(Error::Node("follower append byte count overflow"))?,
+        );
         tokio::task::spawn_blocking(move || {
-            let retained = retained
-                .lock()
-                .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
-            retained.try_grow(growth)?;
-            let mut state = lock
-                .lock()
-                .map_err(|_| Error::Node("follower lane lock poisoned"))?;
-            let result = append_sync(
-                &root,
-                lane,
-                frames,
-                covered_through,
-                limits,
-                &index_used,
-                &mut state,
-                &scan_counter,
-            );
-            let resize =
-                follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
-            if result.is_err() {
-                *state = None;
-            }
-            settle_disk_reservation(result, resize)
+            observation.worker_started();
+            let result = (|| {
+                let _maintenance = maintenance
+                    .read()
+                    .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
+                let waiting = observation.mark();
+                let state = lock.lock();
+                observation.timing.lane_wait = AppendObservation::elapsed(waiting);
+                let mut state = state.map_err(|_| Error::Node("follower lane lock poisoned"))?;
+                let accounting =
+                    LaneAccounting::begin(retained, &root, lane, growth, &mut observation)?;
+                let started = observation.mark();
+                let result = append_sync(
+                    &root,
+                    lane,
+                    frames,
+                    covered_through,
+                    limits,
+                    &accounting,
+                    &namespace,
+                    &index_used,
+                    &mut state,
+                    &scan_counter,
+                    &mut observation,
+                );
+                observation.timing.append = AppendObservation::elapsed(started);
+                let result = accounting.finish(result, &mut observation);
+                if result.is_err() {
+                    *state = None;
+                }
+                result
+            })();
+            observation.finish(result.is_ok());
+            result
         })
         .await
         .map_err(Error::FollowerWorkerJoin)?
@@ -260,26 +302,40 @@ impl FollowerStore {
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
+        let maintenance = Arc::clone(&self.maintenance);
         let index_used = Arc::clone(&self.index_used);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
-            let retained = retained
-                .lock()
-                .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
+            let _maintenance = maintenance
+                .read()
+                .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
+            let mut observation = AppendObservation::unobserved(lane);
             let mut state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
             let directory = lane_directory(&root, lane);
-            if !directory.join("sealed").exists() && !directory.join("retired").exists() {
-                retained.try_grow(8)?;
-            }
-            let result = seal_sync(&root, lane, limits, &index_used, &mut state, &scan_counter);
-            let resize =
-                follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
+            let growth =
+                if !directory.join("sealed").exists() && !directory.join("retired").exists() {
+                    8
+                } else {
+                    0
+                };
+            let accounting =
+                LaneAccounting::begin(retained, &root, lane, growth, &mut observation)?;
+            let result = seal_sync(
+                &root,
+                lane,
+                limits,
+                &accounting,
+                &index_used,
+                &mut state,
+                &scan_counter,
+            );
+            let result = accounting.finish(result, &mut observation);
             if result.is_err() {
                 *state = None;
             }
-            settle_disk_reservation(result, resize)
+            result
         })
         .await
         .map_err(Error::FollowerWorkerJoin)?
@@ -297,22 +353,36 @@ impl FollowerStore {
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
+        let maintenance = Arc::clone(&self.maintenance);
+        let namespace = Arc::clone(&self.namespace);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
-            let retained = retained
-                .lock()
-                .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
+            let _maintenance = maintenance
+                .read()
+                .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
+            let mut observation = AppendObservation::unobserved(lane);
             let mut state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
-            if !lane_directory(&root, lane).join("retired").exists() {
-                retained.try_grow(8)?;
-            }
-            let result = retire_sync(&root, lane, covered_through, limits, &scan_counter);
-            let resize =
-                follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
+            let growth = if !lane_directory(&root, lane).join("retired").exists() {
+                8
+            } else {
+                0
+            };
+            let accounting =
+                LaneAccounting::begin(retained, &root, lane, growth, &mut observation)?;
+            accounting.invalidate();
+            let result = retire_sync(
+                &root,
+                lane,
+                covered_through,
+                limits,
+                &namespace,
+                &scan_counter,
+            );
+            let result = accounting.finish(result, &mut observation);
             *state = None;
-            settle_disk_reservation(result, resize)
+            result
         })
         .await
         .map_err(Error::FollowerWorkerJoin)?
@@ -329,12 +399,22 @@ impl FollowerStore {
         let lock = self.lane_lock(lane)?;
         let root = self.root.clone();
         let limits = self.limits;
+        let retained = Arc::clone(&self.retained);
+        let maintenance = Arc::clone(&self.maintenance);
         let index_used = Arc::clone(&self.index_used);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
+            let _maintenance = maintenance
+                .read()
+                .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
+            let mut observation = AppendObservation::unobserved(lane);
             let mut state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
+            let accounting = LaneAccounting::begin(retained, &root, lane, 0, &mut observation)?;
+            if state.is_none() {
+                accounting.invalidate();
+            }
             let result = read_tail_sync(
                 &root,
                 lane,
@@ -347,6 +427,7 @@ impl FollowerStore {
                 &scan_counter,
             )
             .map(|page| page.frames);
+            let result = accounting.finish(result, &mut observation);
             if result.is_err() {
                 *state = None;
             }
@@ -370,12 +451,22 @@ impl FollowerStore {
         let lock = self.lane_lock(lane)?;
         let root = self.root.clone();
         let limits = self.limits;
+        let retained = Arc::clone(&self.retained);
+        let maintenance = Arc::clone(&self.maintenance);
         let index_used = Arc::clone(&self.index_used);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
+            let _maintenance = maintenance
+                .read()
+                .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
+            let mut observation = AppendObservation::unobserved(lane);
             let mut state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
+            let accounting = LaneAccounting::begin(retained, &root, lane, 0, &mut observation)?;
+            if state.is_none() {
+                accounting.invalidate();
+            }
             let result = read_tail_sync(
                 &root,
                 lane,
@@ -387,6 +478,7 @@ impl FollowerStore {
                 MAX_TAIL_PAGE_FRAMES,
                 &scan_counter,
             );
+            let result = accounting.finish(result, &mut observation);
             if result.is_err() {
                 *state = None;
             }
@@ -406,9 +498,15 @@ impl FollowerStore {
             return Err(Error::Node("retired follower scan bound is invalid"));
         }
         let root = self.root.clone();
-        tokio::task::spawn_blocking(move || retired_lanes_sync(&root, retired_before_ms, limit))
-            .await
-            .map_err(Error::FollowerWorkerJoin)?
+        let maintenance = Arc::clone(&self.maintenance);
+        tokio::task::spawn_blocking(move || {
+            let _maintenance = maintenance
+                .read()
+                .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
+            retired_lanes_sync(&root, retired_before_ms, limit)
+        })
+        .await
+        .map_err(Error::FollowerWorkerJoin)?
     }
 
     /// Deletes one exact, grace-aged retired lane after external authority proof.
@@ -428,16 +526,21 @@ impl FollowerStore {
         let cleanup_lock = Arc::clone(&lock);
         let root = self.root.clone();
         let retained = Arc::clone(&self.retained);
+        let maintenance = Arc::clone(&self.maintenance);
         let removed = tokio::task::spawn_blocking(move || {
-            let retained = retained
-                .lock()
-                .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
+            let _maintenance = maintenance
+                .write()
+                .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
+            let mut observation = AppendObservation::unobserved(lane);
             let _lane = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
-            let removed = remove_retired_sync(&root, lane, candidate, retired_before_ms)?;
-            retained.resize(follower_bytes(&root)?)?;
-            Ok::<bool, Error>(removed)
+            let accounting = LaneAccounting::begin(retained, &root, lane, 0, &mut observation)?;
+            let result = remove_retired_sync(&root, lane, candidate, retired_before_ms);
+            if matches!(result, Ok(true)) {
+                accounting.emptied();
+            }
+            accounting.finish(result, &mut observation)
         })
         .await
         .map_err(Error::FollowerWorkerJoin)??;

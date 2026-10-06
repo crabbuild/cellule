@@ -72,6 +72,9 @@ pub(in crate::cell::actor) fn start_next(
         }
         QueuedWork::Query(query) => {
             let effect_id = active.begin_task(CoordinationEffect::Work(kind));
+            if let Some(timing) = &query.timing {
+                timing.dispatched();
+            }
             tasks.spawn(async move {
                 execute_query(pool, query, interrupt, generation, effect_id).await
             });

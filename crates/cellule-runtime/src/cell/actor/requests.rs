@@ -15,7 +15,7 @@ pub(super) async fn execute_migration(
     pool: SqlWorkerPool,
     mut publisher: Box<CellPublisher>,
     mut migration: Box<QueuedMigration>,
-    interrupt: Arc<cellule_ltx::rusqlite::InterruptHandle>,
+    interrupt: Arc<cellule_ltx::DbInterruptHandle>,
     generation: u64,
     effect_id: u64,
 ) -> TaskResult {
@@ -141,7 +141,7 @@ pub(super) async fn execute_command(
     pool: SqlWorkerPool,
     durability: CellDurabilitySubmitter,
     mut command: Box<QueuedCommand>,
-    interrupt: Arc<cellule_ltx::rusqlite::InterruptHandle>,
+    interrupt: Arc<cellule_ltx::DbInterruptHandle>,
     generation: u64,
     effect_id: u64,
 ) -> TaskResult {
@@ -646,10 +646,13 @@ pub(super) async fn wait_for_fleet_proof(
 pub(super) async fn execute_query(
     pool: SqlWorkerPool,
     mut query: Box<QueuedQuery>,
-    interrupt: Arc<cellule_ltx::rusqlite::InterruptHandle>,
+    interrupt: Arc<cellule_ltx::DbInterruptHandle>,
     generation: u64,
     effect_id: u64,
 ) -> TaskResult {
+    if let Some(timing) = &query.timing {
+        timing.started();
+    }
     let deadline = SqlDeadline::new(std::time::Instant::now() + SQL_WALL_DEADLINE);
     let result = match query.handler.take() {
         Some(handler) => {
@@ -658,6 +661,7 @@ pub(super) async fn execute_query(
                 query.max_result_bytes,
                 deadline.clone(),
                 handler,
+                query.timing.clone(),
             );
             tokio::pin!(operation);
             match tokio::time::timeout_at(deadline.at().into(), &mut operation).await {
@@ -706,7 +710,7 @@ pub(super) async fn execute_query(
 pub(super) async fn execute_resolve(
     pool: SqlWorkerPool,
     mut resolve: Box<QueuedResolve>,
-    interrupt: Arc<cellule_ltx::rusqlite::InterruptHandle>,
+    interrupt: Arc<cellule_ltx::DbInterruptHandle>,
     generation: u64,
     effect_id: u64,
 ) -> TaskResult {

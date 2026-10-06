@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_coverage, verify_timing_evidence, verify_window
+from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_coverage, verify_timing_evidence, verify_trace_counts, verify_window, verify_submission_timings, verify_control_transitions, SUBMISSION_PHASES
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -19,13 +19,13 @@ class EntityWindowEvidence(unittest.TestCase):
             "window_id\tnodes\tshape\trate_per_node\tconcurrency\tseconds\tstarted_ms\tended_ms\tstarted_boot_ms\tended_boot_ms\telapsed_us\n"
             "0\t3\tuniform\t1\t4\t10\t100000\t110000\t100000\t110000\t10000000\n")
         counts = [0] * 12
-        lines = ["arrival\tscheduled_us\tstarted_us\telapsed_us\tentity\tkind\toutcome\tsequence\tread_sequence\tcount"]
+        lines = ["arrival\tscheduled_us\tstarted_us\tgenerator_started_us\telapsed_us\tentity\tkind\toutcome\tsequence\tread_sequence\tcount"]
         for arrival in range(30):
             entity = arrival % 12
             counts[entity] += 1
             sequence = counts[entity] * 2 + 1
             scheduled = arrival * 1_000_000 // 3
-            lines.append(f"{arrival}\t{scheduled}\t{scheduled + 10}\t1000\t{entity}\twrite\tok\t{sequence}\t{sequence}\t{counts[entity]}")
+            lines.append(f"{arrival}\t{scheduled}\t{scheduled + 10}\t{scheduled}\t1000\t{entity}\twrite\tok\t{sequence}\t{sequence}\t{counts[entity]}")
         (self.root / f"{self.label}.tsv").write_text("\n".join(lines) + "\n")
         (self.root / f"{self.label}-readback.tsv").write_text(
             "entity\texpected\tactual\tsequence\n" + "".join(
@@ -47,6 +47,11 @@ class EntityWindowEvidence(unittest.TestCase):
     def test_complete_window_has_independent_owner_work(self):
         result = self.verify()
         self.assertEqual((result["fully_served_arrivals"], result["acknowledged_writes_by_node"]), (True, [12, 10, 8]))
+
+    def test_generator_timestamp_after_dispatch_is_rejected(self):
+        self.change("", lambda rows: rows[0].update(generator_started_us="11"))
+        with self.assertRaisesRegex(AssertionError, "generator timing"):
+            self.verify()
 
     def test_value_at_wrong_receipt_is_rejected(self):
         self.change("", lambda rows: rows[0].update(count="2"))
@@ -87,6 +92,8 @@ class EntityTimingEvidence(unittest.TestCase):
         (self.root / "node-0-executions.tsv").write_text(
             "at_ms\tqueue_wait_us\tworker_round_trip_us\tsucceeded\n"
             "100001\t100\t300\ttrue\n100002\t200\t400\ttrue\n")
+        (self.root / "node-0-node-log-submissions.tsv").write_text("at_ms\n")
+        (self.root / "node-0-control-transitions.tsv").write_text("at_ms\n")
         (self.root / "node-0-publications.tsv").write_text(
             "at_ms\tcell\tsequence\tqueue_wait_us\tpreparation_us\tauthority_us\ttotal_us\tsucceeded\n"
             "100003\tcell-1\t1\t100\t1000\t200\t1500\ttrue\n")
@@ -101,6 +108,12 @@ class EntityTimingEvidence(unittest.TestCase):
             "at_ms\tacknowledged\tbytes\n")
         (self.root / "node-0-follower-network.tsv").write_text(
             "at_ms\tacknowledged\tbytes\tduration_us\n")
+        (self.root / "node-0-follower-transport.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\tpool_wait_us\tmember_resolution_us\tencoding_us\taddress_resolution_us\tconnection_us\twire_us\tverification_us\ttotal_us\tconnection_attempts\n")
+        (self.root / "node-0-follower-store.tsv").write_text(
+            "at_ms\tleader\tepoch\tblocking_queue_us\taccounting_wait_us\taccounting_hold_us\tlane_wait_us\tappend_us\tprune_us\tdata_sync_us\tdirectory_sync_us\trecount_us\ttotal_us\tframes\tencoded_bytes\tdata_sync_calls\tdirectory_sync_calls\trecounts\tsucceeded\n")
+        (self.root / "node-0-node-log-batches.tsv").write_text(
+            "at_ms\tleader\tepoch\tfirst_sequence\tlast_sequence\tqueue_wait_us\tcollection_us\tappend_us\tframes\tcompleted_captures\tencoded_bytes\tmembers\tsucceeded\n")
         (self.root / "node-0-node-log-events.tsv").write_text(
             "at_ms\tepoch\tphase\tcovered_through\n")
         self.windows = [dict(nodes=3, started_ms=100000, ended_ms=110000, elapsed_us=10_000_000)]
@@ -122,6 +135,65 @@ class EntityTimingEvidence(unittest.TestCase):
         (self.root / "node-0-executions.tsv").write_text(
             "at_ms\tqueue_wait_us\tworker_round_trip_us\tsucceeded\n")
         with self.assertRaisesRegex(AssertionError, "missing command execution evidence"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_missing_batch_evidence_is_rejected(self):
+        (self.root / "node-0-follower-appends.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\n100001\ttrue\t8192\n")
+        with self.assertRaisesRegex(AssertionError, "missing node-log batch evidence"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_batch_frames_and_captures_are_not_transactions_or_replica_bytes(self):
+        (self.root / "node-0-follower-appends.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\n100001\ttrue\t8192\n")
+        path = self.root / "node-0-node-log-batches.tsv"
+        path.write_text(path.read_text() + "100001\tSessionId(" + "01" * 16 + ")\t1\t10\t11\t5\t1000\t2000\t2\t1\t4096\t2\ttrue\n")
+        report = verify_timing_evidence(self.root, 0, self.windows)
+        self.assertEqual(report["node_log_batch"]["frames"], 2)
+        self.assertEqual(report["node_log_batch"]["completed_captures"], 1)
+        self.assertEqual(report["node_log_batch"]["encoded_bytes"], 4096)
+        self.assertEqual(report["node_log_batch"]["replica_bytes"], 8192)
+        path.write_text(path.read_text().replace("\t4096\t2\ttrue", "\t8192\t2\ttrue"))
+        with self.assertRaisesRegex(AssertionError, "batch replica bytes differ"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_failed_follower_phases_remain_visible_and_nested_times_are_checked(self):
+        path = self.root / "node-0-follower-store.tsv"
+        path.write_text(path.read_text() + "100001\tSessionId(" + "01" * 16 + ")\t1\t10\t20\t500\t5\t400\t100\t200\t50\t50\t600\t1\t4096\t1\t1\t1\tfalse\n")
+        report = verify_timing_evidence(self.root, 0, self.windows)
+        self.assertEqual(report["follower_store"]["failures"], 1)
+        self.assertEqual(report["follower_store"]["data_sync_calls"], 1)
+        path.write_text(path.read_text().replace("\t400\t100\t200", "\t400\t100\t401"))
+        with self.assertRaisesRegex(AssertionError, "data sync exceeds append"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_transport_phases_reconcile_with_the_exact_network_attempt(self):
+        (self.root / "node-0-follower-network.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\tduration_us\n100001\ttrue\t4096\t1000\n")
+        path = self.root / "node-0-follower-transport.tsv"
+        path.write_text(path.read_text() + "100001\ttrue\t4096\t0\t100\t50\t50\t100\t500\t100\t1000\t1\n")
+        result = verify_timing_evidence(self.root, 0, self.windows)
+        self.assertEqual(result["follower_transport"]["connection_attempts"], 1)
+        path.write_text(path.read_text().replace("\t4096\t0\t100\t", "\t4097\t0\t100\t"))
+        with self.assertRaisesRegex(AssertionError, "transport phases differ"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_failed_transport_attempt_requires_phase_evidence(self):
+        (self.root / "node-0-follower-network.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\tduration_us\n100001\tfalse\t4096\t1000\n")
+        with self.assertRaisesRegex(AssertionError, "missing transport phase evidence"):
+            verify_timing_evidence(self.root, 0, self.windows)
+
+    def test_reused_transport_keeps_pool_wait_without_another_connection(self):
+        (self.root / "node-0-follower-network.tsv").write_text(
+            "at_ms\tacknowledged\tbytes\tduration_us\n100001\ttrue\t4096\t1000\n")
+        path = self.root / "node-0-follower-transport.tsv"
+        path.write_text(path.read_text() + "100001\ttrue\t4096\t200\t100\t50\t0\t0\t500\t100\t1000\t0\n")
+        report = verify_timing_evidence(self.root, 0, self.windows)
+        self.assertEqual(report["follower_transport"]["connection_attempts"], 0)
+        self.assertEqual(report["follower_transport"]["pool_wait"]["p99_ms"], 0.2)
+        path.write_text(path.read_text().replace("\t4096\t200\t", "\t4096\t1001\t"))
+        with self.assertRaisesRegex(AssertionError, "transport phase exceeds total"):
             verify_timing_evidence(self.root, 0, self.windows)
 
     def test_duplicate_publication_is_rejected(self):
@@ -179,20 +251,20 @@ class CapacityScheduleEvidence(unittest.TestCase):
             (self.root / f"{label}-window.tsv").write_text(
                 "window_id\tnodes\tshape\trate_per_node\tconcurrency\tseconds\tstarted_ms\tended_ms\tstarted_boot_ms\tended_boot_ms\telapsed_us\n"
                 f"{window_id}\t3\t{shape}\t{rate}\t{concurrency}\t10\t{started_ms}\t{started_ms + 10000}\t{started_ms}\t{started_ms + 10000}\t10000000\n")
-            samples = ["arrival\tscheduled_us\tstarted_us\telapsed_us\tentity\tkind\toutcome\tsequence\tread_sequence\tcount"]
+            samples = ["arrival\tscheduled_us\tstarted_us\tgenerator_started_us\telapsed_us\tentity\tkind\toutcome\tsequence\tread_sequence\tcount"]
             planned = 30 * rate
             for arrival in range(planned):
                 entity, kind = destination(shape, arrival, 12)
                 scheduled = arrival * 1_000_000 // (3 * rate)
                 if rate == 4 and arrival == planned - 1:
-                    samples.append(f"{arrival}\t{scheduled}\t10000000\t0\t{entity}\t{kind}\tscheduler_late\t0\t0\t0")
+                    samples.append(f"{arrival}\t{scheduled}\t10000000\t{scheduled}\t0\t{entity}\t{kind}\tscheduler_late\t0\t0\t0")
                     continue
                 sequence = 0
                 if kind == "write":
                     counts[entity] += 1
                     sequences[entity] += 2
                     sequence = sequences[entity]
-                samples.append(f"{arrival}\t{scheduled}\t{scheduled + 10}\t1000\t{entity}\t{kind}\tok\t{sequence}\t{sequences[entity]}\t{counts[entity]}")
+                samples.append(f"{arrival}\t{scheduled}\t{scheduled + 10}\t{scheduled}\t1000\t{entity}\t{kind}\tok\t{sequence}\t{sequences[entity]}\t{counts[entity]}")
             (self.root / f"{label}.tsv").write_text("\n".join(samples) + "\n")
             (self.root / f"{label}-readback.tsv").write_text(
                 "entity\texpected\tactual\tsequence\n" +
@@ -275,6 +347,89 @@ class FollowerProofEvidence(unittest.TestCase):
             verify_root_coverage(roots, positions, identity, 1)
         roots[0]["root_sequence"] = "2"
         verify_root_coverage(roots, positions, identity, 1)
+
+
+class BoundedTraceEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        names = dict(object_operations="object-operations", proofs="durability",
+                     responses="responses", executions="executions", queries="queries", sql_slots="sql-slots", publications="publications",
+                     phases="phases", captures="captures", publication_costs="publication-costs",
+                     follower_appends="follower-appends", follower_network="follower-network",
+                     follower_transport="follower-transport",
+                     follower_store="follower-store", node_log_batches="node-log-batches",
+                     node_log_submissions="node-log-submissions", control_transitions="control-transitions",
+                     node_log_events="node-log-events")
+        for filename in names.values():
+            (self.root / f"node-0-{filename}.tsv").write_text("header\n")
+        self.path = self.root / "node-0-trace-counts.tsv"
+        self.path.write_text("buffer\tcapacity\trecorded\tdropped\tbuffered\n" + "".join(
+            f"{name}\t65536\t0\t0\t0\n" for name in names))
+
+    def test_complete_final_drain_has_no_losses(self):
+        self.assertEqual(len(verify_trace_counts(self.root, 0)), 18)
+
+    def test_overflow_invalidates_qualification(self):
+        self.path.write_text(self.path.read_text().replace("responses\t65536\t0\t0\t0", "responses\t65536\t1\t1\t0"))
+        with self.assertRaisesRegex(AssertionError, "lost trace events"):
+            verify_trace_counts(self.root, 0)
+
+    def test_export_count_mismatch_invalidates_qualification(self):
+        self.path.write_text(self.path.read_text().replace("responses\t65536\t0", "responses\t65536\t1"))
+        with self.assertRaisesRegex(AssertionError, "trace count differs"):
+            verify_trace_counts(self.root, 0)
+
+    def test_unflushed_final_events_invalidate_qualification(self):
+        self.path.write_text(self.path.read_text().replace("responses\t65536\t0\t0\t0", "responses\t65536\t1\t0\t1"))
+        with self.assertRaisesRegex(AssertionError, "were not drained"):
+            verify_trace_counts(self.root, 0)
+
+    def test_missing_buffer_counts_invalidate_qualification(self):
+        self.path.write_text(self.path.read_text().replace("responses\t65536\t0\t0\t0\n", ""))
+        with self.assertRaisesRegex(AssertionError, "missing or duplicate"):
+            verify_trace_counts(self.root, 0)
+
+
+class WriteAttributionEvidence(unittest.TestCase):
+    def submission(self, **changes):
+        return dict(at_ms="100001", cell="CellId(" + "01" * 32 + ")", commit_sequence="1",
+                    first_sequence="1", encoded_bytes="4096", enqueued="true", total_us="20",
+                    **{f"{phase}_us": "2" for phase in SUBMISSION_PHASES}) | changes
+
+    def test_enqueued_phases_are_complete_and_partition_the_total(self):
+        row = self.submission()
+        self.assertEqual(verify_submission_timings([row])["ticket_order"]["p99_ms"], .002)
+        row["ticket_order_us"] = "19"
+        with self.assertRaisesRegex(AssertionError, "disjoint submission phases"):
+            verify_submission_timings([row])
+
+    def test_cancellation_does_not_become_zero_or_an_enqueued_ticket(self):
+        row = self.submission(enqueued="", first_sequence="",
+                              **{f"{phase}_us": "" for phase in SUBMISSION_PHASES})
+        report = verify_submission_timings([row])
+        self.assertEqual(report["outcomes"], {"cancelled": 1})
+        self.assertEqual(report["byte_admission"], {"count": 0})
+        row["first_sequence"] = "1"
+        with self.assertRaisesRegex(AssertionError, "uncommitted submission"):
+            verify_submission_timings([row])
+
+    def test_rejects_duplicate_scope_and_missing_completed_boundary(self):
+        row = self.submission()
+        with self.assertRaisesRegex(AssertionError, "duplicate or invalid"):
+            verify_submission_timings([row, row])
+        row["capture_load_us"] = ""
+        with self.assertRaisesRegex(AssertionError, "after a missing boundary"):
+            verify_submission_timings([row])
+
+    def test_control_purposes_and_unknown_provider_outcomes_stay_distinct(self):
+        row = dict(at_ms="100001", cell="CellId(" + "01" * 32 + ")",
+                   transition="Renew", elapsed_us="20", succeeded="")
+        self.assertEqual(verify_control_transitions([row])["Renew"]["outcomes"], {"cancelled": 1})
+        row["transition"] = "blind_write"
+        with self.assertRaises(AssertionError):
+            verify_control_transitions([row])
 
 
 if __name__ == "__main__":

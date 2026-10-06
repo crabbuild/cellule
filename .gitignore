@@ -1,2 +1,5 @@
 /target
 .DS_Store
+
+# Local qualification interpreter caches
+__pycache__/

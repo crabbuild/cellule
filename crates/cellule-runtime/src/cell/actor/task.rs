@@ -431,6 +431,9 @@ pub(super) fn handle_message(
             }
         }
         Message::Query(mut query) => {
+            if let Some(timing) = &query.timing {
+                timing.received();
+            }
             let Some(active) = cells.get_mut(&query.cell) else {
                 send_query_reply(&mut query, Err(Error::CellNotActive));
                 return;
@@ -444,6 +447,21 @@ pub(super) fn handle_message(
                 admission_matches: Arc::ptr_eq(&active.admission, &query.admission),
             }) {
                 CoordinationDecision::Admit => {
+                    if let Some(timing) = &query.timing {
+                        use crate::fleet::telemetry::QueryActorState;
+                        let state = if active.renewing() {
+                            QueryActorState::Renewal
+                        } else if active.busy() {
+                            QueryActorState::Busy
+                        } else if active.inventory_refreshing {
+                            QueryActorState::Inventory
+                        } else if !active.queue.is_empty() {
+                            QueryActorState::Queued
+                        } else {
+                            QueryActorState::Ready
+                        };
+                        timing.enqueued(state);
+                    }
                     active.queue.push_back(QueuedWork::Query(query));
                     start_next(active, pool, tasks, node_lease);
                 }

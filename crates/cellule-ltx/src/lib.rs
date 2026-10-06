@@ -87,7 +87,9 @@ pub use writable_vfs::Hydration;
 mod format_tests;
 
 pub use capture::CheckpointMode;
-pub use db::{Db, MANAGED_CONNECTION_PAGE_CACHE_BYTES, MANAGED_SQLITE_CONNECTIONS};
+pub use db::{
+    Db, DbInterruptHandle, MANAGED_CONNECTION_PAGE_CACHE_BYTES, MANAGED_SQLITE_CONNECTIONS,
+};
 pub use error::{FailureClass, LimitKind, LtxError, QueryError, Result, TransactionError};
 pub use recovery::{VerifiedPlan, compact_exact, restore_exact};
 pub use rusqlite;

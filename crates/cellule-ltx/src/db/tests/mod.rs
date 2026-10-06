@@ -541,3 +541,4 @@ fn truncate_checkpoint_and_auto_vacuum_preserve_every_cut() {
 
 #[cfg(feature = "replica")]
 mod continuation;
+mod reader;

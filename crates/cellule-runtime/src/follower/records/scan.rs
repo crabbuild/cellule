@@ -2,6 +2,44 @@
 
 use super::*;
 
+pub(in crate::follower) struct RecoveredLane {
+    pub records: BTreeMap<u64, StoredRecord>,
+    pub open_records: Vec<StoredRecord>,
+}
+
+pub(in crate::follower) fn recover_lane(
+    chunks: &Path,
+    lane: Lane,
+    limits: cellule_ltx::Limits,
+    counter: &ScanCounter,
+    mut observation: Option<&mut AppendObservation>,
+) -> Result<RecoveredLane> {
+    let records = scan_lane_counted(chunks, lane, limits, counter)?;
+    let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true)?;
+    // An earlier worker may have written complete records before failing its
+    // batch or sync. Checksums prove their bytes, not their durability. Sync
+    // that recovered prefix and any completed rename before caching receipts.
+    if !open_records.is_empty() {
+        let file = std::fs::File::open(chunks.join("open.log"))?;
+        if let Some(observation) = observation.as_deref_mut() {
+            observation.sync_data(&file)?;
+        } else {
+            file.sync_data()?;
+        }
+    }
+    if !records.is_empty() {
+        if let Some(observation) = observation {
+            observation.sync_directory(chunks)?;
+        } else {
+            sync_directory(chunks)?;
+        }
+    }
+    Ok(RecoveredLane {
+        records,
+        open_records,
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "keeps tail bounds, cache ownership, and scan instrumentation explicit"
@@ -24,10 +62,9 @@ pub(in crate::follower) fn read_tail_sync(
         return Err(Error::Node("follower lane is not sealed"));
     }
     if state.is_none() {
-        let retained = scan_lane_counted(&directory.join("chunks"), lane, limits, scan_counter)?;
-        let open_records = scan_chunk(&directory.join("chunks/open.log"), lane, limits, true)?;
-        let scan_only = retained.clone();
-        match lane_memory(retained, &open_records, index_used) {
+        let recovered = recover_lane(&directory.join("chunks"), lane, limits, scan_counter, None)?;
+        let scan_only = recovered.records.clone();
+        match lane_memory(recovered.records, &recovered.open_records, index_used) {
             Ok(memory) => *state = Some(memory),
             Err(Error::Capacity(_)) => {
                 return read_tail_records(

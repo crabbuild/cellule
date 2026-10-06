@@ -74,21 +74,22 @@ pub(crate) fn release(transaction: &Transaction<'_>, key: &[u8]) -> Result<bool>
 // Otherwise those writes, effect delivery, or migration could spend capacity
 // already promised to another command. Refusal rolls back the whole transaction.
 pub(crate) fn validate(connection: &Connection) -> Result<()> {
-    let installed: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('capacity_reservations', 'capacity_total')",
-        [], |row| row.get(0),
-    )?;
+    let installed = connection
+        .prepare_cached("SELECT COUNT(*) FROM main.sqlite_schema WHERE type = 'table' AND name IN ('capacity_reservations', 'capacity_total')")?
+        .query_row([], |row| row.get(0))?;
+    validate_installed(connection, installed)
+}
+
+pub(crate) fn validate_installed(connection: &Connection, installed: u32) -> Result<()> {
     if installed == 0 {
         return Ok(());
     }
     if installed != 2 {
         return Err(Error::Command("database reservation schema is incomplete"));
     }
-    let reserved: i64 = connection.query_row(
-        "SELECT pages FROM capacity_total WHERE singleton = 1",
-        [],
-        |row| row.get(0),
-    )?;
+    let reserved: i64 = connection
+        .prepare_cached("SELECT pages FROM capacity_total WHERE singleton = 1")?
+        .query_row([], |row| row.get(0))?;
     if reserved == 0 {
         return Ok(());
     }

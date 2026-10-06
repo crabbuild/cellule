@@ -17,7 +17,7 @@ pub(super) fn handle_activated(
     admission: Arc<CellAdmission>,
     reply: oneshot::Sender<crate::Result<Arc<CellAdmission>>>,
     result: crate::Result<(
-        Arc<cellule_ltx::rusqlite::InterruptHandle>,
+        Arc<cellule_ltx::DbInterruptHandle>,
         Option<cellule_ltx::Hydration>,
     )>,
     persisted_work: crate::Result<crate::primitives::maintenance::PersistedWorkInventory>,

@@ -797,9 +797,37 @@ digest. A duplicate sequence with different bytes is corruption and
 quarantines that leader lane. A future sequence returns `expected_sequence`
 without filling the gap.
 
+A failed batch can leave complete records before its final sync. Rebuilding a
+lane index therefore syncs the recovered open prefix and chunk directory before
+those records can authorize a duplicate receipt or seal. Checksums establish
+content; they do not establish durability. Retrying a seal or retirement marker
+completes its file and directory barriers even when the marker already exists.
+
 **Truncation and retirement.**
 
 - Followers delete only chunks at or below `covered_through`.
+- A partial open-chunk rewrite reserves the temporary's records and headers
+  before creating it, in addition to incoming append bytes. The old file remains
+  authoritative until the synced replacement is renamed. Final byte accounting
+  settles the reservation even after failure; leftover temporaries stay charged.
+- Lane workers reserve incoming bytes, markers, and prune scratch under short
+  shared accounting updates. File writes, syncs, lane-lock waits, and lane-local
+  recounts run outside that accounting mutex. Successful warm append/prune and
+  marker operations settle exact tracked byte changes; cold recovery, retirement,
+  and errors reconcile the affected lane. Settlement releases only the
+  current lane's unused growth; failed recount or admission keeps a conservative
+  charge until that lane can be reconciled. Cold tail recovery uses this path
+  because it can truncate a torn suffix. Cancellation of an async waiter cannot
+  release a dispatched worker's charge.
+- A verified lane index skips pruning when authoritative coverage reaches no
+  retained record. Warm duplicate receipts revalidate their stored header, bytes,
+  checksum, and scope. Appends check the expected open-file length before writing.
+  Any error invalidates the content index; recovery completes its sync barriers
+  before another receipt. The byte ledger and index are derived state of the
+  live store, rather than persisted recovery authority.
+- Cold directory creation is serialized through parent syncs. Warm appends
+  bypass that namespace lock. Grace-aged collection takes an exclusive
+  maintenance barrier because it can remove a leader directory shared by epochs.
 - Whole-epoch retirement first fsyncs the eight-byte `retired` watermark and its
   directory, then removes the chunks.
 - The marker permanently rejects old-epoch appends and lets recovery prove that

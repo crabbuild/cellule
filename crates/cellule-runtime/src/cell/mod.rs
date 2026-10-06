@@ -7,4 +7,5 @@ pub mod due;
 pub mod executor;
 pub(crate) mod resume;
 pub mod schema;
+pub(crate) mod schema_cache;
 pub mod worker;
