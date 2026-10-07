@@ -66,14 +66,14 @@ Reconcile(b) == /\ stage[b] = 3 /\ b \notin proof
                      stage, proposedVersion, proposedHead, proposedEpoch,
                      complete, present, ack, visible, root,
                      badSelection, badPrefix, badContents>>
-Ack(c, b) == /\ b \in proof /\ c \notin closed
+Ack(c, b) == /\ open /\ b \in proof /\ c \notin closed
              /\ proposedEpoch[b][c] = epoch[c] /\ ack[c] < b
              /\ ack' = [ack EXCEPT ![c] = b]
              /\ UNCHANGED <<open, version, head, epoch, closed, endpoint,
                   stage, proposedVersion, proposedHead, proposedEpoch,
                   complete, present, proof, visible, root,
                   badSelection, badPrefix, badContents>>
-Read(c, b) == /\ visible[c] < b /\ (UnprovedRead \/ b \in proof)
+Read(c, b) == /\ open /\ visible[c] < b /\ (UnprovedRead \/ b \in proof)
               /\ proposedEpoch[b][c] = epoch[c] /\ c \notin closed
               /\ visible' = [visible EXCEPT ![c] = b]
               /\ UNCHANGED <<open, version, head, epoch, closed, endpoint,

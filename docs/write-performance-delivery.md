@@ -38,9 +38,9 @@ collection paths. There is no legacy decoding or automatic migration.
 | --- | --- | --- |
 | M0 | Measurement and comparison harness delivered | Three A/A capacity pairs unverified; storage API totals reconcile, but SDK-internal HTTP retries need provider telemetry |
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
-| M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Full isolated contributor checks pass; paired measurement pending. Three per-Cell authority PUTs remain |
-| M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated contributor checks, native race/pruning checks and wire tests pass; 0.05 enrollment GETs/command measurement pending |
-| M4 | Binding/selector model and [authority decision](bundle-coverage-proof.md) delivered; unsafe node-only selection has a required counterexample | Production bundle proof, atomic transfer/recovery/collection and bundle ACKs not implemented |
+| M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Corrected active-Fleet window costs 5.484 PUTs/command and fails the debt trend. Three per-Cell authority PUTs remain; M4 is required |
+| M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; one active-Fleet window costs 0.0138 enrollment GETs/command. Three-repetition gate pending |
+| M4 | Binding/selector and delayed-materialization models plus [authority decision](bundle-coverage-proof.md) delivered | Production bundle proof, atomic transfer/recovery/collection and bundle ACKs not implemented |
 | M5 | Matched Fleet/read points and target stress with exact ACK audits delivered | Three repetitions, read/failure/overload matrix and absolute/relative parity unverified |
 
 ## Shared publication checkpoint
@@ -59,13 +59,21 @@ durable closure gates. Bundle coverage ACKs remain disabled: the proposed
 Cell-binding catalog, atomic transfer, exact range recovery and collection
 contracts still need production integration.
 
-The final isolated snapshot passed 1,857 workspace tests (38 documented tests
+The first isolated M2/M3 snapshot passed 1,857 workspace tests (38 documented tests
 ignored), 58 local LTX tests without replica features, all-target/all-feature
 checking, Rust 1.99 Clippy with warnings denied, API documentation and all
 boundary/layout/document/SQL-peer/Python gates. The write-proof model checked
 13,356 distinct states and all three required unsafe counterexamples. These
 checks validate the implementation contracts; they do not qualify throughput,
 physical-device durability or bundle-based bucket acknowledgments.
+
+The corrected production snapshot at `d351d886` passed 1,861 workspace tests
+(38 ignored), 58 local LTX tests and all contributor checks. A separate complete
+serial native lifecycle suite passed 382 tests, including expiry, pruning,
+receiver refusal and shutdown. Framework Rust/Cargo source hashes match the
+pinned release build; later reporter/model/document changes do not alter that
+production binary. Earlier failing snapshots and CI routing results remain
+retained outside Git.
 
 ## Measured-path corrections
 
@@ -92,6 +100,48 @@ now closes before the exact length/digest-verified object upload, without a
 local durability barrier for that disposable source. Native captures and
 follower logs retain their barriers. The contribution of this change requires
 a fresh routing comparison; the earlier failure remains evidence.
+
+## Corrected shared/grant measurement
+
+Candidate `d351d886` and main `831877cf` use separate source-content-isolated
+release builds, with no measurement overlay. Celld is pinned to v0.6.1
+`f2bf6486`. Clients, ACK auditors and provider images are byte-identical across
+the arms. The current profile is the SQL ledger workload below on one shared
+8-CPU/16-GiB VM, with tmpfs node state and fresh RustFS volumes.
+
+The first corrected candidate window offered 100 writes/s for 300 seconds after
+30 seconds warmup. All original node containers were removed after drain and
+before the bucket-only cold audit. Paired repeats are in progress; the following
+is one diagnostic window, not a sustainable-capacity or parity claim.
+
+| Candidate window/audit | Measured value |
+| --- | ---: |
+| Successful commands/s inside window | 100.000 |
+| Scheduled p50 / p95 / p99, ms | 5.5 / 7.9 / 15.6 |
+| Errors / dropped / unissued offers | 0 / 0 / 0 |
+| Warm and cold GET plus exact retry checks | 34,001 each; zero failures |
+| Original fleet drain | 5.305 s |
+| All provider PUT successes/command | 5.4842 |
+| All GET attempts/command, including ranges | 2.4048 |
+| Fresh enrollment GETs/command, owner + receivers | 0.0138 |
+| Shared cohorts / Cell submissions | 29,931 / 30,000 |
+| Shared pressure / large fallbacks | 0 / 0 |
+| Logical commands/selected Cell root | 1.0000 |
+| Final debt / oldest-age slope | +98.53 bytes/s / +0.152 ms/s |
+
+Fleet stayed active, unfenced and non-rotating throughout the sampled window;
+its follower proof frontier advanced. Delivery, latency and all-ACK audits pass
+at this point. The strict publication stability gate fails, and PUT cost is
+well above M2's 0.25 budget. Near-singleton cohorts show why shared payloads
+alone cannot amortize sparse per-Cell authority work. The
+[bundle decision](bundle-coverage-proof.md) describes the remaining atomic
+authority/recovery changes and cost accounting.
+
+Reports require Fleet activity and proof advancement independently of debt.
+An inactive fallback run cannot qualify Fleet even if it has zero enrollment
+GETs or no remaining follower debt. Window cost subtracts cumulative counters
+and raw histogram buckets; decreasing summary percentiles/means are not
+monotonic counters. Reporter source hashes accompany reevaluated evidence.
 
 ## Historical packed-implementation evidence
 
