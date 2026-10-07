@@ -37,6 +37,7 @@ jobs:
           crates/cellule-runtime/model/check.sh fast
           crates/cellule-runtime/model/check.sh negative
           crates/cellule-runtime/model/check.sh write-proofs
+          crates/cellule-runtime/model/check.sh bundle-coverage
 
   broad:
     if: github.event_name != 'pull_request'

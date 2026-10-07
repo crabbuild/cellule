@@ -108,6 +108,16 @@ case "$mode" in
     run_model WriteProofsNoFence.cfg FrozenTail WriteProofs
     run_model WriteProofsWallOnly.cfg GrantLifetime WriteProofs
     ;;
+  bundle-coverage)
+    java -cp "$jar" tlc2.TLC -workers 1 -nowarning -noGenerateSpecTE \
+      -metadir "$cache_dir/meta-bundle-coverage" \
+      -config "$model_dir/BundleCoverage.cfg" "$model_dir/BundleCoverage.tla"
+    run_model BundleCoverageNodeOnly.cfg CellFence BundleCoverage
+    run_model BundleCoverageIncomplete.cfg CompleteSelection BundleCoverage
+    run_model BundleCoverageGap.cfg ContiguousSelection BundleCoverage
+    run_model BundleCoverageRead.cfg ReadProven BundleCoverage
+    run_model BundleCoverageGC.cfg ColdRecoverable BundleCoverage
+    ;;
   fast)
     java -cp "$jar" tlc2.TLC -workers 1 -depth 6 -nowarning -noGenerateSpecTE \
       -metadir "$cache_dir/meta-fast" \
@@ -131,7 +141,7 @@ case "$mode" in
     run_model CellCoordinationBrokenRelease.cfg RetainedHasOwner
     ;;
   *)
-    echo "usage: $0 {fast|broad|negative|write-proofs}" >&2
+    echo "usage: $0 {fast|broad|negative|write-proofs|bundle-coverage}" >&2
     exit 2
     ;;
 esac

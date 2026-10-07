@@ -71,3 +71,24 @@ This model constrains the implemented [append grant](../docs/append-grants.md)
 lifecycle and the proposed [bundle authority](../../../docs/bundle-coverage-proof.md).
 It does not establish a production bundle proof, complete dependency verification,
 byte-identical recovery, liveness or performance qualification.
+
+## Bundle selection and delayed materialization
+
+`check.sh bundle-coverage` explores two ordered shared bundles across two Cell
+bindings. Upload, selection and proof reconciliation are separate actions, so
+a lost selection reply can be reconciled only from the selected immutable
+identity. A Cell closure freezes its selected endpoint in the same authority
+transition; transfer requires reconstruction through that endpoint. Node
+fencing blocks further selection.
+
+The positive model checks contiguous selection, complete verified inputs,
+proven read visibility and retention of a shared object until both Cells have
+authenticated checkpoints. A hot Cell cannot release its dormant sibling's
+range. Five broken configurations must expose `CellFence`,
+`CompleteSelection`, `ContiguousSelection`, `ReadProven` and `ColdRecoverable`.
+
+`complete` abstracts successful verification of exact bytes, durable retry
+outcomes and all dependencies. `root` abstracts an authenticated exact
+checkpoint. The model does not implement or prove those checks, SQLite replay,
+cryptography, provider persistence, bounded history or Rust adapter ordering.
+No production response is enabled by a passing result.
