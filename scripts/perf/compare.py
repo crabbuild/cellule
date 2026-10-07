@@ -23,6 +23,27 @@ def summarize(directory):
     return case, build, report
 
 
+def read_guardrail(baseline, candidate):
+    """A matched point is not evidence of either arm's highest read capacity."""
+    if not baseline or len(baseline) != len(candidate):
+        return {'available': False, 'pass': False, 'reason': 'matched repeats missing'}
+    results = []
+    for before, after in zip(baseline, candidate):
+        rate = before['successful_reads_per_second']
+        p99 = before['reads']['scheduled_latency_ms_all_attempts']['p99']
+        new_p99 = after['reads']['scheduled_latency_ms_all_attempts']['p99']
+        valid = rate > 0 and p99 is not None and p99 > 0 and new_p99 is not None
+        ratio_rate = after['successful_reads_per_second'] / rate if valid else None
+        ratio_p99 = new_p99 / p99 if valid else None
+        passed = bool(valid and before['delivery_latency_audit_pass']
+                      and after['delivery_latency_audit_pass']
+                      and ratio_rate >= 0.90 and ratio_p99 <= 1.20)
+        results.append({'pass': passed, 'throughput_ratio': ratio_rate,
+                        'scheduled_p99_ratio': ratio_p99})
+    return {'available': True, 'pass': all(result['pass'] for result in results),
+            'repetitions': results, 'baseline_capacity_search_verified': False}
+
+
 def compare(matrix):
     if set(matrix) != {'baseline', 'candidate', 'celld'}:
         raise ValueError('matrix needs baseline, candidate and celld case lists')
@@ -59,25 +80,33 @@ def compare(matrix):
                 key = (point['offered_writes_per_second'], point['offered_reads_per_second'])
                 by_offer.setdefault(key, []).append(point)
         points[role] = by_offer
-    common = set(points['baseline']) & set(points['candidate']) & set(points['celld'])
-    if not common:
-        raise ValueError('no identical offered write/read points')
+    common = set(points['baseline'])
+    if not common or any(set(arm) != common for arm in points.values()):
+        raise ValueError('offered point sets differ; no case may be silently omitted')
     comparisons = []
     for key in sorted(common):
         arms = {}
+        contracts = [sample['load_contract'] for role in rows for sample in points[role][key]]
+        if any(contract != contracts[0] for contract in contracts):
+            raise ValueError('point workload or hot-read distribution mismatch: ' + str(key))
         for role in rows:
             samples = points[role][key]
             arms[role] = {
                 'repetitions': len(samples),
                 'rates': [point['successful_writes_per_second'] for point in samples],
                 'scheduled_p99_ms': [point['writes']['scheduled_latency_ms_all_attempts']['p99'] for point in samples],
+                'read_rates': [point['successful_reads_per_second'] for point in samples],
+                'read_scheduled_p99_ms': [point['reads']['scheduled_latency_ms_all_attempts']['p99'] for point in samples],
                 'delivery_latency_audit_pass': all(point['delivery_latency_audit_pass'] for point in samples),
                 'failures': [point['failures'] for point in samples],
                 'publication_stability': [point['publication_stability'] for point in samples],
                 'provider_cost': [point['window_cost'] for point in samples],
             }
         comparisons.append({'offered_writes_per_second': key[0],
-                            'offered_reads_per_second': key[1], 'arms': arms})
+                            'offered_reads_per_second': key[1], 'load_contract': contracts[0],
+                            'read_guardrail_at_matched_point': read_guardrail(
+                                points['baseline'][key], points['candidate'][key]) if key[1] else None,
+                            'arms': arms})
     return {'schema_version': 1, 'workload': 'sql-ledger-96', 'contract': contract,
             'evidence': evidence, 'points': comparisons,
             'qualification_pass': False,

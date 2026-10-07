@@ -14,6 +14,17 @@ def measurements(unleased_reads=4096):
 
 
 class GateTests(unittest.TestCase):
+    def test_frozen_harness_changes_only_synthetic_timing_initializers(self):
+        harness = (routing.Path(__file__).parents[1] / "src/performance_tests.rs").read_bytes()
+        self.assertEqual(routing.adapt_test_harness(harness, "pub covered_commits: u64"), harness)
+        adapted = routing.adapt_test_harness(harness, "pub commit_sequence: u64")
+        expected = harness.decode().replace(
+            "                covered_commits: if sequence == 1 { 1 } else { 4 },\n", "").replace(
+            "            covered_commits: 1,\n", "")
+        self.assertEqual(adapted.decode(), expected)
+        with self.assertRaisesRegex(RuntimeError, "initializer no longer matches"):
+            routing.adapt_test_harness(adapted, "pub commit_sequence: u64")
+
     @staticmethod
     def publication(first, last):
         return dict(first_sequence=first, sequence=last, queue_wait_ns=0,

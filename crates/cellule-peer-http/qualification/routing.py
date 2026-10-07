@@ -56,6 +56,24 @@ def output(*command, cwd=None):
     return subprocess.check_output(command, cwd=cwd, text=True).strip()
 
 
+def adapt_test_harness(harness, telemetry):
+    """Keep synthetic unit-test initializers valid on the frozen baseline.
+
+    Measurement callbacks use the common timing fields. These two extra fields
+    are only in unit-test fixtures, whose coverage is reconstructed from the
+    same commit sequences on both revisions.
+    """
+    if "pub covered_commits: u64" in telemetry:
+        return harness
+    text = harness.decode()
+    for line in ("                covered_commits: if sequence == 1 { 1 } else { 4 },\n",
+                 "            covered_commits: 1,\n"):
+        if text.count(line) != 1:
+            raise RuntimeError("Frozen routing harness initializer no longer matches")
+        text = text.replace(line, "")
+    return text.encode()
+
+
 def build(revision, name, state, evidence, harness):
     source = state / f"{name}-source"
     source.mkdir()
@@ -63,7 +81,9 @@ def build(revision, name, state, evidence, harness):
     with tarfile.open(fileobj=io.BytesIO(archive)) as files:
         files.extractall(source, filter="data")
     # Only test wiring is transplanted. Older revisions predate this harness.
-    (source / PEER / "src/performance_tests.rs").write_bytes(harness)
+    adapted_harness = adapt_test_harness(
+        harness, (source / "crates/cellule-runtime/src/fleet/telemetry.rs").read_text())
+    (source / PEER / "src/performance_tests.rs").write_bytes(adapted_harness)
     entry = source / PEER / "src/lib.rs"
     if "mod performance_tests;" not in entry.read_text():
         entry.write_text(entry.read_text() + "\n#[cfg(test)]\nmod performance_tests;\n")
@@ -111,7 +131,8 @@ def build(revision, name, state, evidence, harness):
             raise RuntimeError(f"Missing exact benchmark: {listed}")
     return {"revision": revision, "binary": str(binary), "binary_sha256": digest(binary),
             "source_archive_sha256": hashlib.sha256(archive).hexdigest(),
-            "harness_sha256": hashlib.sha256(harness).hexdigest()}
+            "harness_sha256": hashlib.sha256(harness).hexdigest(),
+            "adapted_harness_sha256": hashlib.sha256(adapted_harness).hexdigest()}
 
 
 def schedule(order):

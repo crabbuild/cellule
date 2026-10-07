@@ -210,7 +210,9 @@ def case_report(directory):
             point_failures.append('metric evidence invalid')
         writes = data['writes']
         stability = stability_report(path.parent) if case['system'] == 'cellule' else {'available': False, 'pass': False, 'reason': 'celld publication age not exposed by this fixture'}
-        points.append({'offered_writes_per_second': config['write_rate'], 'offered_reads_per_second': config['read_rate'], 'successful_writes_per_second': writes['successful_requests_per_second'], 'logical_value_bytes_per_second': writes['successful_requests_per_second'] * 96, 'writes': writes, 'reads': data['reads'], 'window_metrics': metrics, 'window_cost': cost_report(metrics, writes['successes_in_window']), 'publication_stability': stability, 'delivery_latency_audit_pass': not point_failures, 'failures': point_failures})
+        load_contract = {key: config.get(key) for key in ('cells', 'concurrency', 'queue_capacity',
+            'write_offset', 'seconds', 'warmup_seconds', 'hot_read_cells')}
+        points.append({'offered_writes_per_second': config['write_rate'], 'offered_reads_per_second': config['read_rate'], 'successful_writes_per_second': writes['successful_requests_per_second'], 'successful_reads_per_second': data['reads']['successful_requests_per_second'], 'load_contract': load_contract, 'logical_value_bytes_per_second': writes['successful_requests_per_second'] * 96, 'writes': writes, 'reads': data['reads'], 'window_metrics': metrics, 'window_cost': cost_report(metrics, writes['successes_in_window']), 'publication_stability': stability, 'delivery_latency_audit_pass': not point_failures, 'failures': point_failures})
     overload = summary.get('overload', {})
     recovery = overload.get('recovery')
     recovery_failures = delivery_failures(recovery, case['durability']) if recovery else ['recovery phase missing']

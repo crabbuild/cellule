@@ -36,7 +36,7 @@ collection paths. There is no legacy decoding or automatic migration.
 | M2 | Existing native grouping and per-Cell coalescing preserved | Shared node publication coordinator not implemented; 0.25 publication PUTs/command not achieved |
 | M3 | Fresh enrollment roles, peer phases and follower append measured | Signed append grants and durable grant fences not implemented; 0.05 enrollment GETs/command not achieved |
 | M4 | Existing authority-pinned Cell roots remain the object proof | Bundle coverage proof, transfer and collection protocol not implemented |
-| M5 | All-ACK warm/cold audits and five-minute main characterization completed | Paired repetitions, read/failure/overload matrix and absolute/relative parity unverified |
+| M5 | One matched five-minute Fleet point and all-ACK warm/cold audits completed | Three repetitions, read/failure/overload matrix and absolute/relative parity unverified |
 
 ## Evidence
 
@@ -53,24 +53,63 @@ main files are design documents. The baseline explicitly overlays measurement
 hooks. Celld is v0.6.1, `f2bf648663a610eefde71f3547ad61e9b896b1f0`, using the
 pinned container digest. Both framework arms use byte-identical clients/auditors.
 
-Latest-main Fleet offered 100 writes/s for 300 seconds after 30 seconds warmup.
-It completed **99.993 writes/s**, with **868.1 ms scheduled p99**, zero errors
-and zero drops. Every one of its **34,001 acknowledged commands** passed GET
-and exact-command retry audits while warm and after all original node containers
-were removed. The original fleet drained in **7.737 seconds**. This point fails
-the 50-ms Fleet latency gate and publication stability.
+Each arm offered 100 Fleet writes/s for 300 seconds after 30 seconds warmup,
+serially with a fresh provider volume. These are individual points, not a
+capacity search or three-repetition qualification.
 
-Its window measured **6.688 successful PUTs/command**, **3.327 GET attempts/command
-including ranges**, and **1.256 fresh enrollment GETs/command**, summed over
-owner and followers. Unpublished bytes and oldest publication age had positive
-slopes over the final three minute segments. The provider was at its two-CPU
-ceiling during much of the run. Fleet proof wait averaged 88.0 ms, response
-confirmation 0.290 ms, capture 1.047 ms, and tmpfs follower data sync about
-0.0007 ms. This points to publication and provider/peer pressure in this profile;
-it does not establish the bottleneck for NVMe or managed object storage.
+| Window or audit | Latest main + telemetry | Packed candidate | celld |
+| --- | ---: | ---: | ---: |
+| Successful commands/s inside window | 99.993 | 99.990 | 100.000 |
+| Scheduled p50 / p95 / p99, ms | 66.8 / 265.3 / 868.1 | 24.0 / 200.1 / 386.5 | 5.6 / 11.8 / 44.3 |
+| Errors / dropped offers | 0 / 0 | 0 / 0 | 0 / 0 |
+| Commands checked by GET and exact retry, warm and cold | 34,001 each | 34,001 each | 34,001 each |
+| Original fleet drain, seconds | 7.737 | 10.918 | 11.742 |
+| All successful storage API PUTs/command | 6.688 | 4.992 | Not instrumented |
+| All GET attempts/command, including ranges | 3.327 | 4.059 | Not instrumented |
+| Fresh enrollment GETs/command, owner + receivers | 1.256 | 2.347 | Different authorization protocol |
+| Logical commits per selected command root | 1.000 | 1.000 | Not instrumented |
+| Final debt slope, bytes/s | +2,455.9 | +2,386.2 | Not instrumented |
+| Final oldest-publication age slope, ms/s | +3.711 | +4.435 | Not instrumented |
+| 50-ms delivery latency gate | Fail | Fail | Pass at this point |
 
-Candidate and matched celld results will be recorded after their complete audits.
-No candidate speedup is inferred from the main result.
+All original node containers were removed before bucket-only cold audits. This
+checks recovery after successful drain, not owner loss before materialization.
+The candidate lowered p99 by 55.5% and PUTs/command by 25.4% in this one pair,
+but its p99 remains **8.72 times celld's**. Both Cellule arms fail the proposal's
+publication stability gate. No sustainable-rate improvement is established.
+
+Compaction mean fell from 444.8 to 25.6 ms; publication mean from 1,288.7 to
+489.4 ms; Fleet proof wait mean from 88.0 to 52.0 ms. Capture remained about
+1.1 ms and tmpfs follower data sync about 0.0005–0.0007 ms. The faster candidate
+also performed more compactions and enrollment GETs. Reduced batching is a
+possible explanation for the enrollment increase; this run does not prove it.
+The provider reached its two-CPU ceiling. Publication amplification and fresh
+peer work remain priorities in this profile; device sync performance is untested.
+
+The measured one-command-per-root result cannot satisfy M2's authority-write
+budget by sharing data alone. With three per-Cell selection PUTs, the floor is
+three PUTs/command before shared data, node coverage or compaction. M3's measured
+2.347 enrollment GETs/command is 46.9 times its 0.05 budget. Meeting those gates
+requires the specified coalescing/proof/grant protocols and their failure tests.
+
+| Frozen artifact | Run/build identity | SQL binary SHA-256 prefix |
+| --- | --- | --- |
+| Latest main + measurement overlay | `implementation-main-logical-metrics` | `85d30c0f93df` |
+| Candidate | `implementation-m1-one-fetch` | `ff4c6ede25f4` |
+| celld | v0.6.1 container digest pinned in `build.json` | Container digest |
+
+The client and auditor hashes are respectively `cc1d47522078` and
+`35368139e4c5` for both builds. Full digests and every exported source hash live
+in the retained manifests. All candidate production bytes match PR 66's
+`a1c48fcd`; the final test expectation and documentation were edited after the
+binary export. A Git base revision alone does not identify an overlaid build.
+
+The isolated all-feature workspace suite passed **1,837 tests** with **38 ignored**
+environment-dependent tests. Clippy and API documentation passed with warnings
+denied; format, boundaries, layout, Rust fences, links and SQL/peer contract
+checks passed. The first compaction run exposed an old range-GET expectation;
+the corrected test now requires zero range GETs and two complete pack GETs.
+That failure remains in the external evidence.
 
 ## Reproduce and inspect
 
