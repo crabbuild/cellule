@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
+REPORTER_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
 def read(path):
     return json.loads(path.read_text())
 
@@ -136,7 +138,11 @@ def metric_delta(directory):
             for outcome, count in values.get('outcomes', {}).items():
                 if sum((family[operation]['outcomes'][outcome] for family in families.values())) != count:
                     raise ValueError(f'unclassified {operation}.{outcome}')
-        shared = subtract(first.get('shared_publication', {}), last.get('shared_publication', {}))
+        # Summary percentiles/means can decrease as more work completes. The
+        # raw shared_queue/shared_upload histograms below supply their deltas.
+        shared_counters = lambda snapshot: {name: value for name, value in snapshot.get('shared_publication', {}).items()
+            if name in ('cohorts', 'cells', 'rows', 'bytes', 'failures', 'large_fallbacks', 'pressure_fallbacks')}
+        shared = subtract(shared_counters(first), shared_counters(last))
         output.append({'shared_publication': shared, 'url': a['url'], 'sample_elapsed_ns': subtract(first['sample_elapsed_ns'], last['sample_elapsed_ns']), 'start_request_ms': [a['request_started_ms'], a['request_finished_ms']], 'end_request_ms': [b['request_started_ms'], b['request_finished_ms']], 'storage_families': families, 'storage': totals, 'histograms': {name: histogram_delta(first['histograms'][name], value) for name, value in last['histograms'].items()}, 'publication': subtract({name: first['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}, {name: last['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}), 'runtime_start': first.get('runtime'), 'runtime_end': last.get('runtime')})
     return {'available': True, 'endpoints': output}
 
@@ -314,7 +320,7 @@ def case_report(directory):
     overload = summary.get('overload', {})
     recovery = overload.get('recovery')
     recovery_failures = (delivery_failures(recovery, case['durability']) if recovery else ['recovery phase missing']) + failures
-    return {'schema_version': 1, 'reporter_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), 'provider_health': health, 'provider_lifecycle': lifecycle, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'expected_acknowledged_rows': expected_acks, 'acknowledgement_count_reconciled': expected_acks is not None and summary.get('acknowledged_rows') == expected_acks, 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
+    return {'schema_version': 1, 'reporter_sha256': REPORTER_SHA256, 'provider_health': health, 'provider_lifecycle': lifecycle, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'expected_acknowledged_rows': expected_acks, 'acknowledgement_count_reconciled': expected_acks is not None and summary.get('acknowledged_rows') == expected_acks, 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)
