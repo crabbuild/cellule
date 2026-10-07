@@ -162,7 +162,7 @@ It does not prove manifests, Rust adapter ordering, SQLite bytes, cryptographic
 identity, provider semantics, fair completion or the full failure matrix. No
 bucket response or retention release uses this proposed proof in production.
 
-`BundleCoverage.tla` extends the bounded model with two shared ranges and two
+`BundleCoverage.tla` extends the bounded model with two ordered ranges and two
 Cell bindings, separate upload/selection/reconciliation, delayed per-Cell
 checkpoints, node fencing and exact closure endpoints. It permits incomplete
 uploads but requires their rejection before selection. Its five negative
@@ -173,3 +173,10 @@ inputs; this is protocol evidence, not a production recovery implementation.
 At `d30e6f11`, CI completed 21,672 distinct positive states and all five named
 counterexamples. The separate append/closure model and its three counterexamples
 also passed in that run.
+
+The next model revision lets the hot Cell continue after its sibling closes.
+Closure freezes the sibling's per-Cell endpoint rather than the node's global
+head. Reusing an uploaded hot-Cell range after that CAS conflict requires fresh
+authorization of every participating row and the unchanged predecessor; it
+cannot reopen or publish rows from the closed binding. Its CI evidence is
+tracked separately from the earlier state count.

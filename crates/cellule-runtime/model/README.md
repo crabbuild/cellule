@@ -74,12 +74,17 @@ byte-identical recovery, liveness or performance qualification.
 
 ## Bundle selection and delayed materialization
 
-`check.sh bundle-coverage` explores two ordered shared bundles across two Cell
-bindings. Upload, selection and proof reconciliation are separate actions, so
+`check.sh bundle-coverage` explores an initial shared bundle and a following hot
+Cell range across two bindings. Upload, selection and proof reconciliation are separate actions, so
 a lost selection reply can be reconciled only from the selected immutable
 identity. A Cell closure freezes its selected endpoint in the same authority
 transition; transfer requires reconstruction through that endpoint. Node
 fencing blocks further selection.
+
+Closing the dormant binding does not freeze unrelated Cell progress. A fresh
+row-scoped rebase can reuse uploaded hot-Cell bytes after the old CAS loses to
+that closure, while a closed participating binding remains rejected. Frozen
+endpoints are per Cell, not the node's later global sequence.
 
 The positive model checks contiguous selection, complete verified inputs,
 proven read visibility and retention of a shared object until both Cells have
