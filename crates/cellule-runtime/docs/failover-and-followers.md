@@ -1769,6 +1769,13 @@ member retirement, and the current authority close are still required. Pending
 tickets continue to require the original live lease and remain retained after
 fencing.
 
+After a terminal node fence, Cell deactivation discards the local handle and
+leaves the exact selected owner/root for takeover. It performs no release CAS
+and grants no Idle or durability proof. A node fence racing the cleanup read
+has the same outcome. A live node session still reconciles and releases an
+individually fenced Cell through the existing authority path; storage and
+control failures remain errors.
+
 Clean node shutdown is broader:
 
 1. Withdraw public admission and mark the session draining

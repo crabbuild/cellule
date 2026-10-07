@@ -80,6 +80,123 @@ async fn leased_preparation_checkpoint_checks_liveness_without_cell_cas() {
 #[derive(Default)]
 struct CoverageAuthority(std::sync::Mutex<Vec<(u64, u64)>>);
 
+#[tokio::test]
+async fn fenced_node_cleanup_preserves_selected_authority_for_takeover() {
+    verify_node_cleanup(CleanupFence::BeforeRead).await;
+}
+
+#[tokio::test]
+async fn node_fence_during_cleanup_read_preserves_selected_authority() {
+    verify_node_cleanup(CleanupFence::DuringRead).await;
+}
+
+#[tokio::test]
+async fn live_node_cleanup_still_releases_selected_authority() {
+    verify_node_cleanup(CleanupFence::Live).await;
+}
+
+#[derive(Clone, Copy)]
+enum CleanupFence {
+    Live,
+    BeforeRead,
+    DuringRead,
+}
+
+async fn verify_node_cleanup(fence: CleanupFence) {
+    let cell = CellId::from_bytes([101; 32]);
+    let incarnation = IncarnationId::from_bytes([102; 16]);
+    let lease = crate::NodeLeaseGuard::new(0, 60_000).unwrap();
+    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let store = Store::new(Arc::new(InMemory::new())).with_read_request_observer({
+        let armed = armed.clone();
+        let lease = lease.clone();
+        Arc::new(move |_| {
+            if armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                lease.fence();
+            }
+        })
+    });
+    let layout = CellStorageLayout::new(store, Path::from("fenced-node-cleanup"), [103; 16]);
+    let control = Control::initial(
+        cell,
+        incarnation,
+        Owner {
+            session: SessionId::from_bytes([104; 16]),
+            endpoint: "https://node.internal:8081".into(),
+        },
+        Digest::from_bytes([105; 32]),
+        1,
+    )
+    .unwrap();
+    layout
+        .store()
+        .create_strict(
+            &layout.control_path(cell.as_bytes()),
+            Bytes::from(control.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout.clone());
+    let observed = authority.load(cell).await.unwrap().unwrap();
+    let replica = CellReplica::new(
+        layout.clone(),
+        *cell.as_bytes(),
+        *incarnation.as_bytes(),
+        Limits::default(),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut publisher = CellPublisher::new(
+        replica,
+        authority.clone(),
+        observed,
+        directory.path().to_owned(),
+    )
+    .with_node_lease(lease.clone());
+    let mut database = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
+    database
+        .transaction(|tx| {
+            tx.execute_batch("CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES(42)")
+        })
+        .unwrap();
+    let cuts = database.capture_deferred().unwrap();
+    let prepared = publisher.prepare_append(&cuts, 1, 1, None).await.unwrap();
+    publisher.publish_prepared(&prepared, None).await.unwrap();
+    let selected = layout
+        .store()
+        .get_with_etag(&layout.control_path(cell.as_bytes()))
+        .await
+        .unwrap();
+    match fence {
+        CleanupFence::BeforeRead => lease.fence(),
+        CleanupFence::DuringRead => armed.store(true, std::sync::atomic::Ordering::SeqCst),
+        CleanupFence::Live => {}
+    }
+    // Node fencing is terminal. Local cleanup grants no Idle release, root
+    // selection or new proof; the exact owner/root stays available to takeover.
+    publisher.release_after_fence().await.unwrap();
+    let after = layout
+        .store()
+        .get_with_etag(&layout.control_path(cell.as_bytes()))
+        .await
+        .unwrap();
+    match fence {
+        CleanupFence::Live => {
+            assert_ne!(after.1, selected.1);
+            let current = authority.load(cell).await.unwrap().unwrap();
+            assert_eq!(current.value().state, crate::control::ControlState::Idle);
+            assert!(current.value().owner.is_none());
+            assert_eq!(current.value().ltx_root(), Some(prepared.root()));
+        }
+        CleanupFence::BeforeRead | CleanupFence::DuringRead => {
+            assert_eq!(after, selected);
+            assert!(matches!(publisher.release().await, Err(Error::Fenced)));
+            assert!(matches!(publisher.renew().await, Err(Error::Fenced)));
+        }
+    }
+    database.close().unwrap();
+}
+
 #[derive(Default)]
 struct CoverageTelemetry(std::sync::atomic::AtomicUsize);
 
