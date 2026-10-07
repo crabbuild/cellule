@@ -29,29 +29,38 @@ coalesce more root work because a follower proof may respond earlier, but it
 still needs bounded retention and eventual object coverage; a longer root timer
 cannot release an unproved capture or hide its debt.
 
-The corrected M2/M3 Docker candidate at `d351d886` completed three 300-second
-windows at 100 offered writes/s. Scheduled p99 was 15.6 / 36.4 / 31.2 ms with
+The latest M2/M3 Docker candidate at `a3787a8d` completed three 300-second
+windows at 100 offered writes/s. Scheduled p99 was 19.8 / 23.1 / 46.9 ms with
 zero errors/drops/unissued offers; every run's 34,001 seed/warmup/window ACKs
 passed warm and cold GET/retry audits. Fleet remained active and follower
-proofs advanced. All three debt trends failed and total PUT cost was
-5.330–5.484 per command. These are diagnostic points, not a qualified capacity
+proofs advanced. Two debt trends failed and total PUT cost was
+5.229–5.433 per command. These are diagnostic points, not a qualified capacity
 or parity claim. The first window supplies the detailed observations below.
 
 | Window observation | Value | Remaining work |
 | --- | ---: | --- |
-| All provider PUT successes/command | 5.4842 | Amortize authority selection, not only payload upload |
-| Cell-authority PUT successes/command | 2.2521 | Root lineage and Cell selection remain per-Cell work |
-| Immutable PUT successes/command | 2.2499 | Includes payloads, roots and maintenance |
-| Node-authority PUT successes/command | 0.9822 | Coverage selection is almost per-command at this arrival rate |
+| All provider PUT successes/command | 5.4330 | Amortize authority selection, not only payload upload |
+| Cell-authority PUT successes/command | 2.2507 | Root lineage and Cell selection remain per-Cell work |
+| Immutable PUT successes/command | 2.2422 | Includes payloads, roots and maintenance |
+| Node-authority PUT successes/command | 0.9401 | Coverage selection is almost per-command at this arrival rate |
 | Fresh owner + receiver enrollment GETs/command | 0.0138 | Grant budget passes in this single window; paired qualification remains required |
-| Cells/shared cohort | 1.0023 | At this sparse arrival rate the bounded coordinator mostly flushes singletons |
+| Singleton Cell submissions | 98.64% | At this sparse arrival rate the coordinator uses canonical native packs |
+| Cells/multi-row shared cohort | 2.7020 | Only 151 multi-row cohorts; this excludes singletons |
 | Commands/selected Cell root | 1.0000 | Delaying a Cell to collect many commands cannot meet the sparse latency target |
 
-The strict three-minute trend gate failed: unpublished debt rose by
-98.53 bytes/s and oldest debt by 0.152 ms/s in the fitted tail. These slopes
+The first window's strict three-minute trend gate failed: unpublished debt rose by
+34.80 bytes/s and oldest debt by 0.0817 ms/s in the fitted tail. These slopes
 must remain failures in the evidence; one run cannot distinguish sustained
 growth from sampling variation. Increasing cohort delay without a measured
 latency/debt benefit is not a remedy.
+
+At the 15K Fleet target, the same candidate accumulated 70.64 MB of unpublished
+log debt and its object frontier lagged by 50,548 sequences. It completed only
+295.263 commands/s, failed delivery and had 432 warm-audit HTTP 503s. The
+[delivery report](write-performance-delivery.md) preserves this failure.
+Follower acknowledgments keep the immediate proof path short only while the
+publication/retention path can make progress. M4 must reduce the complete cost
+and bound unmaterialized locators, with headroom for leases and drain.
 
 ## Authority and transfer
 
@@ -162,6 +171,15 @@ retain three root/lineage/Cell-selection PUTs, the remaining M4 budget requires
 checkpoint, before compaction, catalog changes or retries. If manifests need a
 separate PUT, three requests per 64 commands leave even less checkpoint budget.
 
+The 160-command value is an optimistic metadata lower bound. A checkpoint that
+rewrites bundle dependencies into one new independent data object has at least
+four PUTs, requiring at least 214 commands per checkpoint under the same
+two-PUT/64 assumption, before indexes, multipart requests or maintenance. A
+root that keeps shared payload references may shorten the manifest scan, but it
+cannot release those payload objects. Account for lookup checkpoints and actual
+data reclamation separately; independent checkpoints cannot be treated as free
+uploads.
+
 At the uniform 1,000-Cell bucket target of 2,000 commands/s, 160 commands per
 Cell span approximately 80 seconds; at 15,000 Fleet commands/s they span about
 10.7 seconds. These are inferred cost constraints, not measured performance or
@@ -219,6 +237,14 @@ precede object selection. Closing freezes issuance and drains exactly that old
 range before terminal closure and reconstruction. Its positive profile also
 checks eventual closing under weakly fair successful upload/selection. Three
 negative profiles require counterexamples for selected-only transfer, late
-issuance and premature follower retirement. Verification is pending separately
-from the state counts above. Exact captures/checkpoints and the Rust join/close
+issuance and premature follower retirement. At `954cacf`, CI passed all 801
+distinct positive states, the fair closing property and the three named
+counterexamples. The selected-only trace is
+`Issue → Replicate → FleetAck → BeginClose → FinishClose → Transfer`: the
+new writer's reconstructed endpoint omits the acknowledged command.
+Exact captures/checkpoints and the Rust join/close
 barrier remain production obligations, not proofs supplied by this abstraction.
+The [three-model CI run](https://github.com/crabbuild/cellule/actions/runs/37620661618)
+preserves all eleven required unsafe counterexamples across the independent
+models. Their state counts cannot be combined into a proof of one production
+protocol.

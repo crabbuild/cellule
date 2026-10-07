@@ -38,10 +38,10 @@ collection paths. There is no legacy decoding or automatic migration.
 | --- | --- | --- |
 | M0 | Measurement and comparison harness delivered | Three A/A capacity pairs unverified; storage API totals reconcile, but SDK-internal HTTP retries need provider telemetry |
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
-| M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Three corrected active-Fleet windows cost 5.330–5.484 PUTs/command and all fail the debt trend. Three per-Cell authority PUTs remain; M4 is required |
-| M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; three active-Fleet windows cost 0.0138–0.0141 enrollment GETs/command. Target-rate qualification remains unverified |
+| M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Latest three active-Fleet windows cost 5.229–5.433 PUTs/command; two fail the debt trend. Three per-Cell authority PUTs remain; M4 is required |
+| M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; latest three active-Fleet windows cost 0.0138 enrollment GETs/command. The 15K target diagnostic fails delivery and warm audit |
 | M4 | Binding/selector and delayed-materialization models plus [authority decision](bundle-coverage-proof.md) delivered | Production bundle proof, atomic transfer/recovery/collection and bundle ACKs not implemented |
-| M5 | Three paired low-rate Fleet repetitions and earlier read/target stress with exact ACK audits delivered | Publication stability fails; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
+| M5 | Three paired low-rate Fleet repetitions and target diagnostics with exact ACK audits delivered | Publication stability and target delivery fail; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
 
 ## Shared publication checkpoint
 
@@ -113,7 +113,7 @@ isolated verification passed 1,862 workspace tests (38 ignored), 58 local LTX
 tests, all contributor checks and the complete 382-test serial native lifecycle
 suite. The release binary is pinned to `a3787a8d`; all 1,248 Rust/Cargo source
 hashes match the verified snapshot. Three matched Docker repetitions and fresh
-routing CI are tracked separately. The `d351d886` results below
+routing CI are recorded below. The `d351d886` results further below
 must not be attributed to this subsequent change.
 
 Fresh routing CI for `75ae439d` passed all four paired command comparisons in
@@ -125,18 +125,167 @@ Their CI latency limit is two times baseline, not the proposal's 1.2 read limit:
 object-only forwarded/local concurrency-one query p99 ratios were 1.614 / 1.241.
 Passing routing CI therefore does not pass the M5 read guardrail.
 
-The same head's workspace CI failed one combined-maintenance lifecycle test with
-a nested fleet-action-journal conflict (381/382 passed); a fresh rerun is
-pending. The isolated complete native suite passed all 382 on the same production
-source. Both results are retained; the CI conflict's cause is not established.
+The same head's workspace CI initially failed one combined-maintenance lifecycle
+test with a nested fleet-action-journal conflict (381/382 passed). The complete
+unchanged-source rerun passed, as did the isolated 382-test native suite. Both
+CI results are retained; a passing rerun does not establish the conflict's cause.
+Fresh [Rust CI at `954cacf`](https://github.com/crabbuild/cellule/actions/runs/37620661541)
+also passes all 382 native lifecycle tests. That revision changes reporting and
+models, not the frozen production Rust/Cargo source.
 
-## Corrected shared/grant measurement
+## Latest singleton/shared/grant measurement
+
+Release candidate `a3787a8d`, current main `831877cf` and celld `f2bf6486`
+completed three matched Fleet repetitions at 100 offered writes/s. Each used
+300 seconds plus 30 seconds warmup, 1,000 uniform Cells, 96-byte SQL-ledger
+values and 128 clients on the shared Docker VM. System order alternated;
+clients, auditors, images and workload contracts match. Neither Cellule arm
+uses a measurement overlay.
+
+| System | Window commands/s, repetitions 1 / 2 / 3 | Scheduled p99, ms, repetitions 1 / 2 / 3 | Point delivery/latency result |
+| --- | --- | --- | --- |
+| Main `831877cf` | 100.000 / 99.977 / 100.000 | 123.9 / 140.2 / 158.6 | All exceed 50 ms |
+| Candidate `a3787a8d` | 100.000 / 100.000 / 100.000 | 19.8 / 23.1 / 46.9 | All pass; two publication-debt trends fail |
+| celld `f2bf6486` | 100.000 / 100.000 / 100.000 | 15.9 / 15.6 / 18.2 | All pass; publication-debt age unavailable |
+
+All nine cases checked every one of 34,001 ACKs with warm GET/retry and cold
+GET/retry, with zero audit failures. All original owner/follower containers
+were destroyed after drain and before cold restore. Candidate Fleet remained
+active, unfenced and non-rotating with advancing valid follower frontiers in
+all three windows; its drain took 5.41 / 8.29 / 15.50 seconds.
+
+Candidate total PUTs/command were 5.4330 / 5.3979 / 5.2295, versus main's
+5.4189 / 5.4156 / 5.3684. Summed fresh owner/receiver enrollment GETs/command
+were 0.0138 in each candidate window. Candidate debt slopes were
++34.80 / +18.58 / −239.85 bytes/s and oldest-age slopes were
++0.0817 / +0.0200 / −1.2583 ms/s. The first two remain failures; the third
+passes. Main fails all three debt trends. This does not establish stable
+capacity or a repeatable publication-cost reduction.
+
+The candidate used 29,592 / 29,456 / 27,950 singleton publications out of
+30,000 Cell submissions per window. Multi-row cohorts accounted for
+408 / 544 / 2,050 submissions; no pressure or large-input fallback occurred.
+Near-singleton arrival patterns explain why payload sharing has little effect
+on the per-Cell authority floor. The singleton optimization removes extra local
+work while preserving the canonical native pack and exact root.
+
+In the first window, mean capture was 0.550 ms, Fleet proof 3.690 ms, Fleet
+response 5.582 ms and publication 22.676 ms. These phases overlap and cannot
+be added. The worker round trip was 1.522 ms, including queueing. Mean shared
+upload was 43.744 ms over only 151 multi-row cohorts; it must not be compared
+with earlier histograms that mixed singleton and multi-row uploads. Sampled
+Docker CPU averaged approximately 0.51 owner cores and 1.63 of RustFS's two
+cores. This identifies provider occupancy at this point, not CPU capacity or
+a sustainable-rate ceiling.
+
+## Target-load failures
+
+One matched 300-second Fleet target pair offered 15,000 writes/s after 30
+seconds warmup. All three arms fail delivery qualification:
+
+| System | Window commands/s | Scheduled all-attempt p99, ms | Request errors / dropped offers | ACK audit outcome |
+| --- | ---: | ---: | --- | --- |
+| Main `831877cf` | 507.040 | 1,391.8 | 254,842 / 4,092,793 | All 198,356 ACKs pass warm/cold GET and retry; 15.04-s drain |
+| Candidate `a3787a8d` | 295.263 | 143.1 | 3,667,746 / 743,667 | 432 warm 503s; cold not reached |
+| celld `f2bf6486` | 1,008.373 | 117.8 | 2,714,671 / 1,482,817 | Owner self-fences; all warm requests fail transport; cold not reached |
+
+The candidate completes fewer commands than main at this overloaded point;
+its lower all-attempt p99 includes fast failures and cannot establish a latency
+or capacity win. Main coalesces 4.856 materialized commands/selected root,
+versus the candidate's 2.080. These observations do not isolate a causal change,
+but they require preserving coalescing and retained-memory headroom when making
+the follower proof path faster. Main also fails the debt-age trend despite
+remaining in active Fleet throughout its window.
+
+The frozen candidate's 15,000 offered Fleet writes/s diagnostic completed
+295.263 commands/s inside its 300-second window. It had 3,667,746 request
+errors, 743,667 dropped offers and scheduled all-attempt p99 of 143.1 ms.
+Its 104,442 actual seed/warmup/window/trailing ACKs reconcile with the journals,
+but warm audit returned 432 HTTP 503 errors. Cold restore was not reached;
+the case is failed, not a data-loss or durability success claim.
+
+Follower proofs advanced while sampled object coverage fell 50,548 sequences
+behind. Tail debt grew by 361,853 bytes/s and oldest age by 837.56 ms/s.
+Window PUT cost of 1.750/command excludes its substantial unpublished suffix
+and trailing work; it cannot be credited as an improvement. Dirty admission
+averaged 348 ms and publication 3,968 ms, while capture averaged 1.282 ms.
+These are overlapping waits/populations, not additive CPU service times.
+The final sample had 997 active Cells and 54.79 MiB of the 64-MiB retained
+budget charged. The audit records status but not the underlying source error,
+so pressure eviction, pending logical proof and unfinished accepted work remain
+diagnostic possibilities rather than an established cause.
+
+The two followers' window mean durable append times were 16.61 / 17.21 ms
+per append operation; native worker time was 16.30 / 16.87 ms and worker queue
+wait 0.158 / 0.185 ms. Their data-sync means were only 0.0010 / 0.0021 ms
+on tmpfs. These populations are batched append operations, not commands.
+This profile does not identify filesystem sync as the dominant wait and cannot
+answer physical-storage fsync versus RocksDB performance. Preserve the native
+barrier; profile the remaining worker work in a separate diagnostic run.
+The native append path calls `prune_covered`, which scans and hashes current
+open-chunk records before appending and can rewrite/reconcile after coverage
+advances. This is a concrete source of additional work, not a measured fraction
+of the 16–17-ms worker time. Measure scan bytes, record count and rewrite time
+before changing it; current-disk corruption and uncovered-witness checks cannot
+be replaced by an unchecked cached watermark.
+
+The matched celld Fleet target completed 1,008.373 commands/s before delivery
+failure. Its owner evicted a gray follower, temporarily fell back to bucket,
+then self-fenced after an ambiguous lease renewal and exited with code 3.
+All 440,676 warm audit requests failed transport; cold restore was not reached.
+Neither target point qualifies capacity or the reported laptop's bounded-KV
+result. Failed cases and exact binaries remain retained outside Git.
+
+The matched bucket target offered 2,000 writes/s under the same resources:
+
+| System | Window commands/s | Scheduled all-attempt p99, ms | Request errors / dropped offers | ACK audit outcome |
+| --- | ---: | ---: | --- | --- |
+| Main `831877cf` | 182.913 | 7,900.9 | 0 / 544,870 | All 61,988 ACKs pass warm/cold GET and retry; 6.01-s drain |
+| Candidate `a3787a8d` | 172.283 | 6,632.2 | 0 / 548,059 | All 59,526 ACKs pass warm/cold GET and retry; 7.43-s drain |
+| celld `f2bf6486` | 756.387 | 813.5 | 0 / 372,827 | All 260,506 warm checks pass; cold has 137 HTTP 500 errors |
+
+All measured offers were generated, but every arm dropped requests in both
+warmup and measurement. Candidate PUT cost was 3.823/command versus main's
+4.220, with 1.026 versus 1.045 materialized commands/root. Candidate publication
+age grew 17.37 ms/s and retained-capture debt grew 464.38 bytes/s; main also
+fails age growth. The lower window PUT ratio does not qualify M2 or stable
+capacity. Celld's provider remains healthy through cold and final snapshots;
+the 137 cold errors' source is unresolved. They cannot be attributed to the
+historical provider OOM or labeled acknowledged-state loss without further
+evidence. All six target cases remain in the matched comparisons.
+
+## Qualification decision
+
+This delivers the quantified gap report permitted by M5. It does not qualify
+rollout or complete M0–M5. Each target has only one matched pair; three
+repetitions at 100/s are diagnostic points rather than a capacity search.
+
+| Gate | Current result |
+| --- | --- |
+| Contributor checks, native lifecycle and bounded protocol models | Pass within their documented scope |
+| Latest three Fleet 100/s delivery/latency and every warm/cold ACK retry | Pass; candidate remains slower than celld in each p99 comparison |
+| Three stable Fleet windows and M2's 0.25 PUT/command budget | Fail: two candidate debt trends grow; cost 5.229–5.433 |
+| 15K Fleet and 2K bucket absolute targets | Fail in every arm; candidate also completes fewer overloaded commands than main |
+| M3's 0.05 fresh enrollment GET budget | Within budget at the three 100/s points; full qualification remains unverified |
+| M4's production proof, atomic fault matrix and 0.05 total PUT budget | Unimplemented; abstract models do not enable ACKs or GC |
+| Read-only/mixed capacity and 1% hot-Cell guardrails | Unverified in Docker; two native routing p99 ratios exceed 1.2 |
+| A/A capacity variance and relative parity | Unverified; overloaded completions cannot supply the reference |
+| Qualified overload, safe refusal before SQL and immediate recovery | Unverified; the historical step-down failed latency |
+| Bounded KV and persistent-device failure profile | Unverified; SQL-ledger/tmpfs results do not establish these |
+
+## Earlier corrected shared/grant measurement
 
 Candidate `d351d886` and main `831877cf` use separate source-content-isolated
 release builds, with no measurement overlay. Celld is pinned to v0.6.1
 `f2bf6486`. Clients, ACK auditors and provider images are byte-identical across
 the arms. The current profile is the SQL ledger workload below on one shared
 8-CPU/16-GiB VM, with tmpfs node state and fresh RustFS volumes.
+
+Healthy celld shipping waits for every selected follower; the fixture checks
+initial enrollment of both followers. Celld can reconfigure down to one follower,
+while this Cellule configuration retains two required members. Fault/availability
+qualification must align that policy separately. Celld's publication-debt age
+and structured window membership are unavailable in the current fixture.
 
 Three paired repetitions offered 100 writes/s for 300 seconds after 30 seconds
 warmup, alternating system order. All original node containers were removed
@@ -161,31 +310,10 @@ Candidate PUTs/command were 5.4842 / 5.3301 / 5.3969 and summed fresh enrollment
 GETs/command were 0.0138 / 0.0141 / 0.0138. Candidate tail-debt slopes were
 +98.53 / +1,588.95 / +12.54 bytes/s; all remain failures. Celld debt age is not
 exposed by this fixture, so its stability is unavailable rather than passing.
-The first candidate window supplies the phase and cohort details below.
-
-| Candidate window/audit | Measured value |
-| --- | ---: |
-| Successful commands/s inside window | 100.000 |
-| Scheduled p50 / p95 / p99, ms | 5.5 / 7.9 / 15.6 |
-| Errors / dropped / unissued offers | 0 / 0 / 0 |
-| Warm and cold GET plus exact retry checks | 34,001 each; zero failures |
-| Original fleet drain | 5.305 s |
-| All provider PUT successes/command | 5.4842 |
-| All GET attempts/command, including ranges | 2.4048 |
-| Fresh enrollment GETs/command, owner + receivers | 0.0138 |
-| Shared cohorts / Cell submissions | 29,931 / 30,000 |
-| Shared pressure / large fallbacks | 0 / 0 |
-| Logical commands/selected Cell root | 1.0000 |
-| Final debt / oldest-age slope | +98.53 bytes/s / +0.152 ms/s |
-
-Fleet stayed active, unfenced and non-rotating throughout the sampled window;
-its follower proof frontier advanced in every repetition. Delivery, latency and
-all-ACK audits pass at these points. The strict publication stability gate fails,
-and PUT cost is
-well above M2's 0.25 budget. Near-singleton cohorts show why shared payloads
-alone cannot amortize sparse per-Cell authority work. The
-[bundle decision](bundle-coverage-proof.md) describes the remaining atomic
-authority/recovery changes and cost accounting.
+Fleet stayed active with advancing follower proofs in all three repetitions.
+The publication stability and 0.25-PUT M2 budget still fail. These earlier
+histograms include singleton shared uploads; their timings cannot be compared
+with the latest multi-row-only histogram.
 
 Reports require Fleet activity and proof advancement independently of debt.
 An inactive fallback run cannot qualify Fleet even if it has zero enrollment
@@ -193,323 +321,49 @@ GETs or no remaining follower debt. Window cost subtracts cumulative counters
 and raw histogram buckets; decreasing summary percentiles/means are not
 monotonic counters. Reporter source hashes accompany reevaluated evidence.
 
-## Historical packed-implementation evidence
+## Historical results retained
 
-The fixture is **SQL application parity**, not the user's bounded KV workload:
-1,000 Cells, 96-byte values, INSERT plus in-command SELECT, and a two-hour
-durable request/result ledger in both applications. Nodes have 8-CPU/16-GiB
-ceilings and tmpfs state, RustFS has 2 CPUs/2 GiB, and the client has 4 CPUs/4 GiB
-on one 8-CPU/16-GiB Linux VM. Summed CPU ceilings exceed VM capacity. This
-profile qualifies neither device persistence nor independent-node isolation.
+Earlier builds and clients remain separate evidence. They are not pooled with
+`a3787a8d` or used as qualified capacity. The matched profile is the SQL ledger,
+not bounded KV; tmpfs and the shared VM do not establish device persistence or
+independent-node isolation.
 
-The earlier baseline is `18eff0f7af47fac09b993157bb444e582072d7cf`, which merged PR 65.
-Its production source matches the audited `397f500a` foundation; three additional
-main files are design documents. The baseline explicitly overlays measurement
-hooks. Celld is v0.6.1, `f2bf648663a610eefde71f3547ad61e9b896b1f0`, using the
-pinned container digest. Both framework arms use byte-identical clients/auditors.
+| Earlier profile | Main | Packed candidate | celld | Result |
+| --- | --- | --- | --- | --- |
+| Fleet, 100 offered/s | 99.993/s; p99 868.1 ms | 99.990/s; p99 386.5 ms | 100.000/s; p99 44.3 ms | All 34,001 ACKs/arm pass warm/cold GET and retry; both Cellule debt trends fail |
+| Fleet, 15K offered/s | 121.84/s; provider-exhausted case excluded from attribution | 476.80/s; p99 3,224.5 ms | 627.14/s; p99 7,071.1 ms | All fail delivery; candidate audits 190,175 ACKs; celld self-fences before warm audit |
+| Bucket, 2K offered/s, fresh provider | 104.710/s; p99 above 10,000-ms histogram bound | Final `19927d16`: 163.033/s; p99 8,906.2 ms | 905.077/s; p99 1,075.3 ms | All fail delivery; main/candidate cold audits pass, celld provider OOM during cold audit |
+| Read-only, 10K offered/s, older client | 9,893.81/s; p99 11.1 ms | 9,934.98/s; p99 8.2 ms | 9,321.13/s; p99 73.4 ms | All drop offers; 4 / 10 / 4 final offers unissued; all 1,001 seed ACKs/arm pass warm/cold audit |
 
-Each arm offered 100 Fleet writes/s for 300 seconds after 30 seconds warmup,
-serially with a fresh provider volume. These are individual points, not a
-capacity search or three-repetition qualification.
+The first Fleet point reduced candidate PUT cost from 6.688 to 4.992/command,
+but candidate p99 remained 8.72 times celld's and its debt grew. The earlier
+`a1be4caa` bucket candidate completed 192.243/s at p99 8,491.8 ms, versus final
+`19927d16` at 163.033/s. The revision changed: this is not an A/A pair. Both
+candidate bucket samples had positive publication-age trends. Final PUT cost
+was 4.186/command and logical commits/selected root 1.045, preserving the
+sparse per-Cell cost/latency gap.
 
-| Window or audit | Latest main + telemetry | Packed candidate | celld |
-| --- | ---: | ---: | ---: |
-| Successful commands/s inside window | 99.993 | 99.990 | 100.000 |
-| Scheduled p50 / p95 / p99, ms | 66.8 / 265.3 / 868.1 | 24.0 / 200.1 / 386.5 | 5.6 / 11.8 / 44.3 |
-| Errors / dropped offers | 0 / 0 | 0 / 0 | 0 / 0 |
-| Commands checked by GET and exact retry, warm and cold | 34,001 each | 34,001 each | 34,001 each |
-| Original fleet drain, seconds | 7.737 | 10.918 | 11.742 |
-| All successful storage API PUTs/command | 6.688 | 4.992 | Not instrumented |
-| All GET attempts/command, including ranges | 3.327 | 4.059 | Not instrumented |
-| Fresh enrollment GETs/command, owner + receivers | 1.256 | 2.347 | Different authorization protocol |
-| Logical commits per selected command root | 1.000 | 1.000 | Not instrumented |
-| Final debt slope, bytes/s | +2,455.9 | +2,386.2 | Not instrumented |
-| Final oldest-publication age slope, ms/s | +3.711 | +4.435 | Not instrumented |
-| 50-ms delivery latency gate | Fail | Fail | Pass at this point |
+The old candidate's immediate Fleet step-down offered 150/s for 60 seconds
+then 50/s for 30 seconds. It had zero delivery errors/drops but p99 remained
+471.6 / 495.0 ms. The 100/s nominal reference was not qualified capacity;
+this is a failed latency-recovery diagnostic, not the required overload gate.
 
-All original node containers were removed before bucket-only cold audits. This
-checks recovery after successful drain, not owner loss before materialization.
-The candidate lowered p99 by 55.5% and PUTs/command by 25.4% in this one pair,
-but its p99 remains **8.72 times celld's**. Both Cellule arms fail the proposal's
-publication stability gate. No sustainable-rate improvement is established.
+The provider-exhausted main attempt had only five free inodes despite 44 GiB
+free bytes. Its contribution to failures is unknown; initial bucket attempts
+produced no throughput sample. Later cases use fresh provider volumes plus
+byte/inode and cold-lifecycle checks. Celld's later bucket case passed all
+307,794 warm ACK/retry checks, then its 2-GiB provider was OOM-killed during cold
+audit. This is availability failure with cold durability unverified, not proof
+of acknowledged-state loss. All exclusions and failed journals remain retained.
 
-Compaction mean fell from 444.8 to 25.6 ms; publication mean from 1,288.7 to
-489.4 ms; Fleet proof wait mean from 88.0 to 52.0 ms. Capture remained about
-1.1 ms and tmpfs follower data sync about 0.0005–0.0007 ms. The faster candidate
-also performed more compactions and enrollment GETs. Reduced batching is a
-possible explanation for the enrollment increase; this run does not prove it.
-The provider reached its two-CPU ceiling. Publication amplification and fresh
-peer work remain priorities in this profile; device sync performance is untested.
-
-The measured one-command-per-root result cannot satisfy M2's authority-write
-budget by sharing data alone. With three per-Cell selection PUTs, the floor is
-three PUTs/command before shared data, node coverage or compaction. M3's measured
-2.347 enrollment GETs/command is 46.9 times its 0.05 budget. Meeting those gates
-requires the specified coalescing/proof/grant protocols and their failure tests.
-
-For the deterministic uniform schedule at 2,000 bucket writes/s, a Cell receives
-one command every 500 ms. Waiting for its next command would already exceed the
-200-ms bucket p99 target. The existing three-PUT per-Cell selection floor cannot
-reach the proposed 0.05 PUT/command budget through cross-Cell data bundling alone.
-This is a cost/latency bound under that schedule, not a measured capacity. M4
-needs a complete authority-pinned range proof before bucket responses can use
-shared coverage; an uploaded bundle or live node epoch alone cannot supply it.
-
-### Fleet target stress and immediate step-down
-
-The rebuilt driver offered 15,000 writes/s for 300 seconds after 30 seconds
-warmup. The candidate completed **476.80 writes/s inside the window**, with
-3,224.5-ms scheduled p99, 61 request errors and 4,356,649 measured queue drops.
-It generated every one of the 4.5 million scheduled offers. This is an overloaded
-completion rate, not qualified capacity. All 190,175 successful acknowledgements
-from setup, warmup, stress and both later phases passed warm and bucket-only cold
-GET/exact-retry audits. Original fleet drain took 24.615 seconds.
-
-The window selected 28,468 command roots covering 145,103 logical commits:
-5.097 commits/root. All provider PUT successes/acknowledged command fell to
-1.000; fresh owner/receiver enrollment GETs/command were 0.083. These are
-time-window ratios with maintenance included, not complete cohort accounting
-of trailing work. Neither M2's 0.25 nor M3's 0.05 budget passed.
-
-Publication mean was 4,046 ms and dirty admission mean 5,409 ms. Worker round
-trip averaged 9.28 ms and capture 0.65 ms. Follower worker calls averaged
-47.9–48.4 ms, while their data-sync barriers averaged 0.0011–0.0013 ms on tmpfs.
-The worker timing includes the native call; it does not identify its internal
-CPU or filesystem costs. At window end, oldest unpublished work was 224.7 seconds
-old and 76,435 node sequences awaited contiguous object coverage. The final
-three-minute debt slope was +19,406.5 bytes/s and age slope +903.4 ms/s.
-
-Immediately after stress the harness offered 150 writes/s for 60 seconds, then
-50 writes/s for 30 seconds, each without fresh warmup. Both had zero request
-errors, queue drops or unissued offers, but scheduled p99 remained 471.6 and
-495.0 ms. The 50/s phase failed latency recovery. The nominal reference of
-100 writes/s was not qualified capacity; this exercises the phase/audit path,
-not M5's required overload at 1.5 times a qualified reference.
-
-Celld's matching stress case failed through lease watchdog self-fencing:
-both followers and the owner exited with code 3, without container OOM.
-Its mixed healthy/failed window completed 627.14 writes/s with 7,071.1-ms p99,
-435 request errors and 4,311,172 drops. The service was unavailable for its warm
-audit of 337,803 acknowledgements; cold audit did not run. This establishes
-availability and qualification failure, **not acknowledged-state loss or a
-clean Fleet capacity comparison**. All failed journals, node logs and the
-provider volume remain in the external artifacts.
-
-Latest main's retained attempt completed 121.84 writes/s with 3,683,013 request
-errors and 780,436 queue drops, then zero successful step-down writes. Its
-54,771 warm checks failed and drain exceeded 120 seconds. **This attempt is
-excluded from framework performance attribution:** the shared provider ran out
-of inodes by the end of the case, and the original harness had no inode samples.
-The following bucket owner received S3 `InternalError: Disk full`; Linux reported
-only five free inodes despite 44 GiB of free bytes. Main's window recorded 205
-transient PUT outcomes, including seven node-authority writes. The exact timing
-and contribution of exhaustion are unknown. These failures cannot establish a
-candidate availability advantage or a clean three-arm stress comparison.
-The exclusion is retained in the machine-readable evidence, rather than deleting
-the failed attempt.
-
-The first candidate and celld bucket attempts produced no throughput sample:
-the former failed startup against the exhausted provider, and the latter could
-not restart its control container. The dedicated Docker disk was expanded from
-80 to 200 GiB without changing CPU/memory ceilings or tmpfs node state. The
-runner now checks byte and inode headroom before, during and after each case;
-missing or exhausted required observations fail qualification. One diagnostic
-volume was archived with a SHA-256 manifest; other retained volumes remain.
-
-New artifact identities are `implementation-m1-bounded-audit` and
-`implementation-main-bounded-audit`. Their SQL binary hashes remain identical
-to the respective earlier builds; both use client `417f07b0424d` and auditor
-`6595c24b0be2`. Fixture, runner and Docker host identities are recorded and must
-match. Do not combine these results with the older client's paired point.
-
-### Fresh bucket target after storage reset
-
-With the drain-fixed candidate and monitored provider headroom, 2,000 offered
-bucket writes/s for 300 seconds yielded 192.243 successful commands/s, zero
-HTTP errors, 542,069 measured drops and 51,687 warmup drops. All 600,000
-measured offers were generated; scheduled p50/p95/p99 were 819.1/4,559.0/8,491.8
-ms. All 67,245 acknowledged commands passed warm and cold GET/exact-retry audits,
-and original owner drain took 3.955 seconds. These overloaded completions do
-not qualify sustainable capacity.
-
-All provider PUT successes/command were 4.241 and GET attempts/command 1.291;
-the window materialized 1.038 commands per selected root. Worker round trip
-averaged 1.539 ms and capture 0.535 ms, versus 460.5-ms publication and 648.1-ms
-object-response wait. The 1,823 compaction observations averaged 5,707.4 ms.
-These intervals overlap and must not be added into a latency breakdown.
-Node-log debt was zero in bucket mode, but oldest-publication age had a positive
-51.8-ms/s final trend. All 69 provider filesystem observations passed; minimum
-free space was 166.3 GB and minimum free inodes 7,573,521. The earlier disk-full
-failure is not an explanation for this target miss.
-
-Celld's matching window completed 905.077 writes/s with 1,075.3-ms scheduled
-p99, three request errors, 328,218 measured drops and 24,986 warmup drops. All
-600,000 offers were generated, and its warm audit passed all 307,794 acknowledged
-commands and exact retries. At this overloaded point the candidate completed
-21.24% of celld's rate, with 7.90 times its scheduled p99. These are point ratios,
-not qualified-capacity ratios. Original owner drain took 9.761 seconds. During
-cold audit the 2-GiB provider was OOM-killed at 05:27:57 UTC; the cold owner
-then self-fenced after lease renewal failed. Only nine exact cold retries
-completed. This is a provider availability failure: acknowledged-state loss is
-unproven, and celld's cold durability is unverified in this case. Provider state
-and the explicit cold-audit exclusion are retained in the report.
-
-Latest main's fresh matching window completed 104.710 writes/s, with zero HTTP
-errors, 568,331 measured drops and 57,138 warmup drops. Scheduled p50/p95 were
-1,367.0/7,131.3 ms; p99 exceeded the 10,000-ms histogram bound (954 overflow
-samples), so no exact p99 or percentile ratio is reported. All 35,532 ACKs
-passed warm and cold GET/exact-retry audits; original owner drain took 4.212
-seconds. All 70 filesystem observations passed, with at least 160.6 GB and
-6,564,266 inodes free.
-
-The final framework build `19927d16` repeated the same offered point with the
-same frozen runner, fixture, client, auditor and resources. It completed
-163.033 writes/s, with zero HTTP errors, 550,834 measured drops and 54,079 warmup
-drops; all 600,000 scheduled offers were generated. Scheduled p50/p95/p99 were
-1,014.5/5,513.4/8,906.2 ms. All **56,088 ACKs** passed warm and cold GET/exact-retry
-audits, and original owner drain took **9.656 seconds**. Cold startup took
-32.710 seconds. Provider headroom passed all 69 filesystem observations, with
-at least 158.2 GB and 6,136,282 inodes free. Oldest-publication age still grew
-55.5 ms/s over the final three minute segments, so stability failed.
-
-| Fresh bucket target point | Latest main | Final packed candidate | celld |
-| --- | ---: | ---: | ---: |
-| Successful writes/s inside window | 104.710 | 163.033 | 905.077 |
-| Scheduled p99, ms | >10,000 | 8,906.2 | 1,075.3 |
-| HTTP errors / measured drops | 0 / 568,331 | 0 / 550,834 | 3 / 328,218 |
-| Warm + cold ACKs checked by GET/exact retry | 35,532 each | 56,088 each | Warm 307,794; cold unavailable |
-| Original owner drain, seconds | 4.212 | 9.656 | 9.761 |
-| All successful storage API PUTs/command | 5.874 | 4.186 | Not instrumented |
-| GET attempts including ranges/command | 1.592 | 1.218 | Not instrumented |
-| Logical commands per selected root | 1.041 | 1.045 | Not instrumented |
-| Delivery qualification | Fail | Fail | Fail |
-
-The final overloaded candidate completed 55.7% more writes than retained main,
-with 28.7% fewer PUTs/command. It reached 18.01% of celld's measured rate and
-8.28 times its scheduled p99. Logical value throughput was 15,651 bytes/s;
-provider PUT bytes were 2.65 MB/s, including publication and coordination.
-These are different numerators, not user payload versus wire-equivalent rates.
-Its publication/object-response means were 536.7/766.4 ms; worker round trip
-and capture averaged 1.852/0.644 ms. Compaction averaged 6,427.3 ms over 1,501
-observations. These overlapping intervals are not additive CPU service costs.
-
-The earlier candidate completed 83.6% more writes than main, with 27.8% fewer
-PUTs/command and publication/object-response means of 460.5/648.1 ms. The final
-candidate's completion rate was 15.2% lower than that sample. This is not an A/A
-pair: the revision changed. Preserve both samples; three qualified A/A and
-paired repetitions remain missing. Main's final publication-age trend was
-negative; both candidate samples were positive. Neither the throughput ratios
-nor successful audits establish sustainable capacity, stability improvement,
-read guardrails or celld parity. The provider lifecycle checker now records
-cold/final state as well as byte/inode headroom; an OOM or missing required
-lifecycle observation fails future cases.
-
-The earlier immutable candidate is `a1be4caa`, artifact
-`implementation-m1-drain-fixed`, SQL hash `7c774549a8f6`. The final candidate is
-`19927d16`, artifact `implementation-m1-preserved-contract`, SQL hash
-`0560f70c65fc`. The baseline artifact is
-`implementation-main-drain-comparison`, SQL hash `85d30c0f93df`; client/auditor
-hashes remain `417f07b0424d`/`6595c24b0be2`. Comparisons use the new identical
-filesystem-monitoring runner `d70fad321f81`. Results from the former runner
-remain separate. The final comparison is indexed by
-`matched-verified-bucket-final-matrix.json` and
-`matched-verified-bucket-final-report.json` outside the repository.
-
-The new lifecycle runner separately completed a five-second, one-write/s
-diagnostic on the final binary: all 1,036 ACKs passed warm and cold GET/retry
-audits, with all five required lifecycle observations healthy. The target
-comparison deliberately retains its frozen runner; it does not acquire the
-new runner's lifecycle evidence retroactively. A diagnostic is not capacity
-qualification.
-
-### Read saturation evidence
-
-The same frozen clients offered 10,000 reads/s for five minutes after 30 seconds
-warmup, without writes beyond setup. Every arm passed warm and cold GET/retry
-audits of its 1,001 seed/contract mutations, with zero HTTP errors. Every arm
-failed delivery qualification through dropped offers. These completion rates
-are saturation observations, not qualified read capacities or M1's read guardrail.
-
-| Window | Latest main + telemetry | Packed candidate | celld |
-| --- | ---: | ---: | ---: |
-| Successful reads/s inside window | 9,893.81 | 9,934.98 | 9,321.13 |
-| Scheduled p50 / p95 / p99, ms | 1.6 / 2.9 / 11.1 | 1.6 / 2.8 / 8.2 | 2.1 / 26.6 / 73.4 |
-| Measured queue drops | 31,834 | 19,494 | 203,645 |
-| Warmup queue drops | 14,240 | 902 | 12,138 |
-| Unissued measured offers | 4 | 10 | 4 |
-| Original fleet drain, seconds | 24.235 | 23.321 | 10.491 |
-
-Inspection and regression tests reproduced why the producer omitted those final
-offers: its wall-clock stop could precede emission of an arrival already due
-inside the window. The new producer emits the full scheduled cohort and keeps
-lateness in the original arrival time. This fixes accounting; it cannot erase
-the real queue drops in these historical runs. Three tests failed against the
-old guard and passed after its removal. The updated client also accepts the
-explicit zero-warmup overload/recovery phases used by the runner.
-
-The new auditor reads JSONL through bounded queues and checks every original
-command, rather than retaining a multi-million-response vector. Collection
-rejects duplicate IDs, missing successful journal records and partial input.
-The runner verifies stream hashes before and after both audits and records its
-loaded source and Docker host limits. New comparisons require matching fixture,
-runner, host and client identities; older cases remain marked as lacking that
-complete provenance. Rebuild both arms before comparing the revised driver;
-historical and new clients are not interchangeable.
-
-| Frozen artifact | Run/build identity | SQL binary SHA-256 prefix |
-| --- | --- | --- |
-| Latest main + measurement overlay | `implementation-main-logical-metrics` | `85d30c0f93df` |
-| Candidate | `implementation-m1-one-fetch` | `ff4c6ede25f4` |
-| celld | v0.6.1 container digest pinned in `build.json` | Container digest |
-
-The client and auditor hashes are respectively `cc1d47522078` and
-`35368139e4c5` for both builds. Full digests and every exported source hash live
-in the retained manifests. All candidate production bytes match PR 66's
-`a1c48fcd`; the final test expectation and documentation were edited after the
-binary export. A Git base revision alone does not identify an overlaid build.
-
-The initial isolated all-feature workspace suite passed **1,839 tests** with **38 ignored**
-environment-dependent tests. Clippy and API documentation passed with warnings
-denied; format, boundaries, layout, Rust fences, links and SQL/peer contract
-checks passed. The first compaction run exposed an old range-GET expectation;
-the corrected test now requires zero range GETs and two complete pack GETs.
-That failure remains in the external evidence.
-The revised client/auditor passed 18 targeted Rust tests and warnings-denied
-Clippy; local LTX without replica features passed 58 tests including its doctest.
-The Python comparison, report, collector and provider checks passed 28 tests
-with warnings treated as errors. These checks do not substitute for live overload, fault or
-capacity qualification.
-
-The native fleet process suite exposed an empty-epoch shutdown loop after a
-local owner fence. A regression test failed before the fix; the existing
-fenced-owner evacuation test stalled at canonical shutdown. Empty coverage
-queues now perform no new writer CAS, while pending tickets still reject
-fencing and contiguous rotation/member/authority checks remain required. The
-original process case passed in 1.30 seconds after the fix, and all 14 runtime
-durability tests passed. The complete isolated fleet process suite then passed
-all **382 tests** in 589.07 seconds. The full workspace suite, all-target/all-feature
-check, warnings-denied Clippy/API documentation, format, architecture/layout,
-document and SQL/peer gates passed again after the fix. Process tests are counted
-separately from workspace tests.
-
-Final framework revision `19927d16` passed **1,843 workspace tests**, with
-**38 ignored**, and all **382 fleet process tests** in 602.78 seconds. Its
-all-target/all-feature check, Rust 1.99 warnings-denied Clippy, and API docs
-passed; local LTX without replica features passed **58 tests** including its
-doctest. All 1,240 Rust/Cargo source files in the isolated verification snapshot
-match the checkout. The Linux SQL binary is `0560f70c65fc`; the client and
-auditor remain `417f07b0424d` and `6595c24b0be2`.
-
-The recovery fault fixture now accepts only the original typed `Fenced` error
-from the deliberately fenced source, retaining the `Draining` state and every
-zero-resource-ledger assertion. Healthy receivers must still stop successfully.
-A new deterministic case shuts down that source before receiver takeover,
-checks that the selected authority record is unchanged, then verifies exact
-reconstruction and the stored retry result. Production shutdown preserves
-authority-release failures; closing local handles grants no successful release.
-Three publication assertions also cover lease expiry, node fencing, and live
-release. The failed contract-changing cleanup experiment and its test failures
-remain outside Git as excluded evidence; that behavior was reverted.
+The producer's final-offer omission was reproduced and fixed; historical drops
+and unissued requests remain failures. Bounded JSONL ACK collection now checks
+every original retry, stream integrity and complete counts. The empty-epoch
+shutdown loop was also reproduced and fixed without weakening pending-ticket
+fencing. A cleanup experiment that weakened release contracts was reverted;
+its failures remain excluded evidence. The final packed build passed 1,843
+workspace tests (38 ignored), 58 local LTX tests and 382 native lifecycle tests.
+Current verification and source identities appear above.
 
 ## Reproduce and inspect
 
@@ -520,9 +374,10 @@ and generated `report.json`. Content-based cache namespaces and persisted-root
 checks prevent stale codec reuse. Source contains reusable drivers and compact
 conclusions; caches, volumes, journals, metric windows, binaries and logs stay
 outside Git. Each retained provider volume has `store-data/volume.json`.
-The external `delivery-evidence-index.json` hashes the final comparison, build,
-case, runner, ACK stream, format smoke and verification manifest. The latter
-pins the 1,240 Rust/Cargo sources and all final check logs. Failed and excluded
+The external `singleton-r4-evidence-index.json` hashes the latest comparisons,
+builds, case reports, loaded runners, ACK manifests and verification results.
+`singleton-r4-qualification-status.json` records each passed, failed or unverified
+gate. The production verification manifest pins all 1,248 Rust/Cargo sources. Failed and excluded
 attempts retain their own scope; they are not overwritten by passing reruns.
 
 `scripts/perf/compare.py` accepts an external JSON matrix containing `baseline`,
