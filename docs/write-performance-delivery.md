@@ -86,7 +86,7 @@ Reports now require healthy Fleet frontiers throughout the window and actual
 follower-proof advancement, separately from publication debt stability.
 
 CI's four paired routing repetitions found 14–23% lower command throughput in
-the first implementation; query rates stayed within approximately 4% of
+the first implementation; steady query rates stayed within approximately 4% of
 baseline. Shared upload created an additional synced temporary file. Its writer
 now closes before the exact length/digest-verified object upload, without a
 local durability barrier for that disposable source. Native captures and

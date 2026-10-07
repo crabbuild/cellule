@@ -112,6 +112,7 @@ def compare(matrix):
                 'delivery_latency_audit_pass': all(point['delivery_latency_audit_pass'] for point in samples),
                 'failures': [point['failures'] for point in samples],
                 'publication_stability': [point['publication_stability'] for point in samples],
+                'fleet_mode': [point.get('fleet_mode') for point in samples],
                 'provider_cost': [point['window_cost'] for point in samples],
             }
         comparisons.append({'offered_writes_per_second': key[0],
