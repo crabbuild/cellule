@@ -15,6 +15,31 @@ RUNNER_BYTES = Path(__file__).read_bytes()
 RUNNER_SHA256 = hashlib.sha256(RUNNER_BYTES).hexdigest()
 CREDS = ['-e', 'AWS_ACCESS_KEY_ID=benchmark_access', '-e', 'AWS_SECRET_ACCESS_KEY=benchmark_secret_private', '-e', 'AWS_DEFAULT_REGION=us-east-1']
 
+def parse_provider_filesystem(output):
+    """The Linux volume and its inode budget are shared by retained cases."""
+    lines = output.strip().splitlines()
+    if len(lines) != 4:
+        raise ValueError('provider df evidence has an unexpected shape')
+    result = {}
+    for label, line in zip(('blocks', 'inodes'), (lines[1], lines[3])):
+        fields = line.split()
+        if len(fields) != 6 or fields[-1] != '/data':
+            raise ValueError('provider df evidence has an unexpected mount')
+        total, used, free = map(int, fields[1:4])
+        if total <= 0 or min(used, free) < 0 or used + free > total:
+            raise ValueError('provider df evidence has invalid counts')
+        result[label] = {'device': fields[0], 'total': total, 'used': used, 'free': free}
+    if result['blocks']['device'] != result['inodes']['device']:
+        raise ValueError('provider df device changed')
+    result['free_bytes'] = result['blocks']['free'] * 1024
+    result['measurement_usable'] = result['free_bytes'] >= 2 * 1024 ** 3 and result['inodes']['free'] >= 200000
+    result['startup_usable'] = result['free_bytes'] >= 10 * 1024 ** 3 and result['inodes']['free'] >= 1000000
+    return result
+
+def provider_filesystem():
+    result = parse_provider_filesystem(docker('exec', STORE, 'sh', '-c', 'df -Pk /data && df -Pi /data').stdout)
+    return dict(result, timestamp=time.time())
+
 def docker(*args, check=True, timeout=700):
     p = subprocess.run(DOCKER + list(map(str, args)), capture_output=True, text=True, timeout=timeout)
     if check and p.returncode:
@@ -116,6 +141,10 @@ def snapshot(directory, label, names):
         if state['OOMKilled'] or not state['Running']:
             failures.append(f'{name}: {state}')
     put(directory / f'{label}-resources.json', data)
+    filesystem = provider_filesystem()
+    put(directory / f'{label}-provider-filesystem.json', filesystem)
+    if not filesystem['measurement_usable']:
+        failures.append('provider byte or inode capacity exhausted')
     if failures:
         raise RuntimeError('infrastructure failed: ' + '; '.join(failures))
 
@@ -128,7 +157,11 @@ def sampler(directory, stop):
                 f.write(json.dumps({'timestamp': time.time(), 'error': str(error)}) + '\n')
                 f.flush()
                 continue
-            f.write(json.dumps({'timestamp': time.time(), 'stats': [json.loads(x) for x in p.stdout.splitlines() if x]}) + '\n')
+            try:
+                filesystem = provider_filesystem()
+            except Exception as error:
+                filesystem = {'error': str(error), 'measurement_usable': False}
+            f.write(json.dumps({'timestamp': time.time(), 'provider_filesystem': filesystem, 'stats': [json.loads(x) for x in p.stdout.splitlines() if x]}) + '\n')
             f.flush()
             stop.wait(3)
 
@@ -232,7 +265,7 @@ def run_case(system, durability):
     directory.mkdir(exist_ok=False)
     (directory / 'runner.py').write_bytes(RUNNER_BYTES)
     prefix = label + '-' + uuid.uuid4().hex[:12]
-    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
+    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
     names = []
     stop = threading.Event()
     sampling = None
@@ -240,6 +273,10 @@ def run_case(system, durability):
     try:
         docker('restart', CONTROL)
         start_provider(directory / 'store-data')
+        filesystem = provider_filesystem()
+        put(directory / 'startup-provider-filesystem.json', filesystem)
+        if not filesystem['startup_usable']:
+            raise RuntimeError('provider lacks 10 GiB free bytes or one million free inodes; preserve old volumes before retrying')
         create_bucket()
         for attempt in range(60):
             try:

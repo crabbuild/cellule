@@ -7,6 +7,24 @@ from pathlib import Path
 def read(path):
     return json.loads(path.read_text())
 
+def provider_health(directory):
+    paths = [directory / f'{label}-provider-filesystem.json' for label in ('startup', 'before', 'after')]
+    if any(not path.exists() for path in paths):
+        return {'available': False, 'pass': False, 'reason': 'provider byte/inode observations missing'}
+    samples = [read(path) for path in paths]
+    journal = directory / 'docker-stats.jsonl'
+    if not journal.exists():
+        return {'available': False, 'pass': False, 'reason': 'provider sampling journal missing'}
+    with journal.open() as stream:
+        for line in stream:
+            samples.append(json.loads(line).get('provider_filesystem', {'error': 'missing filesystem sample'}))
+    valid = all(sample.get('measurement_usable') is True for sample in samples)
+    valid = valid and samples[0].get('startup_usable') is True
+    return {'available': True, 'pass': valid, 'sample_count': len(samples),
+            'minimum_free_bytes': min((sample.get('free_bytes', 0) for sample in samples)),
+            'minimum_free_inodes': min((sample.get('inodes', {}).get('free', 0) for sample in samples)),
+            'reason': None if valid else 'provider capacity or filesystem evidence failed'}
+
 def expected_acknowledgements(case, summary):
     phases = list(summary.get('writes', []))
     phases.extend(summary.get('overload', {}).get(name) for name in ('overload', 'recovery'))
@@ -192,6 +210,9 @@ def stability_report(directory):
 def case_report(directory):
     case, summary = (read(directory / 'case.json'), read(directory / 'summary.json'))
     failures = []
+    health = provider_health(directory)
+    if case.get('provider_filesystem_required') and not health['pass']:
+        failures.append('provider byte/inode health failed: ' + str(health['reason']))
     exclusions = directory / 'qualification-exclusions.json'
     if exclusions.exists():
         failures.append('explicit evidence exclusion: ' + json.dumps(read(exclusions), sort_keys=True))
@@ -237,7 +258,7 @@ def case_report(directory):
     overload = summary.get('overload', {})
     recovery = overload.get('recovery')
     recovery_failures = (delivery_failures(recovery, case['durability']) if recovery else ['recovery phase missing']) + failures
-    return {'schema_version': 1, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'expected_acknowledged_rows': expected_acks, 'acknowledgement_count_reconciled': expected_acks is not None and summary.get('acknowledged_rows') == expected_acks, 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
+    return {'schema_version': 1, 'provider_health': health, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'expected_acknowledged_rows': expected_acks, 'acknowledgement_count_reconciled': expected_acks is not None and summary.get('acknowledged_rows') == expected_acks, 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)

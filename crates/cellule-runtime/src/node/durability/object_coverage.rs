@@ -37,6 +37,13 @@ impl ObjectCoverage {
         lease: &NodeLeaseGuard,
         tickets: &[CommitTicket],
     ) -> Result<()> {
+        // Drain may close an already-covered epoch after its local lease has
+        // fenced. An empty queue requires no new coverage CAS or proof. A late
+        // staged ticket still blocks begin_rotation's contiguous-coverage check;
+        // native member retirement and the fresh authority close remain required.
+        if tickets.is_empty() && self.pending()?.is_empty() {
+            return Ok(());
+        }
         let _flushing = tokio::select! {
             guard = self.flushing.lock() => guard,
             () = lease.wait_fenced() => return Err(Error::Fenced),

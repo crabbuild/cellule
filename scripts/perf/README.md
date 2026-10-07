@@ -20,6 +20,12 @@ data on the Linux filesystem, retained for investigation. Its name is recorded
 in `store-data/volume.json`; it is never a host filesystem bind mount. The build records every exported source digest, the
 adapted fixture source, immutable binary hashes and pinned image digests.
 Never reuse an artifact directory for a new build.
+Retained volumes share the Docker filesystem's byte and inode budgets. Startup
+requires at least 10 GiB and one million free inodes. The runner records provider
+filesystem counts before, during and after each case; falling below 2 GiB or
+200,000 free inodes invalidates measurement. Archive and hash old test volumes
+before removing their exact containers/volumes, or expand the dedicated test
+disk. A fresh volume alone does not reset the shared filesystem's capacity.
 Build caches are partitioned by every adapted source digest and the compiler
 image. Before measurement, the runner reads a persisted root from the provider
 and checks its codec version against the exported source; the small-root

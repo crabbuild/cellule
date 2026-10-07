@@ -1763,6 +1763,12 @@ sequenceDiagram
 An optional successor hint may prefetch the authenticated root directory and hot
 pages, but it grants no authority.
 
+An empty object-coverage queue needs no new coverage CAS, including after a
+local lease fence. This no-op grants no proof: contiguous coverage, exact
+member retirement, and the current authority close are still required. Pending
+tickets continue to require the original live lease and remain retained after
+fencing.
+
 Clean node shutdown is broader:
 
 1. Withdraw public admission and mark the session draining

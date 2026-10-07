@@ -11,6 +11,24 @@ SPEC.loader.exec_module(REPORT)
 
 
 class DeliveryGateTests(unittest.TestCase):
+    def test_provider_health_preserves_failed_and_missing_inode_samples(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.assertFalse(REPORT.provider_health(directory)['pass'])
+            sample = {'measurement_usable': True, 'startup_usable': True,
+                      'free_bytes': 100 * 1024**3, 'inodes': {'free': 7000000}}
+            for label in ('startup', 'before', 'after'):
+                (directory / f'{label}-provider-filesystem.json').write_text(json.dumps(sample))
+            journal = directory / 'docker-stats.jsonl'
+            journal.write_text(json.dumps({'provider_filesystem': sample}) + '\n')
+            self.assertTrue(REPORT.provider_health(directory)['pass'])
+            journal.write_text(json.dumps({'provider_filesystem': dict(sample, measurement_usable=False, inodes={'free': 5})}) + '\n')
+            result = REPORT.provider_health(directory)
+            self.assertFalse(result['pass'])
+            self.assertEqual(result['minimum_free_inodes'], 5)
+            journal.write_text('{}\n')
+            self.assertFalse(REPORT.provider_health(directory)['pass'])
+
     def test_all_ack_count_includes_warmup_late_overload_and_recovery_successes(self):
         def phase(steady, warm, errors):
             return {'writes': {'successes_including_drain': steady,
