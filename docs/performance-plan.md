@@ -5,6 +5,10 @@ records and the current implementation section distinguish code inspection,
 local characterization, and capacity qualification. Every change preserves
 durability, fencing, and exact recovery.
 
+The [write performance proposal and delivery plan](write-performance-proposal.md)
+defines the next implementation milestones, proof-model decisions, operation
+budgets, qualification procedure, and rollout deliverables.
+
 Re-audit note: review the retained measurement records under
 `crates/cellule-axum/performance/` before starting any row below. Two changes in
 the same area are already measured — captured-delta coalescing
@@ -249,8 +253,8 @@ The next architecture work must reduce publication amplification rather than
 raise concurrency alone:
 
 1. Pack small root dependencies to reduce body/index/directory/lineage object
-   operations. Introduce a versioned representation with legacy readers,
-   explicit bounds, and full producer, restore, sparse-read, compaction, and
+   operations. Update the one development representation atomically with
+   explicit bounds and full producer, restore, sparse-read, compaction, and
    retention coverage. Preserve exact authority selection and uncertain-CAS
    reconciliation. Measure object operations per acknowledged write and
    dirty-admission delay, as well as TPS.
@@ -271,7 +275,7 @@ report startup, compaction, and drain work separately.
 
 | Proposal | Initial operation budget | Evidence before adoption |
 | --- | --- | --- |
-| Packed small roots | At most four successful provider PUTs per selected root for the small-value workload, including lineage and control | Legacy and new representations restore identically; ambiguous publication and collection remain safe |
+| Packed small roots | At most four successful provider PUTs per selected root for the small-value workload, including lineage and control | All producers and consumers change atomically under the development format policy; ambiguous publication and collection remain safe |
 | Node-wide tiering | At most 0.25 publication PUTs per acknowledged Fleet command under sustained backlog, including each Cell's selection work | Partial selection cannot advance coverage past an uncovered Cell; bounded retention and complete drain pass |
 | Epoch-bound peer authorization | At most 0.05 fresh enrollment GETs per acknowledged Fleet command, summed over owner and followers | Seal, retire, restart, and expiry races cannot release a new stale-owner proof |
 
