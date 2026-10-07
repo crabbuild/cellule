@@ -33,7 +33,7 @@ fn observation() -> FleetObservation {
             free_memory_bytes: 1000,
             free_disk_bytes: 1000,
             job_credits: 2,
-            log_protocol: 1,
+            log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
             ..NodeCapacity::default()
         },
     )

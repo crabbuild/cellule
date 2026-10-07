@@ -47,7 +47,7 @@ pub(super) fn advertisement(id: u8, code: Digest, now: i64) -> NodeAdvertisement
             follower_free_bytes: 1 << 30,
             follower_retained_bytes: 0,
             job_credits: 3,
-            log_protocol: 1,
+            log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
         },
     )
     .unwrap()

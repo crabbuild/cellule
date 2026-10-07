@@ -98,6 +98,15 @@ pub enum Resolution {
 }
 
 impl StoredOutcome {
+    fn compact_result(mut self) -> Self {
+        let result = match &mut self {
+            Self::Success { result, .. } | Self::Rejected { result, .. } => result,
+        };
+        // Handler Vec capacity is not a wire limit. Retained outcomes and
+        // their clones must fit the byte charge for their encoded length.
+        *result = std::mem::take(result).into_boxed_slice().into_vec();
+        self
+    }
     /// Returns the commit sequence the outcome was stored at.
     #[must_use]
     pub fn commit_sequence(&self) -> u64 {
@@ -238,6 +247,16 @@ impl PendingCommit {
     #[must_use]
     pub(crate) fn retained_bytes(&self) -> u64 {
         retained_bytes(&self.cuts)
+    }
+
+    pub(crate) fn retained_memory_bytes(&self) -> u64 {
+        self.cuts.retained_memory_bytes().saturating_add(
+            self.outcome
+                .result()
+                .len()
+                .saturating_add(std::mem::size_of::<Self>())
+                .saturating_mul(3) as u64,
+        )
     }
 }
 
@@ -1288,7 +1307,7 @@ impl CellExecutor {
                     }
                 };
                 let pending = PendingCommit {
-                    outcome,
+                    outcome: outcome.compact_result(),
                     logical_time_ms,
                     next_due_ms,
                     cuts,

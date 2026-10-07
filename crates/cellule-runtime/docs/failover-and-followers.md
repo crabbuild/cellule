@@ -765,6 +765,24 @@ durability ticket names the last node sequence in that command's consecutive
 frame range. A follower acknowledgement covers the whole contiguous range, not
 individual Cells.
 
+Native command groups use node-log protocol version **2**. A singleton keeps
+the byte-identical `CNL1` version-one envelope (240 bytes). A group uses envelope
+version two (248 bytes), appending `first_commit_sequence` after the body digest;
+the existing `commit_sequence` is the inclusive endpoint. Every checkpoint cut
+from that transaction carries the same range. The complete encoded frame digest
+and signed append bind both endpoints. Recovery accepts adjacent complete
+ranges and repeated ranges for checkpoint cuts, rejects gaps and overlaps, and
+rejects an authority base inside a physical command group.
+
+New nodes still read persisted version-one frames. They select followers that
+advertise `NODE_LOG_PROTOCOL_VERSION` (currently two); an older enrollment cannot
+join a new range-capable ensemble. Upgrade followers before enabling a new
+owner. Until enough compatible followers are enrolled, the ordinary exact
+object-root proof remains available. Drain an old ensemble before retiring its
+members; frame read compatibility does not authorize changing its selected set.
+Do not downgrade a node while it retains version-two frames. Tier or recover
+and retire those lanes with a compatible reader before rolling back.
+
 Before writing, a follower verifies:
 
 1. The mTLS peer and signed session identity match `leader_session`
@@ -1810,6 +1828,13 @@ application runtime is draining.
 
 Follower capacity is accounted separately from Cell residency. It covers
 fragment bytes, open leader lanes, recovery readers, and sync work.
+
+Owner admission also protects publication progress. With uncovered follower
+work, a mutation is refused before dispatch when retained RAM or local disk is
+at three quarters of its node budget. Accepted work retains its ordinary drain
+obligation, and reads remain eligible. The RAM ledger charges the shared capture
+indexes and retained outcome/descriptor metadata; complete LTX bodies remain
+charged to the local disk ledger and physical backlog high water.
 
 | Resource | Required bound |
 | --- | --- |

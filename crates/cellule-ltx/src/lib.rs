@@ -74,7 +74,10 @@ pub use paged_io::with_paged_io_deadline;
 #[cfg(feature = "replica")]
 mod writable_vfs;
 #[cfg(feature = "replica")]
-pub use node_frame::{NodeFrameScope, VerifiedNodeFrame, encode_node_frame, inspect_node_frame};
+pub use node_frame::{
+    MAX_NODE_FRAME_HEADER_BYTES, NodeFrameScope, VerifiedNodeFrame, encode_node_frame,
+    encode_node_frame_range, inspect_node_frame,
+};
 #[cfg(feature = "replica")]
 pub use replica::{
     CellPagedDatabase, CellReplica, CellWritableDatabase, PreparedRoot, PublicationCost,

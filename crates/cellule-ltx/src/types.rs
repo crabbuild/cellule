@@ -122,6 +122,8 @@ pub struct LocalSegment {
     info: SegmentInfo,
     #[cfg(feature = "replica")]
     captured_index: Option<bytes::Bytes>,
+    #[cfg(feature = "replica")]
+    captured_index_capacity: usize,
 }
 
 impl std::fmt::Debug for LocalSegment {
@@ -143,6 +145,8 @@ impl LocalSegment {
             info,
             #[cfg(feature = "replica")]
             captured_index: None,
+            #[cfg(feature = "replica")]
+            captured_index_capacity: 0,
         }
     }
     /// Returns the local path of the segment file.
@@ -158,6 +162,7 @@ impl LocalSegment {
 
     #[cfg(feature = "replica")]
     pub(crate) fn with_captured_index(mut self, index: Vec<u8>) -> Self {
+        self.captured_index_capacity = index.capacity();
         self.captured_index = Some(index.into());
         self
     }
@@ -177,6 +182,37 @@ pub struct CaptureBatch {
     pub position: Position,
     /// Bounded observations recorded while capturing.
     pub timing: CaptureTiming,
+}
+
+impl CaptureBatch {
+    /// Conservative RAM charge for a capture awaiting runtime publication.
+    ///
+    /// Bodies remain in local files and belong to the host's disk budget.
+    /// Encoder indexes share their allocation across clones. Charge each index
+    /// once and allow three copies of descriptor, path, and vector metadata for
+    /// the database retention list, executor, and publication task.
+    #[must_use]
+    pub fn retained_memory_bytes(&self) -> u64 {
+        let metadata = std::mem::size_of::<Self>()
+            .saturating_add(
+                self.segments
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<LocalSegment>()),
+            )
+            .saturating_mul(3);
+        self.segments
+            .iter()
+            .fold(metadata as u64, |bytes, segment| {
+                let paths = segment.path.capacity().saturating_mul(3);
+                #[cfg(feature = "replica")]
+                let index = segment.captured_index_capacity;
+                #[cfg(not(feature = "replica"))]
+                let index = 0;
+                bytes
+                    .saturating_add(paths as u64)
+                    .saturating_add(index as u64)
+            })
+    }
 }
 
 /// Bounded, in-memory observations for one capture operation.

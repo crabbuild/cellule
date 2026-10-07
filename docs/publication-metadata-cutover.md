@@ -1,5 +1,11 @@
 # Publication metadata cutover: plan
 
+Historical draft at `2d02d08`. Its successive alternatives and implementation
+recommendations are superseded by the
+[write performance proposal and delivery plan](write-performance-proposal.md).
+In particular, retain accumulating lineage until a complete replacement is
+specified and proven; do not implement the single-predecessor root rewrite below.
+
 Hard cutover, no compatibility shims. Goal: reduce objects uploaded per published
 root from 4–7 toward celld's 1, and re-measure the matched head-to-head in
 `docs/performance-audit-rustfs.md`.

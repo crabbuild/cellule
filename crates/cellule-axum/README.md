@@ -517,8 +517,12 @@ separate processes, pinned mTLS, signed directory enrollment, and fsynced
 Cellule commit frames unchanged. See the [node capacity runner](performance/node-capacity.md)
 for setup, proof-source checks, resource evidence, and remaining qualification
 requirements. HTTP endpoints and transport wiring remain application-owned.
-If the follow-up read fails after a command commits, the example retains the
-committed receipt in its published-failure response. Resolve the original
+The SQL example selects its response row inside the mutation batch and stores
+it in the durable command outcome. The reply uses that outcome's proof and
+receipt, eliminating a second actor dispatch and a follow-up query after commit.
+Retries return the same selected row. If decoding the row fails after a command
+commits, the example retains the committed receipt in its published-failure
+response. Resolve the original
 mutation before issuing a replacement.
 
 The [performance runner](../../scripts/bench-axum-rustfs.py) measures real

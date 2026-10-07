@@ -207,7 +207,7 @@ fn capacity(follower: Option<&cellule_runtime::follower::FollowerStore>) -> Node
         follower_free_bytes: follower.map_or(0, |store| store.available_bytes()),
         follower_retained_bytes: follower.map_or(0, |store| store.retained_bytes()),
         job_credits: 1,
-        log_protocol: 1,
+        log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
     }
 }
 

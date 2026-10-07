@@ -4,6 +4,237 @@ use super::*;
 use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn queued_fleet_groups_recover_and_backlog_refuses_before_sql() {
+    let fixture = fixture();
+    let session = SessionId::from_bytes([181; 16]);
+    let member = NodeId::from_bytes([182; 16]);
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        2 * 1024 * 1024,
+        session,
+        ReplicaHost::default().with_dirty_slots(dirty.clone()),
+    )
+    .unwrap();
+    let lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    runtime.install_node_lease(lease.clone()).unwrap();
+    let directory = tempfile::TempDir::new().unwrap();
+    let follower = cellule_runtime::FollowerStore::open(
+        directory.path().to_owned(),
+        Limits::default(),
+        DiskBudget::new(1 << 30),
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(
+        cellule_runtime::node::log_transport::LocalFollowerTransport::new(member, follower),
+    );
+    let gate = DurabilityGate::new(
+        session,
+        NodeId::from_bytes(*session.as_bytes()),
+        1,
+        [member],
+    )
+    .unwrap();
+    let shipper = NodeLogShipper::new(gate.clone(), transport.clone(), Limits::default()).unwrap();
+    runtime
+        .install_node_durability(
+            fixture.target.application(),
+            Arc::new(NodeDurability::new(
+                gate,
+                shipper,
+                Arc::new(TestNodeAuthority::default()),
+                transport.clone(),
+                lease,
+            )),
+        )
+        .unwrap();
+    let handle = bootstrap_on(&runtime, &fixture, session).await;
+    let base = CellAuthority::new(fixture.layout.clone())
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    let responses = Arc::new(RecordingResponses::default());
+    runtime.install_telemetry(responses.clone()).unwrap();
+    // Keep every object publication waiting while the original follower stores
+    // the group's only cut. A paused query puts every mutation in the FIFO.
+    let occupied = dirty.clone().acquire_owned().await.unwrap();
+    let (entered, observed) = tokio::sync::oneshot::channel();
+    let (resume, resume_rx) = mpsc::channel();
+    let reader = handle.clone();
+    let query = tokio::spawn(async move {
+        reader
+            .query(1_024, 1_024, move |_| {
+                entered.send(()).unwrap();
+                resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(Vec::new())
+            })
+            .await
+    });
+    observed.await.unwrap();
+    let commands = (1_u8..=4)
+        .map(|id| {
+            enqueue(&handle, id, id, move |tx| {
+                tx.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(vec![id]))
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(runtime.active_catalog_entries().await.unwrap().len(), 1);
+    resume.send(()).unwrap();
+    query.await.unwrap().unwrap();
+    let mut outcomes = Vec::new();
+    for command in commands {
+        outcomes.push(
+            tokio::time::timeout(Duration::from_secs(5), command)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    responses.wait_for_responses(4).await;
+    let pressure = runtime.try_reserve_node_bytes(3 * 1024 * 1024 / 2).unwrap();
+    let refused = handle.execute(
+        mutation_identity_window(5, 10, 10_000),
+        Digest::from_bytes([5; 32]),
+        20,
+        1024,
+        1024,
+        |_| panic!("backlog refusal must precede SQL"),
+    );
+    assert!(matches!(
+        refused.await,
+        Err(cellule_runtime::Error::Capacity("publication backlog"))
+    ));
+    assert_eq!(runtime.active_catalog_entries().await.unwrap().len(), 1);
+    assert_eq!(
+        handle
+            .query(1024, 1024, |db| {
+                let value: i64 = db.query_row("SELECT value FROM counter", [], |row| row.get(0))?;
+                Ok(value.to_be_bytes().to_vec())
+            })
+            .await
+            .unwrap(),
+        4_i64.to_be_bytes()
+    );
+    drop(pressure);
+
+    // The next queued group extends a follower-proven, unpublished head.
+    let (entered, observed) = tokio::sync::oneshot::channel();
+    let (resume, resume_rx) = mpsc::channel();
+    let reader = handle.clone();
+    let query = tokio::spawn(async move {
+        reader
+            .query(1024, 1024, move |_| {
+                entered.send(()).unwrap();
+                resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(Vec::new())
+            })
+            .await
+    });
+    observed.await.unwrap();
+    let next = (5_u8..=6)
+        .map(|id| {
+            enqueue(&handle, id, id, move |tx| {
+                tx.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(vec![id]))
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(runtime.active_catalog_entries().await.unwrap().len(), 1);
+    resume.send(()).unwrap();
+    query.await.unwrap().unwrap();
+    for command in next {
+        outcomes.push(
+            tokio::time::timeout(Duration::from_secs(5), command)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    responses.wait_for_responses(6).await;
+    assert_eq!(
+        enqueue(&handle, 1, 1, |_| panic!("replay must not execute"))
+            .await
+            .unwrap(),
+        outcomes[0]
+    );
+    let seal = cellule_runtime::node::log_transport::SealRequest {
+        leader_session: session,
+        log_epoch: 1,
+    };
+    transport.seal(member, seal).await.unwrap();
+    let bytes = transport
+        .tail(
+            member,
+            cellule_runtime::node::log_transport::TailRequest {
+                leader_session: session,
+                log_epoch: 1,
+                first_sequence: 1,
+            },
+        )
+        .await
+        .unwrap();
+    let frames = bytes
+        .into_iter()
+        .map(|bytes| cellule_ltx::inspect_node_frame(bytes, Limits::default()).unwrap())
+        .collect::<Vec<_>>();
+    drop(occupied);
+    handle.drain().await.unwrap();
+    runtime.shutdown().await.unwrap();
+    assert_eq!(
+        frames.len(),
+        2,
+        "each queued group must ship one physical cut"
+    );
+    assert_eq!(frames[0].first_commit_sequence(), 1);
+    assert_eq!(frames[0].scope().commit_sequence, 4);
+    assert_eq!(frames[1].first_commit_sequence(), 5);
+    assert_eq!(frames[1].scope().commit_sequence, 6);
+    assert_eq!(
+        &responses.0.lock().unwrap()[..6],
+        &[CommandResponseSource::Fleet; 6]
+    );
+    let bases = [cellule_runtime::node::log::RecoveryBase {
+        application: *fixture.target.application().as_bytes(),
+        cell_epoch: 1,
+        root: base,
+    }];
+    let recovered =
+        cellule_runtime::node::log::build_recovery_overlays(frames, &bases, Limits::default())
+            .unwrap();
+    let prepared = fixture
+        .replica
+        .prepare_recovered_overlay(&recovered[0].overlay, 1)
+        .await
+        .unwrap();
+    let restored = fixture
+        ._directory
+        .path()
+        .join("fleet-group-restored.sqlite");
+    prepared.verified().restore(&restored).await.unwrap();
+    let db = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    assert_eq!(
+        db.query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM sys_requests", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+    for (index, outcome) in outcomes.iter().enumerate() {
+        assert_eq!(outcome.commit_sequence(), (index + 1) as u64);
+        assert_eq!(outcome.result(), &[(index + 1) as u8]);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn queued_native_mutations_share_one_capture_and_exact_root_proof() {
     let store = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
     let fixture = fixture_with_limits_and_store(
@@ -728,7 +959,7 @@ async fn group_deadline_retains_all_admissions_until_dispatched_sql_exits() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn binding_a_node_log_during_a_group_keeps_its_members_object_gated() {
+async fn binding_a_node_log_during_a_group_proves_its_complete_range() {
     let store = Arc::new(PausingStore::new(Arc::new(InMemory::new())));
     let fixture = fixture_with_limits_and_store(
         b"group-binding-race",
@@ -796,17 +1027,16 @@ async fn binding_a_node_log_during_a_group_keeps_its_members_object_gated() {
     responses.wait_for_responses(3).await;
     assert_eq!(
         gate.issued_through(),
-        0,
-        "a final-only group log record would create a recovery gap"
+        1,
+        "one range frame covers both logical commands"
     );
-    assert_eq!(
-        responses.0.lock().unwrap().as_slice(),
-        &[
-            CommandResponseSource::Object,
-            CommandResponseSource::Object,
-            CommandResponseSource::Object
-        ]
-    );
+    let sources = responses.0.lock().unwrap().clone();
+    assert_eq!(sources[0], CommandResponseSource::Object);
+    assert_eq!(sources[1], sources[2]);
+    assert!(matches!(
+        sources[1],
+        CommandResponseSource::Object | CommandResponseSource::Fleet
+    ));
     assert_eq!(
         enqueue(&handle, 4, 4, increment)
             .await
@@ -816,8 +1046,8 @@ async fn binding_a_node_log_during_a_group_keeps_its_members_object_gated() {
     );
     handle.drain().await.unwrap();
     runtime.shutdown().await.unwrap();
-    assert_eq!(gate.issued_through(), 1);
-    assert_eq!(*authority.coverage.lock().unwrap(), vec![(1, 1)]);
+    assert_eq!(gate.issued_through(), 2);
+    assert_eq!(authority.coverage.lock().unwrap().last(), Some(&(1, 2)));
     let root = CellAuthority::new(fixture.layout.clone())
         .load(fixture.target.cell_id())
         .await

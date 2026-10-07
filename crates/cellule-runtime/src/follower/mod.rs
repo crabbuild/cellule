@@ -237,8 +237,13 @@ impl FollowerStore {
             .try_fold(0_u64, |total, frame| total.checked_add(frame.len() as u64));
         if frames.is_empty()
             || frames.len() > MAX_APPEND_FRAMES
-            || encoded_bytes
-                .is_none_or(|bytes| bytes > self.limits.max_capture_bytes.saturating_add(64 * 240))
+            || encoded_bytes.is_none_or(|bytes| {
+                bytes
+                    > self
+                        .limits
+                        .max_capture_bytes
+                        .saturating_add(64 * cellule_ltx::MAX_NODE_FRAME_HEADER_BYTES as u64)
+            })
         {
             return Err(Error::Node("invalid follower append batch"));
         }

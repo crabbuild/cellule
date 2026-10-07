@@ -176,6 +176,33 @@ fn captured_indexes_match_independent_ltx_inspection() {
 
     let batch = db.capture().unwrap();
 
+    let index_bytes: usize = batch
+        .segments
+        .iter()
+        .map(|segment| segment.captured_index().unwrap().len())
+        .sum();
+    assert!(batch.retained_memory_bytes() >= index_bytes as u64);
+    assert!(batch.retained_memory_bytes() < 32 * 1024);
+    assert!(
+        batch
+            .segments
+            .iter()
+            .map(|segment| segment.info().size_bytes)
+            .sum::<u64>()
+            > 200_000
+    );
+    assert!(batch.clone().retained_memory_bytes() <= batch.retained_memory_bytes());
+    let mut padded = Vec::with_capacity(64 * 1024);
+    let segment = &batch.segments[0];
+    padded.extend_from_slice(&segment.captured_index().unwrap());
+    let capacity = padded.capacity();
+    let mut padded_batch = batch.clone();
+    padded_batch.segments = vec![
+        crate::LocalSegment::new(segment.path().to_owned(), segment.info().clone())
+            .with_captured_index(padded),
+    ];
+    assert!(padded_batch.retained_memory_bytes() >= capacity as u64);
+
     for segment in &batch.segments {
         let file = std::fs::File::open(segment.path()).unwrap();
         let (decoded, size, digest, pages) = crate::ltx::inspect_reader_with_index(file).unwrap();

@@ -204,7 +204,7 @@ async fn unexpected_advertised_boot_prevents_complete_counts_even_without_live_r
         vec![1],
         NodeFailureDomain::default(),
         NodeCapacity {
-            log_protocol: 1,
+            log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
             ..Default::default()
         },
     )

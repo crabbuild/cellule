@@ -103,7 +103,7 @@ async fn advertisement_with_receive_capacity(
             } else {
                 0
             },
-            log_protocol: 1,
+            log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
             ..Default::default()
         },
     )?
@@ -297,7 +297,7 @@ impl BootOwner {
                 job_credits: stats
                     .placement_job_capacity()
                     .saturating_sub(stats.placement_running_jobs()),
-                log_protocol: 1,
+                log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
             },
         )?
         .with_operational_placement(

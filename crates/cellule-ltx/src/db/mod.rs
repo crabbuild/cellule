@@ -367,6 +367,7 @@ impl Db {
             .map_err(|error| disk.take_error().unwrap_or(error.into()))?;
         writer.busy_timeout(std::time::Duration::from_secs(1))?;
         writer.pragma_update(None, "wal_autocheckpoint", 0)?;
+        writer.pragma_update(None, "journal_size_limit", 0)?;
         writer.pragma_update(None, "synchronous", "FULL")?;
         writer.pragma_update(None, "foreign_keys", true)?;
         let page_size: u32 = writer.query_row("PRAGMA page_size", [], |row| row.get(0))?;

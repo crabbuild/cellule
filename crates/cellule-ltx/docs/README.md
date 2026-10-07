@@ -576,6 +576,13 @@ at 1 MiB per captured batch; descriptor construction, directory updates, and
 immutable upload reuse those same bytes without another full index copy. Larger
 batches use the inspection fallback.
 
+For deferred runtime capture, shared disk pressure starts passive checkpoint
+cohorts at 64 frames once half of the local disk budget is reserved. Capture
+still verifies the complete commit boundary before checkpointing and returns
+every resulting cut. SQLite releases physical WAL slack only after a safe
+generation reset; it never truncates uncaptured pages. Standalone synchronous
+capture retains its ordinary checkpoint threshold.
+
 - **Overlap.** Immutable preparation overlaps independent uploads without
   weakening the root gate: each LTX body uploads alongside its index, changed
   directory nodes upload concurrently, initial directory construction streams

@@ -49,7 +49,7 @@ const PLACEMENT_SCHEMA_VERSION: u32 = 2;
 const OPERATIONAL_PLACEMENT_SCHEMA_VERSION: u32 = 3;
 
 /// Current private follower-log wire and persistence protocol.
-pub const NODE_LOG_PROTOCOL_VERSION: u32 = 1;
+pub const NODE_LOG_PROTOCOL_VERSION: u32 = 2;
 pub use advertisement::{
     FencedNodeSession, NodeAdvertisement, NodeTakeoverProof, SealedNodeLog,
     VersionedNodeAdvertisement,

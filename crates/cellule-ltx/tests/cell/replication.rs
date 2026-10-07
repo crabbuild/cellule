@@ -1,5 +1,6 @@
 use cellule_ltx::rusqlite::Connection;
 use cellule_ltx::{Db, Limits, LocalSegment, LtxError, VerifiedPlan, compact_exact, restore_exact};
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn insert(db: &mut Db, value: &str) {
@@ -143,6 +144,56 @@ fn checkpoint_threshold_captures_every_cut_and_growth_page() {
         .query_row("SELECT count(*) FROM blobs", [], |row| row.get(0))
         .unwrap();
     assert_eq!(count, 800);
+}
+
+#[test]
+fn shared_disk_pressure_bounds_wal_and_preserves_every_checkpoint_cut() {
+    let temp = TempDir::new().unwrap();
+    let budget = cellule_ltx::DiskBudget::new(8 << 20);
+    let _other_cells = budget.try_reserve(4 << 20).unwrap();
+    let host = cellule_ltx::Host::default().with_local_disk_budget(budget);
+    let path = temp.path().join("pressure.sqlite");
+    let mut db = Db::open_with_host(&path, Limits::default(), host).unwrap();
+    let wal = PathBuf::from(format!("{}-wal", path.display()));
+    let mut cuts = Vec::new();
+    let mut position = Default::default();
+    let mut largest_wal = 0;
+    for value in 0..160 {
+        db.transaction(|tx| {
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS counter(value INTEGER)")?;
+            tx.execute("INSERT INTO counter VALUES (?1)", [value])?;
+            Ok(())
+        })
+        .unwrap();
+        let batch = db.capture_deferred().unwrap();
+        cuts.extend(batch.segments);
+        position = batch.position;
+        largest_wal = largest_wal.max(std::fs::metadata(&wal).unwrap().len());
+    }
+    assert!(
+        largest_wal < 512 << 10,
+        "dense Cells must not each retain a multi-megabyte WAL: {largest_wal}"
+    );
+    assert!(
+        cuts.len() > 160,
+        "checkpoint boundary cuts must be retained"
+    );
+    let plan = VerifiedPlan::new(&cuts, position, Limits::default()).unwrap();
+    let restored = temp.path().join("pressure-restored.sqlite");
+    restore_exact(&plan, &restored).unwrap();
+    let conn = Connection::open(restored).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT sum(value) FROM counter", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        159 * 160 / 2
+    );
+    assert_eq!(
+        conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+    db.close().unwrap();
 }
 
 #[test]

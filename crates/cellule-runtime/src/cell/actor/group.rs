@@ -1,4 +1,4 @@
-//! One bounded native worker job, released through the ordinary object proof.
+//! One bounded native worker job, released through its exact range proof.
 
 use super::admission::{fence_admission, send_command_reply};
 use super::*;
@@ -6,6 +6,7 @@ use tracing::Instrument as _;
 
 pub(super) async fn execute(
     pool: SqlWorkerPool,
+    durability: CellDurabilitySubmitter,
     mut command: Box<QueuedCommand>,
     interrupt: Arc<cellule_ltx::rusqlite::InterruptHandle>,
     generation: u64,
@@ -105,15 +106,29 @@ pub(super) async fn execute(
                 }
                 match pending {
                     Some(pending) => {
-                        let result = reserve_pending_publication(&pool, &pending).map(
-                            |retained_reservation| CommandTaskResult::Pending {
-                                pending,
-                                durability: None,
-                                retained_reservation,
-                            },
-                        );
-                        // A binding installed during this job cannot log only the
-                        // final sequence: every group member is object-gated.
+                        let result = match reserve_pending_publication(&pool, &pending) {
+                            Ok(retained_reservation) => {
+                                let first = base_sequence.checked_add(1).ok_or(Error::Fenced);
+                                match first {
+                                    Ok(first) => durability
+                                        .submit_range(
+                                            first,
+                                            pending.outcome().commit_sequence(),
+                                            pending.cuts(),
+                                        )
+                                        .await
+                                        .map(|durability| CommandTaskResult::Pending {
+                                            pending,
+                                            durability,
+                                            retained_reservation,
+                                        }),
+                                    Err(error) => Err(error),
+                                }
+                            }
+                            Err(error) => Err(error),
+                        };
+                        // One verified physical cut includes every result in
+                        // this logical range, including durable rejections.
                         (result, true)
                     }
                     None => (Ok(CommandTaskResult::GroupRecorded), false),
@@ -203,7 +218,11 @@ pub(super) fn reply(command: &mut QueuedCommand, result: crate::Result<Option<St
                         representative.as_ref() == Some(highest)
                             && matches!(
                                 proof,
-                                Some((crate::node::log::DurabilitySource::Object, _))
+                                Some((
+                                    crate::node::log::DurabilitySource::Object
+                                        | crate::node::log::DurabilitySource::Fleet,
+                                    _
+                                ))
                             )
                     }
                     None => representative.is_none(),

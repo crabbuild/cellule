@@ -337,7 +337,12 @@ pub(in crate::follower) fn scan_chunk(
             }
             Err(error) => return Err(error),
         };
-        if length > limits.max_capture_bytes.saturating_add(240) || length > usize::MAX as u64 {
+        if length
+            > limits
+                .max_capture_bytes
+                .saturating_add(cellule_ltx::MAX_NODE_FRAME_HEADER_BYTES as u64)
+            || length > usize::MAX as u64
+        {
             if truncate_suffix {
                 file.set_len(valid_bytes)?;
                 file.sync_data()?;

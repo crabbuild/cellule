@@ -28,6 +28,7 @@ LtxTelemetry
 MANAGED_CONNECTION_LOOKASIDE_BYTES
 MANAGED_CONNECTION_PAGE_CACHE_BYTES
 MANAGED_SQLITE_CONNECTIONS
+MAX_NODE_FRAME_HEADER_BYTES
 NodeFrameScope
 Position
 PreparedRoot
@@ -49,6 +50,7 @@ VerifiedPlan
 VerifiedRoot
 compact_exact
 encode_node_frame
+encode_node_frame_range
 inspect_node_frame
 restore_exact
 rusqlite

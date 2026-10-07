@@ -1,4 +1,4 @@
-//! A bounded native group commits once and remains hidden until root proof.
+//! A bounded native group commits once and remains hidden until durable proof.
 
 use super::*;
 
@@ -43,13 +43,18 @@ impl CellExecutor {
         if self.fenced {
             return Err(Error::Fenced);
         }
-        // A group cannot extend a follower-proven or unproved pending head.
-        // The worker owns one SQLite transaction throughout, and the actor
-        // remains occupied until publication; public visibility guards stay intact.
-        if self.has_pending() || !self.accepts_publication() {
+        // Only a proven logical head can continue. One physical transaction
+        // stores every member's request result; its range proof releases them
+        // together while ordered object publication can continue behind it.
+        if !self.accepts_publication() {
             return Err(Error::PendingPublication);
         }
-        let base_sequence = self.published_sequence;
+        let base_sequence = self
+            .pending
+            .back()
+            .map_or(self.published_sequence, |pending| {
+                pending.outcome.commit_sequence()
+            });
         let cell = self.cell;
         let incarnation = self.incarnation;
         let schema = self.schema;

@@ -2,6 +2,58 @@
 
 use super::*;
 
+#[tokio::test]
+async fn range_capable_ensemble_excludes_legacy_follower_enrollment() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let leader = directory
+        .create(
+            advertisement_for(SessionId::from_bytes([1; 16]), &key, 1, NOW_MS),
+            NOW_MS,
+        )
+        .await
+        .unwrap();
+    let member = SessionId::from_bytes([2; 16]);
+    let mut capacity = NodeCapacity {
+        free_memory_bytes: 1000,
+        free_disk_bytes: 2000,
+        follower_free_bytes: 2000,
+        follower_retained_bytes: 0,
+        job_credits: 3,
+        log_protocol: 1,
+    };
+    let follower = directory
+        .create(
+            advertisement_for_capacity(member, &key, 1, NOW_MS, capacity),
+            NOW_MS,
+        )
+        .await
+        .unwrap();
+    assert!(
+        directory
+            .try_recruit_log(&leader, 1, 1, 2, NOW_MS + 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    capacity.log_protocol = NODE_LOG_PROTOCOL_VERSION;
+    directory
+        .refresh(
+            &follower,
+            advertisement_for_capacity(member, &key, 2, NOW_MS + 2, capacity),
+            NOW_MS + 2,
+        )
+        .await
+        .unwrap();
+    assert!(
+        directory
+            .try_recruit_log(&leader, 1, 1, 2, NOW_MS + 3)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
 #[test]
 fn recovery_candidate_window_rotates_without_growing_with_directory_size() {
     let sessions = [

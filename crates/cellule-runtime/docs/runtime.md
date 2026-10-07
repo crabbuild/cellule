@@ -46,18 +46,24 @@ waiting does not restart retry grace. Admission is released before provider
 backoff, authority CAS or paired compaction recovery. Publication queue timing
 includes the admission wait; LTX root timing measures preparation after admission.
 
-Without a node log, the actor groups up to sixteen already-queued, consecutive
+The actor groups up to sixteen already-queued, consecutive
 native mutations into one SQLite transaction and WAL capture. The ceiling only
 bounds commands already waiting behind the head, so it adds no wait of its own:
 a shallow queue groups few, and a deep queue amortizes one published root over
 more acknowledged commands. Each member
 uses its own savepoint and request-ledger identity; successful and rejected
 outcomes retain separate logical commit sequences. One fenced object-root
-publication covers the complete group before any new outcome is returned.
+publication or follower-durable range covers the complete group before any new
+outcome is returned.
 No batching timer delays an otherwise ready command. A query, resolve, effect,
-or migration ends the group at its FIFO position. The group cannot extend
-an existing pending head. Installing node durability during execution keeps
-that group object-gated; later commands use the ordinary follower path.
+or migration ends the group at its FIFO position. A group can extend an existing
+head only after that head has its durability proof. Installing node durability
+during execution can submit the complete logical range to the new binding.
+
+The node shipper verifies each complete LTX body before entering its shared
+sequence lane. That lane assigns consecutive envelope sequences and enqueues
+them atomically; failed validation consumes no ticket. Signing follows sequence
+assignment, and followers still verify the complete signed frames before fsync.
 
 Each member retains its ordinary request and byte admission, and the group
 uses the existing database, capture, and retained-publication ceilings. A
@@ -65,6 +71,22 @@ command error rolls back that member's savepoint. A whole transaction abort,
 capture failure, or lost publication proof never releases a new success;
 ambiguous outcomes retain each request identity and the shared original cause.
 Caller cancellation does not remove accepted members or their drain obligations.
+
+While follower-proven work awaits object publication, new mutations are refused
+before SQL when retained RAM or local disk reaches three quarters of its node
+budget. The remaining headroom belongs to accepted work and publication.
+Queries remain eligible, and a refused mutation has no new ledger outcome.
+Local LTX bodies remain charged to the disk budget; publication's RAM reservation
+covers shared encoder indexes, descriptor/path copies, and retained outcomes.
+The physical pending-byte high water and node-log coverage counters still count
+complete LTX files.
+
+Deferred runtime capture starts smaller, 64-frame passive checkpoint cohorts
+once half of the shared local disk budget is reserved. The normal capture
+barrier still verifies the committed WAL boundary and retains every checkpoint
+cut. SQLite releases obsolete WAL file slack only when it safely resets the
+generation. This keeps many small Cells from filling the node before any single
+Cell reaches the ordinary 1,000-frame checkpoint threshold.
 
 One Cell actor serializes admission and publication. A bounded SQLite worker
 runs the application callback; the actor owns the result gate and lifecycle.
@@ -101,7 +123,7 @@ proof. Either proof may release a command result.
 | Release | A result is released only by a proof covering its own commit: the exact published root, or a follower fsync for the same cut. |
 | Occupancy | The actor stays occupied until that proof lands, so no read observes a commit before its proof. |
 | Pipelining | With a node log the proof is the follower fsync, so SQL and capture for later commands run ahead of object publication, bounded by `MAX_PENDING_PUBLICATIONS` and the pending-bytes high water. |
-| Native grouping | At most four queued mutations share one transaction and capture in object-only mode; all new results wait for the root covering the group. |
+| Native grouping | At most sixteen queued mutations share one transaction and capture; all new results wait for an object or follower proof covering the complete logical range. |
 | Coalescing | When several commits are queued, one root covers all of them: the merged captures append oldest first, and the range confirmation releases exactly the covered outcomes. |
 
 If the owner dies first, takeover seals the failed node log and pins and
@@ -381,7 +403,7 @@ The actor never reruns a handler after SQLite may have started it. `Resolve` rea
 
 - Fresh `Db` captures privately retain the page index already authenticated by their encoder. Root preparation reuses it instead of decoding the same local LTX file again, while multipart upload still verifies every source byte against the captured digest.
 - Caller-constructed local segments do not carry this private provenance and retain the full inspection path.
-- Index retention is capped at 1 MiB per pending `CaptureBatch`; larger capture cohorts fall back to decoding. Descriptor construction, directory updates, and index upload share the retained bytes rather than copying them at each stage. The executor retains only one unpublished batch.
+- Index retention is capped at 1 MiB per pending `CaptureBatch`; larger capture cohorts fall back to decoding. Descriptor construction, directory updates, and index upload share the retained bytes rather than copying them at each stage. Multiple follower-proven batches remain bounded by the existing pending-count, physical-byte, RAM, and disk budgets.
 
 **Bounded upload concurrency**
 

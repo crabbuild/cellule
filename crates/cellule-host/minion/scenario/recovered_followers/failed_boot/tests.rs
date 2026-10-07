@@ -604,7 +604,7 @@ async fn failed_boot_closure_replay_preserves_new_boot_foreign_roles_on_the_same
             free_disk_bytes: 1 << 20,
             follower_free_bytes: 1 << 20,
             job_credits: 4,
-            log_protocol: 1,
+            log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
             ..Default::default()
         },
     )

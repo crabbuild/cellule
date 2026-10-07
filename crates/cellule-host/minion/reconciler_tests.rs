@@ -125,7 +125,7 @@ impl FleetObserver for Observer {
                         free_memory_bytes: 1 << 30,
                         free_disk_bytes: 1 << 30,
                         job_credits: 16,
-                        log_protocol: 1,
+                        log_protocol: cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION,
                         ..NodeCapacity::default()
                     },
                 )?
