@@ -52,6 +52,69 @@ fn managed_connections_set_the_budgeted_page_cache() {
 }
 
 #[test]
+fn external_durability_is_explicit_and_refuses_an_uncaptured_commit() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut db = Db::open(&temp.path().join("durability.sqlite"), Limits::default()).unwrap();
+    let synchronous = |db: &mut Db| {
+        db.query_with(|connection| {
+            connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+        })
+        .unwrap()
+    };
+    assert_eq!(synchronous(&mut db), 2);
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE witness(value INTEGER)"))
+        .unwrap();
+    assert!(matches!(
+        db.use_external_durability(),
+        Err(LtxError::InvalidState(_))
+    ));
+    assert_eq!(synchronous(&mut db), 2);
+    db.capture().unwrap();
+    assert!(db.use_external_durability().is_err());
+    db.close().unwrap();
+
+    let mut external = Db::open(&temp.path().join("external.sqlite"), Limits::default()).unwrap();
+    external.use_external_durability().unwrap();
+    assert_eq!(synchronous(&mut external), 1);
+    external
+        .transaction(|tx| {
+            tx.execute_batch("CREATE TABLE witness(value INTEGER); INSERT INTO witness VALUES(7)")
+        })
+        .unwrap();
+    let cuts = external.capture().unwrap();
+    let restored = temp.path().join("restored.sqlite");
+    let plan = VerifiedPlan::new(&cuts.segments, cuts.position, Limits::default()).unwrap();
+    restore_exact(&plan, &restored).unwrap();
+    let connection = Connection::open(restored).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT value FROM witness", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        7
+    );
+    external.close().unwrap();
+}
+
+#[test]
+fn external_durability_configuration_failure_fences_the_session() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut db = Db::open(&temp.path().join("configuration.sqlite"), Limits::default()).unwrap();
+    // SQLite refuses a safety-level change inside a transaction. The public
+    // transaction callback cannot leave one behind; inject it at this seam to
+    // check the configuration error path, including refusal of subsequent SQL.
+    db.writer.execute_batch("BEGIN").unwrap();
+    assert!(matches!(
+        db.use_external_durability(),
+        Err(LtxError::Sqlite(_))
+    ));
+    assert!(matches!(db.transaction(|_| Ok(())), Err(LtxError::Fenced)));
+    assert!(matches!(
+        db.use_external_durability(),
+        Err(LtxError::Fenced)
+    ));
+}
+
+#[test]
 fn capture_reports_deterministic_bounded_timing_for_real_ltx_work() {
     let temp = tempfile::TempDir::new().unwrap();
     let host = crate::Host::default().with_clock(Arc::new(TimingClock::new()));

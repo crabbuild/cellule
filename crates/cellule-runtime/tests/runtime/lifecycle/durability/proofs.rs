@@ -23,6 +23,10 @@ async fn accepted_control_cas_with_lost_response_releases_once() {
 
     let first = handle
         .execute(request, digest, 20, 1_024, 1_024, move |transaction| {
+            assert_eq!(
+                transaction.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))?,
+                1
+            );
             observed.fetch_add(1, Ordering::SeqCst);
             transaction.execute("UPDATE counter SET value = value + 1", [])?;
             Ok(HandlerOutcome::Success(b"published".to_vec()))
@@ -126,6 +130,10 @@ async fn capture_failure_after_sql_commit_fences_until_authoritative_recovery() 
     filesystem.fail_next_capture();
     let first = handle
         .execute(request, digest, 20, 1_024, 1_024, move |transaction| {
+            assert_eq!(
+                transaction.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))?,
+                1
+            );
             observed.fetch_add(1, Ordering::SeqCst);
             transaction.execute("UPDATE counter SET value = value + 1", [])?;
             Ok(HandlerOutcome::Success(b"unpublished".to_vec()))

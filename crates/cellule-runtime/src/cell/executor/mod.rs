@@ -355,6 +355,12 @@ impl CellExecutor {
         schema: u32,
         initialize: impl FnOnce(&cellule_ltx::rusqlite::Transaction<'_>) -> Result<()>,
     ) -> Result<(Self, CaptureBatch, Option<i64>)> {
+        // Bootstrap and every later response wait for an external proof. Local
+        // WAL sync would duplicate that boundary; failed sessions are discarded.
+        if let Err(error) = db.use_external_durability() {
+            let _ = db.close();
+            return Err(error.into());
+        }
         let initialized = db.transaction_with(|transaction| {
             crate::cell::schema::install_runtime_schema_in(transaction, cell, incarnation, schema)?;
             initialize(transaction)?;
@@ -451,6 +457,12 @@ impl CellExecutor {
             );
             let _ = db.close();
             return Err(error);
+        }
+        // Validate the exact authoritative image before enabling the replicated
+        // writer. This includes sparse, cold-restored and verified warm resumes.
+        if let Err(error) = db.use_external_durability() {
+            let _ = db.close();
+            return Err(error.into());
         }
         let mut executor = Self::new(db, cell, incarnation, schema);
         executor.published_sequence = root.commit_sequence;

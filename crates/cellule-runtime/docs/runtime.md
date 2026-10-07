@@ -356,6 +356,13 @@ A Cell can install `primitives::capacity::SCHEMA` and use `CommandContext::reser
 <a id="publication"></a>
 ## Publish before replying
 
+Runtime bootstrap and verified restored activations select SQLite WAL
+`synchronous=NORMAL` through `Db::use_external_durability`. Local commit success
+does not release a response or query: the exact object-root or recoverable
+follower proof remains the durability boundary. Unverified local WAL and
+capture residue cannot authorize recovery or warm reuse. Standalone LTX opens
+and direct `CellExecutor::new` callers retain their supplied database mode.
+
 `PendingCommit` owns the request identity, predecessor control, encoded reply, commit sequence, and captured cuts. The actor doesn't accept the next mutation until this commit reaches a terminal publication result.
 
 ```text

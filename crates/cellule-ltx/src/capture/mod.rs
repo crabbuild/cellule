@@ -272,6 +272,16 @@ impl CaptureEngine {
         }
     }
 
+    pub(crate) fn use_external_durability(&self) -> Result<()> {
+        // Checkpoint maintenance also commits control-table writes. It uses
+        // the same externally proven boundary as the application writer; the
+        // retained read-mark connection never writes. NORMAL still synchronizes
+        // WAL and database backfill at SQLite's checkpoint boundaries.
+        self.conn
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(LtxError::from)
+    }
+
     pub fn wal_path(&self) -> PathBuf {
         let mut s = self.path.clone().into_os_string();
         s.push("-wal");
