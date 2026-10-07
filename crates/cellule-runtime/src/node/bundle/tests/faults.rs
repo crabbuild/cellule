@@ -30,6 +30,25 @@ impl ObjectStore for ReplyFault {
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
         let mode = self.mode.load(Ordering::SeqCst);
+        let node_update = path.as_ref().contains("/nodes/")
+            && matches!(opts.mode, object_store::PutMode::Update(_));
+        if node_update && mode == 4 {
+            self.mode
+                .compare_exchange(4, 5, Ordering::SeqCst, Ordering::SeqCst)
+                .unwrap();
+        } else if node_update && mode == 5 {
+            return Err(denied());
+        }
+        if mode == 3
+            && path.as_ref().ends_with("/control.json")
+            && matches!(opts.mode, object_store::PutMode::Update(_))
+            && self
+                .mode
+                .compare_exchange(3, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            return Err(denied());
+        }
         let eligible = (mode == 1 && path.as_ref().ends_with(".cnb"))
             || (mode == 2
                 && path.as_ref().contains("/nodes/")
@@ -75,6 +94,157 @@ impl ObjectStore for ReplyFault {
     ) -> object_store::Result<()> {
         self.inner.copy_opts(from, to, opts).await
     }
+}
+
+#[tokio::test]
+async fn interrupted_pin_cas_retains_a_provisional_inventory_obligation() {
+    let faults = Arc::new(ReplyFault::default());
+    let mut f = Fixture::with_store(faults.clone()).await;
+    let cell = f.unbound_cell_for_application(4, [9; 16]).await;
+    faults.mode.store(3, Ordering::SeqCst);
+    assert!(
+        f.directory
+            .bind_bundle_cell(&f.node, &cell.authority, &cell.control, NOW)
+            .await
+            .is_err()
+    );
+    let reserved = f
+        .directory
+        .load(SessionId::from_bytes([1; 16]), NOW)
+        .await
+        .unwrap()
+        .unwrap();
+    let catalog = load_catalog(
+        &f.layout,
+        SessionId::from_bytes([1; 16]),
+        reserved.advertisement().bundle_head().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(catalog.bindings.len(), 1);
+    assert_eq!(catalog.bindings[0].phase, BindingPhase::Provisional);
+    assert!(
+        cell.authority
+            .load(cell.control.value().cell)
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .bundle_binding
+            .is_none()
+    );
+    assert!(matches!(
+        f.directory.withdraw(&reserved, NOW).await,
+        Err(Error::PendingPublication)
+    ));
+    let (opened, pinned) = f
+        .directory
+        .bind_bundle_cell(&reserved, &cell.authority, &cell.control, NOW)
+        .await
+        .unwrap();
+    assert_eq!(
+        pinned.value().bundle_binding,
+        catalog.bindings[0].control.bundle_binding
+    );
+    let catalog = load_catalog(
+        &f.layout,
+        SessionId::from_bytes([1; 16]),
+        opened.advertisement().bundle_head().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(catalog.bindings.len(), 1);
+    assert_eq!(catalog.bindings[0].phase, BindingPhase::Open);
+}
+
+#[tokio::test]
+async fn lower_level_pin_cas_cannot_bypass_catalog_reservation() {
+    let mut f = Fixture::new().await;
+    let cell = f.unbound_cell_for_application(4, [9; 16]).await;
+    let mut next = cell.control.value().clone();
+    next.revision += 1;
+    next.progress += 1;
+    next.bundle_binding = Some(BundleBindingRef {
+        session: SessionId::from_bytes([1; 16]),
+        epoch: EPOCH,
+        digest: Digest::from_bytes([55; 32]),
+    });
+    assert!(
+        cell.authority
+            .transition(&cell.control, next, Transition::BindBundle)
+            .await
+            .is_err()
+    );
+    assert!(
+        cell.authority
+            .load(cell.control.value().cell)
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .bundle_binding
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn interrupted_activation_retains_the_already_selected_cell_pin() {
+    let faults = Arc::new(ReplyFault::default());
+    let mut f = Fixture::with_store(faults.clone()).await;
+    let cell = f.unbound_cell_for_application(4, [9; 16]).await;
+    faults.mode.store(4, Ordering::SeqCst);
+    let error = f
+        .directory
+        .bind_bundle_cell(&f.node, &cell.authority, &cell.control, NOW)
+        .await
+        .err()
+        .unwrap();
+    let Error::Storage(cellule_store::StorageError::NotSupported {
+        source: object_store::Error::NotSupported { source },
+    }) = error
+    else {
+        panic!("original provider error must survive unchanged-head reconciliation: {error:?}");
+    };
+    assert_eq!(source.to_string(), "injected bundle reply failure");
+    let pinned = cell
+        .authority
+        .load(cell.control.value().cell)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(pinned.value().bundle_binding.is_some());
+    let reserved = f
+        .directory
+        .load(SessionId::from_bytes([1; 16]), NOW)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        f.directory.withdraw(&reserved, NOW).await,
+        Err(Error::PendingPublication)
+    ));
+    assert!(matches!(
+        f.directory
+            .load_bundle_coverage(&cell.authority, &pinned, Limits::default())
+            .await,
+        Err(Error::PendingPublication)
+    ));
+    faults.mode.store(0, Ordering::SeqCst);
+    let (opened, same_pin) = f
+        .directory
+        .bind_bundle_cell(&reserved, &cell.authority, &pinned, NOW)
+        .await
+        .unwrap();
+    assert_eq!(same_pin.value(), pinned.value());
+    let catalog = load_catalog(
+        &f.layout,
+        SessionId::from_bytes([1; 16]),
+        opened.advertisement().bundle_head().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(catalog.bindings.len(), 1);
+    assert_eq!(catalog.bindings[0].phase, BindingPhase::Open);
 }
 
 #[tokio::test]

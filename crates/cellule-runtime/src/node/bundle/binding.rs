@@ -35,8 +35,9 @@ impl NodeDirectory {
         self.select_catalog(observed, &prepared, now_ms).await
     }
 
-    /// Pins one original writer in Cell authority before enrolling it in the
-    /// complete catalog. An ambiguous failure retains the pin and blocks departure.
+    /// Reserves a provisional catalog entry before pinning the original Cell,
+    /// then opens it only after the Cell CAS is confirmed. Cancellation or an
+    /// ambiguous failure leaves a catalog obligation that blocks maintenance.
     pub async fn bind_bundle_cell(
         &self,
         observed: &VersionedNodeAdvertisement,
@@ -68,17 +69,60 @@ impl NodeDirectory {
             return Err(Error::Fenced);
         }
         let application = ApplicationId::from_bytes(*authority.layout().application_id());
-        let pinned = if let Some(pin) = value.bundle_binding {
-            if pin.session != catalog.session || pin.epoch != catalog.epoch {
+        let existing = catalog.bindings.iter().find(|binding| {
+            binding.application == application
+                && binding.control.cell == value.cell
+                && binding.phase != BindingPhase::Closed
+        });
+        if let Some(binding) = existing {
+            if binding.control.incarnation != value.incarnation
+                || binding.control.epoch != value.epoch
+                || binding.control.owner != value.owner
+                || binding.control.code != value.code
+                || binding.control.schema != value.schema
+                || binding.control.root != value.root
+            {
                 return Err(Error::Fenced);
             }
-            control.clone()
+            if binding.phase == BindingPhase::Open {
+                if binding.control.bundle_binding != value.bundle_binding {
+                    return Err(Error::Fenced);
+                }
+                return Ok((observed.clone(), control.clone()));
+            }
+            if binding.phase != BindingPhase::Provisional {
+                return Err(Error::Fenced);
+            }
+        }
+        let pin = if let Some(binding) = existing {
+            binding
+                .control
+                .bundle_binding
+                .ok_or(Error::Node("provisional binding lacks pin"))?
+        } else if let Some(pin) = value.bundle_binding {
+            pin
         } else {
             let mut identity = value.encode()?;
             identity.extend_from_slice(b"cellule.bundle-binding.v1\0");
             identity.extend_from_slice(application.as_bytes());
             identity.extend_from_slice(&catalog.epoch.to_le_bytes());
-            let mut next = value.clone();
+            BundleBindingRef {
+                session: catalog.session,
+                epoch: catalog.epoch,
+                digest: Digest::from_bytes(*blake3::hash(&identity).as_bytes()),
+            }
+        };
+        if pin.session != catalog.session
+            || pin.epoch != catalog.epoch
+            || value.bundle_binding.is_some_and(|current| current != pin)
+            || catalog.bindings.iter().any(|binding| {
+                binding.phase == BindingPhase::Closed && binding.control.bundle_binding == Some(pin)
+            })
+        {
+            return Err(Error::Fenced);
+        }
+        let mut next = value.clone();
+        if next.bundle_binding.is_none() {
             next.revision = next
                 .revision
                 .checked_add(1)
@@ -87,11 +131,41 @@ impl NodeDirectory {
                 .progress
                 .checked_add(1)
                 .ok_or(Error::Control("progress overflow"))?;
-            next.bundle_binding = Some(BundleBindingRef {
-                session: catalog.session,
-                epoch: catalog.epoch,
-                digest: Digest::from_bytes(*blake3::hash(&identity).as_bytes()),
+            next.bundle_binding = Some(pin);
+        }
+        // Select the inventory obligation first. Otherwise cancellation after
+        // Cell pinning could leave a pin absent from the complete node catalog.
+        let reserved = if existing.is_none() {
+            let base = next
+                .ltx_root()
+                .ok_or(Error::Node("bundle binding lacks published base"))?;
+            catalog.bindings.push(Binding {
+                application,
+                first_commit: base.commit_sequence,
+                control: next.clone(),
+                phase: BindingPhase::Provisional,
+                terminal: None,
+                selected_sequence: 0,
+                selected_commit: base.commit_sequence,
+                selected_position: base.position,
+                locators: Vec::new(),
             });
+            catalog.bindings.sort_unstable_by_key(|binding| {
+                binding
+                    .control
+                    .bundle_binding
+                    .map(|pin| *pin.digest.as_bytes())
+            });
+            let prepared = self
+                .upload_catalog(Some(head), catalog.clone(), &[])
+                .await?;
+            self.select_catalog(observed, &prepared, now_ms).await?
+        } else {
+            observed.clone()
+        };
+        let pinned = if value.bundle_binding.is_some() {
+            control.clone()
+        } else {
             match authority
                 .transition(control, next.clone(), Transition::BindBundle)
                 .await
@@ -103,53 +177,14 @@ impl NodeDirectory {
                 },
             }
         };
-        let pin = pinned
-            .value()
-            .bundle_binding
-            .ok_or(Error::Node("Cell bundle pin missing"))?;
-        if let Some(binding) = catalog
-            .bindings
-            .iter()
-            .find(|binding| binding.control.bundle_binding == Some(pin))
-        {
-            if binding.phase != BindingPhase::Open || binding.control != *pinned.value() {
-                return Err(Error::Fenced);
-            }
-            return Ok((observed.clone(), pinned));
-        }
-        // Enrolling two writer bindings for one Cell would allow a departed
-        // epoch to rejoin under a new identity. Closed originals remain tombstones.
-        if catalog.bindings.iter().any(|binding| {
-            binding.application == application
-                && binding.control.cell == value.cell
-                && binding.phase != BindingPhase::Closed
-        }) {
-            return Err(Error::Fenced);
-        }
-        let base = pinned
-            .value()
-            .ltx_root()
-            .ok_or(Error::Node("bundle binding lacks published base"))?;
-        catalog.bindings.push(Binding {
-            application,
-            first_commit: base.commit_sequence,
-            control: pinned.value().clone(),
-            phase: BindingPhase::Open,
-            terminal: None,
-            selected_sequence: 0,
-            selected_commit: base.commit_sequence,
-            selected_position: base.position,
-            locators: Vec::new(),
-        });
-        catalog.bindings.sort_unstable_by_key(|binding| {
-            binding
-                .control
-                .bundle_binding
-                .map(|pin| *pin.digest.as_bytes())
-        });
-        let prepared = self.upload_catalog(Some(head), catalog, &[]).await?;
+        let binding = catalog.binding_mut(pin.digest)?;
+        binding.control = pinned.value().clone();
+        binding.phase = BindingPhase::Open;
+        let prepared = self
+            .upload_catalog(reserved.advertisement.bundle, catalog, &[])
+            .await?;
         Ok((
-            self.select_catalog(observed, &prepared, now_ms).await?,
+            self.select_catalog(&reserved, &prepared, now_ms).await?,
             pinned,
         ))
     }

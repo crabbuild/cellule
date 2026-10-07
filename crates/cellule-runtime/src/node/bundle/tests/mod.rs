@@ -103,6 +103,17 @@ impl Fixture {
         self.cell_for_application(byte, [9; 16]).await
     }
     async fn cell_for_application(&mut self, byte: u8, application: [u8; 16]) -> Cell {
+        let mut cell = self.unbound_cell_for_application(byte, application).await;
+        let (node, control) = self
+            .directory
+            .bind_bundle_cell(&self.node, &cell.authority, &cell.control, NOW)
+            .await
+            .unwrap();
+        self.node = node;
+        cell.control = control;
+        cell
+    }
+    async fn unbound_cell_for_application(&mut self, byte: u8, application: [u8; 16]) -> Cell {
         let layout = self.layout.for_application(application);
         let cell = CellId::from_bytes([byte; 32]);
         let incarnation = IncarnationId::from_bytes([byte + 10; 16]);
@@ -148,17 +159,11 @@ impl Fixture {
         let authority = CellAuthority::new(layout);
         authority.retain_root_lineage(&prepared).await.unwrap();
         let observed = authority.load(cell).await.unwrap().unwrap();
-        let (node, control) = self
-            .directory
-            .bind_bundle_cell(&self.node, &authority, &observed, NOW)
-            .await
-            .unwrap();
-        self.node = node;
         Cell {
             db,
             replica,
             authority,
-            control,
+            control: observed,
         }
     }
     fn append(

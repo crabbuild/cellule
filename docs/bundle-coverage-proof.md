@@ -74,7 +74,7 @@ read node advertisement would reinstate a fencing race.
 | Object or capability | Exact meaning |
 | --- | --- |
 | Cell binding | Cell/incarnation, writer epoch, exact base root/schema/code, permitted node boot/log epoch, and a unique binding identity pinned by Cell control |
-| Immutable binding catalog | Complete Open/Closing bindings plus terminal Closed endpoints; closed binding IDs cannot be re-added |
+| Immutable binding catalog | Provisional enrollment obligations, complete Open/Closing bindings and terminal Closed endpoints; closed binding IDs cannot be re-added |
 | Immutable range manifest | Contiguous ordered node ranges, exact Cell bindings and commit/transaction intervals, scoped byte extents and digests, complete native outcome/dependency coverage, predecessor head |
 | Node selection | Post-upload CAS of both catalog and range head while the original node/log remains Open and every row's binding remains active |
 | `BundleCoverageProof` | Opaque capability minted only after exact selection reconciliation and complete dependency verification; uploaded bytes cannot construct it |

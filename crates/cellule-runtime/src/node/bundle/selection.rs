@@ -61,7 +61,7 @@ impl NodeDirectory {
                         && binding.control.epoch == scope.cell_epoch
                 })
                 .ok_or(Error::Node("bundle row has no enrolled Cell binding"))?;
-            if binding.phase == BindingPhase::Closed
+            if !matches!(binding.phase, BindingPhase::Open | BindingPhase::Closing)
                 || binding.locators.len() >= MAX_LOCATORS
                 || binding
                     .terminal

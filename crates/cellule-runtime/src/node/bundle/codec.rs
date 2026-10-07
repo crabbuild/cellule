@@ -33,6 +33,7 @@ fn metadata(catalog: &Catalog, frames: usize) -> Result<BoundedEncoder> {
         e.write_u64(binding.first_commit)?;
         e.write_bytes(&binding.control.encode()?)?;
         e.write_u8(match binding.phase {
+            BindingPhase::Provisional => 3,
             BindingPhase::Open => 0,
             BindingPhase::Closing => 1,
             BindingPhase::Closed => 2,
@@ -127,6 +128,7 @@ pub(super) fn decode(body: &Bytes) -> Result<Catalog> {
         let first_commit = d.read_u64()?;
         let control = Control::decode(d.read_bytes()?)?;
         let phase = match d.read_u8()? {
+            3 => BindingPhase::Provisional,
             0 => BindingPhase::Open,
             1 => BindingPhase::Closing,
             2 => BindingPhase::Closed,

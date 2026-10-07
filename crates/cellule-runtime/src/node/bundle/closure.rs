@@ -93,6 +93,7 @@ impl NodeDirectory {
             || scope.incarnation != binding.control.incarnation
             || scope.cell_epoch != binding.control.epoch
             || binding.phase == BindingPhase::Closed
+            || binding.phase == BindingPhase::Provisional
         {
             return Err(Error::Fenced);
         }

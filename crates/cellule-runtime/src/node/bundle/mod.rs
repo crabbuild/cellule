@@ -85,6 +85,7 @@ impl NodeBundleHead {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BindingPhase {
+    Provisional,
     Open,
     Closing,
     Closed,
@@ -221,6 +222,8 @@ impl Catalog {
                 return Err(Error::Node("invalid bundle binding coverage"));
             }
             match (binding.phase, binding.terminal) {
+                (BindingPhase::Provisional, None)
+                    if binding.locators.is_empty() && binding.selected_sequence == 0 => {}
                 (BindingPhase::Open, None) => {}
                 (BindingPhase::Closing, Some((sequence, commit, position)))
                     if sequence >= binding.selected_sequence

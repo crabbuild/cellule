@@ -43,6 +43,9 @@ impl NodeDirectory {
         let head = head.ok_or(Error::PendingPublication)?;
         let mut catalog = load_catalog(&self.layout, session, head).await?;
         let binding = catalog.binding_mut(pin.digest)?.clone();
+        if binding.phase == BindingPhase::Provisional {
+            return Err(Error::PendingPublication);
+        }
         if head.epoch != pin.epoch
             || binding.control.bundle_binding != Some(pin)
             || binding.application.as_bytes() != authority.layout().application_id()
