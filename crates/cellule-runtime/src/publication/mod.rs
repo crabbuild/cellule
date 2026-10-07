@@ -940,14 +940,7 @@ impl CellPublisher {
     ///
     /// Reloading first adopts an ambiguous publication or pure renewal. A new
     /// epoch or owner proves that recovery already belongs to another executor.
-    /// A fenced node session performs local cleanup only, retaining authority
-    /// for takeover without attempting a release CAS or granting a new proof.
     pub(crate) async fn release_after_fence(&mut self) -> Result<()> {
-        match self.check_node_lease() {
-            Ok(()) => {}
-            Err(Error::Fenced) => return Ok(()),
-            Err(error) => return Err(error),
-        }
         let expected = self.observed.value().clone();
         let expected_owner = expected.owner.clone().ok_or(Error::Fenced)?;
         let expected_cell = expected.cell;
@@ -985,16 +978,7 @@ impl CellPublisher {
             ));
         }
         self.observed = current;
-        match self.release().await {
-            Err(Error::Fenced) => match self.check_node_lease() {
-                // A terminal node fence may race the load or release. Local
-                // deactivation still finishes; authority stays with recovery.
-                Err(Error::Fenced) => Ok(()),
-                Err(error) => Err(error),
-                Ok(()) => Err(Error::Fenced),
-            },
-            result => result,
-        }
+        self.release().await
     }
 
     fn check_node_lease(&self) -> Result<()> {

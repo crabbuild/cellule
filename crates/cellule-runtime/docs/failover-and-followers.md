@@ -1769,12 +1769,12 @@ member retirement, and the current authority close are still required. Pending
 tickets continue to require the original live lease and remain retained after
 fencing.
 
-After a terminal node fence, Cell deactivation discards the local handle and
-leaves the exact selected owner/root for takeover. It performs no release CAS
-and grants no Idle or durability proof. A node fence racing the cleanup read
-has the same outcome. A live node session still reconciles and releases an
-individually fenced Cell through the existing authority path; storage and
-control failures remain errors.
+Cell deactivation can close every native handle while preserving a fenced
+release failure. Shutdown retains that original error even if recovery later
+changes the owner record. Resource closure does not prove an Idle release or
+successful session withdrawal; the host remains draining when a required
+facility fails. A fault test that deliberately fences its source must verify
+the typed original failure and empty resource ledgers alongside exact recovery.
 
 Clean node shutdown is broader:
 

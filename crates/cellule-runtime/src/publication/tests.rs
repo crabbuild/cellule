@@ -174,7 +174,13 @@ async fn verify_node_cleanup(fence: CleanupFence) {
     }
     // Node fencing is terminal. Local cleanup grants no Idle release, root
     // selection or new proof; the exact owner/root stays available to takeover.
-    publisher.release_after_fence().await.unwrap();
+    let result = publisher.release_after_fence().await;
+    match fence {
+        CleanupFence::Live => result.unwrap(),
+        CleanupFence::BeforeRead | CleanupFence::DuringRead => {
+            assert!(matches!(result, Err(Error::Fenced)));
+        }
+    }
     let after = layout
         .store()
         .get_with_etag(&layout.control_path(cell.as_bytes()))
