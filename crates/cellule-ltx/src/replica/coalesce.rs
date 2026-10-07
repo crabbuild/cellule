@@ -15,7 +15,7 @@ pub(super) async fn run(
 ) -> Result<Vec<PreparedSegment>> {
     if segments.len() < 2
         || segments.iter().any(|segment| {
-            !matches!(segment.body, AppendBody::Native(_))
+            !matches!(segment.body, AppendBody::Native(_) | AppendBody::Frozen(_))
                 || segment.descriptor.info.size_bytes > SINGLE_PUT_BYTES
                 || segment.index.len() as u64 > SINGLE_PUT_BYTES
         })
@@ -29,18 +29,23 @@ pub(super) async fn run(
             .ok_or(LtxError::LTXCorrupted)
     })?;
     for segment in &segments {
-        let AppendBody::Native(source) = &segment.body else {
-            return Err(LtxError::LTXCorrupted);
-        };
         let info = segment.descriptor.info.clone();
-        let source = source.clone();
+        let body = segment.body.clone();
         let index = segment.index.clone();
         // One admitted job owns the pinned read and verification. Synchronous
         // access avoids nesting file jobs in the same bounded pool, and the
-        // dispatched closure retains the source and admission on cancellation.
+        // dispatched closure retains the pinned or frozen source and admission
+        // on cancellation. Both representations pass the same byte/index checks.
         let merged = replica
             .host
-            .run(move || state.apply(source.read_small(info.size_bytes)?, &info, &index))
+            .run(move || {
+                let bytes = match body {
+                    AppendBody::Native(source) => source.read_small(info.size_bytes)?,
+                    AppendBody::Frozen(bytes) => bytes,
+                    _ => return Err(LtxError::LTXCorrupted),
+                };
+                state.apply(bytes, &info, &index)
+            })
             .await
             .map_err(pinned_storage_error)??;
         let Some(merged) = merged else {

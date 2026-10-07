@@ -22,6 +22,7 @@ sequenceDiagram
 | `admit_root_preparation` | Waits for the existing dirty reservation before capture selection; the scoped clone starts no work and grants no authority. |
 | `CellReplica::prepare` | Verifies cuts and writes immutable root dependencies. |
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
+| `prepare_recovered_overlay` | Verifies the exact predecessor and final position; small independent tails use the canonical coalescer and native pack. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
 | `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
 | `try_admit_scheduled_compaction` | Returns a scoped clone with existing dirty/recovery admission, or defers without waiting behind a queued cohort. |
@@ -75,6 +76,13 @@ index and root formats. Larger working sets, oversized output and representation
 outside the existing capture bound retain the file-backed upload path. All
 dependencies still finish before a proposal returns; original follower receipts
 and the authority CAS continue to govern acknowledgement.
+
+Independent recovery uses the same path when all selected rows, their indexes
+and pack headers together fit the existing 256 KiB single-PUT budget. Every
+original row is verified before coalescing. If a later row exceeds that budget,
+earlier frozen bodies are released and the entire tail retains its ordinary
+bundle representation. `prepare_bundle` preserves shared bundle references.
+No root format, authority rule or host resource ceiling changes.
 
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the

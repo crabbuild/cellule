@@ -6,6 +6,12 @@
 
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BundleUse {
+    Shared,
+    IndependentRecovery,
+}
+
 impl CellReplica {
     /// Appends captured cuts to a private representation-only compaction.
     ///
@@ -214,7 +220,7 @@ impl CellReplica {
         let mut replica = self.clone();
         replica.host = self.host.for_dirty().await?;
         replica
-            .prepare_bundle_admitted(base, bundle, commit_sequence, schema)
+            .prepare_bundle_admitted(base, bundle, commit_sequence, schema, BundleUse::Shared)
             .await
     }
 
@@ -223,6 +229,8 @@ impl CellReplica {
     /// Recovery policy and ownership remain caller-owned. This method accepts
     /// only this replica's Cell/incarnation rows, requires the declared final
     /// position to match the bundle, and reuses normal root preparation.
+    /// Independent small tails use canonical native coalescing and packing;
+    /// larger tails keep the bundle representation under the existing bounds.
     pub async fn prepare_recovered_overlay(
         &self,
         overlay: &RecoveryOverlay,
@@ -245,12 +253,15 @@ impl CellReplica {
         if final_position != overlay.final_position {
             return Err(LtxError::ChecksumMismatch);
         }
-        let prepared = self
-            .prepare_bundle(
+        let mut replica = self.clone();
+        replica.host = self.host.for_dirty().await?;
+        let prepared = replica
+            .prepare_bundle_admitted(
                 Some(&overlay.predecessor),
                 &overlay.bundle,
                 overlay.final_commit_sequence,
                 schema,
+                BundleUse::IndependentRecovery,
             )
             .await?;
         if prepared.root().position != overlay.final_position {
@@ -265,6 +276,7 @@ impl CellReplica {
         bundle: &crate::bundle::Bundle,
         commit_sequence: u64,
         schema: u32,
+        usage: BundleUse,
     ) -> Result<PreparedRoot> {
         self.validate_metadata(commit_sequence, schema)?;
         if bundle.len() > self.limits.max_plan_bytes {
@@ -278,8 +290,10 @@ impl CellReplica {
 
         let (repository, epoch) = crate::bundle::cell_identity(&self.cell, &self.incarnation);
         let bundle_digest = bundle.digest();
-        let mut inputs = Vec::new();
+        let mut inputs: Vec<AppendInput> = Vec::new();
         let mut selected_bytes = 0_u64;
+        let mut independent = usage == BundleUse::IndependentRecovery;
+        let mut independent_bytes = 0_u64;
         let mut prospective = base_graph
             .as_ref()
             .map(|graph| graph.descriptors.clone())
@@ -313,6 +327,25 @@ impl CellReplica {
             }
             self.admit_segment_representation(&row.info, pages.len() * crate::paged::ENTRY_BYTES)?;
             let index_bytes = Bytes::from(crate::paged::encode_index_from_pages(&pages)?);
+            // Retain at most one canonical small-pack budget of verified native
+            // inputs. If a later row exceeds it, release every earlier frozen
+            // body and keep the shared bundle representation for the whole tail.
+            if independent {
+                match independent_bytes
+                    .checked_add(packed::HEADER_BYTES)
+                    .and_then(|size| size.checked_add(row.info.size_bytes))
+                    .and_then(|size| size.checked_add(index_bytes.len() as u64))
+                    .filter(|size| *size <= upload::SINGLE_PUT_BYTES)
+                {
+                    Some(size) => independent_bytes = size,
+                    None => {
+                        independent = false;
+                        for input in &mut inputs {
+                            input.body = AppendBody::Bundle;
+                        }
+                    }
+                }
+            }
             inputs.push(AppendInput {
                 info: row.info.clone(),
                 location: BodyLocation::Bundle {
@@ -320,7 +353,11 @@ impl CellReplica {
                     offset: row.offset,
                 },
                 index: index_bytes,
-                body: AppendBody::Bundle,
+                body: if independent {
+                    AppendBody::Frozen(bytes)
+                } else {
+                    AppendBody::Bundle
+                },
             });
         }
         let target = inputs
@@ -328,6 +365,18 @@ impl CellReplica {
             .map(|input| input.info.position())
             .ok_or(LtxError::TxNotAvailable)?;
         self.validate_chain(&prospective, target)?;
+        if independent {
+            // Independent recovery already verified every original cut. The
+            // canonical coalescer and native pack factory can now reduce their
+            // representation without retaining shared-bundle dependencies.
+            for input in &mut inputs {
+                input.location = BodyLocation::Native;
+            }
+        }
+        let retained_bundle = inputs
+            .iter()
+            .any(|input| matches!(input.body, AppendBody::Bundle))
+            .then_some(bundle);
         self.prepare_append(
             base,
             base_graph.map(AppendBaseState::from),
@@ -335,7 +384,7 @@ impl CellReplica {
             target,
             commit_sequence,
             schema,
-            Some(bundle),
+            retained_bundle,
         )
         .await
     }

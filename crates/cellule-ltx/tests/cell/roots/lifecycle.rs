@@ -706,7 +706,10 @@ async fn recovered_overlay_requires_exact_predecessor_and_final_position() {
     let first = writer.capture().unwrap();
     let cell = [81; 32];
     let incarnation = [82; 16];
-    let replica = replica(Store::new(Arc::new(InMemory::new())), cell, incarnation);
+    let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+        Arc::new(InMemory::new()),
+    ));
+    let replica = replica(Store::new(counted.clone()), cell, incarnation);
     let base = replica.prepare(None, &first, 1, 6).await.unwrap().root();
 
     writer
@@ -730,6 +733,7 @@ async fn recovered_overlay_requires_exact_predecessor_and_final_position() {
         .collect();
     let bundle = Bundle::encode(entries, Limits::default()).unwrap();
     let overlay = RecoveryOverlay::new(base, bundle, tail.position, 2);
+    counted.reset();
     let recovered = replica
         .prepare_recovered_overlay(&overlay, 6)
         .await
@@ -738,6 +742,30 @@ async fn recovered_overlay_requires_exact_predecessor_and_final_position() {
     assert_eq!(recovered.predecessor(), Some(base));
     assert_eq!(recovered.root().position, tail.position);
     assert_eq!(recovered.root().commit_sequence, 2);
+    assert_eq!(counted.put_requests(), 2, "one native pack and one root");
+    let direct = replica.prepare(Some(&base), &tail, 2, 6).await.unwrap();
+    assert_eq!(
+        recovered.root(),
+        direct.root(),
+        "recovery uses the exact canonical pack factory"
+    );
+    let restored = directory.path().join("recovered.sqlite");
+    replica
+        .open_root(&recovered.root())
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let db = rusqlite::Connection::open(restored).unwrap();
+    let events: Vec<String> = db
+        .prepare("SELECT body FROM events ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(events, ["published", "fleet-only"]);
 
     let invalid = RecoveryOverlay::new(
         RootRef {
@@ -768,5 +796,87 @@ async fn recovered_overlay_requires_exact_predecessor_and_final_position() {
             .await
             .is_err()
     );
+    writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn recovered_overlay_keeps_the_bundle_when_a_later_row_exceeds_the_pack_budget() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut writer =
+        Db::open(&directory.path().join("fallback.sqlite"), Limits::default()).unwrap();
+    writer.transaction(|tx| tx.execute_batch("CREATE TABLE payloads(id INTEGER PRIMARY KEY, value BLOB); INSERT INTO payloads VALUES(0, X'00')")).unwrap();
+    let cell = [181; 32];
+    let incarnation = [182; 16];
+    let replica = replica(Store::new(Arc::new(InMemory::new())), cell, incarnation);
+    let base = replica
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    writer
+        .transaction(|tx| tx.execute("INSERT INTO payloads VALUES(1, X'01')", []))
+        .unwrap();
+    let first = writer.capture().unwrap();
+    let payload: Vec<u8> = (0_u64..10_000)
+        .flat_map(|number| *blake3::hash(&number.to_le_bytes()).as_bytes())
+        .collect();
+    writer
+        .transaction(|tx| tx.execute("INSERT INTO payloads VALUES(2, ?1)", [&payload]))
+        .unwrap();
+    let last = writer.capture().unwrap();
+    assert!(
+        last.segments
+            .iter()
+            .map(|segment| segment.info().size_bytes)
+            .sum::<u64>()
+            > 256 << 10
+    );
+    let bundle = Bundle::encode(
+        first
+            .segments
+            .iter()
+            .chain(&last.segments)
+            .map(|segment| {
+                BundleEntry::for_cell(
+                    cell,
+                    incarnation,
+                    segment.info().clone(),
+                    std::fs::read(segment.path()).unwrap(),
+                )
+            })
+            .collect(),
+        Limits::default(),
+    )
+    .unwrap();
+    let overlay = RecoveryOverlay::new(base, bundle, last.position, 3);
+    let recovered = replica
+        .prepare_recovered_overlay(&overlay, 1)
+        .await
+        .unwrap();
+    let objects = replica.reachable_objects(&recovered.root()).await.unwrap();
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|object| object.kind == CellObjectKind::Bundle)
+            .count(),
+        1
+    );
+    let restored = directory.path().join("fallback-restored.sqlite");
+    replica
+        .open_root(&recovered.root())
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let db = rusqlite::Connection::open(restored).unwrap();
+    let values: Vec<Vec<u8>> = db
+        .prepare("SELECT value FROM payloads ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(values, vec![vec![0], vec![1], payload]);
     writer.close().unwrap();
 }
