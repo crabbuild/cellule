@@ -29,6 +29,11 @@ monotonic horizon starts before those reads; wall-clock rollback and slow I/O
 cannot extend it. This is a bounded authorization horizon, not a device
 persistence or clock-skew qualification.
 
+The signed pruning floor is the lower of fresh authoritative object coverage
+and the sequence immediately before the requested window. Publication can
+advance past frames already queued by the source; retaining their first
+witness preserves the source's exact receipt contract through that race.
+
 ## Lifecycle and ownership
 
 1. Install a fresh receiver boot before serving traffic.

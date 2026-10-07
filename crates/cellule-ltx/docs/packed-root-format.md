@@ -66,6 +66,11 @@ must have the same provider identity and application prefix. Large cuts,
 compaction, or insufficient retained-memory admission use ordinary preparation.
 Cancelled waiters leave dispatched upload and scratch cleanup owned by the lane.
 The lane joins after all Cell actors and publishers during shutdown.
+The worker pool reserves 4,224 node publication descriptors in addition to the
+eight handles per resident Cell. Only publication pins can consume this headroom;
+Cell and reader admission retains its ordinary descriptor bound. Aggregate
+descriptor observations include both classes. Retained RAM and disk limits
+remain separate.
 
 Upload grants no durability authority. Each Cell independently prepares its
 root, accumulates lineage and performs its existing fenced control CAS. Failed

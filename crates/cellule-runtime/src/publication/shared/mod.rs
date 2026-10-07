@@ -119,7 +119,7 @@ impl SharedPublication {
             .ok_or(Error::Capacity("shared publication memory"))?;
         let cost = ResourceCost::zero()
             .with_retained_bytes(memory)
-            .with_file_descriptors(cuts.segments.len() + 2);
+            .with_publication_file_descriptors(cuts.segments.len() + 2);
         let memory = match self.resources.try_reserve(cost) {
             Ok(memory) => memory,
             // Sharing is optional representation reduction. Never wait for

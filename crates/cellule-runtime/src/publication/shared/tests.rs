@@ -7,8 +7,63 @@ fn resources(memory: usize) -> ResourceLedger {
     ResourceLedger::new(
         ResourceCost::zero()
             .with_retained_bytes(memory)
-            .with_file_descriptors(64),
+            .with_publication_file_descriptors(64),
     )
+}
+
+#[tokio::test]
+async fn fully_resident_worker_pool_can_admit_a_shared_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let pool = crate::SqlWorkerPool::new(1, 1).unwrap();
+    let host = Host::default().with_local_disk_budget(cellule_ltx::DiskBudget::new(8 << 20));
+    let runtime = crate::CellRuntime::new_with_replica_host(
+        pool.clone(),
+        4 << 20,
+        crate::SessionId::from_bytes([9; 16]),
+        host.clone(),
+    )
+    .unwrap();
+    let ledger = pool.resource_ledger();
+    let active = ledger.try_reserve(ResourceCost::active_cell()).unwrap();
+    let coordinator = SharedPublication::new(ledger.clone(), Default::default());
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(Arc::new(InMemory::new())),
+            Path::from("resident-shared"),
+            [3; 16],
+        ),
+        [1; 32],
+        [1; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(host.clone());
+    let mut db =
+        Db::open_with_host(&directory.path().join("source"), Limits::default(), host).unwrap();
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(7)"))
+        .unwrap();
+    let cuts = db.capture().unwrap();
+    let prepared = coordinator
+        .submit(
+            &replica,
+            &cuts,
+            directory.path().to_owned(),
+            coordinator.admit().await.unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        prepared.is_some(),
+        "resident Cell descriptors must not consume node publication headroom"
+    );
+    drop(prepared);
+    coordinator.shutdown().await.unwrap();
+    drop(cuts);
+    drop(db);
+    drop(replica);
+    drop(active);
+    runtime.shutdown().await.unwrap();
+    assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
 }
 
 #[tokio::test]
@@ -49,7 +104,7 @@ async fn minimum_host_permits_drain_shared_work_after_a_sibling_waiter_cancels()
             .try_reserve(
                 ResourceCost::zero()
                     .with_retained_bytes(512 << 10)
-                    .with_file_descriptors(3),
+                    .with_publication_file_descriptors(3),
             )
             .unwrap();
         let (reply, response) = oneshot::channel();

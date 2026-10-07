@@ -484,3 +484,32 @@ async fn only_fresh_grant_coverage_can_release_native_prefix_records() {
     );
     assert!(f.backend.requests().is_empty());
 }
+
+#[tokio::test]
+async fn enrollment_coverage_ahead_of_queued_frames_does_not_skip_the_requested_witness() {
+    let mut f = Fixture::new().await;
+    let leader = f
+        .directory
+        .load(f.peer.session, NOW)
+        .await
+        .unwrap()
+        .unwrap();
+    f.directory
+        .advance_log_coverage(&leader, 6, NOW)
+        .await
+        .unwrap();
+    // The source queued sequence 1 while its object floor was still zero.
+    // Its exact batch receipt requires that witness even if publication wins
+    // the race before grant issuance. Fresh authority permits a lower floor.
+    let grant = f.grant(1).await.unwrap();
+    assert_eq!(grant.covered_through(), 0);
+    let frame = f.frame(1);
+    let receipt = f.append(&grant, vec![frame.clone()]).await.unwrap();
+    assert_eq!(receipt.base_sequence, 1);
+    assert_eq!(receipt.durable_through, 1);
+    f.follower.seal(f.peer.session, 2).await.unwrap();
+    assert_eq!(
+        f.follower.read_tail(f.peer.session, 2, 1).await.unwrap(),
+        vec![frame]
+    );
+}

@@ -215,13 +215,14 @@ impl CellRuntimeStats {
         self.resident_capacity_bytes
     }
 
-    /// Returns file descriptors reserved by active Cells in the shared ledger.
+    /// Returns reserved Cell, reader and node publication descriptors.
     #[must_use]
     pub const fn file_descriptors(self) -> usize {
         self.file_descriptors
     }
 
-    /// Returns the active-Cell file-descriptor ceiling in the shared ledger.
+    /// Returns the combined ordinary-handle and dedicated publication ceilings.
+    /// Publication headroom cannot admit more Cell or reader handles.
     #[must_use]
     pub const fn file_descriptor_capacity(self) -> usize {
         self.file_descriptor_capacity

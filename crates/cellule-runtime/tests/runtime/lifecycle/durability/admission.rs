@@ -419,6 +419,7 @@ async fn node_byte_reservation_rejects_overcommit_and_releases_capacity() {
     assert_eq!(
         full.file_descriptor_capacity(),
         ACTIVE_CELL_FILE_DESCRIPTORS
+            + cellule_runtime::fleet::resource::PUBLICATION_FILE_DESCRIPTORS
     );
     assert_eq!(full.retained_bytes(), 1_024);
     assert_eq!(full.retained_capacity_bytes(), 1_024);
@@ -436,6 +437,7 @@ async fn node_byte_reservation_rejects_overcommit_and_releases_capacity() {
     assert_eq!(
         empty.file_descriptor_capacity(),
         ACTIVE_CELL_FILE_DESCRIPTORS
+            + cellule_runtime::fleet::resource::PUBLICATION_FILE_DESCRIPTORS
     );
     assert_eq!(empty.retained_bytes(), 0);
     assert_eq!(empty.local_disk_reserved_bytes(), 0);

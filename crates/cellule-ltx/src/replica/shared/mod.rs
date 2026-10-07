@@ -280,7 +280,11 @@ impl CellReplica {
                 if offset != size || file.file_len()? != size {
                     return Err(LtxError::LTXCorrupted);
                 }
-                file.sync_all()?;
+                // This file is only a transient upload source, never restart
+                // state or a durability proof. Close the writer before origin
+                // reads; put_source still verifies its exact length and digest.
+                // Native captures and follower logs retain their own barriers.
+                drop(file);
                 let digest = *hasher.finalize().as_bytes();
                 for append in &mut appends {
                     for segment in &mut append.segments {

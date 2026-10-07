@@ -843,6 +843,7 @@ async fn runtime_stats_follow_active_cell_lifecycle() {
     assert_eq!(
         runtime.stats().file_descriptor_capacity(),
         10 * ACTIVE_CELL_FILE_DESCRIPTORS
+            + cellule_runtime::fleet::resource::PUBLICATION_FILE_DESCRIPTORS
     );
     handle.drain().await.unwrap();
     assert_eq!(runtime.stats().active_cells(), 0);

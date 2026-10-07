@@ -67,7 +67,33 @@ boundary/layout/document/SQL-peer/Python gates. The write-proof model checked
 checks validate the implementation contracts; they do not qualify throughput,
 physical-device durability or bundle-based bucket acknowledgments.
 
-## Evidence
+## Measured-path corrections
+
+The first M2/M3 Docker run exposed two implementation faults before any gain
+could be qualified. At 1,000 resident Cells, ordinary handles consumed the
+entire descriptor ledger, so all 29,999 measured shared submissions fell back.
+Publication now has dedicated bounded descriptor credit. Cell and reader
+admission cannot borrow it; aggregate usage includes both classes, and drain
+must return all credit.
+
+Fresh enrollment could also observe object coverage ahead of the first queued
+frame. Signing that higher pruning floor let the receiver skip the frame the
+shipper required as an exact witness. Grants now sign the lesser of fresh
+coverage and `first_sequence - 1`; verification rejects a floor inside the
+authorized window. The retained run had no follower proof advancement and
+inactive Fleet shipping, so its zero enrollment GETs are a failure diagnostic.
+Reports now require healthy Fleet frontiers throughout the window and actual
+follower-proof advancement, separately from publication debt stability.
+
+CI's four paired routing repetitions found 14–23% lower command throughput in
+the first implementation; query rates stayed within approximately 4% of
+baseline. Shared upload created an additional synced temporary file. Its writer
+now closes before the exact length/digest-verified object upload, without a
+local durability barrier for that disposable source. Native captures and
+follower logs retain their barriers. The contribution of this change requires
+a fresh routing comparison; the earlier failure remains evidence.
+
+## Historical packed-implementation evidence
 
 The fixture is **SQL application parity**, not the user's bounded KV workload:
 1,000 Cells, 96-byte values, INSERT plus in-command SELECT, and a two-hour
@@ -76,7 +102,7 @@ ceilings and tmpfs state, RustFS has 2 CPUs/2 GiB, and the client has 4 CPUs/4 G
 on one 8-CPU/16-GiB Linux VM. Summed CPU ceilings exceed VM capacity. This
 profile qualifies neither device persistence nor independent-node isolation.
 
-Latest main is `18eff0f7af47fac09b993157bb444e582072d7cf`, which merged PR 65.
+The earlier baseline is `18eff0f7af47fac09b993157bb444e582072d7cf`, which merged PR 65.
 Its production source matches the audited `397f500a` foundation; three additional
 main files are design documents. The baseline explicitly overlays measurement
 hooks. Celld is v0.6.1, `f2bf648663a610eefde71f3547ad61e9b896b1f0`, using the

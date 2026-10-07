@@ -50,6 +50,7 @@ impl NodeAppendGrant {
             || grant.last_sequence().checked_sub(grant.first_sequence())
                 != Some(APPEND_GRANT_SEQUENCES - 1)
             || grant.first_sequence() == 0
+            || grant.covered_through() >= grant.first_sequence()
             || grant.log_epoch() == 0
             || !grant.members().contains(&receiver.node)
         {
@@ -245,7 +246,10 @@ impl NodeDirectory {
             epoch,
             first,
             last,
-            log.tiered_through(),
+            // Publication may pass frames already queued by the source. Its
+            // exact batch receipt still needs the first requested witness.
+            // Fresh authority permits less pruning; it never permits more.
+            log.tiered_through().min(first - 1),
             now_ms as u64,
             expires as u64,
         ] {

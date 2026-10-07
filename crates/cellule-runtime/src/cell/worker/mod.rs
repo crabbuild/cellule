@@ -171,6 +171,9 @@ impl SqlWorkerPool {
                 .with_file_descriptors(
                     max_active_cells.saturating_mul(ACTIVE_CELL_FILE_DESCRIPTORS),
                 )
+                .with_publication_file_descriptors(
+                    crate::fleet::resource::PUBLICATION_FILE_DESCRIPTORS,
+                )
                 .with_worker_jobs(worker_count)
                 .with_primitive_jobs(worker_count)
                 .with_hydration_jobs(HYDRATION_JOB_CAPACITY),
