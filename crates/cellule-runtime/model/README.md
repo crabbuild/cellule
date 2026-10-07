@@ -93,7 +93,9 @@ range. Five broken configurations must expose `CellFence`,
 `CompleteSelection`, `ContiguousSelection`, `ReadProven` and `ColdRecoverable`.
 
 `complete` abstracts successful verification of exact bytes, durable retry
-outcomes and all dependencies. `root` abstracts an authenticated exact
-checkpoint. The model does not implement or prove those checks, SQLite replay,
+outcomes and all dependencies. `root` abstracts an authenticated independent
+checkpoint selected in the authority catalog, including release of its old range
+references. An ordinary root that still refers to shared bundle data cannot
+perform that action. The model does not implement or prove those checks, SQLite replay,
 cryptography, provider persistence, bounded history or Rust adapter ordering.
 No production response is enabled by a passing result.

@@ -99,11 +99,16 @@ Read(c, b) == /\ open /\ visible[c] < b /\ (UnprovedRead \/ b \in proof)
                    stage, proposedVersion, proposedHead, proposedEpoch,
                    complete, present, proof, ack, root,
                    badSelection, badPrefix, badContents>>
+(* Abstract a fully independent checkpoint selected by the authority catalog.
+   A root descriptor still referencing this bundle is NOT such a checkpoint.
+   Byte verification, dependency rewriting and complete reference inventory
+   remain production obligations, not properties proved by this abstraction. *)
 Materialize(c, b) == /\ b \in proof /\ b \in present /\ b \in complete
                     /\ c \in RowCells(b)
                     /\ root[c] < b
                     /\ root' = [root EXCEPT ![c] = b]
-                    /\ UNCHANGED <<open, version, head, epoch, closed, endpoint,
+                    /\ version' = version + 1
+                    /\ UNCHANGED <<open, head, epoch, closed, endpoint,
                          stage, proposedVersion, proposedHead, proposedEpoch,
                          complete, present, proof, ack, visible,
                          badSelection, badPrefix, badContents>>
