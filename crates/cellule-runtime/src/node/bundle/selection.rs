@@ -18,10 +18,19 @@ impl NodeDirectory {
             .advertisement
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
-        let mut catalog = load_catalog(&self.layout, observed.advertisement.session, head).await?;
         if frames.is_empty() || frames.len() > MAX_FRAMES {
             return Err(Error::Capacity("bundle frame count"));
         }
+        let shards = frames
+            .iter()
+            .map(|frame| {
+                let scope = frame.scope();
+                index::shard(&scope.application, &scope.cell)
+            })
+            .collect();
+        let mut catalog =
+            store::load_catalog_shards(&self.layout, observed.advertisement.session, head, &shards)
+                .await?;
         let mut consumed = 0_usize;
         for assignment in assignments {
             let count = usize::try_from(
@@ -112,7 +121,24 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<(VersionedNodeAdvertisement, Vec<BundleCoverageProof>)> {
         lease.check()?;
-        let catalog = load_catalog(&self.layout, prepared.catalog.session, prepared.head).await?;
+        let shards = prepared
+            .catalog
+            .bindings
+            .iter()
+            .map(|binding| {
+                index::shard(
+                    binding.application.as_bytes(),
+                    binding.control.cell.as_bytes(),
+                )
+            })
+            .collect();
+        let catalog = store::load_catalog_shards(
+            &self.layout,
+            prepared.catalog.session,
+            prepared.head,
+            &shards,
+        )
+        .await?;
         let mut proofs = Vec::new();
         for binding in catalog.bindings {
             if !binding

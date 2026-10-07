@@ -16,6 +16,7 @@ use std::sync::Arc;
 const NOW: i64 = 1_000_000;
 const EPOCH: u64 = 2;
 mod faults;
+mod index;
 mod lifecycle;
 mod ranges;
 struct Fixture {
@@ -114,6 +115,14 @@ impl Fixture {
         cell
     }
     async fn unbound_cell_for_application(&mut self, byte: u8, application: [u8; 16]) -> Cell {
+        self.unbound_cell_at_commit(byte, application, 1).await
+    }
+    async fn unbound_cell_at_commit(
+        &mut self,
+        byte: u8,
+        application: [u8; 16],
+        commit_sequence: u64,
+    ) -> Cell {
         let layout = self.layout.for_application(application);
         let cell = CellId::from_bytes([byte; 32]);
         let incarnation = IncarnationId::from_bytes([byte + 10; 16]);
@@ -134,7 +143,10 @@ impl Fixture {
             Limits::default(),
         )
         .unwrap();
-        let prepared = replica.prepare(None, &cuts, 1, 1).await.unwrap();
+        let prepared = replica
+            .prepare(None, &cuts, commit_sequence, 1)
+            .await
+            .unwrap();
         let mut control = Control::initial(
             cell,
             incarnation,
@@ -379,7 +391,9 @@ async fn closure_drains_prior_fleet_ack_rejects_old_cas_and_blocks_transfer_unti
             .is_err()
     );
     assert!(matches!(
-        f.directory.finish_bundle_close(&closing, pin, NOW).await,
+        f.directory
+            .finish_bundle_close(&closing, pin, issued, NOW)
+            .await,
         Err(Error::PendingPublication)
     ));
     let successor = a
@@ -408,7 +422,7 @@ async fn closure_drains_prior_fleet_ack_rejects_old_cas_and_blocks_transfer_unti
         .unwrap();
     let closed = f
         .directory
-        .finish_bundle_close(&selected, pin, NOW)
+        .finish_bundle_close(&selected, pin, issued, NOW)
         .await
         .unwrap();
     assert!(matches!(
@@ -438,7 +452,7 @@ async fn closure_drains_prior_fleet_ack_rejects_old_cas_and_blocks_transfer_unti
     // would retain locators that the departed writer can no longer release.
     let closed = f
         .directory
-        .checkpoint_bundle_cell(&closed, &a.authority, pin, Limits::default(), NOW)
+        .checkpoint_bundle_cell(&closed, &a.authority, &proofs[0], Limits::default(), NOW)
         .await
         .unwrap();
     let released = a

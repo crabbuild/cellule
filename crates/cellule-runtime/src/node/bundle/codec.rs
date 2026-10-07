@@ -62,6 +62,7 @@ fn metadata(catalog: &Catalog, frames: usize) -> Result<BoundedEncoder> {
     Ok(e)
 }
 
+#[cfg(test)]
 pub(super) fn encode(
     catalog: &mut Catalog,
     frames: &[cellule_ltx::VerifiedNodeFrame],
@@ -99,7 +100,19 @@ pub(super) fn encode(
     Ok(Bytes::from(e.finish()))
 }
 
+pub(super) fn encode_leaf(catalog: &Catalog) -> Result<Bytes> {
+    Ok(Bytes::from(metadata(catalog, 0)?.finish()))
+}
+
 pub(super) fn decode(body: &Bytes) -> Result<Catalog> {
+    decode_inner(body, true)
+}
+
+pub(super) fn decode_leaf(body: &Bytes) -> Result<Catalog> {
+    decode_inner(body, false)
+}
+
+fn decode_inner(body: &Bytes, complete_object: bool) -> Result<Catalog> {
     let mut d = BoundedDecoder::new(body, MAX_BUNDLE_BYTES as u32)?;
     if d.read_bytes()? != MAGIC {
         return Err(Error::Node("unsupported node bundle format"));
@@ -178,7 +191,7 @@ pub(super) fn decode(body: &Bytes) -> Result<Catalog> {
         });
     }
     let count = d.read_count()?;
-    if count > MAX_FRAMES {
+    if count > MAX_FRAMES || (!complete_object && count != 0) {
         return Err(Error::Capacity("bundle frame count"));
     }
     let mut local = Vec::with_capacity(count);
@@ -200,6 +213,7 @@ pub(super) fn decode(body: &Bytes) -> Result<Catalog> {
         predecessor,
         selected_through,
         bindings,
+        index: None,
     };
     catalog.validate()?;
     let locators: Vec<_> = catalog
@@ -209,10 +223,11 @@ pub(super) fn decode(body: &Bytes) -> Result<Catalog> {
         .filter(|locator| locator.object.is_none())
         .map(|locator| (locator.offset, locator.bytes, locator.frame_digest))
         .collect();
-    if locators.len() != local.len()
-        || local
-            .iter()
-            .any(|extent| locators.iter().filter(|locator| *locator == extent).count() != 1)
+    if complete_object
+        && (locators.len() != local.len()
+            || local
+                .iter()
+                .any(|extent| locators.iter().filter(|locator| *locator == extent).count() != 1))
     {
         return Err(Error::Node(
             "bundle local extents differ from complete manifest",

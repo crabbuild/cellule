@@ -14,6 +14,15 @@ modestly better, and provider/recovery failures remain explicitly recorded.
 The older measurements below are historical and are not measurements of the
 latest bundle APIs.
 
+The [WAL NORMAL reevaluation](pr67-normal-wal-reevaluation.md) records a later
+interrupted comparison at `075b2cd`; it does not qualify parity. The
+[indexed bundle implementation](bundle-coverage-implementation.md) reduces one
+1,000-Cell catalog update from 783,146 to 35,223 metadata bytes and checkpoints
+64 exact roots with two shared PUTs. Those are protocol component measurements;
+ordinary actor responses still use the previous publication path.
+Canonical small-tail materialization also reduces the 64-root cohort from 320
+to 256 PUTs and a 32-locator suffix from 37 PUTs to four, with exact cold restore.
+
 ## Delivered behavior
 
 | Change | Measurable result | Preserved contract |
@@ -48,7 +57,7 @@ collection paths. There is no legacy decoding or automatic migration.
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
 | M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Latest three active-Fleet windows cost 5.229–5.433 PUTs/command; two fail the debt trend. Three per-Cell authority PUTs remain; M4 is required |
 | M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; latest three active-Fleet windows cost 0.0138 enrollment GETs/command. The 15K target diagnostic fails delivery and warm audit |
-| M4 | Models and [connected protocol APIs](bundle-coverage-implementation.md) for shared selection, exact assigned ranges, independent materialization, checkpoint and complete live-writer closure | Actor response/read integration, failed-node issued-suffix recovery, bounded index/host admission and bundle collection remain incomplete; bundle ACKs disabled |
+| M4 | [Connected protocol APIs](bundle-coverage-implementation.md), authenticated copy-on-write catalog shards, exact prefix/cohort checkpoints and streamed complete inventory | Actor response/read integration, admitted materializer scheduling, checkpoint density, failed-node issued-suffix recovery and bundle collection remain incomplete; bundle ACKs disabled |
 | M5 | Three paired low-rate Fleet repetitions and target diagnostics with exact ACK audits delivered | Publication stability and target delivery fail; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
 
 ## Shared publication checkpoint

@@ -53,11 +53,10 @@ async fn verify_hot_materialization(checkpoint_first: bool) {
         .await
         .unwrap();
     assert_eq!(between.commit_sequence(), 3);
-    let pin = cell.control.value().bundle_binding.unwrap();
     let (node, proof) = if checkpoint_first {
         let checkpoint = f
             .directory
-            .checkpoint_bundle_cell(&latest, &cell.authority, pin, Limits::default(), NOW)
+            .checkpoint_bundle_cell(&latest, &cell.authority, &old, Limits::default(), NOW)
             .await
             .unwrap();
         let current = cell
@@ -88,7 +87,7 @@ async fn verify_hot_materialization(checkpoint_first: bool) {
     );
     let checkpoint = f
         .directory
-        .checkpoint_bundle_cell(&node, &cell.authority, pin, Limits::default(), NOW)
+        .checkpoint_bundle_cell(&node, &cell.authority, &proof, Limits::default(), NOW)
         .await
         .unwrap();
     let current = cell
@@ -129,10 +128,15 @@ async fn checkpoint_releases_locators_and_the_next_range_continues_exactly() {
         .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
         .await
         .unwrap();
-    let pin = cell.control.value().bundle_binding.unwrap();
     assert!(matches!(
         f.directory
-            .checkpoint_bundle_cell(&selected, &cell.authority, pin, Limits::default(), NOW)
+            .checkpoint_bundle_cell(
+                &selected,
+                &cell.authority,
+                &proofs[0],
+                Limits::default(),
+                NOW
+            )
             .await,
         Err(Error::PendingPublication)
     ));
@@ -147,7 +151,7 @@ async fn checkpoint_releases_locators_and_the_next_range_continues_exactly() {
         .unwrap();
     f.node = f
         .directory
-        .checkpoint_bundle_cell(&selected, &cell.authority, pin, Limits::default(), NOW)
+        .checkpoint_bundle_cell(&selected, &cell.authority, &proof, Limits::default(), NOW)
         .await
         .unwrap();
     let checkpoint = f
@@ -197,12 +201,17 @@ async fn quiet_binding_must_close_and_checkpoint_before_session_withdrawal() {
         .unwrap();
     let closed = f
         .directory
-        .finish_bundle_close(&closing, pin, NOW)
+        .finish_bundle_close(&closing, pin, issued, NOW)
+        .await
+        .unwrap();
+    let proof = f
+        .directory
+        .load_bundle_coverage(&cell.authority, &cell.control, Limits::default())
         .await
         .unwrap();
     let checkpoint = f
         .directory
-        .checkpoint_bundle_cell(&closed, &cell.authority, pin, Limits::default(), NOW)
+        .checkpoint_bundle_cell(&closed, &cell.authority, &proof, Limits::default(), NOW)
         .await
         .unwrap();
     f.directory.withdraw(&checkpoint, NOW).await.unwrap();

@@ -16,14 +16,10 @@ impl NodeDirectory {
             ));
         }
         catalog.predecessor = original.map(|head| head.digest);
-        let body = codec::encode(&mut catalog, frames)?;
-        // Decode the very bytes sent to the provider before selecting them.
-        if codec::decode(&body)? != catalog {
-            return Err(Error::Node("bundle manifest self-verification differs"));
-        }
+        let (body, digest) = index::encode(&mut catalog, frames)?;
         let head = NodeBundleHead {
             epoch: catalog.epoch,
-            digest: Digest::from_bytes(*blake3::hash(&body).as_bytes()),
+            digest,
             selected_through: catalog.selected_through,
         };
         self.layout
@@ -52,7 +48,7 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<VersionedNodeAdvertisement> {
         let mut base = observed.clone();
-        if *blake3::hash(&prepared.body).as_bytes() != *prepared.head.digest.as_bytes() {
+        if index::body_digest(&prepared.body)? != prepared.head.digest {
             return Err(Error::Node("bundle proposal digest differs"));
         }
         let mut last_conflict = None;
@@ -110,7 +106,25 @@ impl NodeDirectory {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn load_catalog(
+    layout: &cellule_ltx::CellStorageLayout,
+    session: SessionId,
+    head: NodeBundleHead,
+) -> Result<Catalog> {
+    index::load(layout, session, head, None).await
+}
+
+pub(super) async fn load_catalog_shards(
+    layout: &cellule_ltx::CellStorageLayout,
+    session: SessionId,
+    head: NodeBundleHead,
+    shards: &std::collections::BTreeSet<u8>,
+) -> Result<Catalog> {
+    index::load(layout, session, head, Some(shards)).await
+}
+
+pub(super) async fn load_legacy_catalog(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
     head: NodeBundleHead,
@@ -172,7 +186,13 @@ pub(crate) async fn ensure_enrollment(
         return Err(Error::Fenced);
     }
     let head = node.bundle.ok_or(Error::PendingPublication)?;
-    let mut catalog = load_catalog(layout, pin.session, head).await?;
+    let shards = [index::shard(
+        layout.application_id(),
+        control.cell.as_bytes(),
+    )]
+    .into_iter()
+    .collect();
+    let mut catalog = load_catalog_shards(layout, pin.session, head, &shards).await?;
     let binding = catalog.binding_mut(pin.digest)?;
     if head.epoch != pin.epoch
         || binding.phase != BindingPhase::Provisional
@@ -216,7 +236,13 @@ pub(crate) async fn ensure_departure(
         return Err(Error::Fenced);
     }
     let head = head.ok_or(Error::PendingPublication)?;
-    let mut catalog = load_catalog(layout, pin.session, head).await?;
+    let shards = [index::shard(
+        layout.application_id(),
+        control.cell.as_bytes(),
+    )]
+    .into_iter()
+    .collect();
+    let mut catalog = load_catalog_shards(layout, pin.session, head, &shards).await?;
     if pin.epoch != catalog.epoch {
         return Err(Error::Fenced);
     }
@@ -248,13 +274,5 @@ pub(crate) async fn ensure_session_drained(
     let Some(head) = head else {
         return Ok(());
     };
-    let catalog = load_catalog(layout, session, head).await?;
-    if catalog
-        .bindings
-        .iter()
-        .any(|binding| binding.phase != BindingPhase::Closed || !binding.locators.is_empty())
-    {
-        return Err(Error::PendingPublication);
-    }
-    Ok(())
+    index::ensure_drained(layout, session, head).await
 }

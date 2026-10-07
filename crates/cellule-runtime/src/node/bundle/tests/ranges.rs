@@ -288,6 +288,35 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
             .commit_sequence(),
         last.commit_sequence()
     );
+    f.count.reset();
+    let root = f.publisher(&cell).materialize_bundle(&last).await.unwrap();
+    eprintln!(
+        "bounded suffix materialization: locators={} puts={}",
+        MAX_LOCATORS,
+        f.count.put_requests()
+    );
+    assert_eq!(
+        f.count.put_requests(),
+        4,
+        "small retained suffix uses one canonical coalesced pack"
+    );
+    let restored = f.scratch.path().join("locator-pressure-restored.sqlite");
+    cell.replica
+        .open_root(&root)
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let db = rusqlite::Connection::open(restored).unwrap();
+    let count: usize = db
+        .query_row("SELECT count(*) FROM outcomes", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        count,
+        MAX_LOCATORS + 1,
+        "the later unselected command is absent"
+    );
 }
 
 #[tokio::test]

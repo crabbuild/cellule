@@ -38,9 +38,13 @@ use bytes::Bytes;
 mod binding;
 mod closure;
 mod codec;
+mod index;
 mod proof;
 mod selection;
-use proof::{checkpoint_prefix, verify_base, verify_binding};
+#[cfg(test)]
+use proof::checkpoint_prefix;
+use proof::{verify_base, verify_binding};
+#[cfg(test)]
 use store::load_catalog;
 pub(crate) mod store;
 #[cfg(test)]
@@ -67,7 +71,7 @@ impl NodeBundleHead {
     pub const fn epoch(&self) -> u64 {
         self.epoch
     }
-    /// Digest of the complete immutable catalog and range.
+    /// Digest authenticating the immutable catalog index and exact range.
     pub const fn digest(&self) -> Digest {
         self.digest
     }
@@ -121,6 +125,9 @@ struct Catalog {
     predecessor: Option<Digest>,
     selected_through: u64,
     bindings: Vec<Binding>,
+    // Authenticated unchanged shards survive a partial load. Loaded rows are
+    // snapshots for copy-on-write comparison, never a second authority.
+    index: Option<index::LoadedIndex>,
 }
 
 /// Uploaded exact proposal. It cannot release an ACK or prune a capture.
@@ -189,7 +196,10 @@ impl Catalog {
                 .ok_or(Error::Node("bundle catalog lacks base"))?;
             if pin.session != self.session
                 || pin.epoch != self.epoch
-                || binding.first_commit == 0
+                // A freshly published runtime bootstrap has no logical command
+                // or assigned frame yet. Only that empty binding may use zero.
+                || (binding.first_commit == 0
+                    && (binding.selected_commit != 0 || binding.selected_sequence != 0))
                 || binding.first_commit > binding.selected_commit
                 || !scopes.insert((
                     binding.application,

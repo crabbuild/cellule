@@ -181,6 +181,29 @@ cannot release those payload objects. Account for lookup checkpoints and actual
 data reclamation separately; independent checkpoints cannot be treated as free
 uploads.
 
+The first indexed prototype provided a measured correction to those optimistic
+bounds. Its 64-Cell materialization test observed **320 successful PUTs**, or
+five per root, while the new shared checkpoint adds two PUTs for the entire
+64-Cell cohort. Keeping both selection and checkpoint cohorts at 64 gives
+`2 / 64 + (5 + 2 / 64) / commands_per_checkpoint <= 0.05`: **at least 269 commands
+per Cell checkpoint**, before compaction, retries or collection. With an actual
+three-PUT materializer that bound would be 162; with four it would be 215 once
+the shared checkpoint is included. These are conditional calculations, not a
+qualified application result. At one command per capture, the current
+32-locator limit cannot meet even the optimistic bound. Raising that limit
+without admitted file-backed metadata and bounded cold/read cost is insufficient.
+
+The subsequent canonical-pack optimization reduces the same 64-root cohort to
+**256 PUTs** and a 32-locator suffix from **37 PUTs to four**. Independent tails
+use this path only when their aggregate native rows, indexes and pack headers
+fit the existing 256 KiB budget; larger tails retain the bundle representation.
+If that four-PUT materialization holds at the eventual checkpoint spacing,
+`2 / 64 + (4 + 2 / 64) / commands_per_checkpoint <= 0.05` requires **215 commands
+per Cell checkpoint**, before compaction, retries or collection. This remains
+conditional: checkpoint density, larger-tail cost and all-ACK cold/read bounds
+must be measured after the file-backed locator work. The present 32-locator
+ceiling still cannot satisfy it for one-command captures.
+
 At the uniform 1,000-Cell bucket target of 2,000 commands/s, 160 commands per
 Cell span approximately 80 seconds; at 15,000 Fleet commands/s they span about
 10.7 seconds. These are inferred cost constraints, not measured performance or

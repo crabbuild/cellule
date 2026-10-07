@@ -41,7 +41,13 @@ impl NodeDirectory {
             return Err(Error::Fenced);
         }
         let head = head.ok_or(Error::PendingPublication)?;
-        let mut catalog = load_catalog(&self.layout, session, head).await?;
+        let shards = [index::shard(
+            authority.layout().application_id(),
+            value.cell.as_bytes(),
+        )]
+        .into_iter()
+        .collect();
+        let mut catalog = store::load_catalog_shards(&self.layout, session, head, &shards).await?;
         let binding = catalog.binding_mut(pin.digest)?.clone();
         if binding.phase == BindingPhase::Provisional {
             return Err(Error::PendingPublication);

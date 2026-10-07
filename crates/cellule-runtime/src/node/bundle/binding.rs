@@ -30,6 +30,7 @@ impl NodeDirectory {
             predecessor: None,
             selected_through: 0,
             bindings: Vec::new(),
+            index: None,
         };
         let prepared = self.upload_catalog(None, catalog, &[]).await?;
         self.select_catalog(observed, &prepared, now_ms).await
@@ -50,8 +51,16 @@ impl NodeDirectory {
             .advertisement
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
-        let mut catalog = load_catalog(&self.layout, observed.advertisement.session, head).await?;
         let value = control.value();
+        let shards = [index::shard(
+            authority.layout().application_id(),
+            value.cell.as_bytes(),
+        )]
+        .into_iter()
+        .collect();
+        let mut catalog =
+            store::load_catalog_shards(&self.layout, observed.advertisement.session, head, &shards)
+                .await?;
         if value.state != ControlState::Serving
             || value.recovery.is_some()
             || value
@@ -99,8 +108,10 @@ impl NodeDirectory {
                 .control
                 .bundle_binding
                 .ok_or(Error::Node("provisional binding lacks pin"))?
-        } else if let Some(pin) = value.bundle_binding {
-            pin
+        } else if value.bundle_binding.is_some() {
+            // The provisional inventory CAS always precedes the original Cell
+            // pin CAS. A pinned Cell absent from its shard is not enrollment.
+            return Err(Error::Fenced);
         } else {
             let mut identity = value.encode()?;
             identity.extend_from_slice(b"cellule.bundle-binding.v1\0");
