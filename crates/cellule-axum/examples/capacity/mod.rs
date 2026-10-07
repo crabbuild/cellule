@@ -8,6 +8,7 @@ use tokio::{
     time::Instant,
 };
 
+mod arrivals;
 mod metrics;
 mod request;
 use metrics::Metrics;
@@ -34,6 +35,14 @@ pub struct Config {
     metrics_urls: Vec<String>,
     hot_read_cells: Option<usize>,
     metrics_tls_directory: Option<std::path::PathBuf>,
+    phase: Option<ProbePhase>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ProbePhase {
+    Overload,
+    Recovery,
 }
 
 impl Config {
@@ -45,7 +54,8 @@ impl Config {
             || self.write_rate > 100_000
             || self.read_rate > 100_000
             || self.write_rate + self.read_rate == 0
-            || !(1..=60).contains(&self.warmup_seconds)
+            || self.warmup_seconds > 60
+            || (self.phase.is_some() && self.warmup_seconds != 0)
             || !(1..=3_600).contains(&self.seconds)
             || !self.write_offset.is_multiple_of(self.cells as u64)
             || self
@@ -376,46 +386,12 @@ pub async fn run(config: Config) -> Result<()> {
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>((writes, reads))
         });
     }
-    let mut indexes = [0_u64; 2];
-    let mut offered = [0_u64; 2];
-    let mut dropped = [0_u64; 2];
-    let mut warmup_dropped = [0_u64; 2];
     let rates = [config.write_rate, config.read_rate];
-    loop {
-        let write_due = (indexes[0] * 1_000_000_000)
-            .checked_div(rates[0])
-            .map_or(end, |nanos| start + Duration::from_nanos(nanos));
-        let read_due = (indexes[1] * 1_000_000_000)
-            .checked_div(rates[1])
-            .map_or(end, |nanos| start + Duration::from_nanos(nanos));
-        let kind = usize::from(read_due < write_due);
-        let due = if kind == 0 { write_due } else { read_due };
-        if due >= end || Instant::now() >= end {
-            break;
-        }
-        tokio::time::sleep_until(due).await;
-        let measured = due >= warm_end;
-        offered[kind] += u64::from(measured);
-        let job = Job {
-            kind: if kind == 0 { Kind::Write } else { Kind::Read },
-            index: indexes[kind],
-            due,
-            measured,
-        };
-        match sender.try_send(job) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                if measured {
-                    dropped[kind] += 1
-                } else {
-                    warmup_dropped[kind] += 1
-                }
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => break,
-        }
-        indexes[kind] += 1;
-    }
-    drop(sender);
+    let arrivals::Arrivals {
+        offered,
+        dropped,
+        warmup_dropped,
+    } = arrivals::produce(sender, start, warm_end, end, rates).await;
     let mut writes = Metrics::new(config.cells);
     let mut reads = Metrics::new(config.cells);
     let mut task_errors = Vec::new();

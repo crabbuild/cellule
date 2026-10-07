@@ -10,7 +10,7 @@ from report import case_report, read
 CONTRACT = ('durability', 'resident_cells', 'concurrency', 'queue_capacity',
             'retained_budget_bytes', 'managed_disk_budget_bytes', 'value_bytes',
             'owner_cpus', 'owner_memory_bytes', 'followers', 'profile',
-            'provider_storage', 'seconds', 'warmup_seconds')
+            'provider_storage', 'seconds', 'warmup_seconds', 'telemetry')
 
 
 def summarize(directory):
@@ -20,6 +20,11 @@ def summarize(directory):
     report = case_report(directory)
     if hashlib.sha256(build_path.read_bytes()).hexdigest() != report['build_manifest_sha256']:
         raise ValueError('build manifest changed after the run: ' + str(directory))
+    if build.get('acknowledgement_format') == 'jsonl-v1':
+        if not case.get('docker_host') or not case.get('runner_sha256'):
+            raise ValueError('bounded-audit case lacks host or runner provenance')
+        if hashlib.sha256((directory / 'runner.py').read_bytes()).hexdigest() != case['runner_sha256']:
+            raise ValueError('runner source changed after the run: ' + str(directory))
     return case, build, report
 
 
@@ -48,7 +53,7 @@ def compare(matrix):
     if set(matrix) != {'baseline', 'candidate', 'celld'}:
         raise ValueError('matrix needs baseline, candidate and celld case lists')
     rows = {}
-    contract = binaries = images = None
+    contract = binaries = images = fixtures = execution = None
     evidence = []
     for role, directories in matrix.items():
         if not directories:
@@ -60,11 +65,18 @@ def compare(matrix):
             if case['system'] != ('celld' if role == 'celld' else 'cellule'):
                 raise ValueError('wrong system for ' + role)
             identity = {key: case[key] for key in CONTRACT}
+            # Historical array-audit cases lack the complete execution record.
+            # Preserve them as evidence, but never label that provenance verified.
+            current = build.get('acknowledgement_format') == 'jsonl-v1'
+            environment = {'docker_host': case.get('docker_host'),
+                           'runner_sha256': case.get('runner_sha256')} if current else None
             driver = {key: build['binaries'][key]['sha256']
                       for key in ('http_capacity', 'http_audit')}
             if contract is None:
-                contract, binaries, images = identity, driver, build['images']
-            if identity != contract or driver != binaries or build['images'] != images:
+                contract, binaries, images, fixtures = identity, driver, build['images'], build.get('fixture_sources')
+                execution = environment
+            if (identity != contract or driver != binaries or build['images'] != images
+                    or build.get('fixture_sources') != fixtures or environment != execution):
                 raise ValueError('workload, resources, client or image mismatch: ' + str(directory))
             rows[role].append(report)
             evidence.append({'role': role, 'directory': str(directory),
@@ -108,6 +120,8 @@ def compare(matrix):
                                 points['baseline'][key], points['candidate'][key]) if key[1] else None,
                             'arms': arms})
     return {'schema_version': 1, 'workload': 'sql-ledger-96', 'contract': contract,
+            'fixture_provenance_verified': fixtures is not None,
+            'host_and_runner_provenance_verified': execution is not None,
             'evidence': evidence, 'points': comparisons,
             'qualification_pass': False,
             'unverified': ['A/A sustainable-capacity search', 'read-only and mixed capacity guardrails',

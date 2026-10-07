@@ -1,6 +1,9 @@
 """A comparison must retain failed points and reject mismatched workloads."""
 import copy
+import hashlib
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -64,7 +67,7 @@ class ComparisonTests(unittest.TestCase):
                     self.compare()
 
     def test_different_client_resources_or_provider_cannot_compare(self):
-        for kind in ('client', 'resources', 'image'):
+        for kind in ('client', 'resources', 'image', 'fixtures', 'host', 'runner'):
             with self.subTest(kind=kind):
                 self.setUp()
                 case, build, _ = self.arms['candidate']
@@ -72,10 +75,42 @@ class ComparisonTests(unittest.TestCase):
                     build['binaries']['http_capacity']['sha256'] = 'different'
                 elif kind == 'resources':
                     case['owner_cpus'] = 4
-                else:
+                elif kind == 'image':
                     build['images']['store'] = 'different'
+                elif kind == 'fixtures':
+                    build['fixture_sources'] = {'observations.py': 'different'}
+                else:
+                    for _, peer_build, _ in self.arms.values():
+                        peer_build['acknowledgement_format'] = 'jsonl-v1'
+                    case['docker_host' if kind == 'host' else 'runner_sha256'] = 'different'
                 with self.assertRaisesRegex(ValueError, 'mismatch'):
                     self.compare()
+
+    def test_historical_missing_provenance_cannot_be_marked_verified(self):
+        result = self.compare()
+        self.assertFalse(result['fixture_provenance_verified'])
+        self.assertFalse(result['host_and_runner_provenance_verified'])
+
+    def test_current_case_requires_unchanged_runner_and_host_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / 'case'
+            directory.mkdir()
+            (root / 'build.json').write_text(json.dumps({'acknowledgement_format': 'jsonl-v1'}))
+            runner = b'original runner\n'
+            (directory / 'runner.py').write_bytes(runner)
+            case = {'docker_host': {'NCPU': 8}, 'runner_sha256': hashlib.sha256(runner).hexdigest()}
+            report = {'build_manifest_sha256': hashlib.sha256((root / 'build.json').read_bytes()).hexdigest()}
+            with patch.object(comparison, 'case_report', return_value=report):
+                (directory / 'case.json').write_text(json.dumps(case))
+                comparison.summarize(directory)
+                (directory / 'runner.py').write_bytes(b'changed runner\n')
+                with self.assertRaisesRegex(ValueError, 'runner source changed'):
+                    comparison.summarize(directory)
+                del case['docker_host']
+                (directory / 'case.json').write_text(json.dumps(case))
+                with self.assertRaisesRegex(ValueError, 'host or runner provenance'):
+                    comparison.summarize(directory)
 
     def test_unmatched_offered_points_cannot_disappear_from_comparison(self):
         extra = copy.deepcopy(point())

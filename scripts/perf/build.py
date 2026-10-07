@@ -104,6 +104,8 @@ def build(args):
             'crates/cellule-runtime/src/follower/records/append.rs',
             'crates/cellule-runtime/src/follower/tests/append.rs',
             'crates/cellule-axum/examples/capacity/mod.rs',
+            'crates/cellule-axum/examples/capacity/arrivals/mod.rs',
+            'crates/cellule-axum/examples/capacity/arrivals/tests.rs',
             'crates/cellule-axum/examples/sql.rs',
             'crates/cellule-axum/examples/sql_metrics/mod.rs',
             'crates/cellule-axum/examples/sql_metrics/capture.rs',
@@ -115,6 +117,7 @@ def build(args):
             'crates/cellule-axum/examples/fleet/transport.rs',
         ]
         for name in names:
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, source / name)
             overlay[name] = sha(source / name)
     manifest = {str(path.relative_to(source)): sha(path) for path in source.rglob('*') if path.is_file()}
@@ -132,7 +135,7 @@ def build(args):
                                           sort_keys=True).encode()).hexdigest()
     target = cache / cache_key
     target.mkdir(exist_ok=True)
-    for name in ('control.py', 'wait-store-ready.py'):
+    for name in ('control.py', 'wait-store-ready.py', 'observations.py'):
         shutil.copy2(ROOT / 'scripts/perf' / name, destination / name)
     shutil.copytree(ROOT / 'scripts/perf/celld', destination / 'celld-app')
     subprocess.run(['python3', str(ROOT / 'scripts/generate-capacity-tls.py'), str(destination / 'tls')], check=True)
@@ -144,7 +147,8 @@ def build(args):
     for name in ('sql', 'http_capacity', 'http_audit'):
         shutil.copy2(target / 'release/examples' / name, destination / 'bin' / name)
     binaries = {name: {'path': f'bin/{name}', 'sha256': sha(destination / f'bin/{name}')} for name in ('sql', 'http_capacity', 'http_audit')}
-    data = {'schema_version': 2, 'build_source_sha256': cache_key, 'framework_revision': resolved, 'measurement_overlay': overlay, 'framework_source_manifest_sha256': sha(destination / 'framework-source.json'), 'adapted_source': {str(p.relative_to(source)): sha(p) for p in sorted(examples.rglob('*.rs'))}, 'images': {'rust': RUST, 'celld': CELLD, 'store': RUSTFS}, 'celld_revision': 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'workload': 'sql-ledger-96', 'binaries': binaries}
+    fixture_names = ('control.py', 'wait-store-ready.py', 'observations.py', 'celld-app/index.js', 'celld-app/wrangler.json')
+    data = {'schema_version': 2, 'acknowledgement_format': 'jsonl-v1', 'fixture_sources': {name: sha(destination / name) for name in fixture_names}, 'build_source_sha256': cache_key, 'framework_revision': resolved, 'measurement_overlay': overlay, 'framework_source_manifest_sha256': sha(destination / 'framework-source.json'), 'adapted_source': {str(p.relative_to(source)): sha(p) for p in sorted(examples.rglob('*.rs'))}, 'images': {'rust': RUST, 'celld': CELLD, 'store': RUSTFS}, 'celld_revision': 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'workload': 'sql-ledger-96', 'binaries': binaries}
     (destination / 'build.json').write_text(json.dumps(data, sort_keys=True, indent=2) + '\n')
     print(json.dumps({'manifest': str(destination / 'build.json'), 'binaries': binaries}))
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 import os, sys, json, subprocess, time, uuid, threading, traceback, hashlib, math, shutil, fcntl, re
 from pathlib import Path
+from observations import collect as collect_observations
 BASE = Path(__file__).resolve().parent
 CTX = None
 RUST = 'rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e'
@@ -9,7 +10,9 @@ CONTROL = None
 STORE = None
 ARGS = None
 MANIFEST = None
-RUNNER_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+DOCKER_HOST = None
+RUNNER_BYTES = Path(__file__).read_bytes()
+RUNNER_SHA256 = hashlib.sha256(RUNNER_BYTES).hexdigest()
 CREDS = ['-e', 'AWS_ACCESS_KEY_ID=benchmark_access', '-e', 'AWS_SECRET_ACCESS_KEY=benchmark_secret_private', '-e', 'AWS_DEFAULT_REGION=us-east-1']
 
 def docker(*args, check=True, timeout=700):
@@ -200,23 +203,16 @@ def contract(directory):
         raise RuntimeError(f'contract failed: {result}')
     return dict(first['body'], request=body)
 
-def collect_observations(directory, extra):
-    observations = {extra['output']['id']: extra}
-    for path in [directory / 'initialize' / 'setup.jsonl', *sorted(directory.glob('write-*/client-*.jsonl'))]:
-        for line in path.open():
-            row = json.loads(line)
-            if row.get('error') is None and row.get('response') and row.get('request'):
-                response = row['response']
-                oid = response['output']['id']
-                if oid in observations:
-                    raise RuntimeError(f'nonunique acknowledged id {oid}')
-                observations[oid] = dict(response, request=row['request'])
-    put(directory / 'acknowledged.json', list(observations.values()))
-    return len(observations)
-
 def audit(directory, label, cold):
+    observations = directory / 'acknowledged.jsonl'
+    manifest = json.loads((directory / 'acknowledged-manifest.json').read_text())
+    def verify_journal():
+        with observations.open('rb') as stream:
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != manifest['sha256']:
+                raise RuntimeError('acknowledgement journal changed after collection')
+    verify_journal()
     path = directory / f'{label}-config.json'
-    put(path, {'address': '127.0.0.1:8080', 'observations': f'/work/{directory.relative_to(BASE)}/acknowledged.json', 'cold': cold})
+    put(path, {'address': '127.0.0.1:8080', 'observations': f'/work/{directory.relative_to(BASE)}/acknowledged.jsonl', 'cold': cold})
     p = docker('exec', CONTROL, '/work/' + MANIFEST['binaries']['http_audit']['path'], f'/work/{path.relative_to(BASE)}', check=False, timeout=1200)
     (directory / f'{label}.log').write_text(p.stdout + p.stderr)
     try:
@@ -225,6 +221,7 @@ def audit(directory, label, cold):
         result = {'error': p.stdout + p.stderr}
     result['exit_code'] = p.returncode
     put(directory / f'{label}.json', result)
+    verify_journal()
     if p.returncode:
         raise RuntimeError(f'{label} failed: {result}')
     return result
@@ -233,8 +230,9 @@ def run_case(system, durability):
     label = f'{system}-{durability}-parity-' + ARGS.tag
     directory = BASE / label
     directory.mkdir(exist_ok=False)
+    (directory / 'runner.py').write_bytes(RUNNER_BYTES)
     prefix = label + '-' + uuid.uuid4().hex[:12]
-    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
+    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
     names = []
     stop = threading.Event()
     sampling = None
@@ -450,9 +448,19 @@ if __name__ == '__main__':
     if ARGS.overload_capacity is not None and ARGS.overload_capacity <= 0:
         parser.error('overload capacity must be positive')
     DOCKER = ['docker', '--context', CTX]
+    info = json.loads(docker('info', '--format', '{{json .}}').stdout)
+    DOCKER_HOST = {key: info[key] for key in ('OperatingSystem', 'OSType', 'Architecture',
+                                            'NCPU', 'MemTotal', 'KernelVersion', 'ServerVersion')}
     MANIFEST = json.loads((BASE / 'build.json').read_text())
     if MANIFEST.get('schema_version') != 2 or not MANIFEST.get('build_source_sha256'):
         parser.error('rebuild with source-content-isolated caches before running this harness')
+    if MANIFEST.get('acknowledgement_format') != 'jsonl-v1':
+        parser.error('rebuild with the bounded JSONL acknowledgement auditor before running this harness')
+    for name, expected in MANIFEST['fixture_sources'].items():
+        if hashlib.sha256((BASE / name).read_bytes()).hexdigest() != expected:
+            parser.error('fixture source differs from build manifest: ' + name)
+    if hashlib.sha256(Path(collect_observations.__code__.co_filename).read_bytes()).hexdigest() != MANIFEST['fixture_sources']['observations.py']:
+        parser.error('loaded acknowledgement collector differs from the exported fixture')
     for binary in MANIFEST['binaries'].values():
         if hashlib.sha256((BASE / binary['path']).read_bytes()).hexdigest() != binary['sha256']:
             parser.error('binary hash differs from build manifest')

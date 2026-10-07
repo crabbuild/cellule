@@ -7,6 +7,21 @@ from pathlib import Path
 def read(path):
     return json.loads(path.read_text())
 
+def expected_acknowledgements(case, summary):
+    phases = list(summary.get('writes', []))
+    phases.extend(summary.get('overload', {}).get(name) for name in ('overload', 'recovery'))
+    total = case['resident_cells'] + 1  # Every seed plus the contract mutation.
+    for phase in phases:
+        if phase is None:
+            continue
+        writes = phase['writes']
+        successes, attempts, errors = (writes[key] for key in (
+            'successes_including_drain', 'warmup_attempts', 'warmup_errors'))
+        if any(type(value) is not int for value in (successes, attempts, errors)) or not 0 <= errors <= attempts or successes < 0:
+            raise ValueError('invalid acknowledgement counters')
+        total += successes + attempts - errors
+    return total
+
 def subtract(before, after):
     if isinstance(after, dict):
         return {key: subtract(before[key], value) for key, value in after.items() if key in before and (isinstance(value, (dict, list)) or isinstance(value, (int, float)))}
@@ -182,6 +197,12 @@ def case_report(directory):
         failures.append('explicit evidence exclusion: ' + json.dumps(read(exclusions), sort_keys=True))
     if not summary['completed']:
         failures.append(summary.get('failure') or 'case incomplete')
+    try:
+        expected_acks = expected_acknowledgements(case, summary)
+    except (KeyError, ValueError):
+        expected_acks = None
+    if expected_acks is None or summary.get('acknowledged_rows') != expected_acks:
+        failures.append('acknowledgement journals do not reconcile with client totals')
     for label in ('warm_audit', 'cold_audit'):
         audit = summary.get(label, {})
         expected = summary.get('acknowledged_rows')
@@ -215,8 +236,8 @@ def case_report(directory):
         points.append({'offered_writes_per_second': config['write_rate'], 'offered_reads_per_second': config['read_rate'], 'successful_writes_per_second': writes['successful_requests_per_second'], 'successful_reads_per_second': data['reads']['successful_requests_per_second'], 'load_contract': load_contract, 'logical_value_bytes_per_second': writes['successful_requests_per_second'] * 96, 'writes': writes, 'reads': data['reads'], 'window_metrics': metrics, 'window_cost': cost_report(metrics, writes['successes_in_window']), 'publication_stability': stability, 'delivery_latency_audit_pass': not point_failures, 'failures': point_failures})
     overload = summary.get('overload', {})
     recovery = overload.get('recovery')
-    recovery_failures = delivery_failures(recovery, case['durability']) if recovery else ['recovery phase missing']
-    return {'schema_version': 1, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
+    recovery_failures = (delivery_failures(recovery, case['durability']) if recovery else ['recovery phase missing']) + failures
+    return {'schema_version': 1, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'expected_acknowledged_rows': expected_acks, 'acknowledgement_count_reconciled': expected_acks is not None and summary.get('acknowledged_rows') == expected_acks, 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)

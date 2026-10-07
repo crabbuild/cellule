@@ -11,6 +11,17 @@ SPEC.loader.exec_module(REPORT)
 
 
 class DeliveryGateTests(unittest.TestCase):
+    def test_all_ack_count_includes_warmup_late_overload_and_recovery_successes(self):
+        def phase(steady, warm, errors):
+            return {'writes': {'successes_including_drain': steady,
+                    'warmup_attempts': warm, 'warmup_errors': errors}}
+        summary = {'writes': [phase(30000, 3000, 0)],
+                   'overload': {'overload': phase(900, 0, 0), 'recovery': phase(200, 0, 0)}}
+        self.assertEqual(REPORT.expected_acknowledgements({'resident_cells': 1000}, summary), 35101)
+        summary['writes'][0]['writes']['warmup_errors'] = 3001
+        with self.assertRaisesRegex(ValueError, 'invalid acknowledgement counters'):
+            REPORT.expected_acknowledgements({'resident_cells': 1000}, summary)
+
     def point(self):
         return {"driver_exit_code": 0, "writes": {
             "errors": 0, "warmup_errors": 0, "queue_dropped": 0, "warmup_queue_dropped": 0,

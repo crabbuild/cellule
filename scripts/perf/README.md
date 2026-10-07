@@ -94,12 +94,30 @@ only to measure exporter overhead; that diagnostic cannot qualify. Compare
 response, confirmation, fleet-proof, capture/checkpoint, and publication timings
 separately instead of attributing publication time to the command ACK.
 
+The producer emits every offer scheduled inside the window even if its final
+wakeup is late. It preserves the original due time: lateness remains in the
+scheduled latency and inside-window completion counts, and a full queue records
+a drop. Overload and immediate recovery use explicit bounded phase metadata
+with zero warmup; ordinary qualification still requires 30 seconds warmup.
+
 Warm and bucket-only cold audits GET every acknowledged mutation and retry
 **every original command**, checking its exact stored output and sequence.
 Original owner and follower containers are removed before cold recovery.
 The S3 origin remains in that case's Docker volume.
 Provider/node failure and unsuccessful drain prevent a case from passing.
 An independent-machine kill or power-loss test remains a separate profile.
+
+New builds use `acknowledged.jsonl`, streamed by a 256-record producer queue
+and at most 128 concurrent GET/retry pairs. Collection checks ID uniqueness
+with a disposable disk index and reconciles seed, warmup, steady, trailing,
+overload and recovery ACK counts against client totals. The retained
+`acknowledged-manifest.json` hashes the stream and source journals; the runner
+checks the stream before and after both audits. Missing successful records fail
+the case. No multi-million-command response list is held in memory.
+Build manifests pin the collector, control scripts and celld adapter bytes.
+Cases preserve the exact loaded runner source. Rebuild old artifact directories
+into fresh directories before using the current JSONL runner; retain their
+original runner and JSON-array journals as historical evidence.
 
 Individual reports expose achieved rate, failed delivery gates, window costs
 and confirmed commands per selected root. They cannot establish the complete
@@ -111,3 +129,18 @@ Cellule stability reports fit the debt and oldest-publication age over the last
 three one-minute segments. A positive slope fails; missing, late, reset, or
 fenced observations cannot pass. Native log frontiers remain observations and
 grant no durability or collection authority.
+
+For a machine-readable comparison, write an external JSON file with `baseline`,
+`candidate` and `celld` lists of case directories, then run:
+
+```sh
+python3 scripts/perf/compare.py /absolute/external/matrix.json \
+  --output /absolute/external/comparison.json
+```
+
+The comparison requires identical offered point sets, driver binaries, pinned
+images, fixture bytes, loaded runner, Docker host, resources and point
+distributions, including hot reads and preceding write offsets. Historical
+cases lacking host/runner or fixture records are explicitly marked unverified
+for those identities. Its read ratios describe each matched point;
+they do not establish the baseline's highest qualified read capacity.

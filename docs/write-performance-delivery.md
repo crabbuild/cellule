@@ -15,6 +15,8 @@ the acceptance contract; completing tests or a load run does not pass its gates.
 | Window telemetry separates response, proof and publication | Logical commands per selected root; capture/checkpoint, worker, peer and sync histograms | Counters and frontiers confer no authority or proof |
 | Storage families distinguish owner/receiver enrollment | Summed enrollment GET cost across all three nodes | Each signed peer message still uses fresh authorization |
 | Docker runner and reports preserve failures | Source/binary identities, fresh provider volumes, scheduled-arrival latency, all-ACK audits | Errors, drops, unissued offers, provider failures and failed drain cannot pass |
+| Arrival producer preserves delayed offers | Final wakeup cannot erase a request scheduled inside the window | Original arrival time still determines latency and completion; full queues count drops |
+| ACK collection and audit stream bounded records | Disk-backed uniqueness index; 256 queued records and at most 128 GET/retry pairs | Seed, warmup, steady, trailing, overload and recovery successes all reconcile |
 
 An ordinary small root needs two immutable PUTs plus lineage and fenced Cell
 selection: **four successful PUTs instead of six**. A small scheduled
@@ -92,6 +94,40 @@ three PUTs/command before shared data, node coverage or compaction. M3's measure
 2.347 enrollment GETs/command is 46.9 times its 0.05 budget. Meeting those gates
 requires the specified coalescing/proof/grant protocols and their failure tests.
 
+### Read saturation evidence
+
+The same frozen clients offered 10,000 reads/s for five minutes after 30 seconds
+warmup, without writes beyond setup. Every arm passed warm and cold GET/retry
+audits of its 1,001 seed/contract mutations, with zero HTTP errors. Every arm
+failed delivery qualification through dropped offers. These completion rates
+are saturation observations, not qualified read capacities or M1's read guardrail.
+
+| Window | Latest main + telemetry | Packed candidate | celld |
+| --- | ---: | ---: | ---: |
+| Successful reads/s inside window | 9,893.81 | 9,934.98 | 9,321.13 |
+| Scheduled p50 / p95 / p99, ms | 1.6 / 2.9 / 11.1 | 1.6 / 2.8 / 8.2 | 2.1 / 26.6 / 73.4 |
+| Measured queue drops | 31,834 | 19,494 | 203,645 |
+| Warmup queue drops | 14,240 | 902 | 12,138 |
+| Unissued measured offers | 4 | 10 | 4 |
+| Original fleet drain, seconds | 24.235 | 23.321 | 10.491 |
+
+Inspection and regression tests reproduced why the producer omitted those final
+offers: its wall-clock stop could precede emission of an arrival already due
+inside the window. The new producer emits the full scheduled cohort and keeps
+lateness in the original arrival time. This fixes accounting; it cannot erase
+the real queue drops in these historical runs. Three tests failed against the
+old guard and passed after its removal. The updated client also accepts the
+explicit zero-warmup overload/recovery phases used by the runner.
+
+The new auditor reads JSONL through bounded queues and checks every original
+command, rather than retaining a multi-million-response vector. Collection
+rejects duplicate IDs, missing successful journal records and partial input.
+The runner verifies stream hashes before and after both audits and records its
+loaded source and Docker host limits. New comparisons require matching fixture,
+runner, host and client identities; older cases remain marked as lacking that
+complete provenance. Rebuild both arms before comparing the revised driver;
+historical and new clients are not interchangeable.
+
 | Frozen artifact | Run/build identity | SQL binary SHA-256 prefix |
 | --- | --- | --- |
 | Latest main + measurement overlay | `implementation-main-logical-metrics` | `85d30c0f93df` |
@@ -110,6 +146,11 @@ denied; format, boundaries, layout, Rust fences, links and SQL/peer contract
 checks passed. The first compaction run exposed an old range-GET expectation;
 the corrected test now requires zero range GETs and two complete pack GETs.
 That failure remains in the external evidence.
+The revised client/auditor passed 18 targeted Rust tests and warnings-denied
+Clippy; local LTX without replica features passed 58 tests including its doctest.
+The Python comparison, report and collector checks passed 21 tests with warnings
+treated as errors. These checks do not substitute for live overload, fault or
+capacity qualification.
 
 ## Reproduce and inspect
 
