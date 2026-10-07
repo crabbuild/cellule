@@ -210,7 +210,7 @@ class DeliveryGateTests(unittest.TestCase):
                                  "sample_elapsed_ns": count * 1000,
                                  "storage_families": {"immutable": {"put": operation}},
                                  "storage_operations": {"put": operation},
-                                 "shared_publication": {"cohorts": count,
+                                 "shared_publication": {"cohorts": count, "singletons": count * 2,
                                      "queue": {"mean_ms": 10 / count, "p99_ms": 20 / count}},
                                  "histograms": {"worker": {"resolution_us": 100,
                                      "total_ns": count * 200000, "buckets": [0, 0, count]}},
@@ -227,7 +227,7 @@ class DeliveryGateTests(unittest.TestCase):
             self.assertEqual(endpoint["histograms"]["worker"]["resolution_us"], 100)
             self.assertEqual(endpoint["histograms"]["worker"]["buckets"], [0, 0, 4])
             self.assertEqual(endpoint["publication"]["materialized_commits"], 8)
-            self.assertEqual(endpoint["shared_publication"], {"cohorts": 4})
+            self.assertEqual(endpoint["shared_publication"], {"cohorts": 4, "singletons": 8})
             bad = sample(5)
             bad[0]["metrics"]["storage_operations"]["put"] = dict(
                 bad[0]["metrics"]["storage_operations"]["put"], bytes_written=999)

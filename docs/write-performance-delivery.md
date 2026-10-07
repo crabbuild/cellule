@@ -101,6 +101,17 @@ local durability barrier for that disposable source. Native captures and
 follower logs retain their barriers. The contribution of this change requires
 a fresh routing comparison; the earlier failure remains evidence.
 
+Fresh routing CI at `120e4aa6` still found 11.5–19.8% lower leased command
+throughput across four paired runs, despite removing the temporary-file fsync.
+The next candidate therefore delegates a one-input/one-row cohort's verified
+captures to the canonical native-pack root factory, without constructing,
+reading back or cleaning up a shared upload file. Multi-row cohorts still share
+one upload. Separate singleton counters preserve actual shared-object cost and
+upload timing. The new path's regression test checks exact native/coalesced
+roots, byte-identical restore and absence of shared objects; its fresh
+verification and measurements remain pending. The `d351d886` results below
+must not be attributed to this subsequent change.
+
 ## Corrected shared/grant measurement
 
 Candidate `d351d886` and main `831877cf` use separate source-content-isolated

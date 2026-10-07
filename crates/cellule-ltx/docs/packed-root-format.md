@@ -46,6 +46,12 @@ Objects live beneath `shared/objects/<BLAKE3>.spack` in the application prefix.
 Application-owned writer, reader, recovery and backup credentials must allow
 that shared prefix as well as the existing Cell object prefixes.
 
+A cohort with one input and one coalesced row retains its verified native
+capture for the ordinary `.pack` factory. It creates no `.spack` or disposable
+shared-upload file. Its root uses `shared: false`; scope, exact bytes and fenced
+selection follow the same canonical path. Multi-row cohorts retain shared
+publication even when the rows belong to one Cell.
+
 Root descriptors require `shared: true` and `packed: true`, pin the complete
 object digest and exact body/index extents, and retain the native body digest.
 Ordinary descriptors require `shared: false`. Inventory, compaction and full

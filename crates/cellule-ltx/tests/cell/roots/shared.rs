@@ -1,6 +1,75 @@
 use super::*;
 
 #[tokio::test]
+async fn singleton_cohort_uses_canonical_packs_and_identical_native_or_coalesced_roots() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::new(Arc::new(InMemory::new()));
+    for count in 1..=2_u8 {
+        let replica = replica(store.clone(), [100 + count; 32], [110 + count; 16]);
+        let mut db = Db::open(
+            &directory.path().join(format!("source-{count}")),
+            Limits::default(),
+        )
+        .unwrap();
+        db.transaction(|tx| tx.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(7)"))
+            .unwrap();
+        let mut cuts = db.capture().unwrap();
+        if count == 2 {
+            db.transaction(|tx| tx.execute_batch("INSERT INTO t VALUES(11)"))
+                .unwrap();
+            let next = db.capture().unwrap();
+            cuts.segments.extend(next.segments);
+            cuts.position = next.position;
+        }
+        let inputs = vec![replica.shared_captures(&cuts).await.unwrap().unwrap()];
+        let appends = CellReplica::upload_shared(inputs, directory.path())
+            .await
+            .unwrap();
+        assert_eq!(replica.publication_cost().objects, 0);
+        let cohort = replica
+            .prepare_shared(None, &appends[0], u64::from(count), 1)
+            .await
+            .unwrap();
+        let direct = replica
+            .prepare(None, &cuts, u64::from(count), 1)
+            .await
+            .unwrap();
+        assert_eq!(cohort.root(), direct.root());
+        let objects = replica.reachable_objects(&cohort.root()).await.unwrap();
+        assert!(
+            objects
+                .iter()
+                .any(|object| object.kind == CellObjectKind::Packed)
+        );
+        assert!(
+            !objects
+                .iter()
+                .any(|object| object.kind == CellObjectKind::SharedPacked)
+        );
+        let destination = directory.path().join(format!("cohort-{count}"));
+        let canonical = directory.path().join(format!("canonical-{count}"));
+        cohort.verified().restore(&destination).await.unwrap();
+        direct.verified().restore(&canonical).await.unwrap();
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            std::fs::read(canonical).unwrap()
+        );
+        let db = rusqlite::Connection::open(destination).unwrap();
+        let rows: u8 = db
+            .query_row("SELECT count(*) FROM t", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, count);
+    }
+    assert!(std::fs::read_dir(directory.path()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("shared-publication")
+    }));
+}
+
+#[tokio::test]
 async fn shared_publication_uploads_once_and_restores_each_exact_cell() {
     let directory = tempfile::tempdir().unwrap();
     let store = Store::new(Arc::new(InMemory::new()));

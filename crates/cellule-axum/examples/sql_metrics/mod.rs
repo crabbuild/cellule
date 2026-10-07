@@ -50,6 +50,7 @@ pub(super) struct QueryMetrics {
 #[derive(Default)]
 struct SharedMetrics {
     cohorts: AtomicU64,
+    singletons: AtomicU64,
     failures: AtomicU64,
     cells: AtomicU64,
     rows: AtomicU64,
@@ -325,6 +326,10 @@ impl CellTelemetry for QueryMetrics {
         }
         .fetch_add(1, Ordering::Relaxed);
     }
+    fn shared_publication_singleton(&self, queue: Duration) {
+        self.shared.singletons.fetch_add(1, Ordering::Relaxed);
+        self.shared.queue.observe(queue);
+    }
     fn ltx_phase(&self, phase: cellule_ltx::LtxPhase, elapsed: Duration, _succeeded: bool) {
         use cellule_ltx::LtxPhase;
         match phase {
@@ -509,6 +514,7 @@ impl QueryMetrics {
             },
             "shared_publication": {
                 "cohorts": self.shared.cohorts.load(Ordering::Relaxed),
+                "singletons": self.shared.singletons.load(Ordering::Relaxed),
                 "failures": self.shared.failures.load(Ordering::Relaxed),
                 "cells": self.shared.cells.load(Ordering::Relaxed),
                 "rows": self.shared.rows.load(Ordering::Relaxed),

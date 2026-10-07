@@ -141,7 +141,7 @@ def metric_delta(directory):
         # Summary percentiles/means can decrease as more work completes. The
         # raw shared_queue/shared_upload histograms below supply their deltas.
         shared_counters = lambda snapshot: {name: value for name, value in snapshot.get('shared_publication', {}).items()
-            if name in ('cohorts', 'cells', 'rows', 'bytes', 'failures', 'large_fallbacks', 'pressure_fallbacks')}
+            if name in ('cohorts', 'singletons', 'cells', 'rows', 'bytes', 'failures', 'large_fallbacks', 'pressure_fallbacks')}
         shared = subtract(shared_counters(first), shared_counters(last))
         output.append({'shared_publication': shared, 'url': a['url'], 'sample_elapsed_ns': subtract(first['sample_elapsed_ns'], last['sample_elapsed_ns']), 'start_request_ms': [a['request_started_ms'], a['request_finished_ms']], 'end_request_ms': [b['request_started_ms'], b['request_finished_ms']], 'storage_families': families, 'storage': totals, 'histograms': {name: histogram_delta(first['histograms'][name], value) for name, value in last['histograms'].items()}, 'publication': subtract({name: first['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}, {name: last['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}), 'runtime_start': first.get('runtime'), 'runtime_end': last.get('runtime')})
     return {'available': True, 'endpoints': output}

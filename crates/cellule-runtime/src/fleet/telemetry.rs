@@ -243,6 +243,10 @@ pub trait CellTelemetry: Send + Sync {
     /// Records shared cohort work without Cell identity labels.
     fn shared_publication(&self, _timing: SharedPublicationTiming) {}
 
+    /// Records a lone cohort delegated to canonical native-pack preparation.
+    /// No shared object or upload is counted; queue age includes the cohort wait.
+    fn shared_publication_singleton(&self, _queue: Duration) {}
+
     /// Records ordinary-path fallback: `true` means retained/descriptor pressure,
     /// `false` means the capture cannot fit the small-object representation.
     fn shared_publication_fallback(&self, _pressure: bool) {}
@@ -420,6 +424,12 @@ impl CellTelemetryHandle {
     pub(crate) fn shared_publication_fallback(&self, pressure: bool) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.shared_publication_fallback(pressure);
+        }
+    }
+
+    pub(crate) fn shared_publication_singleton(&self, queue: Duration) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.shared_publication_singleton(queue);
         }
     }
 

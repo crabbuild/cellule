@@ -268,14 +268,20 @@ async fn upload_cohort(
     let cells = inputs.len() as u64;
     let upload_started = Instant::now();
     let result = cellule_ltx::CellReplica::upload_shared(inputs, &scratch).await;
-    telemetry.shared_publication(crate::fleet::telemetry::SharedPublicationTiming {
-        cells,
-        rows: rows as u64,
-        bytes,
-        queue: age,
-        upload: upload_started.elapsed(),
-        succeeded: result.is_ok(),
-    });
+    if cells == 1 && rows == 1 && result.is_ok() {
+        // The native inputs stay pinned and charged through canonical root
+        // preparation. This path performs no shared-object upload.
+        telemetry.shared_publication_singleton(age);
+    } else {
+        telemetry.shared_publication(crate::fleet::telemetry::SharedPublicationTiming {
+            cells,
+            rows: rows as u64,
+            bytes,
+            queue: age,
+            upload: upload_started.elapsed(),
+            succeeded: result.is_ok(),
+        });
+    }
     tracing::debug!(
         rows,
         bytes,

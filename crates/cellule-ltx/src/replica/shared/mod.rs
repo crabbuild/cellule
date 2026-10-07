@@ -107,10 +107,11 @@ impl SharedCaptures {
     }
 }
 
-/// One Cell's verified extents in an uploaded shared object.
+/// One Cell's verified inputs from a bounded publication cohort.
 ///
-/// The private factory waits for exact upload completion. The runtime must still
-/// select a prepared root under that Cell's writer fence before acknowledging.
+/// Multi-row inputs contain uploaded shared extents. A singleton retains its
+/// native captures for the canonical pack factory. Neither grants authority;
+/// the runtime must select a prepared root under the Cell's writer fence.
 #[derive(Clone)]
 pub struct SharedAppend {
     replica: CellReplica,
@@ -173,7 +174,9 @@ impl CellReplica {
         }))
     }
 
-    /// Uploads one file-backed cohort once and returns independently scoped inputs.
+    /// Uploads a multi-row cohort once and returns independently scoped inputs.
+    /// A singleton retains its verified native inputs: `prepare_shared` uses the
+    /// ordinary pack factory without a redundant shared file or scratch upload.
     /// The caller owns retained-memory admission for row/index tables and the
     /// bounded upload buffer. Scratch uses the same host ledger as compaction.
     pub async fn upload_shared(
@@ -197,6 +200,17 @@ impl CellReplica {
         let rows: usize = inputs.iter().map(SharedCaptures::rows).sum();
         if size > SINGLE_PUT_BYTES || rows == 0 || rows > SHARED_PUBLICATION_ROWS {
             return Err(LtxError::Limit(crate::LimitKind::CellBundleBytes));
+        }
+        if inputs.len() == 1 && rows == 1 {
+            return Ok(inputs
+                .into_iter()
+                .map(|input| SharedAppend {
+                    replica: input.replica,
+                    position: input.position,
+                    segments: input.segments,
+                    original: input.original,
+                })
+                .collect());
         }
         let host = replica.host.for_scratch(size).await?;
         let disk = host.reserve_local_disk(size)?;
@@ -318,7 +332,7 @@ impl CellReplica {
         result
     }
 
-    /// Prepares a scoped shared append through the canonical root factory.
+    /// Prepares scoped cohort inputs through the canonical root factory.
     pub async fn prepare_shared(
         &self,
         base: Option<&RootRef>,
@@ -354,16 +368,23 @@ impl CellReplica {
         let inputs = append
             .segments
             .iter()
-            .map(|segment| AppendInput {
-                info: segment.descriptor.info.clone(),
-                location: BodyLocation::Shared {
-                    digest: segment.descriptor.object_digest(),
-                    offset: segment.descriptor.offset(),
-                },
-                index: segment.index.clone(),
-                body: AppendBody::SharedUploaded,
+            .map(|segment| {
+                let location = match &segment.body {
+                    AppendBody::SharedUploaded => BodyLocation::Shared {
+                        digest: segment.descriptor.object_digest(),
+                        offset: segment.descriptor.offset(),
+                    },
+                    AppendBody::Native(_) | AppendBody::Frozen(_) => BodyLocation::Native,
+                    _ => return Err(LtxError::InvalidState("invalid cohort input body")),
+                };
+                Ok(AppendInput {
+                    info: segment.descriptor.info.clone(),
+                    location,
+                    index: segment.index.clone(),
+                    body: segment.body.clone(),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         replica
             .prepare_append(
                 base,

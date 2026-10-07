@@ -122,6 +122,32 @@ calculation that omits materialization or catalog checkpoints cannot qualify
 M4. Checkpoint spacing also needs a bounded cold-restore scan and the same read
 guardrail; it is a measured policy decision, not an assumed saving.
 
+### Quantified checkpoint constraint
+
+As a design calculation, assume a manifest is embedded in one immutable data
+object and one node-selector PUT selects each 64-command cohort. Those two
+requests already cost `2 / 64 = 0.03125` PUTs/command. If ordinary checkpoints
+retain three root/lineage/Cell-selection PUTs, the remaining M4 budget requires
+`0.03125 + 3 / commands_per_checkpoint <= 0.05`: at least 160 commands per
+checkpoint, before compaction, catalog changes or retries. If manifests need a
+separate PUT, three requests per 64 commands leave even less checkpoint budget.
+
+At the uniform 1,000-Cell bucket target of 2,000 commands/s, 160 commands per
+Cell span approximately 80 seconds; at 15,000 Fleet commands/s they span about
+10.7 seconds. These are inferred cost constraints, not measured performance or
+a recommended checkpoint delay. Production must either verify that such lag
+has bounded file-backed locators and acceptable cold/sparse-read costs, or
+amortize checkpoint authority and lineage work as well. Merely allowing bundle
+ACKs while publishing every ordinary root would miss the target.
+
+For the two-PUT assumption, a cohort must contain more than 40 logical commands
+to leave any budget for materialization. At 2,000 commands/s, collecting 40
+commands takes about 20 ms in the uniform arrival model. A flush policy must
+budget assembly, upload, selector reconciliation and queueing against the
+200-ms bucket p99; extending the existing 1-ms cohort policy without that
+measurement would be speculation. Count logical commands separately from
+manifest rows because one native capture can cover a command range.
+
 ## Protocol evidence
 
 `WriteProofs.tla` separates upload, exact selection, binding closure and transfer.
@@ -144,3 +170,6 @@ profiles test node-only selection, unchecked contents, a skipped range,
 unproven reads and collection of a selected range before both Cells have
 checkpoints. Exact bytes/outcomes and checkpoint authentication remain abstract
 inputs; this is protocol evidence, not a production recovery implementation.
+At `d30e6f11`, CI completed 21,672 distinct positive states and all five named
+counterexamples. The separate append/closure model and its three counterexamples
+also passed in that run.
