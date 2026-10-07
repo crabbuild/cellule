@@ -4,7 +4,9 @@ The connected protocol APIs now implement shared selection, independently
 awaitable root materialization and complete live-writer closure. They are **not
 enabled in the ordinary actor response path**. The prior performance regression
 and failed qualification remain the baseline. This slice establishes ordering
-and reconstruction evidence; it makes no new throughput or latency claim.
+and reconstruction evidence. The [fresh application-path benchmark](pr67-performance-reevaluation.md)
+measures `7fc0793`; it does not exercise bundle-based responses or establish
+write parity.
 
 ## Celld reference and Cellule adaptation
 

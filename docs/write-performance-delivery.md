@@ -6,6 +6,14 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
+The [PR 67 reevaluation](pr67-performance-reevaluation.md) measures the latest
+protocol implementation at `7fc0793` in nine fresh matched Docker cases. Fleet
+100/s p99 is 19.9 ms versus main's 34.7 ms and celld's 16.0 ms. Target-load
+delivery still fails: candidate Fleet completion is below main, bucket is
+modestly better, and provider/recovery failures remain explicitly recorded.
+The older measurements below are historical and are not measurements of the
+latest bundle APIs.
+
 ## Delivered behavior
 
 | Change | Measurable result | Preserved contract |
