@@ -11,6 +11,31 @@ SPEC.loader.exec_module(REPORT)
 
 
 class DeliveryGateTests(unittest.TestCase):
+    def test_provider_oom_after_measurement_is_retained_as_a_cold_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            healthy = {'Running': True, 'OOMKilled': False, 'Paused': False,
+                       'Restarting': False, 'Dead': False}
+            for label in ('startup', 'before', 'after', 'cold', 'final'):
+                (directory / f'{label}-provider-state.json').write_text(json.dumps(healthy))
+            self.assertTrue(REPORT.provider_lifecycle(directory, True)['pass'])
+            (directory / 'final-provider-state.json').write_text(json.dumps(
+                dict(healthy, Running=False, OOMKilled=True, ExitCode=137)))
+            result = REPORT.provider_lifecycle(directory, True)
+            self.assertFalse(result['pass'])
+            self.assertEqual(result['failed_phases'], ['final'])
+            self.assertTrue(result['states']['final']['OOMKilled'])
+
+    def test_missing_or_incomplete_lifecycle_evidence_cannot_pass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            result = REPORT.provider_lifecycle(directory, True)
+            self.assertFalse(result['available'])
+            self.assertFalse(result['pass'])
+            self.assertIn('cold', result['missing_phases'])
+            (directory / 'final-provider-state.json').write_text('{"Running": true}')
+            self.assertEqual(REPORT.provider_lifecycle(directory)['failed_phases'], ['final'])
+
     def test_provider_health_preserves_failed_and_missing_inode_samples(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

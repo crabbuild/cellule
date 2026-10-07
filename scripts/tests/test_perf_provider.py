@@ -1,13 +1,28 @@
 """A filesystem with free bytes can still fail through exhausted inodes."""
 import sys
 import unittest
+import json
+import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'perf'))
 import run as runner
 
 
 class ProviderTests(unittest.TestCase):
+    def test_provider_oom_snapshot_is_written_before_the_case_is_rejected(self):
+        state = {'Running': False, 'OOMKilled': True, 'ExitCode': 137,
+                 'Paused': False, 'Restarting': False, 'Dead': False}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(runner, 'docker', return_value=SimpleNamespace(
+                    stdout=json.dumps([{'State': state}]))):
+                with self.assertRaisesRegex(RuntimeError, 'provider lifecycle failed'):
+                    runner.record_provider_state(directory, 'final')
+            self.assertEqual(json.loads((directory / 'final-provider-state.json').read_text()), state)
+
     def evidence(self, free=7864324, byte_blocks=164221168):
         return ('Filesystem 1024-blocks Used Available Capacity Mounted on\n'
                 f'/dev/vdb1 205838168 32373416 {byte_blocks} 17% /data\n'

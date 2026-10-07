@@ -26,6 +26,11 @@ filesystem counts before, during and after each case; falling below 2 GiB or
 200,000 free inodes invalidates measurement. Archive and hash old test volumes
 before removing their exact containers/volumes, or expand the dedicated test
 disk. A fresh volume alone does not reset the shared filesystem's capacity.
+Provider lifecycle snapshots cover startup, both resource boundaries, cold
+startup and final cleanup before the intentional provider stop. OOM or exit
+during cold recovery invalidates the audit even if the measured window had
+healthy byte/inode headroom. Keep that failure separate from data-loss claims;
+missing required lifecycle evidence cannot pass.
 Build caches are partitioned by every adapted source digest and the compiler
 image. Before measurement, the runner reads a persisted root from the provider
 and checks its codec version against the exported source; the small-root

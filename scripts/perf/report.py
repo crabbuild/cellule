@@ -25,6 +25,20 @@ def provider_health(directory):
             'minimum_free_inodes': min((sample.get('inodes', {}).get('free', 0) for sample in samples)),
             'reason': None if valid else 'provider capacity or filesystem evidence failed'}
 
+def provider_lifecycle(directory, required=False):
+    """Filesystem headroom does not prove the provider survived cold restore."""
+    labels = ('startup', 'before', 'after', 'cold', 'final')
+    paths = [directory / f'{label}-provider-state.json' for label in labels]
+    states = {label: read(path) for label, path in zip(labels, paths) if path.exists()}
+    failed = [label for label, state in states.items()
+              if state.get('Running') is not True or state.get('OOMKilled') is not False
+              or any(state.get(flag) is not False for flag in ('Paused', 'Restarting', 'Dead'))]
+    missing = [label for label in labels if label not in states]
+    return {'available': not missing, 'pass': not failed and not missing,
+            'required': required, 'failed_phases': failed, 'missing_phases': missing,
+            'states': states, 'reason': 'provider exited, OOM or unavailable' if failed
+            else 'provider lifecycle observations missing' if missing else None}
+
 def expected_acknowledgements(case, summary):
     phases = list(summary.get('writes', []))
     phases.extend(summary.get('overload', {}).get(name) for name in ('overload', 'recovery'))
@@ -213,6 +227,9 @@ def case_report(directory):
     health = provider_health(directory)
     if case.get('provider_filesystem_required') and not health['pass']:
         failures.append('provider byte/inode health failed: ' + str(health['reason']))
+    lifecycle = provider_lifecycle(directory, case.get('provider_lifecycle_required', False))
+    if lifecycle['failed_phases'] or (lifecycle['required'] and not lifecycle['pass']):
+        failures.append('provider lifecycle failed: ' + str(lifecycle['reason']))
     exclusions = directory / 'qualification-exclusions.json'
     if exclusions.exists():
         failures.append('explicit evidence exclusion: ' + json.dumps(read(exclusions), sort_keys=True))
@@ -258,7 +275,7 @@ def case_report(directory):
     overload = summary.get('overload', {})
     recovery = overload.get('recovery')
     recovery_failures = (delivery_failures(recovery, case['durability']) if recovery else ['recovery phase missing']) + failures
-    return {'schema_version': 1, 'provider_health': health, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'expected_acknowledged_rows': expected_acks, 'acknowledgement_count_reconciled': expected_acks is not None and summary.get('acknowledged_rows') == expected_acks, 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
+    return {'schema_version': 1, 'provider_health': health, 'provider_lifecycle': lifecycle, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'expected_acknowledged_rows': expected_acks, 'acknowledgement_count_reconciled': expected_acks is not None and summary.get('acknowledged_rows') == expected_acks, 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)

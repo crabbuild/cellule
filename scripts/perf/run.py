@@ -49,6 +49,14 @@ def docker(*args, check=True, timeout=700):
 def put(path, obj):
     path.write_text(json.dumps(obj, indent=2) + '\n')
 
+def record_provider_state(directory, label):
+    state = json.loads(docker('inspect', STORE).stdout)[0]['State']
+    put(directory / f'{label}-provider-state.json', state)
+    if state.get('Running') is not True or state.get('OOMKilled') is not False or any(
+            state.get(flag) is not False for flag in ('Paused', 'Restarting', 'Dead')):
+        raise RuntimeError('provider lifecycle failed: ' + json.dumps(state, sort_keys=True))
+    return state
+
 def http(method, path, body=None, port=8080):
     args = ['exec', CONTROL, 'python3', '/work/control.py', method, f'http://127.0.0.1:{port}{path}']
     if body is not None:
@@ -141,6 +149,7 @@ def snapshot(directory, label, names):
         if state['OOMKilled'] or not state['Running']:
             failures.append(f'{name}: {state}')
     put(directory / f'{label}-resources.json', data)
+    record_provider_state(directory, label)
     filesystem = provider_filesystem()
     put(directory / f'{label}-provider-filesystem.json', filesystem)
     if not filesystem['measurement_usable']:
@@ -265,7 +274,7 @@ def run_case(system, durability):
     directory.mkdir(exist_ok=False)
     (directory / 'runner.py').write_bytes(RUNNER_BYTES)
     prefix = label + '-' + uuid.uuid4().hex[:12]
-    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
+    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'provider_lifecycle_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
     names = []
     stop = threading.Event()
     sampling = None
@@ -273,6 +282,7 @@ def run_case(system, durability):
     try:
         docker('restart', CONTROL)
         start_provider(directory / 'store-data')
+        record_provider_state(directory, 'startup')
         filesystem = provider_filesystem()
         put(directory / 'startup-provider-filesystem.json', filesystem)
         if not filesystem['startup_usable']:
@@ -378,6 +388,7 @@ def run_case(system, durability):
         owner = f'comparison-{label}-cold'
         names.append(owner)
         summary['cold_startup_seconds'] = start_node(system, 'bucket', 0, prefix, owner)
+        record_provider_state(directory, 'cold')
         summary['cold_audit'] = audit(directory, 'cold-audit', True)
         saved = json.loads((directory / 'contract.json').read_text())
         retry = http('POST', '/orders', saved['request'])
@@ -405,6 +416,12 @@ def run_case(system, durability):
                 summary.setdefault('cleanup_failures', []).append(str(e))
                 (directory / f'{name}.log').write_text(logs(name))
                 docker('stop', '--time', '2', name, check=False)
+        try:
+            record_provider_state(directory, 'final')
+        except Exception as error:
+            summary['completed'] = False
+            summary.setdefault('infrastructure_failures', []).append(str(error))
+            summary['failure'] = summary.get('failure') or str(error)
         (directory / 'store.log').write_text(logs(STORE))
         put(directory / 'summary.json', summary)
         print(json.dumps({'case': label, 'completed': summary['completed'], 'failure': str(summary.get('failure'))[:500], 'write_rates': [x['writes']['successful_requests_per_second'] for x in summary['writes']], 'read_rates': [x.get('successful_requests_per_second') for x in summary['reads']]}), flush=True)
