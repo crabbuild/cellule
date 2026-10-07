@@ -1,9 +1,10 @@
 # Bundle coverage authority decision
 
-Status: protocol model and implementation design; bundle-based bucket responses
-are disabled. Shared payload upload and signed append grants are separate
-implemented paths. The [proposal](write-performance-proposal.md) remains the
-qualification contract.
+Status: protocol model and connected implementation APIs; bundle-based bucket
+responses remain disabled. [Implementation and remaining gates](bundle-coverage-implementation.md)
+records the verified slice and its limits. Shared payload upload and signed
+append grants are separate implemented paths. The
+[proposal](write-performance-proposal.md) remains the qualification contract.
 
 ## Cost and latency gap
 

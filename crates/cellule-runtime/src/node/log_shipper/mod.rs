@@ -78,6 +78,10 @@ impl NodeLogSubmission {
             || first_commit_sequence > commit_sequence
             || commit_sequence > i64::MAX as u64
             || cuts.segments.is_empty()
+            || cuts
+                .segments
+                .last()
+                .is_none_or(|segment| segment.info().position() != cuts.position)
             || encoded_bytes.is_none()
         {
             return Err(Error::Node("invalid node-log submission"));
@@ -143,7 +147,7 @@ struct LoadedNodeLogSubmission {
 }
 
 impl LoadedNodeLogSubmission {
-    fn encode(self, ticket: CommitTicket) -> Result<Vec<Bytes>> {
+    fn encode(self, ticket: CommitTicket) -> Result<Vec<cellule_ltx::VerifiedNodeFrame>> {
         self.frames
             .into_iter()
             .enumerate()
@@ -154,10 +158,7 @@ impl LoadedNodeLogSubmission {
                     .first_sequence()
                     .checked_add(offset)
                     .ok_or(Error::Node("node-log sequence overflow"))?;
-                frame
-                    .with_node_sequence(node_sequence)
-                    .map(|frame| frame.encoded().clone())
-                    .map_err(Error::from)
+                frame.with_node_sequence(node_sequence).map_err(Error::from)
             })
             .collect()
     }
@@ -277,6 +278,17 @@ impl NodeLogShipper {
     /// Queue, byte admission, disk reads, and canonical encoding happen before
     /// the ticket reservation commits, so failures cannot create a sequence gap.
     pub async fn submit(&self, submission: NodeLogSubmission) -> Result<CommitTicket> {
+        self.submit_assigned(submission)
+            .await
+            .map(|(ticket, _)| ticket)
+    }
+
+    /// Assigns the same canonical submission and returns its complete native
+    /// range witness for node-wide object publication. There is one shipping lane.
+    pub async fn submit_assigned(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<(CommitTicket, crate::node::log::AssignedCommitRange)> {
         let frame_count = submission.frame_count()?;
         if submission
             .segments
@@ -317,21 +329,24 @@ impl NodeLogShipper {
         let _ordered = self.order.lock().await;
         let ticket = self.gate.preview(frame_count)?;
         let encoded = loaded.encode(ticket)?;
-        self.gate.commit(ticket)?;
+        let assignment = self
+            .gate
+            .commit_frames(ticket, &encoded)?
+            .ok_or(Error::Node("assigned capture is empty"))?;
         let reservation = Arc::new(OutstandingBytes {
             _permit: reservation,
         });
         let frames = encoded
             .into_iter()
             .enumerate()
-            .map(|(offset, encoded)| QueuedFrame {
+            .map(|(offset, frame)| QueuedFrame {
                 sequence: ticket.first_sequence().saturating_add(offset as u64),
-                encoded,
+                encoded: frame.encoded().clone(),
                 _reservation: Arc::clone(&reservation),
             })
             .collect();
         slot.send(QueuedSubmission { frames });
-        Ok(ticket)
+        Ok((ticket, assignment))
     }
 
     /// Closes admission and drains every accepted frame to the current epoch.

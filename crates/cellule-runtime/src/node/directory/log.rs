@@ -197,6 +197,14 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<VersionedNodeAdvertisement> {
         self.validate(&observed.advertisement, now_ms)?;
+        // This bounded catalog retains original binding tombstones for one
+        // boot/epoch. Clearing its head during rotation would erase Cell pins.
+        // Drain and withdraw this boot before starting another bundle lane.
+        if observed.advertisement.bundle.is_some() {
+            return Err(Error::Node(
+                "bundle-bound boot must drain before log rotation",
+            ));
+        }
         let current = observed
             .advertisement
             .log
@@ -241,6 +249,12 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<VersionedNodeAdvertisement> {
         self.validate(&observed.advertisement, now_ms)?;
+        crate::node::bundle::store::ensure_session_drained(
+            &self.layout,
+            observed.advertisement.session,
+            observed.advertisement.bundle,
+        )
+        .await?;
         let current = observed
             .advertisement
             .log

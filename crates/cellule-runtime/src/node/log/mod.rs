@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
 use crate::identity::NodeId;
-use crate::identity::SessionId;
+use crate::identity::{ApplicationId, CellId, IncarnationId, SessionId};
 use crate::node::log_transport::NodeLogTransport;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 use crate::{Error, Result};
@@ -21,6 +21,110 @@ pub use retirement::{
 pub use recovery::*;
 
 pub(crate) const MAX_TICKET_FRAMES: u64 = 1_024;
+
+/// Exact Cell writer identity carried by the ordered native frame lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CellLogScope {
+    /// Application that owns the Cell.
+    pub application: ApplicationId,
+    /// Cell whose issuance will be closed.
+    pub cell: CellId,
+    /// Original incarnation.
+    pub incarnation: IncarnationId,
+    /// Original writer epoch.
+    pub cell_epoch: u64,
+}
+
+/// Frozen complete issued endpoint, including frames acknowledged by followers
+/// above the selected object prefix. Only the ordered gate can construct it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellIssuedRange {
+    leader_session: SessionId,
+    log_epoch: u64,
+    scope: CellLogScope,
+    last_node_sequence: u64,
+    commit_sequence: u64,
+    first_commit_sequence: u64,
+    position: cellule_ltx::Position,
+}
+
+/// Exact complete capture assigned by the ordered native lane. A frame prefix
+/// cannot substitute for this capability even when it carries the final logical
+/// command number. Its digest binds every assigned native frame in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AssignedCommitRange {
+    ticket: CommitTicket,
+    scope: CellLogScope,
+    first_commit: u64,
+    commit: u64,
+    position: cellule_ltx::Position,
+    digest: [u8; 32],
+}
+impl AssignedCommitRange {
+    /// Exact original native ticket.
+    pub const fn ticket(&self) -> CommitTicket {
+        self.ticket
+    }
+    pub(crate) fn verify(&self, frames: &[cellule_ltx::VerifiedNodeFrame]) -> Result<()> {
+        if frames.is_empty()
+            || frames.len() as u64 != self.ticket.last_sequence - self.ticket.first_sequence + 1
+        {
+            return Err(Error::Node("bundle omits part of an assigned capture"));
+        }
+        let mut hash = blake3::Hasher::new();
+        for (offset, frame) in frames.iter().enumerate() {
+            let scope = frame.scope();
+            if scope.leader_session != *self.ticket.leader_session.as_bytes()
+                || scope.log_epoch != self.ticket.log_epoch
+                || scope.node_sequence != self.ticket.first_sequence + offset as u64
+                || scope.application != *self.scope.application.as_bytes()
+                || scope.cell != *self.scope.cell.as_bytes()
+                || scope.incarnation != *self.scope.incarnation.as_bytes()
+                || scope.cell_epoch != self.scope.cell_epoch
+                || frame.first_commit_sequence() != self.first_commit
+                || scope.commit_sequence != self.commit
+            {
+                return Err(Error::Node("bundle assigned capture scope differs"));
+            }
+            hash.update(&frame.digest());
+        }
+        if *hash.finalize().as_bytes() != self.digest
+            || frames
+                .last()
+                .is_none_or(|frame| frame.segment().position() != self.position)
+        {
+            return Err(Error::Node("bundle assigned capture digest differs"));
+        }
+        Ok(())
+    }
+}
+
+impl CellIssuedRange {
+    /// Original lane session.
+    pub const fn leader_session(&self) -> SessionId {
+        self.leader_session
+    }
+    /// Original lane epoch.
+    pub const fn log_epoch(&self) -> u64 {
+        self.log_epoch
+    }
+    /// Exact original writer.
+    pub const fn scope(&self) -> CellLogScope {
+        self.scope
+    }
+    /// Complete assigned native endpoint, rather than sampled follower coverage.
+    pub const fn last_node_sequence(&self) -> u64 {
+        self.last_node_sequence
+    }
+    /// Complete logical command endpoint.
+    pub const fn commit_sequence(&self) -> u64 {
+        self.commit_sequence
+    }
+    /// Exact SQLite position of the complete issued range.
+    pub const fn position(&self) -> cellule_ltx::Position {
+        self.position
+    }
+}
 
 /// One actor-issued consecutive frame range awaiting a durability proof.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,6 +282,9 @@ struct GateState {
     fleet_active: bool,
     rotating: bool,
     fenced: bool,
+    cell_issued: HashMap<CellLogScope, CellIssuedRange>,
+    closed_cells: HashSet<CellLogScope>,
+    untracked_issuance: bool,
 }
 
 impl DurabilityGate {
@@ -235,6 +342,9 @@ impl DurabilityGate {
                 fleet_active: false,
                 rotating: false,
                 fenced: false,
+                cell_issued: HashMap::new(),
+                closed_cells: HashSet::new(),
+                untracked_issuance: false,
             })),
             changed: Arc::new(Notify::new()),
         })
@@ -259,6 +369,10 @@ impl DurabilityGate {
         state.next_sequence = last_sequence
             .checked_add(1)
             .ok_or(Error::Node("node sequence overflow"))?;
+        // This legacy API has no Cell identity. Its ranges cannot establish a
+        // complete per-Cell closure endpoint; the canonical shipper uses the
+        // verified commit_frames path instead.
+        state.untracked_issuance = true;
         Ok(CommitTicket {
             leader_session: state.leader_session,
             log_epoch: state.log_epoch,
@@ -290,7 +404,11 @@ impl DurabilityGate {
         })
     }
 
-    pub(crate) fn commit(&self, ticket: CommitTicket) -> Result<()> {
+    pub(crate) fn commit_frames(
+        &self,
+        ticket: CommitTicket,
+        frames: &[cellule_ltx::VerifiedNodeFrame],
+    ) -> Result<Option<AssignedCommitRange>> {
         let mut state = self.lock()?;
         if state.fenced {
             return Err(Error::Fenced);
@@ -307,11 +425,151 @@ impl DurabilityGate {
         {
             return Err(Error::Node("node-log ticket reservation changed"));
         }
+        // One submission is one complete Cell capture. Stage its endpoint on
+        // the stack, then install it only after every frame passed validation.
+        let mut issued: Option<CellIssuedRange> = None;
+        let mut assignment = None;
+        if !frames.is_empty()
+            && frames.len() as u64 != ticket.last_sequence - ticket.first_sequence + 1
+        {
+            return Err(Error::Node("node-log assigned frame range differs"));
+        }
+        for (index, frame) in frames.iter().enumerate() {
+            let scope = frame.scope();
+            let cell_scope = CellLogScope {
+                application: ApplicationId::from_bytes(scope.application),
+                cell: CellId::from_bytes(scope.cell),
+                incarnation: IncarnationId::from_bytes(scope.incarnation),
+                cell_epoch: scope.cell_epoch,
+            };
+            match &mut assignment {
+                None => {
+                    assignment = Some(AssignedCommitRange {
+                        ticket,
+                        scope: cell_scope,
+                        first_commit: frame.first_commit_sequence(),
+                        commit: scope.commit_sequence,
+                        position: frame.segment().position(),
+                        digest: [0; 32],
+                    })
+                }
+                Some(assignment) => {
+                    if assignment.scope != cell_scope
+                        || assignment.first_commit != frame.first_commit_sequence()
+                        || assignment.commit != scope.commit_sequence
+                    {
+                        return Err(Error::Node(
+                            "assigned capture changes Cell or command range",
+                        ));
+                    }
+                    assignment.position = frame.segment().position();
+                }
+            }
+            if state.closed_cells.contains(&cell_scope) {
+                return Err(Error::Fenced);
+            }
+            if scope.leader_session != *state.leader_session.as_bytes()
+                || scope.log_epoch != state.log_epoch
+                || scope.node_sequence != ticket.first_sequence + index as u64
+            {
+                return Err(Error::Node("node-log assigned frame scope differs"));
+            }
+            if let Some(previous) = issued.as_ref() {
+                let continuing_group = scope.commit_sequence == previous.commit_sequence;
+                if (continuing_group
+                    && frame.first_commit_sequence() != previous.first_commit_sequence)
+                    || (!continuing_group
+                        && frame.first_commit_sequence()
+                            != previous
+                                .commit_sequence
+                                .checked_add(1)
+                                .ok_or(Error::Node("Cell commit overflow"))?)
+                    || frame.segment().min_txid
+                        != previous
+                            .position
+                            .txid
+                            .checked_add(1)
+                            .ok_or(Error::Node("Cell TXID overflow"))?
+                    || frame.segment().pre_checksum != previous.position.checksum
+                {
+                    return Err(Error::Node("node-log Cell issuance has a gap"));
+                }
+            } else if state.cell_issued.get(&cell_scope).is_some_and(|previous| {
+                // Separate captures may have intervening object-only commands.
+                // Require forward issuance here; only the bundle verifier can
+                // establish exact continuity from its authority-pinned base.
+                scope.commit_sequence <= previous.commit_sequence
+                    || frame.first_commit_sequence() <= previous.commit_sequence
+                    || frame.segment().max_txid <= previous.position.txid
+            }) {
+                return Err(Error::Node("node-log Cell issuance did not advance"));
+            }
+            if !state.cell_issued.contains_key(&cell_scope) && state.cell_issued.len() >= 4_096 {
+                return Err(Error::Capacity("node-log Cell issuance bindings"));
+            }
+            issued = Some(CellIssuedRange {
+                leader_session: state.leader_session,
+                log_epoch: state.log_epoch,
+                scope: cell_scope,
+                last_node_sequence: scope.node_sequence,
+                commit_sequence: scope.commit_sequence,
+                first_commit_sequence: frame.first_commit_sequence(),
+                position: frame.segment().position(),
+            });
+        }
         state.next_sequence = ticket
             .last_sequence
             .checked_add(1)
             .ok_or(Error::Node("node sequence overflow"))?;
-        Ok(())
+        if let Some(issued) = issued {
+            state.cell_issued.insert(issued.scope, issued);
+        }
+        if let Some(assignment) = &mut assignment {
+            let mut hash = blake3::Hasher::new();
+            for frame in frames {
+                hash.update(&frame.digest());
+            }
+            assignment.digest = *hash.finalize().as_bytes();
+        }
+        Ok(assignment)
+    }
+
+    /// Closes this writer's sequence assignment in the same lock as native
+    /// ticket commit. Call after joining its accepted SQL/capture/submission
+    /// jobs. Late assignment fails without consuming a global sequence.
+    pub fn close_cell_issuance(
+        &self,
+        scope: CellLogScope,
+        base: cellule_ltx::RootRef,
+    ) -> Result<CellIssuedRange> {
+        let mut state = self.lock()?;
+        if state.fenced || state.untracked_issuance {
+            return Err(Error::Fenced);
+        }
+        if scope.cell_epoch == 0
+            || scope.cell.as_bytes().iter().all(|byte| *byte == 0)
+            || base.cell != *scope.cell.as_bytes()
+            || base.incarnation != *scope.incarnation.as_bytes()
+        {
+            return Err(Error::Node("invalid Cell issuance closure"));
+        }
+        if !state.closed_cells.contains(&scope) && state.closed_cells.len() >= 4_096 {
+            return Err(Error::Capacity("node-log closed Cell bindings"));
+        }
+        state.closed_cells.insert(scope);
+        Ok(state
+            .cell_issued
+            .get(&scope)
+            .copied()
+            .unwrap_or(CellIssuedRange {
+                leader_session: state.leader_session,
+                log_epoch: state.log_epoch,
+                scope,
+                last_node_sequence: 0,
+                first_commit_sequence: base.commit_sequence,
+                commit_sequence: base.commit_sequence,
+                position: base.position,
+            }))
     }
 
     /// Returns this gate's immutable enrolled epoch, including after rotation.

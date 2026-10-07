@@ -90,6 +90,17 @@ pub struct Owner {
     pub endpoint: String,
 }
 
+/// Exact node bundle lane pinned before it can cover this writer's commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BundleBindingRef {
+    /// Original boot session whose canonical node record selects the bundle.
+    pub session: SessionId,
+    /// Immutable publication lane epoch.
+    pub epoch: u64,
+    /// Unique binding identity; a closed binding cannot be enrolled again.
+    pub digest: Digest,
+}
+
 /// Exact recovered follower tail pinned before a dead owner's Cell can move.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecoveryOverlayRef {
@@ -170,6 +181,8 @@ pub struct Control {
     pub root: Option<RootRef>,
     /// Recovered overlay pinned before the Cell moved.
     pub recovery: Option<RecoveryOverlayRef>,
+    /// Original bundle binding, retained until its complete issued range drains.
+    pub bundle_binding: Option<BundleBindingRef>,
     /// Application code digest the owner installed.
     pub code: Digest,
     /// Schema version the owner installed.
@@ -181,6 +194,8 @@ pub struct Control {
 /// Named transition whose complete predicate must pass before an ETag update.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transition {
+    /// Pins a bundle binding without changing the writer or materialized root.
+    BindBundle,
     /// Extends the current owner's lease without changing the root.
     Renew,
     /// Installs a new owner for an existing root.
@@ -229,6 +244,7 @@ impl Control {
             owner: Some(owner),
             root: None,
             recovery: None,
+            bundle_binding: None,
             code,
             schema,
             next_due_ms: None,
@@ -281,6 +297,7 @@ impl Control {
             && previous.owner == self.owner
             && previous.root == self.root
             && previous.recovery == self.recovery
+            && previous.bundle_binding == self.bundle_binding
             && previous.code == self.code
             && previous.schema == self.schema
             && previous.next_due_ms == self.next_due_ms
@@ -320,6 +337,7 @@ impl Control {
     /// Builds a recovering successor owned by a different enrolled session.
     pub fn takeover(&self, owner: Owner) -> Result<Self> {
         let mut next = self.clone();
+        next.bundle_binding = None;
         next.epoch = next
             .epoch
             .checked_add(1)
@@ -464,6 +482,7 @@ impl Control {
     /// Builds the sole valid successor that releases a drained Cell owner.
     pub(crate) fn release(&self) -> Result<Self> {
         let mut next = self.clone();
+        next.bundle_binding = None;
         next.revision = next
             .revision
             .checked_add(1)
@@ -490,7 +509,30 @@ impl Control {
         {
             return Err(Error::Control("successor revision or progress"));
         }
+        if !matches!(
+            transition,
+            Transition::BindBundle
+                | Transition::Release
+                | Transition::Takeover
+                | Transition::Tombstone
+        ) && self.bundle_binding != next.bundle_binding
+        {
+            return Err(Error::Control("successor changed bundle binding"));
+        }
         match transition {
+            Transition::BindBundle => {
+                let mut expected = self.clone();
+                expected.revision = next.revision;
+                expected.progress = next.progress;
+                expected.bundle_binding = next.bundle_binding;
+                if self.state != ControlState::Serving
+                    || self.bundle_binding.is_some()
+                    || next.bundle_binding.is_none()
+                    || expected != *next
+                {
+                    return Err(Error::Control("invalid bundle binding transition"));
+                }
+            }
             Transition::Renew => {
                 if self.epoch != next.epoch
                     || self.state != next.state
@@ -536,7 +578,8 @@ impl Control {
                 }
             }
             Transition::Migrate => {
-                if !matches!(self.state, ControlState::Recovering | ControlState::Serving)
+                if self.bundle_binding.is_some()
+                    || !matches!(self.state, ControlState::Recovering | ControlState::Serving)
                     || next.state != ControlState::Serving
                     || self.epoch != next.epoch
                     || self.owner != next.owner
@@ -552,6 +595,7 @@ impl Control {
             }
             Transition::Release => {
                 if !matches!(self.state, ControlState::Recovering | ControlState::Serving)
+                    || next.bundle_binding.is_some()
                     || next.state != ControlState::Idle
                     || next.owner.is_some()
                     || next.root.is_none()
@@ -610,6 +654,7 @@ impl Control {
             }
             Transition::Takeover => {
                 if self.state == ControlState::Tombstoned
+                    || next.bundle_binding.is_some()
                     || next.state != ControlState::Recovering
                     || next.owner.is_none()
                     || self.owner == next.owner
@@ -625,6 +670,7 @@ impl Control {
             }
             Transition::Tombstone => {
                 if self.state == ControlState::Tombstoned
+                    || next.bundle_binding.is_some()
                     || next.state != ControlState::Tombstoned
                     || next.owner.is_some()
                     || self.epoch.checked_add(1) != Some(next.epoch)
@@ -648,6 +694,19 @@ impl Control {
         }
         if self.next_due_ms.is_some_and(|value| value < 0) {
             return Err(Error::Control("negative next due time"));
+        }
+        if let Some(binding) = self.bundle_binding
+            && (binding.epoch == 0
+                || binding.session.as_bytes().iter().all(|byte| *byte == 0)
+                || binding.digest.as_bytes().iter().all(|byte| *byte == 0)
+                || self.state != ControlState::Serving
+                || self.recovery.is_some()
+                || self
+                    .owner
+                    .as_ref()
+                    .is_none_or(|owner| owner.session != binding.session))
+        {
+            return Err(Error::Control("invalid bundle binding"));
         }
         if let Some(owner) = &self.owner
             && (owner.endpoint.is_empty()

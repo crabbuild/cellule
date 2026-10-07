@@ -150,6 +150,7 @@ impl NodeDirectory {
                     now_ms,
                     None,
                     advertisement.log.clone(),
+                    advertisement.bundle,
                 )?
                 .claim(claimant, now_ms)?
             }

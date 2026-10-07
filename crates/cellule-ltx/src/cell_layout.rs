@@ -68,6 +68,17 @@ impl CellStorageLayout {
         &self.application
     }
 
+    /// Binds application-scoped paths to another validated application under
+    /// the same canonical fleet prefix and transport. Node paths are shared.
+    #[must_use]
+    pub fn for_application(&self, application: [u8; 16]) -> Self {
+        Self {
+            store: self.store.clone(),
+            root: self.root.clone(),
+            application,
+        }
+    }
+
     /// Returns the process-local identity used to isolate immutable read caches.
     #[must_use]
     pub fn immutable_cache_identity(&self) -> u64 {
@@ -314,6 +325,22 @@ impl CellStorageLayout {
         ))
     }
 
+    /// Exact immutable node-wide coverage catalog and native range object.
+    #[must_use]
+    pub fn node_coverage_bundle_path(
+        &self,
+        session: &[u8; 16],
+        epoch: u64,
+        digest: &[u8; 32],
+    ) -> Path {
+        Path::from(format!(
+            "{}/cells/v1/node-logs/{}/{epoch}/coverage/v1/{}.cnb",
+            self.root,
+            encode_hex(session),
+            encode_hex(digest)
+        ))
+    }
+
     fn application_path(&self, suffix: &str) -> Path {
         Path::from(format!(
             "{}/cells/v1/apps/{}/{}",
@@ -364,6 +391,12 @@ mod tests {
         assert_eq!(
             layout.node_directory_path().as_ref(),
             "tenant-root/cells/v1/nodes"
+        );
+        assert_eq!(
+            layout
+                .node_coverage_bundle_path(&[0xdd; 16], 7, &[0xef; 32])
+                .as_ref(),
+            "tenant-root/cells/v1/node-logs/dddddddddddddddddddddddddddddddd/7/coverage/v1/efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef.cnb"
         );
         assert_eq!(
             layout

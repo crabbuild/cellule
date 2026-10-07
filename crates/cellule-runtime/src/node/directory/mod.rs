@@ -254,8 +254,23 @@ impl NodeDirectory {
             return Ok(false);
         };
         validate_record_path(&self.layout, record.session(), &path)?;
-        Ok(matches!(record, NodeRecord::Tombstone(current)
-            if current.claimant.is_none() && current.log.is_none()))
+        let NodeRecord::Tombstone(current) = record else {
+            return Ok(false);
+        };
+        if current.claimant.is_some() || current.log.is_some() {
+            return Ok(false);
+        }
+        match crate::node::bundle::store::ensure_session_drained(
+            &self.layout,
+            current.session,
+            current.bundle,
+        )
+        .await
+        {
+            Ok(()) => Ok(true),
+            Err(Error::PendingPublication) => Ok(false),
+            Err(source) => Err(source),
+        }
     }
 
     pub(super) fn validate(&self, advertisement: &NodeAdvertisement, now_ms: i64) -> Result<()> {
@@ -496,6 +511,7 @@ pub(super) struct NodeTombstone {
     pub(super) claim_generation: u64,
     pub(super) claim_expires_at_ms: Option<i64>,
     pub(super) log: Option<NodeLogStatus>,
+    pub(super) bundle: Option<crate::node::bundle::NodeBundleHead>,
 }
 
 impl NodeTombstone {
@@ -506,6 +522,7 @@ impl NodeTombstone {
         retired_at_ms: i64,
         claimant: Option<SessionId>,
         log: Option<NodeLogStatus>,
+        bundle: Option<crate::node::bundle::NodeBundleHead>,
     ) -> Result<Self> {
         let tombstone = Self {
             session,
@@ -518,6 +535,7 @@ impl NodeTombstone {
                 retired_at_ms.saturating_add(crate::node::log_state::RECOVERY_CLAIM_LIFETIME_MS)
             }),
             log,
+            bundle,
         };
         tombstone.validate()?;
         Ok(tombstone)
@@ -647,13 +665,17 @@ impl NodeTombstone {
             return Err(Error::Node("node tombstone exceeds 64 KiB"));
         }
         let raw: RawNodeTombstoneEnvelope = serde_json::from_slice(bytes)?;
-        if raw.tombstone.version != 1 {
+        if raw.tombstone.version != if raw.tombstone.bundle.is_some() { 2 } else { 1 } {
             return Err(Error::Node("unsupported node tombstone version"));
         }
         let raw = raw.tombstone;
         let session = SessionId::from_bytes(decode_hex(&raw.session)?);
         let node = NodeId::from_bytes(decode_hex(&raw.node)?);
         let tombstone = Self {
+            bundle: raw
+                .bundle
+                .map(crate::node::bundle::NodeBundleHead::try_from)
+                .transpose()?,
             session,
             node,
             expires_at_ms: canonical_i64(&raw.expires_at_ms)?,
@@ -678,6 +700,9 @@ impl NodeTombstone {
     }
 
     pub(super) fn validate(&self) -> Result<()> {
+        if let Some(bundle) = self.bundle {
+            bundle.validate()?;
+        }
         if self.session.as_bytes().iter().all(|byte| *byte == 0)
             || self.node.as_bytes().iter().all(|byte| *byte == 0)
             || self.expires_at_ms < 0

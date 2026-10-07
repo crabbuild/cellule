@@ -100,6 +100,7 @@ fn idle_control(
         owner: None,
         root: Some(RootRef::from_ltx(cell, incarnation, root).unwrap()),
         recovery: None,
+        bundle_binding: None,
         code,
         schema: 1,
         next_due_ms: None,

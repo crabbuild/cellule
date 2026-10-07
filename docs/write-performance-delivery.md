@@ -40,7 +40,7 @@ collection paths. There is no legacy decoding or automatic migration.
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
 | M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Latest three active-Fleet windows cost 5.229–5.433 PUTs/command; two fail the debt trend. Three per-Cell authority PUTs remain; M4 is required |
 | M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; latest three active-Fleet windows cost 0.0138 enrollment GETs/command. The 15K target diagnostic fails delivery and warm audit |
-| M4 | Binding/selector and delayed-materialization models plus [authority decision](bundle-coverage-proof.md) delivered | Production bundle proof, atomic transfer/recovery/collection and bundle ACKs not implemented |
+| M4 | Models and [connected protocol APIs](bundle-coverage-implementation.md) for shared selection, exact assigned ranges, independent materialization, checkpoint and complete live-writer closure | Actor response/read integration, failed-node issued-suffix recovery, bounded index/host admission and bundle collection remain incomplete; bundle ACKs disabled |
 | M5 | Three paired low-rate Fleet repetitions and target diagnostics with exact ACK audits delivered | Publication stability and target delivery fail; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
 
 ## Shared publication checkpoint
@@ -267,7 +267,7 @@ repetitions at 100/s are diagnostic points rather than a capacity search.
 | Three stable Fleet windows and M2's 0.25 PUT/command budget | Fail: two candidate debt trends grow; cost 5.229–5.433 |
 | 15K Fleet and 2K bucket absolute targets | Fail in every arm; candidate also completes fewer overloaded commands than main |
 | M3's 0.05 fresh enrollment GET budget | Within budget at the three 100/s points; full qualification remains unverified |
-| M4's production proof, atomic fault matrix and 0.05 total PUT budget | Unimplemented; abstract models do not enable ACKs or GC |
+| M4's complete production integration, atomic fault matrix and 0.05 total PUT budget | Incomplete; protocol tests do not enable ACKs or GC and no new TPS/cost qualification has passed |
 | Read-only/mixed capacity and 1% hot-Cell guardrails | Unverified in Docker; two native routing p99 ratios exceed 1.2 |
 | A/A capacity variance and relative parity | Unverified; overloaded completions cannot supply the reference |
 | Qualified overload, safe refusal before SQL and immediate recovery | Unverified; the historical step-down failed latency |

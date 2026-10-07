@@ -1,5 +1,6 @@
 //! Node advertisements, capacity, the node directory, leases, and the durability log.
 pub mod append_grant;
+pub mod bundle;
 pub mod durability;
 pub mod lease;
 pub mod log;

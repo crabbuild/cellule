@@ -208,13 +208,34 @@ impl NodeDurability {
 
     /// Assigns and asynchronously ships one captured commit to every member.
     pub async fn submit(&self, submission: NodeLogSubmission) -> Result<CommitTicket> {
+        self.submit_assigned(submission)
+            .await
+            .map(|(ticket, _)| ticket)
+    }
+
+    /// Uses the same bounded native lane and retains the complete assigned range
+    /// witness required by shared bundle selection.
+    pub async fn submit_assigned(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<(CommitTicket, crate::node::log::AssignedCommitRange)> {
         self.node_lease.check()?;
         let ticket = tokio::select! {
-            result = self.shipper.submit(submission) => result?,
+            result = self.shipper.submit_assigned(submission) => result?,
             () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
         };
         self.node_lease.check()?;
         Ok(ticket)
+    }
+
+    /// Freezes exact Cell issuance after the original SQL and capture tasks join.
+    pub fn close_cell_issuance(
+        &self,
+        scope: crate::node::log::CellLogScope,
+        base: cellule_ltx::RootRef,
+    ) -> Result<crate::node::log::CellIssuedRange> {
+        self.node_lease.check()?;
+        self.gate.close_cell_issuance(scope, base)
     }
 
     /// Returns fleet proof only after follower fsync and authoritative activation.

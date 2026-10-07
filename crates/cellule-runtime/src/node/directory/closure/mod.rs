@@ -94,6 +94,12 @@ impl NodeDirectory {
         {
             return Err(Error::Control("node session log recovery is incomplete"));
         }
+        crate::node::bundle::store::ensure_session_drained(
+            &self.layout,
+            current.session,
+            current.bundle,
+        )
+        .await?;
         Ok(NodeSessionRecovery {
             fence: NodeSessionFence::from_record(&current),
             log: current.log.clone(),
@@ -122,6 +128,12 @@ impl NodeDirectory {
         {
             return Err(Error::Control("node session log retirement is incomplete"));
         }
+        crate::node::bundle::store::ensure_session_drained(
+            &self.layout,
+            current.session,
+            current.bundle,
+        )
+        .await?;
         Ok(NodeSessionClosure {
             node: current.node,
             session: current.session,

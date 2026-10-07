@@ -191,6 +191,51 @@ fn submission(cuts: &cellule_ltx::CaptureBatch) -> NodeLogSubmission {
 }
 
 #[tokio::test]
+async fn intervening_object_only_commands_do_not_disable_native_issuance() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut db = cellule_ltx::Db::open(
+        &directory.path().join("object-gap.sqlite"),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE items(value)"))
+        .unwrap();
+    let first = db.capture().unwrap();
+    db.transaction(|tx| tx.execute_batch("INSERT INTO items VALUES (5)"))
+        .unwrap();
+    let _object_only = db.capture().unwrap();
+    db.transaction(|tx| tx.execute_batch("INSERT INTO items VALUES (6)"))
+        .unwrap();
+    let last = db.capture().unwrap();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    gate.activate_fleet().unwrap();
+    let shipper = NodeLogShipper::new_with_telemetry(
+        gate.clone(),
+        Arc::new(RecordingTransport::default()),
+        cellule_ltx::Limits::default(),
+        crate::fleet::telemetry::CellTelemetryHandle::default(),
+    )
+    .unwrap();
+    let first = shipper.submit(submission(&first)).await.unwrap();
+    let next = NodeLogSubmission::new(
+        ApplicationId::from_bytes([9; 16]),
+        CellId::from_bytes([8; 32]),
+        IncarnationId::from_bytes([7; 16]),
+        3,
+        6,
+        &last,
+    )
+    .unwrap();
+    let (ticket, _) = shipper.submit_assigned(next).await.unwrap();
+    assert_eq!(ticket.first_sequence(), first.last_sequence() + 1);
+    assert_eq!(
+        gate.prove(ticket).await.unwrap().source(),
+        crate::node::log::DurabilitySource::Fleet
+    );
+    shipper.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn concurrent_submissions_stay_ordered_and_require_every_member_ack() {
     let (_directory, cuts) = capture();
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(2), node(3)]).unwrap();
@@ -207,7 +252,17 @@ async fn concurrent_submissions_stay_ordered_and_require_every_member_ack() {
 
     let (first, second) = tokio::join!(
         shipper.submit(submission(&cuts)),
-        shipper.submit(submission(&cuts))
+        shipper.submit(
+            NodeLogSubmission::new(
+                ApplicationId::from_bytes([9; 16]),
+                CellId::from_bytes([6; 32]),
+                IncarnationId::from_bytes([7; 16]),
+                3,
+                4,
+                &cuts
+            )
+            .unwrap()
+        )
     );
     let first = first.unwrap();
     let second = second.unwrap();
@@ -249,8 +304,25 @@ async fn append_telemetry_records_one_result_for_each_batch() {
 
 #[tokio::test]
 async fn splits_large_submission_at_sixty_four_frames() {
-    let (_directory, mut cuts) = capture();
-    cuts.segments = std::iter::repeat_n(cuts.segments[0].clone(), 65).collect();
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut database = cellule_ltx::Db::open(
+        &directory.path().join("many-cuts.sqlite"),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("CREATE TABLE items(value)"))
+        .unwrap();
+    let mut cuts = database.capture().unwrap();
+    for value in 0..64 {
+        database
+            .transaction(|tx| tx.execute("INSERT INTO items VALUES (?1)", [value]))
+            .unwrap();
+        let next = database.capture().unwrap();
+        cuts.segments.extend(next.segments);
+        cuts.position = next.position;
+    }
+    assert_eq!(cuts.segments.len(), 65);
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
     gate.activate_fleet().unwrap();
     let transport = Arc::new(RecordingTransport::default());
@@ -310,7 +382,7 @@ async fn covered_queued_prefix_keeps_the_uncovered_suffix_fleet_durable() {
         .enumerate()
         .map(|(offset, encoded)| QueuedFrame {
             sequence: offset as u64 + 1,
-            encoded,
+            encoded: encoded.encoded().clone(),
             _reservation: Arc::clone(&reservation),
         })
         .collect();

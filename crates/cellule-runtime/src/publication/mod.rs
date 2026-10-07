@@ -100,6 +100,37 @@ impl CellPublisher {
         self
     }
 
+    /// Materializes a selected exact bundle prefix through the ordinary root,
+    /// lineage and fenced Cell CAS path. The proof retains bounded locators;
+    /// materialization owns fresh I/O rather than retained capture bodies.
+    pub async fn materialize_bundle(
+        &mut self,
+        proof: &crate::node::bundle::BundleCoverageProof,
+    ) -> Result<cellule_ltx::RootRef> {
+        self.check_node_lease()?;
+        if self.observed.value().bundle_binding != Some(proof.binding()) {
+            return Err(Error::Fenced);
+        }
+        let base = self.observed.value().ltx_root().ok_or(Error::Fenced)?;
+        if base.commit_sequence == proof.commit_sequence() && base.position == proof.position() {
+            return Ok(base);
+        }
+        let overlay = proof
+            .recovery_overlay_from(self.authority.layout(), self.replica.limits(), base)
+            .await?;
+        self.check_node_lease()?;
+        let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
+        let prepared = replica
+            .prepare_recovered_overlay(&overlay, self.observed.value().schema)
+            .await
+            .map_err(lineage::error)?;
+        self.lineage_confirmed = *confirmation
+            .lock()
+            .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+        self.publish_prepared(&prepared, self.observed.value().next_due_ms)
+            .await
+    }
+
     pub(crate) fn with_shared_publication(
         mut self,
         coordinator: std::sync::Arc<SharedPublication>,
