@@ -79,6 +79,9 @@ pub(super) struct BootstrapActivation {
 pub(super) type IdleTransferCandidates = Vec<(CellId, u64, i64, CatalogRole)>;
 
 pub(super) enum Message {
+    PublicationProgress {
+        reply: oneshot::Sender<crate::Result<CellPublicationProgress>>,
+    },
     Activate {
         cell: CellId,
         role: CatalogRole,
@@ -279,6 +282,7 @@ pub(super) struct ActiveCell {
     pub(super) publisher: Option<CellPublisher>,
     pub(super) durability_submitter: CellDurabilitySubmitter,
     pub(super) publications: VecDeque<QueuedPublication>,
+    pub(super) publishing_since: Option<std::time::Instant>,
     pub(super) publication_bytes: u64,
     pub(super) unpublished_node_logs: usize,
     pub(super) queue: VecDeque<QueuedWork>,

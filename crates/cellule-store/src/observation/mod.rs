@@ -161,6 +161,15 @@ pub struct StorageObservation {
 
 /// Receives bounded backend lifecycle events.
 pub trait StorageObserver: Send + Sync {
+    /// Selects a bounded application-owned observer for this object or prefix.
+    ///
+    /// The returned observer receives the complete operation, including streamed
+    /// reads, cancellation, and multipart parts. Selection occurs once; do not
+    /// retain object identities as metric labels. `None` uses this observer.
+    fn for_object(&self, _location: Option<&Path>) -> Option<Arc<dyn StorageObserver>> {
+        None
+    }
+
     /// Marks a newly active logical backend operation.
     fn started(&self, operation: StorageOperation);
 
@@ -200,7 +209,8 @@ impl ObjectStore for ObservedObjectStore {
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
         let bytes = saturating_u64(payload.content_length());
-        let mut observation = ActiveObservation::new(StorageOperation::Put, &self.observer);
+        let mut observation =
+            ActiveObservation::for_object(StorageOperation::Put, &self.observer, Some(location));
         let result = self.inner.put_opts(location, payload, options).await;
         observation.finish_result(&result, 0, bytes);
         result
@@ -211,15 +221,18 @@ impl ObjectStore for ObservedObjectStore {
         location: &Path,
         options: PutMultipartOptions,
     ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        let mut observation =
-            ActiveObservation::new(StorageOperation::MultipartStart, &self.observer);
+        let mut observation = ActiveObservation::for_object(
+            StorageOperation::MultipartStart,
+            &self.observer,
+            Some(location),
+        );
         let result = self.inner.put_multipart_opts(location, options).await;
         match result {
             Ok(upload) => {
                 observation.finish(StorageOutcome::Success, 0, 0);
                 Ok(Box::new(ObservedMultipartUpload {
                     inner: upload,
-                    observer: Arc::clone(&self.observer),
+                    observer: Arc::clone(&observation.observer),
                 }))
             }
             Err(error) => {
@@ -241,7 +254,8 @@ impl ObjectStore for ObservedObjectStore {
         } else {
             StorageOperation::Get
         };
-        let mut observation = ActiveObservation::new(operation, &self.observer);
+        let mut observation =
+            ActiveObservation::for_object(operation, &self.observer, Some(location));
         let result = self.inner.get_opts(location, options).await;
         let result = match result {
             Ok(result) => result,
@@ -275,7 +289,8 @@ impl ObjectStore for ObservedObjectStore {
         location: &Path,
         ranges: &[Range<u64>],
     ) -> object_store::Result<Vec<Bytes>> {
-        let mut observation = ActiveObservation::new(StorageOperation::Range, &self.observer);
+        let mut observation =
+            ActiveObservation::for_object(StorageOperation::Range, &self.observer, Some(location));
         let result = self.inner.get_ranges(location, ranges).await;
         let bytes_read = result.as_ref().map_or(0, |bodies| {
             bodies.iter().fold(0_u64, |total, body| {
@@ -290,12 +305,14 @@ impl ObjectStore for ObservedObjectStore {
         &self,
         locations: BoxStream<'static, object_store::Result<Path>>,
     ) -> BoxStream<'static, object_store::Result<Path>> {
-        let observation = ActiveObservation::new(StorageOperation::Delete, &self.observer);
+        let observation =
+            ActiveObservation::for_object(StorageOperation::Delete, &self.observer, None);
         observe_stream(self.inner.delete_stream(locations), observation)
     }
 
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        let observation = ActiveObservation::new(StorageOperation::List, &self.observer);
+        let observation =
+            ActiveObservation::for_object(StorageOperation::List, &self.observer, prefix);
         observe_stream(self.inner.list(prefix), observation)
     }
 
@@ -304,12 +321,14 @@ impl ObjectStore for ObservedObjectStore {
         prefix: Option<&Path>,
         offset: &Path,
     ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        let observation = ActiveObservation::new(StorageOperation::List, &self.observer);
+        let observation =
+            ActiveObservation::for_object(StorageOperation::List, &self.observer, prefix);
         observe_stream(self.inner.list_with_offset(prefix, offset), observation)
     }
 
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        let mut observation = ActiveObservation::new(StorageOperation::List, &self.observer);
+        let mut observation =
+            ActiveObservation::for_object(StorageOperation::List, &self.observer, prefix);
         let result = self.inner.list_with_delimiter(prefix).await;
         observation.finish_result(&result, 0, 0);
         result
@@ -321,7 +340,8 @@ impl ObjectStore for ObservedObjectStore {
         to: &Path,
         options: CopyOptions,
     ) -> object_store::Result<()> {
-        let mut observation = ActiveObservation::new(StorageOperation::Copy, &self.observer);
+        let mut observation =
+            ActiveObservation::for_object(StorageOperation::Copy, &self.observer, Some(to));
         let result = self.inner.copy_opts(from, to, options).await;
         observation.finish_result(&result, 0, 0);
         result
@@ -342,8 +362,11 @@ impl ObservedMultipartStore {
 #[async_trait::async_trait]
 impl MultipartStore for ObservedMultipartStore {
     async fn create_multipart(&self, path: &Path) -> object_store::Result<MultipartId> {
-        let mut observation =
-            ActiveObservation::new(StorageOperation::MultipartStart, &self.observer);
+        let mut observation = ActiveObservation::for_object(
+            StorageOperation::MultipartStart,
+            &self.observer,
+            Some(path),
+        );
         let result = self.inner.create_multipart(path).await;
         observation.finish_result(&result, 0, 0);
         result
@@ -354,8 +377,11 @@ impl MultipartStore for ObservedMultipartStore {
         path: &Path,
         options: PutMultipartOptions,
     ) -> object_store::Result<MultipartId> {
-        let mut observation =
-            ActiveObservation::new(StorageOperation::MultipartStart, &self.observer);
+        let mut observation = ActiveObservation::for_object(
+            StorageOperation::MultipartStart,
+            &self.observer,
+            Some(path),
+        );
         let result = self.inner.create_multipart_opts(path, options).await;
         observation.finish_result(&result, 0, 0);
         result
@@ -369,8 +395,11 @@ impl MultipartStore for ObservedMultipartStore {
         data: PutPayload,
     ) -> object_store::Result<PartId> {
         let bytes = saturating_u64(data.content_length());
-        let mut observation =
-            ActiveObservation::new(StorageOperation::MultipartPart, &self.observer);
+        let mut observation = ActiveObservation::for_object(
+            StorageOperation::MultipartPart,
+            &self.observer,
+            Some(path),
+        );
         let result = self.inner.put_part(path, id, part_idx, data).await;
         observation.finish_result(&result, 0, bytes);
         result
@@ -382,16 +411,22 @@ impl MultipartStore for ObservedMultipartStore {
         id: &MultipartId,
         parts: Vec<PartId>,
     ) -> object_store::Result<PutResult> {
-        let mut observation =
-            ActiveObservation::new(StorageOperation::MultipartComplete, &self.observer);
+        let mut observation = ActiveObservation::for_object(
+            StorageOperation::MultipartComplete,
+            &self.observer,
+            Some(path),
+        );
         let result = self.inner.complete_multipart(path, id, parts).await;
         observation.finish_result(&result, 0, 0);
         result
     }
 
     async fn abort_multipart(&self, path: &Path, id: &MultipartId) -> object_store::Result<()> {
-        let mut observation =
-            ActiveObservation::new(StorageOperation::MultipartAbort, &self.observer);
+        let mut observation = ActiveObservation::for_object(
+            StorageOperation::MultipartAbort,
+            &self.observer,
+            Some(path),
+        );
         let result = self.inner.abort_multipart(path, id).await;
         observation.finish_result(&result, 0, 0);
         result
@@ -451,6 +486,15 @@ struct ActiveObservation {
 }
 
 impl ActiveObservation {
+    fn for_object(
+        operation: StorageOperation,
+        observer: &Arc<dyn StorageObserver>,
+        location: Option<&Path>,
+    ) -> Self {
+        let selected = observer.for_object(location);
+        Self::new(operation, selected.as_ref().unwrap_or(observer))
+    }
+
     fn new(operation: StorageOperation, observer: &Arc<dyn StorageObserver>) -> Self {
         observer.started(operation);
         Self {

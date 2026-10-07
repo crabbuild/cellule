@@ -401,7 +401,7 @@ async fn complete_original_successors_read_actual_origin_despite_live_native_sql
     let objects = inputs.replica.reachable_objects(&root).await.unwrap();
     let missing = objects
         .iter()
-        .find(|row| row.kind == CellObjectKind::Ltx)
+        .find(|row| matches!(row.kind, CellObjectKind::Ltx | CellObjectKind::Packed))
         .unwrap();
     let captured = fixture.original.capture().await.unwrap();
     let target = captured

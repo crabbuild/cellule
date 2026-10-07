@@ -141,6 +141,29 @@ pub struct DurabilityGate {
     changed: Arc<Notify>,
 }
 
+/// One consistent observation of an epoch's durability frontiers.
+///
+/// Observations grant no durability, recovery, rotation, or deletion authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeLogProgress {
+    /// Epoch these frontiers describe.
+    pub log_epoch: u64,
+    /// Highest issued node-log sequence.
+    pub issued_through: u64,
+    /// Highest sequence fsynced by every enrolled follower.
+    pub follower_proven_through: u64,
+    /// Contiguous prefix covered by authoritative object publication.
+    pub tiered_through: u64,
+    /// Issued sequences beyond the contiguous object-covered prefix.
+    pub pending_object_sequences: u64,
+    /// Whether authoritative activation enabled fleet proofs.
+    pub fleet_active: bool,
+    /// Whether issuance has stopped for rotation.
+    pub rotating: bool,
+    /// Whether the gate has been fenced.
+    pub fenced: bool,
+}
+
 struct GateState {
     leader_session: SessionId,
     leader_node: NodeId,
@@ -158,6 +181,27 @@ struct GateState {
 }
 
 impl DurabilityGate {
+    /// Samples all frontiers under one lock without issuing a proof.
+    pub fn progress(&self) -> Result<NodeLogProgress> {
+        let state = self.lock()?;
+        let issued_through = state.next_sequence.saturating_sub(1);
+        Ok(NodeLogProgress {
+            log_epoch: state.log_epoch,
+            issued_through,
+            follower_proven_through: state
+                .members
+                .iter()
+                .map(|member| state.follower_through.get(member).copied().unwrap_or(0))
+                .min()
+                .unwrap_or(0),
+            tiered_through: state.tiered_through,
+            pending_object_sequences: issued_through.saturating_sub(state.tiered_through),
+            fleet_active: state.fleet_active,
+            rotating: state.rotating,
+            fenced: state.fenced,
+        })
+    }
+
     /// Creates one inactive gate for the exact recruited follower ensemble.
     pub fn new(
         leader_session: SessionId,

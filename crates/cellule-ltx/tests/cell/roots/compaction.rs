@@ -4,6 +4,66 @@ use super::*;
 use cellule_ltx::LtxError;
 
 #[tokio::test]
+async fn small_compaction_fetches_each_verified_pack_once_for_body_and_index() {
+    let directory = tempfile::tempdir().unwrap();
+    let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+        Arc::new(InMemory::new()),
+    ));
+    let cell = replica(Store::new(counted.clone()), [225; 32], [226; 16]);
+    let mut writer = Db::open(&directory.path().join("source"), Limits::default()).unwrap();
+    let mut root = None;
+    for sequence in 1..=4 {
+        writer
+            .transaction(|tx| {
+                if sequence == 1 {
+                    tx.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(0)")?;
+                }
+                tx.execute("UPDATE t SET v=?1", [sequence])?;
+                Ok(())
+            })
+            .unwrap();
+        root = Some(
+            cell.prepare(root.as_ref(), &writer.capture().unwrap(), sequence, 1)
+                .await
+                .unwrap()
+                .root(),
+        );
+    }
+    let root = root.unwrap();
+    counted.reset();
+    let compacted = cell
+        .prepare_compaction(&root, 0..4, 1, directory.path())
+        .await
+        .unwrap();
+    let packs = counted
+        .requests()
+        .into_iter()
+        .filter(|request| request.location.ends_with(".pack"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        packs.len(),
+        4,
+        "index and body must share one verified origin fetch"
+    );
+    assert!(
+        packs
+            .iter()
+            .all(|request| request.kind == cellule_store::test_support::ObjectReadKind::Full)
+    );
+    assert_eq!(compacted.root().position, root.position);
+    assert_eq!(compacted.root().commit_sequence, root.commit_sequence);
+    let restored = directory.path().join("restored");
+    compacted.verified().restore(&restored).await.unwrap();
+    let db = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    assert_eq!(
+        db.query_row("SELECT v FROM t", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
+    writer.close().unwrap();
+}
+
+#[tokio::test]
 async fn private_compaction_append_retains_original_predecessor_and_exact_root() {
     let directory = tempfile::tempdir().unwrap();
     let mut writer = Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
@@ -101,7 +161,6 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
     let incarnation = [212; 16];
     let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
     let mut root = None;
-    let mut first_body = None;
     for sequence in 1..=8 {
         writer
             .transaction(|transaction| {
@@ -114,9 +173,6 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
             })
             .unwrap();
         let cuts = writer.capture().unwrap();
-        if sequence == 1 {
-            first_body = Some(cuts.segments[0].info().blake3);
-        }
         root = Some(
             replica
                 .prepare(root.as_ref(), &cuts, sequence, 1)
@@ -211,11 +267,15 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
     );
     backend.put(&path, bytes.into()).await.unwrap();
 
+    let selected_body = objects
+        .iter()
+        .find(|object| object.kind == CellObjectKind::Packed)
+        .unwrap();
     let body_path = layout.incarnation_object_path(
         &cell,
         &incarnation,
-        &first_body.unwrap(),
-        CellObjectKind::Ltx,
+        &selected_body.digest,
+        selected_body.kind,
     );
     let original = backend
         .get(&body_path)
@@ -255,8 +315,8 @@ async fn scheduled_compaction_append_checks_origin_and_sources_before_escape() {
     assert_eq!(prepared.verified().schema(), 2);
     assert_eq!(
         counted.put_requests(),
-        6,
-        "one-leaf compaction append needs two body/index pairs, final directory and root"
+        3,
+        "one-leaf compaction append needs two packed segments and its root with an inline directory"
     );
     let compacted = replica
         .prepare_scheduled_compaction(&root, scratch.path())
@@ -932,9 +992,6 @@ async fn compaction_rejects_selected_body_corruption_outside_page_frames() {
         })
         .unwrap();
     let batch = writer.capture().unwrap();
-    let info = batch.segments[0].info().clone();
-    let mut corrupted = std::fs::read(batch.segments[0].path()).unwrap();
-    corrupted[0] ^= 1;
     let inner = Arc::new(InMemory::new());
     let store = Store::new(inner.clone());
     let cell = [93; 32];
@@ -943,8 +1000,23 @@ async fn compaction_rejects_selected_body_corruption_outside_page_frames() {
     let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
     let root = replica.prepare(None, &batch, 1, 1).await.unwrap().root();
     writer.close().unwrap();
-    let object =
-        layout.incarnation_object_path(&cell, &incarnation, &info.blake3, CellObjectKind::Ltx);
+    let body = replica
+        .reachable_objects(&root)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|object| object.kind == CellObjectKind::Packed)
+        .unwrap();
+    let object = layout.incarnation_object_path(&cell, &incarnation, &body.digest, body.kind);
+    let mut corrupted = inner
+        .get(&object)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+    corrupted[64] ^= 1; // Native LTX header, outside every authenticated page frame.
     inner
         .put(&object, Bytes::from(corrupted).into())
         .await

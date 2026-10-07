@@ -18,6 +18,7 @@ mod coalesce;
 mod compaction;
 pub(crate) mod directory;
 mod merge;
+mod packed;
 mod preparation;
 mod prepare;
 pub use preparation::{RootPreparation, RootPreparationFuture, RootPreparationMetadata};
@@ -327,6 +328,7 @@ pub struct CellPagedDatabase {
     replica: CellReplica,
     directory_digest: [u8; 32],
     directory_height: u32,
+    directory_inline: Option<Arc<[u8]>>,
     extents: Arc<BTreeMap<[u8; 32], ObjectExtent>>,
     page_size: u32,
     database_pages: u32,
@@ -424,6 +426,7 @@ impl CellPagedDatabase {
                 incarnation: &self.replica.incarnation,
                 page_size: self.page_size,
                 database_pages: self.database_pages,
+                inline_root: self.directory_inline.as_deref(),
                 extents: &self.extents,
                 host: &self.replica.host,
                 origin: crate::LtxReadOrigin::Cold,
@@ -468,6 +471,7 @@ impl CellPagedDatabase {
                 incarnation: &self.replica.incarnation,
                 page_size: self.page_size,
                 database_pages: self.database_pages,
+                inline_root: self.directory_inline.as_deref(),
                 extents: &self.extents,
                 host: &self.replica.host,
                 origin,
@@ -591,6 +595,7 @@ impl CellPagedDatabase {
                 incarnation: &self.replica.incarnation,
                 page_size: self.page_size,
                 database_pages: self.database_pages,
+                inline_root: self.directory_inline.as_deref(),
                 extents: &self.extents,
                 host: &self.replica.host,
                 origin,
@@ -864,6 +869,7 @@ struct AppendBaseState {
     aggregate: directory::Aggregate,
     directory_digest: [u8; 32],
     directory_height: u32,
+    directory_inline: Option<Arc<[u8]>>,
     page_size: u32,
     database_pages: u32,
     inherited_segment_pages: Vec<[u8; 32]>,
@@ -877,6 +883,7 @@ impl From<LoadedGraph> for AppendBaseState {
             aggregate: graph.aggregate,
             directory_digest: graph.document.directory_digest,
             directory_height: graph.document.directory_height,
+            directory_inline: graph.document.directory_inline,
             page_size: graph.document.page_size,
             database_pages: graph.document.database_pages,
             inherited_segment_pages: graph.document.segment_pages,
@@ -939,6 +946,7 @@ struct AppendInput {
 enum AppendBody {
     Native(Arc<upload::PinnedCapture>),
     Frozen(Bytes),
+    Packed(Arc<dyn cellule_store::MultipartUploadSource>),
     Bundle,
 }
 

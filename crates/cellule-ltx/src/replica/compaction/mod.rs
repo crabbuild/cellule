@@ -96,15 +96,14 @@ async fn prepare_root(
     append: Option<CompactionAppend>,
 ) -> Result<PreparedRoot> {
     let selected = &graph.descriptors[range.clone()];
-    // The authenticated streams have separate scratch files. Both must finish
-    // before the merge, but neither depends on the other's transfer.
-    let (spooled, body_inputs) = futures_util::future::join(
-        spool_indexes(replica, selected, &files.scratch, &files.original_indexes),
-        spool_selected_bodies(replica, selected, &files.scratch, &files.original_bodies),
+    let (spooled, body_inputs) = spool_selected(
+        replica,
+        selected,
+        &files.scratch,
+        &files.original_bodies,
+        &files.original_indexes,
     )
-    .await;
-    let spooled = spooled?;
-    let body_inputs = body_inputs?;
+    .await?;
     let artifacts = write_compacted(replica, spooled, &body_inputs, &files).await?;
 
     let first = selected.first().ok_or(LtxError::TxNotAvailable)?;
@@ -122,12 +121,55 @@ async fn prepare_root(
     let descriptor =
         SegmentDescriptor::native(info, artifacts.index.digest, artifacts.index.length)
             .with_level(level);
+    let packed_segment = if super::packed::HEADER_BYTES
+        .checked_add(artifacts.ltx.length)
+        .and_then(|n| n.checked_add(artifacts.index.length))
+        .is_some_and(|n| n <= super::upload::SINGLE_PUT_BYTES)
+    {
+        let scratch = Arc::clone(&files.scratch);
+        let path = files.compacted_index.clone();
+        let length = artifacts.index.length as usize;
+        let index = replica
+            .host
+            .run(move || {
+                // A dispatched read owns scratch through cancellation. Opening
+                // read-only also preserves the source-read error boundary.
+                let mut file = scratch.host.filesystem.open(&path)?;
+                file.read_exact_at(0, length)
+            })
+            .await??;
+        let source = super::upload::PinnedCapture::open(
+            &replica.host,
+            files.compacted_ltx.clone(),
+            artifacts.ltx.length,
+        )
+        .await?;
+        Some(
+            super::packed::freeze(
+                replica,
+                super::PreparedSegment {
+                    descriptor: descriptor.clone(),
+                    index: bytes::Bytes::from(index),
+                    body: super::AppendBody::Native(source),
+                },
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let descriptor = packed_segment
+        .as_ref()
+        .map_or(descriptor, |segment| segment.descriptor.clone());
     descriptor.validate_published(replica.limits)?;
 
     let mut descriptors = graph.descriptors.clone();
     descriptors.splice(range.clone(), [descriptor.clone()]);
     replica.validate_chain(&descriptors, base.position)?;
     let dependency_uploads = async {
+        if let Some(segment) = packed_segment {
+            return replica.upload_prepared_segment(segment).await;
+        }
         let (body, index) = futures_util::future::join(
             upload(
                 replica,
@@ -163,13 +205,14 @@ async fn prepare_root(
         let endpoint = descriptors.last().ok_or(LtxError::LTXCorrupted)?;
         let page_size = endpoint.info.page_size;
         let database_pages = endpoint.info.database_pages;
-        let retain_leaf = append.as_ref().is_some_and(|append| {
-            graph.document.directory_height == 0
-                && append
-                    .inputs
-                    .last()
-                    .is_some_and(|input| directory::fits_leaf(input.info.database_pages))
-        });
+        let retain_leaf = graph.document.directory_height == 0
+            && append.as_ref().is_none_or(|append| {
+                graph.document.directory_height == 0
+                    && append
+                        .inputs
+                        .last()
+                        .is_some_and(|input| directory::fits_leaf(input.info.database_pages))
+            });
         let directory = directory::relocate_and_upload(
             replica,
             &graph,
@@ -187,6 +230,7 @@ async fn prepare_root(
                 aggregate: graph.aggregate,
                 directory_digest: directory.root_digest(),
                 directory_height: directory.height(),
+                directory_inline: None,
                 page_size,
                 database_pages,
                 inherited_segment_pages: graph.document.segment_pages.clone(),

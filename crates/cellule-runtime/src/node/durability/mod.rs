@@ -170,6 +170,11 @@ pub struct NodeDurability {
 }
 
 impl NodeDurability {
+    /// Observes the epoch's durability frontiers; this does not issue a proof.
+    pub fn progress(&self) -> Result<crate::node::log::NodeLogProgress> {
+        self.gate.progress()
+    }
+
     /// Creates one node-log durability epoch over its gate, shipper, authority,
     /// transport, and node lease.
     #[must_use]

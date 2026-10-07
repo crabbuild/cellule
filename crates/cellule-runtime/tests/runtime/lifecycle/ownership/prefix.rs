@@ -162,7 +162,7 @@ async fn cached_root_metadata_cannot_hide_a_missing_or_corrupt_current_dependenc
         runtime.shutdown().await.unwrap();
         let object = objects
             .iter()
-            .find(|object| object.kind == CellObjectKind::Ltx)
+            .find(|object| matches!(object.kind, CellObjectKind::Ltx | CellObjectKind::Packed))
             .unwrap();
         let path = fixture.layout.incarnation_object_path(
             &root.cell,

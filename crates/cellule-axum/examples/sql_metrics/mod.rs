@@ -10,6 +10,7 @@ use std::{
 };
 
 mod capture;
+mod storage;
 use capture::CaptureMetrics;
 
 #[cfg(test)]
@@ -25,13 +26,24 @@ pub(super) struct QueryMetrics {
     primitive_ns: AtomicU64,
     writes: WriteMetrics,
     capture: CaptureMetrics,
-    storage: [StorageMetrics; StorageOperation::ALL.len()],
+    storage: storage::Accounting,
+    peer: [Histogram; PeerPhase::COUNT],
     host_capacity: serde_json::Value,
     response_sources: [AtomicU64; 3],
+    response_elapsed: [Histogram; 3],
+    response_confirmation: Histogram,
+    proof_wait: [Histogram; 2],
     submission_sources: [AtomicU64; 4],
     log_append_successes: AtomicU64,
     log_append_failures: AtomicU64,
     log_append_bytes: AtomicU64,
+    selected_roots: AtomicU64,
+    materialized_commits: AtomicU64,
+    follower_frames: AtomicU64,
+    follower_sync_calls: AtomicU64,
+    follower_failures: AtomicU64,
+    sample_origin: std::sync::OnceLock<std::time::Instant>,
+    sample_session: std::sync::OnceLock<uuid::Uuid>,
 }
 
 // Application-owned instrumentation: fixed histograms, 100-us upper
@@ -84,10 +96,70 @@ impl Histogram {
         };
         serde_json::json!({
             "count": count,
+            "total_ns": self.total_ns.load(Ordering::Relaxed),
             "mean_ms": (count > 0).then(|| self.total_ns.load(Ordering::Relaxed) as f64 / count as f64 / 1_000_000.0),
             "p50_ms": percentile(50), "p95_ms": percentile(95), "p99_ms": percentile(99),
             "overflow": buckets[WRITE_BUCKETS - 1], "resolution_us": WRITE_BUCKET_US
         })
+    }
+
+    fn raw(&self) -> serde_json::Value {
+        serde_json::json!({
+            "resolution_us": WRITE_BUCKET_US,
+            "bucket_count": WRITE_BUCKETS,
+            "total_ns": self.total_ns.load(Ordering::Relaxed),
+            // Preserve every cumulative count and its original bucket index.
+            // Serializing hundreds of thousands of empty JSON values on an
+            // async service thread perturbs the workload being measured.
+            "nonzero_buckets": self.buckets.iter().enumerate().filter_map(|(index, bucket)| {
+                let count = bucket.load(Ordering::Relaxed);
+                (count != 0).then_some((index, count))
+            }).collect::<Vec<_>>()
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum PeerPhase {
+    OwnerEnrollment,
+    RequestSign,
+    RoundTrip,
+    ReplyVerify,
+    RequestVerify,
+    ReceiverEnrollment,
+    DurableAppend,
+    FollowerWorkerQueue,
+    FollowerWorker,
+    FollowerDataSync,
+}
+
+impl PeerPhase {
+    const COUNT: usize = 10;
+    const ALL: [Self; Self::COUNT] = [
+        Self::OwnerEnrollment,
+        Self::RequestSign,
+        Self::RoundTrip,
+        Self::ReplyVerify,
+        Self::RequestVerify,
+        Self::ReceiverEnrollment,
+        Self::DurableAppend,
+        Self::FollowerWorkerQueue,
+        Self::FollowerWorker,
+        Self::FollowerDataSync,
+    ];
+    fn label(self) -> &'static str {
+        match self {
+            Self::OwnerEnrollment => "owner_enrollment",
+            Self::RequestSign => "request_sign",
+            Self::RoundTrip => "round_trip",
+            Self::ReplyVerify => "reply_verify",
+            Self::RequestVerify => "request_verify",
+            Self::ReceiverEnrollment => "receiver_enrollment",
+            Self::DurableAppend => "durable_append",
+            Self::FollowerWorkerQueue => "follower_worker_queue",
+            Self::FollowerWorker => "follower_worker",
+            Self::FollowerDataSync => "follower_data_sync",
+        }
     }
 }
 
@@ -121,22 +193,18 @@ struct StorageMetrics {
 }
 
 impl StorageObserver for QueryMetrics {
-    fn started(&self, operation: StorageOperation) {
-        self.storage[operation.index()]
-            .started
-            .fetch_add(1, Ordering::Relaxed);
+    fn for_object(
+        &self,
+        location: Option<&object_store::path::Path>,
+    ) -> Option<std::sync::Arc<dyn StorageObserver>> {
+        Some(self.storage.observer(location))
     }
 
+    fn started(&self, operation: StorageOperation) {
+        self.storage.started(operation);
+    }
     fn finished(&self, observation: StorageObservation) {
-        let metrics = &self.storage[observation.operation.index()];
-        metrics.duration.observe(observation.duration);
-        metrics.outcomes[observation.outcome.index()].fetch_add(1, Ordering::Relaxed);
-        metrics
-            .bytes_read
-            .fetch_add(observation.bytes_read, Ordering::Relaxed);
-        metrics
-            .bytes_written
-            .fetch_add(observation.bytes_written, Ordering::Relaxed);
+        self.storage.finished(observation);
     }
 }
 
@@ -145,6 +213,17 @@ fn nanos(elapsed: Duration) -> u64 {
 }
 
 impl CellTelemetry for QueryMetrics {
+    fn follower_append(&self, timing: cellule_runtime::fleet::telemetry::FollowerAppendTiming) {
+        self.peer_phase(PeerPhase::FollowerWorkerQueue, timing.worker_queue);
+        self.peer_phase(PeerPhase::FollowerWorker, timing.worker);
+        self.peer_phase(PeerPhase::FollowerDataSync, timing.data_sync);
+        self.follower_frames
+            .fetch_add(timing.frames, Ordering::Relaxed);
+        self.follower_sync_calls
+            .fetch_add(timing.data_sync_calls, Ordering::Relaxed);
+        self.follower_failures
+            .fetch_add(u64::from(!timing.succeeded), Ordering::Relaxed);
+    }
     fn ltx_capture(&self, timing: &cellule_ltx::CaptureTiming, succeeded: bool) {
         self.capture.observe(timing, succeeded);
     }
@@ -152,8 +231,8 @@ impl CellTelemetry for QueryMetrics {
     fn command_response(
         &self,
         source: CommandResponseSource,
-        _elapsed: Duration,
-        _confirmation: Duration,
+        elapsed: Duration,
+        confirmation: Duration,
     ) {
         let index = match source {
             CommandResponseSource::Recorded => 0,
@@ -161,6 +240,19 @@ impl CellTelemetry for QueryMetrics {
             CommandResponseSource::Object => 2,
         };
         self.response_sources[index].fetch_add(1, Ordering::Relaxed);
+        self.response_elapsed[index].observe(elapsed);
+        self.response_confirmation.observe(confirmation);
+    }
+    fn durability_proof(
+        &self,
+        source: cellule_runtime::node::log::DurabilitySource,
+        waited: Duration,
+    ) {
+        let index = match source {
+            cellule_runtime::node::log::DurabilitySource::Fleet => 0,
+            cellule_runtime::node::log::DurabilitySource::Object => 1,
+        };
+        self.proof_wait[index].observe(waited);
     }
     fn durability_submission(&self, outcome: DurabilitySubmissionOutcome) {
         let index = match outcome {
@@ -184,6 +276,11 @@ impl CellTelemetry for QueryMetrics {
         self.writes.worker.observe(worker);
     }
     fn publication_completed(&self, _cell: cellule_runtime::CellId, timing: PublicationTiming) {
+        if timing.succeeded {
+            self.selected_roots.fetch_add(1, Ordering::Relaxed);
+            self.materialized_commits
+                .fetch_add(timing.covered_commits, Ordering::Relaxed);
+        }
         self.writes.preparation.observe(timing.preparation);
         self.writes.authority.observe(timing.authority);
         self.writes.publication.observe(timing.total);
@@ -232,6 +329,57 @@ impl CellTelemetry for QueryMetrics {
 }
 
 impl QueryMetrics {
+    pub(super) fn peer_phase(&self, phase: PeerPhase, elapsed: Duration) {
+        self.peer[phase as usize].observe(elapsed);
+    }
+
+    pub(super) async fn enrollment<T>(
+        &self,
+        receiver: bool,
+        future: impl std::future::Future<Output = T>,
+    ) -> T {
+        let started = std::time::Instant::now();
+        let result = storage::enrollment(receiver, future).await;
+        self.peer_phase(
+            if receiver {
+                PeerPhase::ReceiverEnrollment
+            } else {
+                PeerPhase::OwnerEnrollment
+            },
+            started.elapsed(),
+        );
+        result
+    }
+
+    pub(super) fn window_snapshot(&self) -> serde_json::Value {
+        let mut value = self.snapshot();
+        let mut histograms = serde_json::Map::new();
+        for (label, histogram) in [
+            ("actor_queue", &self.writes.queue),
+            ("worker", &self.writes.worker),
+            ("publication", &self.writes.publication),
+            ("compaction", &self.writes.compaction),
+            ("dirty_admission", &self.writes.dirty_admission),
+        ] {
+            histograms.insert(label.into(), histogram.raw());
+        }
+        for phase in PeerPhase::ALL {
+            histograms.insert(phase.label().into(), self.peer[phase as usize].raw());
+        }
+        for (name, histogram) in [
+            ("response_recorded", &self.response_elapsed[0]),
+            ("response_fleet", &self.response_elapsed[1]),
+            ("response_object", &self.response_elapsed[2]),
+            ("response_confirmation", &self.response_confirmation),
+            ("proof_fleet", &self.proof_wait[0]),
+            ("proof_object", &self.proof_wait[1]),
+        ] {
+            histograms.insert(name.into(), histogram.raw());
+        }
+        histograms.extend(self.capture.window_snapshot());
+        value["histograms"] = histograms.into();
+        value
+    }
     pub(super) fn new(host: &cellule_ltx::Host) -> Self {
         Self {
             host_capacity: serde_json::json!({
@@ -256,33 +404,52 @@ impl QueryMetrics {
                 Some(total.load(Ordering::Relaxed) as f64 / count as f64 / 1000.0)
             }
         };
+        // Derive aggregate counters from this one family snapshot. Reading
+        // separate live totals before families introduces false reconciliation
+        // gaps while callbacks complete. Duration histograms remain independent.
+        let storage_families = self.storage.snapshot();
+        let sum = |operation: &str, field: &str, outcome: Option<&str>| -> u64 {
+            storage_families
+                .as_object()
+                .into_iter()
+                .flat_map(|families| families.values())
+                .map(|family| {
+                    let value = &family[operation][field];
+                    outcome.map_or_else(
+                        || value.as_u64().unwrap_or(0),
+                        |outcome| value[outcome].as_u64().unwrap_or(0),
+                    )
+                })
+                .sum()
+        };
         let storage: serde_json::Map<String, serde_json::Value> = StorageOperation::ALL
             .iter()
             .map(|operation| {
-                let metrics = &self.storage[operation.index()];
+                let metrics = &self.storage.total[operation.index()];
                 let outcomes: serde_json::Map<String, serde_json::Value> = StorageOutcome::ALL
                     .iter()
                     .map(|outcome| {
                         (
                             outcome.label().into(),
-                            metrics.outcomes[outcome.index()]
-                                .load(Ordering::Relaxed)
-                                .into(),
+                            sum(operation.label(), "outcomes", Some(outcome.label())).into(),
                         )
                     })
                     .collect();
                 (
                     operation.label().into(),
                     serde_json::json!({
-                        "started": metrics.started.load(Ordering::Relaxed),
+                        "started": sum(operation.label(), "started", None),
                         "duration": metrics.duration.snapshot(), "outcomes": outcomes,
-                        "bytes_read": metrics.bytes_read.load(Ordering::Relaxed),
-                        "bytes_written": metrics.bytes_written.load(Ordering::Relaxed)
+                        "bytes_read": sum(operation.label(), "bytes_read", None),
+                        "bytes_written": sum(operation.label(), "bytes_written", None)
                     }),
                 )
             })
             .collect();
         serde_json::json!({
+            "schema_version": 3,
+            "sample_session": self.sample_session.get_or_init(uuid::Uuid::now_v7).to_string(),
+            "sample_elapsed_ns": nanos(self.sample_origin.get_or_init(std::time::Instant::now).elapsed()),
             "host_capacity": self.host_capacity,
             "response_sources": {
                 "recorded": self.response_sources[0].load(Ordering::Relaxed),
@@ -300,7 +467,14 @@ impl QueryMetrics {
                 "failures": self.log_append_failures.load(Ordering::Relaxed),
                 "bytes": self.log_append_bytes.load(Ordering::Relaxed)
             },
+            "follower_append": {
+                "input_frames": self.follower_frames.load(Ordering::Relaxed),
+                "data_sync_calls": self.follower_sync_calls.load(Ordering::Relaxed),
+                "failures": self.follower_failures.load(Ordering::Relaxed)
+            },
             "storage_operations": storage,
+            "storage_families": storage_families,
+            "peer_phases": PeerPhase::ALL.iter().map(|phase| (phase.label().to_owned(), self.peer[*phase as usize].snapshot())).collect::<serde_json::Map<_, _>>(),
             "queries": queries,
             "failures": self.failures.load(Ordering::Relaxed),
             "mean_actor_queue_us": mean_us(&self.queue_ns, queries),
@@ -323,6 +497,8 @@ impl QueryMetrics {
                 "dirty_admission": self.writes.dirty_admission.snapshot(),
                 "recovery_admission": self.writes.recovery_admission.snapshot(),
                 "publication_failures": self.writes.publication_failures.load(Ordering::Relaxed),
+                "selected_roots": self.selected_roots.load(Ordering::Relaxed),
+                "materialized_commits": self.materialized_commits.load(Ordering::Relaxed),
                 "uploaded_objects": self.writes.objects.load(Ordering::Relaxed),
                 "uploaded_bytes": self.writes.bytes.load(Ordering::Relaxed)
             }

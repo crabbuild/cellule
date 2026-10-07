@@ -60,8 +60,8 @@ async fn small_roots_keep_descriptor_metadata_inline_and_check_origin() {
             .root();
         assert_eq!(
             counted.put_requests(),
-            4,
-            "small roots upload body, index, directory and root without a separate descriptor page"
+            2,
+            "small roots upload one authenticated packed segment and the root containing its directory leaf"
         );
         assert_eq!(counted.counts().full, 0);
         assert_eq!(
@@ -69,7 +69,7 @@ async fn small_roots_keep_descriptor_metadata_inline_and_check_origin() {
             usize::from(root.is_some()),
             "the authenticated predecessor root must still exist at origin"
         );
-        assert_eq!(replica.take_publication_cost().objects, 4);
+        assert_eq!(replica.take_publication_cost().objects, 2);
         writer.prune_captured(&cuts).unwrap();
         root = Some(next);
     }
@@ -159,8 +159,8 @@ async fn append_reuses_verified_descriptor_pages_and_rejects_missing_origin() {
         .root();
     assert_eq!(
         counted.put_requests(),
-        4,
-        "only new body, index, directory and root with an inline tail"
+        3,
+        "only new packed segment, external directory and root with an inline tail"
     );
     assert_eq!(
         counted.counts().full,
@@ -172,7 +172,7 @@ async fn append_reuses_verified_descriptor_pages_and_rejects_missing_origin() {
         3,
         "predecessor root and both descriptor pages still checked"
     );
-    assert_eq!(replica.take_publication_cost().objects, 4);
+    assert_eq!(replica.take_publication_cost().objects, 3);
     writer.prune_captured(&next).unwrap();
 
     let restored = directory.path().join("restored.sqlite");

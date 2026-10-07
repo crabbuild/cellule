@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::{Limits, LtxError, Result, SegmentInfo};
 
@@ -14,6 +15,7 @@ pub(super) struct RootDocument {
     pub database_pages: u32,
     pub directory_digest: [u8; 32],
     pub directory_height: u32,
+    pub directory_inline: Option<Arc<[u8]>>,
     pub incarnation: [u8; 16],
     pub page_size: u32,
     pub schema: u32,
@@ -31,6 +33,7 @@ pub(super) struct SegmentDescriptor {
     offset: u64,
     length: u64,
     level: u8,
+    packed: bool,
 }
 
 impl SegmentDescriptor {
@@ -45,6 +48,7 @@ impl SegmentDescriptor {
             offset: 0,
             length,
             level: 0,
+            packed: false,
         }
     }
 
@@ -64,6 +68,38 @@ impl SegmentDescriptor {
             offset,
             length,
             level: 0,
+            packed: false,
+        }
+    }
+
+    pub(super) fn packed(
+        info: SegmentInfo,
+        index_digest: [u8; 32],
+        index_length: u64,
+        object_digest: [u8; 32],
+    ) -> Self {
+        let length = info.size_bytes;
+        Self {
+            info,
+            index_digest,
+            index_length,
+            object_digest,
+            offset: super::packed::HEADER_BYTES,
+            length,
+            level: 0,
+            packed: true,
+        }
+    }
+
+    pub(super) fn index_extent(&self) -> ([u8; 32], crate::CellObjectKind, u64) {
+        if self.packed {
+            (
+                self.object_digest,
+                crate::CellObjectKind::Packed,
+                self.offset + self.length,
+            )
+        } else {
+            (self.index_digest, crate::CellObjectKind::Index, 0)
         }
     }
 
@@ -90,7 +126,9 @@ impl SegmentDescriptor {
     }
 
     pub(super) fn object_kind(&self) -> crate::CellObjectKind {
-        if self.object_digest == self.info.blake3 {
+        if self.packed {
+            crate::CellObjectKind::Packed
+        } else if self.object_digest == self.info.blake3 {
             crate::CellObjectKind::Ltx
         } else {
             crate::CellObjectKind::Bundle
@@ -120,6 +158,13 @@ impl SegmentDescriptor {
             || self.length != info.size_bytes
             || self.offset.checked_add(self.length).is_none()
             || (self.object_kind() == crate::CellObjectKind::Ltx && self.offset != 0)
+            || (self.packed
+                && (self.offset != super::packed::HEADER_BYTES
+                    || self
+                        .offset
+                        .checked_add(self.length)
+                        .and_then(|n| n.checked_add(self.index_length))
+                        .is_none_or(|end| end > super::upload::SINGLE_PUT_BYTES)))
             || self
                 .offset
                 .checked_add(self.length)
@@ -150,6 +195,7 @@ struct RootWire {
     database_pages: u32,
     directory_digest: String,
     directory_height: u32,
+    directory_inline: Option<String>,
     incarnation: String,
     page_size: u32,
     schema: u32,
@@ -172,13 +218,39 @@ struct SegmentWire {
     min_txid: String,
     object_digest: String,
     offset: String,
+    packed: bool,
     page_size: u32,
     post_checksum: String,
     pre_checksum: String,
     size_bytes: String,
 }
 
+pub(super) const INLINE_DIRECTORY_BYTES: usize = 2 << 10;
+
+fn parse_inline(value: &str) -> Result<Arc<[u8]>> {
+    if value.is_empty()
+        || !value.len().is_multiple_of(2)
+        || value.len() > INLINE_DIRECTORY_BYTES * 2
+    {
+        return Err(LtxError::LTXCorrupted);
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| Ok((nibble(pair[0])? << 4) | nibble(pair[1])?))
+        .collect::<Result<Vec<_>>>()
+        .map(Into::into)
+}
+
 pub(super) fn encode_root(root: &RootDocument) -> Result<Vec<u8>> {
+    if let Some(bytes) = &root.directory_inline
+        && (root.directory_height != 0
+            || bytes.is_empty()
+            || bytes.len() > INLINE_DIRECTORY_BYTES
+            || *blake3::hash(bytes).as_bytes() != root.directory_digest)
+    {
+        return Err(LtxError::LTXCorrupted);
+    }
     if root.schema == 0
         || root.txid == 0
         || root.checksum & crate::CHECKSUM_FLAG == 0
@@ -197,6 +269,10 @@ pub(super) fn encode_root(root: &RootDocument) -> Result<Vec<u8>> {
         database_pages: root.database_pages,
         directory_digest: encode_hex(&root.directory_digest),
         directory_height: root.directory_height,
+        directory_inline: root
+            .directory_inline
+            .as_ref()
+            .map(|bytes| encode_hex(bytes)),
         incarnation: encode_hex(&root.incarnation),
         page_size: root.page_size,
         schema: root.schema,
@@ -207,7 +283,7 @@ pub(super) fn encode_root(root: &RootDocument) -> Result<Vec<u8>> {
             .collect(),
         segments: root.segments.iter().map(segment_wire).collect(),
         txid: root.txid.to_string(),
-        version: 1,
+        version: 2,
     })?;
     if bytes.len() as u64 > ROOT_BYTES {
         return Err(LtxError::Limit(crate::LimitKind::CellRootBytes));
@@ -230,7 +306,7 @@ pub(super) fn decode_root(bytes: &[u8]) -> Result<RootDocument> {
         return Err(LtxError::Limit(crate::LimitKind::CellRootBytes));
     }
     let wire: RootWire = serde_json::from_slice(bytes)?;
-    if wire.version != 1 {
+    if wire.version != 2 {
         return Err(LtxError::LTXCorrupted);
     }
     let root = RootDocument {
@@ -240,6 +316,10 @@ pub(super) fn decode_root(bytes: &[u8]) -> Result<RootDocument> {
         database_pages: wire.database_pages,
         directory_digest: parse_hex(&wire.directory_digest)?,
         directory_height: wire.directory_height,
+        directory_inline: wire
+            .directory_inline
+            .map(|value| parse_inline(&value))
+            .transpose()?,
         incarnation: parse_hex(&wire.incarnation)?,
         page_size: wire.page_size,
         schema: wire.schema,
@@ -296,6 +376,7 @@ fn segment_wire(segment: &SegmentDescriptor) -> SegmentWire {
         max_txid: segment.info.max_txid.to_string(),
         min_txid: segment.info.min_txid.to_string(),
         object_digest: encode_hex(&segment.object_digest),
+        packed: segment.packed,
         offset: segment.offset.to_string(),
         page_size: segment.info.page_size,
         post_checksum: checksum(segment.info.post_checksum),
@@ -322,6 +403,7 @@ fn segment_descriptor(segment: SegmentWire) -> Result<SegmentDescriptor> {
         offset: decimal(&segment.offset)?,
         length: decimal(&segment.length)?,
         level: segment.level,
+        packed: segment.packed,
     })
 }
 
@@ -383,6 +465,7 @@ mod tests {
             database_pages: 9,
             directory_digest: [2; 32],
             directory_height: 0,
+            directory_inline: None,
             incarnation: [3; 16],
             page_size: 4096,
             schema: 1,

@@ -604,6 +604,14 @@ impl CellReplica {
         self.validate_chain(&descriptors, target)?;
         if bundle.is_none() {
             prepared = coalesce::run(self, prepared).await?;
+            prepared = stream::iter(
+                prepared
+                    .into_iter()
+                    .map(|segment| packed::freeze(self, segment)),
+            )
+            .buffered(SEGMENT_TRANSFER_CONCURRENCY)
+            .try_collect()
+            .await?;
             descriptors.truncate(
                 base_graph
                     .as_ref()
@@ -678,6 +686,7 @@ impl CellReplica {
                     incarnation: &self.incarnation,
                     page_size: graph.page_size,
                     database_pages: graph.database_pages,
+                    inline_root: graph.directory_inline.as_deref(),
                     extents: &base_extents,
                     host: &self.host,
                     origin: crate::LtxReadOrigin::Cold,
@@ -695,6 +704,7 @@ impl CellReplica {
                     incarnation: &self.incarnation,
                     page_size,
                     database_pages,
+                    inline_root: None,
                     extents: &extents,
                     host: &self.host,
                     origin: crate::LtxReadOrigin::Cold,
@@ -717,15 +727,7 @@ impl CellReplica {
             }
             directory
         };
-        let directory_uploads = self.put_objects(
-            CellObjectKind::Directory,
-            directory
-                .objects()
-                .iter()
-                .map(|node| (node.digest, node.bytes.clone()))
-                .collect(),
-        );
-        let root_uploads = self.finish_root(
+        self.finish_root(
             base,
             base_graph
                 .as_ref()
@@ -738,11 +740,8 @@ impl CellReplica {
             page_size,
             database_pages,
             directory,
-        );
-        // Both object sets are immutable; no proposal escapes unless every
-        // upload succeeds, and a failed sibling leaves only unreachable data.
-        let (_, prepared) = futures_util::future::try_join(directory_uploads, root_uploads).await?;
-        Ok(prepared)
+        )
+        .await
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -783,13 +782,14 @@ impl CellReplica {
         if segment_pages.len() > MAX_SEGMENT_PAGES {
             return Err(LtxError::Limit(crate::LimitKind::CellRootSegmentPages));
         }
-        let document = RootDocument {
+        let mut document = RootDocument {
             cell: self.cell,
             checksum: target.checksum,
             commit_sequence,
             database_pages,
             directory_digest: directory.root_digest(),
             directory_height: directory.height(),
+            directory_inline: None,
             incarnation: self.incarnation,
             page_size,
             schema,
@@ -797,6 +797,31 @@ impl CellReplica {
             segments: descriptors[external_count..].to_vec(),
             txid: target.txid,
         };
+        // Inline only one small leaf authenticated by this root. Large trees
+        // keep streamed directory objects and never grow an unbounded root.
+        if directory.height() == 0
+            && let Some(leaf) = directory
+                .objects()
+                .iter()
+                .find(|node| node.digest == directory.root_digest())
+            && leaf.bytes.len() <= root::INLINE_DIRECTORY_BYTES
+        {
+            document.directory_inline = Some(leaf.bytes.clone().into());
+            if matches!(
+                encode_root(&document),
+                Err(LtxError::Limit(crate::LimitKind::CellRootBytes))
+            ) {
+                document.directory_inline = None;
+            }
+        }
+        let directory_objects = directory
+            .objects()
+            .iter()
+            .filter(|node| {
+                document.directory_inline.is_none() || node.digest != document.directory_digest
+            })
+            .map(|node| (node.digest, node.bytes.clone()))
+            .collect();
         let bytes = encode_root(&document)?;
         let digest = *blake3::hash(&bytes).as_bytes();
         root_objects.push((digest, bytes));
@@ -835,8 +860,9 @@ impl CellReplica {
         };
         // Independent immutable objects and derivation metadata can overlap.
         // Neither the complete proposal nor authority rights escape on failure.
-        futures_util::future::try_join(
+        futures_util::future::try_join3(
             self.put_objects(CellObjectKind::Root, root_objects),
+            self.put_objects(CellObjectKind::Directory, directory_objects),
             metadata,
         )
         .await?;

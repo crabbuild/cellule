@@ -291,6 +291,7 @@ fn publication_samples_cover_grouped_commands_without_inventing_events() {
                 total: Duration::from_millis(sequence * 3),
                 succeeded: true,
                 commit_sequence: sequence,
+                covered_commits: if sequence == 1 { 1 } else { 4 },
             },
         );
     }
@@ -316,6 +317,7 @@ fn publication_samples_reject_missing_final_root() {
             total: Duration::ZERO,
             succeeded: true,
             commit_sequence: 1,
+            covered_commits: 1,
         },
     );
     publications.covered_publications(1, 5);

@@ -43,6 +43,56 @@ fn observed_store(observer: &Arc<RecordingObserver>) -> Store {
         .with_storage_observer(Arc::clone(observer) as Arc<dyn StorageObserver>)
 }
 
+struct RoutedObserver(Arc<RecordingObserver>);
+
+impl StorageObserver for RoutedObserver {
+    fn for_object(&self, location: Option<&Path>) -> Option<Arc<dyn StorageObserver>> {
+        assert!(location.is_some());
+        Some(self.0.clone())
+    }
+
+    fn started(&self, _: StorageOperation) {
+        panic!("operation was not routed");
+    }
+
+    fn finished(&self, _: StorageObservation) {
+        panic!("completion was not routed");
+    }
+}
+
+#[tokio::test]
+async fn selected_observer_owns_stream_cancellation_and_multipart_lifetime() {
+    let target = Arc::new(RecordingObserver::default());
+    let store = Store::new(Arc::new(InMemory::new()))
+        .with_storage_observer(Arc::new(RoutedObserver(target.clone())));
+    let path = Path::from("bounded-family/object");
+    let mut upload = store.inner().put_multipart(&path).await.unwrap();
+    upload
+        .put_part(Bytes::from_static(b"payload").into())
+        .await
+        .unwrap();
+    upload.complete().await.unwrap();
+    let result = store.inner().get(&path).await.unwrap();
+    assert_eq!(target.active(StorageOperation::Get), 1);
+    drop(result);
+    assert_eq!(target.active(StorageOperation::Get), 0);
+    let observations = target.observations();
+    assert!(observations.iter().any(|o| o.operation == StorageOperation::Get && o.outcome == StorageOutcome::Cancelled));
+    for operation in [
+        StorageOperation::MultipartStart,
+        StorageOperation::MultipartPart,
+        StorageOperation::MultipartComplete,
+    ] {
+        assert_eq!(
+            observations
+                .iter()
+                .filter(|o| o.operation == operation)
+                .count(),
+            1
+        );
+    }
+}
+
 struct TestMultipartStore;
 
 #[async_trait::async_trait]

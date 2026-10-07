@@ -196,7 +196,7 @@ impl ObjectStore for InstrumentedStore {
         self.puts.fetch_add(1, Ordering::SeqCst);
         self.check_upload_fault()?;
         let result = self.inner.put_opts(location, payload, options).await?;
-        if location.extension() == Some("ltx")
+        if matches!(location.extension(), Some("ltx" | "pack"))
             && self
                 .fault
                 .compare_exchange(

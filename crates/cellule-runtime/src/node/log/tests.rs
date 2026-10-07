@@ -134,6 +134,28 @@ fn node(byte: u8) -> NodeId {
     NodeId::from_bytes([byte; 16])
 }
 
+#[test]
+fn progress_keeps_follower_proof_distinct_from_contiguous_object_coverage() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(3), node(4)]).unwrap();
+    let first = gate.issue(2).unwrap();
+    let second = gate.issue(1).unwrap();
+    gate.acknowledge(node(3), 3).unwrap();
+    gate.acknowledge(node(4), 2).unwrap();
+    gate.prove_object(second).unwrap();
+    let progress = gate.progress().unwrap();
+    assert_eq!(progress.issued_through, 3);
+    assert_eq!(progress.follower_proven_through, 2);
+    assert_eq!(progress.tiered_through, 0);
+    assert_eq!(progress.pending_object_sequences, 3);
+    assert!(!progress.fleet_active);
+    assert!(gate.proof(first).unwrap().is_none());
+    gate.prove_object(first).unwrap();
+    assert_eq!(gate.progress().unwrap().pending_object_sequences, 0);
+    assert_eq!(gate.progress().unwrap().tiered_through, 3);
+    gate.fence();
+    assert!(gate.progress().unwrap().fenced);
+}
+
 #[tokio::test]
 async fn fleet_requires_activation_and_every_follower() {
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(3), node(4)]).unwrap();

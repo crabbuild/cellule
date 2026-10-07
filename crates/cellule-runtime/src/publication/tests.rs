@@ -384,8 +384,8 @@ async fn pressure_append_avoids_intermediate_root_metadata() {
         database.close().unwrap();
         assert_eq!(
             requests,
-            (7, 1),
-            "only final directory, root and lineage metadata is retained"
+            (4, 1),
+            "two packed segments, the final root and lineage are retained"
         );
     }
 }

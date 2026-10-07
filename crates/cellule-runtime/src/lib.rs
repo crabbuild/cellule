@@ -46,7 +46,7 @@ pub mod read_policy;
 pub mod recovery;
 pub mod registry;
 
-pub use cell::actor::{CellRuntime, CellRuntimeStats};
+pub use cell::actor::{CellPublicationProgress, CellRuntime, CellRuntimeStats};
 
 pub use cell::catalog::CatalogRole;
 pub use cell::executor::{MutationIdentity, Resolution};

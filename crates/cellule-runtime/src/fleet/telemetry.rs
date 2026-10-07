@@ -32,6 +32,26 @@ pub struct PublicationTiming {
     pub succeeded: bool,
     /// Sequence used to correlate this observation with a request trace.
     pub commit_sequence: u64,
+    /// Logical commits included in this publication attempt. Count these only
+    /// when `succeeded` is true when calculating commands per selected root.
+    pub covered_commits: u64,
+}
+
+/// Native follower timing for one dispatched append batch.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FollowerAppendTiming {
+    /// Time until the blocking worker starts; excludes its subsequent lane lock.
+    pub worker_queue: Duration,
+    /// Worker lifetime, including lane locking, verification, writes and barriers.
+    pub worker: Duration,
+    /// Time in append-file and rotation `sync_data` calls; excludes directory sync.
+    pub data_sync: Duration,
+    /// Number of attempted append-file and rotation barriers, including failures.
+    pub data_sync_calls: u64,
+    /// Number of input frames, including retries and already covered frames.
+    pub frames: u64,
+    /// Whether the append returned a durable receipt.
+    pub succeeded: bool,
 }
 
 /// Outcome of an actor-owned resident route lookup.
@@ -206,6 +226,9 @@ pub trait CellTelemetry: Send + Sync {
     /// Records bytes sent to follower append lanes and whether every lane acknowledged them.
     fn node_log_append(&self, _acknowledged: bool, _bytes: u64) {}
 
+    /// Reports native follower work separately from peer HTTP and authorization.
+    fn follower_append(&self, _timing: FollowerAppendTiming) {}
+
     /// Records a bounded-cardinality resident route result.
     fn resident_route(&self, _outcome: ResidentRouteOutcome) {}
 
@@ -367,6 +390,12 @@ impl CellTelemetryHandle {
     pub(crate) fn node_log_append(&self, acknowledged: bool, bytes: u64) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.node_log_append(acknowledged, bytes);
+        }
+    }
+
+    pub(crate) fn follower_append(&self, timing: FollowerAppendTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.follower_append(timing);
         }
     }
 

@@ -33,6 +33,7 @@ pub(in crate::replica) async fn run(
         incarnation: &replica.incarnation,
         page_size: graph.document.page_size,
         database_pages: graph.document.database_pages,
+        inline_root: graph.document.directory_inline.as_deref(),
         extents: &base_extents,
         host: &replica.host,
         origin: crate::LtxReadOrigin::Cold,

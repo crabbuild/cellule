@@ -254,6 +254,7 @@ pub(super) struct Verification<'a> {
     pub incarnation: &'a [u8; 16],
     pub page_size: u32,
     pub database_pages: u32,
+    pub inline_root: Option<&'a [u8]>,
     pub extents: &'a BTreeMap<[u8; 32], ObjectExtent>,
     pub host: &'a Host,
     pub origin: crate::LtxReadOrigin,
@@ -328,7 +329,9 @@ pub(super) async fn reachable_digests(
         if max_objects.is_some_and(|limit| digests.len() == limit) {
             return Err(LtxError::Limit(crate::LimitKind::RootInventoryObjects));
         }
-        digests.push(digest);
+        if inline_node(&verification, digest)?.is_none() {
+            digests.push(digest);
+        }
         if header.kind == 0 {
             let (aggregate, entries) = verify_leaf(
                 &bytes,
@@ -550,7 +553,20 @@ pub(super) async fn lookup_spans(
     Ok(spans)
 }
 
+fn inline_node(verification: &Verification<'_>, digest: [u8; 32]) -> Result<Option<Arc<[u8]>>> {
+    let Some(bytes) = verification.inline_root else {
+        return Ok(None);
+    };
+    if bytes.len() > super::root::INLINE_DIRECTORY_BYTES || bytes.is_empty() {
+        return Err(LtxError::LTXCorrupted);
+    }
+    Ok((*blake3::hash(bytes).as_bytes() == digest).then(|| Arc::from(bytes)))
+}
+
 async fn read_node(verification: &Verification<'_>, digest: [u8; 32]) -> Result<Arc<[u8]>> {
+    if let Some(bytes) = inline_node(verification, digest)? {
+        return Ok(bytes);
+    }
     let path = verification.layout.incarnation_object_path(
         verification.cell,
         verification.incarnation,
@@ -631,6 +647,9 @@ async fn read_node_uncached(
     verification: &Verification<'_>,
     digest: [u8; 32],
 ) -> Result<Arc<[u8]>> {
+    if let Some(bytes) = inline_node(verification, digest)? {
+        return Ok(bytes);
+    }
     let path = verification.layout.incarnation_object_path(
         verification.cell,
         verification.incarnation,

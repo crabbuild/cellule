@@ -377,7 +377,9 @@ async fn main() -> ExampleResult<()> {
     if let Some(config) = &fleet_config
         && config.index != 0
     {
-        config.serve_follower(layout, code, bind).await?;
+        config
+            .serve_follower(layout, code, bind, query_metrics.clone())
+            .await?;
         return Ok(());
     }
     let session = SessionId::from_bytes(*Uuid::now_v7().as_bytes());
@@ -407,7 +409,14 @@ async fn main() -> ExampleResult<()> {
         if let Some(config) = &fleet_config {
             fleet_owner = Some(
                 config
-                    .start_owner(layout.clone(), code, session, application_id, &runtime)
+                    .start_owner(
+                        layout.clone(),
+                        code,
+                        session,
+                        application_id,
+                        &runtime,
+                        query_metrics.clone(),
+                    )
                     .await?,
             );
             owner.endpoint = fleet_owner
@@ -478,6 +487,53 @@ async fn main() -> ExampleResult<()> {
         let typed =
             ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id)?;
         let router = Router::new()
+            .route("/debug/metrics", get({
+                let metrics = query_metrics.clone();
+                let runtime = runtime.clone();
+                move || {
+                    let metrics = metrics.clone();
+                    let runtime = runtime.clone();
+                    async move {
+                        let mut sample = metrics.window_snapshot();
+                        let stats = runtime.stats();
+                        let publication = runtime.publication_progress().await;
+                        sample["publication_progress"] = match publication {
+                            Ok(progress) => serde_json::json!({
+                                "pending_publications": progress.pending_publications,
+                                "retained_capture_bytes": progress.retained_capture_bytes,
+                                "oldest_unpublished_ms": progress.oldest_unpublished.map(|age| age.as_millis())
+                            }),
+                            Err(error) => serde_json::json!({"error": error.to_string()}),
+                        };
+                        sample["node_log_progress"] = match runtime.node_durability() {
+                            Some((_, durability)) => match durability.progress() {
+                                Ok(progress) => serde_json::json!({
+                                    "log_epoch": progress.log_epoch,
+                                    "issued_through": progress.issued_through,
+                                    "follower_proven_through": progress.follower_proven_through,
+                                    "tiered_through": progress.tiered_through,
+                                    "pending_object_sequences": progress.pending_object_sequences,
+                                    "fleet_active": progress.fleet_active,
+                                    "rotating": progress.rotating,
+                                    "fenced": progress.fenced
+                                }),
+                                Err(error) => serde_json::json!({"error": error.to_string()}),
+                            },
+                            None => serde_json::Value::Null,
+                        };
+                        sample["runtime"] = serde_json::json!({
+                            "active_cells": stats.active_cells(),
+                            "retained_bytes": stats.retained_bytes(),
+                            "retained_capacity_bytes": stats.retained_capacity_bytes(),
+                            "local_disk_reserved_bytes": stats.local_disk_reserved_bytes(),
+                            "unpublished_node_log_bytes": stats.unpublished_node_log_bytes(),
+                            "worker_jobs": stats.worker_jobs(), "io_slots": stats.io_slots(),
+                            "dirty_jobs": stats.dirty_jobs(), "blocking_jobs": stats.blocking_jobs()
+                        });
+                        Json(sample)
+                    }
+                }
+            }))
             .route("/orders", post(create_order))
             .route("/orders/{id}", get(get_order))
             .with_state(ServiceState {
@@ -523,6 +579,12 @@ async fn main() -> ExampleResult<()> {
         Some(owner) => owner.stop().await,
         None => Ok(()),
     };
+    if let Err(error) = &shutdown {
+        eprintln!("Runtime drain failed: {error:?}");
+    }
+    if let Err(error) = &fleet_shutdown {
+        eprintln!("Node enrollment drain failed: {error:?}");
+    }
     result?;
     shutdown?;
     fleet_shutdown?;

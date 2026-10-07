@@ -545,7 +545,10 @@ fn immutable_candidate(application_prefix: &Path, location: &Path) -> bool {
                 && lower_hex(incarnation, 32)
                 && object.rsplit_once('.').is_some_and(|(digest, extension)| {
                     lower_hex(digest, 64)
-                        && matches!(extension, "ltx" | "index" | "dir" | "root" | "bundle")
+                        && matches!(
+                            extension,
+                            "ltx" | "index" | "dir" | "root" | "bundle" | "pack"
+                        )
                 })
         }
         _ => false,

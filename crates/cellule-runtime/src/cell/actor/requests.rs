@@ -467,6 +467,15 @@ pub(super) fn start_admitted_publication(
         return;
     };
     let covered = coverage.len();
+    // One physical native-group capture can represent several logical commands.
+    // The serialized publisher advances the exact contiguous Cell sequence.
+    let covered_commits = coverage.last().map_or(0, |queued| {
+        queued
+            .pending
+            .outcome()
+            .commit_sequence()
+            .saturating_sub(active.published_sequence)
+    });
     let retained_bytes: u64 = coverage
         .iter()
         .map(|queued| queued.pending.retained_bytes())
@@ -503,6 +512,7 @@ pub(super) fn start_admitted_publication(
     let generation = active.generation;
     // Moving the publisher out of ActiveCell is the serialization token for
     // root preparation and CAS; no second object publisher can overtake it.
+    active.publishing_since = coverage.first().map(|queued| queued.submitted_at);
     let pool = pool.clone();
     let published_next_due_ms = newest.pending.next_due_ms();
     let published_commit_sequence = commit_sequence;
@@ -633,6 +643,7 @@ pub(super) fn start_admitted_publication(
             total: newest_submitted_at.elapsed(),
             succeeded: result.is_ok(),
             commit_sequence,
+            covered_commits,
         });
         tracing::debug!(
             target: "cellule_runtime::action",

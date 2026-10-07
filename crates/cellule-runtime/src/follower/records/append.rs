@@ -3,6 +3,10 @@
 use super::*;
 use std::collections::BTreeSet;
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the append binding and its caller-owned timing remain explicit"
+)]
 pub(in crate::follower) fn append_sync(
     root: &Path,
     lane: Lane,
@@ -12,6 +16,7 @@ pub(in crate::follower) fn append_sync(
     index_used: &Arc<Mutex<u64>>,
     state: &mut Option<LaneMemory>,
     scan_counter: &ScanCounter,
+    timing: &mut FollowerAppendTiming,
 ) -> Result<FollowerReceipt> {
     validate_lane(lane)?;
     let directory = lane_directory(root, lane);
@@ -104,7 +109,7 @@ pub(in crate::follower) fn append_sync(
         if file.metadata()?.len() > 0
             && file.metadata()?.len().saturating_add(record_bytes) > ROTATE_BYTES
         {
-            file.sync_data()?;
+            sync_append(&file, timing)?;
             drop(file);
             let destination = rotate_open(&chunks, &open_path, open_first, open_last)?;
             relocate_records(
@@ -141,7 +146,7 @@ pub(in crate::follower) fn append_sync(
         });
     }
     if !pending.is_empty() {
-        file.sync_data()?;
+        sync_append(&file, timing)?;
         state
             .records
             .extend(pending.into_iter().map(|record| (record.sequence, record)));
@@ -163,6 +168,14 @@ pub(in crate::follower) fn append_sync(
         base_sequence,
         durable_through,
     })
+}
+
+fn sync_append(file: &std::fs::File, timing: &mut FollowerAppendTiming) -> Result<()> {
+    let started = Instant::now();
+    let result = file.sync_data();
+    timing.data_sync += started.elapsed();
+    timing.data_sync_calls = timing.data_sync_calls.saturating_add(1);
+    result.map_err(Into::into)
 }
 pub(in crate::follower) fn seal_sync(
     root: &Path,

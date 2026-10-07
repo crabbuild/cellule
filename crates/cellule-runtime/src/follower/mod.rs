@@ -8,8 +8,10 @@ use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 
+use crate::fleet::telemetry::{CellTelemetryHandle, FollowerAppendTiming};
 use crate::identity::SessionId;
 use crate::{Error, Result};
+use std::time::Instant;
 
 mod directory;
 mod inventory;
@@ -151,6 +153,7 @@ pub struct FollowerStore {
     scan_counter: ScanCounter,
     admission: crate::fleet::admission::NodeAdmission,
     inventory_scope: [u8; 16],
+    telemetry: CellTelemetryHandle,
 }
 
 impl FollowerStore {
@@ -183,6 +186,7 @@ impl FollowerStore {
             scan_counter: new_scan_counter(),
             admission: crate::fleet::admission::NodeAdmission::default(),
             inventory_scope: rand::random(),
+            telemetry: CellTelemetryHandle::default(),
         })
     }
 
@@ -195,6 +199,13 @@ impl FollowerStore {
         admission: crate::fleet::admission::NodeAdmission,
     ) -> Self {
         self.admission = admission;
+        self
+    }
+
+    /// Attaches a bounded telemetry sink before sharing the native store.
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: CellTelemetryHandle) -> Self {
+        self.telemetry = telemetry;
         self
     }
 
@@ -263,7 +274,19 @@ impl FollowerStore {
             .ok_or(Error::Node("follower append byte count overflow"))?;
         let admission = self.admission.clone();
         let lanes = Arc::clone(&self.lanes);
+        let queued_at = Instant::now();
+        let telemetry = self.telemetry.clone();
+        let frame_count = frames.len() as u64;
         tokio::task::spawn_blocking(move || {
+            let mut observation = AppendObservation {
+                started: Instant::now(),
+                telemetry,
+                timing: FollowerAppendTiming {
+                    worker_queue: queued_at.elapsed(),
+                    frames: frame_count,
+                    ..FollowerAppendTiming::default()
+                },
+            };
             let retained = retained
                 .lock()
                 .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
@@ -284,6 +307,7 @@ impl FollowerStore {
                     &index_used,
                     &mut state,
                     &scan_counter,
+                    &mut observation.timing,
                 )
             })();
             let resize =
@@ -307,6 +331,7 @@ impl FollowerStore {
                     }
                 }
             }
+            observation.timing.succeeded = result.is_ok();
             result
         })
         .await
@@ -573,6 +598,19 @@ impl FollowerStore {
             .entry(lane)
             .or_insert_with(|| Arc::new(Mutex::new(None)))
             .clone())
+    }
+}
+
+struct AppendObservation {
+    started: Instant,
+    telemetry: CellTelemetryHandle,
+    timing: FollowerAppendTiming,
+}
+
+impl Drop for AppendObservation {
+    fn drop(&mut self) {
+        self.timing.worker = self.started.elapsed();
+        self.telemetry.follower_append(self.timing);
     }
 }
 

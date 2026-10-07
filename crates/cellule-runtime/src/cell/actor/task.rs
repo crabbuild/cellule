@@ -355,7 +355,11 @@ pub(super) fn handle_message(
     movement_permits: &mut HashMap<CellId, MovementPermit>,
     next_generation: &mut u64,
 ) {
-    if !matches!(message, Message::Shutdown { .. }) && node_lease.check().is_err() {
+    if !matches!(
+        message,
+        Message::Shutdown { .. } | Message::PublicationProgress { .. }
+    ) && node_lease.check().is_err()
+    {
         for active in cells.values_mut() {
             active.coordination.step(CoordinationInput::Fence);
             fence_active(active);
@@ -364,6 +368,29 @@ pub(super) fn handle_message(
         return;
     }
     match message {
+        Message::PublicationProgress { reply } => {
+            let now = std::time::Instant::now();
+            let progress = CellPublicationProgress {
+                pending_publications: cells
+                    .values()
+                    .map(|active| active.coordination.publication_count())
+                    .sum(),
+                retained_capture_bytes: cells.values().map(|active| active.publication_bytes).sum(),
+                oldest_unpublished: cells
+                    .values()
+                    .flat_map(|active| {
+                        active.publishing_since.into_iter().chain(
+                            active
+                                .publications
+                                .front()
+                                .map(|queued| queued.submitted_at),
+                        )
+                    })
+                    .min()
+                    .map(|oldest| now.saturating_duration_since(oldest)),
+            };
+            let _ = reply.send(Ok(progress));
+        }
         Message::Activate {
             cell,
             role,
@@ -929,6 +956,9 @@ pub(super) fn handle_message(
 
 pub(super) fn reject_fenced_message(message: Message) {
     match message {
+        Message::PublicationProgress { reply } => {
+            let _ = reply.send(Err(Error::Fenced));
+        }
         Message::Activate { reply, .. } => {
             let _ = reply.send(Err(Error::Fenced));
         }

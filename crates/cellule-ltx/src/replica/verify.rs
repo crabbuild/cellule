@@ -57,6 +57,7 @@ impl CellReplica {
             incarnation: &self.incarnation,
             page_size: graph.document.page_size,
             database_pages: graph.document.database_pages,
+            inline_root: graph.document.directory_inline.as_deref(),
             extents: &extents,
             host: &self.host,
             origin: crate::LtxReadOrigin::Cold,
@@ -87,6 +88,32 @@ impl CellReplica {
                 }),
         );
         for descriptor in &graph.descriptors {
+            if descriptor.object_kind() == CellObjectKind::Packed {
+                let path = self.layout.incarnation_object_path(
+                    &self.cell,
+                    &self.incarnation,
+                    &descriptor.object_digest(),
+                    CellObjectKind::Packed,
+                );
+                let _permit = self.host.io_permit().await?;
+                let result = self
+                    .layout
+                    .store()
+                    .get_with_etag_bounded(&path, upload::SINGLE_PUT_BYTES)
+                    .await;
+                self.host.observe_ltx_origin_request(
+                    crate::LtxReadOrigin::Cold,
+                    result.is_ok(),
+                    result.as_ref().map_or(0, |(bytes, _)| bytes.len()),
+                );
+                let (bytes, _) = result?;
+                packed::verify(&bytes, descriptor)?;
+                objects.insert(RootObjectRef {
+                    digest: descriptor.object_digest(),
+                    kind: CellObjectKind::Packed,
+                });
+                continue;
+            }
             let body = RootObjectRef {
                 digest: descriptor.object_digest(),
                 kind: descriptor.object_kind(),
@@ -274,6 +301,7 @@ impl CellReplica {
                 incarnation: &self.incarnation,
                 page_size: document.page_size,
                 database_pages: document.database_pages,
+                inline_root: document.directory_inline.as_deref(),
                 extents: &extents,
                 host: &self.host,
                 origin: crate::LtxReadOrigin::Cold,
@@ -435,6 +463,7 @@ impl VerifiedRoot {
                 replica,
                 directory_digest: document.directory_digest,
                 directory_height: document.directory_height,
+                directory_inline: document.directory_inline.clone(),
                 extents: Arc::new(extents),
                 page_size: document.page_size,
                 database_pages: document.database_pages,

@@ -1,0 +1,225 @@
+"""Produce explicit qualification failures, measured rates and window cost deltas."""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+
+def read(path):
+    return json.loads(path.read_text())
+
+def subtract(before, after):
+    if isinstance(after, dict):
+        return {key: subtract(before[key], value) for key, value in after.items() if key in before and (isinstance(value, (dict, list)) or isinstance(value, (int, float)))}
+    if isinstance(after, list):
+        if len(before) != len(after):
+            raise ValueError('metric bucket shape changed')
+        return [subtract(a, b) for a, b in zip(before, after)]
+    delta = after - before
+    if delta < 0:
+        raise ValueError('monotonic metric reset during the measurement window')
+    return delta
+
+def delivery_failures(point, durability):
+    failures = []
+    if point.get('driver_exit_code') != 0:
+        failures.append('driver failed')
+    for kind in ('writes', 'reads'):
+        if kind not in point:
+            continue
+        result = point[kind]
+        if result['planned_offers'] == 0:
+            continue
+        prefix = '' if kind == 'writes' else 'reads: '
+        for name in ('errors', 'warmup_errors', 'queue_dropped', 'warmup_queue_dropped'):
+            if result[name] != 0:
+                failures.append(prefix + name)
+        if result['generated_offers'] != result['planned_offers']:
+            failures.append(prefix + 'unissued offers')
+        if result['successes_in_window'] < result['planned_offers'] * 0.99:
+            failures.append(prefix + 'less than 99% completed inside window')
+        p99 = result['scheduled_latency_ms_all_attempts']['p99']
+        if p99 is None or (kind == 'writes' and p99 > (50 if durability == 'fleet' else 200)):
+            failures.append(prefix + 'scheduled p99')
+    return failures
+
+def histogram_buckets(histogram):
+    if 'buckets' in histogram:
+        return histogram['buckets']
+    count = histogram['bucket_count']
+    if not isinstance(count, int) or not 2 <= count <= 100002:
+        raise ValueError('invalid raw histogram bound')
+    buckets = [0] * count
+    previous = -1
+    for index, value in histogram['nonzero_buckets']:
+        if not isinstance(index, int) or not previous < index < count or not isinstance(value, int) or value <= 0:
+            raise ValueError('invalid raw histogram index or count')
+        buckets[index] = value
+        previous = index
+    return buckets
+
+def histogram_delta(before, after):
+    if before['resolution_us'] != after['resolution_us']:
+        raise ValueError('histogram resolution changed')
+    return {'resolution_us': after['resolution_us'],
+            'total_ns': subtract(before['total_ns'], after['total_ns']),
+            'buckets': subtract(histogram_buckets(before), histogram_buckets(after))}
+
+def metric_delta(directory):
+    start = directory / 'metrics-window-start.json'
+    end = directory / 'metrics-window-end.json'
+    if not start.exists() or not end.exists():
+        return {'available': False}
+    before, after = (read(start), read(end))
+    if [x['url'] for x in before] != [x['url'] for x in after]:
+        raise ValueError('metric endpoints changed')
+    output = []
+    for a, b in zip(before, after):
+        first, last = (a['metrics'], b['metrics'])
+        if first['schema_version'] != last['schema_version'] or first['sample_session'] != last['sample_session']:
+            raise ValueError('process or metric schema changed')
+        if first['histograms'].keys() != last['histograms'].keys():
+            raise ValueError('histogram phases changed')
+        families = subtract(first['storage_families'], last['storage_families'])
+        counters = lambda snapshot: {operation: {key: value for key, value in fields.items() if key in ('started', 'outcomes', 'bytes_read', 'bytes_written')} for operation, fields in snapshot['storage_operations'].items()}
+        totals = subtract(counters(first), counters(last))
+        for operation, values in totals.items():
+            for field in ('started', 'bytes_read', 'bytes_written'):
+                if field in values and sum((family[operation][field] for family in families.values())) != values[field]:
+                    raise ValueError(f'unclassified {operation}.{field}')
+            for outcome, count in values.get('outcomes', {}).items():
+                if sum((family[operation]['outcomes'][outcome] for family in families.values())) != count:
+                    raise ValueError(f'unclassified {operation}.{outcome}')
+        output.append({'url': a['url'], 'sample_elapsed_ns': subtract(first['sample_elapsed_ns'], last['sample_elapsed_ns']), 'start_request_ms': [a['request_started_ms'], a['request_finished_ms']], 'end_request_ms': [b['request_started_ms'], b['request_finished_ms']], 'storage_families': families, 'storage': totals, 'histograms': {name: histogram_delta(first['histograms'][name], value) for name, value in last['histograms'].items()}, 'publication': subtract({name: first['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}, {name: last['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}), 'runtime_start': first.get('runtime'), 'runtime_end': last.get('runtime')})
+    return {'available': True, 'endpoints': output}
+
+def cost_report(metrics, successes):
+    if not metrics.get('available') or successes == 0:
+        return {'available': False}
+    endpoints = metrics['endpoints']
+    operations = {name: {'attempts': 0, 'successes': 0, 'bytes_read': 0, 'bytes_written': 0}
+                  for name in ('put', 'get', 'range', 'head', 'list', 'copy', 'delete',
+                               'multipart_start', 'multipart_part', 'multipart_complete', 'multipart_abort')}
+    families = {}
+    roots = commits = 0
+    for endpoint in endpoints:
+        publication = endpoint['publication']
+        roots += publication['selected_roots']
+        commits += publication['materialized_commits']
+        for name, total in operations.items():
+            source = endpoint['storage'].get(name, {})
+            total['attempts'] += source.get('started', 0)
+            total['successes'] += source.get('outcomes', {}).get('success', 0)
+            for field in ('bytes_read', 'bytes_written'):
+                total[field] += source.get(field, 0)
+        for name, source in endpoint['storage_families'].items():
+            family = families.setdefault(name, {'put_attempts': 0, 'put_successes': 0, 'get_attempts': 0,
+                                               'range_get_attempts': 0})
+            family['put_attempts'] += source['put']['started']
+            family['put_successes'] += source['put']['outcomes']['success']
+            family['get_attempts'] += source['get']['started'] + source.get('range', {}).get('started', 0)
+            family['range_get_attempts'] += source.get('range', {}).get('started', 0)
+    return {'available': True, 'denominator': 'successful logical commands inside the window',
+            'operations': operations, 'families': families,
+            'all_provider_put_successes_per_command': operations['put']['successes'] / successes,
+            'all_provider_put_attempts_per_command': operations['put']['attempts'] / successes,
+            'get_attempts_including_ranges_per_command': (operations['get']['attempts'] + operations['range']['attempts']) / successes,
+            'mutation_request_successes_per_command': sum(operations[name]['successes'] for name in ('put', 'copy', 'multipart_start', 'multipart_part', 'multipart_complete', 'multipart_abort')) / successes,
+            'observation_scope': 'storage API calls; provider SDK internal retries are not individually instrumented',
+            'selected_roots': roots, 'materialized_commits': commits,
+            'materialized_commits_per_selected_root': commits / roots if roots else None,
+            'trailing_publication_included': False,
+            'enrollment_gets_separately_attributed': all('owner_enrollment' in endpoint['storage_families'] and 'receiver_enrollment' in endpoint['storage_families'] for endpoint in endpoints),
+            'fresh_enrollment_get_attempts_per_command': sum(families.get(name, {}).get('get_attempts', 0) for name in ('owner_enrollment', 'receiver_enrollment')) / successes if all('owner_enrollment' in endpoint['storage_families'] for endpoint in endpoints) else None}
+
+def stability_report(directory):
+    """Fit the last three minute segments; absent/reset evidence cannot pass."""
+    paths = [directory / 'metrics-window-start.json',
+             *sorted(directory.glob('metrics-window-minute-*.json'),
+                     key=lambda path: int(path.stem.rsplit('-', 1)[1])),
+             directory / 'metrics-window-end.json']
+    if any(not path.exists() for path in paths) or len(paths) < 4:
+        return {'available': False, 'pass': False, 'reason': 'three minute segments missing'}
+    samples = [read(path) for path in paths[-4:]]
+    owners = [[item['metrics'] for item in sample
+               if item['metrics'].get('runtime') is not None] for sample in samples]
+    if any(len(owner) != 1 for owner in owners):
+        return {'available': False, 'pass': False, 'reason': 'one owner observation required'}
+    values = [owner[0] for owner in owners]
+    if len({(value['sample_session'], value['schema_version']) for value in values}) != 1:
+        return {'available': False, 'pass': False, 'reason': 'process or schema changed'}
+    times = [value['sample_elapsed_ns'] / 1e9 for value in values]
+    if any(b <= a or b - a < 50 or b - a > 70 for a, b in zip(times, times[1:])):
+        return {'available': False, 'pass': False, 'reason': 'minute observations missing or late'}
+    if any('error' in value.get('publication_progress', {'error': 'missing'}) for value in values):
+        return {'available': False, 'pass': False, 'reason': 'publication progress unavailable'}
+    series = {
+        'unpublished_node_log_bytes': [value['runtime']['unpublished_node_log_bytes'] for value in values],
+        'oldest_unpublished_ms': [value['publication_progress']['oldest_unpublished_ms'] or 0 for value in values],
+        'pending_publications': [value['publication_progress']['pending_publications'] for value in values],
+        'retained_capture_bytes': [value['publication_progress']['retained_capture_bytes'] for value in values],
+    }
+    center = sum(times) / len(times)
+    denominator = sum((time - center) ** 2 for time in times)
+    slopes = {name: sum((time - center) * value for time, value in zip(times, data)) / denominator
+              for name, data in series.items()}
+    frontiers = [value.get('node_log_progress') for value in values]
+    frontier_valid = all(frontier is None or ('error' not in frontier and not frontier['fenced']
+                         and frontier['tiered_through'] <= frontier['issued_through']
+                         and frontier['follower_proven_through'] <= frontier['issued_through'])
+                         for frontier in frontiers)
+    return {'available': True,
+            'pass': frontier_valid and slopes['unpublished_node_log_bytes'] <= 0
+                    and slopes['oldest_unpublished_ms'] <= 0,
+            'method': 'least-squares slope over the last three one-minute segments; positive debt or age fails',
+            'sample_elapsed_seconds': times, 'series': series, 'slopes_per_second': slopes,
+            'frontiers': frontiers, 'frontier_valid': frontier_valid}
+
+def case_report(directory):
+    case, summary = (read(directory / 'case.json'), read(directory / 'summary.json'))
+    failures = []
+    exclusions = directory / 'qualification-exclusions.json'
+    if exclusions.exists():
+        failures.append('explicit evidence exclusion: ' + json.dumps(read(exclusions), sort_keys=True))
+    if not summary['completed']:
+        failures.append(summary.get('failure') or 'case incomplete')
+    for label in ('warm_audit', 'cold_audit'):
+        audit = summary.get(label, {})
+        expected = summary.get('acknowledged_rows')
+        if expected is None or audit.get('checked') != expected or audit.get('retries_checked') != expected or (audit.get('errors') != 0) or (audit.get('exit_code') != 0):
+            failures.append(label + ' incomplete or failed')
+    if not summary.get('cold_retry_pass'):
+        failures.append('cold contract retry missing')
+    if summary.get('cleanup_failures'):
+        failures.append('drain or cleanup failed')
+    if case.get('telemetry') == 'off':
+        failures.append('exporter-off diagnostic cannot qualify')
+    if case.get('diagnostic'):
+        failures.append('diagnostic profile')
+    points = []
+    for path in sorted(directory.glob('write-*/summary.json')):
+        config, data = (read(path.parent / 'config.json'), read(path))
+        if config.get('phase') in ('overload', 'recovery'):
+            continue
+        point_failures = delivery_failures(data, case['durability']) + failures
+        if config['seconds'] < 300 or config['warmup_seconds'] < 30:
+            point_failures.append('short diagnostic window')
+        try:
+            metrics = metric_delta(path.parent)
+        except (KeyError, ValueError) as error:
+            metrics = {'available': False, 'error': str(error)}
+            point_failures.append('metric evidence invalid')
+        writes = data['writes']
+        stability = stability_report(path.parent) if case['system'] == 'cellule' else {'available': False, 'pass': False, 'reason': 'celld publication age not exposed by this fixture'}
+        points.append({'offered_writes_per_second': config['write_rate'], 'offered_reads_per_second': config['read_rate'], 'successful_writes_per_second': writes['successful_requests_per_second'], 'logical_value_bytes_per_second': writes['successful_requests_per_second'] * 96, 'writes': writes, 'reads': data['reads'], 'window_metrics': metrics, 'window_cost': cost_report(metrics, writes['successes_in_window']), 'publication_stability': stability, 'delivery_latency_audit_pass': not point_failures, 'failures': point_failures})
+    overload = summary.get('overload', {})
+    recovery = overload.get('recovery')
+    recovery_failures = delivery_failures(recovery, case['durability']) if recovery else ['recovery phase missing']
+    return {'schema_version': 1, 'case': summary['case'], 'system': case['system'], 'durability': case['durability'], 'workload': 'sql-ledger-96', 'seconds': case['seconds'], 'warmup_seconds': case['warmup_seconds'], 'build_manifest_sha256': summary['build_manifest_sha256'], 'completed': summary['completed'], 'points': points, 'failures': failures, 'overload': {'available': bool(overload), 'reference_capacity': overload.get('reference_capacity'), 'reference_requires_paired_qualification': True, 'recovery_30_second_delivery_pass': bool(recovery) and not recovery_failures, 'recovery_failures': recovery_failures, 'drain_seconds': summary.get('drain_seconds'), 'safe_refusals_before_sql_verified': False}, 'qualification_pass': False, 'qualification_unverified': ['three paired repetitions', 'A/A variance', 'sustained debt slopes and age', 'read-only and mixed guardrails', 'safe overload refusals and qualified reference capacity']}
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('directory', type=Path)
+    args = parser.parse_args()
+    report = case_report(args.directory)
+    destination = args.directory / 'report.json'
+    destination.write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps({'report': str(destination), 'qualification_pass': report['qualification_pass'], 'points': [{key: point[key] for key in ('offered_writes_per_second', 'successful_writes_per_second', 'delivery_latency_audit_pass', 'failures')} for point in report['points']]}))

@@ -5,7 +5,7 @@ use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, State},
     http::StatusCode,
     middleware,
-    routing::post,
+    routing::{get, post},
 };
 use bytes::Bytes;
 use cellule_peer_http::PeerTlsIdentity;
@@ -23,6 +23,7 @@ struct Server {
     store: FollowerStore,
     lease: NodeLeaseGuard,
     jobs: TaskTracker,
+    metrics: Arc<QueryMetrics>,
 }
 
 pub(super) async fn serve(
@@ -30,6 +31,7 @@ pub(super) async fn serve(
     layout: cellule_ltx::CellStorageLayout,
     code: Digest,
     bind: std::net::SocketAddr,
+    metrics: Arc<QueryMetrics>,
 ) -> Result<()> {
     let tls = config.tls()?;
     let directory = NodeDirectory::new(layout, tls.fleet(), code, code);
@@ -38,7 +40,10 @@ pub(super) async fn serve(
         config.root.join(format!("data-{}", config.index)),
         cellule_ltx::Limits::default(),
         cellule_ltx::DiskBudget::new(1 << 30),
-    )?;
+    )?
+    .with_telemetry(
+        cellule_runtime::fleet::telemetry::CellTelemetryHandle::from_sink(metrics.clone()),
+    );
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(transport_error)?;
@@ -64,13 +69,13 @@ pub(super) async fn serve(
         store,
         lease: enrollment.authority.lease.clone(),
         jobs: jobs.clone(),
+        metrics: metrics.clone(),
     };
     // Reserve the body/decoding lifetime before Axum buffers request bytes.
     // The follower has one ordered append lane; overload never allocates another body.
     let admission = Arc::new(Semaphore::new(1));
     let router = Router::new()
         .route(wire::PATH, post(handle))
-        .with_state(state)
         .layer(DefaultBodyLimit::max(wire::MAX_REQUEST_BYTES))
         .layer(middleware::from_fn(
             move |mut request: axum::extract::Request, next: middleware::Next| {
@@ -83,7 +88,14 @@ pub(super) async fn serve(
                     next.run(request).await
                 }
             },
-        ));
+        ))
+        .route(
+            "/debug/metrics",
+            get(|State(server): State<Server>| async move {
+                axum::Json(server.metrics.window_snapshot())
+            }),
+        )
+        .with_state(state);
     println!(
         "Follower service: {}; member: {:?}; session: {:?}",
         endpoint,
@@ -101,7 +113,9 @@ pub(super) async fn serve(
     .await;
     jobs.close();
     jobs.wait().await;
+    println!("Follower metrics before drain: {}", metrics.snapshot());
     let stopped = enrollment.stop().await;
+    println!("Follower metrics: {}", metrics.snapshot());
     served.map_err(transport_error)?;
     signal_rx
         .await
@@ -136,9 +150,13 @@ async fn handle(
 
 async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> Result<Vec<u8>> {
     server.lease.check()?;
+    let phase = std::time::Instant::now();
     let key = VerifyingKey::from_bytes(&peer.public_key()).map_err(Error::PeerSignature)?;
     let body = wire::verify(&encoded, &key, wire::REQUEST_DOMAIN)?;
     let request = wire::Request::decode(body.as_slice())?;
+    server
+        .metrics
+        .peer_phase(PeerPhase::RequestVerify, phase.elapsed());
     let started_at = std::time::Instant::now();
     let started_ms = clock()?;
     validate_request(&request, started_ms, "before directory verification")?;
@@ -148,9 +166,15 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
         return Err(Error::PeerAuthorization("capacity log member differs"));
     }
     let enrolled = server
-        .directory
-        .peer_verifier(sender, peer.certificate(), peer.public_key(), clock()?)
-        .await?;
+        .metrics
+        .enrollment(
+            true,
+            server
+                .directory
+                .peer_verifier(sender, peer.certificate(), peer.public_key(), clock()?),
+        )
+        .await;
+    let enrolled = enrolled?;
     // Directory I/O consumed time. Preserve the accepted horizon across wall
     // clock rollback, while monotonic elapsed time still expires the request.
     let now = wire::request_time(started_ms, clock()?, started_at.elapsed())?;
@@ -172,7 +196,8 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
                 request.covered_through,
                 clock()?,
             )?;
-            let receipt = server
+            let phase = std::time::Instant::now();
+            let result = server
                 .store
                 .append(
                     leader,
@@ -180,7 +205,11 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
                     request.frames.into_iter().map(Bytes::from).collect(),
                     request.covered_through,
                 )
-                .await?;
+                .await;
+            server
+                .metrics
+                .peer_phase(PeerPhase::DurableAppend, phase.elapsed());
+            let receipt = result?;
             reply.base_sequence = receipt.base_sequence;
             reply.durable_through = receipt.durable_through;
         }

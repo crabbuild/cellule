@@ -584,10 +584,11 @@ generation reset; it never truncates uncaptured pages. Standalone synchronous
 capture retains its ordinary checkpoint threshold.
 
 - **Overlap.** Immutable preparation overlaps independent uploads without
-  weakening the root gate: each LTX body uploads alongside its index, changed
-  directory nodes upload concurrently, initial directory construction streams
-  nodes in eight-object waves, and the root document uploads alongside its
-  segment pages.
+  weakening the root gate: small segment/index pairs share one authenticated
+  packed object and a bounded directory leaf lives in its root. Larger bodies,
+  indexes and directories retain parallel streaming uploads. Root documents
+  upload alongside their segment pages. The [current root format](packed-root-format.md)
+  defines the exact bounds and development cutover.
 - **Concurrency ceiling.** Up to four captured segments and eight small metadata
   objects progress concurrently; the shared host I/O permits remain the
   process-wide request ceiling.
@@ -838,9 +839,10 @@ These are per-operation correctness bounds, not an RSS quota.
   `take_publication_cost` report the exact object count and bytes per root, so a
   host can budget object-store cost per command instead of inferring it from the
   database size.
-- **Measured cost.** The local measurement frozen in `tests/cell/roots/lifecycle.rs`
-  is five objects per small append (about 7 KiB for a 4 KiB payload);
-  provider-scale cost distributions remain outstanding.
+- **Measured cost.** `tests/cell/roots/prepare_cost.rs` verifies two immutable
+  PUTs per small selected root through 32 successive cuts, with a predecessor
+  origin check. Runtime lineage and fenced control selection add two PUTs.
+  Larger roots and maintenance retain their own measured operation counts.
 - **Plan memory.** Each live `VerifiedPlan` retains one reconstructed database
   image, bounded by `max_database_bytes`, plus its checksum state and segment
   metadata.

@@ -1,4 +1,5 @@
 //! Optional three-process, real-directory follower durability benchmark wiring.
+use super::sql_metrics::{PeerPhase, QueryMetrics};
 use cellule_peer_http::LoadedPeerTls;
 use cellule_runtime::identity::NodeId;
 use cellule_runtime::node::NodeDirectory;
@@ -67,8 +68,9 @@ impl Config {
         layout: cellule_ltx::CellStorageLayout,
         code: Digest,
         bind: std::net::SocketAddr,
+        metrics: Arc<QueryMetrics>,
     ) -> Result<()> {
-        server::serve(self, layout, code, bind).await
+        server::serve(self, layout, code, bind, metrics).await
     }
 
     pub async fn start_owner(
@@ -78,6 +80,7 @@ impl Config {
         session: SessionId,
         application: ApplicationId,
         runtime: &CellRuntime,
+        metrics: Arc<QueryMetrics>,
     ) -> Result<Owner> {
         let tls = self.tls()?;
         let directory = NodeDirectory::new(layout, tls.fleet(), code, code);
@@ -119,7 +122,9 @@ impl Config {
             runtime.install_node_lease(enrollment.authority.lease.clone())?;
             let peers = enrollment.authority.recruit().await?;
             let members = peers.iter().map(|peer| peer.node()).collect();
-            let transport = Arc::new(transport::Transport::new(directory, session, tls, peers)?);
+            let transport = Arc::new(transport::Transport::new(
+                directory, session, tls, peers, metrics,
+            )?);
             let config = cellule_runtime::node::durability::NodeDurabilityConfig::new(
                 session,
                 node(0),
