@@ -37,6 +37,23 @@ pub struct PublicationTiming {
     pub covered_commits: u64,
 }
 
+/// One bounded shared upload; participating Cells still select roots separately.
+#[derive(Clone, Copy, Debug)]
+pub struct SharedPublicationTiming {
+    /// Participating Cell publication inputs.
+    pub cells: u64,
+    /// Scoped native LTX/index rows.
+    pub rows: u64,
+    /// Exact shared object bytes, including framing.
+    pub bytes: u64,
+    /// Oldest input's queue age when the cohort freezes.
+    pub queue: Duration,
+    /// File construction, upload and joined scratch cleanup duration.
+    pub upload: Duration,
+    /// Whether every scoped uploaded input was produced.
+    pub succeeded: bool,
+}
+
 /// Native follower timing for one dispatched append batch.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FollowerAppendTiming {
@@ -223,6 +240,13 @@ pub trait CellTelemetry: Send + Sync {
     /// record the objects they did upload.
     fn publication_cost(&self, _objects: u64, _bytes: u64) {}
 
+    /// Records shared cohort work without Cell identity labels.
+    fn shared_publication(&self, _timing: SharedPublicationTiming) {}
+
+    /// Records ordinary-path fallback: `true` means retained/descriptor pressure,
+    /// `false` means the capture cannot fit the small-object representation.
+    fn shared_publication_fallback(&self, _pressure: bool) {}
+
     /// Records bytes sent to follower append lanes and whether every lane acknowledged them.
     fn node_log_append(&self, _acknowledged: bool, _bytes: u64) {}
 
@@ -384,6 +408,18 @@ impl CellTelemetryHandle {
     pub(crate) fn publication_cost(&self, objects: u64, bytes: u64) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.publication_cost(objects, bytes);
+        }
+    }
+
+    pub(crate) fn shared_publication(&self, timing: SharedPublicationTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.shared_publication(timing);
+        }
+    }
+
+    pub(crate) fn shared_publication_fallback(&self, pressure: bool) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.shared_publication_fallback(pressure);
         }
     }
 

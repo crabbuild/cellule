@@ -1,8 +1,8 @@
 # Write performance implementation and verification
 
-This delivers an implementation slice and a quantified gap report, not the
-completed M0–M5 plan. The implementation packs small publication dependencies and provides a pinned
-Docker comparison with exact retry and cold-state audits. **Celld write parity
+This delivers packed dependencies, shared publication, signed append grants and
+a quantified gap report, not the completed M0–M5 plan. A pinned Docker
+comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
@@ -14,7 +14,9 @@ the acceptance contract; completing tests or a load run does not pass its gates.
 | Small directory leaf lives in the root | Removes its separate PUT, GET and cached-origin HEAD | Canonical leaf validation; 2 KiB leaf and 32 KiB root bounds |
 | Packed compaction input supplies both scratch streams | One full GET per selected pack instead of full plus range GET | Complete verification; bounded transfer and file ownership through cancellation |
 | Window telemetry separates response, proof and publication | Logical commands per selected root; capture/checkpoint, worker, peer and sync histograms | Counters and frontiers confer no authority or proof |
-| Storage families distinguish owner/receiver enrollment | Summed enrollment GET cost across all three nodes | Each signed peer message still uses fresh authorization |
+| Storage families distinguish owner/receiver enrollment | Summed enrollment GET cost across all three nodes | Fresh authorization issues signed windows; every append checks its local window and fence |
+| Application-scoped shared capture objects | One payload PUT for up to 64 scoped rows and 256 KiB | Per-Cell root selection, exact recovery and complete reference collection remain mandatory |
+| Signed follower append windows | Up to 512 sequences/five seconds per fresh issuance | Pinned mTLS, signed RPCs, fsync, local monotonic expiry and durable closure |
 | Docker runner and reports preserve failures | Source/binary identities, fresh provider volumes, scheduled-arrival latency, all-ACK audits | Errors, drops, unissued offers, provider failures and failed drain cannot pass |
 | Arrival producer preserves delayed offers | Final wakeup cannot erase a request scheduled inside the window | Original arrival time still determines latency and completion; full queues count drops |
 | ACK collection and audit stream bounded records | Disk-backed uniqueness index; 256 queued records and at most 128 GET/retry pairs | Seed, warmup, steady, trailing, overload and recovery successes all reconcile |
@@ -25,7 +27,7 @@ compaction composed with an append still needs two packs, the final root,
 lineage and selection: **five PUTs**. Node coverage and maintenance remain in
 the window numerator. M1's universal four-PUT gate has therefore not passed.
 
-The current root development format is version 2. The
+The current root development format is version 3. The
 [format specification](../crates/cellule-ltx/docs/packed-root-format.md) covers
 all readers, producers, sparse-read locators, recovery inventories, backup and
 collection paths. There is no legacy decoding or automatic migration.
@@ -36,10 +38,34 @@ collection paths. There is no legacy decoding or automatic migration.
 | --- | --- | --- |
 | M0 | Measurement and comparison harness delivered | Three A/A capacity pairs unverified; storage API totals reconcile, but SDK-internal HTTP retries need provider telemetry |
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
-| M2 | Existing native grouping and per-Cell coalescing preserved | Shared node publication coordinator not implemented; 0.25 publication PUTs/command not achieved |
-| M3 | Fresh enrollment roles, peer phases and follower append measured | Signed append grants and durable grant fences not implemented; 0.05 enrollment GETs/command not achieved |
-| M4 | Existing authority-pinned Cell roots remain the object proof | Bundle coverage proof, transfer and collection protocol not implemented |
+| M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Full isolated contributor checks pass; paired measurement pending. Three per-Cell authority PUTs remain |
+| M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated contributor checks, native race/pruning checks and wire tests pass; 0.05 enrollment GETs/command measurement pending |
+| M4 | Binding/selector model and [authority decision](bundle-coverage-proof.md) delivered; unsafe node-only selection has a required counterexample | Production bundle proof, atomic transfer/recovery/collection and bundle ACKs not implemented |
 | M5 | Matched Fleet/read points and target stress with exact ACK audits delivered | Three repetitions, read/failure/overload matrix and absolute/relative parity unverified |
+
+## Shared publication checkpoint
+
+Shared publication is implemented in the runtime and LTX layer, with the
+existing fenced per-Cell response gate. It uses one 64-entry lane, a 1-ms assembly
+bound with immediate idle flush and a 256-KiB shared object bound. Fixed cohort counters and cumulative
+queue/upload histograms permit windowed comparison. The new format requires a
+fresh isolated prefix and coordinated deployment of all producers and consumers.
+
+The prior evidence below measures the packed implementation, **not this shared
+coordinator**. Its improvement percentages must not be attributed to M2. New
+source identities, checks and performance results will be recorded separately.
+Signed append grants are implemented with a fresh issuance path and local
+durable closure gates. Bundle coverage ACKs remain disabled: the proposed
+Cell-binding catalog, atomic transfer, exact range recovery and collection
+contracts still need production integration.
+
+The final isolated snapshot passed 1,857 workspace tests (38 documented tests
+ignored), 58 local LTX tests without replica features, all-target/all-feature
+checking, Rust 1.99 Clippy with warnings denied, API documentation and all
+boundary/layout/document/SQL-peer/Python gates. The write-proof model checked
+13,356 distinct states and all three required unsafe counterexamples. These
+checks validate the implementation contracts; they do not qualify throughput,
+physical-device durability or bundle-based bucket acknowledgments.
 
 ## Evidence
 
@@ -387,18 +413,20 @@ multipart calls. SDK-internal retries need provider telemetry for exact HTTP cou
    recovery, backup and collection worker together.
 3. Retained version-1 data needs a separately verified logical export/rebuild
    using the old binary. No automatic conversion route is delivered here.
-4. A rollback binary cannot read version-2 roots. Use a verified logical
+4. A rollback binary cannot read version-3 roots. Use a verified logical
    export/rebuild if available; otherwise preserve artifacts and roll forward.
    Bucket listing and completed uploads never select authority.
 
 ## Remaining delivery
 
 Complete M0's reproducibility gate before attributing sustainable-rate changes
-to the framework. Then implement M2's bounded node publication coordinator,
-complete cross-Cell inventory and per-Cell reconciliation. Measure the selection
-floor before deciding M4. M3 needs scoped signed grants and receiver fences with
-seal, retire, restart, expiry and lease-loss tests; a TTL cache of consumed peer
-verifiers does not implement that contract.
+to the framework. Measure M2 cohort fill, per-Cell selection cost and debt, and
+M3's summed issuance GETs and renewal stalls. The shared coordinator and signed
+grant protocol are implemented; their exit budgets require measured evidence.
+The authority cost floor requires M4's atomic binding/selector, transfer,
+recovery and collection integration before shared coverage can support bucket
+acknowledgments. The [authority decision](bundle-coverage-proof.md) defines that
+integration; it is not an enabled response path.
 
 Finally run three paired five-minute repetitions, bounded KV, read-only and
 mixed/hot-read guardrails, 1.5× overload with immediate recovery, owner loss

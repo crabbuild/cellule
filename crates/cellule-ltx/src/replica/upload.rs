@@ -67,6 +67,11 @@ impl CellReplica {
             index,
             body,
         } = segment;
+        if matches!(body, AppendBody::SharedUploaded) {
+            // Only the verified shared-upload factory constructs this input.
+            // Both body and index already belong to its one immutable object.
+            return Ok(());
+        }
         if let AppendBody::Packed(source) = body {
             let path = self.layout.incarnation_object_path(
                 &self.cell,
@@ -88,7 +93,7 @@ impl CellReplica {
             let source: Arc<dyn cellule_store::MultipartUploadSource> = match body {
                 AppendBody::Native(source) => source,
                 AppendBody::Frozen(bytes) => Arc::new(FrozenCapture(bytes)),
-                AppendBody::Bundle | AppendBody::Packed(_) => {
+                AppendBody::Bundle | AppendBody::Packed(_) | AppendBody::SharedUploaded => {
                     return Err(LtxError::InvalidState("native Cell body source missing"));
                 }
             };

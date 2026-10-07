@@ -811,6 +811,7 @@ impl CellRuntime {
         }
         publisher = publisher.with_node_durability_slot(Arc::clone(&self.inner.node_durability));
         publisher = publisher.with_telemetry(self.inner.telemetry.clone());
+        publisher = publisher.with_shared_publication(Arc::clone(&self.inner.shared_publication));
         self.inner
             .sender
             .send(Message::Activate {

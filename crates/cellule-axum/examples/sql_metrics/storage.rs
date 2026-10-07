@@ -94,9 +94,11 @@ impl Accounting {
     ) -> Arc<dyn StorageObserver> {
         let index = location.map_or(3, |path| {
             let name = path.as_ref();
-            if [".ltx", ".index", ".dir", ".root", ".bundle", ".pack"]
-                .iter()
-                .any(|suffix| name.ends_with(suffix))
+            if [
+                ".ltx", ".index", ".dir", ".root", ".bundle", ".pack", ".spack",
+            ]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
             {
                 0
             } else if name

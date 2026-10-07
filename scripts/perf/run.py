@@ -105,11 +105,14 @@ expected = int(sys.argv[2])
 if root['version'] != expected or root['cell'] != cell or root['incarnation'] != control['incarnation']:
     raise SystemExit('persisted root codec or scope differs from source and control')
 packed = [segment for segment in root['segments'] if segment.get('packed')]
-if expected == 2:
+if expected in (2, 3):
     if not packed:
         raise SystemExit('small-root fixture did not persist a packed dependency')
-    body = get('/comparison/' + objects + packed[0]['object_digest'] + '.pack')
-    if body[:8] != b'CRBPACK1' or len(body) > 256 * 1024:
+    segment = packed[0]
+    shared = segment.get('shared', False)
+    prefix = sys.argv[1] + '/cells/v1/apps/' + '03' * 16 + '/shared/objects/' if shared else objects
+    body = get('/comparison/' + prefix + segment['object_digest'] + ('.spack' if shared else '.pack'))
+    if body[:8] != (b'CRBSH001' if shared else b'CRBPACK1') or len(body) > 256 * 1024:
         raise SystemExit('packed dependency has an invalid header or bound')
 print(json.dumps({'root_path': root_path, 'root_sha256': hashlib.sha256(raw).hexdigest(), 'version': root['version'], 'packed_segments': len(packed), 'inline_directory': root.get('directory_inline') is not None, 'pass': True}))
 '''

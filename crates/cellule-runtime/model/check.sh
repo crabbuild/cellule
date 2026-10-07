@@ -76,6 +76,7 @@ fi
 run_model() {
   local config="$1"
   local expected="$2"
+  local module="${3:-CellCoordination}"
   local output
   local meta_dir="$cache_dir/meta-negative/${config%.cfg}"
   mkdir -p "$meta_dir"
@@ -84,7 +85,7 @@ run_model() {
   set +e
   java -cp "$jar" tlc2.TLC -workers 1 -noGenerateSpecTE \
     -metadir "$meta_dir" -config "$model_dir/$config" \
-    "$model_dir/CellCoordination.tla" | tee "$output"
+    "$model_dir/$module.tla" | tee "$output"
   local status=${PIPESTATUS[0]}
   set -e
   if [ "$status" -eq 0 ]; then
@@ -99,6 +100,14 @@ run_model() {
 }
 
 case "$mode" in
+  write-proofs)
+    java -cp "$jar" tlc2.TLC -workers 1 -nowarning -noGenerateSpecTE \
+      -metadir "$cache_dir/meta-write-proofs" \
+      -config "$model_dir/WriteProofs.cfg" "$model_dir/WriteProofs.tla"
+    run_model WriteProofsNodeOnly.cfg BucketCellFence WriteProofs
+    run_model WriteProofsNoFence.cfg FrozenTail WriteProofs
+    run_model WriteProofsWallOnly.cfg GrantLifetime WriteProofs
+    ;;
   fast)
     java -cp "$jar" tlc2.TLC -workers 1 -depth 6 -nowarning -noGenerateSpecTE \
       -metadir "$cache_dir/meta-fast" \
@@ -122,7 +131,7 @@ case "$mode" in
     run_model CellCoordinationBrokenRelease.cfg RetainedHasOwner
     ;;
   *)
-    echo "usage: $0 {fast|broad|negative}" >&2
+    echo "usage: $0 {fast|broad|negative|write-proofs}" >&2
     exit 2
     ;;
 esac

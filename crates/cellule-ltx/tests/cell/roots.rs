@@ -40,4 +40,5 @@ mod lifecycle;
 mod packed;
 mod preparation;
 mod prepare_cost;
+mod shared;
 mod sparse;

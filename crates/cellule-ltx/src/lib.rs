@@ -82,7 +82,8 @@ pub use node_frame::{
 pub use replica::{
     CellPagedDatabase, CellReplica, CellWritableDatabase, PreparedRoot, PublicationCost,
     ReadOnlyRoot, RecoveryOverlay, RootObjectRef, RootPreparation, RootPreparationFuture,
-    RootPreparationMetadata, RootRef, VerifiedRoot,
+    RootPreparationMetadata, RootRef, SHARED_PUBLICATION_BYTES, SHARED_PUBLICATION_ROWS,
+    SharedAppend, SharedCaptures, VerifiedRoot,
 };
 #[cfg(feature = "replica")]
 pub use writable_vfs::Hydration;

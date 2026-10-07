@@ -66,6 +66,17 @@ impl EnrolledPeerVerifier {
         log::authorize_advertised_append(&self.advertisement, member, log_epoch, covered_through)
     }
 
+    pub(super) fn into_append_grant_leader(
+        self,
+        member: NodeId,
+        epoch: u64,
+        now_ms: i64,
+    ) -> Result<NodeAdvertisement> {
+        self.advertisement.validate_at(now_ms)?;
+        log::authorize_advertised_append(&self.advertisement, member, epoch, 0)?;
+        Ok(self.advertisement)
+    }
+
     /// Verifies the signed request while rechecking the enrollment's lifetime.
     pub fn verify(
         &self,

@@ -19,6 +19,8 @@ mod compaction;
 pub(crate) mod directory;
 mod merge;
 mod packed;
+mod shared;
+pub use shared::{SHARED_PUBLICATION_BYTES, SHARED_PUBLICATION_ROWS, SharedAppend, SharedCaptures};
 mod preparation;
 mod prepare;
 pub use preparation::{RootPreparation, RootPreparationFuture, RootPreparationMetadata};
@@ -330,6 +332,7 @@ pub struct CellPagedDatabase {
     directory_height: u32,
     directory_inline: Option<Arc<[u8]>>,
     extents: Arc<BTreeMap<[u8; 32], ObjectExtent>>,
+    shared_segments: Arc<Vec<SegmentDescriptor>>,
     page_size: u32,
     database_pages: u32,
     position: Position,
@@ -495,6 +498,8 @@ impl CellPagedDatabase {
             .offset
             .checked_add(u64::from(entry.length))
             .ok_or(LtxError::LTXCorrupted)?;
+        self.verify_shared_range(entry.object, entry.offset, end, origin)
+            .await?;
         let path = self.replica.layout.incarnation_object_path(
             &self.replica.cell,
             &self.replica.incarnation,
@@ -617,6 +622,8 @@ impl CellPagedDatabase {
         span: DirectorySpan,
         origin: crate::LtxReadOrigin,
     ) -> Result<FetchedSpan> {
+        self.verify_shared_range(span.object, span.start, span.end, origin)
+            .await?;
         let extent = self
             .extents
             .get(&span.object)
@@ -943,19 +950,23 @@ struct AppendInput {
     body: AppendBody,
 }
 
+#[derive(Clone)]
 enum AppendBody {
     Native(Arc<upload::PinnedCapture>),
     Frozen(Bytes),
     Packed(Arc<dyn cellule_store::MultipartUploadSource>),
     Bundle,
+    SharedUploaded,
 }
 
 #[derive(Clone, Copy)]
 enum BodyLocation {
     Native,
     Bundle { digest: [u8; 32], offset: u64 },
+    Shared { digest: [u8; 32], offset: u64 },
 }
 
+#[derive(Clone)]
 struct PreparedSegment {
     descriptor: SegmentDescriptor,
     index: Bytes,

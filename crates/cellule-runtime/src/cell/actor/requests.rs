@@ -702,6 +702,9 @@ pub(super) fn start_admitted_publication(
 }
 
 pub(super) fn is_storage_publication_error(error: &Error) -> bool {
+    if let Error::Shared(source) = error {
+        return is_storage_publication_error(source);
+    }
     matches!(
         error,
         Error::Storage(_) | Error::Ltx(cellule_ltx::LtxError::Storage(_))

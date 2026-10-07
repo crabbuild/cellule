@@ -103,7 +103,10 @@ indices and fixed bound, preserving 100-us resolution and overflow. The client
 primes exporters and sampling connections before warmup. Use `--telemetry off`
 only to measure exporter overhead; that diagnostic cannot qualify. Compare
 response, confirmation, fleet-proof, capture/checkpoint, and publication timings
-separately instead of attributing publication time to the command ACK.
+separately instead of attributing publication time to the command ACK. Shared
+publication exports window cohort/cell/row/byte and fallback counters plus
+`shared_queue` and `shared_upload` histograms. Cohort fill alone does not prove
+a lower authority cost or a sustainable capacity increase.
 
 The producer emits every offer scheduled inside the window even if its final
 wakeup is late. It preserves the original due time: lateness remains in the

@@ -27,6 +27,8 @@ pub enum CellObjectKind {
     Bundle,
     /// Bounded segment and authenticated fixed-width index in one object.
     Packed,
+    /// Application-scoped, bounded captures shared by multiple Cell roots.
+    SharedPacked,
 }
 
 impl CellObjectKind {
@@ -38,6 +40,7 @@ impl CellObjectKind {
             Self::Root => "root",
             Self::Bundle => "bundle",
             Self::Packed => "pack",
+            Self::SharedPacked => "spack",
         }
     }
 }
@@ -177,6 +180,9 @@ impl CellStorageLayout {
         digest: &[u8; 32],
         kind: CellObjectKind,
     ) -> Path {
+        if kind == CellObjectKind::SharedPacked {
+            return self.application_path(&format!("shared/objects/{}.spack", encode_hex(digest)));
+        }
         self.application_path(&format!(
             "cells/{}/inc/{}/objects/{}.{}",
             encode_hex(cell),

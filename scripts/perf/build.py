@@ -118,7 +118,14 @@ def build(args):
         ]
         for name in names:
             (source / name).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / name, source / name)
+            if (name.startswith('crates/cellule-runtime/') and name != 'crates/cellule-runtime/src/fleet/telemetry.rs') or name.startswith('crates/cellule-axum/examples/fleet/'):
+                # Freeze the audited actor/log measurement hooks. Copying the
+                # candidate actor now would silently install shared publication
+                # into the baseline rather than measure main's implementation.
+                (source / name).write_bytes(subprocess.check_output(
+                    ['git', 'show', 'a9e743ea148eb4e76b30f2b0c62f42dbce04f8bd:' + name], cwd=ROOT))
+            else:
+                shutil.copy2(ROOT / name, source / name)
             overlay[name] = sha(source / name)
     manifest = {str(path.relative_to(source)): sha(path) for path in source.rglob('*') if path.is_file()}
     (destination / 'framework-source.json').write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')

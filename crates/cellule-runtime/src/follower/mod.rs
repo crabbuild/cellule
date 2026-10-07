@@ -13,6 +13,8 @@ use crate::identity::SessionId;
 use crate::{Error, Result};
 use std::time::Instant;
 
+mod grant;
+pub use grant::{AppendGrantIssuer, AppendGrantPeer, GrantedFollowerAppend};
 mod directory;
 mod inventory;
 mod records;
@@ -82,7 +84,16 @@ enum RetirementWatermark {
     Recovered { active: bool },
 }
 
-type LaneState = Arc<Mutex<Option<LaneMemory>>>;
+struct LaneSlot {
+    memory: Mutex<Option<LaneMemory>>,
+    grant: Arc<tokio::sync::Mutex<grant::GrantState>>,
+}
+impl LaneSlot {
+    fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Option<LaneMemory>>> {
+        self.memory.lock()
+    }
+}
+type LaneState = Arc<LaneSlot>;
 type LaneMap = Arc<Mutex<HashMap<Lane, LaneState>>>;
 
 /// Durable contiguous range retained by one follower lane.
@@ -154,6 +165,8 @@ pub struct FollowerStore {
     admission: crate::fleet::admission::NodeAdmission,
     inventory_scope: [u8; 16],
     telemetry: CellTelemetryHandle,
+    grant_receiver: Option<SessionId>,
+    grant_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl FollowerStore {
@@ -187,6 +200,8 @@ impl FollowerStore {
             admission: crate::fleet::admission::NodeAdmission::default(),
             inventory_scope: rand::random(),
             telemetry: CellTelemetryHandle::default(),
+            grant_receiver: None,
+            grant_slots: Arc::new(tokio::sync::Semaphore::new(grant::MAX_APPEND_GRANTS)),
         })
     }
 
@@ -243,6 +258,18 @@ impl FollowerStore {
         frames: Vec<Bytes>,
         covered_through: u64,
     ) -> Result<FollowerReceipt> {
+        self.append_inner(leader, epoch, frames, covered_through, None)
+            .await
+    }
+
+    async fn append_inner(
+        &self,
+        leader: SessionId,
+        epoch: u64,
+        frames: Vec<Bytes>,
+        covered_through: u64,
+        grant: Option<grant::GrantAppend>,
+    ) -> Result<FollowerReceipt> {
         let encoded_bytes = frames
             .iter()
             .try_fold(0_u64, |total, frame| total.checked_add(frame.len() as u64));
@@ -263,7 +290,19 @@ impl FollowerStore {
         if !lane_directory(&self.root, lane).exists() {
             self.admission.check_new_role()?;
         }
-        let lock = self.lane_lock(lane)?;
+        let lock = if grant.is_some() {
+            // An invalid/replayed token cannot allocate a new lane. Only fresh
+            // grant issuance installs its locally charged registry entry.
+            self.lanes
+                .lock()
+                .map_err(|_| Error::Node("follower store lock poisoned"))?
+                .get(&lane)
+                .cloned()
+                .ok_or(Error::Fenced)?
+        } else {
+            self.lane_lock(lane)?
+        };
+        let grant_state = lock.grant.clone().lock_owned().await;
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
@@ -278,6 +317,17 @@ impl FollowerStore {
         let telemetry = self.telemetry.clone();
         let frame_count = frames.len() as u64;
         tokio::task::spawn_blocking(move || {
+            // Dispatched work owns the lifecycle gate through fsync and proof
+            // revalidation even when the HTTP or runtime waiter disconnects.
+            let grant_state = grant_state;
+            let authorization = grant
+                .as_ref()
+                .map(|request| grant_state.authorize(request, epoch))
+                .transpose()?;
+            let covered_through = authorization.as_ref().map_or(
+                covered_through,
+                crate::node::append_grant::NodeAppendGrant::covered_through,
+            );
             let mut observation = AppendObservation {
                 started: Instant::now(),
                 telemetry,
@@ -308,11 +358,18 @@ impl FollowerStore {
                     &mut state,
                     &scan_counter,
                     &mut observation.timing,
+                    authorization.as_ref(),
                 )
             })();
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
             let result = settle_disk_reservation(result, resize);
+            let result = result.and_then(|receipt| {
+                if let Some(request) = &grant {
+                    grant_state.authorize(request, epoch)?;
+                }
+                Ok(receipt)
+            });
             if result.is_err() {
                 if let Some(memory) = state.as_mut() {
                     memory.invalidate();
@@ -342,12 +399,14 @@ impl FollowerStore {
     pub async fn seal(&self, leader: SessionId, epoch: u64) -> Result<FollowerReceipt> {
         let lane = Lane { leader, epoch };
         let lock = self.lane_lock(lane)?;
+        let grant_state = lock.grant.clone().lock_owned().await;
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
         let index_used = Arc::clone(&self.index_used);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
+            let mut grant_state = grant_state;
             let retained = retained
                 .lock()
                 .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
@@ -362,6 +421,10 @@ impl FollowerStore {
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
             let result = settle_disk_reservation(result, resize);
+            let directory = lane_directory(&root, lane);
+            if directory.join("sealed").exists() || directory.join("retired").exists() {
+                grant_state.close();
+            }
             if result.is_err()
                 && let Some(memory) = state.as_mut()
             {
@@ -417,11 +480,13 @@ impl FollowerStore {
         watermark: RetirementWatermark,
     ) -> Result<FollowerReceipt> {
         let lock = self.lane_lock(lane)?;
+        let grant_state = lock.grant.clone().lock_owned().await;
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
+            let mut grant_state = grant_state;
             let retained = retained
                 .lock()
                 .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
@@ -435,6 +500,10 @@ impl FollowerStore {
             let resize =
                 follower_bytes(&root).and_then(|bytes| retained.resize(bytes).map_err(Error::from));
             let result = settle_disk_reservation(result, resize);
+            let directory = lane_directory(&root, lane);
+            if directory.join("sealed").exists() || directory.join("retired").exists() {
+                grant_state.close();
+            }
             if result.is_ok() {
                 *state = None;
             } else if let Some(memory) = state.as_mut() {
@@ -557,10 +626,12 @@ impl FollowerStore {
             epoch: candidate.epoch,
         };
         let lock = self.lane_lock(lane)?;
+        let grant_state = lock.grant.clone().lock_owned().await;
         let cleanup_lock = Arc::clone(&lock);
         let root = self.root.clone();
         let retained = Arc::clone(&self.retained);
         let removed = tokio::task::spawn_blocking(move || {
+            let mut grant_state = grant_state;
             let retained = retained
                 .lock()
                 .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
@@ -568,6 +639,9 @@ impl FollowerStore {
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
             let removed = remove_retired_sync(&root, lane, candidate, retired_before_ms)?;
+            if removed {
+                grant_state.close();
+            }
             retained.resize(follower_bytes(&root)?)?;
             Ok::<bool, Error>(removed)
         })
@@ -589,14 +663,19 @@ impl FollowerStore {
         Ok(removed)
     }
 
-    fn lane_lock(&self, lane: Lane) -> Result<Arc<Mutex<Option<LaneMemory>>>> {
+    fn lane_lock(&self, lane: Lane) -> Result<LaneState> {
         let mut lanes = self
             .lanes
             .lock()
             .map_err(|_| Error::Node("follower store lock poisoned"))?;
         Ok(lanes
             .entry(lane)
-            .or_insert_with(|| Arc::new(Mutex::new(None)))
+            .or_insert_with(|| {
+                Arc::new(LaneSlot {
+                    memory: Mutex::new(None),
+                    grant: Arc::new(tokio::sync::Mutex::new(grant::GrantState::default())),
+                })
+            })
             .clone())
     }
 }

@@ -88,12 +88,15 @@ impl CellReplica {
                 }),
         );
         for descriptor in &graph.descriptors {
-            if descriptor.object_kind() == CellObjectKind::Packed {
+            if matches!(
+                descriptor.object_kind(),
+                CellObjectKind::Packed | CellObjectKind::SharedPacked
+            ) {
                 let path = self.layout.incarnation_object_path(
                     &self.cell,
                     &self.incarnation,
                     &descriptor.object_digest(),
-                    CellObjectKind::Packed,
+                    descriptor.object_kind(),
                 );
                 let _permit = self.host.io_permit().await?;
                 let result = self
@@ -107,10 +110,14 @@ impl CellReplica {
                     result.as_ref().map_or(0, |(bytes, _)| bytes.len()),
                 );
                 let (bytes, _) = result?;
-                packed::verify(&bytes, descriptor)?;
+                if descriptor.object_kind() == CellObjectKind::SharedPacked {
+                    shared::verify(&bytes, descriptor, &self.cell, &self.incarnation)?;
+                } else {
+                    packed::verify(&bytes, descriptor)?;
+                }
                 objects.insert(RootObjectRef {
                     digest: descriptor.object_digest(),
-                    kind: CellObjectKind::Packed,
+                    kind: descriptor.object_kind(),
                 });
                 continue;
             }
@@ -465,6 +472,14 @@ impl VerifiedRoot {
                 directory_height: document.directory_height,
                 directory_inline: document.directory_inline.clone(),
                 extents: Arc::new(extents),
+                shared_segments: Arc::new(
+                    descriptors
+                        .into_iter()
+                        .filter(|descriptor| {
+                            descriptor.object_kind() == CellObjectKind::SharedPacked
+                        })
+                        .collect(),
+                ),
                 page_size: document.page_size,
                 database_pages: document.database_pages,
                 position: root.position,

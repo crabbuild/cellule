@@ -136,7 +136,8 @@ def metric_delta(directory):
             for outcome, count in values.get('outcomes', {}).items():
                 if sum((family[operation]['outcomes'][outcome] for family in families.values())) != count:
                     raise ValueError(f'unclassified {operation}.{outcome}')
-        output.append({'url': a['url'], 'sample_elapsed_ns': subtract(first['sample_elapsed_ns'], last['sample_elapsed_ns']), 'start_request_ms': [a['request_started_ms'], a['request_finished_ms']], 'end_request_ms': [b['request_started_ms'], b['request_finished_ms']], 'storage_families': families, 'storage': totals, 'histograms': {name: histogram_delta(first['histograms'][name], value) for name, value in last['histograms'].items()}, 'publication': subtract({name: first['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}, {name: last['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}), 'runtime_start': first.get('runtime'), 'runtime_end': last.get('runtime')})
+        shared = subtract(first.get('shared_publication', {}), last.get('shared_publication', {}))
+        output.append({'shared_publication': shared, 'url': a['url'], 'sample_elapsed_ns': subtract(first['sample_elapsed_ns'], last['sample_elapsed_ns']), 'start_request_ms': [a['request_started_ms'], a['request_finished_ms']], 'end_request_ms': [b['request_started_ms'], b['request_finished_ms']], 'storage_families': families, 'storage': totals, 'histograms': {name: histogram_delta(first['histograms'][name], value) for name, value in last['histograms'].items()}, 'publication': subtract({name: first['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}, {name: last['writes'][name] for name in ('selected_roots', 'materialized_commits', 'publication_failures', 'uploaded_objects', 'uploaded_bytes')}), 'runtime_start': first.get('runtime'), 'runtime_end': last.get('runtime')})
     return {'available': True, 'endpoints': output}
 
 def cost_report(metrics, successes):
@@ -148,7 +149,11 @@ def cost_report(metrics, successes):
                                'multipart_start', 'multipart_part', 'multipart_complete', 'multipart_abort')}
     families = {}
     roots = commits = 0
+    shared = {}
     for endpoint in endpoints:
+        for name, value in endpoint.get('shared_publication', {}).items():
+            if isinstance(value, (int, float)):
+                shared[name] = shared.get(name, 0) + value
         publication = endpoint['publication']
         roots += publication['selected_roots']
         commits += publication['materialized_commits']
@@ -172,6 +177,9 @@ def cost_report(metrics, successes):
             'get_attempts_including_ranges_per_command': (operations['get']['attempts'] + operations['range']['attempts']) / successes,
             'mutation_request_successes_per_command': sum(operations[name]['successes'] for name in ('put', 'copy', 'multipart_start', 'multipart_part', 'multipart_complete', 'multipart_abort')) / successes,
             'observation_scope': 'storage API calls; provider SDK internal retries are not individually instrumented',
+            'shared_publication': shared,
+            'shared_cells_per_cohort': shared.get('cells', 0) / shared['cohorts'] if shared.get('cohorts') else None,
+            'shared_bytes_per_cohort': shared.get('bytes', 0) / shared['cohorts'] if shared.get('cohorts') else None,
             'selected_roots': roots, 'materialized_commits': commits,
             'materialized_commits_per_selected_root': commits / roots if roots else None,
             'trailing_publication_included': False,

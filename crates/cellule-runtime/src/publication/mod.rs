@@ -11,6 +11,8 @@ use crate::retry::{Backoff, retry_hint, retryable_storage_error};
 use crate::{Error, Result};
 
 mod lineage;
+mod shared;
+pub(crate) use shared::{PublicationPermit, SharedPublication};
 
 const COMPACTION_CHECK_INTERVAL: u8 = 8;
 const COMPACTION_DEBT_SEGMENTS: usize = 32;
@@ -49,6 +51,7 @@ pub struct CellPublisher {
     node_durability: Option<NodeDurabilitySlot>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     lineage_confirmed: Option<cellule_ltx::RootPreparation>,
+    shared_publication: Option<std::sync::Arc<SharedPublication>>,
 }
 
 enum AppendBase {
@@ -88,11 +91,20 @@ impl CellPublisher {
             node_durability: None,
             telemetry: crate::fleet::telemetry::CellTelemetryHandle::default(),
             lineage_confirmed: None,
+            shared_publication: None,
         }
     }
 
     pub(crate) fn with_node_lease(mut self, node_lease: crate::NodeLeaseGuard) -> Self {
         self.node_lease = Some(node_lease);
+        self
+    }
+
+    pub(crate) fn with_shared_publication(
+        mut self,
+        coordinator: std::sync::Arc<SharedPublication>,
+    ) -> Self {
+        self.shared_publication = Some(coordinator);
         self
     }
 
@@ -332,14 +344,32 @@ impl CellPublisher {
         }
     }
 
-    pub(crate) async fn admit_publication(&mut self) -> Result<cellule_ltx::CellReplica> {
+    pub(crate) async fn admit_publication(&mut self) -> Result<PublicationPermit> {
         self.check_node_lease()?;
         let replica = self.replica.clone();
-        let admission = replica.admit_root_preparation();
+        let shared = self.shared_publication.clone();
+        let admission = async {
+            match shared {
+                Some(shared) => {
+                    let slot = shared.admit().await?;
+                    // Choose the actor's complete retained range only after
+                    // foreground root capacity becomes available. Release the
+                    // probe before cohort work so no dirty slot waits for its
+                    // uploader or paired compaction admission.
+                    drop(replica.admit_root_preparation().await?);
+                    Ok(PublicationPermit::Shared(slot))
+                }
+                None => replica
+                    .admit_root_preparation()
+                    .await
+                    .map(|replica| PublicationPermit::Direct(Box::new(replica)))
+                    .map_err(Into::into),
+            }
+        };
         tokio::pin!(admission);
         loop {
             tokio::select! {
-                result = &mut admission => return result.map_err(Into::into),
+                result = &mut admission => return result,
                 _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
                     self.renew().await?;
                 }
@@ -349,20 +379,113 @@ impl CellPublisher {
 
     pub(crate) async fn prepare_admitted_batch(
         &mut self,
-        replica: cellule_ltx::CellReplica,
+        permit: PublicationPermit,
         cuts: &cellule_ltx::CaptureBatch,
         commit_sequence: u64,
     ) -> Result<cellule_ltx::PreparedRoot> {
-        let result = self
-            .prepare_append(
-                cuts,
-                commit_sequence,
-                self.observed.value().schema,
-                Some(replica),
-            )
-            .await;
+        let result = match permit {
+            PublicationPermit::Shared(slot) => {
+                self.prepare_shared_batch(slot, cuts, commit_sequence).await
+            }
+            PublicationPermit::Direct(replica) => {
+                self.prepare_append(
+                    cuts,
+                    commit_sequence,
+                    self.observed.value().schema,
+                    Some(*replica),
+                )
+                .await
+            }
+        };
         self.record_publication_cost();
         result
+    }
+
+    async fn prepare_shared_batch(
+        &mut self,
+        slot: tokio::sync::OwnedSemaphorePermit,
+        cuts: &cellule_ltx::CaptureBatch,
+        commit_sequence: u64,
+    ) -> Result<cellule_ltx::PreparedRoot> {
+        // Compaction keeps its canonical paired recovery/dirty admission. Do
+        // not retain a cohort slot while negotiating those scarce permits.
+        if self
+            .compaction_pressure(cuts.segments.len())
+            .await?
+            .is_some()
+        {
+            drop(slot);
+            return self
+                .prepare_append(cuts, commit_sequence, self.observed.value().schema, None)
+                .await;
+        }
+        let coordinator = self
+            .shared_publication
+            .clone()
+            .ok_or(Error::Control("shared publication is unavailable"))?;
+        let replica = self.replica.clone();
+        let submission = coordinator.submit(&replica, cuts, self.scratch_directory.clone(), slot);
+        tokio::pin!(submission);
+        let shared = loop {
+            tokio::select! {
+                result = &mut submission => break result,
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => self.renew().await?,
+            }
+        };
+        self.check_node_lease()?;
+        let shared = match shared {
+            Ok(shared) => shared,
+            // A corrupt sibling or one failed shared upload cannot invalidate
+            // this Cell's independent captures. The canonical factory rechecks
+            // its own inputs and preserves its own original source on failure.
+            Err(Error::Shared(source)) if matches!(source.as_ref(), Error::Ltx(_)) => None,
+            Err(error) => return Err(error),
+        };
+        let Some(shared) = shared else {
+            return self
+                .prepare_append(cuts, commit_sequence, self.observed.value().schema, None)
+                .await;
+        };
+        self.check_node_lease()?;
+        // Upload neither selects a Cell root nor extends its writer lifetime.
+        // The final exact Cell CAS revalidates its fence after this cohort wait.
+        let base = self.observed.value().ltx_root();
+        let schema = self.observed.value().schema;
+        let mut backoff = Backoff::default();
+        loop {
+            let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
+            let attempt =
+                replica.prepare_shared(base.as_ref(), &shared.append, commit_sequence, schema);
+            tokio::pin!(attempt);
+            let result = loop {
+                tokio::select! {
+                    result = &mut attempt => break result,
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => self.renew().await?,
+                }
+            };
+            match result {
+                Ok(prepared) => {
+                    self.lineage_confirmed = *confirmation
+                        .lock()
+                        .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+                    self.note_append(&prepared);
+                    return Ok(prepared);
+                }
+                Err(source) => {
+                    if source.is_cell_graph_limit() {
+                        return self
+                            .prepare_append(cuts, commit_sequence, schema, None)
+                            .await;
+                    }
+                    let error = lineage::error(source);
+                    if retryable_publication_error(&error) {
+                        backoff.wait(runtime_retry_hint(&error)).await;
+                    } else {
+                        return Err(error);
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) async fn prepare(

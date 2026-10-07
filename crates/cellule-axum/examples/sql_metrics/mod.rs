@@ -1,7 +1,7 @@
 //! Finite, nonblocking runtime and provider measurements for this application.
 use cellule_runtime::fleet::telemetry::{
     CellTelemetry, CommandResponseSource, DurabilitySubmissionOutcome, PrimitiveOperationKind,
-    PrimitiveOperationOutcome, PublicationTiming,
+    PrimitiveOperationOutcome, PublicationTiming, SharedPublicationTiming,
 };
 use cellule_store::{StorageObservation, StorageObserver, StorageOperation, StorageOutcome};
 use std::{
@@ -39,11 +39,25 @@ pub(super) struct QueryMetrics {
     log_append_bytes: AtomicU64,
     selected_roots: AtomicU64,
     materialized_commits: AtomicU64,
+    shared: SharedMetrics,
     follower_frames: AtomicU64,
     follower_sync_calls: AtomicU64,
     follower_failures: AtomicU64,
     sample_origin: std::sync::OnceLock<std::time::Instant>,
     sample_session: std::sync::OnceLock<uuid::Uuid>,
+}
+
+#[derive(Default)]
+struct SharedMetrics {
+    cohorts: AtomicU64,
+    failures: AtomicU64,
+    cells: AtomicU64,
+    rows: AtomicU64,
+    bytes: AtomicU64,
+    pressure: AtomicU64,
+    large: AtomicU64,
+    queue: Histogram,
+    upload: Histogram,
 }
 
 // Application-owned instrumentation: fixed histograms, 100-us upper
@@ -292,6 +306,25 @@ impl CellTelemetry for QueryMetrics {
         self.writes.objects.fetch_add(objects, Ordering::Relaxed);
         self.writes.bytes.fetch_add(bytes, Ordering::Relaxed);
     }
+    fn shared_publication(&self, timing: SharedPublicationTiming) {
+        self.shared.cohorts.fetch_add(1, Ordering::Relaxed);
+        self.shared
+            .failures
+            .fetch_add(u64::from(!timing.succeeded), Ordering::Relaxed);
+        self.shared.cells.fetch_add(timing.cells, Ordering::Relaxed);
+        self.shared.rows.fetch_add(timing.rows, Ordering::Relaxed);
+        self.shared.bytes.fetch_add(timing.bytes, Ordering::Relaxed);
+        self.shared.queue.observe(timing.queue);
+        self.shared.upload.observe(timing.upload);
+    }
+    fn shared_publication_fallback(&self, pressure: bool) {
+        if pressure {
+            &self.shared.pressure
+        } else {
+            &self.shared.large
+        }
+        .fetch_add(1, Ordering::Relaxed);
+    }
     fn ltx_phase(&self, phase: cellule_ltx::LtxPhase, elapsed: Duration, _succeeded: bool) {
         use cellule_ltx::LtxPhase;
         match phase {
@@ -360,6 +393,8 @@ impl QueryMetrics {
             ("publication", &self.writes.publication),
             ("compaction", &self.writes.compaction),
             ("dirty_admission", &self.writes.dirty_admission),
+            ("shared_queue", &self.shared.queue),
+            ("shared_upload", &self.shared.upload),
         ] {
             histograms.insert(label.into(), histogram.raw());
         }
@@ -471,6 +506,17 @@ impl QueryMetrics {
                 "input_frames": self.follower_frames.load(Ordering::Relaxed),
                 "data_sync_calls": self.follower_sync_calls.load(Ordering::Relaxed),
                 "failures": self.follower_failures.load(Ordering::Relaxed)
+            },
+            "shared_publication": {
+                "cohorts": self.shared.cohorts.load(Ordering::Relaxed),
+                "failures": self.shared.failures.load(Ordering::Relaxed),
+                "cells": self.shared.cells.load(Ordering::Relaxed),
+                "rows": self.shared.rows.load(Ordering::Relaxed),
+                "bytes": self.shared.bytes.load(Ordering::Relaxed),
+                "pressure_fallbacks": self.shared.pressure.load(Ordering::Relaxed),
+                "large_fallbacks": self.shared.large.load(Ordering::Relaxed),
+                "queue": self.shared.queue.snapshot(),
+                "upload": self.shared.upload.snapshot()
             },
             "storage_operations": storage,
             "storage_families": storage_families,

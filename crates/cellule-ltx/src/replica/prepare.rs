@@ -126,7 +126,7 @@ impl CellReplica {
         .await
     }
 
-    fn admit_capture_batch(&self, cuts: &CaptureBatch) -> Result<()> {
+    pub(super) fn admit_capture_batch(&self, cuts: &CaptureBatch) -> Result<()> {
         if cuts.segments.is_empty() {
             return Err(LtxError::InvalidState("empty Cell append"));
         }
@@ -147,7 +147,7 @@ impl CellReplica {
         Ok(())
     }
 
-    async fn prepare_captured_inputs(
+    pub(super) async fn prepare_captured_inputs(
         &self,
         segments: &[crate::LocalSegment],
     ) -> Result<Vec<AppendInput>> {
@@ -585,6 +585,13 @@ impl CellReplica {
                         digest,
                         offset,
                     ),
+                    BodyLocation::Shared { digest, offset } => SegmentDescriptor::shared(
+                        input.info,
+                        *blake3::hash(&input.index).as_bytes(),
+                        input.index.len() as u64,
+                        digest,
+                        offset,
+                    ),
                 };
                 Ok(PreparedSegment {
                     descriptor,
@@ -602,7 +609,11 @@ impl CellReplica {
         // Admit every original cut before reducing its representation. A merge
         // cannot rescue a gap, invalid endpoint, or over-budget original chain.
         self.validate_chain(&descriptors, target)?;
-        if bundle.is_none() {
+        if bundle.is_none()
+            && prepared
+                .iter()
+                .all(|segment| !matches!(segment.body, AppendBody::SharedUploaded))
+        {
             prepared = coalesce::run(self, prepared).await?;
             prepared = stream::iter(
                 prepared
@@ -872,14 +883,14 @@ impl CellReplica {
         })
     }
 
-    fn validate_metadata(&self, commit_sequence: u64, schema: u32) -> Result<()> {
+    pub(super) fn validate_metadata(&self, commit_sequence: u64, schema: u32) -> Result<()> {
         if schema == 0 || commit_sequence > i64::MAX as u64 {
             return Err(LtxError::InvalidState("invalid Cell root metadata"));
         }
         Ok(())
     }
 
-    fn validate_append_sequence(
+    pub(super) fn validate_append_sequence(
         &self,
         base: &Option<LoadedGraph>,
         commit_sequence: u64,

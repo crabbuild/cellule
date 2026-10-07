@@ -56,3 +56,18 @@ their state counts. Negative configurations must identify the configured
 invariant by name. A passing model run is protocol-assurance evidence only;
 release and Celld comparison claims still require the qualification receipts
 described in `../docs/delivery.md`.
+
+## Shared write proofs
+
+`check.sh write-proofs` checks `WriteProofs.tla` and three deliberately broken
+configurations. The positive model checks immutable-upload versus authoritative
+selection, Cell-binding closure/transfer, receiver seal/retirement, original boot
+rejection and monotonic grant expiry. Negative runs must report
+`BucketCellFence`, `FrozenTail`, and `GrantLifetime` respectively. Lost seal is
+stuttering and supplies no receipt. A grant clock unit represents the bounded
+local authorization horizon; physical timestamps and signing are abstracted.
+
+This model constrains the implemented [append grant](../docs/append-grants.md)
+lifecycle and the proposed [bundle authority](../../../docs/bundle-coverage-proof.md).
+It does not establish a production bundle proof, complete dependency verification,
+byte-identical recovery, liveness or performance qualification.

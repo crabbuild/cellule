@@ -606,6 +606,10 @@ fn immutable_path_classifier_accepts_only_version_one_layouts() {
         &prefix,
         &layout.catalog_object_path(&[6; 32]),
     ));
+    assert!(immutable_candidate(
+        &prefix,
+        &layout.incarnation_object_path(&[3; 32], &[4; 16], &[5; 32], CellObjectKind::SharedPacked)
+    ));
     assert!(!immutable_candidate(
         &prefix,
         &layout.control_path(&[3; 32]),
@@ -618,4 +622,147 @@ fn immutable_path_classifier_accepts_only_version_one_layouts() {
     assert!(GarbageCollectionPolicy::new(0, 0, 1).is_err());
     assert!(GarbageCollectionPolicy::new(0, 1, 0).is_err());
     assert!(GarbageCollectionPolicy::new(0, 1, 100_001).is_err());
+}
+
+#[tokio::test]
+async fn collection_keeps_a_shared_object_after_its_hot_sibling_compacts() {
+    let identity = identity();
+    let layout = CellStorageLayout::new(
+        Store::new(Arc::new(InMemory::new())),
+        Path::from("shared-retention"),
+        *identity.application().as_bytes(),
+    );
+    let catalog = CellCatalog::new(layout.clone(), identity.tenant());
+    let targets = [target(identity, b"hot"), target(identity, b"dormant")];
+    let code = Digest::from_bytes([4; 32]);
+    let directory = tempfile::tempdir().unwrap();
+    let mut db =
+        cellule_ltx::Db::open(&directory.path().join("source"), ReplicaLimits::default()).unwrap();
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(7)"))
+        .unwrap();
+    let cuts = db.capture().unwrap();
+    let mut replicas = Vec::new();
+    let mut inputs = Vec::new();
+    for (i, target) in targets.iter().enumerate() {
+        catalog
+            .provision(CatalogEntry::new(target, CatalogRole::Application, code, 1).unwrap())
+            .await
+            .unwrap();
+        let replica = cellule_ltx::CellReplica::new(
+            layout.clone(),
+            *target.cell_id().as_bytes(),
+            [i as u8 + 5; 16],
+            ReplicaLimits::default(),
+        )
+        .unwrap();
+        inputs.push(replica.shared_captures(&cuts).await.unwrap().unwrap());
+        replicas.push(replica);
+    }
+    let appends = cellule_ltx::CellReplica::upload_shared(inputs, directory.path())
+        .await
+        .unwrap();
+    let roots = [
+        replicas[0]
+            .prepare_shared(None, &appends[0], 1, 1)
+            .await
+            .unwrap()
+            .root(),
+        replicas[1]
+            .prepare_shared(None, &appends[1], 1, 1)
+            .await
+            .unwrap()
+            .root(),
+    ];
+    let shared = replicas[0]
+        .reachable_objects(&roots[0])
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|object| object.kind == CellObjectKind::SharedPacked)
+        .unwrap();
+    let shared_path = layout.incarnation_object_path(
+        &roots[0].cell,
+        &roots[0].incarnation,
+        &shared.digest,
+        shared.kind,
+    );
+    let hot_root = replicas[0]
+        .prepare_compaction(&roots[0], 0..1, 9, directory.path())
+        .await
+        .unwrap()
+        .root();
+    let mut controls = Vec::new();
+    for root in [hot_root, roots[1]] {
+        let control = idle_control(
+            CellId::from_bytes(root.cell),
+            IncarnationId::from_bytes(root.incarnation),
+            root,
+            code,
+        );
+        layout
+            .store()
+            .create_strict(
+                &layout.control_path(control.cell.as_bytes()),
+                Bytes::from(control.encode().unwrap()),
+            )
+            .await
+            .unwrap();
+        controls.push(control);
+    }
+    let releases = ReleaseStore::new(layout.clone(), identity).unwrap();
+    let descriptor = br#"{"runtime":"shared-retention","version":1}"#;
+    let operation = RequestId::from_bytes([7; 16]);
+    let prepared = releases
+        .prepare(
+            descriptor,
+            Digest::from_bytes(*blake3::hash(descriptor).as_bytes()),
+            0,
+            &format!("sha256:{}", "a".repeat(64)),
+            operation,
+        )
+        .await
+        .unwrap();
+    let maintenance = releases
+        .start_maintenance(prepared.revision(), operation)
+        .await
+        .unwrap();
+    let collector = CellGarbageCollector::new(
+        layout.clone(),
+        identity,
+        ReplicaLimits::default(),
+        ReplicaHost::default(),
+    )
+    .unwrap();
+    let policy = GarbageCollectionPolicy::new(i64::MAX, 1, 100_000).unwrap();
+    collector
+        .collect(&maintenance, directory.path(), policy)
+        .await
+        .unwrap();
+    layout.store().head(&shared_path).await.unwrap();
+    replicas[1].reachable_objects(&roots[1]).await.unwrap();
+    // Only once the complete application reference set drops the dormant root
+    // can the shared object cross the same maintenance/grace deletion gate.
+    controls[1].state = ControlState::Tombstoned;
+    controls[1].epoch += 1;
+    controls[1].revision += 1;
+    controls[1].progress += 1;
+    let authority = CellAuthority::new(layout.clone());
+    let observed = authority.load(controls[1].cell).await.unwrap().unwrap();
+    authority
+        .transition(
+            &observed,
+            controls[1].clone(),
+            crate::control::Transition::Tombstone,
+        )
+        .await
+        .unwrap();
+    collector
+        .collect(&maintenance, directory.path(), policy)
+        .await
+        .unwrap();
+    assert!(matches!(
+        layout.store().head(&shared_path).await,
+        Err(cellule_store::StorageError::NotFound { .. })
+    ));
+    replicas[0].reachable_objects(&hot_root).await.unwrap();
 }

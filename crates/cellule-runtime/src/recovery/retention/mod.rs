@@ -540,6 +540,9 @@ fn immutable_candidate(application_prefix: &Path, location: &Path) -> bool {
         ["releases", object] | ["catalog", "objects", object] | ["pins", "objects", object] => {
             json_digest(object)
         }
+        ["shared", "objects", object] => object
+            .strip_suffix(".spack")
+            .is_some_and(|digest| lower_hex(digest, 64)),
         ["cells", cell, "inc", incarnation, "objects", object] => {
             lower_hex(cell, 64)
                 && lower_hex(incarnation, 32)

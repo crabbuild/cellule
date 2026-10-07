@@ -155,6 +155,8 @@ impl CellRuntime {
         let node_lease = Arc::new(node_lease);
         let unpublished_node_log_bytes = Arc::new(AtomicU64::new(0));
         let node_admission = NodeAdmission::default();
+        let shared_publication =
+            crate::publication::SharedPublication::new(resources.clone(), telemetry.clone());
         runtime.spawn(run(
             receiver,
             pool.clone(),
@@ -181,6 +183,7 @@ impl CellRuntime {
                 node_durability: Arc::new(std::sync::RwLock::new(None)),
                 telemetry,
                 unpublished_node_log_bytes,
+                shared_publication,
             }),
         })
     }
@@ -407,6 +410,7 @@ impl CellRuntime {
             .map_err(|_| Error::RuntimeClosed)?;
         let drain = response.await.map_err(|_| Error::RuntimeClosed)?;
         let workers = self.inner.pool.shutdown().await;
+        let publication = self.inner.shared_publication.shutdown().await;
         let durability = match self.node_durability() {
             Some((_, durability)) => durability.shutdown().await,
             None => Ok(()),
@@ -414,7 +418,11 @@ impl CellRuntime {
         // Admission and replica work are stopped. Optional fills outlive their
         // readers, so keep artifacts/executors until accepted fills complete.
         self.inner.replica_host.drain_cache_fills().await;
-        receivers.and(drain).and(workers).and(durability)
+        receivers
+            .and(drain)
+            .and(workers)
+            .and(publication)
+            .and(durability)
     }
 
     /// Stops new Cell acquisition while existing owners continue serving.

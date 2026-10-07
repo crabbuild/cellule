@@ -29,7 +29,10 @@ pub(super) async fn spool_selected(
     let results = stream::iter(planned.into_iter().enumerate().map(
         |(order, (descriptor, body_start, index_start))| {
             async move {
-                if descriptor.object_kind() == CellObjectKind::Packed {
+                if matches!(
+                    descriptor.object_kind(),
+                    CellObjectKind::Packed | CellObjectKind::SharedPacked
+                ) {
                     return spool_packed(
                         replica,
                         descriptor,
@@ -90,7 +93,7 @@ async fn spool_packed(
         &replica.cell,
         &replica.incarnation,
         &descriptor.object_digest(),
-        CellObjectKind::Packed,
+        descriptor.object_kind(),
     );
     let permit = replica.host.io_permit().await?;
     let (bytes, _) = replica
@@ -98,11 +101,15 @@ async fn spool_packed(
         .store()
         .get_with_etag_bounded(&path, super::super::upload::SINGLE_PUT_BYTES)
         .await?;
-    super::super::packed::verify(&bytes, &descriptor)?;
+    if descriptor.object_kind() == CellObjectKind::SharedPacked {
+        super::super::shared::verify(&bytes, &descriptor, &replica.cell, &replica.incarnation)?;
+    } else {
+        super::super::packed::verify(&bytes, &descriptor)?;
+    }
     let body_offset = descriptor.offset() as usize;
     let index_offset = (descriptor.offset() + descriptor.info.size_bytes) as usize;
     let body = bytes.slice(body_offset..index_offset);
-    let index = bytes.slice(index_offset..);
+    let index = bytes.slice(index_offset..index_offset + descriptor.index_length as usize);
     let mut body_file = scratch.open(body_destination).await?;
     let mut index_file = scratch.open(index_destination).await?;
     replica

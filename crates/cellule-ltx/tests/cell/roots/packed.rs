@@ -28,7 +28,7 @@ async fn packed_root_vector_authenticates_exact_native_bytes_and_every_metadata_
         .await
         .unwrap();
     let wire: serde_json::Value = serde_json::from_slice(&root_bytes).unwrap();
-    assert_eq!(wire["version"], 2);
+    assert_eq!(wire["version"], 3);
     assert_eq!(wire["directory_height"], 0);
     assert!(wire["directory_inline"].as_str().unwrap().len() <= 4096);
     assert_eq!(wire["segments"][0]["packed"], true);

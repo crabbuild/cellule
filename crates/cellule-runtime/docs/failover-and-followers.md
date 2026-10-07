@@ -2246,3 +2246,11 @@ Crab must prove its own version because its control model differs:
 | [`src/follower`](../src/follower) | Follower store, lane records, and quarantine |
 | [`src/recovery`](../src/recovery) | Recovery claims, manifests, and overlays |
 | [`src/publication`](../src/publication) | Ordered root publication and object coverage |
+
+## Bounded append authorization
+
+The runtime also supports receiver-signed [append grants](append-grants.md).
+Fresh issuance binds the original ensemble, both boots and TLS identities;
+ordinary appends retain signed-message, local fence, expiry, native integrity
+and fsync checks. Seal, retirement and collection serialize with issuance.
+A grant is neither a reused enrollment observation nor object durability proof.

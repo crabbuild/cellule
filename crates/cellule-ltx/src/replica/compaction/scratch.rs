@@ -6,7 +6,7 @@ use cellule_store::{MultipartUploadSource, StorageError};
 use super::CellReplica;
 use crate::{CellObjectKind, Host, LtxError, Result, environment::FileIo};
 
-pub(super) async fn upload(
+pub(in crate::replica) async fn upload(
     replica: &CellReplica,
     scratch: &Arc<ScratchFiles>,
     source: &Path,
@@ -81,16 +81,17 @@ fn storage_read_error(error: LtxError) -> StorageError {
     }
 }
 
-pub(super) struct ScratchFiles {
-    pub(super) host: Host,
+pub(in crate::replica) struct ScratchFiles {
+    pub(in crate::replica) host: Host,
     runtime: tokio::runtime::Handle,
     cleaned: Option<tokio::sync::oneshot::Sender<()>>,
     directory: PathBuf,
     paths: Vec<PathBuf>,
+    disk: Option<crate::DiskReservation>,
 }
 
 impl ScratchFiles {
-    pub(super) fn new(
+    pub(in crate::replica) fn new(
         host: Host,
         directory: &Path,
         runtime: tokio::runtime::Handle,
@@ -102,10 +103,19 @@ impl ScratchFiles {
             cleaned: Some(cleaned),
             directory: directory.to_owned(),
             paths: Vec::new(),
+            disk: None,
         }
     }
 
-    pub(super) fn create(&mut self, label: &str) -> Result<PathBuf> {
+    pub(in crate::replica) fn with_disk_reservation(
+        mut self,
+        disk: crate::DiskReservation,
+    ) -> Self {
+        self.disk = Some(disk);
+        self
+    }
+
+    pub(in crate::replica) fn create(&mut self, label: &str) -> Result<PathBuf> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         for _ in 0..16 {
             let path = self.directory.join(format!(
@@ -178,6 +188,7 @@ impl Drop for ScratchFiles {
         let paths = std::mem::take(&mut self.paths);
         let host = self.host.clone();
         let cleaned = self.cleaned.take();
+        let disk = self.disk.take();
         // Keep dirty/recovery/scratch admission until the last file and queued
         // job have finished, then remove files through the same job ceiling.
         self.runtime.spawn(async move {
@@ -190,6 +201,7 @@ impl Drop for ScratchFiles {
                 })
                 .await;
             drop(host);
+            drop(disk);
             if let Some(cleaned) = cleaned {
                 let _ = cleaned.send(());
             }

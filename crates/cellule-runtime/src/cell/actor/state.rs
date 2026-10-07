@@ -18,6 +18,7 @@ pub(super) struct RuntimeInner {
     pub(super) node_durability: NodeDurabilitySlot,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) unpublished_node_log_bytes: Arc<AtomicU64>,
+    pub(super) shared_publication: Arc<crate::publication::SharedPublication>,
 }
 
 pub(super) enum RuntimeNodeLease {
@@ -449,7 +450,7 @@ pub(super) struct DueResidentCell {
 
 /// Preparation admission carries the retry boundary from original dispatch.
 pub(super) struct PublicationAdmission {
-    pub(super) replica: cellule_ltx::CellReplica,
+    pub(super) replica: crate::publication::PublicationPermit,
     pub(super) fleet_deadline: std::time::Instant,
 }
 

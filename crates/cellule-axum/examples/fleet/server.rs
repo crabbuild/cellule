@@ -1,4 +1,4 @@
-//! Private follower process: mTLS, fresh enrollment and canonical fsynced storage.
+//! Private follower process: signed grants, mTLS and canonical fsynced storage.
 use super::*;
 use axum::{
     Extension, Router,
@@ -9,7 +9,9 @@ use axum::{
 };
 use bytes::Bytes;
 use cellule_peer_http::PeerTlsIdentity;
-use cellule_runtime::follower::FollowerStore;
+use cellule_runtime::follower::{
+    AppendGrantIssuer, AppendGrantPeer, FollowerStore, GrantedFollowerAppend,
+};
 use ed25519_dalek::VerifyingKey;
 use prost::Message;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -41,6 +43,7 @@ pub(super) async fn serve(
         cellule_ltx::Limits::default(),
         cellule_ltx::DiskBudget::new(1 << 30),
     )?
+    .with_append_grant_receiver(session)
     .with_telemetry(
         cellule_runtime::fleet::telemetry::CellTelemetryHandle::from_sink(metrics.clone()),
     );
@@ -165,21 +168,30 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
     if request.member != server.member.as_bytes() {
         return Err(Error::PeerAuthorization("capacity log member differs"));
     }
-    let enrolled = server
-        .metrics
-        .enrollment(
-            true,
+    let enrolled = if matches!(request.operation, 2..=4) {
+        Some(
             server
-                .directory
-                .peer_verifier(sender, peer.certificate(), peer.public_key(), clock()?),
+                .metrics
+                .enrollment(
+                    true,
+                    server.directory.peer_verifier(
+                        sender,
+                        peer.certificate(),
+                        peer.public_key(),
+                        clock()?,
+                    ),
+                )
+                .await?,
         )
-        .await;
-    let enrolled = enrolled?;
+    } else {
+        None
+    };
     // Directory I/O consumed time. Preserve the accepted horizon across wall
     // clock rollback, while monotonic elapsed time still expires the request.
     let now = wire::request_time(started_ms, clock()?, started_at.elapsed())?;
     validate_request(&request, now, "after directory verification")?;
     server.lease.check()?;
+    let deadline = request.deadline_ms;
     let mut reply = wire::Reply {
         member: server.member.as_bytes().to_vec(),
         request_digest: blake3::hash(&body).as_bytes().to_vec(),
@@ -190,20 +202,21 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
             if sender != leader {
                 return Err(Error::PeerAuthorization("capacity append sender differs"));
             }
-            enrolled.authorize_log_append(
-                server.member,
-                request.epoch,
-                request.covered_through,
-                clock()?,
-            )?;
             let phase = std::time::Instant::now();
             let result = server
                 .store
-                .append(
-                    leader,
-                    request.epoch,
-                    request.frames.into_iter().map(Bytes::from).collect(),
-                    request.covered_through,
+                .append_granted(
+                    GrantedFollowerAppend {
+                        peer: AppendGrantPeer {
+                            session: sender,
+                            certificate: peer.certificate(),
+                            public_key: peer.public_key(),
+                        },
+                        log_epoch: request.epoch,
+                        grant: Digest::try_from(request.grant.as_slice())?,
+                        frames: request.frames.into_iter().map(Bytes::from).collect(),
+                    },
+                    server.lease.clone(),
                 )
                 .await;
             server
@@ -212,6 +225,33 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
             let receipt = result?;
             reply.base_sequence = receipt.base_sequence;
             reply.durable_through = receipt.durable_through;
+        }
+        5 => {
+            if sender != leader {
+                return Err(Error::PeerAuthorization("capacity grant sender differs"));
+            }
+            let grant = server
+                .metrics
+                .enrollment(
+                    true,
+                    server.store.open_append_grant(
+                        AppendGrantPeer {
+                            session: sender,
+                            certificate: peer.certificate(),
+                            public_key: peer.public_key(),
+                        },
+                        request.epoch,
+                        request.first_sequence,
+                        AppendGrantIssuer {
+                            directory: &server.directory,
+                            signing_key: server.tls.signing_key(),
+                            lease: &server.lease,
+                            now_ms: now,
+                        },
+                    ),
+                )
+                .await?;
+            reply.grant = grant.encode();
         }
         3 => {
             if sender != leader {
@@ -262,7 +302,13 @@ async fn handle_inner(server: Server, peer: PeerTlsIdentity, encoded: Bytes) -> 
         }
         _ => return Err(Error::PeerAuthorization("capacity operation differs")),
     }
+    drop(enrolled);
     server.lease.check()?;
+    if wire::request_time(started_ms, clock()?, started_at.elapsed())? >= deadline {
+        return Err(Error::PeerAuthorization(
+            "capacity reply exceeded request horizon",
+        ));
+    }
     let reply = wire::sign(
         reply.encode_to_vec(),
         server.tls.signing_key(),

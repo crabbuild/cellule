@@ -42,8 +42,12 @@ RootPreparation
 RootPreparationFuture
 RootPreparationMetadata
 RootRef
+SHARED_PUBLICATION_BYTES
+SHARED_PUBLICATION_ROWS
 ScratchMonitor
 SegmentInfo
+SharedAppend
+SharedCaptures
 TransactionError
 VerifiedNodeFrame
 VerifiedPlan
