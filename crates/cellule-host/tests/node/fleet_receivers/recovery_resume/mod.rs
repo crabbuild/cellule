@@ -19,6 +19,15 @@ async fn failed(
     value: i64,
     overlay: bool,
 ) -> (Movement, FleetAction, Control, Acknowledged) {
+    failed_with_source_drain(writes, value, overlay, false).await
+}
+
+async fn failed_with_source_drain(
+    writes: usize,
+    value: i64,
+    overlay: bool,
+    drain_source: bool,
+) -> (Movement, FleetAction, Control, Acknowledged) {
     let movement = Movement::new(128 << 20).await;
     let now = clock();
     let identity = MutationIdentity {
@@ -46,6 +55,36 @@ async fn failed(
         super::suffix::start_suffix_recovery(&movement).await;
     } else {
         movement.start_recovery(false).await;
+    }
+    if drain_source {
+        let before = movement
+            .inputs
+            .authority
+            .load(movement.spec.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let error = movement.source.node.shutdown().await.unwrap_err();
+        assert!(matches!(
+            error,
+            Error::Facility {
+                name: "cell-runtime-drain",
+                ..
+            }
+        ));
+        assert!(has_fenced_source(&error));
+        assert_eq!(movement.source.node.state(), NodeState::Draining);
+        assert_eq!(
+            movement
+                .inputs
+                .authority
+                .load(movement.spec.target.cell_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .value(),
+            before.value()
+        );
     }
     if writes == 0 {
         movement

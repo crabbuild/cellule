@@ -1763,6 +1763,19 @@ sequenceDiagram
 An optional successor hint may prefetch the authenticated root directory and hot
 pages, but it grants no authority.
 
+An empty object-coverage queue needs no new coverage CAS, including after a
+local lease fence. This no-op grants no proof: contiguous coverage, exact
+member retirement, and the current authority close are still required. Pending
+tickets continue to require the original live lease and remain retained after
+fencing.
+
+Cell deactivation can close every native handle while preserving a fenced
+release failure. Shutdown retains that original error even if recovery later
+changes the owner record. Resource closure does not prove an Idle release or
+successful session withdrawal; the host remains draining when a required
+facility fails. A fault test that deliberately fences its source must verify
+the typed original failure and empty resource ledgers alongside exact recovery.
+
 Clean node shutdown is broader:
 
 1. Withdraw public admission and mark the session draining

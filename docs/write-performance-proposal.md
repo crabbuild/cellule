@@ -1,6 +1,9 @@
 # Cellule write performance proposal and delivery plan
 
 Status: proposed implementation plan, 2026-10-06. Write parity is not achieved.
+Implementation and actual verification are tracked in the
+[delivery report](write-performance-delivery.md). Its partial milestone status
+does not relax the acceptance gates below.
 The implementation baseline is PR [65](https://github.com/crabbuild/cellule/pull/65)
 at `397f500a`, against main `0813f974` and celld v0.6.1 `f2bf6486`.
 The [performance plan](performance-plan.md) retains the earlier audit and local

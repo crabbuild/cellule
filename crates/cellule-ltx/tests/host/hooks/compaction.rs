@@ -59,6 +59,7 @@ async fn compaction_case_inputs(
     replica: &CellReplica,
     writer: &mut Db,
     composed: bool,
+    large: bool,
 ) -> (cellule_ltx::RootRef, Option<cellule_ltx::CaptureBatch>) {
     let mut root = replica
         .prepare(None, &writer.capture().unwrap(), 1, 1)
@@ -70,7 +71,13 @@ async fn compaction_case_inputs(
     }
     for sequence in 2..=8 {
         writer
-            .transaction(|tx| tx.execute_batch("UPDATE t SET v=randomblob(20000)"))
+            .transaction(|tx| {
+                tx.execute_batch("UPDATE t SET v=randomblob(20000)")?;
+                if large {
+                    tx.execute_batch("UPDATE padding SET v=randomblob(400000)")?;
+                }
+                Ok(())
+            })
             .unwrap();
         root = replica
             .prepare(Some(&root), &writer.capture().unwrap(), sequence, 1)
@@ -199,10 +206,14 @@ async fn canceled_parallel_output_flushes_retain_both_jobs_and_scratch() {
 async fn compaction_dependency_failure_cannot_return_metadata_proposal() {
     use cellule_store::test_support::CountingObjectStore;
 
-    for (composed, operation) in [false, true].into_iter().flat_map(|composed| {
+    for (composed, operation, packed) in [false, true].into_iter().flat_map(|composed| {
         ["compaction_ltx_read", "compaction_index_read"]
             .into_iter()
-            .map(move |operation| (composed, operation))
+            .flat_map(move |operation| {
+                [false, true]
+                    .into_iter()
+                    .map(move |packed| (composed, operation, packed))
+            })
     }) {
         let (directory, faults, host, mut writer) = fixture();
         let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
@@ -218,7 +229,16 @@ async fn compaction_dependency_failure_cannot_return_metadata_proposal() {
         )
         .unwrap()
         .with_host(host);
-        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed).await;
+        if !packed {
+            writer
+                .transaction(|tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE padding(v); INSERT INTO padding VALUES(randomblob(400000))",
+                    )
+                })
+                .unwrap();
+        }
+        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed, !packed).await;
         counted.reset();
         faults.arm(Some(operation));
         let result = if let Some(cuts) = &cuts {
@@ -232,10 +252,18 @@ async fn compaction_dependency_failure_cannot_return_metadata_proposal() {
                 .await
         };
         assert!(result.is_err(), "metadata upload must not mask {operation}");
-        assert!(
-            counted.put_requests() > 0,
-            "the independent metadata branch should complete"
-        );
+        if packed {
+            assert_eq!(
+                counted.put_requests(),
+                0,
+                "packed identity is not known before source verification"
+            );
+        } else {
+            assert!(
+                counted.put_requests() > 0,
+                "the independent metadata branch should complete: composed={composed}, operation={operation}"
+            );
+        }
         faults.arm(None);
         let restored = directory.path().join("original.sqlite");
         replica
@@ -534,10 +562,9 @@ async fn compaction_overlaps_independent_remote_transfers() {
         .await
         .unwrap();
 
-    // Cached metadata HEADs, source transfers, directory and root uploads each
-    // need one wave. The compacted body/index upload overlaps the directory;
-    // the returned proposal still waits for all immutable dependencies.
-    assert_eq!(started.elapsed(), delay * 4);
+    // Cached root HEADs, concurrent packed source transfers, then packed/root
+    // uploads need three waves. The bounded directory leaf stays in the root.
+    assert_eq!(started.elapsed(), delay * 3);
     writer.close().unwrap();
 }
 #[cfg(feature = "replica")]
@@ -740,7 +767,7 @@ async fn verify_canceled_compaction(pre_admitted: bool) {
                 .with_recovery_slots(recovery.clone())
                 .with_scratch_slots(scratch.clone()),
         );
-        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed).await;
+        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed, false).await;
         writer.close().unwrap();
         let pause = Arc::new(Pause {
             operation,

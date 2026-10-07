@@ -25,6 +25,8 @@ pub enum CellObjectKind {
     Root,
     /// Recovery bundle.
     Bundle,
+    /// Bounded segment and authenticated fixed-width index in one object.
+    Packed,
 }
 
 impl CellObjectKind {
@@ -35,6 +37,7 @@ impl CellObjectKind {
             Self::Directory => "dir",
             Self::Root => "root",
             Self::Bundle => "bundle",
+            Self::Packed => "pack",
         }
     }
 }

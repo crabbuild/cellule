@@ -3,6 +3,66 @@
 use super::*;
 
 #[tokio::test]
+async fn native_append_timing_distinguishes_durable_batches_from_retries() {
+    #[derive(Default)]
+    struct Timings(Mutex<Vec<crate::fleet::telemetry::FollowerAppendTiming>>);
+    impl crate::fleet::telemetry::CellTelemetry for Timings {
+        fn follower_append(&self, timing: crate::fleet::telemetry::FollowerAppendTiming) {
+            self.0.lock().unwrap().push(timing);
+        }
+    }
+    let sink = Arc::new(Timings::default());
+    let limits = cellule_ltx::Limits::default();
+    let source = tempfile::TempDir::new().unwrap();
+    let mut database = Db::open(&source.path().join("cell.sqlite"), limits).unwrap();
+    database
+        .transaction(|tx| {
+            tx.execute_batch("CREATE TABLE values_(v); INSERT INTO values_ VALUES(1)")
+        })
+        .unwrap();
+    let capture = database.capture().unwrap();
+    let segment = capture.segments.first().unwrap();
+    let root = tempfile::TempDir::new().unwrap();
+    let store = FollowerStore::open(
+        root.path().to_owned(),
+        limits,
+        cellule_ltx::DiskBudget::new(1 << 30),
+    )
+    .unwrap()
+    .with_telemetry(crate::fleet::telemetry::CellTelemetryHandle::from_sink(
+        sink.clone(),
+    ));
+    let leader = SessionId::from_bytes([1; 16]);
+    let frames = vec![frame(1, segment, limits), frame(2, segment, limits)];
+    assert_eq!(
+        store
+            .append(leader, 2, frames.clone(), 0)
+            .await
+            .unwrap()
+            .durable_through,
+        2
+    );
+    assert_eq!(
+        store
+            .append(leader, 2, frames, 0)
+            .await
+            .unwrap()
+            .durable_through,
+        2
+    );
+    let observed = sink.0.lock().unwrap();
+    assert_eq!(observed.len(), 2);
+    assert!(
+        observed
+            .iter()
+            .all(|timing| timing.succeeded && timing.frames == 2)
+    );
+    assert_eq!(observed[0].data_sync_calls, 1);
+    assert_eq!(observed[1].data_sync_calls, 0);
+    assert!(observed[0].data_sync <= observed[0].worker);
+}
+
+#[tokio::test]
 async fn cordon_blocks_new_lanes_while_existing_tail_appends_and_restart_remain_safe() {
     let limits = cellule_ltx::Limits::default();
     let source = tempfile::TempDir::new().unwrap();

@@ -5,6 +5,7 @@ BlobNamespace
 BuildDescriptor
 CatalogRole
 CellClient
+CellPublicationProgress
 CellReadReplica
 CellId
 CellModule

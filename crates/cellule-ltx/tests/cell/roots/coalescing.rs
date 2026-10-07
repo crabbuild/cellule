@@ -44,8 +44,8 @@ async fn small_captured_batch_publishes_one_delta_and_restores_every_original_cu
     );
     assert_eq!(
         counted.put_requests(),
-        4,
-        "one body/index pair, final directory and root"
+        2,
+        "one packed body/index and root containing its final directory"
     );
     let retried = cell.prepare(Some(&base), &batch, 17, 1).await.unwrap();
     assert_eq!(retried.root(), prepared.root());

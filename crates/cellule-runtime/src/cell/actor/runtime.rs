@@ -721,6 +721,18 @@ impl CellRuntime {
         self.inner.shutting_down.load(Ordering::Acquire)
     }
 
+    /// Samples committed command publication debt through the bounded actor lane.
+    /// This diagnostic performs no provider I/O and grants no writer authority.
+    pub async fn publication_progress(&self) -> crate::Result<CellPublicationProgress> {
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::PublicationProgress { reply })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
     /// Samples node-wide admission usage without waiting for actor work.
     #[must_use]
     pub fn stats(&self) -> CellRuntimeStats {

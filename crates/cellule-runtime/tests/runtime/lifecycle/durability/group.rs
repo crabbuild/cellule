@@ -195,6 +195,17 @@ async fn queued_fleet_groups_recover_and_backlog_refuses_before_sql() {
     assert_eq!(frames[1].first_commit_sequence(), 5);
     assert_eq!(frames[1].scope().commit_sequence, 6);
     assert_eq!(
+        responses
+            .1
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|timing| timing.succeeded)
+            .map(|timing| timing.covered_commits)
+            .sum::<u64>(),
+        6
+    );
+    assert_eq!(
         &responses.0.lock().unwrap()[..6],
         &[CommandResponseSource::Fleet; 6]
     );
@@ -430,6 +441,13 @@ async fn queued_native_mutations_share_one_capture_and_exact_root_proof() {
             .map(|timing| timing.commit_sequence)
             .collect::<Vec<_>>(),
         vec![1, 5]
+    );
+    assert_eq!(
+        publications
+            .iter()
+            .map(|timing| timing.covered_commits)
+            .collect::<Vec<_>>(),
+        vec![1, 4]
     );
     assert_eq!(
         root.position.txid, 3,

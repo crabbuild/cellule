@@ -1,6 +1,12 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_source_shutdown_preserves_its_fence_and_exact_recovery() {
+    let (movement, action, idle, receipt) = failed_with_source_drain(1, 42, false, true).await;
+    finish(movement, action, &idle, 42, false, receipt).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_source_missing_or_corrupt_history_blocks_idle_and_ordinary_winner() {
     for (corrupt, ordinary) in [(false, false), (true, false), (false, true), (true, true)] {
         let (movement, action, idle, receipt) = failed(1, 42, false).await;

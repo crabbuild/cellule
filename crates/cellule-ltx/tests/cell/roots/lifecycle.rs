@@ -124,23 +124,18 @@ async fn small_appends_report_a_bounded_publication_cost() {
     )
     .unwrap();
 
-    // A bootstrap root uploads one body, one index, the changed directory
-    // nodes, and the root document. The bound documents the per-command
-    // object-store amplification the runtime budgets against.
+    // A small root uses one packed body/index and an authenticated inline leaf.
+    // Runtime lineage and control selection add two authority PUTs.
     let first = writer.capture().unwrap();
     let root = replica.prepare(None, &first, 1, 1).await.unwrap().root();
     let initial = replica.take_publication_cost();
-    assert!(
-        (4..=12).contains(&initial.objects),
-        "bootstrap objects: {initial:?}"
-    );
+    assert_eq!(initial.objects, 2, "bootstrap objects: {initial:?}");
     assert!(
         initial.bytes >= first.segments[0].info().size_bytes,
         "{initial:?}"
     );
 
-    // One appended command pays at least a body and index, and no more than the
-    // same bounded set of metadata objects.
+    // The appended command retains the same bounded representation.
     writer
         .transaction(|transaction| {
             transaction.execute_batch("INSERT INTO t VALUES(randomblob(4096))")
@@ -149,10 +144,7 @@ async fn small_appends_report_a_bounded_publication_cost() {
     let second = writer.capture().unwrap();
     replica.prepare(Some(&root), &second, 2, 1).await.unwrap();
     let append = replica.take_publication_cost();
-    assert!(
-        (3..=12).contains(&append.objects),
-        "append objects: {append:?}"
-    );
+    assert_eq!(append.objects, 2, "append objects: {append:?}");
     assert!(
         append.bytes >= second.segments[0].info().size_bytes,
         "{append:?}"

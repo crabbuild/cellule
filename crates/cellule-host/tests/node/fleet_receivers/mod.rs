@@ -277,9 +277,34 @@ impl Movement {
 
     async fn shutdown(&self) {
         self.receiver.shutdown().await.unwrap();
-        self.source.node.shutdown().await.unwrap();
-        for node in [&self.receiver, &self.source.node] {
-            assert_eq!(node.state(), NodeState::Stopped);
+        let source_fenced = match self.source.node.shutdown().await {
+            Ok(()) => false,
+            Err(Error::Facility {
+                name: "cell-runtime-drain",
+                source,
+            }) if matches!(self.source.lease.check(), Err(Error::Fenced))
+                && has_fenced_source(source.as_ref()) =>
+            {
+                true
+            }
+            Err(error) => panic!("unexpected source shutdown failure: {error:?}"),
+        };
+        // Failed-source fixtures deliberately fence the source lease. Cleanup
+        // may finish before recovery changes its owner record, retaining the
+        // original Fenced error as required by the runtime drain contract.
+        // No other facility failure or remaining native resource is accepted.
+        for (node, state) in [
+            (&self.receiver, NodeState::Stopped),
+            (
+                &self.source.node,
+                if source_fenced {
+                    NodeState::Draining
+                } else {
+                    NodeState::Stopped
+                },
+            ),
+        ] {
+            assert_eq!(node.state(), state);
             let stats = node.stats();
             assert_eq!(stats.active_cells(), 0);
             assert_eq!(stats.worker_jobs(), 0);
@@ -287,6 +312,18 @@ impl Movement {
             assert_eq!(stats.resident_bytes(), 0);
             assert_eq!(stats.file_descriptors(), 0);
             assert_eq!(stats.local_disk_reserved_bytes(), 0);
+        }
+    }
+}
+
+fn has_fenced_source(mut error: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if matches!(error.downcast_ref::<Error>(), Some(Error::Fenced)) {
+            return true;
+        }
+        match error.source() {
+            Some(source) => error = source,
+            None => return false,
         }
     }
 }

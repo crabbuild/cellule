@@ -84,7 +84,8 @@ impl Enrollment {
                 }
             }
             .await;
-            if result.is_err() {
+            if let Err(error) = &result {
+                eprintln!("Node heartbeat failed: {error:?}");
                 running.lease.fence();
             }
             result

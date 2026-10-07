@@ -93,6 +93,11 @@ pub(super) fn handle_publication_admitted(
                     total: elapsed,
                     succeeded: false,
                     commit_sequence: newest.pending.outcome().commit_sequence(),
+                    covered_commits: newest
+                        .pending
+                        .outcome()
+                        .commit_sequence()
+                        .saturating_sub(active.published_sequence),
                 });
             }
             active.publisher = Some(*publisher);
@@ -160,6 +165,7 @@ pub(super) fn handle_published(
     active.finish_task(effect_id, CoordinationEffect::Publication);
     active.last_work_at = std::time::Instant::now();
     let object_published = result.is_ok();
+    active.publishing_since = None;
     if object_published {
         // Control now names this commit, so the local mirror can answer a due
         // scan without reading the record back.

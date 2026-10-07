@@ -77,7 +77,10 @@ impl ObjectStore for TransferGateStore {
     }
     async fn get_opts(&self, path: &Path, opts: GetOptions) -> object_store::Result<GetResult> {
         let kind = *self.kind.lock().unwrap();
-        let selected = opts.range.is_some() && kind.is_some() && path.extension() == kind;
+        let selected = !opts.head
+            && (opts.range.is_some() || kind == Some("pack"))
+            && kind.is_some()
+            && path.extension() == kind;
         let _active = selected.then(|| {
             let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
             self.peak.fetch_max(active, Ordering::AcqRel);
@@ -130,14 +133,22 @@ async fn compaction_index_transfers_refill_before_first_source_finishes() {
     verify_transfer_refill("index").await;
 }
 
+#[tokio::test]
+async fn packed_compaction_transfers_refill_before_first_source_finishes() {
+    verify_transfer_refill("pack").await;
+}
+
 async fn verify_transfer_refill(kind: &'static str) {
     let directory = tempfile::tempdir().unwrap();
     let backend = Arc::new(TransferGateStore::new());
     let cell = replica(Store::new(backend.clone()), [233; 32], [234; 16]);
     let mut writer = Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
+    let padding = if kind == "pack" { 96 } else { 300_000 };
     writer
         .transaction(|tx| {
-            tx.execute_batch("CREATE TABLE counter(value); INSERT INTO counter VALUES(0)")
+            tx.execute_batch("CREATE TABLE counter(value); INSERT INTO counter VALUES(0); CREATE TABLE padding(v)")?;
+            tx.execute("INSERT INTO padding VALUES(randomblob(?1))", [padding])?;
+            Ok(())
         })
         .unwrap();
     let mut root = cell
@@ -147,7 +158,11 @@ async fn verify_transfer_refill(kind: &'static str) {
         .root();
     for sequence in 2..=5 {
         writer
-            .transaction(|tx| tx.execute_batch("UPDATE counter SET value=value+1"))
+            .transaction(|tx| {
+                tx.execute_batch("UPDATE counter SET value=value+1")?;
+                tx.execute("UPDATE padding SET v=randomblob(?1)", [padding])?;
+                Ok(())
+            })
             .unwrap();
         root = cell
             .prepare(Some(&root), &writer.capture().unwrap(), sequence, 1)

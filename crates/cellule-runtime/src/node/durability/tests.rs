@@ -598,3 +598,39 @@ async fn shutdown_retries_after_object_coverage_and_is_idempotent() {
     durability.shutdown().await.unwrap();
     durability.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn fenced_empty_coverage_flush_does_not_require_new_writer_authority() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let authority = RecordingAuthority::default();
+    let lease = lease();
+    lease.fence();
+    let coverage = ObjectCoverage::default();
+    coverage
+        .flush(&gate, &authority, &lease, &[])
+        .await
+        .unwrap();
+    assert!(authority.0.lock().unwrap().coverage.is_empty());
+    assert_eq!(gate.tiered_through(), 0);
+}
+
+#[tokio::test]
+async fn fenced_pending_coverage_flush_retains_tickets_without_advancing() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let authority = RecordingAuthority::default();
+    let lease = lease();
+    let ticket = gate.issue(1).unwrap();
+    let coverage = ObjectCoverage::default();
+    coverage.stage(&gate, &[ticket]).unwrap();
+    lease.fence();
+    assert!(matches!(
+        coverage.flush(&gate, &authority, &lease, &[]).await,
+        Err(Error::Fenced)
+    ));
+    assert!(authority.0.lock().unwrap().coverage.is_empty());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(matches!(
+        gate.begin_rotation(),
+        Err(Error::PendingPublication)
+    ));
+}

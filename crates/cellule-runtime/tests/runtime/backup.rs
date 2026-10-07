@@ -199,7 +199,7 @@ async fn pin_verifies_roots_and_fails_closed_when_a_dependency_is_missing() {
         .await
         .unwrap()
         .into_iter()
-        .find(|object| object.kind == CellObjectKind::Ltx)
+        .find(|object| matches!(object.kind, CellObjectKind::Ltx | CellObjectKind::Packed))
         .unwrap();
     let missing_path = layout.incarnation_object_path(
         cell.as_bytes(),

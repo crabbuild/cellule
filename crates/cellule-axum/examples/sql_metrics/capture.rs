@@ -35,6 +35,14 @@ pub(super) struct CaptureMetrics {
 }
 
 impl CaptureMetrics {
+    pub(super) fn window_snapshot(&self) -> serde_json::Map<String, serde_json::Value> {
+        PHASES
+            .iter()
+            .zip(&self.phases)
+            .map(|(name, phase)| (format!("capture_{name}"), phase.raw()))
+            .collect()
+    }
+
     pub(super) fn observe(&self, timing: &CaptureTiming, succeeded: bool) {
         // Preserve CaptureTiming boundaries. A phase not visited by an attempt
         // contributes zero; this is one bounded histogram set, not Cell labels.

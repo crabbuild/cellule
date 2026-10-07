@@ -95,6 +95,10 @@ async fn publication_admission_batches_commits_that_arrive_while_waiting() {
     }
 
     responses.wait_for_responses(4).await;
+    let progress = runtime.publication_progress().await.unwrap();
+    assert_eq!(progress.pending_publications, 4);
+    assert!(progress.retained_capture_bytes > 0);
+    assert!(progress.oldest_unpublished.is_some());
     assert!(
         responses
             .0
@@ -108,6 +112,10 @@ async fn publication_admission_batches_commits_that_arrive_while_waiting() {
         .await
         .unwrap()
         .unwrap();
+    let progress = runtime.publication_progress().await.unwrap();
+    assert_eq!(progress.pending_publications, 0);
+    assert_eq!(progress.retained_capture_bytes, 0);
+    assert_eq!(progress.oldest_unpublished, None);
     runtime.shutdown().await.unwrap();
 
     let released = CellAuthority::new(fixture.layout.clone())

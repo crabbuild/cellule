@@ -143,6 +143,21 @@ pub struct NodeJobReservation {
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 
+/// Actor-owned committed publication debt, sampled without provider I/O.
+///
+/// These observations grant no durability proof. Age covers queued and running
+/// command publications, excluding migration and failed recovery obligations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellPublicationProgress {
+    /// Physical capture publications awaiting their terminal result. A capture
+    /// may contain several logically committed commands.
+    pub pending_publications: usize,
+    /// Retained capture bytes of those command publications.
+    pub retained_capture_bytes: u64,
+    /// Age of the oldest queued or running command publication, if any.
+    pub oldest_unpublished: Option<std::time::Duration>,
+}
+
 /// Point-in-time node admission usage for one embedded Cell runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellRuntimeStats {

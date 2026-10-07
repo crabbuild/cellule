@@ -129,6 +129,7 @@ pub(super) fn handle_activated(
                     publisher: Some(*publisher),
                     durability_submitter,
                     publications: VecDeque::new(),
+                    publishing_since: None,
                     publication_bytes: 0,
                     unpublished_node_logs: 0,
                     queue: VecDeque::new(),

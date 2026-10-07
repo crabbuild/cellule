@@ -20,6 +20,7 @@ pub(super) struct Transport {
     sender: SessionId,
     tls: Arc<LoadedPeerTls>,
     members: HashMap<NodeId, Member>,
+    metrics: Arc<QueryMetrics>,
 }
 
 impl Transport {
@@ -28,6 +29,7 @@ impl Transport {
         sender: SessionId,
         tls: Arc<LoadedPeerTls>,
         members: Vec<NodeAdvertisement>,
+        metrics: Arc<QueryMetrics>,
     ) -> Result<Self> {
         let mut enrolled = HashMap::new();
         for original in members {
@@ -47,6 +49,7 @@ impl Transport {
             sender,
             tls,
             members: enrolled,
+            metrics,
         })
     }
 
@@ -56,10 +59,14 @@ impl Transport {
             .get(&member)
             .ok_or(Error::PeerAuthorization("unknown capacity follower"))?;
         let fresh = self
-            .directory
-            .load_if_live(peer.original.session(), clock()?)
-            .await?
-            .ok_or(Error::Fenced)?;
+            .metrics
+            .enrollment(
+                false,
+                self.directory
+                    .load_if_live(peer.original.session(), clock()?),
+            )
+            .await;
+        let fresh = fresh?.ok_or(Error::Fenced)?;
         let actual = fresh.advertisement();
         if actual.node() != member
             || actual.certificate() != peer.original.certificate()
@@ -71,13 +78,17 @@ impl Transport {
         request.sender = self.sender.as_bytes().to_vec();
         request.member = member.as_bytes().to_vec();
         request.deadline_ms = clock()?.checked_add(10_000).ok_or(Error::Deadline)?;
+        let phase = std::time::Instant::now();
         let body = request.encode_to_vec();
         let digest = blake3::hash(&body);
         let encoded = wire::sign(body, self.tls.signing_key(), wire::REQUEST_DOMAIN);
+        self.metrics
+            .peer_phase(PeerPhase::RequestSign, phase.elapsed());
         if encoded.len() > wire::MAX_REQUEST_BYTES {
             return Err(Error::Capacity("capacity node-log request bytes"));
         }
-        let encoded = tokio::time::timeout(Duration::from_secs(10), async {
+        let phase = std::time::Instant::now();
+        let result = tokio::time::timeout(Duration::from_secs(10), async {
             let response = peer
                 .client
                 .post(format!(
@@ -104,8 +115,11 @@ impl Transport {
             }
             Ok(bytes)
         })
-        .await
-        .map_err(transport_error)??;
+        .await;
+        self.metrics
+            .peer_phase(PeerPhase::RoundTrip, phase.elapsed());
+        let encoded = result.map_err(transport_error)??;
+        let phase = std::time::Instant::now();
         let body = wire::verify(&encoded, &actual.verifying_key()?, wire::RESPONSE_DOMAIN)?;
         let reply = wire::Reply::decode(body.as_slice())?;
         if reply.member != member.as_bytes() || reply.request_digest != digest.as_bytes() {
@@ -116,6 +130,8 @@ impl Transport {
         if reply.status != 0 {
             return Err(Error::Peer("capacity follower operation failed"));
         }
+        self.metrics
+            .peer_phase(PeerPhase::ReplyVerify, phase.elapsed());
         Ok(reply)
     }
 }

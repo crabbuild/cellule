@@ -310,7 +310,12 @@ async fn cell_prepare_bounds_source_transfers_without_local_writes() {
         .iter()
         .map(|segment| segment.info().size_bytes.div_ceil(8 << 20) as usize)
         .sum();
-    assert_eq!(faults.read_calls.load(Ordering::Relaxed), expected_reads);
+    // The small bootstrap also needs one bounded read to derive the packed
+    // content digest before upload; its frozen upload rechecks the source.
+    assert_eq!(
+        faults.read_calls.load(Ordering::Relaxed),
+        expected_reads + 1
+    );
     writer.close().unwrap();
     drop(directory);
 }
@@ -432,7 +437,7 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
     assert_eq!(started.elapsed(), delay * 2);
     assert_eq!(counted.counts().heads, 1);
     assert_eq!(counted.counts().body_requests(), 0);
-    assert_eq!(counted.put_requests(), 4);
+    assert_eq!(counted.put_requests(), 2);
     assert_eq!(prepared.root().position, second.position);
     counted.reset();
     let compacted = replica
@@ -444,19 +449,18 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
         compacted.root().commit_sequence,
         prepared.root().commit_sequence
     );
-    // Remote range reads belong to compaction's authenticated body/index
-    // spools, rather than ordinary warm-write SQLite page faults.
-    assert_eq!(counted.counts().ranges, 4);
-    for extension in [".ltx", ".index"] {
+    // Each compaction input supplies both authenticated scratch streams from
+    // one pack GET; ordinary warm append still makes no metadata body reads.
+    assert_eq!(counted.counts().ranges, 0);
+    assert_eq!(counted.counts().full, 2);
+    for (kind, expected) in [(ObjectReadKind::Range, 0), (ObjectReadKind::Full, 2)] {
         assert_eq!(
             counted
                 .requests()
                 .iter()
-                .filter(|request| {
-                    request.kind == ObjectReadKind::Range && request.location.ends_with(extension)
-                })
+                .filter(|request| { request.kind == kind && request.location.ends_with(".pack") })
                 .count(),
-            2
+            expected
         );
     }
     let independent = CellReplica::new(
@@ -478,7 +482,7 @@ async fn warm_append_reuses_its_authenticated_root_metadata() {
     .unwrap();
     let cold_started = tokio::time::Instant::now();
     independent.open_root(&prepared.root()).await.unwrap();
-    assert!(cold_started.elapsed() >= delay * 2);
+    assert_eq!(cold_started.elapsed(), delay);
     writer.close().unwrap();
 }
 #[cfg(feature = "replica")]

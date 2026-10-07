@@ -67,6 +67,20 @@ impl CellReplica {
             index,
             body,
         } = segment;
+        if let AppendBody::Packed(source) = body {
+            let path = self.layout.incarnation_object_path(
+                &self.cell,
+                &self.incarnation,
+                &descriptor.object_digest(),
+                CellObjectKind::Packed,
+            );
+            let _permit = self.host.io_permit().await?;
+            let length =
+                packed::HEADER_BYTES + descriptor.info.size_bytes + descriptor.index_length;
+            put_source(self, &path, source, length, descriptor.object_digest()).await?;
+            self.cost.record(length);
+            return Ok(());
+        }
         let body_upload = async {
             if descriptor.object_kind() != CellObjectKind::Ltx {
                 return Ok(());
@@ -74,7 +88,7 @@ impl CellReplica {
             let source: Arc<dyn cellule_store::MultipartUploadSource> = match body {
                 AppendBody::Native(source) => source,
                 AppendBody::Frozen(bytes) => Arc::new(FrozenCapture(bytes)),
-                AppendBody::Bundle => {
+                AppendBody::Bundle | AppendBody::Packed(_) => {
                     return Err(LtxError::InvalidState("native Cell body source missing"));
                 }
             };
@@ -137,7 +151,7 @@ const MULTIPART_BYTES: usize = 8 << 20;
 // below one multipart chunk so many publishing Cells stay within node memory.
 pub(super) const SINGLE_PUT_BYTES: u64 = 256 << 10;
 
-struct FrozenCapture(Bytes);
+pub(super) struct FrozenCapture(pub(super) Bytes);
 
 #[async_trait::async_trait]
 impl cellule_store::MultipartUploadSource for FrozenCapture {
