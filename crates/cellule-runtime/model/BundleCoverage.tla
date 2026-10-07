@@ -49,9 +49,9 @@ Select(b) == /\ stage[b] = 2 /\ open /\ b \in present
              /\ (SkipPrefix \/ (proposedHead[b] = head /\ b = head + 1))
              /\ stage' = [stage EXCEPT ![b] = 3]
              /\ head' = b /\ version' = version + 1
-             /\ badSelection' = badSelection \/ closed # {} \/ proposedEpoch[b] # epoch
-             /\ badPrefix' = badPrefix \/ b # head + 1 \/ proposedHead[b] # head
-             /\ badContents' = badContents \/ b \notin complete
+             /\ badSelection' = (badSelection \/ closed # {} \/ proposedEpoch[b] # epoch)
+             /\ badPrefix' = (badPrefix \/ b # head + 1 \/ proposedHead[b] # head)
+             /\ badContents' = (badContents \/ b \notin complete)
              /\ UNCHANGED <<open, epoch, closed, endpoint, proposedVersion,
                   proposedHead, proposedEpoch, complete, present, proof,
                   ack, visible, root>>
