@@ -236,7 +236,9 @@ fn parse_inline(value: &str) -> Result<Arc<[u8]>> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| Ok((nibble(pair[0])? << 4) | nibble(pair[1])?))
         .collect::<Result<Vec<_>>>()
         .map(Into::into)
