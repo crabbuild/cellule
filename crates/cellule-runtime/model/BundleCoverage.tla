@@ -38,7 +38,7 @@ Prepare(b) == /\ stage[b] = 0 /\ open /\ closed = {}
 Upload(b, good) == /\ stage[b] = 1
                   /\ stage' = [stage EXCEPT ![b] = 2]
                   /\ present' = present \cup {b}
-                  /\ complete' = IF good THEN complete \cup {b} ELSE complete
+                  /\ complete' = (IF good THEN complete \cup {b} ELSE complete)
                   /\ UNCHANGED <<open, version, head, epoch, closed, endpoint,
                        proposedVersion, proposedHead, proposedEpoch, proof,
                        ack, visible, root, badSelection, badPrefix, badContents>>
