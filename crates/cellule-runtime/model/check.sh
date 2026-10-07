@@ -118,6 +118,14 @@ case "$mode" in
     run_model BundleCoverageRead.cfg ReadProven BundleCoverage
     run_model BundleCoverageGC.cfg ColdRecoverable BundleCoverage
     ;;
+  binding-drain)
+    java -cp "$jar" tlc2.TLC -workers 1 -nowarning -noGenerateSpecTE \
+      -metadir "$cache_dir/meta-binding-drain" \
+      -config "$model_dir/BindingDrain.cfg" "$model_dir/BindingDrain.tla"
+    run_model BindingDrainSelectedOnly.cfg TransferredRecoverable BindingDrain
+    run_model BindingDrainLateIssue.cfg IssuedPrefixFrozen BindingDrain
+    run_model BindingDrainRetire.cfg AckRecoverable BindingDrain
+    ;;
   fast)
     java -cp "$jar" tlc2.TLC -workers 1 -depth 6 -nowarning -noGenerateSpecTE \
       -metadir "$cache_dir/meta-fast" \
@@ -141,7 +149,7 @@ case "$mode" in
     run_model CellCoordinationBrokenRelease.cfg RetainedHasOwner
     ;;
   *)
-    echo "usage: $0 {fast|broad|negative|write-proofs|bundle-coverage}" >&2
+    echo "usage: $0 {fast|broad|negative|write-proofs|bundle-coverage|binding-drain}" >&2
     exit 2
     ;;
 esac

@@ -99,3 +99,24 @@ references. An ordinary root that still refers to shared bundle data cannot
 perform that action. The model does not implement or prove those checks, SQLite replay,
 cryptography, provider persistence, bounded history or Rust adapter ordering.
 No production response is enabled by a passing result.
+
+## Accepted Fleet suffix during binding closure
+
+`check.sh binding-drain` composes follower ACKs with later object selection for
+one binding and two ordered commands. A selected-only closure could omit a
+command already acknowledged by the native follower path. `BeginClose` first
+stops issuance and freezes the complete previously assigned range. Closing may
+select verified rows only through that endpoint, under a fresh CAS, before
+terminal closure and reconstruction permit transfer. Old uploaded proposals
+must rebase their authority version and unchanged predecessor; they cannot add
+new commands after the boundary. Retirement preserves every ACK's durable copy.
+
+The positive configuration checks accepted-prefix coverage, frozen issuance,
+recoverable ACKs and a terminal endpoint reconstructed before transfer. Under
+weakly fair successful preparation/upload/selection, `ClosingDrains` checks
+eventual terminal closure. Three unsafe configurations must expose
+`TransferredRecoverable`, `IssuedPrefixFrozen` and `AckRecoverable` respectively.
+The model assumes exact complete captures and authenticated independent
+checkpoints. It does not prove that Rust joins every accepted SQL/capture job,
+that native receivers enforce the barrier, or that providers always complete.
+It does not enable a production bundle response.

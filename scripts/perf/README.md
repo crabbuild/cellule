@@ -143,6 +143,10 @@ Cellule stability reports fit the debt and oldest-publication age over the last
 three one-minute segments. A positive slope fails; missing, late, reset, or
 fenced observations cannot pass. Native log frontiers remain observations and
 grant no durability or collection authority.
+Fleet write windows also require follower-proof advancement. Read-only windows
+may retain the same frontier, but still require active Fleet, one unchanged log
+epoch, monotonic valid counters and no fencing/rotation throughout the window.
+Their seed ACKs remain subject to the complete warm/cold audit.
 
 For a machine-readable comparison, write an external JSON file with `baseline`,
 `candidate` and `celld` lists of case directories, then run:

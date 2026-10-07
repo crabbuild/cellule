@@ -38,10 +38,10 @@ collection paths. There is no legacy decoding or automatic migration.
 | --- | --- | --- |
 | M0 | Measurement and comparison harness delivered | Three A/A capacity pairs unverified; storage API totals reconcile, but SDK-internal HTTP retries need provider telemetry |
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
-| M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Corrected active-Fleet window costs 5.484 PUTs/command and fails the debt trend. Three per-Cell authority PUTs remain; M4 is required |
-| M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; one active-Fleet window costs 0.0138 enrollment GETs/command. Three-repetition gate pending |
+| M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Three corrected active-Fleet windows cost 5.330–5.484 PUTs/command and all fail the debt trend. Three per-Cell authority PUTs remain; M4 is required |
+| M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; three active-Fleet windows cost 0.0138–0.0141 enrollment GETs/command. Target-rate qualification remains unverified |
 | M4 | Binding/selector and delayed-materialization models plus [authority decision](bundle-coverage-proof.md) delivered | Production bundle proof, atomic transfer/recovery/collection and bundle ACKs not implemented |
-| M5 | Matched Fleet/read points and target stress with exact ACK audits delivered | Three repetitions, read/failure/overload matrix and absolute/relative parity unverified |
+| M5 | Three paired low-rate Fleet repetitions and earlier read/target stress with exact ACK audits delivered | Publication stability fails; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
 
 ## Shared publication checkpoint
 
@@ -109,8 +109,26 @@ reading back or cleaning up a shared upload file. Multi-row cohorts still share
 one upload. Separate singleton counters preserve actual shared-object cost and
 upload timing. The new path's regression test checks exact native/coalesced
 roots, byte-identical restore and absence of shared objects; its fresh
-verification and measurements remain pending. The `d351d886` results below
+isolated verification passed 1,862 workspace tests (38 ignored), 58 local LTX
+tests, all contributor checks and the complete 382-test serial native lifecycle
+suite. The release binary is pinned to `a3787a8d`; all 1,248 Rust/Cargo source
+hashes match the verified snapshot. Three matched Docker repetitions and fresh
+routing CI are tracked separately. The `d351d886` results below
 must not be attributed to this subsequent change.
+
+Fresh routing CI for `75ae439d` passed all four paired command comparisons in
+both modes against `831877cf`. Median command-throughput ratios are
+0.992–1.069 in leased mode and 0.967–1.143 in object-only mode. Steady local and
+forwarded query-throughput ratios are 0.958–1.015. These native routing workloads
+have different transaction/arrival contracts from the SQL Docker comparison.
+Their CI latency limit is two times baseline, not the proposal's 1.2 read limit:
+object-only forwarded/local concurrency-one query p99 ratios were 1.614 / 1.241.
+Passing routing CI therefore does not pass the M5 read guardrail.
+
+The same head's workspace CI failed one combined-maintenance lifecycle test with
+a nested fleet-action-journal conflict (381/382 passed); a fresh rerun is
+pending. The isolated complete native suite passed all 382 on the same production
+source. Both results are retained; the CI conflict's cause is not established.
 
 ## Corrected shared/grant measurement
 
@@ -120,10 +138,30 @@ release builds, with no measurement overlay. Celld is pinned to v0.6.1
 the arms. The current profile is the SQL ledger workload below on one shared
 8-CPU/16-GiB VM, with tmpfs node state and fresh RustFS volumes.
 
-The first corrected candidate window offered 100 writes/s for 300 seconds after
-30 seconds warmup. All original node containers were removed after drain and
-before the bucket-only cold audit. Paired repeats are in progress; the following
-is one diagnostic window, not a sustainable-capacity or parity claim.
+Three paired repetitions offered 100 writes/s for 300 seconds after 30 seconds
+warmup, alternating system order. All original node containers were removed
+after drain and before each bucket-only cold audit. These are matched diagnostic
+points, not a sustainable-capacity or parity claim.
+
+| System | Window commands/s, repetitions 1 / 2 / 3 | Scheduled p99, ms, repetitions 1 / 2 / 3 | Point delivery/latency result |
+| --- | --- | --- | --- |
+| Main `831877cf` | 99.997 / 100.000 / 99.997 | 123.2 / 89.3 / 90.0 | All exceed 50 ms; first also loses active Fleet shipping |
+| Candidate `d351d886` | 100.000 / 99.987 / 100.000 | 15.6 / 36.4 / 31.2 | All pass; all three publication-debt trends fail |
+| celld `f2bf6486` | 100.000 / 99.997 / 100.000 | 11.1 / 15.8 / 14.1 | First/third pass; second has one request-identity validity error |
+
+Every actual ACK passed warm and cold GET plus exact retry: 34,001 per Cellule
+run and 34,001 / 34,000 / 34,001 for celld. The celld error is not an ACK-loss
+observation. Its underlying clock/identity cause remains unestablished; no
+backdating or policy change is applied. Main's first follower rejected a signed
+deadline above its allowed horizon before directory verification; zero final
+debt after fallback does not qualify Fleet. The original failed cases remain
+in the comparison.
+
+Candidate PUTs/command were 5.4842 / 5.3301 / 5.3969 and summed fresh enrollment
+GETs/command were 0.0138 / 0.0141 / 0.0138. Candidate tail-debt slopes were
++98.53 / +1,588.95 / +12.54 bytes/s; all remain failures. Celld debt age is not
+exposed by this fixture, so its stability is unavailable rather than passing.
+The first candidate window supplies the phase and cohort details below.
 
 | Candidate window/audit | Measured value |
 | --- | ---: |
@@ -141,8 +179,9 @@ is one diagnostic window, not a sustainable-capacity or parity claim.
 | Final debt / oldest-age slope | +98.53 bytes/s / +0.152 ms/s |
 
 Fleet stayed active, unfenced and non-rotating throughout the sampled window;
-its follower proof frontier advanced. Delivery, latency and all-ACK audits pass
-at this point. The strict publication stability gate fails, and PUT cost is
+its follower proof frontier advanced in every repetition. Delivery, latency and
+all-ACK audits pass at these points. The strict publication stability gate fails,
+and PUT cost is
 well above M2's 0.25 budget. Near-singleton cohorts show why shared payloads
 alone cannot amortize sparse per-Cell authority work. The
 [bundle decision](bundle-coverage-proof.md) describes the remaining atomic

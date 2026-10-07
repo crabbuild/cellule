@@ -32,7 +32,8 @@ class DeliveryGateTests(unittest.TestCase):
     def test_active_fleet_requires_healthy_frontiers_throughout_the_window(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            healthy = {'fleet_active': True, 'fenced': False, 'rotating': False}
+            healthy = {'fleet_active': True, 'fenced': False, 'rotating': False,
+                       'log_epoch': 1, 'issued_through': 2, 'tiered_through': 0}
             paths = [directory / f'metrics-window-{label}.json'
                      for label in ('start', 'minute-1', 'end')]
             for index, path in enumerate(paths):
@@ -48,6 +49,33 @@ class DeliveryGateTests(unittest.TestCase):
                         dict(healthy, error='lease expired')):
                 paths[1].write_text(json.dumps([{'metrics': {'node_log_progress': bad}}]))
                 self.assertFalse(REPORT.fleet_mode_report(directory)['pass'])
+
+    def test_read_only_fleet_keeps_the_same_verified_frontier_without_new_appends(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            healthy = {'fleet_active': True, 'fenced': False, 'rotating': False,
+                       'log_epoch': 1, 'issued_through': 1000, 'tiered_through': 1000,
+                       'follower_proven_through': 1000}
+            paths = [directory / f'metrics-window-{label}.json'
+                     for label in ('start', 'minute-1', 'end')]
+            for path in paths:
+                path.write_text(json.dumps([{'metrics': {'node_log_progress': healthy}}]))
+            self.assertFalse(REPORT.fleet_mode_report(directory)['pass'])
+            idle = REPORT.fleet_mode_report(directory, writes_offered=False)
+            self.assertTrue(idle['pass'])
+            self.assertFalse(idle['follower_proof_required'])
+            self.assertFalse(idle['follower_proof_advanced'])
+            # An idle read window still cannot qualify after loss of Fleet,
+            # a reset/rotation or an impossible proof. No write gate changes.
+            for bad in (dict(healthy, fleet_active=False), dict(healthy, fenced=True),
+                        dict(healthy, rotating=True), dict(healthy, log_epoch=2),
+                        dict(healthy, follower_proven_through=999),
+                        dict(healthy, follower_proven_through=1001),
+                        dict(healthy, tiered_through=1001),
+                        dict(healthy, follower_proven_through=True),
+                        dict(healthy, error='lease lost')):
+                paths[1].write_text(json.dumps([{'metrics': {'node_log_progress': bad}}]))
+                self.assertFalse(REPORT.fleet_mode_report(directory, writes_offered=False)['pass'])
 
     def test_missing_fleet_frontiers_cannot_qualify(self):
         with tempfile.TemporaryDirectory() as temporary:

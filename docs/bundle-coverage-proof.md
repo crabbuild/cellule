@@ -21,11 +21,21 @@ capture bodies from retained memory while keeping bounded authenticated locators
 A faster upload without these changes can still accumulate debt and exhaust
 admission.
 
-The corrected M2/M3 Docker candidate at `d351d886` completed one 300-second
-window at 100 offered writes/s: 100 completed writes/s, 15.6-ms scheduled p99,
-zero errors/drops/unissued offers, and all 34,001 seed/warmup/window ACKs passed
-warm and cold GET/retry audits. Fleet remained active and follower proofs
-advanced. This is a diagnostic point, not a qualified capacity or parity claim.
+At one command per selected root, the three per-Cell metadata PUTs alone would
+require 6,000 PUTs/s at the bucket target, before payloads, node selection or
+maintenance. The complete M4 budget there is 100 PUTs/s. This is a cost bound
+for that sparse schedule, not extrapolated measured throughput. Fleet can
+coalesce more root work because a follower proof may respond earlier, but it
+still needs bounded retention and eventual object coverage; a longer root timer
+cannot release an unproved capture or hide its debt.
+
+The corrected M2/M3 Docker candidate at `d351d886` completed three 300-second
+windows at 100 offered writes/s. Scheduled p99 was 15.6 / 36.4 / 31.2 ms with
+zero errors/drops/unissued offers; every run's 34,001 seed/warmup/window ACKs
+passed warm and cold GET/retry audits. Fleet remained active and follower
+proofs advanced. All three debt trends failed and total PUT cost was
+5.330–5.484 per command. These are diagnostic points, not a qualified capacity
+or parity claim. The first window supplies the detailed observations below.
 
 | Window observation | Value | Remaining work |
 | --- | ---: | --- |
@@ -54,29 +64,42 @@ read node advertisement would reinstate a fencing race.
 | Object or capability | Exact meaning |
 | --- | --- |
 | Cell binding | Cell/incarnation, writer epoch, exact base root/schema/code, permitted node boot/log epoch, and a unique binding identity pinned by Cell control |
-| Immutable binding catalog | Complete active bindings plus terminal closure endpoints; closed binding IDs cannot be re-added |
+| Immutable binding catalog | Complete Open/Closing bindings plus terminal Closed endpoints; closed binding IDs cannot be re-added |
 | Immutable range manifest | Contiguous ordered node ranges, exact Cell bindings and commit/transaction intervals, scoped byte extents and digests, complete native outcome/dependency coverage, predecessor head |
 | Node selection | Post-upload CAS of both catalog and range head while the original node/log remains Open and every row's binding remains active |
 | `BundleCoverageProof` | Opaque capability minted only after exact selection reconciliation and complete dependency verification; uploaded bytes cannot construct it |
 | Materialization | Exact logical endpoint reconstructed from base and selected rows; ordinary Cell root/lineage CAS consumes the same proof |
-| Closure endpoint | Complete selected prefix frozen in the same CAS that closes the binding; new Cell ownership cannot execute before reconstructing it |
+| Closure endpoint | Closing freezes the complete previously issued range; Closed records its complete selected endpoint; new ownership cannot execute before reconstructing it |
 
-A live-node Cell transfer must first close its old binding in that node's
-canonical record. A proposed upload holding an earlier catalog/head version
-then loses its CAS, reloads, and rejects the closed rows. The closed binding
-retains all earlier selected rows and its base until exact reconstruction or
-retention proof releases them. Only then can Cell authority select the next
-writer. Failed-node recovery first fences the whole original node record and
-freezes its selected head before closing individual bindings. This ordering
+A live-node Cell transfer must first quiesce SQL, join accepted capture/submission
+jobs and close issuance for its old binding in the ordered node lane. A CAS
+marks that binding Closing and freezes its complete assigned endpoint. Previously
+issued, exactly verified rows may drain through that boundary using fresh
+authority; a proposed upload holding the earlier catalog/head version loses
+its CAS. Terminal Closed rejects all later rows and retains the complete selected
+prefix and base until reconstruction or retention proof releases them. Only then
+can Cell authority select the next writer. Failed-node recovery first fences
+the whole original node record, seals the complete follower endpoint and
+accounts for its accepted suffix beyond the selected head before terminal
+closure. This ordering
 must also govern release, takeover, tombstone, migration, backup and failed
 shutdown; a lower-level Cell transition cannot bypass it.
+
+The accepted endpoint and selected endpoint are distinct. A Fleet command can
+already be acknowledged from native followers above the last selected bucket
+range. Freezing only that selected prefix could let a new writer omit a prior
+ACK. Do not use a sampled follower watermark as the issuance boundary: an
+accepted SQL/capture job may still be assigning its ticket. Join the original
+jobs, stop assignment, and retain every old range until exact object coverage
+or reconstruction consumes it. If the old node cannot establish this barrier,
+fence/recover its complete log before exposing the replacement Cell writer.
 
 ## Atomic integration required before enabling responses
 
 | Surface | Required production change and rejection case |
 | --- | --- |
 | Node advertisement/log codecs | Catalog/head/materialized frontiers preserved by every heartbeat, enrollment, closure and recovery CAS; reject old formats atomically |
-| Cell control and acquisition history | Pin exact binding before SQL; close/freeze it before ownership departure; reject live-node late rows |
+| Cell control and acquisition history | Pin exact binding before SQL; quiesce/join/stop issuance, drain its frozen accepted range and reconstruct before ownership departure; reject live-node late rows |
 | Runtime durability gate | Distinct bundle source and proof; exact ticket/row coverage; no proof from upload alone |
 | Actor and executor | Advance proven outcome/query endpoint together; retain debt until proof; replace proved capture bodies with bounded immutable locators |
 | Materializer | Coalesce selected intervals under host budgets; root and schema stay byte-identical; failure cannot invalidate an earlier bundle ACK |
@@ -90,6 +113,13 @@ long histories. Merely chaining every per-command manifest leaves an unbounded
 cold-recovery scan. Catalog checkpoints can advance bases only after verified
 materialization; complete reference inventory must survive every intermediate
 CAS and cancellation. Its object and metadata costs remain in qualification.
+Recovery needs an authenticated lookup of the chosen binding's selected suffix,
+not a scan of every unrelated Cell's data object. Bound and measure index
+depth, objects/bytes read, retained locator bytes and reconstruction work before
+choosing checkpoint spacing. Public receipts already name a logical Cell
+incarnation/command sequence, but the read-replica implementation opens a
+materialized root: delayed roots must preserve receipt-bound visibility without
+claiming that an older root contains the selected suffix.
 
 ## Production cutover and verification order
 
@@ -101,7 +131,7 @@ discarding catalog or coverage fields.
 
 | Slice | Existing implementation to extend | Required evidence before the next slice |
 | --- | --- | --- |
-| Canonical authority | Node directory record/CAS and `control/authority/acquisition` | Heartbeat/coverage/closure racing on one CAS preserves every field; live-node transfer freezes the exact old binding; fresh reconciliation after a lost PUT reply |
+| Canonical authority | Node directory record/CAS and `control/authority/acquisition` | Heartbeat/coverage/closure racing on one CAS preserves every field; live-node transfer covers the frozen issued endpoint, including prior Fleet ACKs beyond the selected prefix; fresh reconciliation after a lost PUT reply |
 | Ordered immutable range | Native node frames and node shipper; LTX verified upload/restore | Bounded canonical manifest, exact predecessor and full native commit/outcome bytes; missing, duplicate, overlapping and cross-binding rows rejected |
 | Opaque proof and logical endpoint | `node/durability`, actor response/query gates | Upload cannot mint proof; selected exact range can; query and retry visibility stop at the same proven endpoint; lease loss stops proof release |
 | Asynchronous roots | Canonical publication and LTX materialization | Root lag does not retain unbounded capture bodies; same bytes and outcomes from base plus selected suffix; materializer errors leave earlier ACKs recoverable |
@@ -170,13 +200,25 @@ profiles test node-only selection, unchecked contents, a skipped range,
 unproven reads and collection of a selected range before both Cells have
 checkpoints. Exact bytes/outcomes and checkpoint authentication remain abstract
 inputs; this is protocol evidence, not a production recovery implementation.
-At `d30e6f11`, CI completed 21,672 distinct positive states and all five named
+At `75ae439d`, CI completed 44,048 distinct positive states and all five named
 counterexamples. The separate append/closure model and its three counterexamples
-also passed in that run.
+also passed in that run. This extends the earlier `d30e6f11` run's 21,672 states.
 
-The next model revision lets the hot Cell continue after its sibling closes.
+The current model lets the hot Cell continue after its sibling closes.
 Closure freezes the sibling's per-Cell endpoint rather than the node's global
 head. Reusing an uploaded hot-Cell range after that CAS conflict requires fresh
 authorization of every participating row and the unchanged predecessor; it
-cannot reopen or publish rows from the closed binding. Its CI evidence is
-tracked separately from the earlier state count.
+cannot reopen or publish rows from the closed binding. An independent checkpoint
+means a fully authenticated base selected by authority; an ordinary root that
+still references the bundle cannot authorize collection. The model does not
+prove byte codecs, complete production reference inventory, history/backup
+retention, grace boundaries or liveness.
+
+`BindingDrain.tla` adds the missing Fleet composition: native durable ACKs may
+precede object selection. Closing freezes issuance and drains exactly that old
+range before terminal closure and reconstruction. Its positive profile also
+checks eventual closing under weakly fair successful upload/selection. Three
+negative profiles require counterexamples for selected-only transfer, late
+issuance and premature follower retirement. Verification is pending separately
+from the state counts above. Exact captures/checkpoints and the Rust join/close
+barrier remain production obligations, not proofs supplied by this abstraction.

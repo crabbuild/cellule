@@ -235,9 +235,12 @@ def stability_report(directory):
             'sample_elapsed_seconds': times, 'series': series, 'slopes_per_second': slopes,
             'frontiers': frontiers, 'frontier_valid': frontier_valid}
 
-def fleet_mode_report(directory):
-    """Zero authorization cost is meaningless after shipping falls back to roots."""
-    paths = sorted(directory.glob('metrics-window-*.json'))
+def fleet_mode_report(directory, *, writes_offered=True):
+    """Require live Fleet and new proofs for writes, healthy fixed proofs for reads."""
+    paths = [directory / 'metrics-window-start.json',
+             *sorted(directory.glob('metrics-window-minute-*.json'),
+                     key=lambda path: int(path.stem.rsplit('-', 1)[1])),
+             directory / 'metrics-window-end.json']
     if not (directory / 'metrics-window-start.json').exists() or not (directory / 'metrics-window-end.json').exists():
         return {'available': False, 'pass': False, 'reason': 'fleet window observations missing'}
     frontiers = []
@@ -249,18 +252,32 @@ def fleet_mode_report(directory):
         if not isinstance(frontier, dict):
             return {'available': False, 'pass': False, 'reason': 'fleet window frontier missing'}
         frontiers.append(frontier)
-    passed = all('error' not in frontier and frontier.get('fleet_active') is True
+    healthy = all('error' not in frontier and frontier.get('fleet_active') is True
                  and frontier.get('fenced') is False and frontier.get('rotating') is False
                  for frontier in frontiers)
-    first = read(directory / 'metrics-window-start.json')[0]['metrics']['node_log_progress']
-    last = read(directory / 'metrics-window-end.json')[0]['metrics']['node_log_progress']
+    # A read-only window need not append. It still cannot hide epoch changes,
+    # reset counters or an invalid frontier. Positive offered writes always
+    # require advancement, even when every write failed before receiving proof.
+    valid = all(type(frontier.get('log_epoch')) is int and frontier['log_epoch'] > 0
+                and all(type(frontier.get(key)) is int and frontier[key] >= 0
+                        for key in ('issued_through', 'tiered_through', 'follower_proven_through'))
+                and frontier['tiered_through'] <= frontier['issued_through']
+                and frontier['follower_proven_through'] <= frontier['issued_through']
+                for frontier in frontiers)
+    if valid:
+        valid = len({frontier['log_epoch'] for frontier in frontiers}) == 1 and all(
+            after[key] >= before[key]
+            for before, after in zip(frontiers, frontiers[1:])
+            for key in ('issued_through', 'tiered_through', 'follower_proven_through'))
+    first, last = frontiers[0], frontiers[-1]
     proven_start, proven_end = first.get('follower_proven_through'), last.get('follower_proven_through')
-    advancing = (isinstance(proven_start, int) and isinstance(proven_end, int)
+    advancing = (type(proven_start) is int and type(proven_end) is int
                  and proven_end > proven_start)
-    passed = passed and advancing
+    passed = healthy and valid and (advancing or not writes_offered)
     return {'available': True, 'pass': passed, 'frontiers': frontiers,
             'follower_proof_advanced': advancing,
-            'reason': None if passed else 'follower shipping inactive, fenced, rotating or proof did not advance'}
+            'follower_proof_required': writes_offered, 'frontier_valid': valid,
+            'reason': None if passed else 'follower shipping inactive, fenced, rotating, invalid or required proof did not advance'}
 
 
 def case_report(directory):
@@ -310,7 +327,7 @@ def case_report(directory):
             metrics = {'available': False, 'error': str(error)}
             point_failures.append('metric evidence invalid')
         writes = data['writes']
-        fleet_mode = fleet_mode_report(path.parent) if case['system'] == 'cellule' and case['durability'] == 'fleet' else {'available': False, 'pass': False, 'reason': 'not a Cellule Fleet window'}
+        fleet_mode = fleet_mode_report(path.parent, writes_offered=writes['planned_offers'] > 0) if case['system'] == 'cellule' and case['durability'] == 'fleet' else {'available': False, 'pass': False, 'reason': 'not a Cellule Fleet window'}
         if case['system'] == 'cellule' and case['durability'] == 'fleet' and not fleet_mode['pass']:
             point_failures.append('active follower durability unverified')
         stability = stability_report(path.parent) if case['system'] == 'cellule' else {'available': False, 'pass': False, 'reason': 'celld publication age not exposed by this fixture'}
