@@ -41,12 +41,13 @@ mod binding;
 mod closure;
 mod codec;
 mod index;
+mod origin;
 mod proof;
 pub(crate) mod recovery;
 mod selection;
 #[cfg(test)]
 use proof::checkpoint_prefix;
-use proof::{verify_base, verify_binding};
+use proof::verify_base;
 pub(crate) use selection::confirm_selected_coverage;
 #[cfg(test)]
 use store::load_catalog;
@@ -59,8 +60,8 @@ const MAX_BINDINGS: usize = 4_096;
 const MAX_LOCATORS: usize = 256;
 const MAX_INLINE_LOCATORS: usize = 32;
 const MAX_FRAMES: usize = 64;
-// Verification retains at most one Cell suffix, independently of the number
-// of historical objects referenced by its locators.
+// Reconstruction retains at most one Cell suffix. Selection streams checked
+// historical frames and shares one fresh cohort body for its new extents.
 const MAX_SUFFIX_BYTES: u64 = MAX_BUNDLE_BYTES;
 const MAX_BASE_OBJECTS: usize = 65_536;
 

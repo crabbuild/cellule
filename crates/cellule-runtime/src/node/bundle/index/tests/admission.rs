@@ -91,7 +91,7 @@ async fn aggregate_history_budget_is_checked_before_the_first_history_read() {
         .unwrap();
     counted.reset();
     assert!(matches!(
-        load_cells(&layout, session, head, &cells).await,
+        load_cells(&layout, session, head, &cells, None).await,
         Err(Error::Capacity("bundle selected history bytes"))
     ));
     assert_eq!(

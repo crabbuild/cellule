@@ -232,11 +232,13 @@ impl NodeDirectory {
                 )
             })
             .collect();
-        let catalog = store::load_catalog_cells(
+        let origin = origin::OriginBundle::load(&self.layout, prepared).await?;
+        let catalog = index::load_cells(
             &self.layout,
             prepared.catalog.session,
             prepared.head,
             &cells,
+            Some(&origin),
         )
         .await?;
         let mut proofs = Vec::new();
@@ -247,12 +249,13 @@ impl NodeDirectory {
             )) {
                 continue;
             }
-            verify_binding(
+            proof::verify_selected_binding(
                 &self.layout,
                 catalog.session,
                 catalog.epoch,
                 &binding,
                 limits,
+                &origin,
             )
             .await?;
             let pin = binding

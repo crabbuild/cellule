@@ -53,12 +53,21 @@ feed can now deliver admitted exact bundle receipts through the actor's existing
 command, worker and read/retry gate. `NodeDurability::start_bundle_publication`
 now retains one producer under the installed runtime ledger. It selects complete
 cohorts of at most 64 captures, 64 frames and 4 MiB, with a 1-ms assembly window
-and a 16-MiB working reservation. Startup admission precedes installation of the
+and a 20-MiB working reservation, including one bounded fresh origin read.
+Startup admission precedes installation of the
 irreversible feed. Selection and exact root checkpoints use the same original
 binding/heartbeat authority; 512 checkpoint requests are bounded and their
 callbacks join before Cell closure. Fair turns alternate queued native work and
 checkpoint cohorts. The Fleet SQL example installs this producer; the current
 Bucket-only performance adapter bypasses it.
+
+Each selection reads its complete new cohort object once from origin, compares
+every byte with the proposal, then verifies header, shards, histories and native
+frames from that operation's read. It retains no cross-operation availability
+cache. Historical objects and every Cell base dependency still require origin
+verification. Selection drops each checked native frame rather than retaining
+reconstruction bodies. The additional 4-MiB buffer is charged before installing
+the producer; workload retention and protocol bounds remain unchanged.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.

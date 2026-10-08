@@ -5,13 +5,17 @@ async fn load_root(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
     head: NodeBundleHead,
+    origin: Option<&super::super::origin::OriginBundle>,
 ) -> Result<Option<Root>> {
-    let path =
-        layout.node_coverage_bundle_path(session.as_bytes(), head.epoch, head.digest.as_bytes());
-    let header = layout
-        .store()
-        .range_get(&path, 0..HEADER_BYTES as u64)
-        .await?;
+    let header = super::super::origin::read_range(
+        layout,
+        session,
+        head.epoch,
+        head.digest,
+        0..HEADER_BYTES as u64,
+        origin,
+    )
+    .await?;
     if !matches!(header.get(..8), Some(magic) if magic == MAGIC || magic == DENSE_MAGIC) {
         return Ok(None);
     }
@@ -38,22 +42,21 @@ async fn load_rows(
     root: &Root,
     shard: &Shard,
     id: u8,
+    origin: Option<&super::super::origin::OriginBundle>,
 ) -> Result<(Vec<Binding>, BTreeMap<[u8; 32], history::History>)> {
     let extent = &shard.extent;
     let object = extent
         .object
         .ok_or(Error::Node("unresolved bundle catalog shard"))?;
-    let bytes = layout
-        .store()
-        .range_get(
-            &layout.node_coverage_bundle_path(
-                root.session.as_bytes(),
-                root.epoch,
-                object.as_bytes(),
-            ),
-            extent.offset..extent.offset + extent.bytes,
-        )
-        .await?;
+    let bytes = super::super::origin::read_range(
+        layout,
+        root.session,
+        root.epoch,
+        object,
+        extent.offset..extent.offset + extent.bytes,
+        origin,
+    )
+    .await?;
     let (mut leaf, mut histories) = decode_leaf_with_histories(bytes, shard, id, root)?;
     for locator in leaf
         .bindings
@@ -79,7 +82,7 @@ pub(in crate::node::bundle) async fn load(
     head: NodeBundleHead,
     wanted: Option<&BTreeSet<u8>>,
 ) -> Result<Catalog> {
-    load_inner(layout, session, head, wanted, None).await
+    load_inner(layout, session, head, wanted, None, None).await
 }
 
 pub(in crate::node::bundle) async fn load_cells(
@@ -87,12 +90,13 @@ pub(in crate::node::bundle) async fn load_cells(
     session: SessionId,
     head: NodeBundleHead,
     cells: &BTreeSet<CellKey>,
+    origin: Option<&super::super::origin::OriginBundle>,
 ) -> Result<Catalog> {
     let shards = cells
         .iter()
         .map(|(application, cell)| shard(application, cell))
         .collect();
-    load_inner(layout, session, head, Some(&shards), Some(cells)).await
+    load_inner(layout, session, head, Some(&shards), Some(cells), origin).await
 }
 
 async fn load_inner(
@@ -101,8 +105,9 @@ async fn load_inner(
     head: NodeBundleHead,
     wanted: Option<&BTreeSet<u8>>,
     cells: Option<&BTreeSet<CellKey>>,
+    origin: Option<&super::super::origin::OriginBundle>,
 ) -> Result<Catalog> {
-    let Some(root) = load_root(layout, session, head).await? else {
+    let Some(root) = load_root(layout, session, head, origin).await? else {
         return super::super::store::load_legacy_catalog(layout, session, head).await;
     };
     // An immutable shard can be individually bounded while a selected cohort
@@ -127,7 +132,7 @@ async fn load_inner(
             continue;
         }
         let (rows, leaf_histories) = match &root.shards[usize::from(id)] {
-            Some(shard) => load_rows(layout, &root, shard, id).await?,
+            Some(shard) => load_rows(layout, &root, shard, id, origin).await?,
             None => (Vec::new(), BTreeMap::new()),
         };
         for (pin, history) in leaf_histories {
@@ -179,17 +184,15 @@ async fn load_inner(
             .extent
             .object
             .ok_or(Error::Node("unresolved bundle history"))?;
-        let bytes = layout
-            .store()
-            .range_get(
-                &layout.node_coverage_bundle_path(
-                    session.as_bytes(),
-                    head.epoch,
-                    object.as_bytes(),
-                ),
-                history.extent.offset..history.extent.offset + history.extent.bytes,
-            )
-            .await?;
+        let bytes = super::super::origin::read_range(
+            layout,
+            session,
+            head.epoch,
+            object,
+            history.extent.offset..history.extent.offset + history.extent.bytes,
+            origin,
+        )
+        .await?;
         let mut locators = history::decode(&bytes, session, head.epoch, binding, history)?;
         for locator in &mut locators {
             if locator.object.is_none() {
@@ -235,14 +238,14 @@ pub(in crate::node::bundle) async fn ensure_drained(
     session: SessionId,
     head: NodeBundleHead,
 ) -> Result<()> {
-    let Some(root) = load_root(layout, session, head).await? else {
+    let Some(root) = load_root(layout, session, head, None).await? else {
         let catalog = super::super::store::load_legacy_catalog(layout, session, head).await?;
         return check_closed(&catalog.bindings);
     };
     let mut pins = std::collections::HashSet::new();
     for (id, shard) in root.shards.iter().enumerate() {
         let Some(shard) = shard else { continue };
-        let (rows, _) = load_rows(layout, &root, shard, id as u8).await?;
+        let (rows, _) = load_rows(layout, &root, shard, id as u8, None).await?;
         for binding in &rows {
             let pin = binding
                 .control
@@ -274,7 +277,7 @@ pub(in crate::node::bundle) async fn binding_inventory(
     session: SessionId,
     head: NodeBundleHead,
 ) -> Result<Vec<Binding>> {
-    let Some(root) = load_root(layout, session, head).await? else {
+    let Some(root) = load_root(layout, session, head, None).await? else {
         return Ok(
             super::super::store::load_legacy_catalog(layout, session, head)
                 .await?
@@ -285,7 +288,7 @@ pub(in crate::node::bundle) async fn binding_inventory(
     let mut pins = std::collections::HashSet::new();
     for (id, shard) in root.shards.iter().enumerate() {
         let Some(shard) = shard else { continue };
-        let (rows, _) = load_rows(layout, &root, shard, id as u8).await?;
+        let (rows, _) = load_rows(layout, &root, shard, id as u8, None).await?;
         for binding in rows {
             let pin = binding
                 .control

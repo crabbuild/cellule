@@ -114,6 +114,42 @@ pub(super) async fn verify_binding(
     binding: &Binding,
     limits: cellule_ltx::Limits,
 ) -> Result<Vec<cellule_ltx::VerifiedNodeFrame>> {
+    let mut frames = Vec::with_capacity(binding.locators.len());
+    verify_binding_into(
+        layout,
+        session,
+        epoch,
+        binding,
+        limits,
+        None,
+        Some(&mut frames),
+    )
+    .await?;
+    Ok(frames)
+}
+
+pub(super) async fn verify_selected_binding(
+    layout: &cellule_ltx::CellStorageLayout,
+    session: SessionId,
+    epoch: u64,
+    binding: &Binding,
+    limits: cellule_ltx::Limits,
+    origin: &origin::OriginBundle,
+) -> Result<()> {
+    // Selection needs exact locators, not retained native bodies. Keep the same
+    // verifier as reconstruction while dropping each checked frame promptly.
+    verify_binding_into(layout, session, epoch, binding, limits, Some(origin), None).await
+}
+
+async fn verify_binding_into(
+    layout: &cellule_ltx::CellStorageLayout,
+    session: SessionId,
+    epoch: u64,
+    binding: &Binding,
+    limits: cellule_ltx::Limits,
+    origin: Option<&origin::OriginBundle>,
+    mut frames: Option<&mut Vec<cellule_ltx::VerifiedNodeFrame>>,
+) -> Result<()> {
     verify_base(layout, binding, limits).await?;
     let mut position = binding
         .control
@@ -126,7 +162,6 @@ pub(super) async fn verify_binding(
         .as_ref()
         .ok_or(Error::Node("bundle base absent"))?
         .commit_sequence;
-    let mut frames = Vec::with_capacity(binding.locators.len());
     let mut sequence = 0;
     let mut first_commit = commit;
     for locator in &binding.locators {
@@ -137,13 +172,8 @@ pub(super) async fn verify_binding(
             .offset
             .checked_add(locator.bytes)
             .ok_or(Error::Node("bundle locator overflow"))?;
-        let bytes = layout
-            .store()
-            .range_get(
-                &layout.node_coverage_bundle_path(session.as_bytes(), epoch, object.as_bytes()),
-                locator.offset..end,
-            )
-            .await?;
+        let bytes =
+            origin::read_range(layout, session, epoch, object, locator.offset..end, origin).await?;
         if bytes.len() as u64 != locator.bytes
             || *blake3::hash(&bytes).as_bytes() != *locator.frame_digest.as_bytes()
         {
@@ -170,7 +200,9 @@ pub(super) async fn verify_binding(
         position = frame.segment().position();
         commit = scope.commit_sequence;
         sequence = scope.node_sequence;
-        frames.push(frame);
+        if let Some(frames) = &mut frames {
+            frames.push(frame);
+        }
     }
     if position != binding.selected_position
         || commit != binding.selected_commit
@@ -178,7 +210,7 @@ pub(super) async fn verify_binding(
     {
         return Err(Error::Node("bundle proof endpoint differs"));
     }
-    Ok(frames)
+    Ok(())
 }
 
 pub(super) async fn verify_base(
