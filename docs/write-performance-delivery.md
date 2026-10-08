@@ -6,7 +6,18 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [coverage-race measurement](pr67-coverage-race-measurement.md)
+The latest [cohort-origin measurement](pr67-cohort-origin-measurement.md)
+records runtime commit `9d4e632`: 95.35 Fleet writes/s and 274.53 Bucket writes/s
+versus 88.28 and 230.58 for the immediate predecessor in fresh paired windows.
+Fleet successful scheduled p99 is 4,414.52 ms; Bucket is 4,367.63 ms. The
+64-Cell regression reduces reads of one fresh bundle from 187 to one; native
+GET/range work falls, but total Fleet GET/range work remains near 20.4 requests
+per completed write. Steady Bundle ACKs are zero and root density is 1.08.
+All Cellule ACK audits and joined drains pass. Single short pairs, including a
+Bucket fixture that bypasses the optimization, do not establish attributable
+throughput gains. Every point fails qualification; PR #67 remains a draft.
+
+The earlier [coverage-race measurement](pr67-coverage-race-measurement.md)
 records runtime commit `e40ecd6`: 100.20 Fleet writes/s and 271.63 Bucket writes/s,
 5.5% and 5.3% lower than the immediately preceding code in one fresh pair.
 Successful scheduled p99 also worsened. Fleet warm availability, joined drain

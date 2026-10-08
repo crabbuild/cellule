@@ -3,6 +3,8 @@
 Historical measurement. The subsequent
 [coverage-race fix and fresh comparison](pr67-coverage-race-measurement.md)
 restore Fleet warm/cold availability and drain, but demonstrate no TPS gain.
+The latest [cohort-origin comparison](pr67-cohort-origin-measurement.md)
+measures the next I/O reduction; write parity remains unqualified.
 
 **The new Fleet connection regressed. Parity is not achieved.** It completed
 93.57 successful writes/s versus 525.67 before the producer: **82.2% lower in

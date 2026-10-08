@@ -11,6 +11,13 @@ Fleet writes/s from 525.67 and failed availability/drain. The subsequent
 [coverage-race measurement](pr67-coverage-race-measurement.md) at `e40ecd6`
 passes all-ACK warm/cold audit and joined drain, but completes 100.20 Fleet
 writes/s versus 106.05 before the fix: no demonstrated throughput gain.
+The latest [cohort-origin comparison](pr67-cohort-origin-measurement.md) at
+`9d4e632` reduces one fresh 64-Cell bundle's origin reads from 187 to one.
+It completes 95.35 Fleet writes/s versus 88.28 in a fresh paired window, with
+passing ACK audits and drain. Total GET/range work remains near 20.4 requests
+per completed write, root density is 1.08, and steady Bundle ACKs remain zero.
+The producer charges its new buffer under the unchanged retention budget.
+Every point fails qualification; a repeatable throughput gain remains unproved.
 This slice establishes ordering and reconstruction evidence.
 The [earlier application-path benchmark](pr67-performance-reevaluation.md)
 measures `7fc0793`; it does not exercise bundle-based responses or establish

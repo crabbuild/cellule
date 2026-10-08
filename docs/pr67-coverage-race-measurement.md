@@ -1,6 +1,10 @@
 # Coverage race fix: measured recovery improvement, no throughput gain
 
-**Latest measured code: 100.20 Fleet writes/s and 271.63 Bucket writes/s.**
+Historical measurement. The subsequent
+[cohort-origin comparison](pr67-cohort-origin-measurement.md) measures `9d4e632`
+at 95.35 Fleet writes/s and 274.53 Bucket writes/s. Parity remains unqualified.
+
+**Code measured here: 100.20 Fleet writes/s and 271.63 Bucket writes/s.**
 Compared with the immediately preceding code, Fleet completed 5.5% fewer writes
 and Bucket 5.3% fewer in these single overloaded pairs. Successful scheduled p99
 increased 9.3% and 14.2%, respectively. There is no demonstrated throughput or

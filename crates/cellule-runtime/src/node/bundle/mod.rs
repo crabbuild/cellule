@@ -7,8 +7,8 @@
 //! The caller owns host admission and the original node lease. This selection
 //! helper operates on complete captures assigned by the canonical shipper;
 //! live selection can confirm the original assigned captures locally without
-//! another CAS. Ordinary actor bundle responses remain disabled until their
-//! command/read/retry visibility and capture release consume that exact proof.
+//! another CAS. Actor responses require the original matching proof; their
+//! command/read/retry visibility and capture release consume that exact coverage.
 //!
 //! ```no_run
 //! use cellule_runtime::node::{NodeDirectory, VersionedNodeAdvertisement};

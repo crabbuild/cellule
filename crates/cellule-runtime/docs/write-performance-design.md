@@ -74,6 +74,15 @@ availability and drain. It is experimental, not performance qualification.
 The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)
 at `e40ecd6` passes warm/cold ACK read/retry and joined drain, but completes
 100.20 Fleet writes/s versus 106.05 before the fix. There is no measured speedup.
+The latest [cohort-origin comparison](../../../docs/pr67-cohort-origin-measurement.md)
+at `9d4e632` reduces 187 reads of one fresh 64-Cell bundle to one. In one paired
+window it completes 95.35 Fleet writes/s versus 88.28, with successful scheduled
+p99 of 4,414.52 ms. ACK audits and drain pass, but total GET/range work remains
+near 20.4 requests per completed write, root density is 1.08, and steady Bundle
+ACKs remain zero. The positive paired rate difference does not establish a
+repeatable gain; every point fails qualification. Its separately admitted
+origin buffer raises the producer reservation from 16 to 20 MiB under the same
+64-MiB diagnostic workload ledger.
 Per-Cell materializers, dense scheduling, complete failed-owner orchestration,
 large-capture fallback, retryable producer failures and collection remain open.
 Do not advance the follower reclamation frontier before
