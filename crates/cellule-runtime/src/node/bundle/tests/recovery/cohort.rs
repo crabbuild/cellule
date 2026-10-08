@@ -11,6 +11,7 @@ async fn full_recovery_stages_65_real_cell_checkpoints_before_one_terminal_node_
     let mut assignments = Vec::new();
     for byte in 1..=65 {
         let mut cell = f.cell(byte).await;
+        f.heartbeat().await;
         let (_, frames, assigned) = f.append(&mut cell, 2);
         assert_eq!(
             frames.len(),
@@ -24,12 +25,23 @@ async fn full_recovery_stages_65_real_cell_checkpoints_before_one_terminal_node_
     for (frames, assigned) in prefix.chunks(64).zip(assignments.chunks(64)) {
         let prepared = f
             .directory
-            .prepare_node_bundle(&f.node, frames, assigned, NOW)
+            .prepare_node_bundle(
+                &f.node,
+                frames,
+                assigned,
+                f.node.advertisement().issued_at_ms(),
+            )
             .await
             .unwrap();
         f.node = f
             .directory
-            .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
+            .select_node_bundle(
+                &f.node,
+                &prepared,
+                &f.lease,
+                Limits::default(),
+                f.node.advertisement().issued_at_ms(),
+            )
             .await
             .unwrap()
             .0;

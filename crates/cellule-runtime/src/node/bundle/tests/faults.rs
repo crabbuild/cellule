@@ -12,6 +12,8 @@ pub(super) struct ReplyFault {
     pub(super) mode: AtomicU8,
     pub(super) node_updates: AtomicUsize,
     pub(super) coverage_puts: AtomicUsize,
+    pub(super) pin_started: tokio::sync::Notify,
+    pub(super) pin_resume: tokio::sync::Notify,
 }
 impl std::fmt::Display for ReplyFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -32,6 +34,17 @@ impl ObjectStore for ReplyFault {
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
         let mode = self.mode.load(Ordering::SeqCst);
+        if mode == 9
+            && path.as_ref().ends_with("/control.json")
+            && matches!(opts.mode, object_store::PutMode::Update(_))
+            && self
+                .mode
+                .compare_exchange(9, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            self.pin_started.notify_one();
+            self.pin_resume.notified().await;
+        }
         if path.as_ref().ends_with("/control.json")
             && matches!(opts.mode, object_store::PutMode::Update(_))
         {

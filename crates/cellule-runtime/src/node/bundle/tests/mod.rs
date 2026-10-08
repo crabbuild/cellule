@@ -28,6 +28,7 @@ struct Fixture {
     lease: NodeLeaseGuard,
     gate: DurabilityGate,
     scratch: tempfile::TempDir,
+    capture_host: cellule_ltx::Host,
 }
 struct Cell {
     db: Db,
@@ -40,6 +41,12 @@ impl Fixture {
         Self::with_store(Arc::new(InMemory::new())).await
     }
     async fn with_store(store: Arc<dyn object_store::ObjectStore>) -> Self {
+        Self::with_capture_host(store, cellule_ltx::Host::default()).await
+    }
+    async fn with_capture_host(
+        store: Arc<dyn object_store::ObjectStore>,
+        capture_host: cellule_ltx::Host,
+    ) -> Self {
         let count = Arc::new(CountingObjectStore::new(store));
         let layout = CellStorageLayout::new(
             Store::new(count.clone()),
@@ -99,6 +106,7 @@ impl Fixture {
             lease,
             gate,
             scratch: tempfile::tempdir().unwrap(),
+            capture_host,
         }
     }
     async fn heartbeat(&mut self) -> i64 {
@@ -149,12 +157,13 @@ impl Fixture {
         let layout = self.layout.for_application(application);
         let cell = CellId::from_bytes([byte; 32]);
         let incarnation = IncarnationId::from_bytes([byte + 10; 16]);
-        let mut db = Db::open(
+        let mut db = Db::open_with_host(
             &self.scratch.path().join(format!(
                 "{byte}-{}.sqlite",
                 crate::identity::encode_hex(&application)
             )),
             Limits::default(),
+            self.capture_host.clone(),
         )
         .unwrap();
         db.transaction(|tx| tx.execute_batch("CREATE TABLE outcomes(request TEXT PRIMARY KEY, result TEXT); INSERT INTO outcomes VALUES ('seed','original')")).unwrap();

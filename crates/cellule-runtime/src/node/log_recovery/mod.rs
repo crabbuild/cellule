@@ -364,12 +364,13 @@ pub async fn recoverable_cells_from_scopes_with_summary(
         if scope.leader_session != *owner.as_bytes() || scope.application != application {
             return Err(Error::Node("recovery frame application or owner differs"));
         }
-        if inventory.closed.contains(&(
+        let generation = (
             scope.application,
             scope.cell,
             scope.incarnation,
             scope.cell_epoch,
-        )) {
+        );
+        if inventory.closed.contains(&generation) || inventory.unpinned.contains(&generation) {
             continue;
         }
         let key = (scope.incarnation, scope.cell_epoch);
@@ -417,7 +418,10 @@ pub async fn recoverable_cells_from_scopes_with_summary(
     if scopes.is_empty() {
         return Ok(RecoverableCellInventory {
             cells: Vec::new(),
-            summary: RecoveryInventorySummary::default(),
+            summary: RecoveryInventorySummary {
+                control_reads: inventory.control_reads,
+                ..RecoveryInventorySummary::default()
+            },
         });
     }
 
@@ -478,7 +482,9 @@ pub async fn recoverable_cells_from_scopes_with_summary(
             catalog_shards,
             catalog_pages,
             control_reads: u64::try_from(recovered.len())
-                .map_err(|_| Error::Capacity("recovery control read count"))?,
+                .map_err(|_| Error::Capacity("recovery control read count"))?
+                .checked_add(inventory.control_reads)
+                .ok_or(Error::Capacity("recovery control read count"))?,
         },
         cells: recovered,
     })
@@ -580,7 +586,7 @@ impl RecoveryCoordinator {
         )
         .await?;
         if let Some(drain) = &drain {
-            drain.add_closed_bases(&mut bases)?;
+            drain.add_archived_bases(&mut bases)?;
         }
         let scratch = self.manifests.recovery_scratch_directory();
         let mut builder = StreamingRecovery::new(
@@ -592,7 +598,11 @@ impl RecoveryCoordinator {
             Some(self.recovery.recovery_disk.clone()),
         )?;
         for cell in &cells {
-            if cell.observed.value().bundle_binding.is_some() {
+            if cell.observed.value().bundle_binding.is_some()
+                && !drain
+                    .as_ref()
+                    .is_some_and(|drain| drain.is_provisional(cell))
+            {
                 builder.seed(
                     crate::node::bundle::recovery::selected_frames(
                         self.manifests.layout(),

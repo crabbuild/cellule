@@ -112,6 +112,10 @@ now materializes original bound roots through ordinary lineage and exact Cell
 CAS, then stages bounded catalog cohorts and selects their complete terminal
 inventory with one recovery-claim node CAS. Quiet Cells participate. Exact
 manifest reuse supports partial-root retries, and closed original roots support
-resumption after transfer or interrupted log seal. Provisional enrollment
-resolution, admitted host scheduling and full qualification remain required
-before enabling the canonical coverage frontier or actor ACKs.
+resumption after transfer or interrupted log seal. Quiet provisional reservations
+now close under the same fenced claim after checking current Cell authority and
+verifying the original base. An unpinned reservation needs no Cell CAS; a late pin CAS
+cannot reopen the closed catalog. Pre-activation native frames remain an explicit
+unresolved obligation and cannot be discarded. Admitted host scheduling and full
+qualification remain required before enabling the canonical coverage frontier
+or actor ACKs.

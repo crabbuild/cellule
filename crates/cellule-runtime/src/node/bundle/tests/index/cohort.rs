@@ -6,6 +6,7 @@ async fn checkpoint_cohort_uses_two_puts_and_preserves_a_hot_cell_suffix() {
     let mut cells = Vec::new();
     for number in 4..(4 + MAX_FRAMES as u8) {
         cells.push(f.cell(number).await);
+        f.heartbeat().await;
     }
     let mut frames = Vec::new();
     let mut assigned = Vec::new();
@@ -16,12 +17,23 @@ async fn checkpoint_cohort_uses_two_puts_and_preserves_a_hot_cell_suffix() {
     }
     let proposal = f
         .directory
-        .prepare_node_bundle(&f.node, &frames, &assigned, NOW)
+        .prepare_node_bundle(
+            &f.node,
+            &frames,
+            &assigned,
+            f.node.advertisement().issued_at_ms(),
+        )
         .await
         .unwrap();
     let (node, proofs) = f
         .directory
-        .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
+        .select_node_bundle(
+            &f.node,
+            &proposal,
+            &f.lease,
+            Limits::default(),
+            f.node.advertisement().issued_at_ms(),
+        )
         .await
         .unwrap();
     f.node = node;

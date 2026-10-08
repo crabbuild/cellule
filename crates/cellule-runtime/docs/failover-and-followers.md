@@ -1589,8 +1589,14 @@ the full witness and terminal endpoint must still agree.
 
 Closed original roots also supply verified recovery bases after transfer, so
 interruption between terminal catalog CAS and log seal does not reload a
-successor as the failed writer. Provisional enrollment resolution and admitted
-host scheduling remain unfinished; ordinary bundle ACKs remain disabled. The
+successor as the failed writer. Quiet provisional reservations are classified
+against fresh Cell authority and their exact verified original base. Pinned
+reservations require the original Cell in recovery; unpinned reservations close
+without changing that Cell. An already-authorized late pin CAS cannot reopen
+the closed node catalog. A pre-activation native frame rejects before attachment
+or terminal selection and retains the unresolved obligation. Discovery counts
+those authority reads even when no affected Cell catalog pages are needed.
+Admitted host scheduling remains unfinished; ordinary bundle ACKs remain disabled. The
 manifest reader admits up to 4,096 scopes under the existing 2 MiB byte ceiling;
 the 2,000-scope codec test is format evidence, not node performance qualification.
 

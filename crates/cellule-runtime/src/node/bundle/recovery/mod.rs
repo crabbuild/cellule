@@ -33,6 +33,8 @@ async fn record(layout: &cellule_ltx::CellStorageLayout, session: SessionId) -> 
 pub(crate) struct OwnerBundleInventory {
     pub(crate) controls: Vec<(crate::ApplicationId, Control)>,
     pub(crate) closed: std::collections::BTreeSet<GenerationKey>,
+    pub(crate) unpinned: std::collections::BTreeSet<GenerationKey>,
+    pub(crate) control_reads: u64,
 }
 
 pub(crate) async fn inventory_for_owner(
@@ -66,19 +68,71 @@ async fn inventory_at(
     let mut inventory = OwnerBundleInventory::default();
     for binding in index::binding_inventory(layout, session, head).await? {
         if binding.phase == BindingPhase::Closed {
-            inventory.closed.insert((
-                *binding.application.as_bytes(),
-                *binding.control.cell.as_bytes(),
-                *binding.control.incarnation.as_bytes(),
-                binding.control.epoch,
-            ));
+            inventory.closed.insert(generation(&binding));
         } else {
+            if binding.phase == BindingPhase::Provisional {
+                let authority =
+                    CellAuthority::new(layout.for_application(*binding.application.as_bytes()));
+                let current = authority
+                    .load(binding.control.cell)
+                    .await?
+                    .ok_or(Error::Fenced)?;
+                inventory.control_reads += 1;
+                if !provisional_pinned(&binding, current.value())? {
+                    inventory.unpinned.insert(generation(&binding));
+                    continue;
+                }
+            }
             inventory
                 .controls
                 .push((binding.application, binding.control));
         }
     }
     Ok(inventory)
+}
+
+fn generation(binding: &Binding) -> GenerationKey {
+    (
+        *binding.application.as_bytes(),
+        *binding.control.cell.as_bytes(),
+        *binding.control.incarnation.as_bytes(),
+        binding.control.epoch,
+    )
+}
+
+fn provisional_pinned(binding: &Binding, current: &Control) -> Result<bool> {
+    let base = binding
+        .control
+        .ltx_root()
+        .ok_or(Error::PendingPublication)?;
+    if binding.phase != BindingPhase::Provisional
+        || binding.control.state != crate::control::ControlState::Serving
+        || binding.control.bundle_binding.is_none()
+        || binding.control.recovery.is_some()
+        || binding.terminal.is_some()
+        || !binding.locators.is_empty()
+        || binding.selected_sequence != 0
+        || binding.first_commit != base.commit_sequence
+        || binding.selected_commit != base.commit_sequence
+        || binding.selected_position != base.position
+        || current.cell != binding.control.cell
+        || binding.control.owner.as_ref().map(|owner| owner.session)
+            != binding.control.bundle_binding.map(|pin| pin.session)
+    {
+        return Err(Error::PendingPublication);
+    }
+    if current.bundle_binding != binding.control.bundle_binding {
+        return Ok(false);
+    }
+    // Renewal may have changed bookkeeping, but admission remains closed until
+    // activation. No mutation, migration or different base may be inferred.
+    let mut expected = binding.control.clone();
+    expected.revision = current.revision;
+    expected.progress = current.progress;
+    if expected != *current {
+        return Err(Error::PendingPublication);
+    }
+    Ok(true)
 }
 
 async fn fenced_bindings(

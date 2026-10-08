@@ -55,9 +55,14 @@ Cells, stages at most 64 checkpoints per immutable upload, then selects the
 complete terminal catalog with one fresh-claim node CAS before sealing the log.
 Only exact lost replies reconcile. Partial-root retries retain the original
 manifest; verified closed roots allow resumption after transfer or interrupted
-log seal. Provisional enrollment reconciliation, admitted host scheduling and
-full lifecycle qualification remain unfinished. Ordinary bundle responses remain
-disabled.
+log seal. Quiet provisional enrollment is reconciled against current Cell
+authority and its verified original base. An unpinned reservation can close
+without changing a Cell that has released or moved. A pin CAS authorized before
+fencing may still select that exact original base, but cannot reopen its closed
+catalog; departure then uses the ordinary closed-binding guard. Native frames
+issued before activation fail recovery before attachment or terminal selection,
+retaining the unresolved obligation. Admitted host scheduling and full lifecycle
+qualification remain unfinished. Ordinary bundle responses remain disabled.
 
 The original SQL/capture/submission jobs must join before `close_cell_issuance`.
 Its ordered gate prevents late assignment from consuming a node sequence. The
@@ -196,15 +201,34 @@ CAS, then one log seal**. This excludes per-Cell roots, recovery manifest upload
 enrollment and steady-state application work; it is not TPS or full M4 evidence.
 The existing 215-command/four-PUT test remains passing.
 
-The terminal-recovery snapshot passed all twelve contributor checks: **1,920
+The terminal-recovery snapshot passed all twelve contributor checks: **1,923
 top-level workspace cases passed, 38 ignored; 60 local LTX cases passed**.
-This count excludes four nested subprocess executions included in earlier
-totals. Default-parallel verification first expired four unchanged lease/grant
+The earlier 1,920 count incorrectly excluded three distinct compile-fail
+doctests as nested executions. Only one actual nested follower subprocess is
+excluded from this corrected count. Default-parallel verification first expired four unchanged lease/grant
 fixtures; a four-worker control run passed the identical runtime source. The
 long density fixtures now renew only after authoritative heartbeat CAS, retaining
 the same production lease duration and catalog head. The final isolated suite
 uses four test workers; qualification concurrency and thresholds are unchanged.
 These checks do not measure application TPS or complete lifecycle qualification.
+
+The provisional-recovery snapshot passed all twelve contributor checks:
+**1,928 top-level workspace cases passed, 38 ignored; 60 local LTX cases passed**.
+Five new cases cover quiet unpinned and pinned reservations, a released Cell,
+an original pin CAS delayed across fencing, and rejection of pre-activation
+issued frames before attachment or terminal selection. Discovery counts its
+fresh authority reads even when no Cell catalog pages are scanned. The locator
+boundary now forces a production time-based checkpoint through a controlled
+file-age input: 255 SQL commands contribute 256 complete native frames, still
+materializing with four PUTs and excluding the next unselected command. It does
+not equate commands with frames or increase either protocol bound.
+
+The first complete suite stopped on an unchanged application deadline test
+with three admitted reads instead of four. That exact binary passed alone,
+and the identical frozen source passed the complete workspace rerun with the
+same four test workers and deadlines. The earlier aborted incomplete snapshot,
+failed runs, source hashes and count correction remain outside Git. No new
+application TPS was measured, and bundle-based responses remain disabled.
 
 The following counts describe the earlier inline-index snapshot, not the latest
 application TPS:
@@ -292,10 +316,11 @@ Remaining work before responses can use bundle proof:
 2. Build on the authenticated index: bound admitted maintenance inventory,
    increase checkpoint density with retained-byte accounting, and measure the
    complete materialization/checkpoint/collection cost.
-3. Finish interrupted provisional enrollment reconciliation and admitted
-   failed-boot orchestration around combined reconstruction, exact materialization
-   and atomic terminal selection. Departure and canonical seal guards still
-   refuse any unfinished original binding before replacement admission.
+3. Integrate admitted failed-boot orchestration around combined reconstruction,
+   provisional reconciliation, exact materialization and atomic terminal
+   selection. Keep admission closed until enrollment activates. Departure and
+   canonical seal guards refuse unfinished original bindings before replacement
+   admission; pre-activation issuance is not a recoverable quiet reservation.
 4. Implement complete cross-Cell reference inventory, pins and grace-qualified
    collection. Preserve original catalog and base dependencies throughout.
 5. Run the unchanged all-ACK cold recovery, paired Docker throughput/latency,

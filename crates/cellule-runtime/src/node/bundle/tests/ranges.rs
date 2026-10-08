@@ -257,13 +257,46 @@ async fn corrupt_origin_dependency_and_overlapping_ranges_fail_closed() {
     );
 }
 
+struct CheckpointClock(std::sync::atomic::AtomicBool);
+
+impl cellule_ltx::environment::Clock for CheckpointClock {
+    fn unix_millis(&self) -> i64 {
+        NOW
+    }
+
+    fn file_age(&self, _: &std::path::Path) -> std::io::Result<std::time::Duration> {
+        // Exercise the real time-based checkpoint once, independently of the
+        // verification host's speed. All native cuts still enter the bundle.
+        Ok(if self.0.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            std::time::Duration::from_secs(61)
+        } else {
+            std::time::Duration::ZERO
+        })
+    }
+}
+
 #[tokio::test]
 async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
-    let mut f = Fixture::new().await;
+    let clock = Arc::new(CheckpointClock(std::sync::atomic::AtomicBool::new(false)));
+    let mut f = Fixture::with_capture_host(
+        Arc::new(InMemory::new()),
+        cellule_ltx::Host::default().with_clock(clock.clone()),
+    )
+    .await;
     let mut cell = f.cell(4).await;
-    for commit in 2..=(MAX_LOCATORS as u64 + 1) {
+    let mut selected_frames = 0;
+    let mut last_commit = 1;
+    while selected_frames < MAX_LOCATORS {
+        let commit = last_commit + 1;
         let now = f.heartbeat().await;
+        if commit == 128 {
+            clock.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         let (_, frames, assigned) = f.append(&mut cell, commit);
+        if commit == 128 {
+            assert_eq!(frames.len(), 2, "checkpoint contributes its native cut");
+        }
+        assert!(selected_frames + frames.len() <= MAX_LOCATORS);
         let prepared = f
             .directory
             .prepare_node_bundle(&f.node, &frames, &[assigned], now)
@@ -275,6 +308,8 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
             .await
             .unwrap()
             .0;
+        selected_frames += frames.len();
+        last_commit = commit;
     }
     let last = f
         .directory
@@ -282,7 +317,8 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
         .await
         .unwrap();
     assert_eq!(last.locator_count(), MAX_LOCATORS);
-    let (_, frames, assigned) = f.append(&mut cell, MAX_LOCATORS as u64 + 2);
+    assert_eq!(last_commit, MAX_LOCATORS as u64);
+    let (_, frames, assigned) = f.append(&mut cell, last_commit + 1);
     assert!(matches!(
         f.directory
             .prepare_node_bundle(
@@ -294,7 +330,7 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
             .await,
         Err(Error::PendingPublication)
     ));
-    assert_eq!(last.commit_sequence(), MAX_LOCATORS as u64 + 1);
+    assert_eq!(last.commit_sequence(), last_commit);
     assert_eq!(
         f.directory
             .load_bundle_coverage(&cell.authority, &cell.control, Limits::default())
@@ -306,8 +342,9 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
     f.count.reset();
     let root = f.publisher(&cell).materialize_bundle(&last).await.unwrap();
     eprintln!(
-        "bounded suffix materialization: locators={} puts={}",
+        "bounded suffix materialization: locators={} commands={} puts={}",
         MAX_LOCATORS,
+        last_commit - 1,
         f.count.put_requests()
     );
     assert_eq!(
@@ -324,14 +361,10 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
         .await
         .unwrap();
     let db = rusqlite::Connection::open(restored).unwrap();
-    let count: usize = db
+    let count: u64 = db
         .query_row("SELECT count(*) FROM outcomes", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(
-        count,
-        MAX_LOCATORS + 1,
-        "the later unselected command is absent"
-    );
+    assert_eq!(count, last_commit, "the later unselected command is absent");
 }
 
 #[tokio::test]

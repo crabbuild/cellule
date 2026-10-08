@@ -8,6 +8,7 @@ use crate::node::log_transport::{
 use crate::recovery::manifest::RecoveryManifestStore;
 use futures_util::future::BoxFuture;
 mod cohort;
+mod provisional;
 
 struct Followers(Vec<(NodeId, FollowerStore)>);
 impl Followers {

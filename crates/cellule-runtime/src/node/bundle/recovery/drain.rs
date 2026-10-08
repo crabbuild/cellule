@@ -19,6 +19,7 @@ pub(crate) struct BundleRecoveryDrain {
     original: NodeBundleHead,
     scopes: BTreeMap<CellKey, Scope>,
     closed: BTreeMap<GenerationKey, Binding>,
+    unpinned: BTreeMap<GenerationKey, Binding>,
     durable_through: u64,
 }
 
@@ -40,6 +41,7 @@ impl BundleRecoveryDrain {
         }
         let mut scopes = BTreeMap::new();
         let mut closed = BTreeMap::new();
+        let mut unpinned = BTreeMap::new();
         for binding in fenced_bindings(layout, fenced).await? {
             if binding.phase == BindingPhase::Closed {
                 if binding.terminal
@@ -65,10 +67,22 @@ impl BundleRecoveryDrain {
                 );
                 continue;
             }
-            // Interrupted enrollment still needs explicit reconciliation. It
-            // must never disappear merely because no follower row names it.
             if binding.phase == BindingPhase::Provisional {
-                return Err(Error::PendingPublication);
+                let authority =
+                    CellAuthority::new(layout.for_application(*binding.application.as_bytes()));
+                let current = authority
+                    .load(binding.control.cell)
+                    .await?
+                    .ok_or(Error::Fenced)?;
+                let pinned = provisional_pinned(&binding, current.value())?;
+                verify_base(layout, &binding, limits).await?;
+                if !pinned {
+                    // Preserve the original reservation root even if the
+                    // unpinned Cell has independently released or moved. A
+                    // late original pin CAS can only select this exact base.
+                    unpinned.insert(generation(&binding), binding);
+                    continue;
+                }
             }
             let cell = cells
                 .iter()
@@ -109,6 +123,7 @@ impl BundleRecoveryDrain {
             original,
             scopes,
             closed,
+            unpinned,
             durable_through,
         }))
     }
@@ -118,6 +133,14 @@ impl BundleRecoveryDrain {
         native: cellule_ltx::NodeFrameScope,
         position: cellule_ltx::Position,
     ) -> Result<()> {
+        if self.unpinned.contains_key(&(
+            native.application,
+            native.cell,
+            native.incarnation,
+            native.cell_epoch,
+        )) {
+            return Err(Error::Node("provisional Cell issued before activation"));
+        }
         if let Some(closed) = self.closed.get(&(
             native.application,
             native.cell,
@@ -136,6 +159,9 @@ impl BundleRecoveryDrain {
             .scopes
             .get_mut(&(native.application, native.cell))
             .ok_or(Error::Node("sealed bundle frame has no original binding"))?;
+        if scope.binding.phase == BindingPhase::Provisional {
+            return Err(Error::Node("provisional Cell issued before activation"));
+        }
         if native.incarnation != *scope.binding.control.incarnation.as_bytes()
             || native.cell_epoch != scope.binding.control.epoch
         {
@@ -147,11 +173,11 @@ impl BundleRecoveryDrain {
         Ok(())
     }
 
-    pub(crate) fn add_closed_bases(
+    pub(crate) fn add_archived_bases(
         &self,
         bases: &mut Vec<crate::node::log::RecoveryBase>,
     ) -> Result<()> {
-        for (key, binding) in &self.closed {
+        for (key, binding) in self.closed.iter().chain(&self.unpinned) {
             if bases.iter().any(|base| {
                 (
                     base.application,
@@ -172,6 +198,15 @@ impl BundleRecoveryDrain {
             });
         }
         Ok(())
+    }
+
+    pub(crate) fn is_provisional(&self, cell: &RecoveryCell) -> bool {
+        self.scopes
+            .get(&(
+                *cell.application.as_bytes(),
+                *cell.observed.value().cell.as_bytes(),
+            ))
+            .is_some_and(|scope| scope.binding.phase == BindingPhase::Provisional)
     }
 
     /// Materialize every original bound Cell before changing any catalog row.
@@ -261,42 +296,52 @@ impl BundleRecoveryDrain {
             verify_base(manifests.layout(), &materialized, manifests.limits()).await?;
             controls.push(current);
         }
-        let entries = self
+        let mut entries = self
             .scopes
             .into_values()
             .zip(controls.iter())
+            .map(|(scope, control)| (scope.binding, scope.terminal, control.value().clone()))
             .collect::<Vec<_>>();
+        entries.extend(self.unpinned.into_values().map(|binding| {
+            let terminal = (
+                binding.selected_sequence,
+                binding.selected_commit,
+                binding.selected_position,
+            );
+            let control = binding.control.clone();
+            (binding, terminal, control)
+        }));
         let mut staged = self.original;
         for cohort in entries.chunks(MAX_FRAMES) {
             let head = staged;
             let keys = cohort
                 .iter()
-                .map(|(scope, _)| {
+                .map(|(binding, _, _)| {
                     (
-                        *scope.binding.application.as_bytes(),
-                        *scope.binding.control.cell.as_bytes(),
+                        *binding.application.as_bytes(),
+                        *binding.control.cell.as_bytes(),
                     )
                 })
                 .collect();
             let mut catalog =
                 store::load_catalog_cells(manifests.layout(), fenced.session(), head, &keys)
                     .await?;
-            for (scope, control) in cohort {
-                let pin = scope.binding.control.bundle_binding.ok_or(Error::Fenced)?;
+            for (original, terminal, control) in cohort {
+                let pin = original.control.bundle_binding.ok_or(Error::Fenced)?;
                 let binding = catalog.binding_mut(pin.digest)?;
-                if !same_scope(&binding.control, control.value())
-                    || binding.phase == BindingPhase::Provisional
-                    || binding.selected_sequence > scope.terminal.0
+                if !same_scope(&binding.control, control)
+                    || binding.phase != original.phase
+                    || binding.selected_sequence > terminal.0
                 {
                     return Err(Error::Fenced);
                 }
-                binding.control = control.value().clone();
+                binding.control = control.clone();
                 binding.phase = BindingPhase::Closed;
-                binding.terminal = Some(scope.terminal);
-                binding.selected_sequence = scope.terminal.0;
-                binding.selected_commit = scope.terminal.1;
-                binding.selected_position = scope.terminal.2;
-                binding.first_commit = scope.terminal.1;
+                binding.terminal = Some(*terminal);
+                binding.selected_sequence = terminal.0;
+                binding.selected_commit = terminal.1;
+                binding.selected_position = terminal.2;
+                binding.first_commit = terminal.1;
                 binding.locators.clear();
             }
             // Every original root was verified above, including quiet Cells.
