@@ -9,6 +9,7 @@ use crate::identity::{IncarnationId, RequestId};
 use crate::primitives::maintenance::TransferWorkInventory;
 use crate::{Error, Result};
 
+mod bundle;
 mod group;
 pub(crate) use group::{MAX_NATIVE_GROUP, NativeCommand, NativeGroupExecution};
 
@@ -214,6 +215,10 @@ pub struct MigrationOutcome {
 }
 
 impl PendingCommit {
+    pub(crate) fn release_selected_metadata(&mut self) {
+        self.cuts.segments = Vec::new();
+    }
+
     /// Returns the durable outcome awaiting publication.
     #[must_use]
     pub fn outcome(&self) -> &StoredOutcome {
@@ -281,8 +286,9 @@ pub enum CommandExecution {
 ///
 /// The actor may continue after the preceding commit has a durability proof.
 /// Dropping a caller does not remove queued cuts or their result. Only
-/// `confirm_published` releases retained files after an authoritative root
-/// matches the oldest local commit.
+/// an exact original bundle receipt or `confirm_published` can release retained
+/// files. Outcomes remain pending until the authoritative root matches the
+/// covered local commits.
 pub struct CellExecutor {
     db: Db,
     cell: CellId,
@@ -291,6 +297,7 @@ pub struct CellExecutor {
     pending: VecDeque<PendingCommit>,
     pending_bytes: u64,
     published_sequence: u64,
+    bundle_materialization: Option<std::sync::Arc<crate::node::log_shipper::SelectedBundle>>,
     pending_migration: Option<PendingMigration>,
     fenced: bool,
 }
@@ -343,6 +350,7 @@ impl CellExecutor {
             pending: VecDeque::new(),
             pending_bytes: 0,
             published_sequence: 0,
+            bundle_materialization: None,
             pending_migration: None,
             fenced: false,
         }
@@ -1154,6 +1162,16 @@ impl CellExecutor {
             outcomes.push(pending.outcome);
         }
         self.published_sequence = root.commit_sequence;
+        if self
+            .bundle_materialization
+            .as_ref()
+            .is_some_and(|selected| {
+                selected.proof.commit_sequence() == root.commit_sequence
+                    && selected.proof.position() == root.position
+            })
+        {
+            self.bundle_materialization = None;
+        }
         Ok(outcomes)
     }
 

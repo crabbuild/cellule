@@ -9,6 +9,34 @@ pub(super) struct LiveBundleCoverage {
     assignments: Vec<crate::node::log::AssignedCommitRange>,
 }
 
+impl LiveBundleCoverage {
+    pub(super) fn check_assignment(
+        &self,
+        assignment: &crate::node::log::AssignedCommitRange,
+    ) -> Result<()> {
+        self.lease.check()?;
+        if !self.contains_assignment(assignment) {
+            return Err(Error::Node("bundle lacks original assigned capture"));
+        }
+        Ok(())
+    }
+
+    pub(super) fn assignment_count(&self) -> usize {
+        self.assignments.len()
+    }
+
+    pub(super) fn contains_assignment(
+        &self,
+        assignment: &crate::node::log::AssignedCommitRange,
+    ) -> bool {
+        self.assignments.contains(assignment)
+    }
+
+    pub(super) fn retained_metadata_bytes(&self) -> usize {
+        self.assignments.capacity() * std::mem::size_of::<crate::node::log::AssignedCommitRange>()
+    }
+}
+
 impl NodeDirectory {
     /// Verifies a contiguous complete native range and uploads one proposal for
     /// every participating Cell. Neither upload nor this value grants an ACK.

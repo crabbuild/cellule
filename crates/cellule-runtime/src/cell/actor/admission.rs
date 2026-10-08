@@ -130,8 +130,11 @@ pub(super) fn send_command_reply(
 
             let (source, confirmation) = match command.response_proof {
                 Some((DurabilitySource::Fleet, elapsed)) => (CommandResponseSource::Fleet, elapsed),
-                Some((DurabilitySource::Object | DurabilitySource::Bundle, elapsed)) => {
+                Some((DurabilitySource::Object, elapsed)) => {
                     (CommandResponseSource::Object, elapsed)
+                }
+                Some((DurabilitySource::Bundle, elapsed)) => {
+                    (CommandResponseSource::Bundle, elapsed)
                 }
                 None => (CommandResponseSource::Recorded, std::time::Duration::ZERO),
             };

@@ -12,7 +12,8 @@ use crate::node::log_transport::{AppendRequest, NodeLogTransport};
 use crate::{Error, Result};
 
 mod publication;
-pub use publication::{AssignedCapture, NodePublicationFeed};
+pub use publication::{AssignedCapture, NodePublicationFeed, SelectedBundlePublication};
+pub(crate) use publication::{SelectedBundle, SubmittedCapture};
 
 const MAX_BATCH_FRAMES: usize = 64;
 const MAX_QUEUED_SUBMISSIONS: usize = 512;
@@ -312,6 +313,15 @@ impl NodeLogShipper {
         &self,
         submission: NodeLogSubmission,
     ) -> Result<(CommitTicket, crate::node::log::AssignedCommitRange)> {
+        self.submit_capture(submission)
+            .await
+            .map(|capture| (capture.assignment.ticket(), capture.assignment))
+    }
+
+    pub(crate) async fn submit_capture(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<SubmittedCapture> {
         let frame_count = submission.frame_count()?;
         if submission
             .segments
@@ -365,13 +375,14 @@ impl NodeLogShipper {
         let reservation = Arc::new(OutstandingBytes {
             _permit: reservation,
         });
-        if let Some(publication) = publication {
-            publication.send(AssignedCapture::new(
-                assignment,
-                encoded.clone(),
-                Arc::clone(&reservation),
-            ));
-        }
+        let selection = if let Some(publication) = publication {
+            let (capture, selection) =
+                AssignedCapture::new(assignment, encoded.clone(), Arc::clone(&reservation));
+            publication.send(capture);
+            Some(selection)
+        } else {
+            None
+        };
         let frames = encoded
             .into_iter()
             .enumerate()
@@ -382,7 +393,10 @@ impl NodeLogShipper {
             })
             .collect();
         slot.send(QueuedSubmission { frames });
-        Ok((ticket, assignment))
+        Ok(SubmittedCapture {
+            assignment,
+            selection,
+        })
     }
 
     /// Closes admission and drains every accepted frame to the current epoch.

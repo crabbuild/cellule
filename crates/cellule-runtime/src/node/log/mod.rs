@@ -62,6 +62,7 @@ pub struct AssignedCommitRange {
     commit: u64,
     position: cellule_ltx::Position,
     digest: [u8; 32],
+    capture_digest: [u8; 32],
 }
 impl AssignedCommitRange {
     pub(crate) const fn scope(&self) -> CellLogScope {
@@ -71,6 +72,23 @@ impl AssignedCommitRange {
     /// Exact original native ticket.
     pub const fn ticket(&self) -> CommitTicket {
         self.ticket
+    }
+
+    pub(crate) fn matches_capture(
+        &self,
+        cell: CellId,
+        incarnation: IncarnationId,
+        commit: u64,
+        cuts: &cellule_ltx::CaptureBatch,
+    ) -> bool {
+        self.scope.cell == cell
+            && self.scope.incarnation == incarnation
+            && self.commit == commit
+            && self.position == cuts.position
+            && cuts.segments.len() as u64
+                == self.ticket.last_sequence - self.ticket.first_sequence + 1
+            && self.capture_digest
+                == capture_digest(cuts.segments.iter().map(cellule_ltx::LocalSegment::info))
     }
     pub(crate) fn verify(&self, frames: &[cellule_ltx::VerifiedNodeFrame]) -> Result<()> {
         if frames.is_empty()
@@ -104,6 +122,22 @@ impl AssignedCommitRange {
         }
         Ok(())
     }
+}
+
+fn capture_digest<'a>(segments: impl Iterator<Item = &'a cellule_ltx::SegmentInfo>) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"cellule-assigned-capture-v1");
+    for segment in segments {
+        hash.update(&segment.min_txid.to_le_bytes());
+        hash.update(&segment.max_txid.to_le_bytes());
+        hash.update(&segment.page_size.to_le_bytes());
+        hash.update(&segment.database_pages.to_le_bytes());
+        hash.update(&segment.pre_checksum.to_le_bytes());
+        hash.update(&segment.post_checksum.to_le_bytes());
+        hash.update(&segment.size_bytes.to_le_bytes());
+        hash.update(&segment.blake3);
+    }
+    *hash.finalize().as_bytes()
 }
 
 impl CellIssuedRange {
@@ -474,6 +508,7 @@ impl DurabilityGate {
                         commit: scope.commit_sequence,
                         position: frame.segment().position(),
                         digest: [0; 32],
+                        capture_digest: [0; 32],
                     })
                 }
                 Some(assignment) => {
@@ -553,6 +588,7 @@ impl DurabilityGate {
                 hash.update(&frame.digest());
             }
             assignment.digest = *hash.finalize().as_bytes();
+            assignment.capture_digest = capture_digest(frames.iter().map(|frame| frame.segment()));
         }
         Ok(assignment)
     }

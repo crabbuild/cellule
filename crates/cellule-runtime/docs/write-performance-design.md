@@ -48,9 +48,11 @@ flowchart LR
     K --> L[Exact root cohort checkpoint]
 ```
 
-Uploaded bytes are not authority. Bundle ACKs remain disabled until the actor,
-worker, read/retry endpoint, recovery and lifecycle consumers agree on one
-opaque complete proof. Do not advance the follower reclamation frontier before
+Uploaded bytes are not authority. An explicitly installed original publication
+feed can now deliver admitted exact bundle receipts through the actor's existing
+command, worker and read/retry gate. The example application's ordinary path
+still has no node bundle producer. Production enablement requires the remaining
+scheduler, recovery, collection and qualification gates. Do not advance the follower reclamation frontier before
 failed-owner recovery understands the selected bundle prefix.
 
 ## Locator density and checkpoint cost
@@ -121,8 +123,18 @@ qualification remain required before enabling actor ACKs. The verified native
 selector now advances enrolled coverage and selects its bundle in one node CAS.
 Exact local confirmation performs no second CAS and reports a distinct Bundle
 proof. Original gate and lease identity remain required; cold proofs grant
-reconstruction only. Ordinary actors continue waiting for their root fallback
-until command/read/retry visibility and capture release consume that proof.
+reconstruction only. An installed feed's original admitted receipt now grants
+actor command/read/retry visibility. Before root preparation starts, the same
+serialized publisher can consume a complete selected oldest capture prefix:
+the worker compares every cut's metadata and body digest with its original
+assignment, verifies every live receipt, and only then removes the local files.
+Outcomes, proof metadata and publication coordination remain retained until
+normal root lineage, exact Cell CAS and joined drain complete. A later unproven
+suffix remains hidden. Origin materialization preserves the captured due time
+and retries storage errors within the existing publication grace. The bounded
+selection opportunity is 100 ms for installed feeds; absent or later coverage
+uses the original root path. This is not the fair node materializer scheduler
+or the 215-command checkpoint density target.
 
 The live root fallback now avoids a node authority mutation when an exact Cell
 root covers only a sparse range beyond an unpublished native gap. That root

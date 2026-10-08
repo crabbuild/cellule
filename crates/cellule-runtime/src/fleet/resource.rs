@@ -330,6 +330,10 @@ pub(crate) struct LedgerState {
 }
 
 impl ResourceLedger {
+    pub(crate) fn same_ledger(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+
     pub(crate) fn new(limit: ResourceCost) -> Self {
         Self {
             state: Arc::new(LedgerState {
@@ -486,6 +490,22 @@ pub(crate) struct ResourceReservation {
     cost: ResourceCost,
 }
 
+impl ResourceReservation {
+    /// Returns only memory whose owned capture indexes have already been dropped.
+    pub(crate) fn shrink_retained(&mut self, bytes: usize) -> Result<()> {
+        let released = self
+            .cost
+            .retained_bytes
+            .checked_sub(bytes)
+            .ok_or(Error::Capacity("capture cleanup cannot grow admission"))?;
+        self.cost.retained_bytes = bytes;
+        self.ledger
+            .release(ResourceCost::zero().with_retained_bytes(released));
+        self.ledger.state.released.notify_waiters();
+        Ok(())
+    }
+}
+
 impl Drop for ResourceReservation {
     fn drop(&mut self) {
         self.ledger.release(self.cost);
@@ -606,6 +626,22 @@ impl cellule_ltx::HostResourceAdmission for LedgerHostResourceAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_cleanup_returns_only_released_memory_and_preserves_outcome_admission() {
+        let cost = ResourceCost::active_cell().with_retained_bytes(128);
+        let ledger = ResourceLedger::new(cost);
+        let mut held = ledger.try_reserve(cost).unwrap();
+        held.shrink_retained(32).unwrap();
+        assert_eq!(
+            ledger.snapshot().unwrap().used,
+            ResourceCost::active_cell().with_retained_bytes(32)
+        );
+        assert!(held.shrink_retained(64).is_err());
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 32);
+        drop(held);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
     use cellule_ltx::HostResourceAdmission;
 
     #[tokio::test]

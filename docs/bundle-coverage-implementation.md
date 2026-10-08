@@ -1,8 +1,9 @@
 # Bundle coverage implementation
 
 The connected protocol APIs now implement shared selection, independently
-awaitable root materialization and complete live-writer closure. They are **not
-enabled in the ordinary actor response path**. The prior performance regression
+awaitable root materialization and complete live-writer closure. An explicitly
+installed original feed can now provide admitted receipts to the actor;
+the example application's ordinary path still has no bundle producer. The prior performance regression
 and failed qualification remain the baseline. This slice establishes ordering
 and reconstruction evidence. The [fresh application-path benchmark](pr67-performance-reevaluation.md)
 measures `7fc0793`; it does not exercise bundle-based responses or establish
@@ -53,9 +54,9 @@ Uploading an immutable object supplies no coverage proof.
 Live confirmation now reports `DurabilitySource::Bundle` separately from a
 materialized Cell root. Adjacent exact ranges merge into compact source
 intervals; root-only gaps keep their original source. A later exact root CAS
-can still return an Object proof. Ordinary actors reject the Bundle source and
-wait for their existing object fallback until command/read/retry visibility is
-integrated. A boot without enrolled native log state supplies reconstruction
+can still return an Object proof. Actors require the original admitted receipt,
+assignment and Cell pin before accepting a Bundle response; raw local gate
+confirmation alone cannot grant it. A boot without enrolled native log state supplies reconstruction
 proofs only. Root work superseded by confirmed coverage joins its old flusher
 before removing already-covered queue entries, including after lease loss.
 
@@ -345,10 +346,37 @@ The experimental checkpoint API now takes its `BundleCoverageProof`, and
 Consumers must pass those original capabilities; a pin or sampled endpoint is
 not a substitute. The singleton checkpoint method delegates to the cohort path.
 
-Remaining work before responses can use bundle proof:
+## Selected capture cleanup in the actor
 
-1. Integrate actor/executor proof and query/retry endpoints, release proved
-   capture retention, and schedule admitted materializers with joined shutdown.
+The existing publisher now consumes a complete selected oldest capture prefix
+before reading files for root preparation. The native worker checks original
+scope, command endpoint, SQLite position, frame count and every captured segment
+descriptor/body digest, and checks the live proof for each whole assignment.
+It validates the complete prefix before deleting any local file. A matching
+endpoint or a cold proof alone cannot release capture retention.
+
+The worker keeps outcomes and its selected proof pending. The actor drops its
+duplicate capture indexes and returns their memory reservation while preserving
+outcome admission. The same actor-owned publisher reconstructs from authenticated
+origin locators, preserves the new command's due time, and uses ordinary root
+lineage and Cell CAS. Storage retries retain the existing publication grace;
+shutdown still joins materialization and complete original issued-range closure.
+The installed feed gets a bounded 100-ms selection opportunity before the
+ordinary root fallback. Root preparation already in progress retains its files.
+
+The real actor test blocks root preparation until selection, then pauses root
+CAS and verifies that every selected capture file is absent. It issues a later
+write and verifies that an unproven suffix refuses a query before its handler
+runs; proving that exact later capture restores visibility. Both commands then
+survive joined drain and cold restore. Separate cases retain prior Fleet ACKs
+and accepted mutations after caller cancellation. These are ordering and
+reconstruction tests, not TPS qualification.
+
+Remaining work before qualified production enablement:
+
+1. Install the canonical bounded node bundle producer and schedule fair admitted
+   materializer cohorts, coalescing proven debt rather than creating one root
+   per command. Preserve the integrated exact capture/visibility gate.
 2. Build on the authenticated index: bound admitted maintenance inventory,
    increase checkpoint density with retained-byte accounting, and measure the
    complete materialization/checkpoint/collection cost.

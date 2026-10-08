@@ -29,6 +29,7 @@ pub(crate) struct CellDurabilitySubmitter {
     cell: crate::CellId,
     incarnation: crate::identity::IncarnationId,
     epoch: u64,
+    binding: Option<crate::control::BundleBindingRef>,
     node_lease: Option<crate::NodeLeaseGuard>,
     node_durability: Option<NodeDurabilitySlot>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
@@ -107,6 +108,15 @@ impl CellPublisher {
         &mut self,
         proof: &crate::node::bundle::BundleCoverageProof,
     ) -> Result<cellule_ltx::RootRef> {
+        self.materialize_bundle_with_due(proof, self.observed.value().next_due_ms)
+            .await
+    }
+
+    pub(crate) async fn materialize_bundle_with_due(
+        &mut self,
+        proof: &crate::node::bundle::BundleCoverageProof,
+        next_due_ms: Option<i64>,
+    ) -> Result<cellule_ltx::RootRef> {
         self.check_node_lease()?;
         if self.observed.value().bundle_binding != Some(proof.binding()) {
             return Err(Error::Fenced);
@@ -127,8 +137,7 @@ impl CellPublisher {
         self.lineage_confirmed = *confirmation
             .lock()
             .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
-        self.publish_prepared(&prepared, self.observed.value().next_due_ms)
-            .await
+        self.publish_prepared(&prepared, next_due_ms).await
     }
 
     pub(crate) fn with_shared_publication(
@@ -161,12 +170,30 @@ impl CellPublisher {
             .await
     }
 
+    pub(crate) async fn enroll_bundle(&mut self) -> Result<()> {
+        let Some(slot) = self.node_durability.as_ref() else {
+            return Ok(());
+        };
+        let durability = slot
+            .read()
+            .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))?
+            .as_ref()
+            .map(|(_, durability)| std::sync::Arc::clone(durability));
+        if let Some(durability) = durability {
+            self.observed = durability
+                .bind_bundle_cell(&self.authority, &self.observed)
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn durability_submitter(&self) -> CellDurabilitySubmitter {
         let control = self.observed.value();
         CellDurabilitySubmitter {
             cell: control.cell,
             incarnation: control.incarnation,
             epoch: control.epoch,
+            binding: control.bundle_binding,
             node_lease: self.node_lease.clone(),
             node_durability: self.node_durability.clone(),
             telemetry: self.telemetry.clone(),
@@ -1047,6 +1074,20 @@ impl CellPublisher {
     /// Releases ownership after the SQL worker has closed the drained Cell.
     pub(crate) async fn release(&mut self) -> Result<()> {
         self.check_node_lease()?;
+        if self.observed.value().bundle_binding.is_some() {
+            let durability = self
+                .node_durability
+                .as_ref()
+                .ok_or(Error::Node("bound Cell lacks original node durability"))?
+                .read()
+                .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))?
+                .as_ref()
+                .map(|(_, durability)| std::sync::Arc::clone(durability))
+                .ok_or(Error::Node("bound Cell lacks original node durability"))?;
+            durability
+                .close_bundle_cell(&self.authority, &self.observed)
+                .await?;
+        }
         let mut backoff = Backoff::default();
         loop {
             self.check_node_lease()?;
@@ -1142,24 +1183,93 @@ impl CellPublisher {
     }
 }
 
+struct PendingBundleCapture {
+    submitted: crate::node::log_shipper::SubmittedCapture,
+    binding: Option<crate::control::BundleBindingRef>,
+}
+
 #[derive(Clone)]
 pub(crate) struct PendingDurability {
     durability: std::sync::Arc<NodeDurability>,
     ticket: CommitTicket,
+    capture: Option<std::sync::Arc<PendingBundleCapture>>,
     submitted_at: std::time::Instant,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
+/// Original whole-capture receipt. Only the submitting durability handle creates it.
+pub(crate) struct VerifiedBundleCapture {
+    assignment: crate::node::log::AssignedCommitRange,
+    selected: std::sync::Arc<crate::node::log_shipper::SelectedBundle>,
+}
+
+impl VerifiedBundleCapture {
+    pub(crate) fn selected(&self) -> &std::sync::Arc<crate::node::log_shipper::SelectedBundle> {
+        &self.selected
+    }
+
+    pub(crate) fn verify_pending(
+        &self,
+        cell: crate::identity::CellId,
+        incarnation: crate::identity::IncarnationId,
+        pending: &crate::cell::executor::PendingCommit,
+    ) -> Result<()> {
+        self.selected
+            .proof
+            .check_live_assignment(&self.assignment)?;
+        if !self.assignment.matches_capture(
+            cell,
+            incarnation,
+            pending.outcome().commit_sequence(),
+            pending.cuts(),
+        ) {
+            return Err(Error::Control("bundle does not match worker capture"));
+        }
+        Ok(())
+    }
+}
+
 impl PendingDurability {
+    pub(crate) fn has_bundle_capture(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    pub(crate) async fn selected_capture(&self) -> Result<Option<VerifiedBundleCapture>> {
+        let Some(capture) = &self.capture else {
+            return Ok(None);
+        };
+        let selection = capture.submitted.selection.as_ref().ok_or(Error::Node(
+            "bundle response lacks original selection receipt",
+        ))?;
+        let selected = tokio::select! {
+            selected = selection.selected() => selected?,
+            () = self.durability.wait_fenced() => return Err(Error::Fenced),
+        };
+        if capture.submitted.assignment.ticket() != self.ticket
+            || !selected
+                .proof
+                .contains_assignment(&capture.submitted.assignment)
+            || capture.binding != Some(selected.proof.binding())
+        {
+            return Err(Error::Node(
+                "bundle response differs from original Cell binding",
+            ));
+        }
+        self.durability.check_lease()?;
+        Ok(Some(VerifiedBundleCapture {
+            assignment: capture.submitted.assignment,
+            selected,
+        }))
+    }
+
     pub(crate) async fn prove(&self) -> Result<crate::node::log::DurabilitySource> {
         let proof = self.durability.prove(self.ticket).await?;
         if proof.source() == crate::node::log::DurabilitySource::Bundle {
-            // Ordinary actors still confirm visibility through per-Cell roots.
-            // Their existing object fallback must win until exact bundle proofs
-            // are connected to command, query, retry and capture release.
-            return Err(Error::Node(
-                "shared bundle actor response path is not installed",
-            ));
+            self.selected_capture()
+                .await?
+                .ok_or(Error::Node("bundle response lacks original capture"))?;
+            self.telemetry
+                .durability_proof(proof.source(), self.submitted_at.elapsed());
         }
         if proof.source() == crate::node::log::DurabilitySource::Fleet {
             self.telemetry
@@ -1257,8 +1367,8 @@ impl CellDurabilitySubmitter {
             commit_sequence,
             cuts,
         )?;
-        let ticket = match durability.submit(submission).await {
-            Ok(ticket) => ticket,
+        let capture = match durability.submit_capture(submission).await {
+            Ok(capture) => capture,
             Err(error) => {
                 self.check_node_lease()?;
                 // The commit still succeeds through object coverage, so this
@@ -1276,9 +1386,20 @@ impl CellDurabilitySubmitter {
         };
         self.telemetry
             .durability_submission(DurabilitySubmissionOutcome::Fleet);
+        let ticket = capture.assignment.ticket();
+        // Retain the exact assignment only for an installed publication feed.
+        // Shared ownership avoids copying it for each command-proof waiter;
+        // the ordinary follower path needs only its existing commit ticket.
+        let capture = capture.selection.is_some().then(|| {
+            std::sync::Arc::new(PendingBundleCapture {
+                submitted: capture,
+                binding: self.binding,
+            })
+        });
         Ok(Some(PendingDurability {
             durability: std::sync::Arc::clone(&durability),
             ticket,
+            capture,
             submitted_at: std::time::Instant::now(),
             telemetry: self.telemetry.clone(),
         }))

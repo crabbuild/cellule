@@ -314,6 +314,7 @@ impl CellRuntime {
                 "Cell runtime node durability was initialized twice",
             ));
         }
+        durability.attach_selection_resources(self.inner.pool.resource_ledger())?;
         *slot = Some((application, durability));
         Ok(())
     }
@@ -378,6 +379,7 @@ impl CellRuntime {
                 "Cell runtime node durability epoch did not advance",
             ));
         }
+        durability.attach_selection_resources(self.inner.pool.resource_ledger())?;
         let (_, previous) = slot
             .replace((application, durability))
             .ok_or(Error::Control("Cell runtime node durability disappeared"))?;

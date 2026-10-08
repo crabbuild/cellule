@@ -28,7 +28,12 @@ pub(in crate::cell::actor) async fn activate_restored_and_publish(
         job,
     )
     .await?;
-    if let Err(error) = publisher.activate().await {
+    let activation = async {
+        publisher.activate().await?;
+        publisher.enroll_bundle().await
+    }
+    .await;
+    if let Err(error) = activation {
         return match pool.deactivate(cell).await {
             Ok(()) => Err(error),
             Err(cleanup) => Err(cleanup),
@@ -90,6 +95,7 @@ pub(in crate::cell::actor) async fn bootstrap_and_publish(
             .await?;
         pool.confirm_bootstrap_published(cell, bootstrap.cuts)
             .await?;
+        publisher.enroll_bundle().await?;
         Ok(())
     }
     .await;

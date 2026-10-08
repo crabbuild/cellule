@@ -401,6 +401,24 @@ fn run_worker_command(
                 .and_then(|cell| cell.executor.confirm_durable(commit_sequence));
             let _ = reply.send(result);
         }
+        WorkerCommand::ReleaseBundleCaptures {
+            cell,
+            captures,
+            reply,
+        } => {
+            let result = cells
+                .get_mut(&cell)
+                .ok_or(Error::CellNotActive)
+                .and_then(|cell| cell.executor.release_bundle_captures(&captures));
+            let _ = reply.send(result);
+        }
+        WorkerCommand::BindBundleMaterialized { cell, root, reply } => {
+            let result = cells
+                .get_mut(&cell)
+                .ok_or(Error::CellNotActive)
+                .and_then(|cell| cell.executor.bind_bundle_materialized(&root));
+            let _ = reply.send(result);
+        }
         WorkerCommand::ConfirmBootstrapPublished { cell, cuts, reply } => {
             let result = cells
                 .get_mut(&cell)

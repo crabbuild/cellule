@@ -159,6 +159,16 @@ pub struct BundleCoverageProof {
     live: Option<selection::LiveBundleCoverage>,
 }
 impl BundleCoverageProof {
+    pub(crate) fn check_live_assignment(
+        &self,
+        assignment: &crate::node::log::AssignedCommitRange,
+    ) -> Result<()> {
+        self.live
+            .as_ref()
+            .ok_or(Error::Node("cold bundle cannot release live capture"))?
+            .check_assignment(assignment)
+    }
+
     /// Original Cell authority pin.
     pub fn binding(&self) -> BundleBindingRef {
         self.pin
@@ -181,6 +191,37 @@ impl BundleCoverageProof {
             .control
             .ltx_root()
             .ok_or(Error::Node("bundle binding has no base"))
+    }
+
+    pub(crate) fn contains_assignment(
+        &self,
+        assignment: &crate::node::log::AssignedCommitRange,
+    ) -> bool {
+        self.live
+            .as_ref()
+            .is_some_and(|live| live.contains_assignment(assignment))
+    }
+
+    pub(crate) fn assignment_count(&self) -> usize {
+        self.live.as_ref().map_or(0, |live| live.assignment_count())
+    }
+
+    pub(crate) fn retained_metadata_bytes(&self) -> Result<usize> {
+        let control = self.binding.control.encode()?.len();
+        self.binding
+            .locators
+            .capacity()
+            .checked_mul(std::mem::size_of::<Locator>())
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    self.live
+                        .as_ref()
+                        .map_or(0, |live| live.retained_metadata_bytes()),
+                )
+            })
+            .and_then(|bytes| bytes.checked_add(control.checked_mul(4)?))
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<Self>() + 256))
+            .ok_or(Error::Capacity("selected bundle metadata"))
     }
 }
 

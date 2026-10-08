@@ -29,8 +29,8 @@ pub(super) struct QueryMetrics {
     storage: storage::Accounting,
     peer: [Histogram; PeerPhase::COUNT],
     host_capacity: serde_json::Value,
-    response_sources: [AtomicU64; 3],
-    response_elapsed: [Histogram; 3],
+    response_sources: [AtomicU64; 4],
+    response_elapsed: [Histogram; 4],
     response_confirmation: Histogram,
     proof_wait: [Histogram; 3],
     submission_sources: [AtomicU64; 4],
@@ -253,6 +253,7 @@ impl CellTelemetry for QueryMetrics {
             CommandResponseSource::Recorded => 0,
             CommandResponseSource::Fleet => 1,
             CommandResponseSource::Object => 2,
+            CommandResponseSource::Bundle => 3,
         };
         self.response_sources[index].fetch_add(1, Ordering::Relaxed);
         self.response_elapsed[index].observe(elapsed);
@@ -411,6 +412,7 @@ impl QueryMetrics {
             ("response_recorded", &self.response_elapsed[0]),
             ("response_fleet", &self.response_elapsed[1]),
             ("response_object", &self.response_elapsed[2]),
+            ("response_bundle", &self.response_elapsed[3]),
             ("response_confirmation", &self.response_confirmation),
             ("proof_fleet", &self.proof_wait[0]),
             ("proof_object", &self.proof_wait[1]),
@@ -496,7 +498,8 @@ impl QueryMetrics {
             "response_sources": {
                 "recorded": self.response_sources[0].load(Ordering::Relaxed),
                 "fleet": self.response_sources[1].load(Ordering::Relaxed),
-                "object": self.response_sources[2].load(Ordering::Relaxed)
+                "object": self.response_sources[2].load(Ordering::Relaxed),
+                "bundle": self.response_sources[3].load(Ordering::Relaxed)
             },
             "submission_sources": {
                 "fleet": self.submission_sources[0].load(Ordering::Relaxed),

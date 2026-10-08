@@ -530,7 +530,7 @@ pub(super) fn start_admitted_publication(
     }
     tasks.spawn(async move {
         let mut admitted = Some(admission.replica);
-        let _retained_reservations = reservations;
+        let mut retained_reservations = reservations;
         let mut publication_proofs = Some(proofs);
         // Admission delay cannot restart or extend the existing retry grace.
         let fleet_deadline = admission.fleet_deadline;
@@ -539,6 +539,64 @@ pub(super) fn start_admitted_publication(
         let mut authority = std::time::Duration::ZERO;
         let result = async {
             let preparation_started = std::time::Instant::now();
+            if let Some(captures) = super::bundle::selected_prefix(
+                &publisher,
+                &durabilities,
+                published_commit_sequence,
+                merged.position,
+            )
+            .await?
+            {
+                let selected = Arc::clone(
+                    captures
+                        .last()
+                        .ok_or(Error::Control("bundle publication lacks capture"))?
+                        .selected(),
+                );
+                // No upload can still be reading these files: this task owns
+                // the sole publisher token and has not begun root preparation.
+                // Drop the old admission before fresh origin reconstruction.
+                drop(admitted.take());
+                pool.release_bundle_captures(cell, captures).await?;
+                drop(merged);
+                for (mut pending, reservation) in
+                    pendings.drain(..).zip(retained_reservations.iter_mut())
+                {
+                    pending.release_selected_metadata();
+                    let bytes = usize::try_from(pending.retained_memory_bytes())
+                        .map_err(|_| Error::Capacity("bundle outcome memory"))?;
+                    drop(pending);
+                    reservation.shrink_retained(bytes)?;
+                }
+                preparation = preparation_started.elapsed();
+                let authority_started = std::time::Instant::now();
+                let root = loop {
+                    match publisher
+                        .materialize_bundle_with_due(&selected.proof, published_next_due_ms)
+                        .await
+                    {
+                        Ok(root) => break root,
+                        Err(error) if is_storage_publication_error(&error) => {
+                            if std::time::Instant::now() >= fleet_deadline {
+                                return Err(error);
+                            }
+                            tokio::time::sleep(retry_delay).await;
+                            retry_delay = retry_delay
+                                .saturating_mul(2)
+                                .min(std::time::Duration::from_secs(2));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                };
+                pool.bind_bundle_materialized(cell, root).await?;
+                PendingDurability::prove_objects(&durabilities).await?;
+                let published = pool.confirm_published_range(cell, root).await?;
+                authority = authority_started.elapsed();
+                if published != expected {
+                    return Err(Error::Control("bundle result differs from queued commit"));
+                }
+                return Ok(());
+            }
             let prepared = loop {
                 let attempt = if let Some(replica) = admitted.take() {
                     publisher

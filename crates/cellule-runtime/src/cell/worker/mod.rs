@@ -793,6 +793,38 @@ impl SqlWorkerPool {
         receive(response).await
     }
 
+    pub(crate) async fn release_bundle_captures(
+        &self,
+        cell: CellId,
+        captures: Vec<crate::publication::VerifiedBundleCapture>,
+    ) -> Result<()> {
+        let (reply, response) = oneshot::channel();
+        self.send(
+            cell,
+            WorkerCommand::ReleaseBundleCaptures {
+                cell,
+                captures,
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
+    pub(crate) async fn bind_bundle_materialized(
+        &self,
+        cell: CellId,
+        root: cellule_ltx::RootRef,
+    ) -> Result<()> {
+        let (reply, response) = oneshot::channel();
+        self.send(
+            cell,
+            WorkerCommand::BindBundleMaterialized { cell, root, reply },
+        )
+        .await?;
+        receive(response).await
+    }
+
     pub(crate) async fn confirm_migration_published(
         &self,
         cell: CellId,
@@ -1265,6 +1297,16 @@ enum WorkerCommand {
     ConfirmDurable {
         cell: CellId,
         commit_sequence: u64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    ReleaseBundleCaptures {
+        cell: CellId,
+        captures: Vec<crate::publication::VerifiedBundleCapture>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    BindBundleMaterialized {
+        cell: CellId,
+        root: cellule_ltx::RootRef,
         reply: oneshot::Sender<Result<()>>,
     },
     ConfirmBootstrapPublished {

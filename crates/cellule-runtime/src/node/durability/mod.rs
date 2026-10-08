@@ -18,6 +18,28 @@ use crate::{Error, Result};
 mod object_coverage;
 use object_coverage::ObjectCoverage;
 
+/// Original node authority used to enroll and close the Cells of an installed
+/// shared publication feed. Implementations serialize these mutations and shared
+/// selection with their original heartbeat/enrollment state. The host owns and
+/// joins the feed; the runtime still verifies Cell departure against origin.
+pub trait NodeBundleAuthority: Send + Sync {
+    /// Pins the Serving Cell before its SQL admission opens.
+    fn bind<'a>(
+        &'a self,
+        authority: &'a crate::control::authority::CellAuthority,
+        observed: &'a crate::control::authority::VersionedControl,
+    ) -> BoxFuture<'a, Result<crate::control::authority::VersionedControl>>;
+
+    /// Joins complete issued coverage, materialization/checkpoint and catalog
+    /// closure after SQL/capture tasks close, including earlier Fleet ACKs.
+    fn close<'a>(
+        &'a self,
+        authority: &'a crate::control::authority::CellAuthority,
+        observed: &'a crate::control::authority::VersionedControl,
+        issued: crate::node::log::CellIssuedRange,
+    ) -> BoxFuture<'a, Result<()>>;
+}
+
 /// Authoritative node-session mutations required by follower durability.
 ///
 /// Implementations must serialize these mutations with heartbeat refreshes and
@@ -167,9 +189,19 @@ pub struct NodeDurability {
     retirement: std::sync::Mutex<Option<Arc<NodeLogRetirementObservation>>>,
     retirement_proof: OnceCell<Arc<NodeLogRetirementProof>>,
     closed: std::sync::atomic::AtomicBool,
+    selection_resources: std::sync::OnceLock<crate::fleet::resource::ResourceLedger>,
+    bundle_authority: std::sync::OnceLock<Arc<dyn NodeBundleAuthority>>,
 }
 
 impl NodeDurability {
+    pub(crate) fn check_lease(&self) -> Result<()> {
+        self.node_lease.check()
+    }
+
+    pub(crate) async fn wait_fenced(&self) {
+        self.node_lease.wait_fenced().await;
+    }
+
     /// Observes the epoch's durability frontiers; this does not issue a proof.
     pub fn progress(&self) -> Result<crate::node::log::NodeLogProgress> {
         self.gate.progress()
@@ -205,6 +237,8 @@ impl NodeDurability {
             retirement: std::sync::Mutex::new(None),
             retirement_proof: OnceCell::new(),
             closed: std::sync::atomic::AtomicBool::new(false),
+            selection_resources: std::sync::OnceLock::new(),
+            bundle_authority: std::sync::OnceLock::new(),
         }
     }
 
@@ -227,13 +261,105 @@ impl NodeDurability {
         &self,
         submission: NodeLogSubmission,
     ) -> Result<(CommitTicket, crate::node::log::AssignedCommitRange)> {
+        self.submit_capture(submission)
+            .await
+            .map(|capture| (capture.assignment.ticket(), capture.assignment))
+    }
+
+    pub(crate) async fn submit_capture(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<crate::node::log_shipper::SubmittedCapture> {
         self.node_lease.check()?;
         let ticket = tokio::select! {
-            result = self.shipper.submit_assigned(submission) => result?,
+            result = self.shipper.submit_capture(submission) => result?,
             () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
         };
         self.node_lease.check()?;
         Ok(ticket)
+    }
+
+    pub(crate) fn attach_selection_resources(
+        &self,
+        resources: crate::fleet::resource::ResourceLedger,
+    ) -> Result<()> {
+        let original = self.selection_resources.get_or_init(|| resources.clone());
+        if !original.same_ledger(&resources) {
+            return Err(Error::Node("bundle selection resource ledger changed"));
+        }
+        Ok(())
+    }
+
+    /// Installs this epoch's shared feed and original binding/closure authority
+    /// before native issuance or actor activation. The host must keep accepting
+    /// and joining complete captures until runtime drain finishes.
+    pub fn enable_bundle_publication(
+        &self,
+        authority: Arc<dyn NodeBundleAuthority>,
+    ) -> Result<crate::node::log_shipper::NodePublicationFeed> {
+        self.node_lease.check()?;
+        let feed = self.shipper.take_publication_feed()?;
+        self.bundle_authority
+            .set(authority)
+            .map_err(|_| Error::Node("bundle authority already installed"))?;
+        Ok(feed)
+    }
+
+    pub(crate) async fn bind_bundle_cell(
+        &self,
+        authority: &crate::control::authority::CellAuthority,
+        observed: &crate::control::authority::VersionedControl,
+    ) -> Result<crate::control::authority::VersionedControl> {
+        let Some(bundle) = self.bundle_authority.get() else {
+            return Ok(observed.clone());
+        };
+        self.node_lease.check()?;
+        let bound = bundle.bind(authority, observed).await?;
+        self.node_lease.check()?;
+        observed
+            .value()
+            .validate_transition(bound.value(), crate::control::Transition::BindBundle)?;
+        let pin = bound
+            .value()
+            .bundle_binding
+            .ok_or(Error::Node("bundle enrollment lacks original Cell pin"))?;
+        let (session, _, epoch) = self.identity()?;
+        if pin.session != session || pin.epoch != epoch {
+            return Err(Error::Fenced);
+        }
+        Ok(bound)
+    }
+
+    pub(crate) async fn close_bundle_cell(
+        &self,
+        authority: &crate::control::authority::CellAuthority,
+        observed: &crate::control::authority::VersionedControl,
+    ) -> Result<()> {
+        if observed.value().bundle_binding.is_none() {
+            return Ok(());
+        }
+        let bundle = self
+            .bundle_authority
+            .get()
+            .ok_or(Error::Node("bound Cell lost original bundle authority"))?;
+        self.node_lease.check()?;
+        let scope = crate::node::log::CellLogScope {
+            application: crate::identity::ApplicationId::from_bytes(
+                *authority.layout().application_id(),
+            ),
+            cell: observed.value().cell,
+            incarnation: observed.value().incarnation,
+            cell_epoch: observed.value().epoch,
+        };
+        let issued = self.close_cell_issuance(
+            scope,
+            observed
+                .value()
+                .ltx_root()
+                .ok_or(Error::PendingPublication)?,
+        )?;
+        bundle.close(authority, observed, issued).await?;
+        self.node_lease.check()
     }
 
     /// Freezes exact Cell issuance after the original SQL and capture tasks join.
@@ -357,6 +483,80 @@ impl NodeDurability {
         proofs: &[crate::node::bundle::BundleCoverageProof],
     ) -> Result<u64> {
         crate::node::bundle::confirm_selected_coverage(&self.gate, &self.node_lease, proofs)
+    }
+
+    /// Confirms a complete admitted feed cohort and returns its exact selected
+    /// metadata to the original commands. The installed runtime's ledger pays
+    /// for each Cell proof once until all command/materialization consumers join.
+    /// Missing, duplicate, cold or foreign assignments cannot wake siblings.
+    /// Captures still require their separate ordinary root cleanup and drain.
+    pub fn confirm_selected_captures(
+        &self,
+        captures: &[crate::node::log_shipper::AssignedCapture],
+        proofs: Vec<crate::node::bundle::BundleCoverageProof>,
+    ) -> Result<crate::node::log_shipper::SelectedBundlePublication> {
+        self.node_lease.check()?;
+        if captures.is_empty() || captures.len() > 64 || proofs.len() > 64 {
+            return Err(Error::Capacity("selected capture cohort"));
+        }
+        let assignments = proofs
+            .iter()
+            .map(|proof| proof.assignment_count())
+            .sum::<usize>();
+        if assignments != captures.len() || proofs.iter().any(|proof| proof.assignment_count() == 0)
+        {
+            return Err(Error::Node("selection omits original captured assignments"));
+        }
+        for (index, capture) in captures.iter().enumerate() {
+            let assignment = capture.assignment();
+            if captures[..index]
+                .iter()
+                .any(|before| before.assignment() == assignment)
+                || proofs
+                    .iter()
+                    .filter(|proof| proof.contains_assignment(&assignment))
+                    .count()
+                    != 1
+            {
+                return Err(Error::Node(
+                    "selection differs from original captured cohort",
+                ));
+            }
+        }
+        let resources = self.selection_resources.get().ok_or(Error::Node(
+            "bundle publication has no installed runtime resource ledger",
+        ))?;
+        let memories = proofs
+            .iter()
+            .map(|proof| {
+                resources.try_reserve(
+                    crate::fleet::resource::ResourceCost::zero()
+                        .with_retained_bytes(proof.retained_metadata_bytes()?),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        // Validate all original gates and leases before sending any receipt.
+        // Receipt waiters also require the gate's confirmed Bundle source.
+        let through =
+            crate::node::bundle::confirm_selected_coverage(&self.gate, &self.node_lease, &proofs)?;
+        let selected = proofs
+            .into_iter()
+            .zip(memories)
+            .map(|(proof, memory)| {
+                Arc::new(crate::node::log_shipper::SelectedBundle {
+                    proof,
+                    _memory: memory,
+                })
+            })
+            .collect::<Vec<_>>();
+        for capture in captures {
+            let proof = selected
+                .iter()
+                .find(|selected| selected.proof.contains_assignment(&capture.assignment()))
+                .ok_or(Error::Node("selected capture lost original assignment"))?;
+            capture.confirm_selection(Arc::clone(proof));
+        }
+        Ok(crate::node::log_shipper::SelectedBundlePublication { through, selected })
     }
 
     /// Returns this binding's exact enrolled log epoch.

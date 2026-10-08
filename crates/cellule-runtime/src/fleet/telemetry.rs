@@ -14,6 +14,8 @@ pub enum CommandResponseSource {
     Fleet,
     /// Object publication proved the new commit.
     Object,
+    /// Original shared bundle selection proved the complete captured commit.
+    Bundle,
 }
 
 /// One completed object publication, which may finish after a follower-proof

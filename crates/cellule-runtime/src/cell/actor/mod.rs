@@ -28,6 +28,7 @@ mod serving;
 pub use acquisition_observer::{AcquisitionObservation, AcquisitionObserver};
 pub use serving::CellServingObservation;
 mod admission;
+mod bundle;
 mod group;
 mod lifecycle;
 mod maintenance;

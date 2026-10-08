@@ -280,13 +280,14 @@ fn coverage_pending(
     Some(super::PendingDurability {
         durability: durability.clone(),
         ticket,
+        capture: None,
         submitted_at: std::time::Instant::now(),
         telemetry: Default::default(),
     })
 }
 
 #[tokio::test]
-async fn ordinary_pending_response_refuses_bundle_until_visibility_is_integrated() {
+async fn ordinary_pending_response_refuses_bundle_without_original_capture_receipt() {
     use crate::node::log::DurabilitySource;
     let (durability, gate, _) = coverage_binding(1);
     let scratch = tempfile::tempdir().unwrap();
@@ -331,9 +332,7 @@ async fn ordinary_pending_response_refuses_bundle_until_visibility_is_integrated
     let pending = coverage_pending(&durability, ticket).unwrap();
     assert!(matches!(
         pending.prove().await,
-        Err(Error::Node(
-            "shared bundle actor response path is not installed"
-        ))
+        Err(Error::Node("bundle response lacks original capture"))
     ));
 }
 
@@ -802,6 +801,7 @@ async fn commits_report_when_no_enrolled_lane_can_carry_them() {
         timing: Default::default(),
     };
     let submitter = CellDurabilitySubmitter {
+        binding: None,
         cell: CellId::from_bytes([71; 32]),
         incarnation: IncarnationId::from_bytes([72; 16]),
         epoch: 1,
@@ -813,6 +813,7 @@ async fn commits_report_when_no_enrolled_lane_can_carry_them() {
 
     let lane: NodeDurabilitySlot = Arc::new(std::sync::RwLock::new(None));
     let submitter = CellDurabilitySubmitter {
+        binding: None,
         node_durability: Some(lane),
         telemetry,
         ..submitter
@@ -938,6 +939,7 @@ async fn commits_report_a_fenced_lane_instead_of_failing() {
 
     let submitter = CellDurabilitySubmitter {
         cell: CellId::from_bytes([84; 32]),
+        binding: None,
         incarnation: IncarnationId::from_bytes([85; 16]),
         epoch: 1,
         node_lease: None,
