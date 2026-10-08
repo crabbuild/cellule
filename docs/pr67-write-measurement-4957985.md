@@ -73,9 +73,9 @@ and total offered requests. Warmup failures/drops remain in the external report.
 
 | Case | ACK read/retry verification | Shutdown / cold recovery |
 | --- | --- | --- |
-| Prior Cellule / Fleet | 96,373 checked; 465 HTTP 503 errors; 95,908 exact retries passed | Owner exceeded 120-second deadline; cold not reached |
-| Current Cellule / Fleet | 119,690 checked; 3,273 HTTP 503 errors; 116,417 exact retries passed | Owner exceeded 120-second deadline; cold not reached |
-| celld / Fleet | All 463,837 checks returned HTTP 500 after owner scratch exhaustion | Cold not reached |
+| Prior Cellule / Fleet | 96,373 checked; 465 errors, sampled HTTP 503; 95,908 exact retries passed | Owner exceeded 120-second deadline; cold not reached |
+| Current Cellule / Fleet | 119,690 checked; 3,273 errors, sampled HTTP 503; 116,417 exact retries passed | Owner exceeded 120-second deadline; cold not reached |
+| celld / Fleet | 463,837 checked; all failed, sampled HTTP 500 after owner scratch exhaustion | Cold not reached |
 | Prior Cellule / Bucket | All 50,569 ACKs passed both warm and cold read/exact retry | Drain 18.53 seconds; cold contract retry passed |
 | Current Cellule / Bucket | All 50,362 ACKs passed both warm and cold read/exact retry | Drain 6.37 seconds; cold contract retry passed |
 | celld / Bucket | All 182,209 ACKs passed both warm and cold read/exact retry | Drain 10.63 seconds; cold contract retry passed |
@@ -83,7 +83,9 @@ and total offered requests. Warmup failures/drops remain in the external report.
 Prior Cellule maintained active Fleet throughout the sampled window. Current
 Cellule entered rotation and disabled Fleet shipping by the final sample, so
 its configured-Fleet result includes fallback and cannot claim steady Fleet
-capacity. Its native tiered frontier stopped at 60,025 while issuance reached
+capacity. The auditor retains aggregate counts and only four error examples;
+the sampled status codes do not classify every failed ACK. Its native tiered
+frontier stopped at 60,025 while issuance reached
 116,564. Live filesystem evidence records celld's owner tmpfs at 100%, while
 each follower used about 16 MiB. Audit HTTP failures are availability failures;
 they do not establish acknowledged data loss.
