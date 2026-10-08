@@ -1,5 +1,8 @@
 # PR67 sparse-root coverage measurement
 
+For the subsequent root-delay experiment and its rollback, see the
+[new matched measurement](pr67-fleet-root-delay-measurement.md).
+
 **Performance parity is not delivered.** The live-path change observed 378.88
 successful writes/s versus 282.43 before it in one matched five-minute run.
 Successful-write p99 improved, but median latency worsened, overload errors
