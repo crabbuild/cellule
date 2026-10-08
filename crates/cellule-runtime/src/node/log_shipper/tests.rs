@@ -335,17 +335,173 @@ async fn splits_large_submission_at_sixty_four_frames() {
     )
     .unwrap();
 
-    let ticket = shipper.submit(submission(&cuts)).await.unwrap();
+    let mut publication = shipper.take_publication_feed().unwrap();
+    let (ticket, assignment) = shipper.submit_assigned(submission(&cuts)).await.unwrap();
+    let capture = publication.recv().await.unwrap();
+    assert_eq!(capture.assignment(), assignment);
+    assert_eq!(capture.frames().len(), 65);
+    assignment.verify(capture.frames()).unwrap();
+    assert!(assignment.verify(&capture.frames()[..64]).is_err());
     assert_eq!(
         gate.prove(ticket).await.unwrap().source(),
         crate::node::log::DurabilitySource::Fleet
     );
     shipper.shutdown().await.unwrap();
+    assert!(publication.recv().await.is_none());
+    let retained = capture
+        .frames()
+        .iter()
+        .map(|frame| frame.encoded().len())
+        .sum::<usize>();
+    assert_eq!(
+        shipper.bytes.available_permits(),
+        shipper.max_outstanding_bytes as usize - retained
+    );
+    drop(capture);
+    assert_eq!(
+        shipper.bytes.available_permits(),
+        shipper.max_outstanding_bytes as usize
+    );
 
     assert_eq!(ticket.first_sequence(), 1);
     assert_eq!(ticket.last_sequence(), 65);
     assert_eq!(transport.batch_sizes(node(2)), [64, 1]);
     assert!(gate.issue(1).is_err());
+}
+
+fn publication_submission(cuts: &cellule_ltx::CaptureBatch, index: u64) -> NodeLogSubmission {
+    let mut cell = [8; 32];
+    cell[..8].copy_from_slice(&index.to_le_bytes());
+    NodeLogSubmission::new(
+        ApplicationId::from_bytes([9; 16]),
+        CellId::from_bytes(cell),
+        IncarnationId::from_bytes([7; 16]),
+        3,
+        4,
+        cuts,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn cancelled_full_publication_queue_does_not_issue_a_native_gap() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    gate.activate_fleet().unwrap();
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        Arc::new(RecordingTransport::default()),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let mut feed = shipper.take_publication_feed().unwrap();
+    assert!(shipper.take_publication_feed().is_err());
+    for index in 0..MAX_QUEUED_SUBMISSIONS as u64 {
+        shipper
+            .submit(publication_submission(&cuts, index))
+            .await
+            .unwrap();
+    }
+    assert_eq!(gate.issued_through(), 512);
+    let blocked = shipper.submit(publication_submission(&cuts, 512));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(25), blocked)
+            .await
+            .is_err()
+    );
+    assert_eq!(gate.issued_through(), 512);
+    let first = feed.recv().await.unwrap();
+    assert_eq!(first.assignment().ticket().first_sequence(), 1);
+    first.assignment().verify(first.frames()).unwrap();
+    drop(first);
+    let next = shipper
+        .submit(publication_submission(&cuts, 512))
+        .await
+        .unwrap();
+    assert_eq!(next.first_sequence(), 513);
+    gate.wait_followers(next).await.unwrap();
+    shipper.shutdown().await.unwrap();
+    for expected in 2..=513 {
+        let capture = feed.recv().await.unwrap();
+        assert_eq!(capture.assignment().ticket().first_sequence(), expected);
+        capture.assignment().verify(capture.frames()).unwrap();
+    }
+    assert!(feed.recv().await.is_none());
+    assert_eq!(
+        shipper.bytes.available_permits(),
+        shipper.max_outstanding_bytes as usize
+    );
+}
+
+#[tokio::test]
+async fn shutdown_wakes_full_publication_admission_and_joins_accepted_frames() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport = Arc::new(RecordingTransport::default());
+    let shipper = Arc::new(
+        NodeLogShipper::new(
+            gate.clone(),
+            transport.clone(),
+            cellule_ltx::Limits::default(),
+        )
+        .unwrap(),
+    );
+    let mut feed = shipper.take_publication_feed().unwrap();
+    for index in 0..MAX_QUEUED_SUBMISSIONS as u64 {
+        shipper
+            .submit(publication_submission(&cuts, index))
+            .await
+            .unwrap();
+    }
+    let next = publication_submission(&cuts, 512);
+    let running = Arc::clone(&shipper);
+    let blocked = tokio::spawn(async move { running.submit(next).await });
+    // The ordered lane is held only after native loading, while the full
+    // publication queue refuses a slot. Observe that actual blocked state.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while shipper.order.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), shipper.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(blocked.await.unwrap(), Err(Error::RuntimeClosed)));
+    assert_eq!(gate.issued_through(), 512);
+    let mut captures = 0;
+    while let Some(capture) = feed.recv().await {
+        captures += 1;
+        capture.assignment().verify(capture.frames()).unwrap();
+    }
+    assert_eq!(captures, 512);
+    assert_eq!(transport.batch_sizes(node(2)).iter().sum::<usize>(), 512);
+}
+
+#[tokio::test]
+async fn dropped_publication_consumer_refuses_issuance_and_cannot_be_replaced() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        Arc::new(RecordingTransport::default()),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    drop(shipper.take_publication_feed().unwrap());
+    assert!(matches!(
+        shipper.submit(submission(&cuts)).await,
+        Err(Error::RuntimeClosed)
+    ));
+    assert_eq!(gate.issued_through(), 0);
+    assert!(shipper.take_publication_feed().is_err());
+    shipper.shutdown().await.unwrap();
+    assert_eq!(
+        shipper.bytes.available_permits(),
+        shipper.max_outstanding_bytes as usize
+    );
 }
 
 #[tokio::test]

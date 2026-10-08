@@ -291,6 +291,21 @@ set, activation bit, contiguous object watermark, and renewable recovery claim.
   failure, while its tickets remain eligible for object proof and covered
   rotation.
 
+`NodeDurability::take_publication_feed` installs one ordered consumer before
+the original epoch issues any frames. Each `AssignedCapture` retains its exact
+complete assignment and verified frames under the shipper's existing byte
+admission. The 512-submission queue reserves space before sequence issuance;
+cancellation or a full queue cannot leave an issued gap. A capture larger than
+64 frames remains one complete witness even when follower transport splits it.
+Shutdown closes admission, wakes blocked producers and lets the feed drain
+accepted captures. The host must join selection or verified fallback for all
+of them before retiring the epoch.
+
+This feed grants no publication authority or response proof. Ordinary actor
+bundle ACKs remain disabled until shared selection, visibility, capture release
+and complete issued-range drain are integrated. The example application does
+not install the feed yet; this API alone is not a measured throughput gain.
+
 **Ensemble directory.** It filters live peers by protocol, pressure, and the
 exact shared-disk capacity advertised by their follower stores:
 

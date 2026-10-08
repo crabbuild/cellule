@@ -11,6 +11,9 @@ use crate::node::log::{CommitTicket, DurabilityGate};
 use crate::node::log_transport::{AppendRequest, NodeLogTransport};
 use crate::{Error, Result};
 
+mod publication;
+pub use publication::{AssignedCapture, NodePublicationFeed};
+
 const MAX_BATCH_FRAMES: usize = 64;
 const MAX_QUEUED_SUBMISSIONS: usize = 512;
 const NODE_FRAME_HEADER_BYTES: u64 = 240;
@@ -195,6 +198,8 @@ pub struct NodeLogShipper {
     max_outstanding_bytes: u64,
     gate: DurabilityGate,
     limits: cellule_ltx::Limits,
+    publication: publication::PublicationState,
+    stopping: tokio::sync::watch::Sender<bool>,
 }
 
 impl NodeLogShipper {
@@ -236,6 +241,7 @@ impl NodeLogShipper {
         let (sender, receiver) = mpsc::channel(MAX_QUEUED_SUBMISSIONS);
         let bytes = Arc::new(Semaphore::new(permits));
         let worker_gate = gate.clone();
+        let (stopping, _) = tokio::sync::watch::channel(false);
         let worker = runtime.spawn(run_shipper(
             receiver,
             worker_gate,
@@ -247,6 +253,7 @@ impl NodeLogShipper {
             batch_bytes,
             telemetry.clone(),
             interval,
+            stopping.clone(),
         ));
         Ok(Self {
             sender: std::sync::Mutex::new(Some(sender)),
@@ -256,7 +263,23 @@ impl NodeLogShipper {
             max_outstanding_bytes: batch_bytes,
             gate,
             limits,
+            publication: publication::PublicationState::default(),
+            stopping,
         })
+    }
+
+    /// Installs the sole ordered publication consumer before any native issuance.
+    /// The host must own and join this consumer with the original epoch. Taking
+    /// the feed does not select objects, authorize responses or activate Fleet.
+    pub fn take_publication_feed(&self) -> Result<NodePublicationFeed> {
+        let _ordered = self
+            .order
+            .try_lock()
+            .map_err(|_| Error::PendingPublication)?;
+        if self.gate.issued_through() != 0 || *self.stopping.borrow() {
+            return Err(Error::PendingPublication);
+        }
+        self.publication.take_feed(self.stopping.subscribe())
     }
 
     pub(crate) fn validate_limits(limits: cellule_ltx::Limits) -> Result<(u64, usize)> {
@@ -327,6 +350,12 @@ impl NodeLogShipper {
         // admission. This lane only patches exclusively owned envelopes and
         // atomically commits their consecutive ticket before enqueueing.
         let _ordered = self.order.lock().await;
+        // Reserve both consumers before committing a sequence. Cancellation or
+        // a full publication queue therefore cannot leave an unselectable gap.
+        let publication = self.publication.reserve(&self.stopping).await?;
+        if *self.stopping.borrow() {
+            return Err(Error::RuntimeClosed);
+        }
         let ticket = self.gate.preview(frame_count)?;
         let encoded = loaded.encode(ticket)?;
         let assignment = self
@@ -336,6 +365,13 @@ impl NodeLogShipper {
         let reservation = Arc::new(OutstandingBytes {
             _permit: reservation,
         });
+        if let Some(publication) = publication {
+            publication.send(AssignedCapture::new(
+                assignment,
+                encoded.clone(),
+                Arc::clone(&reservation),
+            ));
+        }
         let frames = encoded
             .into_iter()
             .enumerate()
@@ -351,6 +387,8 @@ impl NodeLogShipper {
 
     /// Closes admission and drains every accepted frame to the current epoch.
     pub async fn shutdown(&self) -> Result<()> {
+        self.stopping.send_replace(true);
+        let publication_closed = self.publication.close();
         self.bytes.close();
         self.sender
             .lock()
@@ -361,16 +399,18 @@ impl NodeLogShipper {
             .lock()
             .map_err(|_| Error::Node("node-log shipper lock poisoned"))?
             .take();
-        if let Some(worker) = worker {
-            worker.await.map_err(Error::FollowerWorkerJoin)?;
-        }
+        let joined = match worker {
+            Some(worker) => worker.await.map_err(Error::FollowerWorkerJoin),
+            None => Ok(()),
+        };
         self.gate.stop_shipping();
-        Ok(())
+        publication_closed.and(joined)
     }
 }
 
 impl Drop for NodeLogShipper {
     fn drop(&mut self) {
+        self.stopping.send_replace(true);
         self.gate.stop_shipping();
         self.bytes.close();
     }
@@ -405,6 +445,7 @@ async fn run_shipper(
     max_batch_bytes: u64,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     interval: Duration,
+    stopping: tokio::sync::watch::Sender<bool>,
 ) {
     let mut pending = VecDeque::<QueuedFrame>::new();
     let mut closed = false;
@@ -412,12 +453,14 @@ async fn run_shipper(
         if pending.is_empty() {
             if closed {
                 bytes.close();
+                stopping.send_replace(true);
                 return;
             }
             match receiver.recv().await {
                 Some(submission) => pending.extend(submission.frames),
                 None => {
                     bytes.close();
+                    stopping.send_replace(true);
                     return;
                 }
             }
@@ -432,18 +475,18 @@ async fn run_shipper(
                     break;
                 };
                 let Some(next_bytes) = batch_bytes.checked_add(next.encoded.len() as u64) else {
-                    stop_shipper(&gate, &bytes);
+                    stop_shipper(&gate, &bytes, &stopping);
                     return;
                 };
                 if !batch.is_empty() && next_bytes > max_batch_bytes {
                     break;
                 }
                 if next_bytes > max_batch_bytes {
-                    stop_shipper(&gate, &bytes);
+                    stop_shipper(&gate, &bytes, &stopping);
                     return;
                 }
                 let Some(next) = pending.pop_front() else {
-                    stop_shipper(&gate, &bytes);
+                    stop_shipper(&gate, &bytes, &stopping);
                     return;
                 };
                 batch_bytes = next_bytes;
@@ -484,14 +527,19 @@ async fn run_shipper(
         .await;
         telemetry.node_log_append(result.is_ok(), append_bytes);
         if result.is_err() {
-            stop_shipper(&gate, &bytes);
+            stop_shipper(&gate, &bytes, &stopping);
             receiver.close();
             return;
         }
     }
 }
 
-fn stop_shipper(gate: &DurabilityGate, bytes: &Semaphore) {
+fn stop_shipper(
+    gate: &DurabilityGate,
+    bytes: &Semaphore,
+    stopping: &tokio::sync::watch::Sender<bool>,
+) {
+    stopping.send_replace(true);
     gate.stop_shipping();
     bytes.close();
 }

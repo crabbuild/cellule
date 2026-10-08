@@ -175,6 +175,14 @@ impl NodeDurability {
         self.gate.progress()
     }
 
+    /// Installs this epoch's sole ordered publication consumer before issuance.
+    /// The original host must join selection/fallback for every accepted capture
+    /// before retiring this epoch. Receiving captures grants no durability proof.
+    pub fn take_publication_feed(&self) -> Result<crate::node::log_shipper::NodePublicationFeed> {
+        self.node_lease.check()?;
+        self.shipper.take_publication_feed()
+    }
+
     /// Creates one node-log durability epoch over its gate, shipper, authority,
     /// transport, and node lease.
     #[must_use]
