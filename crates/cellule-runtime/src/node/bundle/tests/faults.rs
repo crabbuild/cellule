@@ -4,12 +4,14 @@ use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     PutMultipartOptions, PutOptions, PutPayload, PutResult,
 };
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 #[derive(Debug, Default)]
-struct ReplyFault {
+pub(super) struct ReplyFault {
     inner: InMemory,
-    mode: AtomicU8,
+    pub(super) mode: AtomicU8,
+    pub(super) node_updates: AtomicUsize,
+    pub(super) coverage_puts: AtomicUsize,
 }
 impl std::fmt::Display for ReplyFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -30,8 +32,23 @@ impl ObjectStore for ReplyFault {
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
         let mode = self.mode.load(Ordering::SeqCst);
+        if path.as_ref().ends_with("/control.json")
+            && matches!(opts.mode, object_store::PutMode::Update(_))
+        {
+            if mode == 6 {
+                self.mode.store(7, Ordering::SeqCst);
+            } else if mode == 7 {
+                return Err(denied());
+            }
+        }
         let node_update = path.as_ref().contains("/nodes/")
             && matches!(opts.mode, object_store::PutMode::Update(_));
+        if node_update {
+            self.node_updates.fetch_add(1, Ordering::SeqCst);
+        }
+        if path.as_ref().ends_with(".cnb") {
+            self.coverage_puts.fetch_add(1, Ordering::SeqCst);
+        }
         if node_update && mode == 4 {
             self.mode
                 .compare_exchange(4, 5, Ordering::SeqCst, Ordering::SeqCst)
@@ -50,6 +67,9 @@ impl ObjectStore for ReplyFault {
             return Err(denied());
         }
         let eligible = (mode == 1 && path.as_ref().ends_with(".cnb"))
+            || (mode == 8
+                && path.as_ref().ends_with("/control.json")
+                && matches!(opts.mode, object_store::PutMode::Update(_)))
             || (mode == 2
                 && path.as_ref().contains("/nodes/")
                 && matches!(opts.mode, object_store::PutMode::Update(_)));

@@ -17,6 +17,7 @@ const MAX_MANIFEST_CELLS: usize = 4_096;
 const MULTIPART_BYTES: usize = 8 << 20;
 
 mod inventory;
+mod reconcile;
 pub use inventory::RecoveryManifestInventory;
 
 /// One control-ready pointer returned after bundle and manifest publication.
@@ -191,6 +192,11 @@ pub struct RecoveryManifestStore {
 }
 
 impl RecoveryManifestStore {
+    pub(crate) fn for_application(&self, application: ApplicationId) -> Self {
+        let mut store = self.clone();
+        store.layout = store.layout.for_application(*application.as_bytes());
+        store
+    }
     pub(crate) fn layout(&self) -> &CellStorageLayout {
         &self.layout
     }
@@ -483,16 +489,17 @@ impl RecoveryManifestStore {
             .await?;
         let limits = self.limits;
         let decoded = tokio::task::spawn_blocking(move || {
-            cellule_ltx::bundle::Bundle::decode_temp_file_with_digest(
+            let bundle = cellule_ltx::bundle::Bundle::decode_temp_file_with_digest(
                 temporary,
                 row.bundle_digest,
                 limits,
-            )
+            )?;
+            Ok::<_, cellule_ltx::LtxError>((bundle, disk_reservation))
         })
         .await
         .map_err(cellule_ltx::LtxError::from)?;
-        let bundle = match decoded {
-            Ok(bundle) => bundle,
+        let (bundle, disk_reservation) = match decoded {
+            Ok(result) => result,
             Err(cellule_ltx::LtxError::ChecksumMismatch) => {
                 return Err(Error::Node("recovery bundle digest differs"));
             }

@@ -178,6 +178,58 @@ async fn checkpoint_releases_locators_and_the_next_range_continues_exactly() {
 }
 
 #[tokio::test]
+async fn closed_dense_history_cannot_withdraw_before_the_exact_root_checkpoint() {
+    let mut f = Fixture::new().await;
+    let mut cell = f.cell(4).await;
+    let (_, frames, assigned) = f.append(&mut cell, 2);
+    let prepared = f
+        .directory
+        .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+        .await
+        .unwrap();
+    let (selected, proofs) = f
+        .directory
+        .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
+        .await
+        .unwrap();
+    let pin = cell.control.value().bundle_binding.unwrap();
+    let issued = f
+        .gate
+        .close_cell_issuance(
+            Fixture::scope(&cell),
+            cell.control.value().ltx_root().unwrap(),
+        )
+        .unwrap();
+    let closing = f
+        .directory
+        .begin_bundle_close(&selected, pin, issued, NOW)
+        .await
+        .unwrap();
+    let closed = f
+        .directory
+        .finish_bundle_close(&closing, pin, issued, NOW)
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            f.directory.withdraw(&closed, NOW).await,
+            Err(Error::PendingPublication)
+        ),
+        "Closed rows still retain a dense native suffix until its exact root checkpoint"
+    );
+    f.publisher(&cell)
+        .materialize_bundle(&proofs[0])
+        .await
+        .unwrap();
+    let checkpoint = f
+        .directory
+        .checkpoint_bundle_cell(&closed, &cell.authority, &proofs[0], Limits::default(), NOW)
+        .await
+        .unwrap();
+    f.directory.withdraw(&checkpoint, NOW).await.unwrap();
+}
+
+#[tokio::test]
 async fn quiet_binding_must_close_and_checkpoint_before_session_withdrawal() {
     let mut f = Fixture::new().await;
     let cell = f.cell(4).await;

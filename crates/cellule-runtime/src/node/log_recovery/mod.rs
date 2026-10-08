@@ -232,6 +232,7 @@ pub struct NodeLogRecovery {
 }
 
 /// One dead-session Cell control that may need a recovered tail attached.
+#[derive(Clone)]
 pub struct RecoveryCell {
     /// Application the Cell belongs to.
     pub application: ApplicationId,
@@ -247,11 +248,12 @@ pub struct RecoveryCoordinator {
     manifests: RecoveryManifestStore,
 }
 
-/// Completed dead-session recovery with every overlay pinned before log seal.
+/// Completed dead-session recovery with every required suffix retained before log seal.
 pub struct CompletedNodeRecovery {
     /// Proof that the dead session's node log is sealed.
     pub sealed: SealedNodeLog,
-    /// Recovered controls with their overlays attached.
+    /// Original bound controls after materialization, or unbound controls with
+    /// exact overlays attached. Already closed generations need no control CAS.
     pub controls: Vec<VersionedControl>,
     /// Proof that the predecessor cannot add newer durable Cell state.
     pub takeover: NodeTakeoverProof,
@@ -263,6 +265,11 @@ pub struct RecoveryCoordinatorResult {
     pub controls: Vec<VersionedControl>,
     /// Publication work the sealed recovery produced.
     pub publication: crate::recovery::manifest::RecoveryPublicationSummary,
+}
+
+struct RecoveryAttempt {
+    result: RecoveryCoordinatorResult,
+    drain: Option<crate::node::bundle::recovery::BundleRecoveryDrain>,
 }
 
 /// Scans one application catalog for published Cells owned by a dead session.
@@ -351,9 +358,19 @@ pub async fn recoverable_cells_from_scopes_with_summary(
     type Scope = ([u8; 16], u64);
     let mut scopes = BTreeMap::<[u8; 32], Scope>::new();
     let application = *catalog.application().as_bytes();
+    let inventory =
+        crate::node::bundle::recovery::inventory_for_owner(authority.layout(), owner).await?;
     for scope in frame_scopes {
         if scope.leader_session != *owner.as_bytes() || scope.application != application {
             return Err(Error::Node("recovery frame application or owner differs"));
+        }
+        if inventory.closed.contains(&(
+            scope.application,
+            scope.cell,
+            scope.incarnation,
+            scope.cell_epoch,
+        )) {
+            continue;
         }
         let key = (scope.incarnation, scope.cell_epoch);
         if let Some(existing) = scopes.get(&scope.cell) {
@@ -374,9 +391,7 @@ pub async fn recoverable_cells_from_scopes_with_summary(
     // Follower scopes omit Cells whose whole suffix is selected in origin.
     // Complete authenticated binding discovery is mandatory even for an empty
     // follower witness; it never grants takeover authority.
-    for (binding_application, binding) in
-        crate::node::bundle::recovery::inventory_for_owner(authority.layout(), owner).await?
-    {
+    for (binding_application, binding) in inventory.controls {
         if binding_application.as_bytes() != &application {
             continue;
         }
@@ -516,6 +531,15 @@ impl RecoveryCoordinator {
         cells: Vec<RecoveryCell>,
         sealed: SealedSession,
     ) -> Result<RecoveryCoordinatorResult> {
+        Ok(self.recover_attempt(fenced, cells, sealed).await?.result)
+    }
+
+    async fn recover_attempt(
+        &self,
+        fenced: FencedNodeSession,
+        cells: Vec<RecoveryCell>,
+        sealed: SealedSession,
+    ) -> Result<RecoveryAttempt> {
         self.recovery.validate_fence(&fenced)?;
         let mut bases = Vec::with_capacity(cells.len());
         for cell in &cells {
@@ -547,27 +571,16 @@ impl RecoveryCoordinator {
         {
             return Err(Error::Fenced);
         }
-        let inventory =
-            crate::node::bundle::recovery::fenced_inventory(self.manifests.layout(), &fenced)
-                .await?;
-        for (application, binding) in &inventory {
-            let cell = cells
-                .iter()
-                .find(|cell| {
-                    cell.application == *application && cell.observed.value().cell == binding.cell
-                })
-                .ok_or(Error::Node(
-                    "selected bundle Cell is absent from recovery inventory",
-                ))?;
-            let current = cell.observed.value();
-            if current.bundle_binding != binding.bundle_binding
-                || current.epoch != binding.epoch
-                || current.incarnation != binding.incarnation
-                || current.code != binding.code
-                || current.schema != binding.schema
-            {
-                return Err(Error::Fenced);
-            }
+        let mut drain = crate::node::bundle::recovery::BundleRecoveryDrain::open(
+            self.manifests.layout(),
+            &fenced,
+            &cells,
+            sealed.durable_through,
+            self.recovery.limits,
+        )
+        .await?;
+        if let Some(drain) = &drain {
+            drain.add_closed_bases(&mut bases)?;
         }
         let scratch = self.manifests.recovery_scratch_directory();
         let mut builder = StreamingRecovery::new(
@@ -603,13 +616,23 @@ impl RecoveryCoordinator {
                 let frame = frame?;
                 first_sequence.get_or_insert(frame.scope().node_sequence);
                 last_sequence = Some(frame.scope().node_sequence);
+                let scope = frame.scope();
+                let position = frame.segment().position();
                 builder.push(frame)?;
+                if let Some(drain) = &mut drain {
+                    drain.observe(scope, position)?;
+                }
             }
         } else {
             for frame in sealed.frames {
                 first_sequence.get_or_insert(frame.scope().node_sequence);
                 last_sequence = Some(frame.scope().node_sequence);
+                let scope = frame.scope();
+                let position = frame.segment().position();
                 builder.push(frame)?;
+                if let Some(drain) = &mut drain {
+                    drain.observe(scope, position)?;
+                }
             }
         }
         if first_sequence.is_some_and(|first| first != required_first)
@@ -619,14 +642,25 @@ impl RecoveryCoordinator {
         }
         let tails = builder.finish()?;
         if tails.is_empty() {
-            return Ok(RecoveryCoordinatorResult {
-                controls: Vec::new(),
-                publication: crate::recovery::manifest::RecoveryPublicationSummary::default(),
+            return Ok(RecoveryAttempt {
+                result: RecoveryCoordinatorResult {
+                    controls: Vec::new(),
+                    publication: crate::recovery::manifest::RecoveryPublicationSummary::default(),
+                },
+                drain,
             });
         }
         let pinned = self
             .manifests
-            .pin_with_summary(sealed.leader_session, sealed.log_epoch, tails)
+            .pin_reconciled(
+                sealed.leader_session,
+                sealed.log_epoch,
+                tails,
+                &cells
+                    .iter()
+                    .filter_map(|cell| cell.observed.value().recovery.clone())
+                    .collect::<Vec<_>>(),
+            )
             .await?;
         if pinned.cells.len() > cells.len() {
             return Err(Error::Node("recovery manifest exceeds Cell inventory"));
@@ -678,13 +712,18 @@ impl RecoveryCoordinator {
             };
             attached.push(versioned);
         }
-        Ok(RecoveryCoordinatorResult {
-            controls: attached,
-            publication: pinned.summary,
+        Ok(RecoveryAttempt {
+            result: RecoveryCoordinatorResult {
+                controls: attached,
+                publication: pinned.summary,
+            },
+            drain,
         })
     }
 
     /// Pins every recovered Cell and then atomically seals the claimed node log.
+    /// Bound original writers first materialize the complete verified suffix
+    /// and checkpoint every binding, including quiet Cells, under this claim.
     pub async fn recover_and_seal(
         &self,
         directory: &NodeDirectory,
@@ -692,8 +731,27 @@ impl RecoveryCoordinator {
         cells: Vec<RecoveryCell>,
         now_ms: i64,
     ) -> Result<CompletedNodeRecovery> {
-        let controls = self.recover(fenced.clone(), cells).await?;
-        self.finish(directory, fenced, controls, now_ms).await
+        let started = std::time::Instant::now();
+        self.recovery.validate_fence(&fenced)?;
+        let witness = self.recovery.ensure_sealed_bounded().await?;
+        let attempt = self.recover_attempt(fenced.clone(), cells, witness).await?;
+        let Some(drain) = attempt.drain else {
+            return self
+                .finish(directory, fenced, attempt.result.controls, now_ms)
+                .await;
+        };
+        let manifest = pinned_manifest(&attempt.result.controls, &fenced, self.recovery.log_epoch)?;
+        let (fresh, controls) = drain
+            .complete(directory, &self.manifests, &fenced, now_ms, started)
+            .await?;
+        let now = crate::node::bundle::recovery::logical_now(now_ms, started)?;
+        let sealed = directory.seal_recovery(&fresh, manifest, now).await?;
+        let takeover = NodeTakeoverProof::after_recovery(&fenced, &sealed)?;
+        Ok(CompletedNodeRecovery {
+            sealed,
+            controls,
+            takeover,
+        })
     }
 
     /// Seals one still-current claim after all recovered controls were pinned.
@@ -705,28 +763,7 @@ impl RecoveryCoordinator {
         now_ms: i64,
     ) -> Result<CompletedNodeRecovery> {
         self.recovery.validate_fence(&fenced)?;
-        let mut manifest = None::<Digest>;
-        for control in &controls {
-            let recovery = control
-                .value()
-                .recovery
-                .as_ref()
-                .ok_or(Error::Control("recovered Cell has no pinned overlay"))?;
-            if recovery.leader_session != fenced.session()
-                || recovery.log_epoch != self.recovery.log_epoch
-            {
-                return Err(Error::Control("recovered Cell overlay scope differs"));
-            }
-            match manifest {
-                None => manifest = Some(recovery.manifest_digest),
-                Some(current) if current == recovery.manifest_digest => {}
-                Some(_) => {
-                    return Err(Error::Control(
-                        "recovered session produced multiple manifests",
-                    ));
-                }
-            }
-        }
+        let manifest = pinned_manifest(&controls, &fenced, self.recovery.log_epoch)?;
         let sealed = directory.seal_recovery(&fenced, manifest, now_ms).await?;
         let takeover = NodeTakeoverProof::after_recovery(&fenced, &sealed)?;
         Ok(CompletedNodeRecovery {
@@ -735,6 +772,34 @@ impl RecoveryCoordinator {
             takeover,
         })
     }
+}
+
+fn pinned_manifest(
+    controls: &[VersionedControl],
+    fenced: &FencedNodeSession,
+    epoch: u64,
+) -> Result<Option<Digest>> {
+    let mut manifest = None;
+    for control in controls {
+        let recovery = control
+            .value()
+            .recovery
+            .as_ref()
+            .ok_or(Error::Control("recovered Cell has no pinned overlay"))?;
+        if recovery.leader_session != fenced.session() || recovery.log_epoch != epoch {
+            return Err(Error::Control("recovered Cell overlay scope differs"));
+        }
+        match manifest {
+            None => manifest = Some(recovery.manifest_digest),
+            Some(current) if current == recovery.manifest_digest => {}
+            Some(_) => {
+                return Err(Error::Control(
+                    "recovered session produced multiple manifests",
+                ));
+            }
+        }
+    }
+    Ok(manifest)
 }
 
 impl NodeLogRecovery {

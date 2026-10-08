@@ -101,6 +101,28 @@ impl Fixture {
             scratch: tempfile::tempdir().unwrap(),
         }
     }
+    async fn heartbeat(&mut self) -> i64 {
+        // Density tests deliberately perform hundreds of selections. Renew
+        // only after canonical heartbeat CAS, preserving the original head
+        // and production lease duration even on a busy verification host.
+        let mut next = self.node.advertisement().clone();
+        next.issued_at_ms += 1;
+        next.expires_at_ms += 1;
+        next.progress += 1;
+        let key = SigningKey::from_bytes(&[10; 32]);
+        next.signature = key.sign(&next.signing_bytes().unwrap()).to_bytes();
+        let now = next.issued_at_ms;
+        let refreshed = self.directory.refresh(&self.node, next, now).await.unwrap();
+        assert_eq!(
+            refreshed.advertisement().bundle_head(),
+            self.node.advertisement().bundle_head()
+        );
+        self.lease
+            .renew(now, refreshed.advertisement().expires_at_ms())
+            .unwrap();
+        self.node = refreshed;
+        now
+    }
     async fn cell(&mut self, byte: u8) -> Cell {
         self.cell_for_application(byte, [9; 16]).await
     }

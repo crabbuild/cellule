@@ -10,7 +10,7 @@ use crate::node::log_shipper::NodeLogSubmission;
 use crate::retry::{Backoff, retry_hint, retryable_storage_error};
 use crate::{Error, Result};
 
-mod lineage;
+pub(crate) mod lineage;
 mod shared;
 pub(crate) use shared::{PublicationPermit, SharedPublication};
 

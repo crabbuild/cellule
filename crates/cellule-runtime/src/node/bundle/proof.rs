@@ -54,6 +54,19 @@ pub(super) async fn load_coverage_at(
     control: &VersionedControl,
     limits: cellule_ltx::Limits,
 ) -> Result<(BundleCoverageProof, Vec<cellule_ltx::VerifiedNodeFrame>)> {
+    let (proof, frames) = load_binding_at(layout, head, authority, control, limits).await?;
+    let current = control.value().ltx_root().ok_or(Error::Fenced)?;
+    checkpoint_prefix(&proof.binding, &frames, &current)?;
+    Ok((proof, frames))
+}
+
+pub(super) async fn load_binding_at(
+    layout: &cellule_ltx::CellStorageLayout,
+    head: NodeBundleHead,
+    authority: &CellAuthority,
+    control: &VersionedControl,
+    limits: cellule_ltx::Limits,
+) -> Result<(BundleCoverageProof, Vec<cellule_ltx::VerifiedNodeFrame>)> {
     let value = control.value();
     let pin = value.bundle_binding.ok_or(Error::PendingPublication)?;
     if authority.layout().node_path(pin.session.as_bytes())
@@ -82,8 +95,6 @@ pub(super) async fn load_coverage_at(
         return Err(Error::Fenced);
     }
     let frames = verify_binding(layout, pin.session, head.epoch, &binding, limits).await?;
-    let current = value.ltx_root().ok_or(Error::Fenced)?;
-    checkpoint_prefix(&binding, &frames, &current)?;
     Ok((
         BundleCoverageProof {
             pin,

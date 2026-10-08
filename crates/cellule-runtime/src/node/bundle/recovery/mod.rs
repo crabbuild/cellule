@@ -1,8 +1,12 @@
 //! Failed-session inventory and exact selected-prefix reconstruction.
 use super::*;
+mod drain;
 use crate::control::authority::{CellAuthority, VersionedControl};
 use crate::node::FencedNodeSession;
 use crate::node::directory::NodeRecord;
+pub(crate) use drain::{BundleRecoveryDrain, logical_now};
+
+pub(crate) type GenerationKey = ([u8; 16], [u8; 32], [u8; 16], u64);
 
 async fn record(layout: &cellule_ltx::CellStorageLayout, session: SessionId) -> Result<NodeRecord> {
     let (bytes, _) = layout
@@ -25,15 +29,23 @@ async fn record(layout: &cellule_ltx::CellStorageLayout, session: SessionId) -> 
 
 /// Discovery remains advisory; only a fenced claim can attach recovered state.
 /// Authenticate every shard without loading dense histories during discovery.
+#[derive(Default)]
+pub(crate) struct OwnerBundleInventory {
+    pub(crate) controls: Vec<(crate::ApplicationId, Control)>,
+    pub(crate) closed: std::collections::BTreeSet<GenerationKey>,
+}
+
 pub(crate) async fn inventory_for_owner(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
-) -> Result<Vec<(crate::ApplicationId, Control)>> {
+) -> Result<OwnerBundleInventory> {
     let node = match record(layout, session).await {
         Ok(node) => node,
         // Scope-only catalog discovery also supports applications that do not
         // use a node directory. A bound Cell still fails the fenced lookup.
-        Err(Error::Storage(cellule_store::StorageError::NotFound { .. })) => return Ok(Vec::new()),
+        Err(Error::Storage(cellule_store::StorageError::NotFound { .. })) => {
+            return Ok(OwnerBundleInventory::default());
+        }
         Err(source) => return Err(source),
     };
     let head = match node {
@@ -41,7 +53,7 @@ pub(crate) async fn inventory_for_owner(
         NodeRecord::Tombstone(node) => node.bundle,
     };
     let Some(head) = head else {
-        return Ok(Vec::new());
+        return Ok(OwnerBundleInventory::default());
     };
     inventory_at(layout, session, head).await
 }
@@ -50,19 +62,29 @@ async fn inventory_at(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
     head: NodeBundleHead,
-) -> Result<Vec<(crate::ApplicationId, Control)>> {
-    Ok(index::binding_inventory(layout, session, head)
-        .await?
-        .into_iter()
-        .filter(|binding| binding.phase != BindingPhase::Closed)
-        .map(|binding| (binding.application, binding.control))
-        .collect())
+) -> Result<OwnerBundleInventory> {
+    let mut inventory = OwnerBundleInventory::default();
+    for binding in index::binding_inventory(layout, session, head).await? {
+        if binding.phase == BindingPhase::Closed {
+            inventory.closed.insert((
+                *binding.application.as_bytes(),
+                *binding.control.cell.as_bytes(),
+                *binding.control.incarnation.as_bytes(),
+                binding.control.epoch,
+            ));
+        } else {
+            inventory
+                .controls
+                .push((binding.application, binding.control));
+        }
+    }
+    Ok(inventory)
 }
 
-pub(crate) async fn fenced_inventory(
+async fn fenced_bindings(
     layout: &cellule_ltx::CellStorageLayout,
     fenced: &FencedNodeSession,
-) -> Result<Vec<(crate::ApplicationId, Control)>> {
+) -> Result<Vec<Binding>> {
     let Some(head) = fenced.bundle_head() else {
         return Ok(Vec::new());
     };
@@ -78,7 +100,7 @@ pub(crate) async fn fenced_inventory(
     {
         return Err(Error::Fenced);
     }
-    inventory_at(layout, fenced.session(), head).await
+    index::binding_inventory(layout, fenced.session(), head).await
 }
 
 pub(crate) async fn selected_frames(
@@ -95,9 +117,25 @@ pub(crate) async fn selected_frames(
     }
     // Return original frames, including a materialized overlap, so the global
     // follower witness must agree byte-for-byte with selected native sequence.
-    super::proof::load_coverage_at(layout, head, authority, control, limits)
-        .await
-        .map(|(_, frames)| frames)
+    let (proof, frames) =
+        super::proof::load_binding_at(layout, head, authority, control, limits).await?;
+    let root = control.value().ltx_root().ok_or(Error::Fenced)?;
+    match super::proof::checkpoint_prefix(&proof.binding, &frames, &root) {
+        Ok(_) => {}
+        Err(Error::PendingPublication)
+            if root.commit_sequence > proof.commit_sequence()
+                && root.position.txid > proof.position().txid => {}
+        Err(source) => return Err(source),
+    }
+    // Recovery may resume between its root CAS and terminal catalog CAS. This
+    // ahead root is only a verified base; the full follower witness still has
+    // to agree and the complete terminal endpoint must match before closure.
+    if proof.binding.control.ltx_root() != Some(root) {
+        let mut current = proof.binding.clone();
+        current.control = control.value().clone();
+        super::proof::verify_base(layout, &current, limits).await?;
+    }
+    Ok(frames)
 }
 
 /// A bound writer may retain a recovery overlay only after canonical fencing.

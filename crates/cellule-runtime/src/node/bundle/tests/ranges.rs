@@ -262,15 +262,16 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
     let mut f = Fixture::new().await;
     let mut cell = f.cell(4).await;
     for commit in 2..=(MAX_LOCATORS as u64 + 1) {
+        let now = f.heartbeat().await;
         let (_, frames, assigned) = f.append(&mut cell, commit);
         let prepared = f
             .directory
-            .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+            .prepare_node_bundle(&f.node, &frames, &[assigned], now)
             .await
             .unwrap();
         f.node = f
             .directory
-            .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
+            .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), now)
             .await
             .unwrap()
             .0;
@@ -284,7 +285,12 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
     let (_, frames, assigned) = f.append(&mut cell, MAX_LOCATORS as u64 + 2);
     assert!(matches!(
         f.directory
-            .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+            .prepare_node_bundle(
+                &f.node,
+                &frames,
+                &[assigned],
+                f.node.advertisement().issued_at_ms(),
+            )
             .await,
         Err(Error::PendingPublication)
     ));

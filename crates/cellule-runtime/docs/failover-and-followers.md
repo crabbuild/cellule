@@ -1577,9 +1577,20 @@ before writing, and cache jobs retain that admission after caller cancellation.
 A bound Cell can pin only recovery from its original session and log epoch,
 after canonical node fencing. Its binding remains pinned. The canonical node
 seal refuses until every binding has a terminal materialized checkpoint;
-uploading or attaching a manifest grants no transfer authority. Scheduling that
-failed-boot materialization, interrupted enrollment resolution and terminal
-catalog CAS is still unfinished, so ordinary bundle ACKs remain disabled. The
+uploading or attaching a manifest grants no transfer authority. The public
+`recover_and_seal` path materializes every original bound root through ordinary
+lineage and Cell CAS, including quiet bindings. It stages bounded catalog cohorts
+and selects their complete terminal inventory with one recovery-claim node CAS
+before log seal. Claims are rechecked after I/O; exact lost replies reconcile.
+Partial-root retries reuse the original digest-verified manifest and match every
+remaining tail's scope, predecessor, complete physical/logical range and bundle
+digest. A materialized root ahead of the old catalog is only a verified base;
+the full witness and terminal endpoint must still agree.
+
+Closed original roots also supply verified recovery bases after transfer, so
+interruption between terminal catalog CAS and log seal does not reload a
+successor as the failed writer. Provisional enrollment resolution and admitted
+host scheduling remain unfinished; ordinary bundle ACKs remain disabled. The
 manifest reader admits up to 4,096 scopes under the existing 2 MiB byte ceiling;
 the 2,000-scope codec test is format evidence, not node performance qualification.
 

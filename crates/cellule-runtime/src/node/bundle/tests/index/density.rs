@@ -9,11 +9,12 @@ async fn dense_history_retains_215_exact_commands_before_checkpoint_and_cold_res
     let mut segments = Vec::new();
     let mut metadata_bytes = 0;
     for commit in 2..=216 {
+        let now = f.heartbeat().await;
         let (cuts, frames, assignment) = f.append(&mut cell, commit);
         segments.extend(cuts.segments);
         let proposal = f
             .directory
-            .prepare_node_bundle(&f.node, &frames, &[assignment], NOW)
+            .prepare_node_bundle(&f.node, &frames, &[assignment], now)
             .await
             .unwrap();
         metadata_bytes = proposal.body.len()
@@ -23,7 +24,7 @@ async fn dense_history_retains_215_exact_commands_before_checkpoint_and_cold_res
                 .sum::<usize>();
         let (selected, mut proofs) = f
             .directory
-            .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
+            .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), now)
             .await
             .unwrap();
         f.node = selected;
@@ -90,7 +91,13 @@ async fn dense_history_retains_215_exact_commands_before_checkpoint_and_cold_res
     expected.sort();
     assert_eq!(outcomes, expected);
     f.directory
-        .checkpoint_bundle_cell(&f.node, &cell.authority, &proof, Limits::default(), NOW)
+        .checkpoint_bundle_cell(
+            &f.node,
+            &cell.authority,
+            &proof,
+            Limits::default(),
+            f.node.advertisement().issued_at_ms(),
+        )
         .await
         .unwrap();
 }

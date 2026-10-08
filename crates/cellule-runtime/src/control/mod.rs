@@ -635,8 +635,10 @@ impl Control {
                 let Some(recovery) = self.recovery.as_ref() else {
                     return Err(Error::Control("invalid recovery publication"));
                 };
-                if self.state != ControlState::Recovering
-                    || next.state != ControlState::Recovering
+                let original_bound_writer =
+                    self.state == ControlState::Serving && self.bundle_binding.is_some();
+                if (self.state != ControlState::Recovering && !original_bound_writer)
+                    || next.state != self.state
                     || next.recovery.is_some()
                     || self.epoch != next.epoch
                     || self.owner != next.owner

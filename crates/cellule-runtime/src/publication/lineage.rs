@@ -3,7 +3,7 @@ use super::*;
 use cellule_ltx::{RootPreparation, RootPreparationFuture, RootPreparationMetadata};
 use std::sync::{Arc, Mutex};
 
-pub(super) type LineageConfirmation = Arc<Mutex<Option<RootPreparation>>>;
+pub(crate) type LineageConfirmation = Arc<Mutex<Option<RootPreparation>>>;
 
 struct RootLineageRecorder {
     authority: CellAuthority,
@@ -25,7 +25,7 @@ impl RootPreparationMetadata for RootLineageRecorder {
     }
 }
 
-pub(super) fn replica(
+pub(crate) fn replica(
     replica: cellule_ltx::CellReplica,
     authority: &CellAuthority,
 ) -> (cellule_ltx::CellReplica, LineageConfirmation) {
@@ -37,7 +37,7 @@ pub(super) fn replica(
     (replica, confirmed)
 }
 
-pub(super) fn error(source: cellule_ltx::LtxError) -> Error {
+pub(crate) fn error(source: cellule_ltx::LtxError) -> Error {
     match source {
         cellule_ltx::LtxError::RootPreparation { source } => match source.downcast::<Error>() {
             Ok(source) => *source,

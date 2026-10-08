@@ -107,6 +107,11 @@ The recovery coordinator now discovers selected-only Cells and joins exact
 origin prefixes with the complete sealed follower witness in one admitted
 file-backed reconstruction path. It rejects conflicting overlap and incomplete
 Cell inventory. Bound overlays retain the original pin, and the canonical node
-seal refuses unfinished materialization/checkpoint closure. Failed-boot root
-materialization, terminal catalog selection and provisional enrollment resolution
-remain required before enabling the canonical coverage frontier or actor ACKs.
+seal refuses unfinished materialization/checkpoint closure. `recover_and_seal`
+now materializes original bound roots through ordinary lineage and exact Cell
+CAS, then stages bounded catalog cohorts and selects their complete terminal
+inventory with one recovery-claim node CAS. Quiet Cells participate. Exact
+manifest reuse supports partial-root retries, and closed original roots support
+resumption after transfer or interrupted log seal. Provisional enrollment
+resolution, admitted host scheduling and full qualification remain required
+before enabling the canonical coverage frontier or actor ACKs.

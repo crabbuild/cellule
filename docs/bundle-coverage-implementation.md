@@ -48,9 +48,16 @@ inventory includes selected-only Cells; identical native overlap is skipped,
 while conflicting bytes and an omitted Cell reject before attachment. A bound
 control may retain only its original recovery session/epoch after canonical
 fencing. Its pin remains until complete terminal materialization/checkpoint;
-the lower-level node seal enforces that obligation too. Failed-boot materializer
-scheduling, terminal catalog CAS and provisional enrollment resolution remain
-unfinished. This does not enable ordinary bundle responses.
+the lower-level node seal enforces that obligation too. `recover_and_seal` now
+materializes bound overlays under the fenced original binding, retaining normal
+lineage and exact root CAS. It verifies every original root, including quiet
+Cells, stages at most 64 checkpoints per immutable upload, then selects the
+complete terminal catalog with one fresh-claim node CAS before sealing the log.
+Only exact lost replies reconcile. Partial-root retries retain the original
+manifest; verified closed roots allow resumption after transfer or interrupted
+log seal. Provisional enrollment reconciliation, admitted host scheduling and
+full lifecycle qualification remain unfinished. Ordinary bundle responses remain
+disabled.
 
 The original SQL/capture/submission jobs must join before `close_cell_issuance`.
 Its ordered gate prevents late assignment from consuming a node sequence. The
@@ -178,8 +185,26 @@ file-backed follower fsync, verifying a pruned prefix with a prior Fleet ACK,
 identical overlap, selected-only recovery, conflicting overlap and omitted
 inventory. Separate tests cover a 2,000-scope manifest codec and retention of
 scratch admission when a cancelled waiter leaves cache work running. The scope
-codec is a metadata fixture, not 2,000 writers or throughput evidence. Failed-boot
-root materialization and terminal catalog closure remain required.
+codec is a metadata fixture, not 2,000 writers or throughput evidence.
+
+The terminal recovery regressions cold-restore selected and prior Fleet outcomes
+before allowing Cell transfer. They cover a partial root CAS, lost root/catalog
+replies, expired claims and resumption after terminal catalog selection when one
+Cell has transferred but log seal was interrupted. A **65-real-Cell** case crosses
+the cohort boundary: **two immutable catalog uploads, one complete terminal node
+CAS, then one log seal**. This excludes per-Cell roots, recovery manifest uploads,
+enrollment and steady-state application work; it is not TPS or full M4 evidence.
+The existing 215-command/four-PUT test remains passing.
+
+The terminal-recovery snapshot passed all twelve contributor checks: **1,920
+top-level workspace cases passed, 38 ignored; 60 local LTX cases passed**.
+This count excludes four nested subprocess executions included in earlier
+totals. Default-parallel verification first expired four unchanged lease/grant
+fixtures; a four-worker control run passed the identical runtime source. The
+long density fixtures now renew only after authoritative heartbeat CAS, retaining
+the same production lease duration and catalog head. The final isolated suite
+uses four test workers; qualification concurrency and thresholds are unchanged.
+These checks do not measure application TPS or complete lifecycle qualification.
 
 The following counts describe the earlier inline-index snapshot, not the latest
 application TPS:
@@ -267,10 +292,10 @@ Remaining work before responses can use bundle proof:
 2. Build on the authenticated index: bound admitted maintenance inventory,
    increase checkpoint density with retained-byte accounting, and measure the
    complete materialization/checkpoint/collection cost.
-3. Complete failed-boot materialization and terminal catalog selection after
-   combined prefix/follower reconstruction, including prior Fleet ACKs and
-   interrupted provisional enrollments. Current departure and canonical seal
-   guards refuse unfinished closure rather than advancing a replacement writer.
+3. Finish interrupted provisional enrollment reconciliation and admitted
+   failed-boot orchestration around combined reconstruction, exact materialization
+   and atomic terminal selection. Departure and canonical seal guards still
+   refuse any unfinished original binding before replacement admission.
 4. Implement complete cross-Cell reference inventory, pins and grace-qualified
    collection. Preserve original catalog and base dependencies throughout.
 5. Run the unchanged all-ACK cold recovery, paired Docker throughput/latency,
