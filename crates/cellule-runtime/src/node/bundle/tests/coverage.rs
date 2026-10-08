@@ -255,6 +255,90 @@ async fn selection_advances_native_coverage_with_one_cas_while_roots_lag() {
 }
 
 #[tokio::test]
+async fn queued_object_root_confirmation_joins_already_selected_native_coverage() {
+    let mut f = Fixture::new().await;
+    enroll(&mut f).await;
+    let mut a = f.cell(4).await;
+    let mut b = f.cell(5).await;
+    let (_, mut frames, arange) = f.append(&mut a, 2);
+    let (_, bframes, brange) = f.append(&mut b, 2);
+    frames.extend(bframes);
+    let prepared = f
+        .directory
+        .prepare_node_bundle(&f.node, &frames, &[arange, brange], NOW)
+        .await
+        .unwrap();
+    let (selected, proofs) = f
+        .directory
+        .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
+        .await
+        .unwrap();
+    // The shared authority CAS can overtake a root flusher's preview. Preserve
+    // the actual interval before the original producer confirms its local gate.
+    assert_eq!(selected.advertisement().log().unwrap().tiered_through(), 2);
+    assert_eq!(f.gate.tiered_through(), 0);
+    let proof = proofs
+        .iter()
+        .find(|proof| proof.binding() == a.control.value().bundle_binding.unwrap())
+        .unwrap();
+    f.publisher(&a).materialize_bundle(proof).await.unwrap();
+    let authority = Arc::new(super::actor::Authority {
+        directory: f.directory.clone(),
+        observed: tokio::sync::Mutex::new(selected.clone()),
+    });
+    let transport: Arc<dyn crate::node::log_transport::NodeLogTransport> = Arc::new(NoExtraIo);
+    let shipper = crate::node::log_shipper::NodeLogShipper::new(
+        f.gate.clone(),
+        transport.clone(),
+        Limits::default(),
+    )
+    .unwrap();
+    let durability = crate::node::durability::NodeDurability::new(
+        f.gate.clone(),
+        shipper,
+        authority.clone(),
+        transport,
+        f.lease.clone(),
+    );
+    f.count.reset();
+    assert_eq!(
+        durability
+            .prove_object(arange.ticket())
+            .await
+            .unwrap()
+            .source(),
+        DurabilitySource::Object
+    );
+    assert_eq!(
+        f.count.put_requests(),
+        0,
+        "already selected coverage needs no CAS"
+    );
+    let current = authority.observed.lock().await.clone();
+    assert_eq!(current.advertisement(), selected.advertisement());
+    assert_eq!(current.advertisement().log().unwrap().tiered_through(), 2);
+    assert_eq!(
+        f.gate.tiered_through(),
+        1,
+        "a root confirms only its own ticket"
+    );
+    assert!(!f.gate.objects_are_covered(&[brange.ticket()]).unwrap());
+    assert_eq!(durability.confirm_bundle(&proofs).unwrap(), 2);
+    assert_eq!(
+        durability.prove(brange.ticket()).await.unwrap().source(),
+        DurabilitySource::Bundle
+    );
+    assert_eq!(f.count.put_requests(), 0);
+    assert!(
+        f.directory
+            .advance_log_coverage(&current, 1, current.advertisement().expires_at_ms())
+            .await
+            .is_err(),
+        "already covered work cannot bypass original lease expiry"
+    );
+}
+
+#[tokio::test]
 async fn cold_proofs_and_replacement_gates_cannot_authorize_local_confirmation() {
     let mut f = Fixture::new().await;
     enroll(&mut f).await;

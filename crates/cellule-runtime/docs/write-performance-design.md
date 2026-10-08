@@ -153,6 +153,12 @@ prefix, including prior Fleet ACKs. The producer's task and failure cause also
 join at epoch shutdown. This provides fair selection/checkpoint turns, not a
 fair node materializer scheduler or the 215-command checkpoint density target.
 
+Shared selection can persist a higher native coverage frontier while an older
+root completion waits for the original authority mutex. In the same validated
+open epoch, `advance_log_coverage` acknowledges that already selected prefix
+without another CAS. It preserves the higher frontier; each local root still
+confirms only its own original tickets. Expired or closed epochs still fail.
+
 The live root fallback now avoids a node authority mutation when an exact Cell
 root covers only a sparse range beyond an unpublished native gap. That root
 grants its own object proof under the original lease; it does not advance follower

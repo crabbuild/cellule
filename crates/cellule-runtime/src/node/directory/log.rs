@@ -165,6 +165,8 @@ impl NodeDirectory {
     }
 
     /// CAS-advances the largest contiguous node sequence covered by object roots.
+    /// An already selected prefix is a no-op in the same validated open epoch;
+    /// shared native selection may overtake a queued root confirmation.
     pub async fn advance_log_coverage(
         &self,
         observed: &VersionedNodeAdvertisement,
@@ -172,12 +174,21 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<VersionedNodeAdvertisement> {
         self.validate(&observed.advertisement, now_ms)?;
-        let log = observed
+        let current = observed
             .advertisement
             .log
             .as_ref()
-            .ok_or(Error::Node("node session has no enrolled log"))?
-            .advance_tiered(observed.advertisement.node, tiered_through)?;
+            .ok_or(Error::Node("node session has no enrolled log"))?;
+        // Check the epoch phase even for an older completion. Keeping its
+        // already persisted frontier grants no new coverage and cannot reopen
+        // recovery/retirement. The caller still checks its original live lease.
+        let log = current.advance_tiered(
+            observed.advertisement.node,
+            tiered_through.max(current.tiered_through()),
+        )?;
+        if tiered_through <= current.tiered_through() {
+            return Ok(observed.clone());
+        }
         let mut next = observed.advertisement.clone();
         next.generation = next
             .generation

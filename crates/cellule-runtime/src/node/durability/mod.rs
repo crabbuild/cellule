@@ -67,7 +67,10 @@ pub trait NodeLogAuthority: Send + Sync {
     /// Activates one log epoch for this session.
     fn activate<'a>(&'a self, log_epoch: u64) -> BoxFuture<'a, Result<()>>;
 
-    /// Advances the tiered coverage watermark for one log epoch.
+    /// Advances the tiered coverage watermark for one log epoch. A queued root
+    /// completion may be older than shared bundle selection; acknowledge an
+    /// already persisted prefix under the same original epoch/heartbeat mutex
+    /// without lowering the frontier or reopening a closed epoch.
     fn advance_coverage<'a>(
         &'a self,
         log_epoch: u64,
