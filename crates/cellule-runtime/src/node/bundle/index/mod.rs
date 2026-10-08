@@ -27,7 +27,7 @@ pub(super) fn history_extent(catalog: &Catalog, pin: Digest) -> Option<Locator> 
         .get(pin.as_bytes())
         .map(|history| history.extent.clone())
 }
-pub(super) use io::{ensure_drained, load_cells};
+pub(super) use io::{binding_inventory, ensure_drained, load_cells};
 
 pub(super) const HEADER_BYTES: usize = 32 << 10;
 const SHARDS: usize = 256;

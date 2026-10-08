@@ -149,6 +149,15 @@ pub struct RecoveryOverlay {
     _bundle_lease: Option<Arc<dyn crate::bundle::BundleLease>>,
 }
 
+/// Original admission and artifact pin retained while a bundle transfers.
+///
+/// Keep this owner through joined upload or cache work, including cancellation.
+/// An owned bundle alone does not retain these caller-provided resources.
+pub struct BundleResourceOwner {
+    _disk_reservation: Option<crate::DiskReservation>,
+    _bundle_lease: Option<Arc<dyn crate::bundle::BundleLease>>,
+}
+
 impl RecoveryOverlay {
     /// Describes the overlay that supersedes `predecessor`; the caller adds
     /// the disk reservation and bundle lease that keep it readable.
@@ -191,6 +200,18 @@ impl RecoveryOverlay {
             ));
         }
         Ok(self.bundle)
+    }
+
+    /// Transfers the original immutable bundle and its resource owner together.
+    /// The receiver must retain the owner until its dispatched transfer joins.
+    pub fn into_bundle_with_owner(self) -> (crate::bundle::Bundle, BundleResourceOwner) {
+        (
+            self.bundle,
+            BundleResourceOwner {
+                _disk_reservation: self._disk_reservation,
+                _bundle_lease: self._bundle_lease,
+            },
+        )
     }
 
     /// Returns the root this overlay supersedes.

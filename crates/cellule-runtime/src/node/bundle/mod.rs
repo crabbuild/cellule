@@ -40,6 +40,7 @@ mod closure;
 mod codec;
 mod index;
 mod proof;
+pub(crate) mod recovery;
 mod selection;
 #[cfg(test)]
 use proof::checkpoint_prefix;

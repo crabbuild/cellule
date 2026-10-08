@@ -180,6 +180,14 @@ impl CellAuthority {
         if transition == Transition::BindBundle {
             crate::node::bundle::store::ensure_enrollment(&self.layout, &next).await?;
         }
+        if transition == Transition::AttachRecovery && observed.value.bundle_binding.is_some() {
+            crate::node::bundle::recovery::ensure_attachment(
+                &self.layout,
+                &observed.value,
+                next.recovery.as_ref().ok_or(Error::Fenced)?,
+            )
+            .await?;
+        }
         if observed.value.bundle_binding.is_some()
             && observed.value.bundle_binding != next.bundle_binding
         {

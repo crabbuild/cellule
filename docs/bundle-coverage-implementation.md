@@ -42,6 +42,16 @@ Uploading an immutable object supplies no coverage proof.
 | Node withdrawal/maintenance | Refuse unresolved bindings; stale fencing preserves the catalog head; one bundle-bound boot cannot rotate its native log to another epoch |
 | Backup and collection | Backup refuses bound Cells. Coverage objects have no deletion path; this is retention, not a qualified collection implementation |
 
+Failed-owner recovery now joins dependency-verified selected prefixes and the
+sealed follower witness in the same file-backed builder. Complete shard
+inventory includes selected-only Cells; identical native overlap is skipped,
+while conflicting bytes and an omitted Cell reject before attachment. A bound
+control may retain only its original recovery session/epoch after canonical
+fencing. Its pin remains until complete terminal materialization/checkpoint;
+the lower-level node seal enforces that obligation too. Failed-boot materializer
+scheduling, terminal catalog CAS and provisional enrollment resolution remain
+unfinished. This does not enable ordinary bundle responses.
+
 The original SQL/capture/submission jobs must join before `close_cell_issuance`.
 Its ordered gate prevents late assignment from consuming a node sequence. The
 legacy identity-free `DurabilityGate::issue` cannot produce a per-Cell closure:
@@ -161,6 +171,16 @@ These results verify correctness and component work; the latest source has no
 new end-to-end TPS measurement. Ordinary application responses still use
 per-Cell publication, and production bundle ACK integration remains unfinished.
 
+The combined selected-prefix/follower recovery snapshot passed all twelve
+contributor checks: **1,916 workspace tests passed, 38 ignored; 60 local LTX
+tests passed**. Its five new two-Cell cases use real managed captures and
+file-backed follower fsync, verifying a pruned prefix with a prior Fleet ACK,
+identical overlap, selected-only recovery, conflicting overlap and omitted
+inventory. Separate tests cover a 2,000-scope manifest codec and retention of
+scratch admission when a cancelled waiter leaves cache work running. The scope
+codec is a metadata fixture, not 2,000 writers or throughput evidence. Failed-boot
+root materialization and terminal catalog closure remain required.
+
 The following counts describe the earlier inline-index snapshot, not the latest
 application TPS:
 
@@ -247,11 +267,10 @@ Remaining work before responses can use bundle proof:
 2. Build on the authenticated index: bound admitted maintenance inventory,
    increase checkpoint density with retained-byte accounting, and measure the
    complete materialization/checkpoint/collection cost.
-3. Fence and seal a failed original node's complete follower-issued suffix,
-   including ACKs above the selected head, before reconstructing and closing
-   every original binding, including interrupted provisional enrollments.
-   Current departure/maintenance guards refuse this
-   unfinished recovery rather than advancing a replacement writer.
+3. Complete failed-boot materialization and terminal catalog selection after
+   combined prefix/follower reconstruction, including prior Fleet ACKs and
+   interrupted provisional enrollments. Current departure and canonical seal
+   guards refuse unfinished closure rather than advancing a replacement writer.
 4. Implement complete cross-Cell reference inventory, pins and grace-qualified
    collection. Preserve original catalog and base dependencies throughout.
 5. Run the unchanged all-ACK cold recovery, paired Docker throughput/latency,

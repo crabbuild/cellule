@@ -41,35 +41,58 @@ impl NodeDirectory {
             return Err(Error::Fenced);
         }
         let head = head.ok_or(Error::PendingPublication)?;
-        let cells = [(*authority.layout().application_id(), *value.cell.as_bytes())]
-            .into_iter()
-            .collect();
-        let mut catalog = store::load_catalog_cells(&self.layout, session, head, &cells).await?;
-        let binding = catalog.binding_mut(pin.digest)?.clone();
-        if binding.phase == BindingPhase::Provisional {
-            return Err(Error::PendingPublication);
-        }
-        if head.epoch != pin.epoch
-            || binding.control.bundle_binding != Some(pin)
-            || binding.application.as_bytes() != authority.layout().application_id()
-            || binding.control.cell != value.cell
-            || binding.control.incarnation != value.incarnation
-            || binding.control.epoch != value.epoch
-            || binding.control.code != value.code
-            || binding.control.schema != value.schema
-        {
-            return Err(Error::Fenced);
-        }
-        let frames = verify_binding(&self.layout, session, head.epoch, &binding, limits).await?;
-        let current = value.ltx_root().ok_or(Error::Fenced)?;
-        checkpoint_prefix(&binding, &frames, &current)?;
-        Ok(BundleCoverageProof {
+        load_coverage_at(&self.layout, head, authority, control, limits)
+            .await
+            .map(|(proof, _)| proof)
+    }
+}
+
+pub(super) async fn load_coverage_at(
+    layout: &cellule_ltx::CellStorageLayout,
+    head: NodeBundleHead,
+    authority: &CellAuthority,
+    control: &VersionedControl,
+    limits: cellule_ltx::Limits,
+) -> Result<(BundleCoverageProof, Vec<cellule_ltx::VerifiedNodeFrame>)> {
+    let value = control.value();
+    let pin = value.bundle_binding.ok_or(Error::PendingPublication)?;
+    if authority.layout().node_path(pin.session.as_bytes())
+        != layout.node_path(pin.session.as_bytes())
+        || authority.layout().immutable_cache_identity() != layout.immutable_cache_identity()
+    {
+        return Err(Error::Fenced);
+    }
+    let cells = [(*authority.layout().application_id(), *value.cell.as_bytes())]
+        .into_iter()
+        .collect();
+    let mut catalog = store::load_catalog_cells(layout, pin.session, head, &cells).await?;
+    let binding = catalog.binding_mut(pin.digest)?.clone();
+    if binding.phase == BindingPhase::Provisional {
+        return Err(Error::PendingPublication);
+    }
+    if head.epoch != pin.epoch
+        || binding.control.bundle_binding != Some(pin)
+        || binding.application.as_bytes() != authority.layout().application_id()
+        || binding.control.cell != value.cell
+        || binding.control.incarnation != value.incarnation
+        || binding.control.epoch != value.epoch
+        || binding.control.code != value.code
+        || binding.control.schema != value.schema
+    {
+        return Err(Error::Fenced);
+    }
+    let frames = verify_binding(layout, pin.session, head.epoch, &binding, limits).await?;
+    let current = value.ltx_root().ok_or(Error::Fenced)?;
+    checkpoint_prefix(&binding, &frames, &current)?;
+    Ok((
+        BundleCoverageProof {
             pin,
             binding,
             head,
-            session,
-        })
-    }
+            session: pin.session,
+        },
+        frames,
+    ))
 }
 
 pub(super) async fn verify_binding(

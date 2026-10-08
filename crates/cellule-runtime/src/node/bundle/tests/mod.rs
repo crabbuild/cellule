@@ -19,6 +19,7 @@ mod faults;
 mod index;
 mod lifecycle;
 mod ranges;
+mod recovery;
 struct Fixture {
     count: Arc<CountingObjectStore>,
     layout: CellStorageLayout,

@@ -648,6 +648,7 @@ impl NodeTombstone {
                 .claim_expires_at_ms
                 .ok_or(Error::Node("node recovery claim expiry is missing"))?,
             log: self.log.clone(),
+            bundle: self.bundle,
         })
     }
 

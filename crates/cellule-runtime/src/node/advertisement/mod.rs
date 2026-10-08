@@ -495,6 +495,7 @@ pub struct FencedNodeSession {
     pub(super) claim_generation: u64,
     pub(super) claim_expires_at_ms: i64,
     pub(super) log: Option<NodeLogStatus>,
+    pub(super) bundle: Option<crate::node::bundle::NodeBundleHead>,
 }
 
 impl FencedNodeSession {
@@ -532,6 +533,13 @@ impl FencedNodeSession {
     #[must_use]
     pub const fn log(&self) -> Option<&NodeLogStatus> {
         self.log.as_ref()
+    }
+
+    /// Exact selected bundle head retained by the failed-session fencing CAS.
+    /// This observation grants no recovery completion or collection authority.
+    #[must_use]
+    pub const fn bundle_head(&self) -> Option<crate::node::bundle::NodeBundleHead> {
+        self.bundle
     }
 
     /// Converts a fence into takeover authority when no fleet proof needs recovery.

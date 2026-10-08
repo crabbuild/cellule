@@ -102,3 +102,11 @@ Implementation and prior measured results are tracked in the
 [bundle delivery record](../../../docs/bundle-coverage-implementation.md) and
 [WAL comparison](../../../docs/pr67-normal-wal-reevaluation.md). Keep bulk logs,
 raw request ledgers and source manifests outside the repository.
+
+The recovery coordinator now discovers selected-only Cells and joins exact
+origin prefixes with the complete sealed follower witness in one admitted
+file-backed reconstruction path. It rejects conflicting overlap and incomplete
+Cell inventory. Bound overlays retain the original pin, and the canonical node
+seal refuses unfinished materialization/checkpoint closure. Failed-boot root
+materialization, terminal catalog selection and provisional enrollment resolution
+remain required before enabling the canonical coverage frontier or actor ACKs.

@@ -700,7 +700,10 @@ impl Control {
                 || binding.session.as_bytes().iter().all(|byte| *byte == 0)
                 || binding.digest.as_bytes().iter().all(|byte| *byte == 0)
                 || self.state != ControlState::Serving
-                || self.recovery.is_some()
+                || self.recovery.as_ref().is_some_and(|recovery| {
+                    recovery.leader_session != binding.session
+                        || recovery.log_epoch != binding.epoch
+                })
                 || self
                     .owner
                     .as_ref()

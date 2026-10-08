@@ -266,3 +266,38 @@ fn check_closed(bindings: &[Binding]) -> Result<()> {
     }
     Ok(())
 }
+
+/// Stream authenticated binding rows without loading dense native histories.
+/// Recovery must discover selected-only Cells as well as the follower scopes.
+pub(in crate::node::bundle) async fn binding_inventory(
+    layout: &cellule_ltx::CellStorageLayout,
+    session: SessionId,
+    head: NodeBundleHead,
+) -> Result<Vec<Binding>> {
+    let Some(root) = load_root(layout, session, head).await? else {
+        return Ok(
+            super::super::store::load_legacy_catalog(layout, session, head)
+                .await?
+                .bindings,
+        );
+    };
+    let mut bindings = Vec::new();
+    let mut pins = std::collections::HashSet::new();
+    for (id, shard) in root.shards.iter().enumerate() {
+        let Some(shard) = shard else { continue };
+        let (rows, _) = load_rows(layout, &root, shard, id as u8).await?;
+        for binding in rows {
+            let pin = binding
+                .control
+                .bundle_binding
+                .ok_or(Error::Node("bundle catalog lacks Cell pin"))?;
+            if !pins.insert(pin.digest) || pins.len() > MAX_BINDINGS {
+                return Err(Error::Node(
+                    "bundle recovery inventory exceeds unique binding bound",
+                ));
+            }
+            bindings.push(binding);
+        }
+    }
+    Ok(bindings)
+}

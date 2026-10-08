@@ -13,9 +13,7 @@ use crate::control::authority::{CellAuthority, VersionedControl};
 use crate::follower::FollowerReceipt;
 use crate::identity::NodeId;
 use crate::identity::{ApplicationId, CellId, Digest, SessionId};
-use crate::node::log::{
-    RecoveryBase, build_recovery_overlays_file_backed, build_recovery_overlays_file_backed_stream,
-};
+use crate::node::log::{RecoveryBase, StreamingRecovery};
 use crate::node::log_state::NodeLogPhase;
 use crate::node::log_transport::{NodeLogTransport, SealRequest, TailRequest};
 use crate::node::{FencedNodeSession, NodeDirectory, NodeTakeoverProof, SealedNodeLog};
@@ -230,6 +228,7 @@ pub struct NodeLogRecovery {
     limits: cellule_ltx::Limits,
     recovery_disk: cellule_ltx::DiskBudget,
     recovery_scratch: Option<PathBuf>,
+    bundle_head: Option<crate::node::bundle::NodeBundleHead>,
 }
 
 /// One dead-session Cell control that may need a recovered tail attached.
@@ -372,6 +371,34 @@ pub async fn recoverable_cells_from_scopes_with_summary(
             scopes.insert(scope.cell, key);
         }
     }
+    // Follower scopes omit Cells whose whole suffix is selected in origin.
+    // Complete authenticated binding discovery is mandatory even for an empty
+    // follower witness; it never grants takeover authority.
+    for (binding_application, binding) in
+        crate::node::bundle::recovery::inventory_for_owner(authority.layout(), owner).await?
+    {
+        if binding_application.as_bytes() != &application {
+            continue;
+        }
+        let key = (*binding.incarnation.as_bytes(), binding.epoch);
+        let cell = *binding.cell.as_bytes();
+        match scopes.get(&cell) {
+            Some(existing) if *existing != key => {
+                return Err(Error::Control(
+                    "recovery Cell scope has multiple generations",
+                ));
+            }
+            Some(_) => {}
+            None => {
+                if scopes.len() == limit {
+                    return Err(Error::Node(
+                        "node recovery Cell inventory exceeds its limit",
+                    ));
+                }
+                scopes.insert(cell, key);
+            }
+        }
+    }
     if scopes.is_empty() {
         return Ok(RecoverableCellInventory {
             cells: Vec::new(),
@@ -512,29 +539,85 @@ impl RecoveryCoordinator {
             });
         }
 
-        if sealed.frame_count() == 0 {
-            return Ok(RecoveryCoordinatorResult {
-                controls: Vec::new(),
-                publication: crate::recovery::manifest::RecoveryPublicationSummary::default(),
-            });
+        if sealed.leader_session != self.recovery.leader_session
+            || sealed.log_epoch != self.recovery.log_epoch
+            || sealed.tiered_through != self.recovery.tiered_through
+            || sealed.durable_through.checked_sub(sealed.tiered_through)
+                != Some(sealed.frame_count())
+        {
+            return Err(Error::Fenced);
+        }
+        let inventory =
+            crate::node::bundle::recovery::fenced_inventory(self.manifests.layout(), &fenced)
+                .await?;
+        for (application, binding) in &inventory {
+            let cell = cells
+                .iter()
+                .find(|cell| {
+                    cell.application == *application && cell.observed.value().cell == binding.cell
+                })
+                .ok_or(Error::Node(
+                    "selected bundle Cell is absent from recovery inventory",
+                ))?;
+            let current = cell.observed.value();
+            if current.bundle_binding != binding.bundle_binding
+                || current.epoch != binding.epoch
+                || current.incarnation != binding.incarnation
+                || current.code != binding.code
+                || current.schema != binding.schema
+            {
+                return Err(Error::Fenced);
+            }
         }
         let scratch = self.manifests.recovery_scratch_directory();
-        let tails = if let Some(witness) = &sealed.witness {
-            let reader = witness.reader(self.recovery.limits)?;
-            build_recovery_overlays_file_backed_stream(
-                reader,
-                &bases,
-                self.recovery.limits,
-                &scratch,
-            )?
+        let mut builder = StreamingRecovery::new(
+            &bases,
+            *fenced.session().as_bytes(),
+            self.recovery.log_epoch,
+            self.recovery.limits,
+            &scratch,
+            Some(self.recovery.recovery_disk.clone()),
+        )?;
+        for cell in &cells {
+            if cell.observed.value().bundle_binding.is_some() {
+                builder.seed(
+                    crate::node::bundle::recovery::selected_frames(
+                        self.manifests.layout(),
+                        &cell.authority,
+                        &cell.observed,
+                        &fenced,
+                        self.recovery.limits,
+                    )
+                    .await?,
+                )?;
+            }
+        }
+        let required_first = sealed
+            .tiered_through
+            .checked_add(1)
+            .ok_or(Error::Capacity("recovery witness range"))?;
+        let mut first_sequence = None;
+        let mut last_sequence = None;
+        if let Some(witness) = &sealed.witness {
+            for frame in witness.reader(self.recovery.limits)? {
+                let frame = frame?;
+                first_sequence.get_or_insert(frame.scope().node_sequence);
+                last_sequence = Some(frame.scope().node_sequence);
+                builder.push(frame)?;
+            }
         } else {
-            build_recovery_overlays_file_backed(
-                sealed.frames,
-                &bases,
-                self.recovery.limits,
-                &scratch,
-            )?
-        };
+            for frame in sealed.frames {
+                first_sequence.get_or_insert(frame.scope().node_sequence);
+                last_sequence = Some(frame.scope().node_sequence);
+                builder.push(frame)?;
+            }
+        }
+        if first_sequence.is_some_and(|first| first != required_first)
+            || last_sequence.is_some_and(|last| last != sealed.durable_through)
+        {
+            return Err(Error::Node("recovery follower witness range differs"));
+        }
+        let tails = builder.finish()?;
         if tails.is_empty() {
             return Ok(RecoveryCoordinatorResult {
                 controls: Vec::new(),
@@ -690,6 +773,7 @@ impl NodeLogRecovery {
             limits,
             recovery_disk: default_recovery_disk(limits),
             recovery_scratch: None,
+            bundle_head: None,
         })
     }
 
@@ -734,6 +818,7 @@ impl NodeLogRecovery {
         )
         .map(|mut recovery| {
             recovery.recovery_disk = recovery_disk;
+            recovery.bundle_head = fenced.bundle_head();
             recovery
         })
     }
@@ -759,6 +844,7 @@ impl NodeLogRecovery {
             || log.members() != self.members
             || log.tiered_through() != self.tiered_through
             || log.active() != self.active
+            || fenced.bundle_head() != self.bundle_head
             || claim.claimant() != fenced.claimant()
             || claim.generation() != fenced.claim_generation()
             || claim.expires_at_ms() != fenced.claim_expires_at_ms()

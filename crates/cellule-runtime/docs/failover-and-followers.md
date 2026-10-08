@@ -1565,6 +1565,24 @@ If `log.active` is true and no complete witness is available:
 
 ### Build recovery manifests
 
+For the experimental bundle lane, recovery also inventories every authenticated
+binding shard from the head retained by the fencing CAS. Follower scopes alone
+omit Cells whose whole unmaterialized suffix is already selected in origin.
+The coordinator verifies those selected prefixes, then feeds them and the
+complete sealed follower witness through one file-backed builder. Overlapping
+native sequences must have identical digests; missing Cells, command/physical
+gaps and conflicting bytes reject before attachment. Scratch growth is admitted
+before writing, and cache jobs retain that admission after caller cancellation.
+
+A bound Cell can pin only recovery from its original session and log epoch,
+after canonical node fencing. Its binding remains pinned. The canonical node
+seal refuses until every binding has a terminal materialized checkpoint;
+uploading or attaching a manifest grants no transfer authority. Scheduling that
+failed-boot materialization, interrupted enrollment resolution and terminal
+catalog CAS is still unfinished, so ordinary bundle ACKs remain disabled. The
+manifest reader admits up to 4,096 scopes under the existing 2 MiB byte ceiling;
+the 2,000-scope codec test is format evidence, not node performance qualification.
+
 The recoverer filters entries at or below the session's object-covered
 watermark, then groups the remaining verified frames by application, Cell,
 incarnation, and Cell epoch:
