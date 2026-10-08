@@ -98,6 +98,10 @@ pub(super) fn handle_executed(
                 submitted_at: std::time::Instant::now(),
                 proof,
             });
+            active
+                .admission
+                .publication_batch
+                .queued(active.publications.len(), durability.is_none());
             if durability.is_some() {
                 active.unpublished_node_logs += 1;
                 unpublished_node_log_bytes.fetch_add(retained_bytes, Ordering::AcqRel);

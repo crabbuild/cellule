@@ -47,6 +47,14 @@ pub(super) struct CellAdmission {
     pub(super) draining: AtomicBool,
     pub(super) maintenance_quiescing: AtomicBool,
     pub(super) fenced: AtomicBool,
+    pub(super) publication_batch: super::publication_schedule::PublicationBatch,
+}
+
+impl CellAdmission {
+    pub(super) fn begin_drain(&self) {
+        self.draining.store(true, Ordering::Release);
+        self.publication_batch.flush();
+    }
 }
 
 pub(crate) struct CommandWork {
@@ -465,6 +473,7 @@ impl CellHandle {
         {
             return Err(Error::CellDraining);
         }
+        self.admission.publication_batch.flush();
         self.admission.requests.close();
         self.admission.bytes.close();
         let successor_admission = new_cell_admission(self.owner_fence());
@@ -507,6 +516,7 @@ impl CellHandle {
         {
             return Err(Error::CellDraining);
         }
+        self.admission.publication_batch.flush();
         self.admission.requests.close();
         self.admission.bytes.close();
         let (reply, response) = oneshot::channel();
@@ -573,6 +583,7 @@ impl CellHandle {
             if retained >= limit.saturating_sub(limit / 4)
                 || disk.used() >= disk.capacity().saturating_sub(disk.capacity() / 4)
             {
+                self.admission.publication_batch.flush();
                 return Err(Error::Capacity("publication backlog"));
             }
         }

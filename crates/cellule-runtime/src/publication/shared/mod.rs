@@ -56,6 +56,10 @@ pub(crate) struct SharedPublication {
 }
 
 impl SharedPublication {
+    pub(crate) fn saturated(&self) -> bool {
+        self.slots.available_permits() == 0
+    }
+
     pub(crate) fn new(
         resources: ResourceLedger,
         telemetry: crate::fleet::telemetry::CellTelemetryHandle,

@@ -51,7 +51,7 @@ pub(super) fn handle_activated(
                 return;
             }
             if shutdown.draining {
-                admission.draining.store(true, Ordering::Release);
+                admission.begin_drain();
                 admission.requests.close();
                 admission.bytes.close();
                 let _ = reply.send(Err(Error::RuntimeClosed));

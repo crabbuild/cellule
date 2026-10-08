@@ -1,5 +1,269 @@
 use super::{CellRuntimeStats, bounded_u32};
 
+#[tokio::test(flavor = "multi_thread")]
+async fn pressured_fleet_roots_batch_without_hiding_reads_or_delaying_drain() {
+    use super::*;
+    use crate::cell::catalog::CellCatalog;
+    use crate::cell::executor::{HandlerOutcome, MutationIdentity};
+    use crate::control::Owner;
+    use crate::identity::{IncarnationId, NamespaceId, NodeId, RequestId, TenantId};
+    use crate::node::log::DurabilityGate;
+    use crate::node::log_shipper::NodeLogShipper;
+    use crate::node::log_transport::LocalFollowerTransport;
+
+    let session = SessionId::from_bytes([87; 16]);
+    let incarnation = IncarnationId::from_bytes([88; 16]);
+    let member = NodeId::from_bytes([89; 16]);
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        ApplicationId::from_bytes([3; 16]),
+        NamespaceId::from_bytes([6; 16]),
+        b"pressured-fleet-roots",
+    )
+    .unwrap();
+    let layout = cellule_ltx::CellStorageLayout::new(
+        cellule_store::Store::new(Arc::new(object_store::memory::InMemory::new())),
+        object_store::path::Path::from("pressured-roots"),
+        *target.application().as_bytes(),
+    );
+    let limits = cellule_ltx::Limits::default();
+    let replica = cellule_ltx::CellReplica::new(
+        layout.clone(),
+        *target.cell_id().as_bytes(),
+        *incarnation.as_bytes(),
+        limits,
+    )
+    .unwrap();
+    let directory = tempfile::TempDir::new().unwrap();
+    let follower = crate::FollowerStore::open(
+        directory.path().join("follower"),
+        limits,
+        cellule_ltx::DiskBudget::new(1 << 30),
+    )
+    .unwrap();
+    let transport = Arc::new(LocalFollowerTransport::new(member, follower));
+    let gate = DurabilityGate::new(session, NodeId::from_bytes([90; 16]), 1, [member]).unwrap();
+    let shipper = NodeLogShipper::new(gate.clone(), transport.clone(), limits).unwrap();
+    let node_lease = NodeLeaseGuard::new(0, 60_000).unwrap();
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        8 << 20,
+        session,
+        cellule_ltx::Host::default(),
+    )
+    .unwrap();
+    runtime.install_node_lease(node_lease.clone()).unwrap();
+    runtime
+        .install_node_durability(
+            target.application(),
+            Arc::new(NodeDurability::new(
+                gate,
+                shipper,
+                Arc::new(BatchNodeAuthority),
+                transport,
+                node_lease,
+            )),
+        )
+        .unwrap();
+    let catalog = CellCatalog::new(layout.clone(), target.tenant());
+    let code = Digest::from_bytes([91; 32]);
+    let proof = catalog
+        .provision(CatalogEntry::new(&target, CatalogRole::Application, code, 1).unwrap())
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout);
+    let observed = authority
+        .create_initial(
+            &proof,
+            incarnation,
+            Owner {
+                session,
+                endpoint: "https://node.internal".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let handle = runtime
+        .bootstrap(
+            proof,
+            replica.clone(),
+            authority.clone(),
+            observed,
+            directory.path().join("cell.sqlite"),
+            |tx| {
+                tx.execute_batch(
+                    "CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES (0)",
+                )?;
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+    let identity = |id| MutationIdentity {
+        request_id: RequestId::from_bytes([id; 16]),
+        issued_at_ms: 10,
+        expires_at_ms: 60_000,
+    };
+    let mut publications = runtime.subscribe_publications();
+    let mut warmup_slots = Vec::new();
+    for _ in 0..cellule_ltx::SHARED_PUBLICATION_ROWS {
+        warmup_slots.push(runtime.inner.shared_publication.admit().await.unwrap());
+    }
+    let first = handle
+        .execute(identity(1), code, 20, 1_024, 1_024, |tx| {
+            tx.execute("UPDATE counter SET value = value + 1", [])?;
+            Ok(HandlerOutcome::Success(vec![1]))
+        })
+        .await
+        .unwrap();
+    assert_eq!(first.commit_sequence(), 1);
+    assert!(
+        runtime
+            .node_durability()
+            .unwrap()
+            .1
+            .progress()
+            .unwrap()
+            .fleet_active
+    );
+    drop(warmup_slots);
+    tokio::time::timeout(std::time::Duration::from_secs(5), publications.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let control = authority.load(target.cell_id()).await.unwrap().unwrap();
+            if control.value().ltx_root().unwrap().commit_sequence == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    // Model the bounded node lane's complete occupancy without retaining any
+    // synthetic captures. These are its real original preparation permits.
+    let mut occupied = Vec::new();
+    for _ in 0..cellule_ltx::SHARED_PUBLICATION_ROWS {
+        occupied.push(runtime.inner.shared_publication.admit().await.unwrap());
+    }
+    let mut acknowledged = Vec::new();
+    for id in 2_u8..=12 {
+        let outcome = handle
+            .execute(identity(id), code, 20, 1_024, 1_024, move |tx| {
+                tx.execute("UPDATE counter SET value = value + 1", [])?;
+                Ok(HandlerOutcome::Success(vec![id]))
+            })
+            .await
+            .unwrap();
+        acknowledged.push(outcome);
+    }
+    drop(occupied);
+    // Once pressure clears, an already-proven cohort still owns its original
+    // bounded age. It does not immediately turn into another tiny root.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let current = authority.load(target.cell_id()).await.unwrap().unwrap();
+    assert_eq!(current.value().ltx_root().unwrap().commit_sequence, 1);
+    assert_eq!(
+        handle
+            .query(1_024, 1_024, |db| {
+                let value: i64 = db.query_row("SELECT value FROM counter", [], |row| row.get(0))?;
+                Ok(value.to_le_bytes().to_vec())
+            })
+            .await
+            .unwrap(),
+        12_i64.to_le_bytes()
+    );
+    for (id, expected) in (2_u8..=12).zip(acknowledged) {
+        assert_eq!(
+            handle
+                .execute(identity(id), code, 20, 1_024, 1_024, |_| {
+                    panic!("exact retry must not execute SQL")
+                })
+                .await
+                .unwrap(),
+            expected
+        );
+    }
+    // Drain must wake the original delayed task rather than wait its five-
+    // second age. It still selects and releases the complete captured prefix.
+    tokio::time::timeout(std::time::Duration::from_secs(2), handle.drain())
+        .await
+        .unwrap()
+        .unwrap();
+    runtime.shutdown().await.unwrap();
+    let root = authority
+        .load(target.cell_id())
+        .await
+        .unwrap()
+        .unwrap()
+        .value()
+        .ltx_root()
+        .unwrap();
+    assert_eq!(root.commit_sequence, 12);
+    let restored = directory.path().join("cold.sqlite");
+    replica
+        .open_root(&root)
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let db = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+    assert_eq!(
+        db.query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        12
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM sys_requests", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        12
+    );
+    for id in 1_u8..=12 {
+        let actual = db
+            .query_row(
+                "SELECT operation_digest, result, commit_sequence FROM sys_requests WHERE request_id = ?1",
+                [RequestId::from_bytes([id; 16]).as_bytes().as_slice()],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, i64>(2)?)),
+            )
+            .unwrap();
+        assert_eq!(actual, (code.as_bytes().to_vec(), vec![id], i64::from(id)));
+    }
+    let stats = runtime.stats();
+    assert_eq!(stats.active_cells(), 0);
+    assert_eq!(stats.retained_bytes(), 0);
+}
+
+struct BatchNodeAuthority;
+
+impl crate::node::durability::NodeLogAuthority for BatchNodeAuthority {
+    fn activate<'a>(
+        &'a self,
+        _epoch: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn advance_coverage<'a>(
+        &'a self,
+        _epoch: u64,
+        _through: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn close<'a>(
+        &'a self,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 #[tokio::test]
 async fn empty_runtime_miss_does_not_wait_for_the_dispatcher() {
     use super::*;

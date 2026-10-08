@@ -24,6 +24,7 @@ mod acquire;
 mod acquire_resume;
 mod acquisition_observer;
 mod prefix;
+mod publication_schedule;
 mod serving;
 pub use acquisition_observer::{AcquisitionObservation, AcquisitionObserver};
 pub use serving::CellServingObservation;
