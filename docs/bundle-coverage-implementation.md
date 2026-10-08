@@ -175,7 +175,10 @@ The first full run timed out at an unchanged five-second follower-backlog drain.
 That exact binary passed the case alone in 0.91 seconds; the identical frozen
 source then passed the complete workspace rerun with the same four test workers
 and deadlines. Failed runs, source hashes and count provenance remain outside
-Git. No new application TPS was measured, and ordinary bundle ACKs stay disabled.
+Git. A subsequent [fresh application measurement](pr67-write-measurement-4957985.md)
+at `4957985` observed 344.19 Fleet-configured TPS and 147.98 Bucket TPS, with
+failed qualification. Fleet successful-write p99 regressed, and ordinary bundle
+ACKs stay disabled; component I/O reductions do not establish application gains.
 
 The detached-history regression first fails at the original 32-reference
 ceiling. With the new representation, one actual Cell among a **2,000-binding
@@ -205,8 +208,8 @@ The frozen detached-history and streaming-materialization source passed all
 twelve contributor checks: **1,908 workspace tests passed, 38 ignored; 60 local
 LTX tests passed**. Its 39 focused bundle/index tests include the 215-command
 exact-root and outcome regression. The file-backed recovery test also passes.
-These results verify correctness and component work; the latest source has no
-new end-to-end TPS measurement. Ordinary application responses still use
+These results verify correctness and component work; this milestone did not
+include an end-to-end TPS measurement. Ordinary application responses still use
 per-Cell publication, and production bundle ACK integration remains unfinished.
 
 The combined selected-prefix/follower recovery snapshot passed all twelve
