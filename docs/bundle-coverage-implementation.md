@@ -9,6 +9,13 @@ measures `7fc0793`; it does not exercise bundle-based responses or establish
 write parity. The [WAL NORMAL comparison](pr67-normal-wal-reevaluation.md)
 separately records seven completed diagnostic cases and an interrupted matrix.
 
+The [latest sparse-root coverage measurement](pr67-sparse-root-coverage-measurement.md)
+exercises the ordinary application path at `b185672`: 378.88 completed writes/s
+versus 282.43 before the change in one five-minute Fleet-configured pair.
+Successful-write p99 improved, median latency worsened, and audit, drain and
+debt gates failed. The paired celld owner exited during load. This is diagnostic
+evidence, not repeatable improvement or qualified parity.
+
 ## Celld reference and Cellule adaptation
 
 The reference is celld `f2bf648663a610eefde71f3547ad61e9b896b1f0`.

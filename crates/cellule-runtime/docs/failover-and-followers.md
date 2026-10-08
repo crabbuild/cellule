@@ -385,10 +385,13 @@ race through stale local state.
 
 Completed roots from independent Cells queue their exact node-log tickets while
 an object-coverage CAS is in flight. The next publisher confirms the queued
-group with one serialized authority update, without a batching timer. Staging
-does not release a local proof or bridge an unpublished sequence gap. Failed or
-cancelled updates retain the original tickets for retry, including shutdown;
-local confirmation follows a successful CAS and a fresh node-lease check.
+group with one serialized authority update when its contiguous watermark
+advances, without a batching timer. A sparse group whose watermark is unchanged
+needs no node authority I/O: its already-selected exact Cell roots grant their
+own object proofs after a fresh original node-lease check. They cannot bridge an
+unpublished gap or permit log retirement. Staging alone grants no proof. Failed
+or cancelled advancing updates retain the original tickets for retry, including
+shutdown; local frontier confirmation follows a successful CAS and lease check.
 One coalesced Cell root stages its entire covered ticket set before that flush.
 Tickets are grouped by the original durability binding; equal epoch numbers
 alone cannot combine different bindings. Per-command proof telemetry remains
