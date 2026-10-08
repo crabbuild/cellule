@@ -41,7 +41,7 @@ impl NodeDirectory {
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
         let mut pins = std::collections::HashSet::new();
-        let mut shards = std::collections::BTreeSet::new();
+        let mut cells = std::collections::BTreeSet::new();
         for (_, proof) in checkpoints {
             if proof.pin.session != observed.advertisement.session
                 || proof.pin.epoch != head.epoch
@@ -49,13 +49,13 @@ impl NodeDirectory {
             {
                 return Err(Error::Fenced);
             }
-            shards.insert(index::shard(
-                proof.binding.application.as_bytes(),
-                proof.binding.control.cell.as_bytes(),
+            cells.insert((
+                *proof.binding.application.as_bytes(),
+                *proof.binding.control.cell.as_bytes(),
             ));
         }
         let mut catalog =
-            store::load_catalog_shards(&self.layout, observed.advertisement.session, head, &shards)
+            store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
                 .await?;
         let mut changed = false;
         for (authority, proof) in checkpoints {
@@ -118,14 +118,11 @@ impl NodeDirectory {
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
         let scope = issued.scope();
-        let shards = [index::shard(
-            scope.application.as_bytes(),
-            scope.cell.as_bytes(),
-        )]
-        .into_iter()
-        .collect();
+        let cells = [(*scope.application.as_bytes(), *scope.cell.as_bytes())]
+            .into_iter()
+            .collect();
         let mut catalog =
-            store::load_catalog_shards(&self.layout, pin.session, head, &shards).await?;
+            store::load_catalog_cells(&self.layout, pin.session, head, &cells).await?;
         if pin.epoch != catalog.epoch {
             return Err(Error::Fenced);
         }
@@ -169,14 +166,11 @@ impl NodeDirectory {
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
         let scope = issued.scope();
-        let shards = [index::shard(
-            scope.application.as_bytes(),
-            scope.cell.as_bytes(),
-        )]
-        .into_iter()
-        .collect();
+        let cells = [(*scope.application.as_bytes(), *scope.cell.as_bytes())]
+            .into_iter()
+            .collect();
         let mut catalog =
-            store::load_catalog_shards(&self.layout, pin.session, head, &shards).await?;
+            store::load_catalog_cells(&self.layout, pin.session, head, &cells).await?;
         let binding = catalog.binding_mut(pin.digest)?;
         if pin.epoch != head.epoch
             || issued.leader_session() != pin.session

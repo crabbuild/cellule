@@ -189,7 +189,7 @@ five per root, while the new shared checkpoint adds two PUTs for the entire
 per Cell checkpoint**, before compaction, retries or collection. With an actual
 three-PUT materializer that bound would be 162; with four it would be 215 once
 the shared checkpoint is included. These are conditional calculations, not a
-qualified application result. At one command per capture, the current
+qualified application result. At one command per capture, the original
 32-locator limit cannot meet even the optimistic bound. Raising that limit
 without admitted file-backed metadata and bounded cold/read cost is insufficient.
 
@@ -201,8 +201,31 @@ If that four-PUT materialization holds at the eventual checkpoint spacing,
 `2 / 64 + (4 + 2 / 64) / commands_per_checkpoint <= 0.05` requires **215 commands
 per Cell checkpoint**, before compaction, retries or collection. This remains
 conditional: checkpoint density, larger-tail cost and all-ACK cold/read bounds
-must be measured after the file-backed locator work. The present 32-locator
-ceiling still cannot satisfy it for one-command captures.
+must be measured after the file-backed locator work. That original 32-locator
+ceiling could not satisfy it for one-command captures.
+
+The next development representation detaches authenticated histories from
+binding shards and retains at most 256 exact frame references per Cell, with
+a 32 KiB encoded-history bound and the unchanged 4 MiB native-suffix bound.
+Only the requested histories are fetched, so increasing density does not load
+all of a hot Cell's sibling histories. A regression over a 2,000-binding catalog
+retains 215 actual commands without checkpoint and cold-restores every selected
+outcome, excluding the later local command.
+
+Density alone initially materialized that small 215-command tail with **220
+PUTs**, disproving the four-PUT assumption at that spacing. Streaming the fully
+validated original rows through the existing bounded coalescer reduces it to
+**four PUTs** without raising the changed-image bound. A file-backed public LTX
+test exercises aggregate inputs exceeding 256 KiB and uses two LTX PUTs; runtime
+lineage and Cell CAS account for the other two. The 256-reference boundary also
+uses four PUTs in this small-image fixture. Large changed images retain their
+measured ordinary fallback and may cost more.
+
+The 215-command conditional cost model is now representable and measured for
+this fixture. It is still not qualified at 64-command/64-root production cohorts,
+and excludes compaction, retries and collection. The new node target and remaining
+admission, ACK, recovery and read gates are in the
+[runtime design](../crates/cellule-runtime/docs/write-performance-design.md).
 
 At the uniform 1,000-Cell bucket target of 2,000 commands/s, 160 commands per
 Cell span approximately 80 seconds; at 15,000 Fleet commands/s they span about

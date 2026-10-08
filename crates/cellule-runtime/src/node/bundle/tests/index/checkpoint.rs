@@ -46,8 +46,8 @@ async fn checkpoint_uses_the_exact_materialized_proof_without_scanning_siblings_
         .collect();
     assert_eq!(
         reads.len(),
-        2,
-        "checkpoint should read only its authenticated header and chosen shard"
+        3,
+        "checkpoint reads its authenticated header, chosen shard and exact history; no native frames"
     );
     assert_eq!(f.count.put_requests(), 2);
     f.node = checkpoint;

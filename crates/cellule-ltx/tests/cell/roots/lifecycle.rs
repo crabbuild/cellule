@@ -880,3 +880,88 @@ async fn recovered_overlay_keeps_the_bundle_when_a_later_row_exceeds_the_pack_bu
     assert_eq!(values, vec![vec![0], vec![1], payload]);
     writer.close().unwrap();
 }
+
+#[tokio::test]
+async fn recovered_file_history_streams_more_than_a_pack_of_inputs_into_one_small_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut writer = Db::open(&directory.path().join("dense.sqlite"), Limits::default()).unwrap();
+    writer.transaction(|tx| tx.execute_batch("CREATE TABLE outcomes(request TEXT PRIMARY KEY, result TEXT); INSERT INTO outcomes VALUES ('seed','original')")).unwrap();
+    let cell = [183; 32];
+    let incarnation = [184; 16];
+    let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+        Arc::new(InMemory::new()),
+    ));
+    let replica = replica(Store::new(counted.clone()), cell, incarnation);
+    let base = replica
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    let mut builder =
+        cellule_ltx::bundle::BundleBuilder::new_temp(directory.path(), Limits::default()).unwrap();
+    let mut total_bytes = 0_u64;
+    let mut position = base.position;
+    for commit in 2..=216 {
+        writer
+            .transaction(|tx| {
+                tx.execute(
+                    "INSERT INTO outcomes VALUES (?1,?2)",
+                    [format!("request-{commit}"), format!("result-{commit}")],
+                )
+            })
+            .unwrap();
+        let cuts = writer.capture().unwrap();
+        position = cuts.position;
+        for segment in &cuts.segments {
+            total_bytes += segment.info().size_bytes;
+            builder
+                .push(BundleEntry::for_cell(
+                    cell,
+                    incarnation,
+                    segment.info().clone(),
+                    std::fs::read(segment.path()).unwrap(),
+                ))
+                .unwrap();
+        }
+    }
+    assert!(
+        total_bytes > 256 << 10,
+        "must exercise streamed fallback, not the small aggregate-input path: {total_bytes}"
+    );
+    let overlay = RecoveryOverlay::new(base, builder.finish().unwrap(), position, 216);
+    counted.reset();
+    let prepared = replica
+        .prepare_recovered_overlay(&overlay, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        counted.put_requests(),
+        2,
+        "one canonical pack and one root, excluding runtime lineage and CAS"
+    );
+    assert_eq!(prepared.root().position, position);
+    assert_eq!(prepared.root().commit_sequence, 216);
+    let restored = directory.path().join("dense-restored.sqlite");
+    replica
+        .open_root(&prepared.root())
+        .await
+        .unwrap()
+        .restore(&restored)
+        .await
+        .unwrap();
+    let db = rusqlite::Connection::open(restored).unwrap();
+    let count: usize = db
+        .query_row("SELECT count(*) FROM outcomes", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 216);
+    assert_eq!(
+        replica
+            .reachable_objects(&prepared.root())
+            .await
+            .unwrap()
+            .iter()
+            .filter(|object| object.kind == CellObjectKind::Bundle)
+            .count(),
+        0
+    );
+}

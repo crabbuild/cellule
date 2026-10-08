@@ -21,15 +21,15 @@ impl NodeDirectory {
         if frames.is_empty() || frames.len() > MAX_FRAMES {
             return Err(Error::Capacity("bundle frame count"));
         }
-        let shards = frames
+        let cells = frames
             .iter()
             .map(|frame| {
                 let scope = frame.scope();
-                index::shard(&scope.application, &scope.cell)
+                (scope.application, scope.cell)
             })
             .collect();
         let mut catalog =
-            store::load_catalog_shards(&self.layout, observed.advertisement.session, head, &shards)
+            store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
                 .await?;
         let mut consumed = 0_usize;
         for assignment in assignments {
@@ -121,31 +121,36 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<(VersionedNodeAdvertisement, Vec<BundleCoverageProof>)> {
         lease.check()?;
-        let shards = prepared
+        let cells = prepared
             .catalog
             .bindings
             .iter()
+            .filter(|binding| {
+                binding
+                    .locators
+                    .iter()
+                    .any(|locator| locator.object.is_none())
+            })
             .map(|binding| {
-                index::shard(
-                    binding.application.as_bytes(),
-                    binding.control.cell.as_bytes(),
+                (
+                    *binding.application.as_bytes(),
+                    *binding.control.cell.as_bytes(),
                 )
             })
             .collect();
-        let catalog = store::load_catalog_shards(
+        let catalog = store::load_catalog_cells(
             &self.layout,
             prepared.catalog.session,
             prepared.head,
-            &shards,
+            &cells,
         )
         .await?;
         let mut proofs = Vec::new();
         for binding in catalog.bindings {
-            if !binding
-                .locators
-                .iter()
-                .any(|locator| locator.object == Some(prepared.head.digest))
-            {
+            if !cells.contains(&(
+                *binding.application.as_bytes(),
+                *binding.control.cell.as_bytes(),
+            )) {
                 continue;
             }
             verify_binding(

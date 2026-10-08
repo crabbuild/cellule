@@ -1,6 +1,80 @@
 use super::*;
 
 #[tokio::test]
+async fn inline_indexed_suffix_migrates_to_detached_history_with_the_same_pin() {
+    let mut f = Fixture::new().await;
+    let mut cell = f.cell(4).await;
+    let (_, frames, assignment) = f.append(&mut cell, 2);
+    let proposal = f
+        .directory
+        .prepare_node_bundle(&f.node, &frames, &[assignment], NOW)
+        .await
+        .unwrap();
+    f.node = f
+        .directory
+        .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
+        .await
+        .unwrap()
+        .0;
+    let original = f.node.advertisement().bundle_head().unwrap();
+    let mut catalog = load_catalog(&f.layout, head_session(&f), original)
+        .await
+        .unwrap();
+    catalog.index = None;
+    catalog.predecessor = Some(original.digest());
+    let (body, digest) = catalog_index::encode_inline(&mut catalog, &[]).unwrap();
+    assert_eq!(&body[..8], b"\0\0\0\x04CNB2");
+    let legacy = PreparedNodeBundle {
+        original: Some(original),
+        head: NodeBundleHead {
+            epoch: EPOCH,
+            digest,
+            selected_through: original.selected_through(),
+        },
+        body,
+        catalog,
+    };
+    f.layout
+        .store()
+        .put_exact(
+            &f.layout
+                .node_coverage_bundle_path(&[1; 16], EPOCH, digest.as_bytes()),
+            legacy.body.clone(),
+        )
+        .await
+        .unwrap();
+    f.node = f
+        .directory
+        .select_catalog(&f.node, &legacy, NOW)
+        .await
+        .unwrap();
+    let old_pin = cell.control.value().bundle_binding.unwrap();
+    assert_eq!(
+        f.directory
+            .load_bundle_coverage(&cell.authority, &cell.control, Limits::default())
+            .await
+            .unwrap()
+            .commit_sequence(),
+        2
+    );
+    let (_, frames, assignment) = f.append(&mut cell, 3);
+    let proposal = f
+        .directory
+        .prepare_node_bundle(&f.node, &frames, &[assignment], NOW)
+        .await
+        .unwrap();
+    assert_eq!(&proposal.body[..8], b"\0\0\0\x04CNB3");
+    let (_, proofs) = f
+        .directory
+        .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
+        .await
+        .unwrap();
+    assert_eq!(proofs[0].binding(), old_pin);
+    assert_eq!(proofs[0].locator_count(), 2);
+    assert_eq!(proofs[0].commit_sequence(), 3);
+}
+
+#[tokio::test]
 async fn legacy_selected_catalog_is_read_and_migrated_without_changing_the_cell_pin() {
     let mut f = Fixture::new().await;
     let mut cell = f.cell(4).await;
@@ -49,7 +123,7 @@ async fn legacy_selected_catalog_is_read_and_migrated_without_changing_the_cell_
         .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
         .await
         .unwrap();
-    assert_eq!(&proposal.body[..8], b"\0\0\0\x04CNB2");
+    assert_eq!(&proposal.body[..8], b"\0\0\0\x04CNB3");
     let (_, proofs) = f
         .directory
         .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
@@ -118,15 +192,15 @@ async fn indexed_shard_corruption_and_missing_reused_shards_fail_closed() {
         .collect();
     assert_eq!(
         reads.len(),
-        3,
-        "a reused shard does not require the old root header"
+        4,
+        "a reused shard/history does not require the old root header"
     );
     assert_eq!(
         reads
             .iter()
             .filter(|read| read.location == old_path.as_ref())
             .count(),
-        2
+        3
     );
     // The head/header stays unchanged; the independently authenticated reused
     // shard must still detect a corrupt provider payload in the old object.

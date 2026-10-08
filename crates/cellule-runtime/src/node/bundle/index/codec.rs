@@ -2,7 +2,7 @@
 use super::*;
 use crate::codec::{BoundedDecoder, BoundedEncoder, read_fixed};
 
-fn write_extent(e: &mut BoundedEncoder, extent: &Locator) -> Result<()> {
+pub(super) fn write_extent(e: &mut BoundedEncoder, extent: &Locator) -> Result<()> {
     e.write_bool(extent.object.is_some())?;
     if let Some(object) = extent.object {
         e.write_bytes(object.as_bytes())?;
@@ -12,7 +12,7 @@ fn write_extent(e: &mut BoundedEncoder, extent: &Locator) -> Result<()> {
     e.write_bytes(extent.frame_digest.as_bytes())?;
     Ok(())
 }
-fn read_extent(d: &mut BoundedDecoder<'_>) -> Result<Locator> {
+pub(super) fn read_extent(d: &mut BoundedDecoder<'_>) -> Result<Locator> {
     let object = if d.read_bool()? {
         Some(Digest::from_bytes(read_fixed(
             d,
@@ -53,7 +53,7 @@ pub(super) fn encode(root: &Root) -> Result<Bytes> {
     }
     let payload = e.finish();
     let mut header = Vec::with_capacity(HEADER_BYTES);
-    header.extend_from_slice(MAGIC);
+    header.extend_from_slice(if root.detached { DENSE_MAGIC } else { MAGIC });
     header.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     header.extend_from_slice(&payload);
     header.resize(HEADER_BYTES, 0);
@@ -61,7 +61,9 @@ pub(super) fn encode(root: &Root) -> Result<Bytes> {
 }
 
 pub(super) fn decode(header: &[u8]) -> Result<Root> {
-    if header.len() != HEADER_BYTES || header.get(..8) != Some(MAGIC.as_slice()) {
+    if header.len() != HEADER_BYTES
+        || !matches!(header.get(..8), Some(magic) if magic == MAGIC || magic == DENSE_MAGIC)
+    {
         return Err(Error::Node("unsupported bundle index header"));
     }
     let length = u32::from_be_bytes(
@@ -110,6 +112,7 @@ pub(super) fn decode(header: &[u8]) -> Result<Root> {
     }
     d.finish()?;
     let root = Root {
+        detached: header.get(..8) == Some(DENSE_MAGIC.as_slice()),
         session,
         epoch,
         predecessor,
@@ -156,12 +159,12 @@ fn validate(root: &Root) -> Result<()> {
         }
         local_end += frame.bytes;
     }
-    if local_end != root.object_bytes {
+    if local_end > root.object_bytes || (!root.detached && local_end != root.object_bytes) {
         return Err(Error::Node("bundle index object length differs"));
     }
     Ok(())
 }
-fn validate_extent(extent: &Locator) -> Result<()> {
+pub(super) fn validate_extent(extent: &Locator) -> Result<()> {
     if extent.offset < HEADER_BYTES as u64
         || extent.bytes == 0
         || extent

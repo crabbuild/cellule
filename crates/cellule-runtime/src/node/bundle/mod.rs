@@ -52,7 +52,8 @@ mod tests;
 
 pub(crate) const MAX_BUNDLE_BYTES: u64 = 4 << 20;
 const MAX_BINDINGS: usize = 4_096;
-const MAX_LOCATORS: usize = 32;
+const MAX_LOCATORS: usize = 256;
+const MAX_INLINE_LOCATORS: usize = 32;
 const MAX_FRAMES: usize = 64;
 // Verification retains at most one Cell suffix, independently of the number
 // of historical objects referenced by its locators.
@@ -185,6 +186,7 @@ impl Catalog {
         let mut previous = None;
         let mut scopes = std::collections::HashSet::new();
         for binding in &self.bindings {
+            index::validate_deferred(self, binding)?;
             binding.control.encode()?;
             let pin = binding
                 .control

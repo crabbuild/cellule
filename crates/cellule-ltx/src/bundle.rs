@@ -408,10 +408,21 @@ impl Bundle {
 
     /// Returns the verified bytes for a row index, never a caller-supplied extent.
     pub fn read_segment(&self, index: usize) -> Result<Bytes> {
+        self.segment_reader(index)?()
+    }
+
+    /// Pins the immutable source for one admitted native read without retaining
+    /// every row's bytes. The dispatched closure owns file lifetime on cancellation.
+    pub(crate) fn segment_reader(
+        &self,
+        index: usize,
+    ) -> Result<impl FnOnce() -> Result<Bytes> + Send + 'static> {
         let row = self.rows.get(index).ok_or(LtxError::TxNotAvailable)?;
         let start = usize::try_from(row.offset).map_err(|_| LtxError::LTXCorrupted)?;
         let length = usize::try_from(row.info.size_bytes).map_err(|_| LtxError::LTXCorrupted)?;
-        match &self.body {
+        let row = row.clone();
+        let body = self.body.clone();
+        Ok(move || match body {
             BundleBody::Memory(bytes) => Ok(bytes.slice(start..start + length)),
             BundleBody::File(file) => {
                 let mut source = File::open(&file.path)?;
@@ -422,7 +433,7 @@ impl Bundle {
                 }
                 Ok(Bytes::from(bytes))
             }
-        }
+        })
     }
 }
 

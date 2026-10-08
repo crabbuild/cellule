@@ -76,56 +76,103 @@ unknown fields are rejected. Old readers must not operate on those records.
 Use a fresh development prefix and initialize the lane before native issuance;
 there is no live-format migration or same-boot bundle-epoch rotation.
 
-New `CNB2` objects contain a fixed authenticated root index, changed catalog
-shards and native extents under the existing
-`cells/v1/node-logs/<session>/<epoch>/coverage/v1/<digest>.cnb` path. The selected
-head digest authenticates the 32 KiB canonical header; the header authenticates
-all shard ranges and new native extents. Unchanged shard references retain their
-original object, offset, length and digest. A Cell lookup needs one header and
-one shard, then its exact native ranges; it never follows a predecessor chain.
-Both the application and Cell ID determine the shard. Complete maintenance
-inventory still reads and verifies every shard, retaining one bounded shard at
-a time and a duplicate-pin set capped at 4,096 entries.
-Hot cohort lookups preflight the sum of their chosen shard lengths against a
-4 MiB encoded-metadata budget before leaf I/O; a point lookup charges only its
-own shard. This bounds protocol input, not total heap usage or host admission.
+New `CNB3` objects contain a fixed authenticated root index, changed catalog
+shards, native extents and detached histories under the existing
+`cells/v1/node-logs/<session>/<epoch>/coverage/v1/<digest>.cnb` path. The head digest
+authenticates the 32 KiB header; shard digests authenticate each binding row and
+its exact history extent; history digests authenticate every native reference.
+New histories share the one immutable upload. Old native bodies are never copied
+into a new history. Unchanged shards and histories keep exact object/range/digest
+references without walking a predecessor chain.
 
-The `CNB1` complete-catalog reader remains available. Its selected digest still
-authenticates the whole object. A new update migrates that catalog to `CNB2`
-without changing Cell pins. Older binaries cannot read `CNB2`; upgrade all
-recovery consumers before selecting this format. This does not migrate unbound
-live actor activations or enable bundle-based responses.
+A point lookup fetches one header, one shard and only the requested Cell's
+history, then its exact native frames. A shared shard keeps unrelated histories
+as authenticated references, including when those bodies are unavailable.
+Selection verifies every participating Cell's origin and native suffix before
+CAS; point selection grants no sibling drain or collection authority.
+Complete maintenance inventory still verifies every shard, retaining one
+bounded shard at a time and at most 4,096 duplicate-pin entries. An unresolved
+history remains a drain obligation.
+
+Hot lookups preflight selected shard lengths against 4 MiB before leaf reads,
+then preflight the selected histories plus those shards against that same bound
+before the first history read. This bounds protocol input, not total heap usage
+or host admission. Hydration alone does not rewrite a shard; modifications to an
+unloaded history reject.
+
+`CNB1` complete catalogs and `CNB2` inline indexed shards remain readable, with
+their original 32-inline-locator bound. Updating them selects `CNB3` without
+changing Cell pins; unchanged inline shards can remain referenced. Older binaries
+cannot read `CNB3`. Upgrade every recovery consumer before selecting it, using a
+fresh development prefix. This does not migrate unbound live actor activations
+or enable bundle responses.
 
 | Development bound | Value |
 | --- | ---: |
 | Immutable object or individual catalog shard bytes | 4 MiB |
-| Encoded catalog shards loaded for one cohort | 4 MiB, checked before leaf reads |
+| Selected shard plus history encoded metadata | 4 MiB, checked before the respective reads |
 | Authenticated index header | 32 KiB / 256 shard references |
 | Original bindings per boot/epoch | 4,096 |
 | Native frames per selection | 64 |
-| Uncheckpointed locators per Cell | 32 |
-| Encoded suffix bytes verified per Cell | 4 MiB |
+| Detached exact frame references per Cell | 256 |
+| One encoded history | 32 KiB |
+| Legacy inline locators per Cell | 32 |
+| Native suffix bytes verified per Cell | 4 MiB |
 | Distinct base-root origin dependencies verified per Cell | 65,536 |
 
-Exhaustion rejects further bundle preparation while retaining the last proof.
-These are safety ceilings, **not performance-qualified policies**. New selections rewrite only changed shards. Old locator bodies are still
-reverified. The indexed point lookup and copy-on-write catalog are implemented;
-the 32-locator bound, materializer policy and full lifecycle cost do not yet meet
-the current conditional 215-command checkpoint cost constraint in the [authority decision](bundle-coverage-proof.md#quantified-checkpoint-constraint).
-The caller owns host memory/native-job admission; automatic materializer budget,
-fairness and cancellation/drain ownership are not integrated.
+Exhaustion rejects preparation while retaining the last proof. These are safety
+ceilings, **not performance-qualified policies**. Old native bodies are still
+reverified. The 215-command checkpoint density is now represented and measured
+for a small-image fixture; total lifecycle cost is not qualified. Host memory,
+native-job admission, materializer fairness and joined scheduling remain caller
+obligations. See the [node performance design](../crates/cellule-runtime/docs/write-performance-design.md).
 
 ## Verification and remaining delivery
 
+The detached-history regression first fails at the original 32-reference
+ceiling. With the new representation, one actual Cell among a **2,000-binding
+catalog** selects 215 commands without checkpoint and cold-restores its seed and
+all 215 outcomes while excluding a later unselected command. The other bindings
+are metadata fixtures; this is not 2,000 active writers or node capacity evidence.
+Density alone initially costs **220 materialization PUTs**. Streaming verified
+rows through the existing admitted coalescer reduces it to **four**, retaining
+the 256 KiB changed-page bound. A public file-backed LTX test exercises more than
+256 KiB of aggregate native input and uses two LTX PUTs, plus the runtime's lineage
+and Cell CAS. The 256-reference boundary also costs four in this fixture; an
+oversized changed image preserves the ordinary bundle fallback.
+
+The new one-Cell update among 1,000 bindings uses **35,416 metadata bytes**, versus
+35,223 with inline `CNB2`. Recovery uses four coverage-object ranges: header,
+shard, history and native frame. Prefix checkpoint uses three ranges with no
+native-body reads. The extra history read buys selective dense lookup; it is not
+a claimed read TPS improvement. One shared shard test corrupts a sibling history:
+the requested Cell still selects without fetching or rewriting it, while a
+complete reconstruction load rejects the missing/corrupt sibling. Additional
+codec tests cover original pin/session/epoch, exact count/native-byte claims,
+truncation, the 256-reference limit and aggregate admission before history I/O.
+Both legacy complete catalogs and inline indexed suffixes migrate with the same
+Cell pin. All raw logs remain outside Git.
+
+The frozen detached-history and streaming-materialization source passed all
+twelve contributor checks: **1,908 workspace tests passed, 38 ignored; 60 local
+LTX tests passed**. Its 39 focused bundle/index tests include the 215-command
+exact-root and outcome regression. The file-backed recovery test also passes.
+These results verify correctness and component work; the latest source has no
+new end-to-end TPS measurement. Ordinary application responses still use
+per-Cell publication, and production bundle ACK integration remains unfinished.
+
+The following counts describe the earlier inline-index snapshot, not the latest
+application TPS:
+
 The index regression reproduces a **783,146-byte** metadata rewrite for one
 update among 1,000 Cells on the old source. The same test measures **35,223 bytes**
-with `CNB2` (95.5% less), retains one immutable PUT plus one node CAS, and recovers
+with the original `CNB2` (95.5% less), retains one immutable PUT plus one node CAS, and recovers
 through three coverage-object ranges: header, chosen shard and native frame.
 An exact materialized-prefix checkpoint among those 1,000 Cells falls from
 **253 coverage-object reads to two**, without reading old native frames. A
 64-Cell checkpoint cohort selects all completed roots with **two PUTs**, keeping
 a hot Cell's newer suffix; an unmaterialized participant rejects the whole cohort
-without a partial CAS. Small independent materialization now uses the canonical
+without a partial CAS. That small independent materialization used the canonical
 native coalescer and pack: **256 PUTs instead of 320** for those 64 roots, or four
 per root. A 32-locator suffix falls from **37 PUTs to four**, and cold restore
 includes every selected outcome while excluding the later unselected command.
@@ -134,7 +181,7 @@ The aggregate native rows, indexes and pack headers must fit the existing
 The [updated cost calculation](bundle-coverage-proof.md#quantified-checkpoint-constraint)
 requires at least 215 commands per Cell checkpoint if that four-PUT path and
 64/64 cohorts hold, before retries or maintenance. Real larger checkpoints must
-be measured; the 32-locator safety ceiling does not satisfy this constraint.
+be measured; that original 32-locator safety ceiling did not satisfy this constraint.
 
 Additional tests cover legacy migration with the same Cell pin, a reused shard
 without reading its old header, corrupt and missing reused shards, and refusal

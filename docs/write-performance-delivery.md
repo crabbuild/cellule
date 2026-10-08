@@ -23,6 +23,14 @@ ordinary actor responses still use the previous publication path.
 Canonical small-tail materialization also reduces the 64-root cohort from 320
 to 256 PUTs and a 32-locator suffix from 37 PUTs to four, with exact cold restore.
 
+Detached histories now retain 256 exact references per Cell under the original
+4 MiB native-suffix bound, fetching only requested histories. A small-image
+215-command regression among 2,000 catalog bindings initially materializes with
+220 PUTs; the streaming bounded coalescer reduces it to four. These are component
+measurements, not 2,000-writer or application TPS qualification. The
+[runtime design](../crates/cellule-runtime/docs/write-performance-design.md) records
+the 8-vCPU/16-GiB node target: 2,000 Cells, 10K write TPS and 50K read TPS.
+
 ## Delivered behavior
 
 | Change | Measurable result | Preserved contract |
@@ -57,7 +65,7 @@ collection paths. There is no legacy decoding or automatic migration.
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
 | M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Latest three active-Fleet windows cost 5.229–5.433 PUTs/command; two fail the debt trend. Three per-Cell authority PUTs remain; M4 is required |
 | M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; latest three active-Fleet windows cost 0.0138 enrollment GETs/command. The 15K target diagnostic fails delivery and warm audit |
-| M4 | [Connected protocol APIs](bundle-coverage-implementation.md), authenticated copy-on-write catalog shards, exact prefix/cohort checkpoints and streamed complete inventory | Actor response/read integration, admitted materializer scheduling, checkpoint density, failed-node issued-suffix recovery and bundle collection remain incomplete; bundle ACKs disabled |
+| M4 | [Connected protocol APIs](bundle-coverage-implementation.md), authenticated copy-on-write catalog shards, exact prefix/cohort checkpoints and streamed complete inventory | Actor response/read integration, admitted materializer scheduling, production checkpoint policy, failed-node issued-suffix recovery and bundle collection remain incomplete; bundle ACKs disabled |
 | M5 | Three paired low-rate Fleet repetitions and target diagnostics with exact ACK audits delivered | Publication stability and target delivery fail; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
 
 ## Shared publication checkpoint

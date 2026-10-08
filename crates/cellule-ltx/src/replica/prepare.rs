@@ -365,6 +365,21 @@ impl CellReplica {
             .map(|input| input.info.position())
             .ok_or(LtxError::TxNotAvailable)?;
         self.validate_chain(&prospective, target)?;
+        if usage == BundleUse::IndependentRecovery && !independent {
+            // A long history can repeatedly update the same small page image.
+            // Its summed input exceeds a pack while its merged output fits.
+            // Stream original rows through the existing admitted coalescer;
+            // retain the bundle unchanged when the changed-image bound fails.
+            if let Some(merged) = coalesce::recovered_bundle(self, bundle, &inputs).await? {
+                inputs = vec![AppendInput {
+                    info: merged.descriptor.info,
+                    location: BodyLocation::Native,
+                    index: merged.index,
+                    body: merged.body,
+                }];
+                independent = true;
+            }
+        }
         if independent {
             // Independent recovery already verified every original cut. The
             // canonical coalescer and native pack factory can now reduce their

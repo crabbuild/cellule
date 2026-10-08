@@ -79,9 +79,13 @@ and the authority CAS continue to govern acknowledgement.
 
 Independent recovery uses the same path when all selected rows, their indexes
 and pack headers together fit the existing 256 KiB single-PUT budget. Every
-original row is verified before coalescing. If a later row exceeds that budget,
-earlier frozen bodies are released and the entire tail retains its ordinary
-bundle representation. `prepare_bundle` preserves shared bundle references.
+original row is verified before coalescing. If the aggregate exceeds that
+budget, earlier frozen bodies are released. The fully validated original chain
+then streams through the same coalescer, with one pinned source read per admitted
+native job and the existing 256 KiB changed-page state. Long histories that
+repeatedly change a small image can still produce one canonical pack. A large
+individual row, changed image or output retains the ordinary bundle path.
+`prepare_bundle` preserves shared bundle references.
 No root format, authority rule or host resource ceiling changes.
 
 A representation-only compaction can remain private while its successor append

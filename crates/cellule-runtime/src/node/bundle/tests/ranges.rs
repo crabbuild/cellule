@@ -216,8 +216,17 @@ async fn corrupt_origin_dependency_and_overlapping_ranges_fail_closed() {
         .layout
         .node_coverage_bundle_path(&[1; 16], EPOCH, prepared.head.digest.as_bytes());
     let mut corrupt = prepared.body.to_vec();
-    let last = corrupt.last_mut().unwrap();
-    *last ^= 1;
+    // Native bodies precede the detached history in CNB3. Corrupt the actual
+    // retained native extent, rather than an older superseded history page.
+    let native_offset = prepared
+        .catalog
+        .bindings
+        .iter()
+        .flat_map(|binding| &binding.locators)
+        .find(|locator| locator.object.is_none())
+        .unwrap()
+        .offset as usize;
+    corrupt[native_offset + 8] ^= 1;
     f.layout
         .store()
         .inner()

@@ -115,13 +115,13 @@ pub(super) async fn load_catalog(
     index::load(layout, session, head, None).await
 }
 
-pub(super) async fn load_catalog_shards(
+pub(super) async fn load_catalog_cells(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
     head: NodeBundleHead,
-    shards: &std::collections::BTreeSet<u8>,
+    cells: &std::collections::BTreeSet<index::CellKey>,
 ) -> Result<Catalog> {
-    index::load(layout, session, head, Some(shards)).await
+    index::load_cells(layout, session, head, cells).await
 }
 
 pub(super) async fn load_legacy_catalog(
@@ -186,13 +186,10 @@ pub(crate) async fn ensure_enrollment(
         return Err(Error::Fenced);
     }
     let head = node.bundle.ok_or(Error::PendingPublication)?;
-    let shards = [index::shard(
-        layout.application_id(),
-        control.cell.as_bytes(),
-    )]
-    .into_iter()
-    .collect();
-    let mut catalog = load_catalog_shards(layout, pin.session, head, &shards).await?;
+    let cells = [(*layout.application_id(), *control.cell.as_bytes())]
+        .into_iter()
+        .collect();
+    let mut catalog = load_catalog_cells(layout, pin.session, head, &cells).await?;
     let binding = catalog.binding_mut(pin.digest)?;
     if head.epoch != pin.epoch
         || binding.phase != BindingPhase::Provisional
@@ -236,13 +233,10 @@ pub(crate) async fn ensure_departure(
         return Err(Error::Fenced);
     }
     let head = head.ok_or(Error::PendingPublication)?;
-    let shards = [index::shard(
-        layout.application_id(),
-        control.cell.as_bytes(),
-    )]
-    .into_iter()
-    .collect();
-    let mut catalog = load_catalog_shards(layout, pin.session, head, &shards).await?;
+    let cells = [(*layout.application_id(), *control.cell.as_bytes())]
+        .into_iter()
+        .collect();
+    let mut catalog = load_catalog_cells(layout, pin.session, head, &cells).await?;
     if pin.epoch != catalog.epoch {
         return Err(Error::Fenced);
     }

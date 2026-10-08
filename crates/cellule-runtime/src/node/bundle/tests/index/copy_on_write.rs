@@ -51,7 +51,7 @@ async fn updating_one_of_a_thousand_cells_does_not_rewrite_the_complete_inventor
     );
     assert_eq!(
         catalog_reads.len(),
-        3,
-        "one header, one shard and one exact native frame"
+        4,
+        "one header, one shard, one history and one exact native frame"
     );
 }

@@ -29,6 +29,9 @@ fn metadata(catalog: &Catalog, frames: usize) -> Result<BoundedEncoder> {
     e.write_u64(catalog.selected_through)?;
     e.write_count(catalog.bindings.len())?;
     for binding in &catalog.bindings {
+        if binding.locators.len() > MAX_INLINE_LOCATORS {
+            return Err(Error::Capacity("inline bundle locator count"));
+        }
         e.write_bytes(binding.application.as_bytes())?;
         e.write_u64(binding.first_commit)?;
         e.write_bytes(&binding.control.encode()?)?;
@@ -156,7 +159,7 @@ fn decode_inner(body: &Bytes, complete_object: bool) -> Result<Catalog> {
         let selected_commit = d.read_u64()?;
         let selected_position = position_read(&mut d)?;
         let count = d.read_count()?;
-        if count > MAX_LOCATORS {
+        if count > MAX_INLINE_LOCATORS {
             return Err(Error::Capacity("bundle locator count"));
         }
         let mut locators = Vec::with_capacity(count);

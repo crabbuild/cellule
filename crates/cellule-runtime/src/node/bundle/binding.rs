@@ -52,14 +52,11 @@ impl NodeDirectory {
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
         let value = control.value();
-        let shards = [index::shard(
-            authority.layout().application_id(),
-            value.cell.as_bytes(),
-        )]
-        .into_iter()
-        .collect();
+        let cells = [(*authority.layout().application_id(), *value.cell.as_bytes())]
+            .into_iter()
+            .collect();
         let mut catalog =
-            store::load_catalog_shards(&self.layout, observed.advertisement.session, head, &shards)
+            store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
                 .await?;
         if value.state != ControlState::Serving
             || value.recovery.is_some()
