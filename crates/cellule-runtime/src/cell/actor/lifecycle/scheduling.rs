@@ -8,7 +8,8 @@ pub(in crate::cell::actor) fn schedule(
 ) -> CoordinationDecision {
     let publication_blocked = active.queue.front().is_some_and(|work| {
         matches!(work, QueuedWork::Command(_))
-            && (active.coordination.publication_count() >= MAX_PENDING_PUBLICATIONS
+            && (super::super::materialization::blocks_commands(active)
+                || active.coordination.publication_count() >= MAX_PENDING_PUBLICATIONS
                 || active.publication_bytes >= PENDING_PUBLICATION_HIGH_WATER_BYTES)
     });
     active.coordination.step(CoordinationInput::Schedule {

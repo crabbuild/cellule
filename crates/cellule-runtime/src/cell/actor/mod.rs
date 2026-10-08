@@ -32,6 +32,7 @@ mod bundle;
 mod group;
 mod lifecycle;
 mod maintenance;
+mod materialization;
 pub use maintenance::MaintenanceCellRelease;
 mod receiver;
 mod requests;
@@ -150,8 +151,8 @@ pub struct NodeJobReservation {
 /// command publications, excluding migration and failed recovery obligations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellPublicationProgress {
-    /// Physical capture publications awaiting their terminal result. A capture
-    /// may contain several logically committed commands.
+    /// Physical captures and coalesced selected-root obligations awaiting their
+    /// terminal result. Either may contain several logical commands.
     pub pending_publications: usize,
     /// Retained capture bytes of those command publications.
     pub retained_capture_bytes: u64,

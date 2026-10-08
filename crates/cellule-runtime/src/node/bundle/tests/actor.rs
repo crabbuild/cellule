@@ -446,15 +446,11 @@ async fn actor_case(prior_fleet: bool, cancel_caller: bool, early_selection: boo
         )
         .await
         .unwrap();
-        assert!(
-            pool.pending(target.cell_id())
-                .await
-                .unwrap()
-                .unwrap()
-                .cuts()
-                .segments
-                .is_empty()
-        );
+        assert!(pool.pending(target.cell_id()).await.unwrap().is_none());
+        assert!(matches!(
+            pool.state(target.cell_id()).await.unwrap(),
+            crate::cell::worker::WorkerState::DurablePending
+        ));
         assert!(
             captured_paths.iter().all(|path| !path.exists()),
             "exact selected capture must release disk before root CAS"

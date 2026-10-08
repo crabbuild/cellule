@@ -100,7 +100,7 @@ pub(super) enum Message {
         require_resident: bool,
         reply: oneshot::Sender<Option<LocalCell>>,
     },
-    /// Lists resident Cells whose published due time has passed.
+    /// Lists resident Cells whose selected durable due time has passed.
     ///
     /// The scheduler uses this to tick a Cell it already owns without reading
     /// its catalog entry or control record first.
@@ -283,6 +283,8 @@ pub(super) struct ActiveCell {
     pub(super) publisher: Option<CellPublisher>,
     pub(super) durability_submitter: CellDurabilitySubmitter,
     pub(super) publications: VecDeque<QueuedPublication>,
+    pub(super) root_debt: Option<RootDebt>,
+    pub(super) materializing: bool,
     pub(super) publishing_since: Option<std::time::Instant>,
     pub(super) publication_bytes: u64,
     pub(super) unpublished_node_logs: usize,
@@ -383,7 +385,30 @@ pub(super) struct QueuedPublication {
     pub(super) proof: oneshot::Sender<crate::Result<()>>,
 }
 
+#[derive(Clone)]
+pub(super) struct RootDebt {
+    pub(super) selected: Arc<crate::node::log_shipper::SelectedBundle>,
+    pub(super) durability: PendingDurability,
+    pub(super) submitted_at: std::time::Instant,
+    pub(super) next_due_ms: Option<i64>,
+    pub(super) node_log_bytes: u64,
+    pub(super) covered_node_logs: u64,
+}
+
+pub(super) struct SelectedPublication {
+    pub(super) covered: u64,
+    pub(super) debt: RootDebt,
+}
+
 impl ActiveCell {
+    pub(super) fn selected_due_head(&self) -> (u64, Option<i64>) {
+        self.root_debt
+            .as_ref()
+            .map_or((self.published_sequence, self.next_due_ms), |debt| {
+                (debt.selected.proof.commit_sequence(), debt.next_due_ms)
+            })
+    }
+
     pub(super) fn draining(&self) -> bool {
         self.drain.is_some()
             || self.transfer.is_some()
@@ -435,7 +460,7 @@ pub(super) struct LocalCell {
     pub(super) schema: u32,
 }
 
-/// One resident Cell whose published due time has passed.
+/// One resident Cell whose selected durable due time has passed.
 pub(super) struct DueResidentCell {
     pub(super) cell: CellId,
     pub(super) catalog: CatalogProof,
@@ -443,7 +468,7 @@ pub(super) struct DueResidentCell {
     pub(super) code: Digest,
     pub(super) schema: u32,
     pub(super) admission: Arc<CellAdmission>,
-    /// Commit sequence the last authoritative publication named.
+    /// Commit sequence the last verified bundle or root named.
     pub(super) expected_commit_sequence: u64,
     pub(super) next_due_ms: i64,
 }
@@ -516,6 +541,15 @@ pub(super) enum TaskResult {
         effect_id: u64,
         publisher: Box<CellPublisher>,
         result: crate::Result<Box<PublicationAdmission>>,
+    },
+    BundleSelected {
+        cell: CellId,
+        generation: u64,
+        effect_id: u64,
+        publisher: Box<CellPublisher>,
+        covered: u64,
+        retained_bytes: u64,
+        result: crate::Result<Box<SelectedPublication>>,
     },
     Published {
         cell: CellId,

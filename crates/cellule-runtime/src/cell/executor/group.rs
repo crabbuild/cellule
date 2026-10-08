@@ -49,12 +49,16 @@ impl CellExecutor {
         if !self.accepts_publication() {
             return Err(Error::PendingPublication);
         }
-        let base_sequence = self
-            .pending
-            .back()
-            .map_or(self.published_sequence, |pending| {
-                pending.outcome.commit_sequence()
-            });
+        let base_sequence = self.pending.back().map_or_else(
+            || {
+                self.bundle_materialization
+                    .as_ref()
+                    .map_or(self.published_sequence, |selected| {
+                        selected.proof.commit_sequence()
+                    })
+            },
+            |pending| pending.outcome.commit_sequence(),
+        );
         let cell = self.cell;
         let incarnation = self.incarnation;
         let schema = self.schema;

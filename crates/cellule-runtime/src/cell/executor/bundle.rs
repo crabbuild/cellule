@@ -7,9 +7,8 @@ impl CellExecutor {
     pub(crate) fn release_bundle_captures(
         &mut self,
         captures: &[VerifiedBundleCapture],
-    ) -> Result<()> {
-        if self.fenced || self.pending_migration.is_some() || self.bundle_materialization.is_some()
-        {
+    ) -> Result<Vec<StoredOutcome>> {
+        if self.fenced || self.pending_migration.is_some() {
             return Err(Error::PendingPublication);
         }
         let newest = captures
@@ -20,6 +19,9 @@ impl CellExecutor {
             .get(captures.len() - 1)
             .ok_or(Error::PendingPublication)?;
         let selected = newest.selected();
+        if let Some(previous) = &self.bundle_materialization {
+            selected.proof.continues_selected_prefix(&previous.proof)?;
+        }
         if selected.proof.commit_sequence() != pending.outcome.commit_sequence()
             || selected.proof.position() != pending.cuts.position
         {
@@ -41,19 +43,19 @@ impl CellExecutor {
         for pending in self.pending.iter().take(captures.len()) {
             self.db.prune_captured(&pending.cuts)?;
         }
-        // Keep outcomes and coordination pending until the actor's sole
-        // publisher materializes the exact endpoint. Proven visibility may
-        // advance now; an unproven later suffix still blocks queries/retries.
-        for pending in self.pending.iter_mut().take(captures.len()) {
+        // The original proof now owns this exact recoverable range. Outcomes
+        // remain in SQLite's durable retry ledger, rather than one heap entry
+        // per selected command. A later unproven suffix remains in `pending`.
+        let mut outcomes = Vec::with_capacity(captures.len());
+        for pending in self.pending.drain(..captures.len()) {
             self.pending_bytes = self
                 .pending_bytes
                 .checked_sub(pending.retained_bytes())
                 .ok_or(Error::Control("bundle cleanup accounting underflow"))?;
-            pending.cuts.segments = Vec::new();
-            pending.durable = true;
+            outcomes.push(pending.outcome);
         }
         self.bundle_materialization = Some(std::sync::Arc::clone(selected));
-        Ok(())
+        Ok(outcomes)
     }
 
     pub(crate) fn bind_bundle_materialized(&mut self, root: &cellule_ltx::RootRef) -> Result<()> {
@@ -70,19 +72,8 @@ impl CellExecutor {
                 "materialized root differs from bundle cleanup",
             ));
         }
-        let index = self
-            .pending
-            .iter()
-            .position(|pending| pending.outcome.commit_sequence() == root.commit_sequence)
-            .ok_or(Error::PendingPublication)?;
-        if self.pending.iter().take(index + 1).any(|pending| {
-            !pending.durable || !pending.cuts.segments.is_empty() || pending.prepared.is_some()
-        }) {
-            return Err(Error::Control("materialized bundle omits retained capture"));
-        }
-        for pending in self.pending.iter_mut().take(index + 1) {
-            pending.prepared = Some(*root);
-        }
+        self.published_sequence = root.commit_sequence;
+        self.bundle_materialization = None;
         Ok(())
     }
 }

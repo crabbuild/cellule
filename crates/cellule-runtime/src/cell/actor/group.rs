@@ -220,7 +220,8 @@ pub(super) fn reply(command: &mut QueuedCommand, result: crate::Result<Option<St
                                 proof,
                                 Some((
                                     crate::node::log::DurabilitySource::Object
-                                        | crate::node::log::DurabilitySource::Fleet,
+                                        | crate::node::log::DurabilitySource::Fleet
+                                        | crate::node::log::DurabilitySource::Bundle,
                                     _
                                 ))
                             )

@@ -76,7 +76,7 @@ impl WorkAdmission {
 ///
 /// A scheduler ticks such a Cell through the handle it already holds, so due
 /// work does not wait for a fleet scan to reach it. `expected_commit_sequence`
-/// is what the last authoritative publication named: a Tick built from it is a
+/// is what the last verified bundle or root named: a Tick built from it is a
 /// no-op when the Cell committed again in the meantime.
 pub struct DueResident {
     handle: CellHandle,
@@ -103,13 +103,13 @@ impl DueResident {
         &self.handle
     }
 
-    /// Returns the commit sequence the last publication named.
+    /// Returns the commit sequence the last verified bundle or root named.
     #[must_use]
     pub const fn expected_commit_sequence(&self) -> u64 {
         self.expected_commit_sequence
     }
 
-    /// Returns the due time this Cell published.
+    /// Returns the due time covered by that exact selected commit.
     #[must_use]
     pub const fn next_due_ms(&self) -> i64 {
         self.next_due_ms

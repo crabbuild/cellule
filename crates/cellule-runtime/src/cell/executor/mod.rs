@@ -865,7 +865,12 @@ impl CellExecutor {
 
     /// Marks one actor-ordered logical commit safe to observe before object publication.
     pub(crate) fn confirm_durable(&mut self, commit_sequence: u64) -> Result<()> {
-        if commit_sequence <= self.published_sequence {
+        if commit_sequence <= self.published_sequence
+            || self
+                .bundle_materialization
+                .as_ref()
+                .is_some_and(|selected| commit_sequence <= selected.proof.commit_sequence())
+        {
             return Ok(());
         }
         let index = self
@@ -1281,7 +1286,9 @@ impl CellExecutor {
     }
 
     fn has_pending(&self) -> bool {
-        !self.pending.is_empty() || self.pending_migration.is_some()
+        !self.pending.is_empty()
+            || self.pending_migration.is_some()
+            || self.bundle_materialization.is_some()
     }
 
     fn accepts_publication(&self) -> bool {

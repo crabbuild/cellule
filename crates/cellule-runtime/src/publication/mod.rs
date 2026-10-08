@@ -1241,6 +1241,10 @@ impl VerifiedBundleCapture {
 }
 
 impl PendingDurability {
+    pub(crate) fn has_managed_bundle_capture(&self) -> bool {
+        self.has_bundle_capture() && self.durability.managed_bundle_publication()
+    }
+
     pub(crate) async fn selected_capture_prefix(&self) -> Result<Option<VerifiedBundleCapture>> {
         let Some(mut capture) = self.selected_capture().await? else {
             return Ok(None);

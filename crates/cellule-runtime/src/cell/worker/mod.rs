@@ -797,7 +797,7 @@ impl SqlWorkerPool {
         &self,
         cell: CellId,
         captures: Vec<crate::publication::VerifiedBundleCapture>,
-    ) -> Result<()> {
+    ) -> Result<Vec<StoredOutcome>> {
         let (reply, response) = oneshot::channel();
         self.send(
             cell,
@@ -1302,7 +1302,7 @@ enum WorkerCommand {
     ReleaseBundleCaptures {
         cell: CellId,
         captures: Vec<crate::publication::VerifiedBundleCapture>,
-        reply: oneshot::Sender<Result<()>>,
+        reply: oneshot::Sender<Result<Vec<StoredOutcome>>>,
     },
     BindBundleMaterialized {
         cell: CellId,

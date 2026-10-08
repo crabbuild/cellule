@@ -167,6 +167,20 @@ async fn producer_failure_fences_new_work_and_join_preserves_its_cause() {
 #[tokio::test(flavor = "multi_thread")]
 async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_close_and_cold_results()
  {
+    managed_actor_case(10, 32 << 20, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managed_actor_retires_215_grouped_commands_per_cell_before_joined_root_materialization() {
+    managed_actor_case(215, 64 << 20, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managed_actor_retires_65_sequential_captures_before_joined_root_materialization() {
+    managed_actor_case(65, 64 << 20, false).await;
+}
+
+async fn managed_actor_case(per_cell: u16, retained_bytes: usize, grouped: bool) {
     let mut f = Fixture::new().await;
     super::coverage::enroll(&mut f).await;
     let authority = Arc::new(Authority {
@@ -186,7 +200,7 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
     let dirty = Arc::new(tokio::sync::Semaphore::new(1));
     let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
         pool.clone(),
-        32 << 20,
+        retained_bytes,
         SessionId::from_bytes([1; 16]),
         cellule_ltx::Host::default().with_dirty_slots(dirty.clone()),
     )
@@ -263,33 +277,76 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
     // origin coverage to grant any command ACK, read or retry visibility.
     let preparation = dirty.acquire_owned().await.unwrap();
     let digest = Digest::from_bytes([9; 32]);
-    for byte in 1_u8..=20 {
-        let handle = &cells[usize::from(byte % 2)].3;
+    let mut commands = tokio::task::JoinSet::new();
+    let mut results = Vec::new();
+    for byte in 1_u16..=per_cell * 2 {
+        if byte % 8 == 1 {
+            renew_actor_lease(&authority, &f.lease).await;
+        }
+        let handle = cells[usize::from(byte % 2)].3.clone();
+        let mut request = [0; 16];
+        request[..2].copy_from_slice(&byte.to_le_bytes());
         let identity = MutationIdentity {
-            request_id: RequestId::from_bytes([byte; 16]),
+            request_id: RequestId::from_bytes(request),
             issued_at_ms: 10,
             expires_at_ms: 10_000,
         };
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            handle.execute(identity, digest, 20, 1024, 1024, |tx| {
-                tx.execute("UPDATE counter SET value=value+1", [])?;
-                Ok(HandlerOutcome::Success(b"managed".to_vec()))
-            }),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(result.commit_sequence(), u64::from(byte).div_ceil(2));
+        let command = async move {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                handle.execute(identity, digest, 20, 1024, 1024, |tx| {
+                    tx.execute("UPDATE counter SET value=value+1", [])?;
+                    Ok(HandlerOutcome::Success(b"managed".to_vec()))
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            (byte, identity, result)
+        };
+        if grouped {
+            commands.spawn(command);
+            // Exercise native grouping within the unchanged 64-request Cell
+            // mailbox; this correctness test does not offer overload traffic.
+            if commands.len() == 32 {
+                while let Some(result) = commands.join_next().await {
+                    results.push(result.unwrap());
+                }
+                renew_actor_lease(&authority, &f.lease).await;
+            }
+        } else {
+            results.push(command.await);
+        }
+    }
+    while let Some(result) = commands.join_next().await {
+        results.push(result.unwrap());
+        if results.len() % 8 == 0 {
+            renew_actor_lease(&authority, &f.lease).await;
+        }
+    }
+    for (byte, identity, result) in &results {
+        let handle = &cells[usize::from(byte % 2)].3;
+        if !grouped {
+            assert_eq!(result.commit_sequence(), u64::from(*byte).div_ceil(2));
+        }
         assert_eq!(
             handle
-                .execute(identity, digest, 21, 1024, 1024, |_| panic!(
+                .execute(*identity, digest, 21, 1024, 1024, |_| panic!(
                     "proved retry must not execute again"
                 ))
                 .await
                 .unwrap(),
-            result
+            *result
         );
+    }
+    for parity in [0, 1] {
+        let mut sequences = results
+            .iter()
+            .filter(|(byte, _, _)| byte % 2 == parity)
+            .map(|(_, _, result)| result.commit_sequence())
+            .collect::<Vec<_>>();
+        sequences.sort_unstable();
+        assert_eq!(sequences, (1..=u64::from(per_cell)).collect::<Vec<_>>());
     }
     for (_, _, _, handle) in &cells {
         assert_eq!(
@@ -300,9 +357,48 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
                     .to_vec()))
                 .await
                 .unwrap(),
-            10_i64.to_le_bytes()
+            i64::from(per_cell).to_le_bytes()
         );
     }
+    // Root preparation is still held: exact selected reads/retries did not
+    // require any root, and covered physical captures have left worker RAM.
+    let mut selected_frames = 0_u64;
+    for (target, authority, _, _) in &cells {
+        assert_eq!(
+            authority
+                .load(target.cell_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .value()
+                .ltx_root()
+                .unwrap()
+                .commit_sequence,
+            0
+        );
+        let proof = authority.load(target.cell_id()).await.unwrap().unwrap();
+        let selected = f
+            .directory
+            .load_bundle_coverage(authority, &proof, Limits::default())
+            .await
+            .unwrap();
+        assert_eq!(selected.commit_sequence(), u64::from(per_cell));
+        assert!(selected.locator_count() <= 256);
+        selected_frames += selected.locator_count() as u64;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while pool.pending(target.cell_id()).await.unwrap().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let due = runtime.due_resident(i64::MAX, 2).await.unwrap();
+    assert_eq!(due.len(), 2);
+    assert!(
+        due.iter()
+            .all(|cell| cell.expected_commit_sequence() == u64::from(per_cell))
+    );
     assert_eq!(
         responses
             .0
@@ -311,7 +407,7 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
             .iter()
             .filter(|source| **source == CommandResponseSource::Bundle)
             .count(),
-        20
+        usize::from(per_cell) * 2
     );
     let shutdown = runtime.shutdown();
     tokio::pin!(shutdown);
@@ -336,7 +432,7 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
         assert_eq!(control.value().state, ControlState::Idle);
         assert!(control.value().bundle_binding.is_none());
         let root = control.value().ltx_root().unwrap();
-        assert_eq!(root.commit_sequence, 10);
+        assert_eq!(root.commit_sequence, u64::from(per_cell));
         let path = f
             .scratch
             .path()
@@ -352,7 +448,7 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
         assert_eq!(
             cold.query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            10
+            i64::from(per_cell)
         );
         assert_eq!(
             cold.query_row(
@@ -361,10 +457,13 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
                 |row| row.get::<_, i64>(0)
             )
             .unwrap(),
-            10
+            i64::from(per_cell)
         );
     }
-    assert_eq!(durability.progress().unwrap().issued_through, 20);
+    assert_eq!(
+        durability.progress().unwrap().issued_through,
+        selected_frames
+    );
     assert_eq!(
         pool.resource_ledger()
             .snapshot()
@@ -373,4 +472,22 @@ async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_
             .retained_bytes(),
         0
     );
+}
+
+async fn renew_actor_lease(authority: &Authority, lease: &NodeLeaseGuard) {
+    // Advance the original guard only after a signed authoritative heartbeat.
+    let mut node = authority.observed.lock().await;
+    let mut next = node.advertisement().clone();
+    next.issued_at_ms += 1;
+    next.expires_at_ms += 1;
+    next.progress += 1;
+    next.signature = SigningKey::from_bytes(&[10; 32])
+        .sign(&next.signing_bytes().unwrap())
+        .to_bytes();
+    let now = next.issued_at_ms;
+    let refreshed = authority.directory.refresh(&node, next, now).await.unwrap();
+    lease
+        .renew(now, refreshed.advertisement().expires_at_ms())
+        .unwrap();
+    *node = refreshed;
 }

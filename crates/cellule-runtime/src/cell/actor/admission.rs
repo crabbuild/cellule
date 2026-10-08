@@ -64,6 +64,17 @@ pub(super) fn fence_active(active: &mut ActiveCell) {
             .refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
     }
     active.inventory_refreshing = false;
+    // An accepted materializer owns its obligation until joined completion.
+    // Otherwise retain the original owner/pin via unpublished_node_logs while
+    // the fenced worker is discarded; no successful release is fabricated.
+    if !active.materializing && active.root_debt.take().is_some() {
+        active
+            .coordination
+            .step(CoordinationInput::FinishPublication {
+                fenced: true,
+                succeeded: false,
+            });
+    }
     while let Some(publication) = active.publications.pop_front() {
         active
             .coordination

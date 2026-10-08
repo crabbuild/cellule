@@ -160,6 +160,30 @@ pub struct BundleCoverageProof {
     live: Option<selection::LiveBundleCoverage>,
 }
 impl BundleCoverageProof {
+    pub(crate) fn continues_selected_prefix(&self, previous: &Self) -> Result<()> {
+        if self.pin != previous.pin
+            || self.session != previous.session
+            || self.head.epoch != previous.head.epoch
+            || self.binding.application != previous.binding.application
+            || self.binding.control.cell != previous.binding.control.cell
+            || self.binding.control.incarnation != previous.binding.control.incarnation
+            || self.binding.control.epoch != previous.binding.control.epoch
+            || self.binding.control.code != previous.binding.control.code
+            || self.binding.control.schema != previous.binding.control.schema
+            || self.base()? != previous.base()?
+            || self.binding.selected_commit < previous.binding.selected_commit
+            || !self
+                .binding
+                .locators
+                .starts_with(&previous.binding.locators)
+        {
+            return Err(Error::Control(
+                "selected bundle does not continue root debt",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn check_live_assignment(
         &self,
         assignment: &crate::node::log::AssignedCommitRange,
@@ -185,6 +209,28 @@ impl BundleCoverageProof {
     /// Number of bounded authenticated frame locators retained by the proof.
     pub fn locator_count(&self) -> usize {
         self.binding.locators.len()
+    }
+
+    pub(crate) fn materialization_bytes(&self) -> Result<usize> {
+        // Frame verification, overlay encoding and preparation may overlap.
+        // Reserve before the first origin read, including one bounded I/O body.
+        let native = self.native_suffix_bytes()?;
+        let bytes = native
+            .checked_mul(6)
+            .and_then(|bytes| bytes.checked_add(MAX_BUNDLE_BYTES))
+            .ok_or(Error::Capacity("bundle materialization memory"))?;
+        usize::try_from(bytes).map_err(|_| Error::Capacity("bundle materialization memory"))
+    }
+
+    pub(crate) fn native_suffix_bytes(&self) -> Result<u64> {
+        self.binding
+            .locators
+            .iter()
+            .try_fold(0_u64, |total, locator| {
+                total
+                    .checked_add(locator.bytes)
+                    .ok_or(Error::Capacity("bundle materialization memory"))
+            })
     }
     /// Exact immutable base required for reconstruction.
     pub fn base(&self) -> Result<cellule_ltx::RootRef> {

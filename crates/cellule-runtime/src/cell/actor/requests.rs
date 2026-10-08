@@ -392,12 +392,26 @@ pub(super) fn receive_publication_proof(
 pub(super) fn start_publication(
     cell: CellId,
     active: &mut ActiveCell,
+    pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
     let Some(mut publisher) = active.publisher.take() else {
         return;
     };
     if active.publications.is_empty() {
+        active.publisher = Some(publisher);
+        return;
+    }
+    if active.publications.iter().all(|queued| {
+        queued
+            .durability
+            .as_ref()
+            .is_some_and(PendingDurability::has_managed_bundle_capture)
+    }) {
+        super::materialization::start_selection(cell, active, pool, tasks, publisher);
+        return;
+    }
+    if active.root_debt.is_some() {
         active.publisher = Some(publisher);
         return;
     }
@@ -557,7 +571,10 @@ pub(super) fn start_admitted_publication(
                 // the sole publisher token and has not begun root preparation.
                 // Drop the old admission before fresh origin reconstruction.
                 drop(admitted.take());
-                pool.release_bundle_captures(cell, captures).await?;
+                let released = pool.release_bundle_captures(cell, captures).await?;
+                if released != expected {
+                    return Err(Error::Control("bundle result differs from queued commit"));
+                }
                 drop(merged);
                 for (mut pending, reservation) in
                     pendings.drain(..).zip(retained_reservations.iter_mut())
@@ -593,11 +610,7 @@ pub(super) fn start_admitted_publication(
                 if let Some(pending) = durabilities.last().and_then(Option::as_ref) {
                     pending.checkpoint_materialized(publisher.authority(), root).await?;
                 }
-                let published = pool.confirm_published_range(cell, root).await?;
                 authority = authority_started.elapsed();
-                if published != expected {
-                    return Err(Error::Control("bundle result differs from queued commit"));
-                }
                 return Ok(());
             }
             let prepared = loop {
