@@ -846,44 +846,51 @@ impl CellPublisher {
         }
     }
 
-    async fn force_full_compaction(
-        &mut self,
-        base: &cellule_ltx::RootRef,
-    ) -> Result<Option<cellule_ltx::RootRef>> {
-        let segment_count = self
-            .segment_count
-            .ok_or(Error::Control("Cell segment count is unavailable"))?;
-        if segment_count <= 1 {
-            return Ok(None);
-        }
-        tracing::debug!(segments = segment_count, "Cell LTX full compaction forced");
-        let mut backoff = Backoff::default();
-        let prepared = loop {
-            let replica = self.replica.clone();
-            let scratch_directory = self.scratch_directory.clone();
-            let attempt = replica.prepare_compaction(base, 0..segment_count, 9, &scratch_directory);
-            tokio::pin!(attempt);
-            let result = loop {
-                tokio::select! {
-                    result = &mut attempt => break result,
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
-                        self.renew().await?;
+    fn force_full_compaction<'a>(
+        &'a mut self,
+        base: &'a cellule_ltx::RootRef,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<cellule_ltx::RootRef>>> {
+        // Keep full compaction out of each enclosing publication poll frame.
+        // On the minimum Rust version the nested inline chain overflowed a
+        // default Tokio worker stack. The sole publisher still owns and joins
+        // this future through the same native/storage admissions.
+        Box::pin(async move {
+            let segment_count = self
+                .segment_count
+                .ok_or(Error::Control("Cell segment count is unavailable"))?;
+            if segment_count <= 1 {
+                return Ok(None);
+            }
+            tracing::debug!(segments = segment_count, "Cell LTX full compaction forced");
+            let mut backoff = Backoff::default();
+            let prepared = loop {
+                let replica = self.replica.clone();
+                let scratch_directory = self.scratch_directory.clone();
+                let attempt =
+                    replica.prepare_compaction(base, 0..segment_count, 9, &scratch_directory);
+                tokio::pin!(attempt);
+                let result = loop {
+                    tokio::select! {
+                        result = &mut attempt => break result,
+                        _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                            self.renew().await?;
+                        }
                     }
+                };
+                self.record_publication_cost();
+                match result {
+                    Ok(prepared) => break prepared,
+                    Err(error) if retryable_ltx_error(&error) => {
+                        backoff.wait(ltx_retry_hint(&error)).await;
+                    }
+                    Err(error) => return Err(error.into()),
                 }
             };
-            self.record_publication_cost();
-            match result {
-                Ok(prepared) => break prepared,
-                Err(error) if retryable_ltx_error(&error) => {
-                    backoff.wait(ltx_retry_hint(&error)).await;
-                }
-                Err(error) => return Err(error.into()),
-            }
-        };
-        let next_due_ms = self.observed.value().next_due_ms;
-        let root = self.publish_prepared(&prepared, next_due_ms).await?;
-        self.segment_count = Some(prepared.verified().segment_count());
-        Ok(Some(root))
+            let next_due_ms = self.observed.value().next_due_ms;
+            let root = self.publish_prepared(&prepared, next_due_ms).await?;
+            self.segment_count = Some(prepared.verified().segment_count());
+            Ok(Some(root))
+        })
     }
 
     async fn prepare_cuts(
