@@ -1,6 +1,9 @@
 //! One serialized directory view for heartbeats and durability CAS callbacks.
 use super::*;
 use cellule_runtime::node::durability::NodeLogAuthority;
+use cellule_runtime::node::durability::{
+    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+};
 use cellule_runtime::node::log::{NodeLogRetirementObservation, NodeLogRotationBarrier};
 use cellule_runtime::node::{
     NodeAdvertisement, NodeCapacity, NodeFailureDomain, VersionedNodeAdvertisement,
@@ -151,6 +154,10 @@ impl Authority {
             .directory
             .recruit_log(&state.observed, 1, 16 << 20, 3, clock()?)
             .await?;
+        state.observed = self
+            .directory
+            .initialize_bundle_lane(&state.observed, 1, clock()?)
+            .await?;
         let members = state
             .observed
             .advertisement()
@@ -196,6 +203,139 @@ impl Authority {
         }
         self.lease.check()?;
         Ok(current)
+    }
+}
+
+impl NodeBundleAuthority for Authority {
+    fn bind<'a>(
+        &'a self,
+        authority: &'a cellule_runtime::control::authority::CellAuthority,
+        observed: &'a cellule_runtime::control::authority::VersionedControl,
+    ) -> BoxFuture<'a, Result<cellule_runtime::control::authority::VersionedControl>> {
+        Box::pin(async move {
+            let mut state = self.state.lock().await;
+            let current = self.current(&state, 1).await?;
+            let (next, pinned) = self
+                .directory
+                .bind_bundle_cell(&current, authority, observed, clock()?)
+                .await?;
+            state.observed = next;
+            self.lease.check()?;
+            Ok(pinned)
+        })
+    }
+
+    fn close<'a>(
+        &'a self,
+        authority: &'a cellule_runtime::control::authority::CellAuthority,
+        observed: &'a cellule_runtime::control::authority::VersionedControl,
+        issued: cellule_runtime::node::log::CellIssuedRange,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            // Runtime joins the complete issued producer prefix before entering
+            // this mutex, including captures whose Fleet ACK preceded selection.
+            let mut state = self.state.lock().await;
+            let mut current = self.current(&state, issued.log_epoch()).await?;
+            let proof = self
+                .directory
+                .load_bundle_coverage(authority, observed, cellule_ltx::Limits::default())
+                .await?;
+            current = self
+                .directory
+                .checkpoint_bundle_cell(
+                    &current,
+                    authority,
+                    &proof,
+                    cellule_ltx::Limits::default(),
+                    clock()?,
+                )
+                .await?;
+            state.observed = current;
+            state.observed = self
+                .directory
+                .begin_bundle_close(&state.observed, proof.binding(), issued, clock()?)
+                .await?;
+            state.observed = self
+                .directory
+                .finish_bundle_close(&state.observed, proof.binding(), issued, clock()?)
+                .await?;
+            self.lease.check()
+        })
+    }
+}
+
+impl NodeBundlePublicationAuthority for Authority {
+    fn select<'a>(
+        &'a self,
+        captures: &'a [cellule_runtime::node::log_shipper::AssignedCapture],
+        lease: &'a NodeLeaseGuard,
+    ) -> BoxFuture<'a, Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>>> {
+        Box::pin(async move {
+            let mut state = self.state.lock().await;
+            let current = self.current(&state, 1).await?;
+            let frames = captures
+                .iter()
+                .flat_map(|c| c.frames().iter().cloned())
+                .collect::<Vec<_>>();
+            let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
+            let prepared = self
+                .directory
+                .prepare_node_bundle(&current, &frames, &assignments, clock()?)
+                .await?;
+            let (next, proofs) = self
+                .directory
+                .select_node_bundle(
+                    &current,
+                    &prepared,
+                    lease,
+                    cellule_ltx::Limits::default(),
+                    clock()?,
+                )
+                .await?;
+            state.observed = next;
+            self.lease.check()?;
+            Ok(proofs)
+        })
+    }
+
+    fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let mut state = self.state.lock().await;
+            let current = self.current(&state, 1).await?;
+            let mut ready = Vec::new();
+            for checkpoint in checkpoints {
+                let root = checkpoint.root();
+                let observed = checkpoint
+                    .authority()
+                    .load(cellule_runtime::CellId::from_bytes(root.cell))
+                    .await?
+                    .ok_or(Error::Fenced)?;
+                let actual = observed.value().ltx_root().ok_or(Error::Fenced)?;
+                if observed.value().bundle_binding == Some(checkpoint.proof().binding())
+                    && actual.cell == root.cell
+                    && actual.incarnation == root.incarnation
+                    && actual.commit_sequence > root.commit_sequence
+                {
+                    // The later root's original notification is retained by its
+                    // joined publisher. This observation releases no locators.
+                    continue;
+                }
+                ready.push((checkpoint.authority(), checkpoint.proof()));
+            }
+            state.observed = if ready.is_empty() {
+                current
+            } else {
+                self.directory
+                    .checkpoint_bundle_cells(
+                        &current,
+                        &ready,
+                        cellule_ltx::Limits::default(),
+                        clock()?,
+                    )
+                    .await?
+            };
+            self.lease.check()
+        })
     }
 }
 

@@ -114,6 +114,10 @@ pub struct NodePublicationFeed {
 }
 
 impl NodePublicationFeed {
+    pub(crate) fn try_recv(&mut self) -> Option<AssignedCapture> {
+        self.receiver.try_recv().ok()
+    }
+
     /// Receives the next complete capture, including accepted work after close.
     /// None means all producers closed and every queued capture was received.
     pub async fn recv(&mut self) -> Option<AssignedCapture> {

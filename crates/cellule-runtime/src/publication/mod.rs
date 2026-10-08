@@ -216,6 +216,10 @@ impl CellPublisher {
         &self.observed
     }
 
+    pub(crate) fn authority(&self) -> &CellAuthority {
+        &self.authority
+    }
+
     pub(crate) fn resource_limits(&self) -> cellule_ltx::Limits {
         self.replica.limits()
     }
@@ -1230,6 +1234,33 @@ impl VerifiedBundleCapture {
 }
 
 impl PendingDurability {
+    pub(crate) async fn selected_capture_prefix(&self) -> Result<Option<VerifiedBundleCapture>> {
+        let Some(mut capture) = self.selected_capture().await? else {
+            return Ok(None);
+        };
+        capture.selected = self
+            .durability
+            .capture_prefix(capture.selected, &capture.assignment)?;
+        Ok(Some(capture))
+    }
+
+    pub(crate) async fn checkpoint_materialized(
+        &self,
+        authority: &CellAuthority,
+        root: cellule_ltx::RootRef,
+    ) -> Result<()> {
+        if !self.durability.managed_bundle_publication() {
+            return Ok(());
+        }
+        let capture = self
+            .selected_capture_prefix()
+            .await?
+            .ok_or(Error::Node("materialized bundle lost original capture"))?;
+        self.durability
+            .checkpoint_materialized(authority.clone(), root, capture.selected)
+            .await
+    }
+
     pub(crate) fn has_bundle_capture(&self) -> bool {
         self.capture.is_some()
     }
@@ -1371,6 +1402,12 @@ impl CellDurabilitySubmitter {
             Ok(capture) => capture,
             Err(error) => {
                 self.check_node_lease()?;
+                // A bound ordered lane cannot silently omit a logical capture
+                // and later select beyond it. Preserve the submission error;
+                // the actor fences this uncertain already-committed outcome.
+                if durability.managed_bundle_publication() {
+                    return Err(error);
+                }
                 // The commit still succeeds through object coverage, so this
                 // event and its counter are the only way to observe that an
                 // enrolled lane refused the captured commit.

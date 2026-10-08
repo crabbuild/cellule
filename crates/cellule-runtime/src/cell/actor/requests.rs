@@ -590,6 +590,9 @@ pub(super) fn start_admitted_publication(
                 };
                 pool.bind_bundle_materialized(cell, root).await?;
                 PendingDurability::prove_objects(&durabilities).await?;
+                if let Some(pending) = durabilities.last().and_then(Option::as_ref) {
+                    pending.checkpoint_materialized(publisher.authority(), root).await?;
+                }
                 let published = pool.confirm_published_range(cell, root).await?;
                 authority = authority_started.elapsed();
                 if published != expected {
@@ -671,6 +674,9 @@ pub(super) fn start_admitted_publication(
             };
             authority = authority_started.elapsed();
             let logged = PendingDurability::prove_objects(&durabilities).await?;
+            if let Some(pending) = durabilities.last().and_then(Option::as_ref) {
+                pending.checkpoint_materialized(publisher.authority(), root).await?;
+            }
             if !logged {
                 publisher.record_object_proof(newest_submitted_at.elapsed());
             }

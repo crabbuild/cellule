@@ -6,7 +6,10 @@ use crate::cell::executor::{HandlerOutcome, MutationIdentity, Resolution};
 use crate::cell::worker::SqlWorkerPool;
 use crate::fleet::telemetry::{CellTelemetry, CommandResponseSource};
 use crate::identity::{CellTarget, NamespaceId, RequestId, TenantId};
-use crate::node::durability::{NodeBundleAuthority, NodeDurability, NodeLogAuthority};
+use crate::node::durability::{
+    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority, NodeDurability,
+    NodeLogAuthority,
+};
 use crate::node::log_shipper::NodeLogShipper;
 use crate::node::log_transport::{
     AppendRequest, LocalFollowerTransport, NodeLogTransport, RetireRequest, SealRequest,
@@ -102,10 +105,67 @@ impl NodeLogAuthority for Authority {
     }
 }
 
+impl NodeBundlePublicationAuthority for Authority {
+    fn select<'a>(
+        &'a self,
+        captures: &'a [crate::node::log_shipper::AssignedCapture],
+        lease: &'a NodeLeaseGuard,
+    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+        Box::pin(async move {
+            let mut node = self.observed.lock().await;
+            let frames = captures
+                .iter()
+                .flat_map(|c| c.frames().iter().cloned())
+                .collect::<Vec<_>>();
+            let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
+            let prepared = self
+                .directory
+                .prepare_node_bundle(&node, &frames, &assignments, NOW)
+                .await?;
+            let (next, proofs) = self
+                .directory
+                .select_node_bundle(&node, &prepared, lease, Limits::default(), NOW)
+                .await?;
+            *node = next;
+            Ok(proofs)
+        })
+    }
+
+    fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let mut node = self.observed.lock().await;
+            let mut ready = Vec::new();
+            for checkpoint in checkpoints {
+                let current = checkpoint
+                    .authority()
+                    .load(CellId::from_bytes(checkpoint.root().cell))
+                    .await?
+                    .ok_or(Error::Fenced)?;
+                let root = current.value().ltx_root().ok_or(Error::Fenced)?;
+                if current.value().bundle_binding == Some(checkpoint.proof().binding())
+                    && root.cell == checkpoint.root().cell
+                    && root.incarnation == checkpoint.root().incarnation
+                    && root.commit_sequence > checkpoint.root().commit_sequence
+                {
+                    continue;
+                }
+                ready.push((checkpoint.authority(), checkpoint.proof()));
+            }
+            if !ready.is_empty() {
+                *node = self
+                    .directory
+                    .checkpoint_bundle_cells(&node, &ready, Limits::default(), NOW)
+                    .await?;
+            }
+            Ok(())
+        })
+    }
+}
+
 pub(super) struct PausedFollowers {
     peers: [LocalFollowerTransport; 2],
-    released: AtomicBool,
-    changed: tokio::sync::Notify,
+    pub(super) released: AtomicBool,
+    pub(super) changed: tokio::sync::Notify,
 }
 
 pub(super) fn transport(f: &Fixture, released: bool) -> Arc<PausedFollowers> {

@@ -136,7 +136,9 @@ impl Config {
                 cellule_ltx::Limits::default(),
                 runtime.telemetry_handle(),
             )?;
-            runtime.install_node_durability(application, config.build()?)?;
+            let durability = config.build()?;
+            runtime.install_node_durability(application, durability.clone())?;
+            durability.start_bundle_publication(enrollment.authority.clone())?;
             Ok(())
         }
         .await;

@@ -26,7 +26,7 @@ pub(super) async fn selected_prefix(
         let mut captures = Vec::with_capacity(durabilities.len());
         for pending in durabilities.iter().flatten() {
             let capture = pending
-                .selected_capture()
+                .selected_capture_prefix()
                 .await?
                 .ok_or(Error::Control("bundle selection lost original capture"))?;
             captures.push(capture);
@@ -41,9 +41,8 @@ pub(super) async fn selected_prefix(
         return Ok(None);
     };
     let proof = &newest.selected().proof;
-    // A proof can cover later commands outside this task's retained cohort.
-    // Keep the root fallback in that case; endpoint equality alone cannot
-    // authorize pruning captures that this publisher does not own.
+    // An original whole-capture capability narrows a later cohort's proof to
+    // this publisher's exact endpoint; an arbitrary watermark cannot do so.
     if proof.commit_sequence() != commit_sequence || proof.position() != position {
         return Ok(None);
     }

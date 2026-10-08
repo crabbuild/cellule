@@ -3,6 +3,7 @@ use super::*;
 use crate::node::lease::NodeLeaseGuard;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 
+#[derive(Clone)]
 pub(super) struct LiveBundleCoverage {
     node: crate::identity::NodeId,
     lease: NodeLeaseGuard,
@@ -34,6 +35,60 @@ impl LiveBundleCoverage {
 
     pub(super) fn retained_metadata_bytes(&self) -> usize {
         self.assignments.capacity() * std::mem::size_of::<crate::node::log::AssignedCommitRange>()
+    }
+}
+
+impl BundleCoverageProof {
+    /// Narrows an original selected cohort to one complete original capture,
+    /// retaining the authenticated historical prefix and the original lease.
+    /// An endpoint alone cannot create this capability.
+    pub(crate) fn original_capture_prefix(
+        &self,
+        assignment: &crate::node::log::AssignedCommitRange,
+    ) -> Result<Self> {
+        self.check_live_assignment(assignment)?;
+        let live = self.live.as_ref().ok_or(Error::Fenced)?;
+        let index = live
+            .assignments
+            .iter()
+            .position(|a| a == assignment)
+            .ok_or(Error::Node("bundle lacks original assigned capture"))?;
+        let count = |a: &crate::node::log::AssignedCommitRange| {
+            usize::try_from(a.ticket().last_sequence() - a.ticket().first_sequence() + 1)
+                .map_err(|_| Error::Capacity("bundle capture prefix"))
+        };
+        let frames = live.assignments.iter().try_fold(0_usize, |n, a| {
+            n.checked_add(count(a)?)
+                .ok_or(Error::Capacity("bundle capture prefix"))
+        })?;
+        let retained = live.assignments[..=index]
+            .iter()
+            .try_fold(0_usize, |n, a| {
+                n.checked_add(count(a)?)
+                    .ok_or(Error::Capacity("bundle capture prefix"))
+            })?;
+        let historical = self
+            .binding
+            .locators
+            .len()
+            .checked_sub(frames)
+            .ok_or(Error::Node("bundle capture prefix omits assigned frames"))?;
+        let mut binding = self.binding.clone();
+        binding.locators.truncate(historical + retained);
+        let (first, commit, position) = assignment.endpoint();
+        binding.first_commit = first;
+        binding.selected_commit = commit;
+        binding.selected_position = position;
+        binding.selected_sequence = assignment.ticket().last_sequence();
+        let mut live = live.clone();
+        live.assignments.truncate(index + 1);
+        Ok(Self {
+            pin: self.pin,
+            binding,
+            head: self.head,
+            session: self.session,
+            live: Some(live),
+        })
     }
 }
 

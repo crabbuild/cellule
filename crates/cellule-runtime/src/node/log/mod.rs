@@ -65,6 +65,10 @@ pub struct AssignedCommitRange {
     capture_digest: [u8; 32],
 }
 impl AssignedCommitRange {
+    pub(crate) const fn endpoint(&self) -> (u64, u64, cellule_ltx::Position) {
+        (self.first_commit, self.commit, self.position)
+    }
+
     pub(crate) const fn scope(&self) -> CellLogScope {
         self.scope
     }

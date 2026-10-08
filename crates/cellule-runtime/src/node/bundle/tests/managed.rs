@@ -1,0 +1,376 @@
+//! Ordinary actors driven by the runtime producer, without a manual selector.
+use super::actor::{Authority, transport};
+use super::*;
+use crate::cell::actor::CellRuntime;
+use crate::cell::catalog::{CatalogEntry, CatalogRole, CellCatalog};
+use crate::cell::executor::{HandlerOutcome, MutationIdentity};
+use crate::cell::worker::SqlWorkerPool;
+use crate::fleet::telemetry::{CellTelemetry, CommandResponseSource};
+use crate::identity::{CellTarget, NamespaceId, RequestId, TenantId};
+use crate::node::durability::NodeDurability;
+use crate::node::durability::{
+    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+};
+use crate::node::log_shipper::NodeLogShipper;
+use crate::node::log_shipper::{AssignedCapture, NodeLogSubmission};
+use futures_util::future::BoxFuture;
+use std::sync::{Mutex, atomic::Ordering};
+
+#[derive(Default)]
+struct Responses(Mutex<Vec<CommandResponseSource>>);
+impl CellTelemetry for Responses {
+    fn command_response(
+        &self,
+        source: CommandResponseSource,
+        _: std::time::Duration,
+        _: std::time::Duration,
+    ) {
+        self.0.lock().unwrap().push(source);
+    }
+}
+
+#[tokio::test]
+async fn rejected_producer_working_credit_does_not_install_an_irreversible_feed() {
+    let mut f = Fixture::new().await;
+    super::coverage::enroll(&mut f).await;
+    let authority = Arc::new(Authority {
+        directory: f.directory.clone(),
+        observed: tokio::sync::Mutex::new(f.node.clone()),
+    });
+    let peers = transport(&f, true);
+    let shipper = NodeLogShipper::new(f.gate.clone(), peers.clone(), Limits::default()).unwrap();
+    let durability = Arc::new(NodeDurability::new(
+        f.gate.clone(),
+        shipper,
+        authority.clone(),
+        peers,
+        f.lease.clone(),
+    ));
+    let pool = SqlWorkerPool::new(1, 1).unwrap();
+    pool.configure_retained_capacity(8 << 20).unwrap();
+    durability
+        .attach_selection_resources(pool.resource_ledger())
+        .unwrap();
+    assert!(matches!(
+        durability.start_bundle_publication(authority),
+        Err(Error::Capacity(_))
+    ));
+    let mut feed = durability.take_publication_feed().unwrap();
+    durability.shutdown().await.unwrap();
+    assert!(feed.recv().await.is_none());
+    assert_eq!(
+        pool.resource_ledger()
+            .snapshot()
+            .unwrap()
+            .used
+            .retained_bytes(),
+        0
+    );
+    pool.shutdown().await.unwrap();
+}
+
+struct FailedSelection(Arc<Authority>);
+impl NodeBundleAuthority for FailedSelection {
+    fn bind<'a>(
+        &'a self,
+        authority: &'a CellAuthority,
+        observed: &'a VersionedControl,
+    ) -> BoxFuture<'a, Result<VersionedControl>> {
+        NodeBundleAuthority::bind(self.0.as_ref(), authority, observed)
+    }
+    fn close<'a>(
+        &'a self,
+        authority: &'a CellAuthority,
+        observed: &'a VersionedControl,
+        issued: crate::node::log::CellIssuedRange,
+    ) -> BoxFuture<'a, Result<()>> {
+        NodeBundleAuthority::close(self.0.as_ref(), authority, observed, issued)
+    }
+}
+impl NodeBundlePublicationAuthority for FailedSelection {
+    fn select<'a>(
+        &'a self,
+        _: &'a [AssignedCapture],
+        _: &'a NodeLeaseGuard,
+    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+        Box::pin(async { Err(Error::Node("injected bundle selection failure")) })
+    }
+    fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
+        self.0.checkpoint(checkpoints)
+    }
+}
+
+#[tokio::test]
+async fn producer_failure_fences_new_work_and_join_preserves_its_cause() {
+    let mut f = Fixture::new().await;
+    super::coverage::enroll(&mut f).await;
+    let mut cell = f.cell(4).await;
+    let authority = Arc::new(Authority {
+        directory: f.directory.clone(),
+        observed: tokio::sync::Mutex::new(f.node.clone()),
+    });
+    let peers = transport(&f, true);
+    let shipper = NodeLogShipper::new(f.gate.clone(), peers.clone(), Limits::default()).unwrap();
+    let durability = Arc::new(NodeDurability::new(
+        f.gate.clone(),
+        shipper,
+        authority.clone(),
+        peers,
+        f.lease.clone(),
+    ));
+    let pool = SqlWorkerPool::new(1, 1).unwrap();
+    pool.configure_retained_capacity(32 << 20).unwrap();
+    durability
+        .attach_selection_resources(pool.resource_ledger())
+        .unwrap();
+    durability
+        .start_bundle_publication(Arc::new(FailedSelection(authority)))
+        .unwrap();
+    cell.db
+        .transaction(|tx| tx.execute("INSERT INTO outcomes VALUES('failed','retained')", []))
+        .unwrap();
+    let cuts = cell.db.capture().unwrap();
+    durability
+        .submit_assigned(
+            NodeLogSubmission::new(
+                ApplicationId::from_bytes([9; 16]),
+                cell.control.value().cell,
+                cell.control.value().incarnation,
+                cell.control.value().epoch,
+                2,
+                &cuts,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), f.lease.wait_fenced())
+        .await
+        .unwrap();
+    let error = durability.shutdown().await.unwrap_err();
+    assert!(
+        matches!(error, Error::Shared(source) if matches!(source.as_ref(), Error::Node("injected bundle selection failure")))
+    );
+    assert_eq!(durability.progress().unwrap().tiered_through, 0);
+    assert_eq!(durability.progress().unwrap().issued_through, 1);
+    assert_eq!(
+        pool.resource_ledger()
+            .snapshot()
+            .unwrap()
+            .used
+            .retained_bytes(),
+        0
+    );
+    pool.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_close_and_cold_results()
+ {
+    let mut f = Fixture::new().await;
+    super::coverage::enroll(&mut f).await;
+    let authority = Arc::new(Authority {
+        directory: f.directory.clone(),
+        observed: tokio::sync::Mutex::new(f.node.clone()),
+    });
+    let peers = transport(&f, false);
+    let shipper = NodeLogShipper::new(f.gate.clone(), peers.clone(), Limits::default()).unwrap();
+    let durability = Arc::new(NodeDurability::new(
+        f.gate.clone(),
+        shipper,
+        authority.clone(),
+        peers.clone(),
+        f.lease.clone(),
+    ));
+    let pool = SqlWorkerPool::new(2, 4).unwrap();
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+        pool.clone(),
+        32 << 20,
+        SessionId::from_bytes([1; 16]),
+        cellule_ltx::Host::default().with_dirty_slots(dirty.clone()),
+    )
+    .unwrap();
+    runtime.install_node_lease(f.lease.clone()).unwrap();
+    runtime
+        .install_node_durability(ApplicationId::from_bytes([9; 16]), durability.clone())
+        .unwrap();
+    durability
+        .start_bundle_publication(authority.clone())
+        .unwrap();
+    let responses = Arc::new(Responses::default());
+    runtime.install_telemetry(responses.clone()).unwrap();
+    let mut cells = Vec::new();
+    for byte in [4, 5] {
+        let target = CellTarget::new(
+            TenantId::from_bytes([1; 16]),
+            ApplicationId::from_bytes([9; 16]),
+            NamespaceId::from_bytes([13; 16]),
+            &[byte],
+        )
+        .unwrap();
+        let catalog = CellCatalog::new(f.layout.clone(), target.tenant());
+        let proof = catalog
+            .provision(
+                CatalogEntry::new(
+                    &target,
+                    CatalogRole::Application,
+                    Digest::from_bytes([12; 32]),
+                    1,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let cell_authority = CellAuthority::new(f.layout.clone());
+        let control = cell_authority
+            .create_initial(
+                &proof,
+                IncarnationId::from_bytes([byte; 16]),
+                Owner {
+                    session: SessionId::from_bytes([1; 16]),
+                    endpoint: "https://bundle.internal:8081".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let replica = CellReplica::new(
+            f.layout.clone(),
+            *target.cell_id().as_bytes(),
+            [byte; 16],
+            Limits::default(),
+        )
+        .unwrap();
+        let handle = runtime
+            .bootstrap(
+                proof,
+                replica.clone(),
+                cell_authority.clone(),
+                control,
+                f.scratch.path().join(format!("managed-{byte}.sqlite")),
+                |tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES(0)",
+                    )?;
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+        cells.push((target, cell_authority, replica, handle));
+    }
+    // Ordinary per-Cell roots are unavailable. The producer must select exact
+    // origin coverage to grant any command ACK, read or retry visibility.
+    let preparation = dirty.acquire_owned().await.unwrap();
+    let digest = Digest::from_bytes([9; 32]);
+    for byte in 1_u8..=20 {
+        let handle = &cells[usize::from(byte % 2)].3;
+        let identity = MutationIdentity {
+            request_id: RequestId::from_bytes([byte; 16]),
+            issued_at_ms: 10,
+            expires_at_ms: 10_000,
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle.execute(identity, digest, 20, 1024, 1024, |tx| {
+                tx.execute("UPDATE counter SET value=value+1", [])?;
+                Ok(HandlerOutcome::Success(b"managed".to_vec()))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.commit_sequence(), u64::from(byte).div_ceil(2));
+        assert_eq!(
+            handle
+                .execute(identity, digest, 21, 1024, 1024, |_| panic!(
+                    "proved retry must not execute again"
+                ))
+                .await
+                .unwrap(),
+            result
+        );
+    }
+    for (_, _, _, handle) in &cells {
+        assert_eq!(
+            handle
+                .query(1024, 1024, |connection| Ok(connection
+                    .query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))?
+                    .to_le_bytes()
+                    .to_vec()))
+                .await
+                .unwrap(),
+            10_i64.to_le_bytes()
+        );
+    }
+    assert_eq!(
+        responses
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|source| **source == CommandResponseSource::Bundle)
+            .count(),
+        20
+    );
+    let shutdown = runtime.shutdown();
+    tokio::pin!(shutdown);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut shutdown)
+            .await
+            .is_err()
+    );
+    drop(preparation);
+    peers.released.store(true, Ordering::Release);
+    peers.changed.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(10), &mut shutdown)
+        .await
+        .unwrap()
+        .unwrap();
+    for (target, cell_authority, replica, _) in cells {
+        let control = cell_authority
+            .load(target.cell_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(control.value().state, ControlState::Idle);
+        assert!(control.value().bundle_binding.is_none());
+        let root = control.value().ltx_root().unwrap();
+        assert_eq!(root.commit_sequence, 10);
+        let path = f
+            .scratch
+            .path()
+            .join(format!("cold-{}.sqlite", root.incarnation[0]));
+        replica
+            .open_root(&root)
+            .await
+            .unwrap()
+            .restore(&path)
+            .await
+            .unwrap();
+        let cold = cellule_ltx::rusqlite::Connection::open(path).unwrap();
+        assert_eq!(
+            cold.query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            cold.query_row(
+                "SELECT COUNT(*) FROM sys_requests WHERE result=?1",
+                [b"managed".as_slice()],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            10
+        );
+    }
+    assert_eq!(durability.progress().unwrap().issued_through, 20);
+    assert_eq!(
+        pool.resource_ledger()
+            .snapshot()
+            .unwrap()
+            .used
+            .retained_bytes(),
+        0
+    );
+}

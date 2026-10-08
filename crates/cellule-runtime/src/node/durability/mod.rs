@@ -17,6 +17,8 @@ use crate::{Error, Result};
 
 mod object_coverage;
 use object_coverage::ObjectCoverage;
+mod publication;
+pub use publication::{BundleCheckpoint, NodeBundlePublicationAuthority};
 
 /// Original node authority used to enroll and close the Cells of an installed
 /// shared publication feed. Implementations serialize these mutations and shared
@@ -191,6 +193,7 @@ pub struct NodeDurability {
     closed: std::sync::atomic::AtomicBool,
     selection_resources: std::sync::OnceLock<crate::fleet::resource::ResourceLedger>,
     bundle_authority: std::sync::OnceLock<Arc<dyn NodeBundleAuthority>>,
+    publisher: std::sync::OnceLock<publication::Publisher>,
 }
 
 impl NodeDurability {
@@ -239,6 +242,7 @@ impl NodeDurability {
             closed: std::sync::atomic::AtomicBool::new(false),
             selection_resources: std::sync::OnceLock::new(),
             bundle_authority: std::sync::OnceLock::new(),
+            publisher: std::sync::OnceLock::new(),
         }
     }
 
@@ -305,6 +309,79 @@ impl NodeDurability {
         Ok(feed)
     }
 
+    /// Starts and retains the sole bounded node bundle producer. Install this
+    /// after the runtime resource ledger and before any Cell/native issuance.
+    /// Selection and checkpoints use the same original binding authority.
+    pub fn start_bundle_publication(
+        self: &Arc<Self>,
+        authority: Arc<dyn NodeBundlePublicationAuthority>,
+    ) -> Result<()> {
+        if self.selection_resources.get().is_none() {
+            return Err(Error::Node(
+                "bundle publication has no installed runtime resource ledger",
+            ));
+        }
+        // Fallible construction precedes installation of the irreversible
+        // original feed. Rejected startup leaves the ordinary lane untouched.
+        let runtime = tokio::runtime::Handle::try_current().map_err(Error::RuntimeStart)?;
+        let working = publication::Publisher::reserve_working(self)?;
+        let original: Arc<dyn NodeBundleAuthority> = authority.clone();
+        let feed = self.enable_bundle_publication(original)?;
+        let publisher = publication::Publisher::start(self, authority, feed, working, runtime);
+        self.publisher
+            .set(publisher)
+            .map_err(|_| Error::Node("bundle producer already installed"))
+    }
+
+    pub(crate) fn capture_prefix(
+        &self,
+        selected: Arc<crate::node::log_shipper::SelectedBundle>,
+        assignment: &crate::node::log::AssignedCommitRange,
+    ) -> Result<Arc<crate::node::log_shipper::SelectedBundle>> {
+        selected.proof.check_live_assignment(assignment)?;
+        let (_, commit, position) = assignment.endpoint();
+        if selected.proof.commit_sequence() == commit && selected.proof.position() == position {
+            return Ok(selected);
+        }
+        let resources = self
+            .selection_resources
+            .get()
+            .ok_or(Error::PendingPublication)?;
+        // Reserve before cloning locator metadata; the original cohort remains
+        // separately charged until its other original consumers release it.
+        let memory = resources.try_reserve(
+            crate::fleet::resource::ResourceCost::zero()
+                .with_retained_bytes(selected.proof.retained_metadata_bytes()?),
+        )?;
+        let proof = selected.proof.original_capture_prefix(assignment)?;
+        Ok(Arc::new(crate::node::log_shipper::SelectedBundle {
+            proof,
+            _memory: memory,
+        }))
+    }
+
+    pub(crate) async fn checkpoint_materialized(
+        &self,
+        authority: crate::control::authority::CellAuthority,
+        root: cellule_ltx::RootRef,
+        selected: Arc<crate::node::log_shipper::SelectedBundle>,
+    ) -> Result<()> {
+        if let Some(publisher) = self.publisher.get() {
+            publisher
+                .checkpoint(BundleCheckpoint {
+                    authority,
+                    root,
+                    selected,
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn managed_bundle_publication(&self) -> bool {
+        self.publisher.get().is_some()
+    }
+
     pub(crate) async fn bind_bundle_cell(
         &self,
         authority: &crate::control::authority::CellAuthority,
@@ -358,6 +435,11 @@ impl NodeDurability {
                 .ltx_root()
                 .ok_or(Error::PendingPublication)?,
         )?;
+        // Never hold the provider's heartbeat/CAS mutex while waiting for the
+        // ordered producer: selecting the complete prior Fleet suffix needs it.
+        if let Some(publisher) = self.publisher.get() {
+            publisher.wait_through(issued.last_node_sequence()).await?;
+        }
         bundle.close(authority, observed, issued).await?;
         self.node_lease.check()
     }
@@ -629,7 +711,13 @@ impl NodeDurability {
             }
             return Ok(proof);
         }
-        self.shipper.shutdown().await?;
+        let shipping = self.shipper.shutdown().await;
+        if let Some(publisher) = self.publisher.get() {
+            // Join both tasks even when fencing stopped the shipper. Preserve
+            // the producer's original cause rather than its secondary fence.
+            publisher.join().await?;
+        }
+        shipping?;
         self.object_coverage
             .flush(&self.gate, self.authority.as_ref(), &self.node_lease, &[])
             .await?;

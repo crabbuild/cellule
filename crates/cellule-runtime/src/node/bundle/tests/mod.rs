@@ -20,6 +20,7 @@ mod coverage;
 mod faults;
 mod index;
 mod lifecycle;
+mod managed;
 mod ranges;
 mod receipts;
 mod recovery;

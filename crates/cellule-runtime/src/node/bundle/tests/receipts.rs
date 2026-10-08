@@ -157,6 +157,30 @@ async fn selection_receipts_require_complete_cohort_and_admission_and_share_one_
     assert!(Arc::ptr_eq(&first, &second));
     assert!(first.proof.contains_assignment(&submitted[0].assignment));
     assert!(second.proof.contains_assignment(&submitted[1].assignment));
+    let prefix = durability
+        .capture_prefix(Arc::clone(&first), &submitted[0].assignment)
+        .unwrap();
+    assert_eq!(prefix.proof.commit_sequence(), 2);
+    assert_eq!(prefix.proof.position(), cuts_by_commit[0].position);
+    assert_eq!(
+        prefix.proof.locator_count(),
+        cuts_by_commit[0].segments.len()
+    );
+    assert!(prefix.proof.contains_assignment(&submitted[0].assignment));
+    assert!(!prefix.proof.contains_assignment(&submitted[1].assignment));
+    let first_root = f
+        .publisher(&cell)
+        .materialize_bundle(&prefix.proof)
+        .await
+        .unwrap();
+    assert_eq!(first_root.commit_sequence, 2);
+    cell.control = cell
+        .authority
+        .load(cell.control.value().cell)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(prefix);
     drop(first);
     drop(second);
     drop(publication);
