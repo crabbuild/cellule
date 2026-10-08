@@ -62,6 +62,9 @@ Bucket-only performance adapter bypasses it.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
+The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)
+at `e40ecd6` passes warm/cold ACK read/retry and joined drain, but completes
+100.20 Fleet writes/s versus 106.05 before the fix. There is no measured speedup.
 Per-Cell materializers, dense scheduling, complete failed-owner orchestration,
 large-capture fallback, retryable producer failures and collection remain open.
 Do not advance the follower reclamation frontier before
@@ -165,5 +168,5 @@ grants its own object proof under the original lease; it does not advance follow
 reclamation or permit rotation. Closing the gap still persists the complete new
 contiguous frontier before confirming it locally. Failed or cancelled advancing
 CAS work remains staged for retry and joined drain. This removes redundant
-coordination work from the existing application path; bundle ACK integration
-and the node capacity qualification remain open.
+coordination work from the existing application path; Bucket producer connection,
+dense materialization and the node capacity qualification remain open.

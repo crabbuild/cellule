@@ -7,13 +7,17 @@ installed original feed can now provide admitted receipts to the actor.
 exact checkpoint callbacks under the original authority. The Fleet SQL example
 installs it; Bucket-only performance wiring bypasses it. Its first
 [measured connection](pr67-managed-producer-measurement.md) regressed to 93.57
-Fleet writes/s from 525.67 and failed availability/drain. This slice establishes ordering
-and reconstruction evidence. The [fresh application-path benchmark](pr67-performance-reevaluation.md)
+Fleet writes/s from 525.67 and failed availability/drain. The subsequent
+[coverage-race measurement](pr67-coverage-race-measurement.md) at `e40ecd6`
+passes all-ACK warm/cold audit and joined drain, but completes 100.20 Fleet
+writes/s versus 106.05 before the fix: no demonstrated throughput gain.
+This slice establishes ordering and reconstruction evidence.
+The [earlier application-path benchmark](pr67-performance-reevaluation.md)
 measures `7fc0793`; it does not exercise bundle-based responses or establish
 write parity. The [WAL NORMAL comparison](pr67-normal-wal-reevaluation.md)
 separately records seven completed diagnostic cases and an interrupted matrix.
 
-The [latest sparse-root coverage measurement](pr67-sparse-root-coverage-measurement.md)
+The [earlier sparse-root coverage measurement](pr67-sparse-root-coverage-measurement.md)
 exercises the ordinary application path at `b185672`: 378.88 completed writes/s
 versus 282.43 before the change in one five-minute Fleet-configured pair.
 Successful-write p99 improved, median latency worsened, and audit, drain and
