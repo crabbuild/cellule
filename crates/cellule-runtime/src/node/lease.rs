@@ -28,6 +28,10 @@ struct LeaseState {
 }
 
 impl NodeLeaseGuard {
+    pub(crate) fn same_lease(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Starts a watchdog from one successfully published lease observation.
     pub fn new(now_ms: i64, expires_at_ms: i64) -> Result<Self> {
         let remaining = lease_remaining(now_ms, expires_at_ms)?;

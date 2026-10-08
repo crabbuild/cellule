@@ -286,6 +286,58 @@ fn coverage_pending(
 }
 
 #[tokio::test]
+async fn ordinary_pending_response_refuses_bundle_until_visibility_is_integrated() {
+    use crate::node::log::DurabilitySource;
+    let (durability, gate, _) = coverage_binding(1);
+    let scratch = tempfile::tempdir().unwrap();
+    let mut db = Db::open(
+        &scratch.path().join("bundle-source.sqlite"),
+        Limits::default(),
+    )
+    .unwrap();
+    db.transaction(|tx| tx.execute_batch("CREATE TABLE outcomes(v)"))
+        .unwrap();
+    let cuts = db.capture().unwrap();
+    let ticket = gate.preview(cuts.segments.len() as u64).unwrap();
+    let frames = cuts
+        .segments
+        .iter()
+        .enumerate()
+        .map(|(offset, segment)| {
+            cellule_ltx::encode_node_frame(
+                cellule_ltx::NodeFrameScope {
+                    leader_session: [1; 16],
+                    log_epoch: 2,
+                    node_sequence: ticket.first_sequence() + offset as u64,
+                    application: [9; 16],
+                    cell: [4; 32],
+                    incarnation: [5; 16],
+                    cell_epoch: 3,
+                    commit_sequence: 1,
+                },
+                segment.info().clone(),
+                Bytes::from(std::fs::read(segment.path()).unwrap()),
+                Limits::default(),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let assignment = gate.commit_frames(ticket, &frames).unwrap().unwrap();
+    gate.confirm_bundle_ranges(&[assignment]).unwrap();
+    assert_eq!(
+        gate.prove(ticket).await.unwrap().source(),
+        DurabilitySource::Bundle
+    );
+    let pending = coverage_pending(&durability, ticket).unwrap();
+    assert!(matches!(
+        pending.prove().await,
+        Err(Error::Node(
+            "shared bundle actor response path is not installed"
+        ))
+    ));
+}
+
+#[tokio::test]
 async fn one_coalesced_root_confirms_all_covered_tickets_with_one_authority_update() {
     let (durability, gate, authority) = coverage_binding(1);
     let mut pendings = (0..64)

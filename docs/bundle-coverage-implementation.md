@@ -32,7 +32,8 @@ Uploading an immutable object supplies no coverage proof.
 | --- | --- |
 | `NodeDirectory::initialize_bundle_lane` / `bind_bundle_cell` | Establish a boot/epoch catalog; reserve a provisional inventory entry, pin the original Cell's base/code/schema/writer, then open it before issuing bundled commands |
 | `NodeLogShipper::submit_assigned` / `NodeDurability::submit_assigned` | Use the existing bounded native shipping lane and return an opaque witness for every frame in a complete capture |
-| `prepare_node_bundle` / `select_node_bundle` | Reject missing, overlapping, unassigned or cross-binding ranges; verify origin extents before selecting; reconcile only the exact head under the original lease |
+| `prepare_node_bundle` / `select_node_bundle` | Reject missing, overlapping, unassigned or cross-binding ranges; verify origin extents; select the bundle and enrolled native coverage in one node CAS; reconcile only the exact head and coverage under the original lease |
+| `NodeDurability::confirm_bundle` | Confirm only the exact original assigned captures and lease locally, with no storage I/O or second authority CAS; reject cold reconstruction proofs and replacement gates or guards |
 | `BundleCoverageProof` | Retain authenticated immutable locators, logical endpoint, SQLite position and original base; retain no capture bodies |
 | `load_bundle_coverage` | Reopen a selected suffix from the authority-pinned canonical catalog, including a fenced boot; grant no writer or follower-suffix closure |
 | `CellPublisher::materialize_bundle` | Reconstruct the exact overlay and use normal root preparation, lineage and Cell CAS independently of selection; bounded small tails reuse canonical native coalescing and packing |
@@ -41,6 +42,23 @@ Uploading an immutable object supplies no coverage proof.
 | Cell departure CAS | Refuse release, takeover and tombstone until Closed, exact materialization and catalog checkpoint; migration refuses while bound |
 | Node withdrawal/maintenance | Refuse unresolved bindings; stale fencing preserves the catalog head; one bundle-bound boot cannot rotate its native log to another epoch |
 | Backup and collection | Backup refuses bound Cells. Coverage objects have no deletion path; this is retention, not a qualified collection implementation |
+
+Live confirmation now reports `DurabilitySource::Bundle` separately from a
+materialized Cell root. Adjacent exact ranges merge into compact source
+intervals; root-only gaps keep their original source. A later exact root CAS
+can still return an Object proof. Ordinary actors reject the Bundle source and
+wait for their existing object fallback until command/read/retry visibility is
+integrated. A boot without enrolled native log state supplies reconstruction
+proofs only. Root work superseded by confirmed coverage joins its old flusher
+before removing already-covered queue entries, including after lease loss.
+
+The two-Cell regression verifies one immutable upload plus one combined node
+CAS while Cell roots lag; exact local confirmation and retry add zero PUTs.
+Cases also cover lost replies, heartbeat rebasing with later root coverage,
+cancellation, lease loss, foreign gates and cold proofs. Historical catalogs
+whose coverage watermark lagged remain tested through cold recovery; a
+matching head alone cannot reconcile a new live selection. This is protocol
+and component I/O evidence, not an application TPS improvement.
 
 Failed-owner recovery now joins dependency-verified selected prefixes and the
 sealed follower witness in the same file-backed builder. Complete shard
@@ -150,6 +168,14 @@ native-job admission, materializer fairness and joined scheduling remain caller
 obligations. See the [node performance design](../crates/cellule-runtime/docs/write-performance-design.md).
 
 ## Verification and remaining delivery
+
+The atomic-coverage snapshot passed all twelve contributor checks: **1,940
+top-level workspace cases passed, 38 ignored; 60 local LTX cases passed**.
+The first full run timed out at an unchanged five-second follower-backlog drain.
+That exact binary passed the case alone in 0.91 seconds; the identical frozen
+source then passed the complete workspace rerun with the same four test workers
+and deadlines. Failed runs, source hashes and count provenance remain outside
+Git. No new application TPS was measured, and ordinary bundle ACKs stay disabled.
 
 The detached-history regression first fails at the original 32-reference
 ceiling. With the new representation, one actual Cell among a **2,000-binding

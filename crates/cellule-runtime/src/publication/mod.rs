@@ -1153,6 +1153,14 @@ pub(crate) struct PendingDurability {
 impl PendingDurability {
     pub(crate) async fn prove(&self) -> Result<crate::node::log::DurabilitySource> {
         let proof = self.durability.prove(self.ticket).await?;
+        if proof.source() == crate::node::log::DurabilitySource::Bundle {
+            // Ordinary actors still confirm visibility through per-Cell roots.
+            // Their existing object fallback must win until exact bundle proofs
+            // are connected to command, query, retry and capture release.
+            return Err(Error::Node(
+                "shared bundle actor response path is not installed",
+            ));
+        }
         if proof.source() == crate::node::log::DurabilitySource::Fleet {
             self.telemetry
                 .durability_proof(proof.source(), self.submitted_at.elapsed());

@@ -218,11 +218,20 @@ async fn verify_recovery(scenario: Scenario) {
         .prepare_node_bundle(&f.node, &prefix, &[arange, brange], NOW)
         .await
         .unwrap();
-    let (selected, _) = f
-        .directory
-        .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
-        .await
-        .unwrap();
+    let selected = if matches!(scenario, Scenario::Overlap | Scenario::Conflict) {
+        // Retain recovery coverage for historical stored catalogs whose native
+        // frontier still lagged their selected bundle. New selection is atomic.
+        f.directory
+            .select_catalog(&f.node, &proposal, NOW)
+            .await
+            .unwrap()
+    } else {
+        f.directory
+            .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
+            .await
+            .unwrap()
+            .0
+    };
     let selected_through = selected
         .advertisement()
         .bundle_head()
@@ -235,11 +244,11 @@ async fn verify_recovery(scenario: Scenario) {
     } else {
         selected_through
     };
-    f.node = f
-        .directory
-        .advance_log_coverage(&selected, coverage, NOW)
-        .await
-        .unwrap();
+    assert_eq!(
+        selected.advertisement().log().unwrap().tiered_through(),
+        coverage
+    );
+    f.node = selected;
     let (suffix, fleet) = if matches!(scenario, Scenario::SelectedOnly) {
         (Vec::new(), None)
     } else {

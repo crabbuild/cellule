@@ -117,5 +117,9 @@ now close under the same fenced claim after checking current Cell authority and
 verifying the original base. An unpinned reservation needs no Cell CAS; a late pin CAS
 cannot reopen the closed catalog. Pre-activation native frames remain an explicit
 unresolved obligation and cannot be discarded. Admitted host scheduling and full
-qualification remain required before enabling the canonical coverage frontier
-or actor ACKs.
+qualification remain required before enabling actor ACKs. The verified native
+selector now advances enrolled coverage and selects its bundle in one node CAS.
+Exact local confirmation performs no second CAS and reports a distinct Bundle
+proof. Original gate and lease identity remain required; cold proofs grant
+reconstruction only. Ordinary actors continue waiting for their root fallback
+until command/read/retry visibility and capture release consume that proof.

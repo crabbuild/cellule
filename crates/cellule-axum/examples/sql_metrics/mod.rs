@@ -32,7 +32,7 @@ pub(super) struct QueryMetrics {
     response_sources: [AtomicU64; 3],
     response_elapsed: [Histogram; 3],
     response_confirmation: Histogram,
-    proof_wait: [Histogram; 2],
+    proof_wait: [Histogram; 3],
     submission_sources: [AtomicU64; 4],
     log_append_successes: AtomicU64,
     log_append_failures: AtomicU64,
@@ -266,6 +266,7 @@ impl CellTelemetry for QueryMetrics {
         let index = match source {
             cellule_runtime::node::log::DurabilitySource::Fleet => 0,
             cellule_runtime::node::log::DurabilitySource::Object => 1,
+            cellule_runtime::node::log::DurabilitySource::Bundle => 2,
         };
         self.proof_wait[index].observe(waited);
     }
@@ -413,6 +414,7 @@ impl QueryMetrics {
             ("response_confirmation", &self.response_confirmation),
             ("proof_fleet", &self.proof_wait[0]),
             ("proof_object", &self.proof_wait[1]),
+            ("proof_bundle", &self.proof_wait[2]),
         ] {
             histograms.insert(name.into(), histogram.raw());
         }

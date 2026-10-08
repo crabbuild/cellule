@@ -52,11 +52,10 @@ async fn full_recovery_stages_65_real_cell_checkpoints_before_one_terminal_node_
         .bundle_head()
         .unwrap()
         .selected_through();
-    f.node = f
-        .directory
-        .advance_log_coverage(&f.node, through, NOW)
-        .await
-        .unwrap();
+    assert_eq!(
+        f.node.advertisement().log().unwrap().tiered_through(),
+        through
+    );
     let mut suffix = Vec::new();
     let mut fleet = Vec::new();
     for cell in &mut cells {

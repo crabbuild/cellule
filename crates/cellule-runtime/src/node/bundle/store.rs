@@ -38,6 +38,7 @@ impl NodeDirectory {
             catalog,
             body,
             head,
+            assignments: Vec::new(),
         })
     }
 
@@ -45,6 +46,32 @@ impl NodeDirectory {
         &self,
         observed: &VersionedNodeAdvertisement,
         prepared: &PreparedNodeBundle,
+        now_ms: i64,
+    ) -> Result<VersionedNodeAdvertisement> {
+        self.select_catalog_with_coverage(observed, prepared, None, now_ms)
+            .await
+    }
+
+    pub(super) async fn select_native_catalog(
+        &self,
+        observed: &VersionedNodeAdvertisement,
+        prepared: &PreparedNodeBundle,
+        now_ms: i64,
+    ) -> Result<VersionedNodeAdvertisement> {
+        self.select_catalog_with_coverage(
+            observed,
+            prepared,
+            Some(prepared.head.selected_through),
+            now_ms,
+        )
+        .await
+    }
+
+    async fn select_catalog_with_coverage(
+        &self,
+        observed: &VersionedNodeAdvertisement,
+        prepared: &PreparedNodeBundle,
+        native_through: Option<u64>,
         now_ms: i64,
     ) -> Result<VersionedNodeAdvertisement> {
         let mut base = observed.clone();
@@ -55,6 +82,7 @@ impl NodeDirectory {
         for _ in 0..4 {
             self.validate_bundle_source(&base.advertisement, prepared, now_ms)?;
             if base.advertisement.bundle == Some(prepared.head) {
+                validate_selected_coverage(&base.advertisement, native_through)?;
                 return Ok(base);
             }
             if base.advertisement.bundle != prepared.original {
@@ -62,6 +90,11 @@ impl NodeDirectory {
             }
             let mut next = base.advertisement.clone();
             next.bundle = Some(prepared.head);
+            if let (Some(log), Some(through)) = (&next.log, native_through) {
+                // Root materialization can cover later native ranges. Rebase
+                // without regressing either that frontier or heartbeat state.
+                next.log = Some(log.advance_tiered(next.node, through.max(log.tiered_through()))?);
+            }
             next.generation = next
                 .generation
                 .checked_add(1)
@@ -71,6 +104,7 @@ impl NodeDirectory {
                 Err(source) => match self.load(prepared.catalog.session, now_ms).await {
                     Ok(Some(current)) if current.advertisement.bundle == Some(prepared.head) => {
                         self.validate_bundle_source(&current.advertisement, prepared, now_ms)?;
+                        validate_selected_coverage(&current.advertisement, native_through)?;
                         return Ok(current);
                     }
                     Ok(Some(current))
@@ -104,6 +138,17 @@ impl NodeDirectory {
         }
         Ok(())
     }
+}
+
+fn validate_selected_coverage(source: &NodeAdvertisement, through: Option<u64>) -> Result<()> {
+    if let (Some(log), Some(through)) = (&source.log, through)
+        && log.tiered_through() < through
+    {
+        return Err(Error::Node(
+            "selected bundle lacks canonical native coverage",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! Coalesce completed roots while serializing authoritative coverage confirmation.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{CommitTicket, DurabilityGate, Error, NodeLeaseGuard, NodeLogAuthority, Result};
 
@@ -44,10 +44,23 @@ impl ObjectCoverage {
         if tickets.is_empty() && self.pending()?.is_empty() {
             return Ok(());
         }
-        let _flushing = tokio::select! {
-            guard = self.flushing.lock() => guard,
-            () = lease.wait_fenced() => return Err(Error::Fenced),
+        let covered =
+            gate.objects_are_covered(&self.pending()?.values().copied().collect::<Vec<_>>())?;
+        let _flushing = if covered {
+            // A selected bundle may supersede staged root work. Join its old
+            // flusher before dropping that work, including after lease loss;
+            // this branch grants no new coverage or response proof.
+            self.flushing.lock().await
+        } else {
+            tokio::select! {
+                guard = self.flushing.lock() => guard,
+                () = lease.wait_fenced() => return Err(Error::Fenced),
+            }
         };
+        self.discard_covered(gate)?;
+        if tickets.is_empty() && self.pending()?.is_empty() {
+            return Ok(());
+        }
         lease.check()?;
         if !tickets.is_empty() && gate.objects_are_covered(tickets)? {
             return Ok(());
@@ -77,5 +90,19 @@ impl ObjectCoverage {
         self.pending
             .lock()
             .map_err(|_| Error::Node("node-log object coverage queue poisoned"))
+    }
+
+    fn discard_covered(&self, gate: &DurabilityGate) -> Result<()> {
+        let mut pending = self.pending()?;
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let uncovered = gate
+            .uncovered_objects(&pending.values().copied().collect::<Vec<_>>())?
+            .into_iter()
+            .map(|ticket| ticket.first_sequence())
+            .collect::<BTreeSet<_>>();
+        pending.retain(|first, _| uncovered.contains(first));
+        Ok(())
     }
 }

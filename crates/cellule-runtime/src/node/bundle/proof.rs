@@ -101,6 +101,7 @@ pub(super) async fn load_binding_at(
             binding,
             head,
             session: pin.session,
+            live: None,
         },
         frames,
     ))

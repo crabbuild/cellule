@@ -1,6 +1,7 @@
 //! Node log: durability gate, rotation barrier, and recovery overlays.
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
@@ -21,6 +22,7 @@ pub use retirement::{
 pub use recovery::*;
 
 pub(crate) const MAX_TICKET_FRAMES: u64 = 1_024;
+static NEXT_GATE_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
 /// Exact Cell writer identity carried by the ordered native frame lane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -53,6 +55,7 @@ pub struct CellIssuedRange {
 /// command number. Its digest binds every assigned native frame in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AssignedCommitRange {
+    gate_instance: u64,
     ticket: CommitTicket,
     scope: CellLogScope,
     first_commit: u64,
@@ -61,6 +64,10 @@ pub struct AssignedCommitRange {
     digest: [u8; 32],
 }
 impl AssignedCommitRange {
+    pub(crate) const fn scope(&self) -> CellLogScope {
+        self.scope
+    }
+
     /// Exact original native ticket.
     pub const fn ticket(&self) -> CommitTicket {
         self.ticket
@@ -166,8 +173,10 @@ impl CommitTicket {
 pub enum DurabilitySource {
     /// The commit was covered by the enrolled node-log lane.
     Fleet,
-    /// The commit was covered by object storage.
+    /// The commit was covered by an exact materialized Cell root in object storage.
     Object,
+    /// A verified node bundle is selected in origin; the Cell root may lag.
+    Bundle,
 }
 
 /// Non-forgeable proof issued by the gate after one complete path wins.
@@ -269,6 +278,7 @@ pub struct NodeLogProgress {
 }
 
 struct GateState {
+    instance: u64,
     leader_session: SessionId,
     leader_node: NodeId,
     log_epoch: u64,
@@ -277,6 +287,9 @@ struct GateState {
     // Keep only completed sequences above the contiguous prefix. The prefix
     // proves older tickets without one allocation per historical frame.
     object_covered: BTreeSet<u64>,
+    // Merge adjacent exact confirmations. A dense selected prefix occupies
+    // one entry without retaining one source tag per historical native frame.
+    bundle_covered: BTreeMap<u64, u64>,
     tiered_through: u64,
     next_sequence: u64,
     fleet_active: bool,
@@ -329,14 +342,23 @@ impl DurabilityGate {
             return Err(Error::Node("invalid node-log ensemble"));
         }
         let follower_through = members.iter().map(|member| (*member, 0)).collect();
+        // Not a persisted identity: exact assignments cannot be confirmed by a
+        // second in-process gate even when boot, epoch and ticket numbers match.
+        let instance = NEXT_GATE_INSTANCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .map_err(|_| Error::Node("durability gate instance overflow"))?;
         Ok(Self {
             inner: Arc::new(Mutex::new(GateState {
+                instance,
                 leader_session,
                 leader_node,
                 log_epoch,
                 members,
                 follower_through,
                 object_covered: BTreeSet::new(),
+                bundle_covered: BTreeMap::new(),
                 tiered_through: 0,
                 next_sequence: 1,
                 fleet_active: false,
@@ -445,6 +467,7 @@ impl DurabilityGate {
             match &mut assignment {
                 None => {
                     assignment = Some(AssignedCommitRange {
+                        gate_instance: state.instance,
                         ticket,
                         scope: cell_scope,
                         first_commit: frame.first_commit_sequence(),
@@ -712,23 +735,54 @@ impl DurabilityGate {
         if state.fenced {
             return Err(Error::Fenced);
         }
-        for ticket in tickets {
-            for sequence in ticket.first_sequence..=ticket.last_sequence {
-                if sequence > state.tiered_through {
-                    state.object_covered.insert(sequence);
-                }
-            }
-        }
-        while let Some(next) = state.tiered_through.checked_add(1) {
-            if !state.object_covered.remove(&next) {
-                break;
-            }
-            state.tiered_through = next;
-        }
+        mark_object_coverage(&mut state, tickets.iter().copied());
         let tiered_through = state.tiered_through;
         drop(state);
         self.changed.notify_waiters();
         Ok(tiered_through)
+    }
+
+    pub(crate) fn confirm_bundle_ranges(&self, assignments: &[AssignedCommitRange]) -> Result<u64> {
+        let mut state = self.lock()?;
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        for assignment in assignments {
+            validate_ticket(&state, assignment.ticket)?;
+            if assignment.gate_instance != state.instance {
+                return Err(Error::Node(
+                    "selected capture belongs to another durability gate",
+                ));
+            }
+        }
+        for assignment in assignments {
+            mark_bundle_coverage(&mut state, assignment.ticket);
+        }
+        mark_object_coverage(
+            &mut state,
+            assignments.iter().map(|assignment| assignment.ticket),
+        );
+        let through = state.tiered_through;
+        drop(state);
+        self.changed.notify_waiters();
+        Ok(through)
+    }
+
+    pub(crate) fn confirmed_object_proof(&self, ticket: CommitTicket) -> Result<DurabilityProof> {
+        let state = self.lock()?;
+        validate_ticket(&state, ticket)?;
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        if !object_covers(&state, ticket) {
+            return Err(Error::Node("object ticket remains unconfirmed"));
+        }
+        // This caller completed an exact Cell root CAS. A bundle that won the
+        // earlier generic race must not turn materialization into an error.
+        Ok(DurabilityProof {
+            ticket,
+            source: DurabilitySource::Object,
+        })
     }
 
     pub(crate) fn preview_objects(&self, tickets: &[CommitTicket]) -> Result<u64> {
@@ -754,7 +808,7 @@ impl DurabilityGate {
         Ok(tiered_through)
     }
 
-    /// Returns the highest sequence the follower lane has made durable.
+    /// Returns the contiguous authoritative object prefix, including selected bundles.
     #[must_use]
     pub fn tiered_through(&self) -> u64 {
         self.lock().map_or(0, |state| state.tiered_through)
@@ -822,7 +876,16 @@ impl DurabilityGate {
         if object_covers(&state, ticket) {
             return Ok(Some(DurabilityProof {
                 ticket,
-                source: DurabilitySource::Object,
+                source: if state
+                    .bundle_covered
+                    .range(..=ticket.first_sequence)
+                    .next_back()
+                    .is_some_and(|(_, through)| *through >= ticket.last_sequence)
+                {
+                    DurabilitySource::Bundle
+                } else {
+                    DurabilitySource::Object
+                },
             }));
         }
         if state.fleet_active
@@ -900,6 +963,42 @@ pub async fn close_node_log(
     let barrier = gate.begin_rotation()?;
     retire_node_log(transport, &barrier).await?;
     directory.close_log(observed, &barrier, now_ms).await
+}
+
+fn mark_bundle_coverage(state: &mut GateState, ticket: CommitTicket) {
+    let mut first = ticket.first_sequence;
+    let mut last = ticket.last_sequence;
+    if let Some((&before, &through)) = state.bundle_covered.range(..=first).next_back()
+        && through >= first.saturating_sub(1)
+    {
+        first = before;
+        last = last.max(through);
+        state.bundle_covered.remove(&before);
+    }
+    while let Some((&after, &through)) = state.bundle_covered.range(first..).next() {
+        if after > last.saturating_add(1) {
+            break;
+        }
+        last = last.max(through);
+        state.bundle_covered.remove(&after);
+    }
+    state.bundle_covered.insert(first, last);
+}
+
+fn mark_object_coverage(state: &mut GateState, tickets: impl Iterator<Item = CommitTicket>) {
+    for ticket in tickets {
+        for sequence in ticket.first_sequence..=ticket.last_sequence {
+            if sequence > state.tiered_through {
+                state.object_covered.insert(sequence);
+            }
+        }
+    }
+    while let Some(next) = state.tiered_through.checked_add(1) {
+        if !state.object_covered.remove(&next) {
+            break;
+        }
+        state.tiered_through = next;
+    }
 }
 
 fn object_covers(state: &GateState, ticket: CommitTicket) -> bool {

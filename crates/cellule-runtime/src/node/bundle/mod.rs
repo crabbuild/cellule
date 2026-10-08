@@ -6,7 +6,9 @@
 //!
 //! The caller owns host admission and the original node lease. This selection
 //! helper operates on complete captures assigned by the canonical shipper;
-//! returned reconstruction proofs do not enable the actor's command response.
+//! live selection can confirm the original assigned captures locally without
+//! another CAS. Ordinary actor bundle responses remain disabled until their
+//! command/read/retry visibility and capture release consume that exact proof.
 //!
 //! ```no_run
 //! use cellule_runtime::node::{NodeDirectory, VersionedNodeAdvertisement};
@@ -45,6 +47,7 @@ mod selection;
 #[cfg(test)]
 use proof::checkpoint_prefix;
 use proof::{verify_base, verify_binding};
+pub(crate) use selection::confirm_selected_coverage;
 #[cfg(test)]
 use store::load_catalog;
 pub(crate) mod store;
@@ -138,17 +141,22 @@ pub struct PreparedNodeBundle {
     catalog: Catalog,
     body: Bytes,
     head: NodeBundleHead,
+    assignments: Vec<crate::node::log::AssignedCommitRange>,
 }
 
 /// Selected, dependency-verified coverage of one exact Cell writer.
 ///
 /// The bounded locators retain no frame bodies. Creation is restricted to a
 /// successful/reconciled canonical node CAS with prior complete range verification.
+/// Live selections also retain the original process lease and complete native
+/// assignments. Cold reconstruction proofs cannot confirm a live ACK gate.
 pub struct BundleCoverageProof {
     pin: BundleBindingRef,
     binding: Binding,
     head: NodeBundleHead,
     session: SessionId,
+    // Cold reconstruction must never revive the original process's ACK gate.
+    live: Option<selection::LiveBundleCoverage>,
 }
 impl BundleCoverageProof {
     /// Original Cell authority pin.

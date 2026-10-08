@@ -33,6 +33,7 @@ async fn inline_indexed_suffix_migrates_to_detached_history_with_the_same_pin() 
         },
         body,
         catalog,
+        assignments: Vec::new(),
     };
     f.layout
         .store()
@@ -94,6 +95,7 @@ async fn legacy_selected_catalog_is_read_and_migrated_without_changing_the_cell_
         },
         body,
         catalog,
+        assignments: Vec::new(),
     };
     f.layout
         .store()

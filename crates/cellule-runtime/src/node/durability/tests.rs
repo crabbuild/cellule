@@ -340,6 +340,43 @@ async fn object_proof_advances_authoritative_contiguous_coverage() {
 }
 
 #[tokio::test]
+async fn selected_bundle_retires_already_covered_staged_root_work_before_lease_loss_drain() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(ImmediateTransport);
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let authority = Arc::new(RecordingAuthority::default());
+    let lease = lease();
+    let durability = NodeDurability::new(
+        gate.clone(),
+        shipper,
+        authority.clone(),
+        transport,
+        lease.clone(),
+    );
+    let (_directory, cuts) = capture();
+    let (ticket, assignment) = durability.submit_assigned(submission(&cuts)).await.unwrap();
+    assert!(durability.object_coverage.stage(&gate, &[ticket]).unwrap());
+    gate.confirm_bundle_ranges(&[assignment]).unwrap();
+    lease.fence();
+    durability
+        .object_coverage
+        .flush(&gate, authority.as_ref(), &lease, &[])
+        .await
+        .unwrap();
+    assert!(authority.0.lock().unwrap().coverage.is_empty());
+    durability
+        .object_coverage
+        .flush(&gate, authority.as_ref(), &lease, &[])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn concurrent_object_proofs_persist_the_complete_contiguous_prefix() {
     for reverse in [false, true] {
         let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();

@@ -14,6 +14,8 @@ pub(super) struct ReplyFault {
     pub(super) coverage_puts: AtomicUsize,
     pub(super) pin_started: tokio::sync::Notify,
     pub(super) pin_resume: tokio::sync::Notify,
+    pub(super) node_started: tokio::sync::Notify,
+    pub(super) node_resume: tokio::sync::Notify,
 }
 impl std::fmt::Display for ReplyFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -58,6 +60,16 @@ impl ObjectStore for ReplyFault {
             && matches!(opts.mode, object_store::PutMode::Update(_));
         if node_update {
             self.node_updates.fetch_add(1, Ordering::SeqCst);
+        }
+        if node_update
+            && mode == 10
+            && self
+                .mode
+                .compare_exchange(10, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            self.node_started.notify_one();
+            self.node_resume.notified().await;
         }
         if path.as_ref().ends_with(".cnb") {
             self.coverage_puts.fetch_add(1, Ordering::SeqCst);
@@ -321,6 +333,7 @@ async fn lost_immutable_reply_grants_no_proof_and_retry_reuses_exact_bytes() {
 async fn lost_node_cas_reply_reconciles_only_the_exact_selected_head() {
     let faults = Arc::new(ReplyFault::default());
     let mut f = Fixture::with_store(faults.clone()).await;
+    super::coverage::enroll(&mut f).await;
     let mut cell = f.cell(4).await;
     let (_, frames, assigned) = f.append(&mut cell, 2);
     let prepared = f
@@ -336,4 +349,130 @@ async fn lost_node_cas_reply_reconciles_only_the_exact_selected_head() {
         .unwrap();
     assert_eq!(selected.advertisement().bundle_head(), Some(prepared.head));
     assert_eq!(proofs[0].commit_sequence(), 2);
+    assert_eq!(selected.advertisement().log().unwrap().tiered_through(), 1);
+    let updates = faults.node_updates.load(Ordering::SeqCst);
+    assert_eq!(
+        confirm_selected_coverage(&f.gate, &f.lease, &proofs).unwrap(),
+        1
+    );
+    assert_eq!(faults.node_updates.load(Ordering::SeqCst), updates);
+}
+
+#[tokio::test]
+async fn lease_loss_during_combined_cas_cannot_release_original_captures() {
+    let faults = Arc::new(ReplyFault::default());
+    let mut f = Fixture::with_store(faults.clone()).await;
+    super::coverage::enroll(&mut f).await;
+    let mut cell = f.cell(4).await;
+    let (_, frames, assigned) = f.append(&mut cell, 2);
+    let prepared = f
+        .directory
+        .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+        .await
+        .unwrap();
+    let directory = f.directory.clone();
+    let node = f.node.clone();
+    let lease = f.lease.clone();
+    faults.mode.store(10, Ordering::SeqCst);
+    let selecting = tokio::spawn(async move {
+        directory
+            .select_node_bundle(&node, &prepared, &lease, Limits::default(), NOW)
+            .await
+    });
+    faults.node_started.notified().await;
+    f.lease.fence();
+    faults.node_resume.notify_one();
+    assert!(matches!(selecting.await.unwrap(), Err(Error::Fenced)));
+    let selected = f
+        .directory
+        .load(SessionId::from_bytes([1; 16]), NOW)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected.advertisement().log().unwrap().tiered_through(), 1);
+    assert_eq!(
+        selected
+            .advertisement()
+            .bundle_head()
+            .unwrap()
+            .selected_through(),
+        1
+    );
+    assert_eq!(f.gate.tiered_through(), 0);
+    let cold = f
+        .directory
+        .load_bundle_coverage(&cell.authority, &cell.control, Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(cold.commit_sequence(), 2);
+    assert!(matches!(
+        confirm_selected_coverage(&f.gate, &f.lease, &[cold]),
+        Err(Error::Fenced)
+    ));
+    assert_eq!(
+        cell.authority
+            .load(cell.control.value().cell)
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .ltx_root()
+            .unwrap()
+            .commit_sequence,
+        1
+    );
+}
+
+#[tokio::test]
+async fn cancelled_combined_cas_keeps_assignments_for_exact_retry() {
+    let faults = Arc::new(ReplyFault::default());
+    let mut f = Fixture::with_store(faults.clone()).await;
+    super::coverage::enroll(&mut f).await;
+    let mut cell = f.cell(4).await;
+    let (_, frames, assigned) = f.append(&mut cell, 2);
+    let prepared = Arc::new(
+        f.directory
+            .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+            .await
+            .unwrap(),
+    );
+    let proposal = Arc::clone(&prepared);
+    let directory = f.directory.clone();
+    let node = f.node.clone();
+    let lease = f.lease.clone();
+    faults.mode.store(10, Ordering::SeqCst);
+    let selecting = tokio::spawn(async move {
+        directory
+            .select_node_bundle(&node, &proposal, &lease, Limits::default(), NOW)
+            .await
+    });
+    faults.node_started.notified().await;
+    selecting.abort();
+    assert!(selecting.await.err().unwrap().is_cancelled());
+    let unchanged = f
+        .directory
+        .load(SessionId::from_bytes([1; 16]), NOW)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        unchanged.advertisement().bundle_head(),
+        f.node.advertisement().bundle_head()
+    );
+    assert_eq!(unchanged.advertisement().log().unwrap().tiered_through(), 0);
+    assert_eq!(f.gate.progress().unwrap().issued_through, 1);
+    assert_eq!(f.gate.tiered_through(), 0);
+    let (_, proofs) = f
+        .directory
+        .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
+        .await
+        .unwrap();
+    assert_eq!(
+        confirm_selected_coverage(&f.gate, &f.lease, &proofs).unwrap(),
+        1
+    );
+    assert_eq!(
+        f.gate.prove(assigned.ticket()).await.unwrap().source(),
+        DurabilitySource::Bundle
+    );
 }

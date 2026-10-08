@@ -309,7 +309,7 @@ impl NodeDurability {
     /// only after the batch's authority CAS succeeds under the original node lease.
     pub async fn prove_object(&self, ticket: CommitTicket) -> Result<DurabilityProof> {
         self.confirm_objects(&[ticket]).await?;
-        let proof = self.gate.prove(ticket).await?;
+        let proof = self.gate.confirmed_object_proof(ticket)?;
         self.node_lease.check()?;
         if proof.source() != DurabilitySource::Object {
             return Err(Error::Node("object proof lost its durability race"));
@@ -334,6 +334,19 @@ impl NodeDurability {
             return Err(Error::Node("object coverage batch remains unconfirmed"));
         }
         Ok(())
+    }
+
+    /// Confirms exact original captures after verified shared bundle selection.
+    ///
+    /// This performs no storage I/O or authority CAS. Selection already persisted
+    /// the bundle and native-log frontier together. Cold reconstruction proofs,
+    /// foreign gates and replacement lease guards cannot authorize local ACKs.
+    /// The caller must still join actor/read/retry visibility before responding.
+    pub fn confirm_bundle(
+        &self,
+        proofs: &[crate::node::bundle::BundleCoverageProof],
+    ) -> Result<u64> {
+        crate::node::bundle::confirm_selected_coverage(&self.gate, &self.node_lease, proofs)
     }
 
     /// Returns this binding's exact enrolled log epoch.

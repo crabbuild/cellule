@@ -3,6 +3,12 @@ use super::*;
 use crate::node::lease::NodeLeaseGuard;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 
+pub(super) struct LiveBundleCoverage {
+    node: crate::identity::NodeId,
+    lease: NodeLeaseGuard,
+    assignments: Vec<crate::node::log::AssignedCommitRange>,
+}
+
 impl NodeDirectory {
     /// Verifies a contiguous complete native range and uploads one proposal for
     /// every participating Cell. Neither upload nor this value grants an ACK.
@@ -106,7 +112,9 @@ impl NodeDirectory {
             });
             catalog.selected_through = scope.node_sequence;
         }
-        self.upload_catalog(Some(head), catalog, frames).await
+        let mut prepared = self.upload_catalog(Some(head), catalog, frames).await?;
+        prepared.assignments = assignments.to_vec();
+        Ok(prepared)
     }
 
     /// Selects exactly the uploaded catalog/range after I/O, under the original
@@ -121,6 +129,9 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<(VersionedNodeAdvertisement, Vec<BundleCoverageProof>)> {
         lease.check()?;
+        if prepared.assignments.is_empty() {
+            return Err(Error::Node("native bundle has no complete assignments"));
+        }
         let cells = prepared
             .catalog
             .bindings
@@ -170,12 +181,75 @@ impl NodeDirectory {
                 binding,
                 head: prepared.head,
                 session: catalog.session,
+                live: None,
             });
         }
         lease.check()?;
-        let selected = self.select_catalog(observed, prepared, now_ms).await?;
+        let selected = self
+            .select_native_catalog(observed, prepared, now_ms)
+            .await?;
         // Expiry during verification must not revive the original writer.
         lease.check()?;
+        // A boot without enrolled native log state supplies reconstruction
+        // only. Enrollment and the selected coverage frontier are prerequisites
+        // for waking this process's original durability gate.
+        if selected.advertisement.log.is_some() {
+            for proof in &mut proofs {
+                let scope = crate::node::log::CellLogScope {
+                    application: proof.binding.application,
+                    cell: proof.binding.control.cell,
+                    incarnation: proof.binding.control.incarnation,
+                    cell_epoch: proof.binding.control.epoch,
+                };
+                let assignments = prepared
+                    .assignments
+                    .iter()
+                    .filter(|assignment| assignment.scope() == scope)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if assignments.is_empty() {
+                    return Err(Error::Node("selected binding lacks complete assignments"));
+                }
+                proof.live = Some(LiveBundleCoverage {
+                    node: selected.advertisement.node,
+                    lease: lease.clone(),
+                    assignments,
+                });
+            }
+        }
         Ok((selected, proofs))
     }
+}
+
+pub(crate) fn confirm_selected_coverage(
+    gate: &crate::node::log::DurabilityGate,
+    lease: &NodeLeaseGuard,
+    proofs: &[BundleCoverageProof],
+) -> Result<u64> {
+    if proofs.is_empty() {
+        return Err(Error::Node("empty selected bundle coverage"));
+    }
+    lease.check()?;
+    let (session, node, epoch) = gate.identity()?;
+    let mut assignments = Vec::new();
+    for proof in proofs {
+        let live = proof
+            .live
+            .as_ref()
+            .ok_or(Error::Node("bundle proof grants reconstruction only"))?;
+        if live.node != node
+            || proof.session != session
+            || proof.head.epoch != epoch
+            || !live.lease.same_lease(lease)
+        {
+            return Err(Error::Fenced);
+        }
+        live.lease.check()?;
+        assignments.extend_from_slice(&live.assignments);
+    }
+    // Validate every original capture before waking any sibling. The canonical
+    // selection already persisted coverage; this is local confirmation only.
+    let through = gate.confirm_bundle_ranges(&assignments)?;
+    lease.check()?;
+    Ok(through)
 }
