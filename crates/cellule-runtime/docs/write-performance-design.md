@@ -74,7 +74,7 @@ availability and drain. It is experimental, not performance qualification.
 The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)
 at `e40ecd6` passes warm/cold ACK read/retry and joined drain, but completes
 100.20 Fleet writes/s versus 106.05 before the fix. There is no measured speedup.
-The latest [cohort-origin comparison](../../../docs/pr67-cohort-origin-measurement.md)
+The earlier [cohort-origin comparison](../../../docs/pr67-cohort-origin-measurement.md)
 at `9d4e632` reduces 187 reads of one fresh 64-Cell bundle to one. In one paired
 window it completes 95.35 Fleet writes/s versus 88.28, with successful scheduled
 p99 of 4,414.52 ms. ACK audits and drain pass, but total GET/range work remains
@@ -83,8 +83,26 @@ ACKs remain zero. The positive paired rate difference does not establish a
 repeatable gain; every point fails qualification. Its separately admitted
 origin buffer raises the producer reservation from 16 to 20 MiB under the same
 64-MiB diagnostic workload ledger.
-Per-Cell materializers, dense scheduling, complete failed-owner orchestration,
-large-capture fallback, retryable producer failures and collection remain open.
+Managed selection now retires exact captures and coalesces one root obligation
+per Cell. The worker keeps its latest authenticated selection and SQLite retry
+results; sequence assignment includes the selected endpoint. Root jobs admit
+memory before origin reads, order by oldest debt, permit at most eight jobs, and
+join on shutdown. Logical 215-command density requests a checkpoint; physical
+locator/byte pressure gates new commands. Root age of 45 seconds, drain,
+migration and fallback also request materialization. Due hints expose the exact
+selected head while a root lags.
+
+The latest [asynchronous-root comparison](../../../docs/pr67-async-root-measurement.md)
+at `6d62d41` completes 183.65 Fleet writes/s versus 115.27, with successful
+scheduled p99 of 1,782.74 ms. It returns 297,811 measured errors and fails its
+warm ACK audit. No cold or successful drain evidence follows. Root density is
+10.25 and PUT cost 0.48 per completed write; retained memory ends at 58.77 MiB
+of 64 MiB and oldest debt reaches 49,054 ms. This is an availability regression,
+not qualified improvement. The 215-command actor regression is grouped; only
+65 sequential commands per Cell are covered by the passing held-root test.
+Materializer progress under pressure, exact active-write checkpoint continuation,
+application receipt visibility, complete failed-owner orchestration, large-capture
+fallback, retryable producer failures and collection remain open.
 Do not advance the follower reclamation frontier before
 failed-owner recovery understands the selected bundle prefix.
 

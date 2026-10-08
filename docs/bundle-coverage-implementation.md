@@ -11,7 +11,13 @@ Fleet writes/s from 525.67 and failed availability/drain. The subsequent
 [coverage-race measurement](pr67-coverage-race-measurement.md) at `e40ecd6`
 passes all-ACK warm/cold audit and joined drain, but completes 100.20 Fleet
 writes/s versus 106.05 before the fix: no demonstrated throughput gain.
-The latest [cohort-origin comparison](pr67-cohort-origin-measurement.md) at
+The latest [asynchronous-root comparison](pr67-async-root-measurement.md) at
+`6d62d41` retires exact selected captures and schedules admitted roots separately.
+It completes 183.65 Fleet writes/s versus 115.27 before, but returns 297,811
+measured request errors and fails its warm ACK audit. Cold recovery and successful
+drain are unverified. Root density rises to 10.25, but retained pressure and
+publication age grow. This is an availability regression; PR #67 is a draft.
+The earlier [cohort-origin comparison](pr67-cohort-origin-measurement.md) at
 `9d4e632` reduces one fresh 64-Cell bundle's origin reads from 187 to one.
 It completes 95.35 Fleet writes/s versus 88.28 in a fresh paired window, with
 passing ACK audits and drain. Total GET/range work remains near 20.4 requests
@@ -110,7 +116,7 @@ Its ordered gate prevents late assignment from consuming a node sequence. The
 legacy identity-free `DurabilityGate::issue` cannot produce a per-Cell closure:
 using it makes that closure fail closed. Managed close now waits for the complete
 issued producer prefix and joins exact checkpoint callbacks before Cell departure.
-Failed-actor closure and dense materializer scheduling remain unqualified.
+Failed-actor closure and sustained materializer progress remain unqualified.
 
 ```mermaid
 sequenceDiagram
@@ -188,8 +194,10 @@ Exhaustion rejects preparation while retaining the last proof. These are safety
 ceilings, **not performance-qualified policies**. Old native bodies are still
 reverified. The 215-command checkpoint density is now represented and measured
 for a small-image fixture; total lifecycle cost is not qualified. Host memory,
-native-job admission, materializer fairness and joined scheduling remain caller
-obligations. See the [node performance design](../crates/cellule-runtime/docs/write-performance-design.md).
+native-job admission and materializer progress still require qualification.
+The actor now owns bounded admitted scheduling and joins accepted jobs; its
+latest application measurement fails availability. See the
+[node performance design](../crates/cellule-runtime/docs/write-performance-design.md).
 
 ## Verification and remaining delivery
 
@@ -371,14 +379,14 @@ descriptor/body digest, and checks the live proof for each whole assignment.
 It validates the complete prefix before deleting any local file. A matching
 endpoint or a cold proof alone cannot release capture retention.
 
-The worker keeps outcomes and its selected proof pending. The actor drops its
-duplicate capture indexes and returns their memory reservation while preserving
-outcome admission. The same actor-owned publisher reconstructs from authenticated
-origin locators, preserves the new command's due time, and uses ordinary root
-lineage and Cell CAS. Storage retries retain the existing publication grace;
-shutdown still joins materialization and complete original issued-range closure.
-The installed feed gets a bounded 100-ms selection opportunity before the
-ordinary root fallback. Root preparation already in progress retains its files.
+For the managed producer, the worker removes selected physical captures and
+heap outcome entries, retains one latest admitted proof, and keeps retry results
+in SQLite. The actor coalesces one root-debt obligation per Cell. Its original
+publisher reconstructs admitted roots from authenticated locators, preserves due
+time and uses ordinary lineage, Cell CAS and exact catalog checkpoint. Storage
+retries retain the existing grace; shutdown joins accepted materializers and
+complete original issued-range closure. The manual-feed/unleased fallback retains
+its bounded 100-ms selection opportunity and ownership of files already preparing.
 
 The real actor test blocks root preparation until selection, then pauses root
 CAS and verifies that every selected capture file is absent. It issues a later
@@ -390,10 +398,11 @@ reconstruction tests, not TPS qualification.
 
 Remaining work before qualified production enablement:
 
-1. Build on the installed bounded producer: fix measured verification overhead
-   and failed-actor closure, then schedule fair admitted materializer cohorts,
-   coalescing proven debt rather than creating one root per command. Connect
-   Bucket-only publication and preserve exact capture/visibility gates.
+1. Fix the measured Fleet availability regression. Prove admitted materializer
+   progress, exact checkpoint continuation under active writes and application
+   minimum-receipt read/retry visibility. Address verification overhead and
+   failed-actor closure. Connect Bucket-only publication while preserving exact
+   capture/visibility gates.
 2. Build on the authenticated index: bound admitted maintenance inventory,
    increase checkpoint density with retained-byte accounting, and measure the
    complete materialization/checkpoint/collection cost.

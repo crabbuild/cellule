@@ -6,7 +6,17 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [cohort-origin measurement](pr67-cohort-origin-measurement.md)
+The latest [asynchronous-root measurement](pr67-async-root-measurement.md)
+records runtime commit `6d62d41`: 183.65 Fleet writes/s and 204.10 Bucket writes/s
+versus 115.27 and 196.27 in fresh paired windows. Fleet successful scheduled p99
+is 1,782.74 ms, but the candidate returns 297,811 measured errors and fails its
+warm ACK audit; cold recovery and successful drain are unverified. This is an
+availability regression, not an acceptable performance gain. Root density rises
+from 1.12 to 10.25 and PUTs fall from 3.67 to 0.48 per completed write, while
+retention and publication age grow. Bucket audits pass, but its fixture bypasses
+the producer. Every point fails qualification; PR #67 is a draft.
+
+The earlier [cohort-origin measurement](pr67-cohort-origin-measurement.md)
 records runtime commit `9d4e632`: 95.35 Fleet writes/s and 274.53 Bucket writes/s
 versus 88.28 and 230.58 for the immediate predecessor in fresh paired windows.
 Fleet successful scheduled p99 is 4,414.52 ms; Bucket is 4,367.63 ms. The
@@ -103,7 +113,7 @@ collection paths. There is no legacy decoding or automatic migration.
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
 | M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Earlier three active-Fleet windows cost 5.229–5.433 PUTs/command; two fail the debt trend. Per-Cell authority work remains; M4 is required |
 | M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; earlier three active-Fleet windows cost 0.0138 enrollment GETs/command. The latest 15K diagnostic still fails delivery despite passing ACK audits |
-| M4 | [Connected protocol APIs](bundle-coverage-implementation.md), actor command/read/retry and exact capture release, retained bounded producer, fair native/checkpoint turns, monotonic coverage joining and joined closure | Latest Fleet warm/cold ACK audit and drain pass; throughput/latency targets still fail. Dense materializer scheduling, Bucket connection, failed-node orchestration, collection and qualification remain open |
+| M4 | [Connected protocol APIs](bundle-coverage-implementation.md), exact capture retirement, coalesced root debt, admitted asynchronous materializers, retained producer, fair native/checkpoint turns and joined closure | Latest Fleet availability and ACK audit regress. Materializer progress, checkpoint continuation, application receipt visibility, Bucket connection, failed-node orchestration, collection and qualification remain open |
 | M5 | Three paired low-rate Fleet repetitions and target diagnostics with exact ACK audits delivered | Publication stability and target delivery fail; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
 
 ## Shared publication checkpoint
@@ -120,7 +130,7 @@ source identities, checks and performance results will be recorded separately.
 Signed append grants are implemented with a fresh issuance path and local
 durable closure gates. Bundle ACKs now require the installed original producer
 and admitted exact proof. Its Fleet connection remains experimental after the
-measured regression; dense scheduling, full recovery orchestration, collection
+measured regression; sustained materializer progress, full recovery orchestration, collection
 and qualification still need production integration.
 
 The first isolated M2/M3 snapshot passed 1,857 workspace tests (38 documented tests

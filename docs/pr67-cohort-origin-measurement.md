@@ -1,5 +1,9 @@
 # Fresh bundle origin reads: write parity still fails
 
+This measures the earlier `9d4e632` implementation. The latest
+[asynchronous-root measurement](pr67-async-root-measurement.md) records `6d62d41`
+and its Fleet availability regression.
+
 **Measured code: 95.35 Fleet writes/s and 274.53 Bucket writes/s.** In one
 fresh paired diagnostic, Fleet completed 8.0% more writes and successful
 scheduled p99 fell 46.1%. The Bucket fixture bypasses this optimization yet
