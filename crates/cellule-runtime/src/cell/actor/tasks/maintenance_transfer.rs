@@ -94,7 +94,7 @@ pub(super) fn handle(
                     // work and refreshing readiness again. Keep semaphore owners
                     // intact until confirm, so a definite refusal can restore
                     // only native completion on this same exact activation.
-                    active.admission.begin_drain();
+                    active.admission.draining.store(true, Ordering::Release);
                     state.closing = true;
                 }
                 state.next_check = now + HYDRATION_TICK;

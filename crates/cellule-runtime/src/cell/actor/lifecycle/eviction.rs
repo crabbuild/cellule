@@ -117,7 +117,7 @@ pub(in crate::cell::actor) fn begin_idle_cell_eviction(
         }
         return false;
     }
-    active.admission.begin_drain();
+    active.admission.draining.store(true, Ordering::Release);
     active.admission.requests.close();
     active.admission.bytes.close();
     active.drain = reply.map(DrainReply::Unit);

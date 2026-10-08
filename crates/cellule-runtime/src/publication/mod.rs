@@ -161,12 +161,6 @@ impl CellPublisher {
             .await
     }
 
-    pub(crate) fn publication_saturated(&self) -> bool {
-        self.shared_publication
-            .as_ref()
-            .is_some_and(|publication| publication.saturated())
-    }
-
     pub(crate) fn durability_submitter(&self) -> CellDurabilitySubmitter {
         let control = self.observed.value();
         CellDurabilitySubmitter {
@@ -1157,12 +1151,6 @@ pub(crate) struct PendingDurability {
 }
 
 impl PendingDurability {
-    pub(crate) fn fleet_active(&self) -> bool {
-        self.durability
-            .progress()
-            .is_ok_and(|progress| progress.fleet_active)
-    }
-
     pub(crate) async fn prove(&self) -> Result<crate::node::log::DurabilitySource> {
         let proof = self.durability.prove(self.ticket).await?;
         if proof.source() == crate::node::log::DurabilitySource::Bundle {

@@ -96,7 +96,7 @@ pub(super) fn fence_active(active: &mut ActiveCell) {
 
 pub(super) fn fence_admission(admission: &CellAdmission) {
     admission.fenced.store(true, Ordering::Release);
-    admission.begin_drain();
+    admission.draining.store(true, Ordering::Release);
     admission.requests.close();
     admission.bytes.close();
 }
@@ -109,7 +109,6 @@ pub(super) fn new_cell_admission(owner_fence: crate::control::OwnerFence) -> Arc
         draining: AtomicBool::new(false),
         maintenance_quiescing: AtomicBool::new(false),
         fenced: AtomicBool::new(false),
-        publication_batch: super::publication_schedule::PublicationBatch::default(),
     })
 }
 

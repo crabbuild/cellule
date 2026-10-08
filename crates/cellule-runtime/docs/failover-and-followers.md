@@ -397,16 +397,6 @@ Tickets are grouped by the original durability binding; equal epoch numbers
 alone cannot combine different bindings. Per-command proof telemetry remains
 scoped to every covered commit.
 
-When the shared preparation lane is saturated, an already-active Fleet owner
-can accumulate a root cohort outside that admission. Its oldest exact capture
-must first have follower proof; a 50 ms follower stall starts normal fallback.
-The cohort requests preparation at 32 physical captures, five seconds from its
-oldest capture, or object fallback/backlog pressure. Drain, migration and fencing
-wake the original waiting task. Capture and byte limits stay unchanged, and
-deferment consumes the original retry grace. Owner reads and exact retries use
-the canonical durable head; published-root readers and due hints await root CAS.
-This remains per-Cell root publication; ordinary bundle ACKs are disabled.
-
 **Retired lane collection.** Retired follower lanes keep their durable
 append-fence marker for ten minutes. The server then:
 

@@ -132,15 +132,3 @@ contiguous frontier before confirming it locally. Failed or cancelled advancing
 CAS work remains staged for retry and joined drain. This removes redundant
 coordination work from the existing application path; bundle ACK integration
 and the node capacity qualification remain open.
-
-The existing Fleet root fallback now waits outside preparation admission when
-the shared node lane is saturated. Only an already-active original Fleet lane
-whose exact oldest capture obtains follower proof may defer. A cohort flushes
-at 32 physical captures (half the unchanged per-Cell limit), five seconds from
-its original oldest capture, object fallback, backlog pressure, drain, migration
-or fencing. Slow follower proof starts ordinary root fallback after at most
-50 ms. The original publication retry grace is not extended. Owner reads/retries
-still use canonical durable-head confirmation; root readers and due hints follow
-later root selection. This is bounded coalescing on the current root path,
-not the completed node materializer or the 215-command bundle checkpoint model.
-Application throughput and debt must be remeasured before claiming improvement.

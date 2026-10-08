@@ -309,7 +309,7 @@ pub(super) fn start_shutdown_drain(
         }
         active.inventory_refreshing = false;
         active.coordination.step(CoordinationInput::BeginShutdown);
-        active.admission.begin_drain();
+        active.admission.draining.store(true, Ordering::Release);
         active.admission.requests.close();
         active.admission.bytes.close();
         if !active.queue.is_empty() {
@@ -914,7 +914,7 @@ pub(super) fn handle_message(
                         return;
                     }
                 }
-                active.admission.begin_drain();
+                active.admission.draining.store(true, Ordering::Release);
                 active.admission.requests.close();
                 active.admission.bytes.close();
                 active.admission = new_cell_admission(active.admission.owner_fence);

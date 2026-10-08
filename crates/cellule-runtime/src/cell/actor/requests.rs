@@ -404,25 +404,10 @@ pub(super) fn start_publication(
     let generation = active.generation;
     let effect_id = active.begin_task(CoordinationEffect::Publication);
     let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
-    let oldest = active
-        .publications
-        .front()
-        .map(|queued| (queued.submitted_at, queued.durability.clone()));
-    let batch_admission = Arc::clone(&active.admission);
     tasks.spawn(async move {
         // Keep coverage in the bounded Cell queue while waiting. The publisher
         // token prevents another root or compaction from overtaking admission.
-        let result = async {
-            if publisher.publication_saturated()
-                && let Some((submitted_at, Some(durability))) = oldest
-            {
-                publication_schedule::wait_for_batch(&batch_admission, &durability, submitted_at)
-                    .await;
-            }
-            publisher.admit_publication().await
-        }
-        .await
-        .map(|replica| {
+        let result = publisher.admit_publication().await.map(|replica| {
             Box::new(PublicationAdmission {
                 replica,
                 fleet_deadline,
@@ -476,13 +461,6 @@ pub(super) fn start_admitted_publication(
         active.publisher = Some(*publisher);
         return;
     };
-    active.admission.publication_batch.reset(
-        active.publications.len(),
-        active
-            .publications
-            .iter()
-            .any(|queued| queued.durability.is_none()),
-    );
     let Some(newest) = coverage.last() else {
         active.finish_task(effect_id, CoordinationEffect::Publication);
         active.publisher = Some(*publisher);
