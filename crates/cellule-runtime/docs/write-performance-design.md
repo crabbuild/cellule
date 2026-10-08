@@ -123,3 +123,12 @@ Exact local confirmation performs no second CAS and reports a distinct Bundle
 proof. Original gate and lease identity remain required; cold proofs grant
 reconstruction only. Ordinary actors continue waiting for their root fallback
 until command/read/retry visibility and capture release consume that proof.
+
+The live root fallback now avoids a node authority mutation when an exact Cell
+root covers only a sparse range beyond an unpublished native gap. That root
+grants its own object proof under the original lease; it does not advance follower
+reclamation or permit rotation. Closing the gap still persists the complete new
+contiguous frontier before confirming it locally. Failed or cancelled advancing
+CAS work remains staged for retry and joined drain. This removes redundant
+coordination work from the existing application path; bundle ACK integration
+and the node capacity qualification remain open.

@@ -69,14 +69,20 @@ impl ObjectCoverage {
         let Some(first) = tickets.first() else {
             return Ok(());
         };
-        // Roots arriving during this CAS remain staged for the next flusher.
-        // A cancelled/failed CAS retains the original tickets for retry or drain;
-        // staging alone never wakes proof waiters or permits log retirement.
         let through = gate.preview_objects(&tickets)?;
-        tokio::select! {
-            result = authority.advance_coverage(first.log_epoch(), through) => result?,
-            () = lease.wait_fenced() => return Err(Error::Fenced),
+        if through > gate.tiered_through() {
+            // Persist every advancing reclamation frontier before confirming it
+            // locally. Roots arriving during I/O remain staged; a cancelled or
+            // failed CAS retains this exact batch for retry or joined drain.
+            tokio::select! {
+                result = authority.advance_coverage(first.log_epoch(), through) => result?,
+                () = lease.wait_fenced() => return Err(Error::Fenced),
+            }
         }
+        // Each caller already selected its exact Cell root. Sparse completions
+        // need no node mutation: they change no reclamation frontier and cannot
+        // close the gap. A concurrent bundle frontier was itself selected before
+        // its local confirmation, so it also needs no duplicate coverage CAS.
         lease.check()?;
         gate.prove_objects(&tickets)?;
         let mut pending = self.pending()?;

@@ -305,8 +305,10 @@ impl NodeDurability {
     /// Records an already-published object root and persists its contiguous watermark.
     ///
     /// Callers must complete the exact Cell root CAS before invoking this method.
-    /// Concurrent completions share coverage updates; local proofs become visible
-    /// only after the batch's authority CAS succeeds under the original node lease.
+    /// Concurrent completions share coverage updates. A new contiguous frontier
+    /// becomes visible only after its authority CAS succeeds under the original
+    /// node lease. Sparse roots grant their own exact object proofs without a
+    /// node mutation; they cannot advance reclamation or close an unpublished gap.
     pub async fn prove_object(&self, ticket: CommitTicket) -> Result<DurabilityProof> {
         self.confirm_objects(&[ticket]).await?;
         let proof = self.gate.confirmed_object_proof(ticket)?;
