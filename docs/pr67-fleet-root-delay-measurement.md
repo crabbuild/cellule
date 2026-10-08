@@ -1,5 +1,9 @@
 # PR67 Fleet root-delay measurement
 
+The [newer ordered-feed measurement](pr67-ordered-feed-measurement.md) records
+the next source's actual Fleet TPS, audit/drain failures and an aborted celld
+comparison. These windows remain separate historical evidence.
+
 **The root-delay experiment was rejected and reverted.** One matched
 five-minute window completed 350.62 writes/s versus 403.73 for the retained
 implementation, a 13.2% observed regression. Successful scheduled p99 improved,
