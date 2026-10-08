@@ -50,9 +50,21 @@ flowchart LR
 
 Uploaded bytes are not authority. An explicitly installed original publication
 feed can now deliver admitted exact bundle receipts through the actor's existing
-command, worker and read/retry gate. The example application's ordinary path
-still has no node bundle producer. Production enablement requires the remaining
-scheduler, recovery, collection and qualification gates. Do not advance the follower reclamation frontier before
+command, worker and read/retry gate. `NodeDurability::start_bundle_publication`
+now retains one producer under the installed runtime ledger. It selects complete
+cohorts of at most 64 captures, 64 frames and 4 MiB, with a 1-ms assembly window
+and a 16-MiB working reservation. Startup admission precedes installation of the
+irreversible feed. Selection and exact root checkpoints use the same original
+binding/heartbeat authority; 512 checkpoint requests are bounded and their
+callbacks join before Cell closure. Fair turns alternate queued native work and
+checkpoint cohorts. The Fleet SQL example installs this producer; the current
+Bucket-only performance adapter bypasses it.
+
+The first end-to-end Fleet diagnostic of this connection failed throughput,
+availability and drain. It is experimental, not performance qualification.
+Per-Cell materializers, dense scheduling, complete failed-owner orchestration,
+large-capture fallback, retryable producer failures and collection remain open.
+Do not advance the follower reclamation frontier before
 failed-owner recovery understands the selected bundle prefix.
 
 ## Locator density and checkpoint cost
@@ -133,8 +145,13 @@ normal root lineage, exact Cell CAS and joined drain complete. A later unproven
 suffix remains hidden. Origin materialization preserves the captured due time
 and retries storage errors within the existing publication grace. The bounded
 selection opportunity is 100 ms for installed feeds; absent or later coverage
-uses the original root path. This is not the fair node materializer scheduler
-or the 215-command checkpoint density target.
+uses the original root path. A later cohort's proof can now be narrowed only by
+the original complete-capture assignment, including its exact descriptors and
+body digests. Materialized roots join the managed checkpoint callback before
+releasing their publisher; Cell close waits for the complete original issued
+prefix, including prior Fleet ACKs. The producer's task and failure cause also
+join at epoch shutdown. This provides fair selection/checkpoint turns, not a
+fair node materializer scheduler or the 215-command checkpoint density target.
 
 The live root fallback now avoids a node authority mutation when an exact Cell
 root covers only a sparse range beyond an unpublished native gap. That root

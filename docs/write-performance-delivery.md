@@ -6,7 +6,15 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [selected-capture release measurement](pr67-selected-capture-release-measurement.md)
+The latest [managed-producer measurement](pr67-managed-producer-measurement.md)
+records runtime commit `2dc1917`: 93.57 Fleet writes/s versus 525.67 before
+the producer, an 82.2% decrease in one matched overloaded pair. Successful p99,
+warm availability and drain regressed. Bucket current code completed 227.78/s
+versus 246.20/s; its fixture bypasses the producer. Celld completed 4,238.78
+Fleet/s with failed warm audit and OOM, and 1,368.50 Bucket/s with passing
+ACK audits. Every point failed delivery qualification. PR #67 remains a draft.
+
+The earlier [selected-capture release measurement](pr67-selected-capture-release-measurement.md)
 records committed code at `3e43601`: 461.53 Fleet writes/s and 168.92 Bucket
 writes/s in one matched 60-second Docker diagnostic. Fleet was 5.9% higher than
 baseline; Bucket was 18.2% lower, with worse successful-write latency. All ACK
@@ -75,7 +83,7 @@ collection paths. There is no legacy decoding or automatic migration.
 | M1 | Packs, inline leaves and bounded compaction spooling delivered | Ordinary append meets four PUTs; composed compaction needs five. Paired cold/sparse-read guardrail unverified |
 | M2 | Bounded file-backed shared publication coordinator implemented; exact scope, restore, cancellation, minimum-budget and dormant-sibling retention checks added | Latest three active-Fleet windows cost 5.229–5.433 PUTs/command; two fail the debt trend. Three per-Cell authority PUTs remain; M4 is required |
 | M3 | Signed 512-sequence/five-second grants, bounded local registry, lifecycle gate and signed HTTP fixture implemented | Full isolated checks and native lifecycle suite pass; latest three active-Fleet windows cost 0.0138 enrollment GETs/command. The 15K target diagnostic fails delivery and warm audit |
-| M4 | [Connected protocol APIs](bundle-coverage-implementation.md), authenticated copy-on-write catalog shards, exact prefix/cohort checkpoints and streamed complete inventory | Actor response/read integration, admitted materializer scheduling, production checkpoint policy, failed-node issued-suffix recovery and bundle collection remain incomplete; bundle ACKs disabled |
+| M4 | [Connected protocol APIs](bundle-coverage-implementation.md), actor command/read/retry and exact capture release, retained bounded producer, fair native/checkpoint turns and joined closure | New Fleet connection failed throughput, availability and drain; dense materializer scheduling, Bucket connection, failed-node orchestration, collection and qualification remain open |
 | M5 | Three paired low-rate Fleet repetitions and target diagnostics with exact ACK audits delivered | Publication stability and target delivery fail; qualified capacity, read/failure/overload matrix and absolute/relative parity remain unverified |
 
 ## Shared publication checkpoint
@@ -90,9 +98,10 @@ The prior evidence below measures the packed implementation, **not this shared
 coordinator**. Its improvement percentages must not be attributed to M2. New
 source identities, checks and performance results will be recorded separately.
 Signed append grants are implemented with a fresh issuance path and local
-durable closure gates. Bundle coverage ACKs remain disabled: the proposed
-Cell-binding catalog, atomic transfer, exact range recovery and collection
-contracts still need production integration.
+durable closure gates. Bundle ACKs now require the installed original producer
+and admitted exact proof. Its Fleet connection remains experimental after the
+measured regression; dense scheduling, full recovery orchestration, collection
+and qualification still need production integration.
 
 The first isolated M2/M3 snapshot passed 1,857 workspace tests (38 documented tests
 ignored), 58 local LTX tests without replica features, all-target/all-feature

@@ -2,9 +2,12 @@
 
 The connected protocol APIs now implement shared selection, independently
 awaitable root materialization and complete live-writer closure. An explicitly
-installed original feed can now provide admitted receipts to the actor;
-the example application's ordinary path still has no bundle producer. The prior performance regression
-and failed qualification remain the baseline. This slice establishes ordering
+installed original feed can now provide admitted receipts to the actor.
+`NodeDurability::start_bundle_publication` retains a bounded producer and joins
+exact checkpoint callbacks under the original authority. The Fleet SQL example
+installs it; Bucket-only performance wiring bypasses it. Its first
+[measured connection](pr67-managed-producer-measurement.md) regressed to 93.57
+Fleet writes/s from 525.67 and failed availability/drain. This slice establishes ordering
 and reconstruction evidence. The [fresh application-path benchmark](pr67-performance-reevaluation.md)
 measures `7fc0793`; it does not exercise bundle-based responses or establish
 write parity. The [WAL NORMAL comparison](pr67-normal-wal-reevaluation.md)
@@ -88,13 +91,15 @@ fencing may still select that exact original base, but cannot reopen its closed
 catalog; departure then uses the ordinary closed-binding guard. Native frames
 issued before activation fail recovery before attachment or terminal selection,
 retaining the unresolved obligation. Admitted host scheduling and full lifecycle
-qualification remain unfinished. Ordinary bundle responses remain disabled.
+qualification remain unfinished. Bundle responses require the original installed
+feed and admitted proof; the new connection is experimental and unqualified.
 
 The original SQL/capture/submission jobs must join before `close_cell_issuance`.
 Its ordered gate prevents late assignment from consuming a node sequence. The
 legacy identity-free `DurabilityGate::issue` cannot produce a per-Cell closure:
-using it makes that closure fail closed. Automatic actor joining and scheduling
-are still required before enabling this path for application commands.
+using it makes that closure fail closed. Managed close now waits for the complete
+issued producer prefix and joins exact checkpoint callbacks before Cell departure.
+Failed-actor closure and dense materializer scheduling remain unqualified.
 
 ```mermaid
 sequenceDiagram
@@ -374,9 +379,10 @@ reconstruction tests, not TPS qualification.
 
 Remaining work before qualified production enablement:
 
-1. Install the canonical bounded node bundle producer and schedule fair admitted
-   materializer cohorts, coalescing proven debt rather than creating one root
-   per command. Preserve the integrated exact capture/visibility gate.
+1. Build on the installed bounded producer: fix measured verification overhead
+   and failed-actor closure, then schedule fair admitted materializer cohorts,
+   coalescing proven debt rather than creating one root per command. Connect
+   Bucket-only publication and preserve exact capture/visibility gates.
 2. Build on the authenticated index: bound admitted maintenance inventory,
    increase checkpoint density with retained-byte accounting, and measure the
    complete materialization/checkpoint/collection cost.
