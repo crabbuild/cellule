@@ -6,7 +6,17 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The [PR 67 reevaluation](pr67-performance-reevaluation.md) measures the latest
+The latest [selected-capture release measurement](pr67-selected-capture-release-measurement.md)
+records committed code at `3e43601`: 461.53 Fleet writes/s and 168.92 Bucket
+writes/s in one matched 60-second Docker diagnostic. Fleet was 5.9% higher than
+baseline; Bucket was 18.2% lower, with worse successful-write latency. All ACK
+audits passed, but every system failed delivery targets. The actor can release
+exact selected captures through its original publisher; the application still
+does not install a node bundle producer, and bundle response counters are zero.
+These results establish neither an attributable improvement nor parity. The
+older comparisons below remain historical evidence.
+
+The [PR 67 reevaluation](pr67-performance-reevaluation.md) measures the earlier
 protocol implementation at `7fc0793` in nine fresh matched Docker cases. Fleet
 100/s p99 is 19.9 ms versus main's 34.7 ms and celld's 16.0 ms. Target-load
 delivery still fails: candidate Fleet completion is below main, bucket is

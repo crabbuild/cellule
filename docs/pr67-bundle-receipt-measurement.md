@@ -1,4 +1,8 @@
-# Current bundle receipt implementation: measured writes
+# Bundle receipt implementation: historical measured writes
+
+The [selected-capture release measurement](pr67-selected-capture-release-measurement.md)
+records later committed code at `3e43601`. The working-tree results below measure
+the earlier receipt snapshot and must not be attributed to that commit.
 
 **Write parity is not achieved.** The frozen working tree completed 514.67
 Fleet writes/s and 225.77 Bucket writes/s in short Docker diagnostics. Fleet
