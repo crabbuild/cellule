@@ -105,7 +105,12 @@ at `4a8f55c` completes 185.83 Fleet writes/s versus 164.73 but still returns
 304,151 measured errors and fails warm ACK availability. Bucket completes
 215.08 writes/s versus 227.15 with passing audits and higher p99. All contributor
 checks pass, but the original application load failure persists. No acceptable
-improvement or parity is established.
+improvement or parity is established. A subsequent
+[release-build repeat](../../../docs/pr67-release-repeat-measurement.md) of the
+same binary completes 107.95 Fleet and 268.12 Bucket writes/s. Fleet still fails
+warm ACK availability; Bucket audits pass but delivery targets fail. Diagnostic
+logs identify shared-selection deadlines that fence Cells and publication
+backlog refusals. This supplies no demonstrated throughput improvement.
 
 The earlier [asynchronous-root comparison](../../../docs/pr67-async-root-measurement.md)
 at `6d62d41` completes 183.65 Fleet writes/s versus 115.27, with successful

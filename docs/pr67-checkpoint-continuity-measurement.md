@@ -1,6 +1,10 @@
 # Checkpoint continuity: measured write results
 
-**Current measured completion rates: 185.83 Fleet writes/s and 215.08 Bucket
+The later [release repeat](pr67-release-repeat-measurement.md) of the same
+binary completes 107.95 Fleet and 268.12 Bucket writes/s. It retains failed
+cases and isolates a shared-selection deadline failure path.
+
+**This comparison's completion rates: 185.83 Fleet writes/s and 215.08 Bucket
 writes/s. No acceptable performance improvement or celld parity is established.**
 Fleet still returns 304,151 measured errors and fails its warm ACK audit. Bucket
 has zero request errors and passing ACK audits, but completes 5.3% fewer writes
@@ -132,8 +136,10 @@ Candidate retained memory grows from **28.41 to 59.52 MiB of 64 MiB**, accounted
 unpublished node-log bytes grow, and oldest publication reaches **47,453 ms**.
 Two boundary samples do not prove bounded debt. The checkpoint density target
 is 215 commands and the conditional PUT target 0.05 per command; neither is met.
-The observed application error's precise cause remains unisolated. Fixing the
-focused continuity cases has not fixed the original load-test failure.
+The subsequent [diagnostic and release repeat](pr67-release-repeat-measurement.md)
+records selection deadlines that fence Cells and sampled pre-SQL publication
+backlog refusals. Fixing the focused continuity cases has not fixed the
+original load-test failure.
 
 Next work must isolate application refusal/read visibility and resource
 admission under this reproduced load, establish admitted materializer progress,

@@ -6,7 +6,17 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [checkpoint-continuity measurement](pr67-checkpoint-continuity-measurement.md)
+The latest [release-build repeat](pr67-release-repeat-measurement.md) measures
+the unchanged `4a8f55c` binary at **107.95 Fleet writes/s and 268.12 Bucket
+writes/s**. Fleet returns 499,450 measured errors and fails 16,057 of 16,190
+warm ACK checks. Bucket passes all 24,880 warm/cold checks but drops 103,657
+offers and misses latency/throughput targets. Celld completes 4,470.70 Fleet
+and 1,392.55 Bucket writes/s; Fleet is OOM-killed, while Bucket audits pass.
+Every point fails qualification. Diagnostic logs identify selection deadlines
+that fence Cells and publication backlog refusals. No acceptable improvement
+or parity is established; PR #67 remains a draft.
+
+The earlier [checkpoint-continuity measurement](pr67-checkpoint-continuity-measurement.md)
 records runtime commit `4a8f55c`: **185.83 Fleet writes/s and 215.08 Bucket
 writes/s**, versus 164.73 and 227.15 for its immediate `6d62d41` baseline.
 Fleet still returns 304,151 measured errors and fails its warm ACK audit.

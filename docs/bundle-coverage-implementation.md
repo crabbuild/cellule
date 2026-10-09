@@ -11,7 +11,12 @@ Fleet writes/s from 525.67 and failed availability/drain. The subsequent
 [coverage-race measurement](pr67-coverage-race-measurement.md) at `e40ecd6`
 passes all-ACK warm/cold audit and joined drain, but completes 100.20 Fleet
 writes/s versus 106.05 before the fix: no demonstrated throughput gain.
-The latest [checkpoint-continuity comparison](pr67-checkpoint-continuity-measurement.md)
+The latest [release-build repeat](pr67-release-repeat-measurement.md) of the same
+`4a8f55c` binary completes 107.95 Fleet and 268.12 Bucket writes/s. Fleet still
+fails warm ACK availability; Bucket audits pass but delivery targets fail.
+Diagnostic logs identify shared-selection deadlines that fence Cells and
+publication backlog refusals. No acceptable improvement or parity is established.
+The earlier [checkpoint-continuity comparison](pr67-checkpoint-continuity-measurement.md)
 at `4a8f55c` verifies live writes across a confirmed root and successive
 intermediate-base receipts, with bounded, admitted prefix witnesses. It measures
 185.83 Fleet writes/s versus 164.73, but still returns 304,151 errors and fails
