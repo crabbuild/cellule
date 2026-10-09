@@ -1,16 +1,17 @@
 # Bundle coverage implementation
 
-The [2,000-Cell comparison](pr67-base-cohort-measurement.md) overlaps fresh
-small-base verification within the original 20-MiB admission. One Fleet write
-pair completes 372.87 writes/s versus 271.00 before; celld completes 1,999.80/s
-at 2,000 offered/s. Candidate successful scheduled p99 improves to 932.77 ms,
-but errors, drops and joined drain fail. All warm ACKs pass; Cellule cold audit
-is not reached. Read-only throughput is 17,456.38/s versus celld's 19,973.25/s
-at 20,000 offered/s, with drops in both. All profiles remain unqualified.
+The [current 2,000-Cell measurements](pr67-closure-admission-measurement.md)
+complete joined drain and all-ACK warm/cold read and retry audits after bounding
+provider closure callbacks. Fleet write throughput is 339.30/s and read-only
+throughput is 16,410.03/s, both below the preceding observations. Successful
+scheduled write p99 is 1,824.77 ms; errors and drops remain. The first read setup
+fails with HTTP 503; its unchanged retry does not erase that failure. There is
+no measured throughput improvement from this closure fix. All profiles remain
+unqualified; the previous celld write reference is 1,999.80/s at 2,000 offered/s.
 
 The [submission diagnosis](pr67-submission-timing-measurement.md) identifies
 publication capacity held under the global issuance lock. The latest candidate
-still spends about 99% of successful submission time waiting for that lock.
+still spends 99.01% of successful submission time waiting for that lock.
 Celld pipelines native progress independently of bucket publication. Similar
 components do not imply the same response path. PR #67 remains a draft.
 

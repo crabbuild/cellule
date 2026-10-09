@@ -225,7 +225,10 @@ def driver(directory, label, config):
     if copy.returncode:
         raise RuntimeError(f'no capacity evidence: {copy.stderr}; {p.stdout} {p.stderr}')
     docker('exec', CONTROL, 'rm', '-rf', '/tmp/comparison-evidence')
-    result = json.loads((dest / 'summary.json').read_text())
+    summary_path = dest / 'summary.json'
+    if not summary_path.is_file():
+        raise RuntimeError(f'{label} capacity driver exited {p.returncode} without a summary: {p.stdout} {p.stderr}')
+    result = json.loads(summary_path.read_text())
     result['driver_exit_code'] = p.returncode
     put(dest / 'summary.json', result)
     return result

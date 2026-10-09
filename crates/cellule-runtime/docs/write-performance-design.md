@@ -1,17 +1,18 @@
 # Node write and read performance design
 
-The [2,000-Cell comparison](../../../docs/pr67-base-cohort-measurement.md)
-overlaps fresh small-base verification within the original 20-MiB admission.
-One Fleet pair completes 372.87 writes/s versus 271.00 before; celld completes
-1,999.80/s at 2,000 offered/s. Successful scheduled p99 improves to 932.77 ms,
-but Cellule errors, drops and joined drain fail. All warm ACKs pass; cold audit
-is not reached. Read-only throughput is 17,456.38/s versus celld's 19,973.25/s
-at 20,000 offered/s, with drops in both. These short observations remain
-unqualified; PR #67 is still a draft.
+The [current 2,000-Cell measurements](../../../docs/pr67-closure-admission-measurement.md)
+complete joined drain and all-ACK warm/cold read and retry audits after bounding
+provider closure callbacks. Fleet throughput is 339.30 writes/s and read-only
+throughput is 16,410.03/s, both below the previous observations. Successful
+scheduled write p99 is 1,824.77 ms; errors and drops remain. The first read setup
+fails with HTTP 503 before any timed point; its unchanged retry does not erase
+that failure. This is a closure scheduling fix, with no demonstrated throughput
+gain. The previous celld reference completes 1,999.80 writes/s at 2,000 offered/s.
+These short observations remain unqualified; PR #67 is still a draft.
 
 The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
 identified publication capacity held under the global issuance lock. The latest
-candidate still spends about 99% of successful submission time waiting for that
+candidate still spends 99.01% of successful submission time waiting for that
 lock. This coupling queues native progress before follower proof starts. Repeated
 historical/base verification and sparse root checkpoints keep the publication
 consumer expensive. Matching celld requires reducing that work and separating
