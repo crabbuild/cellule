@@ -251,9 +251,20 @@ pub(super) async fn execute_command(
         succeeded = execution.is_ok(),
     );
     let (result, must_fence) = match execution {
-        Ok(WorkerExecution::Recorded(outcome)) => (Ok(CommandTaskResult::Recorded(outcome)), false),
+        Ok(WorkerExecution::Recorded(outcome)) => (
+            command
+                ._work
+                .finish_sql(outcome.result().len(), 0)
+                .map(|_| CommandTaskResult::Recorded(outcome)),
+            false,
+        ),
         Ok(WorkerExecution::Pending(pending)) => {
-            let result = reserve_pending_publication(&pool, &pending);
+            let result = reserve_pending_publication(
+                &pool,
+                &pending,
+                &mut command._work,
+                pending.outcome().result().len(),
+            );
             let result = match result {
                 Ok(retained_reservation) => durability
                     .submit(pending.outcome().commit_sequence(), pending.cuts())
@@ -299,12 +310,19 @@ pub(super) async fn execute_command(
 pub(super) fn reserve_pending_publication(
     pool: &SqlWorkerPool,
     pending: &PendingCommit,
+    work: &mut WorkAdmission,
+    result_bytes: usize,
 ) -> crate::Result<ResourceReservation> {
     // The host already owns the LTX file's disk reservation. Retain RAM for
     // shared indexes and live outcome/descriptor copies, not the on-disk body.
     // Physical backlog counters and their per-Cell limits remain unchanged.
     let bytes = usize::try_from(pending.retained_memory_bytes())
         .map_err(|_| Error::Capacity("pending publication bytes"))?;
+    if let Some(reservation) = work.finish_sql(result_bytes, bytes)? {
+        return Ok(reservation);
+    }
+    // Larger cuts still need their full charged admission. Returning unused
+    // result capacity first makes it available without changing the node limit.
     pool.resource_ledger()
         .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))
         .map_err(|error| match error {

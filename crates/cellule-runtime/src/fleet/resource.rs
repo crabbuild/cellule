@@ -491,6 +491,10 @@ pub(crate) struct ResourceReservation {
 }
 
 impl ResourceReservation {
+    pub(crate) const fn retained_bytes(&self) -> usize {
+        self.cost.retained_bytes
+    }
+
     /// Transfers already admitted memory to an independently owned lifetime.
     /// Total ledger usage is unchanged; this cannot admit after publication.
     pub(crate) fn split_retained(&mut self, bytes: usize) -> Result<Self> {
@@ -506,7 +510,7 @@ impl ResourceReservation {
         })
     }
 
-    /// Returns only memory whose owned capture indexes have already been dropped.
+    /// Returns memory after its original work exits or owned indexes are dropped.
     pub(crate) fn shrink_retained(&mut self, bytes: usize) -> Result<()> {
         let released = self
             .cost

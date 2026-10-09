@@ -5,6 +5,7 @@ use cellule_runtime::fleet::telemetry::{CellTelemetry, CommandResponseSource, Pu
 
 mod admission;
 mod admission_batching;
+mod admission_handoff;
 mod group;
 mod proofs;
 mod recovery;

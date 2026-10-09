@@ -370,10 +370,12 @@ async fn durable_group_releases_all_request_slots_before_its_first_reply() {
         let admitted = futures_util::poll!(&mut query);
         followups.push((query, admitted));
     }
-    // All completion data remains charged while its terminal request slots
-    // become available; releasing slots must not discharge retained bytes.
-    assert!(runtime.stats().retained_bytes() >= 4 * 2_048);
+    // SQL has exited and returned each unused result allowance. Every group's
+    // input (1,024 bytes) and actual reply (one byte) must remain charged while
+    // terminal request slots become available; releasing slots cannot drop them.
+    let retained = runtime.stats().retained_bytes();
     resume.send(()).unwrap();
+    assert!(retained >= 4 * (1_024 + 1), "retained: {retained}");
     let mut observed = Vec::new();
     for (query, admitted) in followups {
         observed.push(match admitted {

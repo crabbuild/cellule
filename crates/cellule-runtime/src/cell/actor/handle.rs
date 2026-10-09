@@ -59,12 +59,39 @@ pub(crate) struct CommandWork {
 
 pub(super) struct WorkAdmission {
     pub(super) kind: AdmissionKind,
+    operation_bytes: usize,
     pub(super) _request: Option<OwnedSemaphorePermit>,
     pub(super) _cell_bytes: OwnedSemaphorePermit,
     pub(super) _node_bytes: ResourceReservation,
 }
 
 impl WorkAdmission {
+    pub(super) fn finish_sql(
+        &mut self,
+        result_bytes: usize,
+        publication_bytes: usize,
+    ) -> crate::Result<Option<ResourceReservation>> {
+        let retained = self
+            .operation_bytes
+            .checked_add(result_bytes)
+            .ok_or(Error::Capacity("completed command bytes"))?;
+        let unused = self
+            ._node_bytes
+            .retained_bytes()
+            .checked_sub(retained)
+            .ok_or(Error::Capacity("completed result exceeds admission"))?;
+        // The original SQL job has exited. Its unused result allowance can
+        // own this exact cut without racing a second global admission. Keep
+        // the input and actual reply charged until their command is dropped.
+        let publication = if publication_bytes != 0 && publication_bytes <= unused {
+            Some(self._node_bytes.split_retained(publication_bytes)?)
+        } else {
+            None
+        };
+        self._node_bytes.shrink_retained(retained)?;
+        Ok(publication)
+    }
+
     pub(super) fn release_request_slot(&mut self) {
         // A finished request can hand its slot to the reply's next invocation.
         // Retained completion data still owns both byte reservations until drop.
@@ -599,6 +626,7 @@ impl CellHandle {
         }
         let admission = WorkAdmission {
             kind,
+            operation_bytes,
             _request: Some(try_one(
                 self.admission.requests.clone(),
                 "Cell mailbox requests",
@@ -655,5 +683,65 @@ pub(super) fn admission_error(error: TryAcquireError, resource: &'static str) ->
     match error {
         TryAcquireError::Closed => Error::CellDraining,
         TryAcquireError::NoPermits => Error::Capacity(resource),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fleet::resource::ResourceLedger;
+
+    fn admitted() -> (ResourceLedger, WorkAdmission) {
+        let ledger = ResourceLedger::new(ResourceCost::zero().with_retained_bytes(32));
+        let work = WorkAdmission {
+            kind: AdmissionKind::Command,
+            operation_bytes: 8,
+            _request: Some(try_one(Arc::new(Semaphore::new(1)), "test request").unwrap()),
+            _cell_bytes: try_many(Arc::new(Semaphore::new(32)), 32, "test bytes").unwrap(),
+            _node_bytes: ledger
+                .try_reserve(ResourceCost::zero().with_retained_bytes(32))
+                .unwrap(),
+        };
+        (ledger, work)
+    }
+
+    #[test]
+    fn completed_sql_transfers_only_unused_credit_and_preserves_both_lifetimes() {
+        let (ledger, mut work) = admitted();
+        let publication = work.finish_sql(4, 12).unwrap().unwrap();
+        assert_eq!(work._node_bytes.retained_bytes(), 12);
+        assert_eq!(publication.retained_bytes(), 12);
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 24);
+        drop(work);
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 12);
+        drop(publication);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
+
+    #[test]
+    fn an_oversized_cut_requires_fresh_capacity_without_undercharging_the_reply() {
+        let (ledger, mut work) = admitted();
+        assert!(work.finish_sql(4, 24).unwrap().is_none());
+        assert_eq!(work._node_bytes.retained_bytes(), 12);
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 12);
+        assert!(
+            ledger
+                .try_reserve(ResourceCost::zero().with_retained_bytes(24))
+                .is_err()
+        );
+        drop(work);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
+
+    #[test]
+    fn invalid_result_size_cannot_release_or_transfer_original_admission() {
+        let (ledger, mut work) = admitted();
+        assert!(matches!(
+            work.finish_sql(25, 1),
+            Err(Error::Capacity("completed result exceeds admission"))
+        ));
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 32);
+        drop(work);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
     }
 }

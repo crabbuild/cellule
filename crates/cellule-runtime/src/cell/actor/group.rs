@@ -98,15 +98,43 @@ pub(super) async fn execute(
                     true,
                 )
             } else {
+                // Each member owns its own input and actual reply. The head's
+                // result can differ from the highest commit in the shared cut;
+                // use its original outcome when transferring its allowance.
+                let head_result_bytes = outcomes
+                    .first()
+                    .and_then(|outcome| outcome.as_ref().ok())
+                    .map_or(command.max_result_bytes, |outcome| outcome.result().len());
+                let member_admission =
+                    command
+                        .group
+                        .as_mut()
+                        .ok_or(Error::Fenced)
+                        .and_then(|group| {
+                            for (member, outcome) in
+                                group.members.iter_mut().zip(outcomes.iter().skip(1))
+                            {
+                                if let Ok(outcome) = outcome {
+                                    member._work.finish_sql(outcome.result().len(), 0)?;
+                                }
+                            }
+                            Ok(())
+                        });
                 if let Some(group) = &mut command.group {
                     group.execution = Some(GroupOutcomes {
                         outcomes,
                         base_sequence,
                     });
                 }
-                match pending {
-                    Some(pending) => {
-                        let result = match reserve_pending_publication(&pool, &pending) {
+                match (member_admission, pending) {
+                    (Err(error), _) => (Err(error), true),
+                    (Ok(()), Some(pending)) => {
+                        let result = match reserve_pending_publication(
+                            &pool,
+                            &pending,
+                            &mut command._work,
+                            head_result_bytes,
+                        ) {
                             Ok(retained_reservation) => {
                                 let first = base_sequence.checked_add(1).ok_or(Error::Fenced);
                                 match first {
@@ -131,7 +159,13 @@ pub(super) async fn execute(
                         // this logical range, including durable rejections.
                         (result, true)
                     }
-                    None => (Ok(CommandTaskResult::GroupRecorded), false),
+                    (Ok(()), None) => (
+                        command
+                            ._work
+                            .finish_sql(head_result_bytes, 0)
+                            .map(|_| CommandTaskResult::GroupRecorded),
+                        false,
+                    ),
                 }
             }
         }

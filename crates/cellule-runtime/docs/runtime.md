@@ -65,7 +65,14 @@ sequence lane. That lane assigns consecutive envelope sequences and enqueues
 them atomically; failed validation consumes no ticket. Signing follows sequence
 assignment, and followers still verify the complete signed frames before fsync.
 
-Each member retains its ordinary request and byte admission, and the group
+Each member retains its ordinary request and byte admission through SQL.
+Once the original worker returns, unused result allowance can transfer to the
+exact publication cut, while the input and actual reply remain charged until
+the command completes. Remaining unused node memory is released. A larger cut
+still needs full fresh admission under the unchanged node limit; this handoff
+does not grant durability or omit publication debt. Cancelled or timed-out
+waiters retain the full allowance until their dispatched worker exits.
+The group
 uses the existing database, capture, and retained-publication ceilings. A
 command error rolls back that member's savepoint. A whole transaction abort,
 capture failure, or lost publication proof never releases a new success;
