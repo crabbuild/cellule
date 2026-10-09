@@ -166,12 +166,35 @@ pub(super) async fn execute_command(
             let max_result_bytes = command.max_result_bytes;
             let worker_pool = pool.clone();
             let worker_deadline = deadline.clone();
+            let refused_mutation = command.refused_mutation.take();
             let operation = async move {
                 match queued_operation {
                     QueuedOperation::Mutation {
                         identity,
                         operation_digest,
                     } => {
+                        if let Some(refusal) = refused_mutation {
+                            identity.validate(now_ms)?;
+                            drop(handler);
+                            return match worker_pool
+                                .resolve(
+                                    cell,
+                                    identity,
+                                    operation_digest,
+                                    now_ms,
+                                    max_result_bytes,
+                                    worker_deadline,
+                                )
+                                .await?
+                            {
+                                Resolution::Committed(outcome) => {
+                                    Ok(WorkerExecution::Recorded(outcome))
+                                }
+                                Resolution::Absent | Resolution::Unknown | Resolution::Expired => {
+                                    Err(refusal)
+                                }
+                            };
+                        }
                         worker_pool
                             .execute_until(
                                 cell,

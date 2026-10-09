@@ -214,12 +214,28 @@ impl CellHandle {
         } else {
             AdmissionKind::Command
         };
-        let admission = self.reserve_work_kind(kind, operation_bytes, max_result_bytes)?;
+        let (admission, refused_mutation) =
+            match self.reserve_work_kind(kind, operation_bytes, max_result_bytes) {
+                Ok(admission) => (admission, None),
+                Err(error @ Error::Capacity("publication backlog")) => {
+                    identity.validate(now_ms)?;
+                    // Keep the original owner, FIFO, request and byte budgets.
+                    // Resolution can replay an existing proof; it cannot admit SQL.
+                    let admission = self.reserve_work_kind(
+                        AdmissionKind::Resolve,
+                        operation_bytes,
+                        max_result_bytes,
+                    )?;
+                    (admission, Some(error))
+                }
+                Err(error) => return Err(error),
+            };
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
                 group: None,
+                refused_mutation,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_execution",
@@ -275,6 +291,7 @@ impl CellHandle {
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
                 group: None,
+                refused_mutation: None,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_effect_execution",

@@ -75,7 +75,13 @@ Caller cancellation does not remove accepted members or their drain obligations.
 While follower-proven work awaits object publication, new mutations are refused
 before SQL when retained RAM or local disk reaches three quarters of its node
 budget. The remaining headroom belongs to accepted work and publication.
-Queries remain eligible, and a refused mutation has no new ledger outcome.
+Queries remain eligible. A command refused by node publication pressure or a
+full Cell publication queue can still replay its original durable request
+outcome through the same bounded FIFO and read-only resolution path. An absent
+or unproven outcome returns the original refusal without invoking its handler;
+digest conflicts, result limits and identity expiry remain enforced. These
+lookups retain mailbox, worker and node byte admission. A refused mutation has
+no new ledger outcome and cannot join a mutating native group.
 Local LTX bodies remain charged to the disk budget; publication's RAM reservation
 covers shared encoder indexes, descriptor/path copies, and retained outcomes.
 The physical pending-byte high water and node-log coverage counters still count

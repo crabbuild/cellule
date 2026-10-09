@@ -1,10 +1,13 @@
 # Node write and read performance design
 
-The latest [historical-read experiment](../../../docs/pr67-historical-read-measurement.md)
+The [historical-read experiment](../../../docs/pr67-historical-read-measurement.md)
 is withdrawn: grouping historical requests passes its isolated regression but
 regresses Fleet completion from 201.82 to 18.18 writes/s and fails ACK availability.
-Production code returns to `11843f6`. Reuse bounded working credit and reproduce
-resource-ledger pressure before accepting another publication optimization.
+The subsequent [receipt admission verification](../../../docs/pr67-receipt-admission-measurement.md)
+fixes a reproduced producer pressure failure, but completes only 154.72 Fleet
+writes/s and fails ACK availability. Resource policies in the celld comparison
+are asymmetric. Reuse bounded working credit and qualify the original
+application workload before accepting another publication optimization.
 
 Status: implementation in progress. The application path is not qualified at
 the targets below. Component I/O reductions are not application TPS.

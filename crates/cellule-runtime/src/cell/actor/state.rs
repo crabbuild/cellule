@@ -162,6 +162,9 @@ pub(super) enum Message {
 
 pub(super) struct QueuedCommand {
     pub(super) group: Option<CommandGroup>,
+    // Pressure may admit only an original durable outcome lookup. An absent
+    // identity returns this refusal without invoking the mutation handler.
+    pub(super) refused_mutation: Option<Error>,
     pub(super) trace: tracing::Span,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) queued_at: std::time::Instant,

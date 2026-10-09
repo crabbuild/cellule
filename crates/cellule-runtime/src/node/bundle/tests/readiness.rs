@@ -15,11 +15,11 @@ use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-struct DelayedSelection {
-    authority: Arc<Authority>,
-    held: AtomicBool,
-    entered: tokio::sync::Notify,
-    changed: tokio::sync::Notify,
+pub(super) struct DelayedSelection {
+    pub(super) authority: Arc<Authority>,
+    pub(super) held: AtomicBool,
+    pub(super) entered: tokio::sync::Notify,
+    pub(super) changed: tokio::sync::Notify,
 }
 
 impl NodeBundleAuthority for DelayedSelection {

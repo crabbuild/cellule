@@ -26,6 +26,7 @@ mod readiness;
 mod receipt_pressure;
 mod receipts;
 mod recovery;
+mod replay_pressure;
 struct Fixture {
     count: Arc<CountingObjectStore>,
     layout: CellStorageLayout,
