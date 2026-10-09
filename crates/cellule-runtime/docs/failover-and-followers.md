@@ -282,11 +282,15 @@ set, activation bit, contiguous object watermark, and renewable recovery claim.
 
 **Shipper.** `NodeLogShipper`:
 
-- Reserves encoded bytes before assigning a sequence.
+- Reserves capture bytes and bounded queue bookkeeping before assigning a sequence.
 - Multiplexes accepted cuts in submission order.
 - Batches for at most one millisecond or 64 frames.
-- Sends each batch to every member concurrently.
-- Advances the gate only after all receipts cover the batch.
+- Enqueues each batch synchronously into every member's ordered FIFO, with at
+  most eight original rounds in flight. Member I/O progresses independently.
+- Groups already queued adjacent requests into one canonical follower append,
+  preserving the 64-frame and native-byte limits and safe coverage watermark.
+- Applies credits in original round order, only after all receipts cover that
+  round. A grouped higher watermark cannot skip an unresolved earlier round.
 - Stops fleet issuance for that epoch on any encoding, transport, or receipt
   failure, while its tickets remain eligible for object proof and covered
   rotation.
@@ -294,17 +298,23 @@ set, activation bit, contiguous object watermark, and renewable recovery claim.
 `NodeDurability::take_publication_feed` installs one ordered consumer before
 the original epoch issues any frames. Each `AssignedCapture` retains its exact
 complete assignment and verified frames under the shipper's existing byte
-admission. The 512-submission queue reserves space before sequence issuance;
-cancellation or a full queue cannot leave an issued gap. A capture larger than
+admission. Publication has no separate submission-slot wait under the global
+ordering lock. Its FIFO and member I/O retain the original native credit;
+exhausted byte credit blocks before issuance. Capture control allocations and
+member frame-vector copies consume that same original window. A capture larger than
 64 frames remains one complete witness even when follower transport splits it.
-Shutdown closes admission, wakes blocked producers and lets the feed drain
-accepted captures. The host must join selection or verified fallback for all
+Shutdown closes admission, wakes blocked producers and joins every accepted
+member append. Cancelling a shutdown waiter does not permit a later join to
+return before the original worker and member tasks finish. The feed can drain
+accepted captures; the host must join selection or verified fallback for all
 of them before retiring the epoch.
 
-This feed grants no publication authority or response proof. Ordinary actor
-bundle ACKs remain disabled until shared selection, visibility, capture release
-and complete issued-range drain are integrated. The example application does
-not install the feed yet; this API alone is not a measured throughput gain.
+This feed grants no publication authority or response proof. The Fleet SQL
+example installs the managed producer before activation. Actor bundle responses
+require its original dependency-verified selection receipt and exact capture
+match; absent or late coverage uses the canonical root path. The Bucket-only
+performance fixture bypasses this producer. Native pipeline tests alone do not
+establish application throughput, sustained publication capacity or qualification.
 
 **Ensemble directory.** It filters live peers by protocol, pressure, and the
 exact shared-disk capacity advertised by their follower stores:

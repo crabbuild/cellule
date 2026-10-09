@@ -72,6 +72,18 @@ capacity contract does not turn a failed earlier profile into a passing one.
 
 ## Canonical write path
 
+The current native candidate removes publication-slot waits from global
+issuance. Capture bodies, control allocations and member frame-vector copies
+consume the original native byte window before a ticket commits; publication
+and accepted member I/O keep that credit through their original lifetimes.
+Eight original rounds can overlap in per-member FIFO lanes, with ordered credit
+application and bounded grouping into canonical follower append/fsync. Every
+lane joins before epoch shutdown, including after cancellation of a join waiter.
+This changes native execution; the bundle publisher still runs expensive
+selection cohorts serially. Publication staging, reduced repeated verification
+and complete application performance qualification remain required. Component
+passes establish no new TPS claim.
+
 ```mermaid
 flowchart LR
     A[Bounded admission before SQL] --> B[Mutation and retry result commit together]

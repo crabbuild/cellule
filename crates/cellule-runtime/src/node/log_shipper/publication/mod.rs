@@ -109,12 +109,13 @@ impl AssignedCapture {
 
 /// Sole ordered consumer for this original native epoch's publication work.
 ///
-/// Complete captures share the shipper's outstanding-byte limit and a queue of
-/// at most 512 submissions. Receiving does not release admission: the consumer
+/// Complete captures and their bookkeeping share the shipper's outstanding-byte
+/// limit. Receiving does not release admission: the consumer
 /// retains each value through joined selection or verified object fallback.
-/// A slow consumer applies backpressure before new sequence issuance.
+/// Publication has no independent slot wait in the global issuance lane;
+/// exhausted native byte credit applies backpressure before that lane.
 pub struct NodePublicationFeed {
-    receiver: mpsc::Receiver<AssignedCapture>,
+    receiver: mpsc::UnboundedReceiver<AssignedCapture>,
     stopping: watch::Receiver<bool>,
 }
 
@@ -142,22 +143,23 @@ impl NodePublicationFeed {
 
 #[derive(Default)]
 pub(super) struct PublicationState {
-    sender: OnceLock<Mutex<Option<mpsc::Sender<AssignedCapture>>>>,
+    sender: OnceLock<Mutex<Option<mpsc::UnboundedSender<AssignedCapture>>>>,
 }
 
 impl PublicationState {
     pub(super) fn take_feed(&self, stopping: watch::Receiver<bool>) -> Result<NodePublicationFeed> {
-        let (sender, receiver) = mpsc::channel(MAX_QUEUED_SUBMISSIONS);
+        // Every queued value owns charged native credit, including control and
+        // frame-vector bookkeeping. The byte window bounds this FIFO even when
+        // the origin publisher is held; a second slot budget would couple Fleet
+        // progress to bucket latency again.
+        let (sender, receiver) = mpsc::unbounded_channel();
         self.sender
             .set(Mutex::new(Some(sender)))
             .map_err(|_| Error::Node("node publication feed already installed"))?;
         Ok(NodePublicationFeed { receiver, stopping })
     }
 
-    pub(super) async fn reserve(
-        &self,
-        stopping: &watch::Sender<bool>,
-    ) -> Result<Option<mpsc::OwnedPermit<AssignedCapture>>> {
+    pub(super) fn sender(&self) -> Result<Option<mpsc::UnboundedSender<AssignedCapture>>> {
         let Some(sender) = self.sender.get() else {
             return Ok(None);
         };
@@ -166,14 +168,10 @@ impl PublicationState {
             .map_err(|_| Error::Node("node publication feed lock poisoned"))?
             .clone()
             .ok_or(Error::RuntimeClosed)?;
-        let mut stopping = stopping.subscribe();
-        if *stopping.borrow() {
+        if sender.is_closed() {
             return Err(Error::RuntimeClosed);
         }
-        tokio::select! {
-            permit = sender.reserve_owned() => permit.map(Some).map_err(|_| Error::RuntimeClosed),
-            _ = stopping.changed() => Err(Error::RuntimeClosed),
-        }
+        Ok(Some(sender))
     }
 
     pub(super) fn close(&self) -> Result<()> {
@@ -185,4 +183,26 @@ impl PublicationState {
         }
         Ok(())
     }
+}
+
+/// Body and bounded capture/queue control allocations consume the same original
+/// byte window. The fixed allowance covers watch/Arc/channel bookkeeping;
+/// frame vectors are charged by their concrete element sizes. No independent
+/// count limit or larger native window is introduced.
+pub(super) fn retained_bytes(body: u64, frames: u64, members: usize) -> Result<u64> {
+    let member_vectors = members
+        .checked_mul(std::mem::size_of::<Bytes>() + std::mem::size_of::<Arc<OutstandingBytes>>())
+        .ok_or(Error::Capacity("node-log retained member bytes"))?;
+    let control = (members as u64)
+        .checked_mul(128)
+        .and_then(|bytes| bytes.checked_add(1024))
+        .ok_or(Error::Capacity("node-log retained member bytes"))?;
+    let per_frame = 2 * std::mem::size_of::<cellule_ltx::VerifiedNodeFrame>()
+        + std::mem::size_of::<QueuedFrame>()
+        + member_vectors;
+    frames
+        .checked_mul(per_frame as u64)
+        .and_then(|metadata| metadata.checked_add(control))
+        .and_then(|metadata| body.checked_add(metadata))
+        .ok_or(Error::Capacity("node-log retained capture bytes"))
 }

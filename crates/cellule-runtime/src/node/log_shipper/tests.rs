@@ -14,6 +14,7 @@ struct RecordingTransport {
     fail: Option<NodeId>,
     delay: Option<Duration>,
     receipt: Option<FollowerReceipt>,
+    held: Option<(NodeId, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 #[derive(Default)]
@@ -83,6 +84,7 @@ impl RecordingTransport {
             fail: Some(member),
             delay: None,
             receipt: None,
+            held: None,
         }
     }
 
@@ -92,6 +94,7 @@ impl RecordingTransport {
             fail: None,
             delay: Some(delay),
             receipt: None,
+            held: None,
         }
     }
 
@@ -113,6 +116,16 @@ impl NodeLogTransport for RecordingTransport {
         request: AppendRequest,
     ) -> BoxFuture<'a, Result<FollowerReceipt>> {
         Box::pin(async move {
+            if let Some((held, entered, release)) = &self.held
+                && member == *held
+                && request.frames.first().is_some_and(|frame| {
+                    cellule_ltx::inspect_node_frame(frame.clone(), cellule_ltx::Limits::default())
+                        .is_ok_and(|frame| frame.scope().node_sequence == 1)
+                })
+            {
+                entered.notify_one();
+                release.notified().await;
+            }
             if self.fail == Some(member) {
                 return Err(Error::Node("injected follower failure"));
             }
@@ -356,11 +369,16 @@ async fn splits_large_submission_at_sixty_four_frames() {
     );
     shipper.shutdown().await.unwrap();
     assert!(publication.recv().await.is_none());
-    let retained = capture
-        .frames()
-        .iter()
-        .map(|frame| frame.encoded().len())
-        .sum::<usize>();
+    let retained = publication::retained_bytes(
+        capture
+            .frames()
+            .iter()
+            .map(|frame| frame.encoded().len() as u64)
+            .sum(),
+        capture.frames().len() as u64,
+        1,
+    )
+    .unwrap() as usize;
     assert_eq!(
         shipper.bytes.available_permits(),
         shipper.max_outstanding_bytes as usize - retained
@@ -392,42 +410,99 @@ fn publication_submission(cuts: &cellule_ltx::CaptureBatch, index: u64) -> NodeL
 }
 
 #[tokio::test]
-async fn cancelled_full_publication_queue_does_not_issue_a_native_gap() {
+async fn publication_backlog_does_not_block_follower_issuance_with_byte_credit() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    gate.activate_fleet().unwrap();
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        Arc::new(RecordingTransport::default()),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let mut feed = shipper.take_publication_feed().unwrap();
+    for index in 0..512 {
+        let ticket = shipper
+            .submit(publication_submission(&cuts, index))
+            .await
+            .unwrap();
+        gate.wait_followers(ticket).await.unwrap();
+    }
+    assert!(shipper.bytes.available_permits() > submission(&cuts).encoded_bytes as usize);
+    let next = tokio::time::timeout(
+        Duration::from_millis(100),
+        shipper.submit(publication_submission(&cuts, 512)),
+    )
+    .await;
+    if let Ok(Ok(ticket)) = next.as_ref() {
+        gate.wait_followers(*ticket).await.unwrap();
+    }
+    shipper.shutdown().await.unwrap();
+    let mut accepted = 0;
+    while let Some(capture) = feed.recv().await {
+        accepted += 1;
+        assert_eq!(capture.assignment().ticket().first_sequence(), accepted);
+        capture.assignment().verify(capture.frames()).unwrap();
+    }
+    assert!(
+        matches!(next, Ok(Ok(_))),
+        "available native byte credit must let followers advance while publication is paused"
+    );
+    assert_eq!(accepted, 513);
+    assert_eq!(
+        shipper.bytes.available_permits(),
+        shipper.max_outstanding_bytes as usize
+    );
+}
+
+#[tokio::test]
+async fn cancelled_full_native_byte_window_does_not_issue_a_native_gap() {
     let (_directory, cuts) = capture();
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
     gate.activate_fleet().unwrap();
     let telemetry = Arc::new(RecordingTelemetry::default());
+    let limits = cellule_ltx::Limits {
+        max_capture_bytes: cuts.segments[0].info().size_bytes * 16,
+        ..cellule_ltx::Limits::default()
+    };
+    let charge = publication::retained_bytes(
+        submission(&cuts).encoded_bytes,
+        cuts.segments.len() as u64,
+        1,
+    )
+    .unwrap();
+    let accepted = NodeLogShipper::validate_limits(limits).unwrap().0 / charge;
     let shipper = NodeLogShipper::new_with_telemetry(
         gate.clone(),
         Arc::new(RecordingTransport::default()),
-        cellule_ltx::Limits::default(),
+        limits,
         crate::fleet::telemetry::CellTelemetryHandle::from_sink(telemetry.clone()),
     )
     .unwrap();
     let mut feed = shipper.take_publication_feed().unwrap();
     assert!(shipper.take_publication_feed().is_err());
-    for index in 0..MAX_QUEUED_SUBMISSIONS as u64 {
+    for index in 0..accepted {
         shipper
             .submit(publication_submission(&cuts, index))
             .await
             .unwrap();
     }
-    assert_eq!(gate.issued_through(), 512);
-    let blocked = shipper.submit(publication_submission(&cuts, 512));
+    assert_eq!(gate.issued_through(), accepted);
+    let blocked = shipper.submit(publication_submission(&cuts, accepted));
     assert!(
         tokio::time::timeout(Duration::from_millis(25), blocked)
             .await
             .is_err()
     );
-    assert_eq!(gate.issued_through(), 512);
+    assert_eq!(gate.issued_through(), accepted);
     {
         let observed = telemetry.submissions.lock().unwrap();
-        assert_eq!(observed.len(), 513);
+        assert_eq!(observed.len() as u64, accepted + 1);
         let (cell, blocked) = observed.last().unwrap();
-        assert_eq!(*cell, publication_submission(&cuts, 512).cell);
+        assert_eq!(*cell, publication_submission(&cuts, accepted).cell);
         assert!(blocked.cancelled);
         assert!(!blocked.succeeded);
-        assert!(blocked.publication_slot > Duration::ZERO);
+        assert!(blocked.native_bytes > Duration::ZERO);
         for (_, timing) in observed.iter() {
             assert_eq!(
                 timing.validation
@@ -449,13 +524,13 @@ async fn cancelled_full_publication_queue_does_not_issue_a_native_gap() {
     first.assignment().verify(first.frames()).unwrap();
     drop(first);
     let next = shipper
-        .submit(publication_submission(&cuts, 512))
+        .submit(publication_submission(&cuts, accepted))
         .await
         .unwrap();
-    assert_eq!(next.first_sequence(), 513);
+    assert_eq!(next.first_sequence(), accepted + 1);
     gate.wait_followers(next).await.unwrap();
     shipper.shutdown().await.unwrap();
-    for expected in 2..=513 {
+    for expected in 2..=accepted + 1 {
         let capture = feed.recv().await.unwrap();
         assert_eq!(capture.assignment().ticket().first_sequence(), expected);
         capture.assignment().verify(capture.frames()).unwrap();
@@ -468,50 +543,52 @@ async fn cancelled_full_publication_queue_does_not_issue_a_native_gap() {
 }
 
 #[tokio::test]
-async fn shutdown_wakes_full_publication_admission_and_joins_accepted_frames() {
+async fn shutdown_wakes_full_native_byte_admission_and_joins_accepted_frames() {
     let (_directory, cuts) = capture();
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
     let transport = Arc::new(RecordingTransport::default());
-    let shipper = Arc::new(
-        NodeLogShipper::new(
-            gate.clone(),
-            transport.clone(),
-            cellule_ltx::Limits::default(),
-        )
-        .unwrap(),
-    );
+    let limits = cellule_ltx::Limits {
+        max_capture_bytes: cuts.segments[0].info().size_bytes * 16,
+        ..cellule_ltx::Limits::default()
+    };
+    let charge = publication::retained_bytes(
+        submission(&cuts).encoded_bytes,
+        cuts.segments.len() as u64,
+        1,
+    )
+    .unwrap();
+    let accepted = NodeLogShipper::validate_limits(limits).unwrap().0 / charge;
+    let shipper = Arc::new(NodeLogShipper::new(gate.clone(), transport.clone(), limits).unwrap());
     let mut feed = shipper.take_publication_feed().unwrap();
-    for index in 0..MAX_QUEUED_SUBMISSIONS as u64 {
+    for index in 0..accepted {
         shipper
             .submit(publication_submission(&cuts, index))
             .await
             .unwrap();
     }
-    let next = publication_submission(&cuts, 512);
-    let running = Arc::clone(&shipper);
-    let blocked = tokio::spawn(async move { running.submit(next).await });
-    // The ordered lane is held only after native loading, while the full
-    // publication queue refuses a slot. Observe that actual blocked state.
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while shipper.order.try_lock().is_ok() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    let next = publication_submission(&cuts, accepted);
+    let blocked = shipper.submit(next);
+    tokio::pin!(blocked);
+    // Poll the actual admission waiter. A full byte window cannot hold the
+    // global ordering lock or issue a ticket while this future is pending.
+    assert!(futures_util::poll!(blocked.as_mut()).is_pending());
+    assert!(shipper.order.try_lock().is_ok());
     tokio::time::timeout(Duration::from_secs(1), shipper.shutdown())
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(blocked.await.unwrap(), Err(Error::RuntimeClosed)));
-    assert_eq!(gate.issued_through(), 512);
+    assert!(matches!(blocked.await, Err(Error::RuntimeClosed)));
+    assert_eq!(gate.issued_through(), accepted);
     let mut captures = 0;
     while let Some(capture) = feed.recv().await {
         captures += 1;
         capture.assignment().verify(capture.frames()).unwrap();
     }
-    assert_eq!(captures, 512);
-    assert_eq!(transport.batch_sizes(node(2)).iter().sum::<usize>(), 512);
+    assert_eq!(captures, accepted);
+    assert_eq!(
+        transport.batch_sizes(node(2)).iter().sum::<usize>() as u64,
+        accepted
+    );
 }
 
 #[tokio::test]
@@ -577,9 +654,14 @@ async fn covered_queued_prefix_keeps_the_uncovered_suffix_fleet_durable() {
         })
         .collect();
 
-    append_batch(&gate, transport, leader, 2, &[member], batch)
-        .await
-        .unwrap();
+    let lanes = replication::MemberLanes::start(transport, leader, 2, vec![member], 1 << 30);
+    let round = lanes.enqueue(batch, gate.tiered_through()).unwrap().await;
+    assert!(complete_round(
+        &gate,
+        &crate::fleet::telemetry::CellTelemetryHandle::default(),
+        round,
+    ));
+    lanes.join().await.unwrap();
 
     assert_eq!(
         gate.prove(second).await.unwrap().source(),
@@ -774,4 +856,136 @@ async fn encoding_failure_does_not_consume_a_node_sequence() {
         crate::node::log::DurabilitySource::Fleet
     );
     shipper.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn ordered_member_lanes_advance_independently_and_group_queued_rounds() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2), node(3)]).unwrap();
+    gate.activate_fleet().unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let transport = Arc::new(RecordingTransport {
+        held: Some((node(2), entered.clone(), release.clone())),
+        ..RecordingTransport::default()
+    });
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let first = shipper
+        .submit(publication_submission(&cuts, 0))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.notified())
+        .await
+        .unwrap();
+    let mut tickets = vec![first];
+    let mut independent = true;
+    for index in 1..=5 {
+        let ticket = shipper
+            .submit(publication_submission(&cuts, index))
+            .await
+            .unwrap();
+        tickets.push(ticket);
+        let progress = tokio::time::timeout(Duration::from_millis(100), async {
+            loop {
+                let reached =
+                    transport
+                        .batches
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|(member, sequences)| {
+                            *member == node(3)
+                                && sequences
+                                    .last()
+                                    .is_some_and(|last| *last >= ticket.last_sequence())
+                        });
+                if reached {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        if progress.is_err() {
+            independent = false;
+            break;
+        }
+    }
+    // A fast member alone grants no Fleet proof past the held original round.
+    let unproven = tokio::time::timeout(Duration::from_millis(10), gate.wait_followers(first))
+        .await
+        .is_err();
+    release.notify_one();
+    for ticket in tickets {
+        gate.wait_followers(ticket).await.unwrap();
+    }
+    shipper.shutdown().await.unwrap();
+    assert!(
+        independent,
+        "a slow member must not prevent the other ordered lane from accepting later rounds"
+    );
+    assert!(unproven);
+    assert_eq!(transport.batch_sizes(node(2)), [1, 5]);
+    assert_eq!(transport.batch_sizes(node(3)), [1, 1, 1, 1, 1, 1]);
+}
+
+#[tokio::test]
+async fn cancelled_shutdown_waiter_does_not_make_a_later_join_complete_early() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let transport = Arc::new(RecordingTransport {
+        held: Some((node(2), entered.clone(), release.clone())),
+        ..RecordingTransport::default()
+    });
+    let shipper =
+        Arc::new(NodeLogShipper::new(gate, transport, cellule_ltx::Limits::default()).unwrap());
+    shipper.submit(submission(&cuts)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.notified())
+        .await
+        .unwrap();
+    let closing = shipper.clone();
+    let waiter = tokio::spawn(async move { closing.shutdown().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while shipper.worker.lock().unwrap().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    waiter.abort();
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    let next = shipper.shutdown();
+    tokio::pin!(next);
+    let premature = match futures_util::poll!(next.as_mut()) {
+        std::task::Poll::Ready(result) => {
+            result.unwrap();
+            true
+        }
+        std::task::Poll::Pending => false,
+    };
+    release.notify_one();
+    if !premature {
+        tokio::time::timeout(Duration::from_secs(1), next)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while shipper.bytes.available_permits() != shipper.max_outstanding_bytes as usize {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        !premature,
+        "a cancelled join waiter cannot manufacture a later successful shutdown before accepted member I/O finishes"
+    );
 }
