@@ -109,8 +109,13 @@ feed and admitted proof; the new connection is experimental and unqualified.
 The original SQL/capture/submission jobs must join before `close_cell_issuance`.
 Its ordered gate prevents late assignment from consuming a node sequence. The
 legacy identity-free `DurabilityGate::issue` cannot produce a per-Cell closure:
-using it makes that closure fail closed. Managed close now waits for the complete
+using it makes that closure fail closed. Managed close waits for the complete
 issued producer prefix and joins exact checkpoint callbacks before Cell departure.
+After that prefix joins, at most eight close callbacks may enter the provider's
+shared authority mutex queue. This bounds callbacks ahead of heartbeat renewal
+during a population-wide drain. Lease fencing wakes callers outside the callback
+cohort; cancellation returns admission while retaining frozen issuance. The
+bound does not shorten an individual provider operation.
 Failed-actor closure and sustained materializer progress remain unqualified.
 
 ```mermaid

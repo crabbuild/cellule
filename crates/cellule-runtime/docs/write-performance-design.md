@@ -257,7 +257,10 @@ uses the original root path. A later cohort's proof can now be narrowed only by
 the original complete-capture assignment, including its exact descriptors and
 body digests. Materialized roots join the managed checkpoint callback before
 releasing their publisher; Cell close waits for the complete original issued
-prefix, including prior Fleet ACKs. The producer's task and failure cause also
+prefix, including prior Fleet ACKs. After prefix joining, an eight-callback
+admission bounds the provider authority mutex queue ahead of lease renewal.
+Fencing wakes outside waiters; cancellation returns callback admission without
+reopening frozen issuance. The producer's task and failure cause also
 join at epoch shutdown. This provides fair selection/checkpoint turns, not a
 fair node materializer scheduler or the 215-command checkpoint density target.
 

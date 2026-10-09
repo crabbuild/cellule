@@ -11,6 +11,8 @@ use crate::node::log_transport::{
     AppendRequest, NodeLogTransport, RetireRequest, SealRequest, TailRequest,
 };
 
+mod closure;
+
 #[derive(Default)]
 struct AuthorityState {
     activations: Vec<u64>,

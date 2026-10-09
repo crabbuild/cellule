@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::{Mutex, OnceCell, Semaphore};
 
 use crate::identity::NodeId;
 use crate::identity::SessionId;
@@ -21,10 +21,14 @@ mod publication;
 pub use publication::{BundleCheckpoint, NodeBundlePublicationAuthority};
 mod receipts;
 
+const MAX_BUNDLE_CLOSE_CALLBACKS: usize = 8;
+
 /// Original node authority used to enroll and close the Cells of an installed
 /// shared publication feed. Implementations serialize these mutations and shared
 /// selection with their original heartbeat/enrollment state. The host owns and
 /// joins the feed; the runtime still verifies Cell departure against origin.
+/// Runtime close callbacks enter in cohorts of at most eight, after their
+/// complete issued producer prefix joins, to bound the authority's renewal queue.
 pub trait NodeBundleAuthority: Send + Sync {
     /// Pins the Serving Cell before its SQL admission opens.
     fn bind<'a>(
@@ -197,6 +201,7 @@ pub struct NodeDurability {
     closed: std::sync::atomic::AtomicBool,
     selection_resources: std::sync::OnceLock<crate::fleet::resource::ResourceLedger>,
     bundle_authority: std::sync::OnceLock<Arc<dyn NodeBundleAuthority>>,
+    bundle_closures: Semaphore,
     publisher: std::sync::OnceLock<publication::Publisher>,
 }
 
@@ -246,6 +251,7 @@ impl NodeDurability {
             closed: std::sync::atomic::AtomicBool::new(false),
             selection_resources: std::sync::OnceLock::new(),
             bundle_authority: std::sync::OnceLock::new(),
+            bundle_closures: Semaphore::new(MAX_BUNDLE_CLOSE_CALLBACKS),
             publisher: std::sync::OnceLock::new(),
         }
     }
@@ -444,6 +450,16 @@ impl NodeDurability {
         if let Some(publisher) = self.publisher.get() {
             publisher.wait_through(issued.last_node_sequence()).await?;
         }
+        // Thousands of actors may close together. Bound callbacks queued on
+        // the provider's shared FIFO authority mutex so lease refresh does not
+        // wait behind the whole Cell population. Prefix joining precedes this
+        // admission: callbacks/checkpoints needed to drain it retain progress.
+        // Cancellation returns the permit, never reopens frozen issuance.
+        let _callback = tokio::select! {
+            result = self.bundle_closures.acquire() => result.map_err(|_| Error::RuntimeClosed)?,
+            () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
+        };
+        self.node_lease.check()?;
         bundle.close(authority, observed, issued).await?;
         self.node_lease.check()
     }
