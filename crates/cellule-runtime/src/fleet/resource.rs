@@ -491,6 +491,21 @@ pub(crate) struct ResourceReservation {
 }
 
 impl ResourceReservation {
+    /// Transfers already admitted memory to an independently owned lifetime.
+    /// Total ledger usage is unchanged; this cannot admit after publication.
+    pub(crate) fn split_retained(&mut self, bytes: usize) -> Result<Self> {
+        let remaining = self
+            .cost
+            .retained_bytes
+            .checked_sub(bytes)
+            .ok_or(Error::Capacity("retained transfer exceeds admission"))?;
+        self.cost.retained_bytes = remaining;
+        Ok(Self {
+            ledger: self.ledger.clone(),
+            cost: ResourceCost::zero().with_retained_bytes(bytes),
+        })
+    }
+
     /// Returns only memory whose owned capture indexes have already been dropped.
     pub(crate) fn shrink_retained(&mut self, bytes: usize) -> Result<()> {
         let released = self
@@ -626,6 +641,25 @@ impl cellule_ltx::HostResourceAdmission for LedgerHostResourceAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_transfer_preserves_usage_until_each_owner_releases() {
+        let cost = ResourceCost::active_cell().with_retained_bytes(128);
+        let ledger = ResourceLedger::new(cost);
+        let mut source = ledger.try_reserve(cost).unwrap();
+        let mut checkpoint = source.split_retained(96).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used, cost);
+        assert!(source.split_retained(33).is_err());
+        checkpoint.shrink_retained(16).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 48);
+        drop(source);
+        assert_eq!(
+            ledger.snapshot().unwrap().used,
+            ResourceCost::zero().with_retained_bytes(16)
+        );
+        drop(checkpoint);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
 
     #[test]
     fn capture_cleanup_returns_only_released_memory_and_preserves_outcome_admission() {

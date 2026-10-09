@@ -815,11 +815,17 @@ impl SqlWorkerPool {
         &self,
         cell: CellId,
         root: cellule_ltx::RootRef,
+        retained: ResourceReservation,
     ) -> Result<()> {
         let (reply, response) = oneshot::channel();
         self.send(
             cell,
-            WorkerCommand::BindBundleMaterialized { cell, root, reply },
+            WorkerCommand::BindBundleMaterialized {
+                cell,
+                root,
+                retained,
+                reply,
+            },
         )
         .await?;
         receive(response).await
@@ -1307,6 +1313,7 @@ enum WorkerCommand {
     BindBundleMaterialized {
         cell: CellId,
         root: cellule_ltx::RootRef,
+        retained: ResourceReservation,
         reply: oneshot::Sender<Result<()>>,
     },
     ConfirmBootstrapPublished {

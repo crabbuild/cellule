@@ -1,6 +1,99 @@
 use super::*;
 
 #[tokio::test]
+async fn checkpoint_continuation_preserves_receipts_from_an_intermediate_base() {
+    let mut f = Fixture::new().await;
+    let mut cell = f.cell(4).await;
+    macro_rules! select {
+        ($sequence:literal) => {{
+            let (_, frames, assigned) = f.append(&mut cell, $sequence);
+            let proposal = f
+                .directory
+                .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+                .await
+                .unwrap();
+            let (node, mut proofs) = f
+                .directory
+                .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
+                .await
+                .unwrap();
+            f.node = node;
+            proofs.pop().unwrap()
+        }};
+    }
+    let first = select!(2);
+    let old_receipt = select!(3);
+    let mut publisher = f.publisher(&cell);
+    let root = publisher.materialize_bundle(&first).await.unwrap();
+    let checkpoint = first.materialized_prefix(root, None).unwrap();
+    f.node = f
+        .directory
+        .checkpoint_bundle_cell(&f.node, &cell.authority, &first, Limits::default(), NOW)
+        .await
+        .unwrap();
+    let intermediate_receipt = select!(4);
+    intermediate_receipt
+        .continues_selected_prefix(&old_receipt, Some(&checkpoint))
+        .unwrap();
+    // The materializer still owns an older receipt, while new captures have
+    // already been selected against the first checkpoint's base.
+    let next_root = publisher.materialize_bundle(&old_receipt).await.unwrap();
+    assert!(
+        old_receipt
+            .materialized_prefix(root, Some(&checkpoint))
+            .is_err()
+    );
+    let next_checkpoint = old_receipt
+        .materialized_prefix(next_root, Some(&checkpoint))
+        .unwrap();
+    f.node = f
+        .directory
+        .checkpoint_bundle_cell(
+            &f.node,
+            &cell.authority,
+            &old_receipt,
+            Limits::default(),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let latest = select!(5);
+    latest
+        .continues_selected_prefix(&intermediate_receipt, Some(&next_checkpoint))
+        .unwrap();
+    let third_root = publisher
+        .materialize_bundle(&intermediate_receipt)
+        .await
+        .unwrap();
+    let third_checkpoint = intermediate_receipt
+        .materialized_prefix(third_root, Some(&next_checkpoint))
+        .unwrap();
+    f.node = f
+        .directory
+        .checkpoint_bundle_cell(
+            &f.node,
+            &cell.authority,
+            &intermediate_receipt,
+            Limits::default(),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let newest = select!(6);
+    newest
+        .continues_selected_prefix(&latest, Some(&third_checkpoint))
+        .unwrap();
+    assert!(
+        newest
+            .continues_selected_prefix(&latest, Some(&next_checkpoint))
+            .is_err()
+    );
+    assert!(
+        third_checkpoint.retained_bytes() <= MaterializedBundlePrefix::maximum_retained_bytes()
+    );
+}
+
+#[tokio::test]
 async fn checkpoint_uses_the_exact_materialized_proof_without_scanning_siblings_or_old_frames() {
     let mut f = Fixture::new().await;
     let mut cell = f.cell(4).await;
@@ -26,11 +119,13 @@ async fn checkpoint_uses_the_exact_materialized_proof_without_scanning_siblings_
         .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
         .await
         .unwrap();
-    let (node, _) = f
+    let (node, mut extended_proofs) = f
         .directory
         .select_node_bundle(&f.node, &proposal, &f.lease, Limits::default(), NOW)
         .await
         .unwrap();
+    let extended = extended_proofs.pop().unwrap();
+    extended.continues_selected_prefix(&old, None).unwrap();
     f.node = node;
     f.count.reset();
     let checkpoint = f
@@ -70,7 +165,7 @@ async fn checkpoint_uses_the_exact_materialized_proof_without_scanning_siblings_
         .await
         .unwrap()
         .unwrap();
-    let suffix = f
+    let mut suffix = f
         .directory
         .load_bundle_coverage(&cell.authority, &current, Limits::default())
         .await
@@ -78,6 +173,44 @@ async fn checkpoint_uses_the_exact_materialized_proof_without_scanning_siblings_
     assert_eq!(suffix.base().unwrap(), materialized);
     assert_eq!(suffix.commit_sequence(), 3);
     assert_eq!(suffix.locator_count(), frames.len());
+    let confirmed = old.materialized_prefix(materialized, None).unwrap();
+    assert!(suffix.continues_selected_prefix(&extended, None).is_err());
+    suffix
+        .continues_selected_prefix(&extended, Some(&confirmed))
+        .unwrap();
+    let mut foreign_root = materialized;
+    foreign_root.digest[0] ^= 1;
+    let foreign = old.materialized_prefix(foreign_root, None).unwrap();
+    assert!(
+        suffix
+            .continues_selected_prefix(&extended, Some(&foreign))
+            .is_err()
+    );
+    let retained = suffix.binding.locators.clone();
+    suffix.binding.locators.clear();
+    assert!(
+        suffix
+            .continues_selected_prefix(&extended, Some(&confirmed))
+            .is_err(),
+        "the confirmed root cannot erase its later selected suffix"
+    );
+    suffix.binding.locators = retained.clone();
+    suffix.binding.locators[0].frame_digest = Digest::from_bytes([7; 32]);
+    assert!(
+        suffix
+            .continues_selected_prefix(&extended, Some(&confirmed))
+            .is_err(),
+        "retained debt must be byte-identical"
+    );
+    suffix.binding.locators = retained;
+    let mut changed_prefix = extended;
+    changed_prefix.binding.locators[0].frame_digest = Digest::from_bytes([6; 32]);
+    assert!(
+        suffix
+            .continues_selected_prefix(&changed_prefix, Some(&confirmed))
+            .is_err(),
+        "the materialized original prefix must match its witness"
+    );
 }
 
 #[tokio::test]

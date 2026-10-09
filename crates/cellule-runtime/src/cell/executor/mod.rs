@@ -298,6 +298,10 @@ pub struct CellExecutor {
     pending_bytes: u64,
     published_sequence: u64,
     bundle_materialization: Option<std::sync::Arc<crate::node::log_shipper::SelectedBundle>>,
+    bundle_checkpoint: Option<(
+        crate::node::bundle::MaterializedBundlePrefix,
+        crate::fleet::resource::ResourceReservation,
+    )>,
     pending_migration: Option<PendingMigration>,
     fenced: bool,
 }
@@ -351,6 +355,7 @@ impl CellExecutor {
             pending_bytes: 0,
             published_sequence: 0,
             bundle_materialization: None,
+            bundle_checkpoint: None,
             pending_migration: None,
             fenced: false,
         }

@@ -40,11 +40,13 @@ use bytes::Bytes;
 mod binding;
 mod closure;
 mod codec;
+mod continuation;
 mod index;
 mod origin;
 mod proof;
 pub(crate) mod recovery;
 mod selection;
+pub(crate) use continuation::MaterializedBundlePrefix;
 #[cfg(test)]
 use proof::checkpoint_prefix;
 use proof::verify_base;
@@ -159,31 +161,8 @@ pub struct BundleCoverageProof {
     // Cold reconstruction must never revive the original process's ACK gate.
     live: Option<selection::LiveBundleCoverage>,
 }
-impl BundleCoverageProof {
-    pub(crate) fn continues_selected_prefix(&self, previous: &Self) -> Result<()> {
-        if self.pin != previous.pin
-            || self.session != previous.session
-            || self.head.epoch != previous.head.epoch
-            || self.binding.application != previous.binding.application
-            || self.binding.control.cell != previous.binding.control.cell
-            || self.binding.control.incarnation != previous.binding.control.incarnation
-            || self.binding.control.epoch != previous.binding.control.epoch
-            || self.binding.control.code != previous.binding.control.code
-            || self.binding.control.schema != previous.binding.control.schema
-            || self.base()? != previous.base()?
-            || self.binding.selected_commit < previous.binding.selected_commit
-            || !self
-                .binding
-                .locators
-                .starts_with(&previous.binding.locators)
-        {
-            return Err(Error::Control(
-                "selected bundle does not continue root debt",
-            ));
-        }
-        Ok(())
-    }
 
+impl BundleCoverageProof {
     pub(crate) fn check_live_assignment(
         &self,
         assignment: &crate::node::log::AssignedCommitRange,

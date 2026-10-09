@@ -388,6 +388,12 @@ retries retain the existing grace; shutdown joins accepted materializers and
 complete original issued-range closure. The manual-feed/unleased fallback retains
 its bounded 100-ms selection opportunity and ownership of files already preparing.
 
+Confirmed roots retain bounded process-local hash-chain witnesses for original
+and intermediate bases. A later selected proof may drop only that identical
+materialized prefix and must retain its complete unresolved suffix. Witnesses
+expire beyond the 256-locator bound; their heap capacity transfers from memory
+admitted before root I/O. They grant no live ACK or origin availability.
+
 The real actor test blocks root preparation until selection, then pauses root
 CAS and verifies that every selected capture file is absent. It issues a later
 write and verifies that an unproven suffix refuses a query before its handler

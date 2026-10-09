@@ -587,6 +587,9 @@ pub(super) fn start_admitted_publication(
                 }
                 preparation = preparation_started.elapsed();
                 let authority_started = std::time::Instant::now();
+                let checkpoint_retained = pool.resource_ledger().try_reserve(
+                    ResourceCost::zero().with_retained_bytes(crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes())
+                )?;
                 let root = loop {
                     match publisher
                         .materialize_bundle_with_due(&selected.proof, published_next_due_ms)
@@ -605,11 +608,11 @@ pub(super) fn start_admitted_publication(
                         Err(error) => return Err(error),
                     }
                 };
-                pool.bind_bundle_materialized(cell, root).await?;
                 PendingDurability::prove_objects(&durabilities).await?;
                 if let Some(pending) = durabilities.last().and_then(Option::as_ref) {
                     pending.checkpoint_materialized(publisher.authority(), root).await?;
                 }
+                pool.bind_bundle_materialized(cell, root, checkpoint_retained).await?;
                 authority = authority_started.elapsed();
                 return Ok(());
             }

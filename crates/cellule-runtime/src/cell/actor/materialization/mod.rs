@@ -166,6 +166,13 @@ pub(super) fn dispatch(
             .proof
             .materialization_bytes()
             .and_then(|bytes| {
+                bytes
+                    .checked_add(
+                        crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes(),
+                    )
+                    .ok_or(Error::Capacity("checkpoint metadata admission"))
+            })
+            .and_then(|bytes| {
                 pool.resource_ledger()
                     .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))
             });
@@ -183,7 +190,7 @@ pub(super) fn dispatch(
         let published_sequence = active.published_sequence;
         let pool = pool.clone();
         tasks.spawn(async move {
-            let _reservation = reservation;
+            let mut reservation = reservation;
             let mut publisher = publisher;
             let started = std::time::Instant::now();
             let commit_sequence = debt.selected.proof.commit_sequence();
@@ -203,7 +210,10 @@ pub(super) fn dispatch(
                 // Checkpoint the authenticated locator prefix before admitting
                 // more selection; both root and index now cover this exact cut.
                 debt.durability.checkpoint_materialized(publisher.authority(), root).await?;
-                pool.bind_bundle_materialized(cell, root).await
+                // Transfer pre-admitted metadata to the worker. No admission
+                // can fail after the canonical root and checkpoint are joined.
+                let retained = reservation.split_retained(crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes())?;
+                pool.bind_bundle_materialized(cell, root, retained).await
             }.await;
             publisher.record_publication_timing(crate::fleet::telemetry::PublicationTiming {
                 queue_wait: started.saturating_duration_since(debt.submitted_at),

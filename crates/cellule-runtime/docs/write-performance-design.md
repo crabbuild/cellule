@@ -92,6 +92,16 @@ locator/byte pressure gates new commands. Root age of 45 seconds, drain,
 migration and fallback also request materialization. Due hints expose the exact
 selected head while a root lags.
 
+A follow-up preserves exact selected suffixes across a confirmed checkpoint,
+including receipts selected against intermediate bases while older roots were
+preparing. Process-local hash-chain witnesses retain no frame bodies and expire
+when their original prefix exceeds the 256-locator proof bound. Their memory
+transfers from admission acquired before root I/O and releases with the worker.
+Regression cases exercise live writes, read/retry visibility, joined cold
+restore and successive intermediate bases. This correctness change still needs
+an end-to-end measurement; it supplies no new durability or origin-availability
+proof.
+
 The latest [asynchronous-root comparison](../../../docs/pr67-async-root-measurement.md)
 at `6d62d41` completes 183.65 Fleet writes/s versus 115.27, with successful
 scheduled p99 of 1,782.74 ms. It returns 297,811 measured errors and fails its
