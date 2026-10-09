@@ -45,6 +45,43 @@ catalog metadata, builds and uploads a proposal, freshly verifies its origin,
 base roots and historical chains, and selects a new head by authority CAS.
 These are different publication protocols and service costs.
 
+## Cross-check against the latest retained run
+
+Re-analysis of the unchanged `10370d2` run in the
+[latest matched comparison](pr67-base-pipeline-measurement.md) verifies the
+start/end telemetry files against the frozen evidence index. This is an
+analysis of that existing 60-second run, not a new benchmark or optimization.
+
+All seven native submission phase deltas have the same **34,809** completed
+submission cohort. Their total durations add exactly to the complete timer:
+
+| Native submission phase | Mean ms |
+| --- | ---: |
+| Complete submission | 96.669 |
+| Waiting for the global ordered lane | 95.297 |
+| Waiting for publication capacity while holding that lane | 1.267 |
+| Local capture load/verification | 0.096 |
+| Sequence assignment and enqueue | 0.008 |
+
+The ordered-lane wait accounts for **98.58%** of native submission duration.
+These are overlapping callers' queue waits, not a serial service interval;
+inverting 95.297 ms would not yield node TPS. The code dependency explains why
+publication backpressure becomes a queue shared by otherwise independent Cells.
+
+Separate cohorts record a 0.187-ms mean SQL worker duration (88,882 executions),
+0.140-ms capture duration (34,871 captures), and 21.543-ms follower-proof wait
+(34,809 observations). Those means must not be added to the submission phases
+or treated as successful-command SQL costs. Follower data-sync means are below
+0.001 ms on tmpfs; this supplies no physical-media fsync comparison. Per-Cell
+publication debt rises from 2,051 to 2,514 pending publications; its oldest age
+is already about 45 seconds at the start of the window.
+
+The underlying result remains **579.10 successful writes/s**, with errors,
+drops and failed warm availability checks. Re-analysis does not improve it or
+qualify capacity. The checked input hashes, exact count/duration partitions and
+replay script are retained outside Git under
+`/Volumes/Workspace/crabbuild-target/write-path-explanation-20261009`.
+
 ## Fresh timing-only reproduction
 
 The external probe pins production `4a5b00148ba579c1f4e035b16e8eb783c3d6fe6d`
@@ -110,9 +147,12 @@ used 1,000 Cells and 15,000 offered writes/s. Celld dropped 622,398 offers and
 did not complete cold/drain qualification after an OOM during shutdown.
 It establishes neither sustainable 4,622-write/s capacity nor a comparison
 with the current 2,000-Cell profile. The latest
-[uninstrumented production pair](pr67-metadata-window-measurement.md) remains
-502.28 versus 1,999.83 writes/s, with Cellule latency/error and read regressions.
-The offered-load cap prevents either 2K reference from proving celld's maximum.
+[uninstrumented production pair](pr67-base-pipeline-measurement.md) records
+579.10 versus 1,999.83 writes/s, with Cellule errors, drops and failed warm ACK
+availability. The offered-load cap prevents either 2K reference from proving
+celld's maximum. The earlier
+[metadata-window pair](pr67-metadata-window-measurement.md) recorded 502.28
+versus 1,999.83 writes/s, with Cellule latency/error and read regressions.
 
 ## Required architectural delivery
 
