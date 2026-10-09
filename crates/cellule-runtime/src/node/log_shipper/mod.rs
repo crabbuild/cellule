@@ -20,7 +20,10 @@ pub(crate) use publication::{SelectedBundle, SubmittedCapture};
 const MAX_BATCH_FRAMES: usize = 64;
 const MAX_QUEUED_SUBMISSIONS: usize = 512;
 const NODE_FRAME_HEADER_BYTES: u64 = 240;
-const BATCH_INTERVAL: Duration = Duration::from_millis(1);
+// An ordered pipeline no longer accumulates submissions while waiting for a
+// preceding RPC. Give small captures a bounded group-commit window instead of
+// sending every newly available round as another tiny follower request.
+const BATCH_INTERVAL: Duration = Duration::from_millis(4);
 type WorkerResult = std::result::Result<(), Arc<Error>>;
 
 /// One captured Cell commit awaiting ordered node-log assignment.

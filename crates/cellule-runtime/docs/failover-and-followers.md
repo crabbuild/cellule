@@ -284,7 +284,9 @@ set, activation bit, contiguous object watermark, and renewable recovery claim.
 
 - Reserves capture bytes and bounded queue bookkeeping before assigning a sequence.
 - Multiplexes accepted cuts in submission order.
-- Batches for at most one millisecond or 64 frames.
+- Batches for at most four milliseconds or 64 frames. The short window preserves
+  group commit when the ordered pipeline can dispatch before a preceding RPC
+  completes; full or byte-limited batches dispatch immediately.
 - Enqueues each batch synchronously into every member's ordered FIFO, with at
   most eight original rounds in flight. Member I/O progresses independently.
 - Groups already queued adjacent requests into one canonical follower append,
@@ -1925,8 +1927,8 @@ charged to the local disk ledger and physical backlog high water.
 
 At 1,000 aggregate transactions/s, the design must group fsync work:
 
-- The leader batches frames across Cells for up to the smaller of one
-  millisecond, 64 frames, or 64 MiB.
+- The leader batches frames across Cells for up to the smaller of four
+  milliseconds, 64 frames, or the native-byte limit.
 - Each follower appends that batch and performs one `sync_data`.
 - The exact interval is a measured runtime constant, not a per-deployment tuning
   surface until qualification proves one is needed.
