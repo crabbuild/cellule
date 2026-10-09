@@ -120,6 +120,10 @@ For REST routes `POST /orders` and `GET /orders/{id}`, run the
 cargo run -p cellule-axum --example sql --locked
 ```
 
+The SQL service writes runtime warnings, including the original cause when a
+command fences its Cell, to stderr. Logging stays in the embedding application;
+HTTP clients receive the same outcome-aware error envelope.
+
 ## Write a manual handler
 
 Add the adapter alongside Axum and your Cellule application crates:

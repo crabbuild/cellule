@@ -369,6 +369,12 @@ pub(super) async fn prove_command(
     };
     let fenced = result.is_err();
     if fenced {
+        tracing::warn!(
+            cell = ?command.cell,
+            commit_sequence,
+            error = ?result.as_ref().err(),
+            "Cell durable confirmation fenced its owner"
+        );
         let _ = pool.fence(command.cell).await;
     }
     let result = if fenced {

@@ -340,6 +340,14 @@ async fn example_storage() -> ExampleResult<(Store, Path)> {
 
 #[tokio::main]
 async fn main() -> ExampleResult<()> {
+    // The embedding application owns logging. Keep runtime fence causes on
+    // stderr while ordinary capacity refusals retain their HTTP error contract.
+    tracing_subscriber::fmt()
+        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .try_init()
+        .map_err(std::io::Error::other)?;
     let fleet_config = fleet::Config::from_env()?;
     let cells = example_count("CELLULE_AXUM_CELLS", 1, MAX_CELLS)?;
     let workers = example_count("CELLULE_AXUM_WORKERS", 1, 16)?;
