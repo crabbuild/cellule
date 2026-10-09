@@ -133,6 +133,15 @@ selection cohorts serially. Publication staging, reduced repeated verification
 and complete application performance qualification remain required. Component
 passes establish no new TPS claim.
 
+Selected bundle materialization now submits eligible recovered rows to the same
+shared root producer used by native captures. The canonical reader verifies
+original scoped rows before coalescing; the root factory still checks the fresh
+predecessor, complete original chain, lineage and exact endpoint before Cell CAS.
+Pre-admitted memory follows dispatched native jobs through cancellation. The
+original 256-KiB/64-row bounds remain; large tails or retained-memory pressure
+use direct recovery preparation. End-to-end TPS and total GET/PUT bytes must
+establish whether this integration improves application performance.
+
 ```mermaid
 flowchart LR
     A[Bounded admission before SQL] --> B[Mutation and retry result commit together]

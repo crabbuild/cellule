@@ -849,6 +849,13 @@ async fn recovered_overlay_keeps_the_bundle_when_a_later_row_exceeds_the_pack_bu
     )
     .unwrap();
     let overlay = RecoveryOverlay::new(base, bundle, last.position, 3);
+    assert!(
+        replica
+            .shared_recovered_captures(&overlay)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let recovered = replica
         .prepare_recovered_overlay(&overlay, 1)
         .await

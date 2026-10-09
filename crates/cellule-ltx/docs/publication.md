@@ -23,6 +23,9 @@ sequenceDiagram
 | `CellReplica::prepare` | Verifies cuts and writes immutable root dependencies. |
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
 | `prepare_recovered_overlay` | Verifies the exact predecessor and final position; small independent tails use the canonical coalescer and native pack. |
+| `shared_recovered_captures` | Verifies eligible overlay rows through the same input reader; original chain facts survive coalescing for the canonical shared root factory. |
+| `RecoveryOverlay::shared_input_upper_bound` | Provides conservative original row/body/index bounds before allocation; grants no verification or authority. |
+| `with_preparation_resource` | Keeps a caller's existing memory/artifact admission alive in dispatched jobs after waiter cancellation; reserves nothing and grants no authority. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
 | `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
 | `try_admit_scheduled_compaction` | Returns a scoped clone with existing dirty/recovery admission, or defers without waiting behind a queued cohort. |
@@ -87,6 +90,16 @@ repeatedly change a small image can still produce one canonical pack. A large
 individual row, changed image or output retains the ordinary bundle path.
 `prepare_bundle` preserves shared bundle references.
 No root format, authority rule or host resource ceiling changes.
+
+Selected bundle materialization can feed those same verified small inputs into
+the runtime's existing shared publication producer. The original 256-KiB object
+and 64-row bounds apply before reduction; larger tails retain ordinary recovery
+preparation. Retained-memory pressure selects that direct fallback immediately,
+without holding a dirty permit while waiting for the shared upload. Each Cell
+still verifies its fresh predecessor, complete original chain and exact endpoint,
+retains native lineage, then selects its own root under the existing fenced CAS.
+Shared-object origin verification remains complete; lower upload counts alone
+do not establish lower total publication bytes or application TPS.
 
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the

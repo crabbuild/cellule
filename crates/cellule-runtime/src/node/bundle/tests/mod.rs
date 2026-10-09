@@ -21,6 +21,7 @@ mod faults;
 mod index;
 mod lifecycle;
 mod managed;
+mod materialization_shared;
 mod ranges;
 mod readiness;
 mod receipt_pressure;

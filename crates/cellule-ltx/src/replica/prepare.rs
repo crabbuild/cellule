@@ -236,23 +236,7 @@ impl CellReplica {
         overlay: &RecoveryOverlay,
         schema: u32,
     ) -> Result<PreparedRoot> {
-        if overlay.predecessor.cell != self.cell
-            || overlay.predecessor.incarnation != self.incarnation
-            || overlay.final_commit_sequence <= overlay.predecessor.commit_sequence
-        {
-            return Err(LtxError::InvalidState("recovery overlay scope"));
-        }
-        let (repository, epoch) = crate::bundle::cell_identity(&self.cell, &self.incarnation);
-        let final_position = overlay
-            .bundle
-            .rows()
-            .iter()
-            .rfind(|row| row.repository == repository && row.epoch == epoch)
-            .map(|row| row.info.position())
-            .ok_or(LtxError::TxNotAvailable)?;
-        if final_position != overlay.final_position {
-            return Err(LtxError::ChecksumMismatch);
-        }
+        self.validate_recovery_overlay(overlay)?;
         let mut replica = self.clone();
         replica.host = self.host.for_dirty().await?;
         let prepared = replica
@@ -289,81 +273,30 @@ impl CellReplica {
         self.validate_append_sequence(&base_graph, commit_sequence)?;
 
         let (repository, epoch) = crate::bundle::cell_identity(&self.cell, &self.incarnation);
-        let bundle_digest = bundle.digest();
-        let mut inputs: Vec<AppendInput> = Vec::new();
-        let mut selected_bytes = 0_u64;
-        let mut independent = usage == BundleUse::IndependentRecovery;
-        let mut independent_bytes = 0_u64;
+        let bundle_inputs =
+            self.read_bundle_inputs(bundle, usage == BundleUse::IndependentRecovery)?;
+        let mut inputs = bundle_inputs.inputs;
+        let target = bundle_inputs.target;
+        let mut independent = bundle_inputs.independent;
         let mut prospective = base_graph
             .as_ref()
             .map(|graph| graph.descriptors.clone())
             .unwrap_or_default();
-        for (index, row) in bundle.rows().iter().enumerate() {
-            if row.repository != repository || row.epoch != epoch {
-                continue;
-            }
-            selected_bytes = selected_bytes
-                .checked_add(row.info.size_bytes)
-                .ok_or(LtxError::Limit(crate::LimitKind::CapturedCellBundleBytes))?;
-            if row.info.size_bytes > self.limits.max_file_bytes
-                || selected_bytes > self.limits.max_plan_bytes
-            {
-                return Err(LtxError::Limit(crate::LimitKind::CapturedCellBundleBytes));
-            }
-            prospective.push(SegmentDescriptor::bundled(
-                row.info.clone(),
-                [0; 32],
-                0,
-                bundle_digest,
-                row.offset,
-            ));
-            let bytes = bundle.read_segment(index)?;
-            let (file, size, digest, pages) = crate::ltx::inspect_bytes_with_index(&bytes)?;
-            if size != row.info.size_bytes
-                || digest != row.info.blake3
-                || crate::SegmentInfo::from_inspected(&file, size, digest) != row.info
-            {
-                return Err(LtxError::ChecksumMismatch);
-            }
-            self.admit_segment_representation(&row.info, pages.len() * crate::paged::ENTRY_BYTES)?;
-            let index_bytes = Bytes::from(crate::paged::encode_index_from_pages(&pages)?);
-            // Retain at most one canonical small-pack budget of verified native
-            // inputs. If a later row exceeds it, release every earlier frozen
-            // body and keep the shared bundle representation for the whole tail.
-            if independent {
-                match independent_bytes
-                    .checked_add(packed::HEADER_BYTES)
-                    .and_then(|size| size.checked_add(row.info.size_bytes))
-                    .and_then(|size| size.checked_add(index_bytes.len() as u64))
-                    .filter(|size| *size <= upload::SINGLE_PUT_BYTES)
-                {
-                    Some(size) => independent_bytes = size,
-                    None => {
-                        independent = false;
-                        for input in &mut inputs {
-                            input.body = AppendBody::Bundle;
-                        }
-                    }
-                }
-            }
-            inputs.push(AppendInput {
-                info: row.info.clone(),
-                location: BodyLocation::Bundle {
-                    digest: bundle_digest,
-                    offset: row.offset,
-                },
-                index: index_bytes,
-                body: if independent {
-                    AppendBody::Frozen(bytes)
-                } else {
-                    AppendBody::Bundle
-                },
-            });
-        }
-        let target = inputs
-            .last()
-            .map(|input| input.info.position())
-            .ok_or(LtxError::TxNotAvailable)?;
+        prospective.extend(
+            bundle
+                .rows()
+                .iter()
+                .filter(|row| row.repository == repository && row.epoch == epoch)
+                .map(|row| {
+                    SegmentDescriptor::bundled(
+                        row.info.clone(),
+                        [0; 32],
+                        0,
+                        bundle.digest(),
+                        row.offset,
+                    )
+                }),
+        );
         self.validate_chain(&prospective, target)?;
         if usage == BundleUse::IndependentRecovery && !independent {
             // A long history can repeatedly update the same small page image.

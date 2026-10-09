@@ -11,6 +11,7 @@ use crate::retry::{Backoff, retry_hint, retryable_storage_error};
 use crate::{Error, Result};
 
 pub(crate) mod lineage;
+mod recovered;
 mod shared;
 pub(crate) use shared::{PublicationPermit, SharedPublication};
 
@@ -129,14 +130,7 @@ impl CellPublisher {
             .recovery_overlay_from(self.authority.layout(), self.replica.limits(), base)
             .await?;
         self.check_node_lease()?;
-        let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
-        let prepared = replica
-            .prepare_recovered_overlay(&overlay, self.observed.value().schema)
-            .await
-            .map_err(lineage::error)?;
-        self.lineage_confirmed = *confirmation
-            .lock()
-            .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+        let prepared = self.prepare_recovered(&overlay).await?;
         self.publish_prepared(&prepared, next_due_ms).await
     }
 

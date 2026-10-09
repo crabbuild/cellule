@@ -107,6 +107,34 @@ impl SharedCaptures {
     }
 }
 
+impl super::RecoveryOverlay {
+    /// Conservative encoded-byte and row bounds for this Cell's shared input.
+    ///
+    /// Includes the one object header, every original scoped row/body and its
+    /// maximum index. This allocates no bodies and grants no verified root or
+    /// authority; use it to reserve working memory before preparation.
+    pub fn shared_input_upper_bound(&self) -> Result<(u64, usize)> {
+        let (repository, epoch) =
+            crate::bundle::cell_identity(&self.predecessor.cell, &self.predecessor.incarnation);
+        let mut count = 0_usize;
+        let mut upper = HEADER_BYTES;
+        for row in self
+            .bundle
+            .rows()
+            .iter()
+            .filter(|row| row.repository == repository && row.epoch == epoch)
+        {
+            count += 1;
+            upper = upper
+                .checked_add(SCOPE_BYTES + packed::HEADER_BYTES)
+                .and_then(|bytes| bytes.checked_add(row.info.size_bytes))
+                .and_then(|bytes| bytes.checked_add(u64::from(row.info.database_pages) * 60))
+                .ok_or(LtxError::Limit(crate::LimitKind::CellBundleBytes))?;
+        }
+        Ok((upper, count))
+    }
+}
+
 /// One Cell's verified inputs from a bounded publication cohort.
 ///
 /// Multi-row inputs contain uploaded shared extents. A singleton retains its
@@ -141,6 +169,42 @@ impl CellReplica {
             return Ok(None);
         }
         let inputs = self.prepare_captured_inputs(&cuts.segments).await?;
+        self.shared_inputs(inputs, cuts.position).await.map(Some)
+    }
+
+    /// Verifies small recovered rows through the canonical bundle-input reader.
+    ///
+    /// Original scopes and endpoint must match the overlay. Every original cut
+    /// remains in the returned input's admission facts before coalescing; the
+    /// later canonical root factory verifies the fresh base and complete chain.
+    /// Large tails return `None` for ordinary recovery preparation. The caller
+    /// retains memory and artifact admission through this operation and upload.
+    pub async fn shared_recovered_captures(
+        &self,
+        overlay: &super::RecoveryOverlay,
+    ) -> Result<Option<SharedCaptures>> {
+        self.validate_recovery_overlay(overlay)?;
+        if overlay.bundle.len() > self.limits.max_plan_bytes {
+            return Err(LtxError::Limit(crate::LimitKind::CellBundleBytes));
+        }
+        let (upper, count) = overlay.shared_input_upper_bound()?;
+        if count > SHARED_PUBLICATION_ROWS || upper > SINGLE_PUT_BYTES {
+            return Ok(None);
+        }
+        let inputs = self.read_bundle_inputs(&overlay.bundle, true)?;
+        if !inputs.independent || inputs.target != overlay.final_position {
+            return Err(LtxError::ChecksumMismatch);
+        }
+        self.shared_inputs(inputs.inputs, inputs.target)
+            .await
+            .map(Some)
+    }
+
+    async fn shared_inputs(
+        &self,
+        inputs: Vec<AppendInput>,
+        position: Position,
+    ) -> Result<SharedCaptures> {
         let segments: Vec<_> = inputs
             .into_iter()
             .map(|input| PreparedSegment {
@@ -165,13 +229,13 @@ impl CellReplica {
                 .and_then(|bytes| bytes.checked_add(segment.descriptor.index_length))
                 .ok_or(LtxError::LTXCorrupted)
         })?;
-        Ok(Some(SharedCaptures {
+        Ok(SharedCaptures {
             replica: self.clone(),
-            position: cuts.position,
+            position,
             segments,
             original,
             encoded_bytes,
-        }))
+        })
     }
 
     /// Uploads a multi-row cohort once and returns independently scoped inputs.

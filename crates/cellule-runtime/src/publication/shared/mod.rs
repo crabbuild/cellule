@@ -30,14 +30,20 @@ pub(crate) enum PublicationPermit {
 pub(crate) struct SharedPrepared {
     pub(crate) append: SharedAppend,
     // Index/row tables remain charged through per-Cell root preparation.
-    _memory: ResourceReservation,
+    _memory: Arc<SharedMemory>,
 }
+
+struct SharedMemory {
+    _reservation: ResourceReservation,
+}
+
+impl cellule_ltx::HostResourcePermit for SharedMemory {}
 
 struct Entry {
     captures: SharedCaptures,
     scratch: PathBuf,
     accepted_at: Instant,
-    memory: ResourceReservation,
+    memory: Arc<SharedMemory>,
     _slot: OwnedSemaphorePermit,
     reply: oneshot::Sender<Result<SharedPrepared>>,
 }
@@ -100,15 +106,60 @@ impl SharedPublication {
                 .checked_add(row)
                 .ok_or(Error::Capacity("shared publication bytes"))
         })?;
-        if estimate as u64 > SHARED_PUBLICATION_BYTES
-            || cuts.segments.len() > SHARED_PUBLICATION_ROWS
-        {
+        let Some(memory) =
+            self.reserve_input(estimate, cuts.segments.len(), cuts.segments.len() + 2)?
+        else {
+            return Ok(None);
+        };
+        let replica = replica.clone().with_preparation_resource(memory.clone());
+        let Some(captures) = replica.shared_captures(cuts).await? else {
+            self.telemetry.shared_publication_fallback(false);
+            return Ok(None);
+        };
+        self.submit_captures(captures, memory, scratch, slot)
+            .await
+            .map(Some)
+    }
+
+    pub(crate) async fn submit_recovered(
+        &self,
+        replica: &cellule_ltx::CellReplica,
+        overlay: &cellule_ltx::RecoveryOverlay,
+        scratch: PathBuf,
+        slot: OwnedSemaphorePermit,
+    ) -> Result<Option<SharedPrepared>> {
+        let (estimate, rows) = overlay.shared_input_upper_bound()?;
+        let estimate =
+            usize::try_from(estimate).map_err(|_| Error::Capacity("shared publication bytes"))?;
+        // The enclosing overlay owns its original artifact. Verified frozen
+        // rows need only the bounded shared scratch descriptors, not one native
+        // file pin per row. Never retain a Cell dirty slot while enqueued.
+        let Some(memory) = self.reserve_input(estimate, rows, 2)? else {
+            return Ok(None);
+        };
+        let replica = replica.clone().with_preparation_resource(memory.clone());
+        let Some(captures) = replica.shared_recovered_captures(overlay).await? else {
+            self.telemetry.shared_publication_fallback(false);
+            return Ok(None);
+        };
+        self.submit_captures(captures, memory, scratch, slot)
+            .await
+            .map(Some)
+    }
+
+    fn reserve_input(
+        &self,
+        estimate: usize,
+        rows: usize,
+        file_descriptors: usize,
+    ) -> Result<Option<Arc<SharedMemory>>> {
+        if estimate as u64 > SHARED_PUBLICATION_BYTES || rows > SHARED_PUBLICATION_ROWS {
             self.telemetry.shared_publication_fallback(false);
             return Ok(None);
         }
         // Charge before pinning/indexing/coalescing. Multiple compressed cuts
         // can expand into a bounded 256 KiB page map before being re-encoded.
-        let work = if cuts.segments.len() > 1 {
+        let work = if rows > 1 {
             estimate.max(SHARED_PUBLICATION_BYTES as usize)
         } else {
             estimate
@@ -119,7 +170,7 @@ impl SharedPublication {
             .ok_or(Error::Capacity("shared publication memory"))?;
         let cost = ResourceCost::zero()
             .with_retained_bytes(memory)
-            .with_publication_file_descriptors(cuts.segments.len() + 2);
+            .with_publication_file_descriptors(file_descriptors);
         let memory = match self.resources.try_reserve(cost) {
             Ok(memory) => memory,
             // Sharing is optional representation reduction. Never wait for
@@ -130,10 +181,18 @@ impl SharedPublication {
             }
             Err(error) => return Err(error),
         };
-        let Some(captures) = replica.shared_captures(cuts).await? else {
-            self.telemetry.shared_publication_fallback(false);
-            return Ok(None);
-        };
+        Ok(Some(Arc::new(SharedMemory {
+            _reservation: memory,
+        })))
+    }
+
+    async fn submit_captures(
+        &self,
+        captures: SharedCaptures,
+        memory: Arc<SharedMemory>,
+        scratch: PathBuf,
+        slot: OwnedSemaphorePermit,
+    ) -> Result<SharedPrepared> {
         let (reply, response) = oneshot::channel();
         self.sender
             .send(Message::Capture(Box::new(Entry {
@@ -147,7 +206,7 @@ impl SharedPublication {
             .await
             .map_err(|_| Error::RuntimeClosed)?;
         // The lane, rather than the waiter, owns dispatched storage and scratch.
-        response.await.map_err(|_| Error::RuntimeClosed)?.map(Some)
+        response.await.map_err(|_| Error::RuntimeClosed)?
     }
 
     pub(crate) async fn shutdown(&self) -> Result<()> {

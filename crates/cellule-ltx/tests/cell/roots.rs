@@ -42,4 +42,5 @@ mod packed;
 mod preparation;
 mod prepare_cost;
 mod shared;
+mod shared_recovery;
 mod sparse;

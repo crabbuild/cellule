@@ -13,6 +13,7 @@ use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 
 use crate::{CaptureBatch, Host, Limits, LtxError, Position, Result};
 
+mod bundle_inputs;
 mod cache;
 mod coalesce;
 mod compaction;
@@ -819,6 +820,20 @@ impl CellReplica {
     #[must_use]
     pub fn with_host(mut self, host: Host) -> Self {
         self.host = host;
+        self
+    }
+
+    /// Retains a caller's pre-admitted preparation resources through native jobs.
+    ///
+    /// This reserves no resources and grants no root or writer authority. Use a
+    /// scoped clone: dispatched jobs keep the token after waiter cancellation,
+    /// and shared inputs keep it until their preparation owner releases them.
+    #[must_use]
+    pub fn with_preparation_resource(
+        mut self,
+        resource: Arc<dyn crate::HostResourcePermit>,
+    ) -> Self {
+        self.host = self.host.with_preparation_resource(resource);
         self
     }
 

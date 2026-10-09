@@ -14,6 +14,9 @@ use std::{
 mod admission;
 mod budget;
 
+#[cfg(all(test, feature = "replica"))]
+mod tests;
+
 pub use budget::{DiskBudget, DiskReservation};
 
 #[cfg(feature = "replica")]
@@ -200,6 +203,8 @@ pub struct Host {
     dirty: Option<Arc<HostPermit>>,
     #[cfg(feature = "replica")]
     scratch: Option<Arc<HostPermit>>,
+    #[cfg(feature = "replica")]
+    preparation_resource: Option<Arc<dyn HostResourcePermit>>,
 }
 
 #[cfg(feature = "replica")]
@@ -725,6 +730,15 @@ impl Host {
     }
 
     #[cfg(feature = "replica")]
+    pub(crate) fn with_preparation_resource(
+        mut self,
+        resource: Arc<dyn HostResourcePermit>,
+    ) -> Self {
+        self.preparation_resource = Some(resource);
+        self
+    }
+
+    #[cfg(feature = "replica")]
     pub(crate) async fn run<T: Send + 'static>(
         &self,
         operation: impl FnOnce() -> T + Send + 'static,
@@ -749,6 +763,7 @@ impl Host {
         let recovery = self.recovery.clone();
         let dirty = self.dirty.clone();
         let scratch = self.scratch.clone();
+        let preparation_resource = self.preparation_resource.clone();
         self.executor.dispatch(Box::new(move || {
             // Dispatched work can outlive its future. Keep admission with the
             // job, not the waiter, so cancellation cannot oversubscribe the pool.
@@ -760,6 +775,7 @@ impl Host {
             drop(recovery);
             drop(dirty);
             drop(scratch);
+            drop(preparation_resource);
             drop(resource);
             drop(permit);
             let _ = send.send(result);
@@ -856,6 +872,8 @@ impl Default for Host {
             dirty: None,
             #[cfg(feature = "replica")]
             scratch: None,
+            #[cfg(feature = "replica")]
+            preparation_resource: None,
         }
     }
 }
