@@ -46,7 +46,7 @@ impl Probe {
         };
         let id = self
             .next_id
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map_err(|_| Error::Capacity("SQL slot trace IDs"))?;
         // The caller exclusively owns this shard's permit. The previous holder
         // wrote both markers before releasing that permit, and no other holder
