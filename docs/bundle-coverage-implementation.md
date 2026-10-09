@@ -11,7 +11,15 @@ Fleet writes/s from 525.67 and failed availability/drain. The subsequent
 [coverage-race measurement](pr67-coverage-race-measurement.md) at `e40ecd6`
 passes all-ACK warm/cold audit and joined drain, but completes 100.20 Fleet
 writes/s versus 106.05 before the fix: no demonstrated throughput gain.
-The latest [asynchronous-root comparison](pr67-async-root-measurement.md) at
+The latest [checkpoint-continuity comparison](pr67-checkpoint-continuity-measurement.md)
+at `4a8f55c` verifies live writes across a confirmed root and successive
+intermediate-base receipts, with bounded, admitted prefix witnesses. It measures
+185.83 Fleet writes/s versus 164.73, but still returns 304,151 errors and fails
+warm ACK availability. Bucket completes 215.08 writes/s versus 227.15 with
+passing audits and higher p99. All contributor checks pass; no acceptable
+performance improvement or parity is established. PR #67 remains a draft.
+
+The earlier [asynchronous-root comparison](pr67-async-root-measurement.md) at
 `6d62d41` retires exact selected captures and schedules admitted roots separately.
 It completes 183.65 Fleet writes/s versus 115.27 before, but returns 297,811
 measured request errors and fails its warm ACK audit. Cold recovery and successful

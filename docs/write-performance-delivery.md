@@ -6,7 +6,17 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [asynchronous-root measurement](pr67-async-root-measurement.md)
+The latest [checkpoint-continuity measurement](pr67-checkpoint-continuity-measurement.md)
+records runtime commit `4a8f55c`: **185.83 Fleet writes/s and 215.08 Bucket
+writes/s**, versus 164.73 and 227.15 for its immediate `6d62d41` baseline.
+Fleet still returns 304,151 measured errors and fails its warm ACK audit.
+Bucket has passing ACK audits but a 5.3% lower completion rate and higher p99.
+Focused checkpoint regressions and all contributor checks pass; the original
+application load failure persists. Celld also fails these fresh Fleet/Bucket
+cases through OOM/self-fencing. Every point fails qualification; no acceptable
+improvement or parity is established, and PR #67 remains a draft.
+
+The earlier [asynchronous-root measurement](pr67-async-root-measurement.md)
 records runtime commit `6d62d41`: 183.65 Fleet writes/s and 204.10 Bucket writes/s
 versus 115.27 and 196.27 in fresh paired windows. Fleet successful scheduled p99
 is 1,782.74 ms, but the candidate returns 297,811 measured errors and fails its

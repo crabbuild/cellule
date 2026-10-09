@@ -1,5 +1,9 @@
 # Asynchronous roots: measured Fleet availability regression
 
+The newer [checkpoint-continuity measurement](pr67-checkpoint-continuity-measurement.md)
+measures `4a8f55c` against this release. Its focused regressions pass, but Fleet
+availability still fails and Bucket completion rate falls in that pair.
+
 **Measured candidate: 183.65 Fleet writes/s and 204.10 Bucket writes/s.**
 The Fleet candidate returns **297,811 measured request errors**, versus zero
 before the change, and fails its warm ACK audit. Its higher completion rate and

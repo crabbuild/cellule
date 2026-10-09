@@ -98,11 +98,16 @@ preparing. Process-local hash-chain witnesses retain no frame bodies and expire
 when their original prefix exceeds the 256-locator proof bound. Their memory
 transfers from admission acquired before root I/O and releases with the worker.
 Regression cases exercise live writes, read/retry visibility, joined cold
-restore and successive intermediate bases. This correctness change still needs
-an end-to-end measurement; it supplies no new durability or origin-availability
-proof.
+restore and successive intermediate bases. This supplies no new durability or
+origin-availability proof. The
+[checkpoint-continuity measurement](../../../docs/pr67-checkpoint-continuity-measurement.md)
+at `4a8f55c` completes 185.83 Fleet writes/s versus 164.73 but still returns
+304,151 measured errors and fails warm ACK availability. Bucket completes
+215.08 writes/s versus 227.15 with passing audits and higher p99. All contributor
+checks pass, but the original application load failure persists. No acceptable
+improvement or parity is established.
 
-The latest [asynchronous-root comparison](../../../docs/pr67-async-root-measurement.md)
+The earlier [asynchronous-root comparison](../../../docs/pr67-async-root-measurement.md)
 at `6d62d41` completes 183.65 Fleet writes/s versus 115.27, with successful
 scheduled p99 of 1,782.74 ms. It returns 297,811 measured errors and fails its
 warm ACK audit. No cold or successful drain evidence follows. Root density is
