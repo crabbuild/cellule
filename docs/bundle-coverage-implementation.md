@@ -1,18 +1,16 @@
 # Bundle coverage implementation
 
-The [submission-timing diagnostic](pr67-submission-timing-measurement.md)
-attributes the main pre-proof delay to publication capacity held under the global
-issuance lock: 727.30 ms mean lock wait, with a 6.14-ms publication wait inside
-the lock. Its 158.37 writes/s result is unqualified; all 19,675 ACKs pass warm/cold
-audit. No throughput gain is claimed for this instrumentation slice.
+The [bounded historical-read comparison](pr67-bounded-history-measurement.md)
+groups fresh ranges within the original 20-MiB admission. One original-profile
+pair completes 307.60 writes/s versus 144.50 before, with worse successful p99.
+A 1-GiB control with zero request errors reaches 237.67 versus 181.45/s.
+Complete Cellule warm/cold ACK audits pass, but all capacity profiles remain
+unqualified.
 
-The [latest replay-pressure diagnostic](pr67-replay-admission-measurement.md)
-preserves original durable command outcomes under node and Cell publication
-pressure. One fresh Fleet pair completes 158.15 writes/s versus 152.92 before
-and 4,473.32 for celld. Candidate warm/cold audits pass for all 19,542 ACKs;
-all three fail performance qualification. A separate 1-GiB retained-credit control
-reaches only 191.08 writes/s. Resource policies are asymmetric, and no repeatable
-throughput improvement or parity is established. PR #67 remains a draft.
+The [submission diagnosis](pr67-submission-timing-measurement.md) identifies
+publication capacity held under the global issuance lock. The current selector
+still gates native progress before follower proof. Celld pipelines that progress
+independently of bucket publication. PR #67 remains a draft.
 
 The installed original producer provides admitted shared receipts, independent
 root materialization and complete live-writer closure. The Fleet SQL example

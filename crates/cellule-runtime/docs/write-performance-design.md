@@ -1,22 +1,19 @@
 # Node write and read performance design
 
-The [submission-timing diagnostic](../../../docs/pr67-submission-timing-measurement.md)
-now measures the missing pre-proof queue: 727.30 ms waiting for the global
-issuance lock, whose holder waits 6.14 ms for publication capacity. The
-instrumented application completes 158.37 writes/s, with all 19,675 ACKs passing
-warm/cold audit. This is diagnosis, not a throughput improvement or qualification.
+The [bounded historical-read comparison](../../../docs/pr67-bounded-history-measurement.md)
+now groups fresh ranges within the original 20-MiB admission. One original-profile
+Fleet pair completes 307.60 writes/s versus 144.50 before, with worse successful
+p99 latency. A matched 1-GiB control reaches 237.67 versus 181.45/s, with zero
+request errors. All Cellule ACKs pass warm/cold audit. These short overloaded
+observations remain unqualified; PR #67 is still a draft.
 
-The [latest replay-pressure verification](../../../docs/pr67-replay-admission-measurement.md)
-preserves original durable outcomes under publication pressure. One fresh Fleet
-pair completes 158.15 writes/s versus 152.92 before, with all 19,542 candidate ACKs
-passing warm/cold audit and joined drain. A separate 1-GiB budget control reaches
-only 191.08 writes/s; its latency worsens versus the matching baseline. Neither
-establishes repeatable performance improvement or parity. Native ticket issuance
-still waits for the bounded publication lane before follower proof can begin,
-and historical/base verification remains expensive. Resource policies in the
-celld comparison are asymmetric. The
-[historical-read experiment](../../../docs/pr67-historical-read-measurement.md)
-remains withdrawn after its severe application regression.
+The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
+identified publication capacity held under the global issuance lock. That
+coupling still queues native progress before follower proof starts. Repeated
+historical/base verification and sparse root checkpoints keep the publication
+consumer expensive. Matching celld requires reducing that work and separating
+native progress from bounded recoverable publication debt; larger queues alone
+do not increase sustainable throughput.
 
 Status: implementation in progress. The application path is not qualified at
 the targets below. Component I/O reductions are not application TPS.
@@ -32,15 +29,15 @@ The embedding application continues to own ingress and authorization.
 | --- | --- |
 | Serving node | 8 vCPUs, 16 GiB memory; report storage, filesystem, network and SQLite policy |
 | Population | 2,000 uniformly active Cells, sub-100-byte values |
-| Writes | 10,000 successful commands/s |
-| Reads | 50,000 successful queries/s |
+| Writes | 2,000 successful commands/s |
+| Reads | 20,000 successful queries/s |
 | Tail latency | Fleet writes p99 at most 50 ms; Bucket writes p99 at most 200 ms; report read p50/p95/p99 |
 | Delivery | Zero errors, dropped offers or unissued requests; at least 99% completed within the window |
 | Evidence | Three paired repetitions of at least five minutes, matched celld revision and workload |
 | Durability | All acknowledged mutations and retry outcomes survive warm audit, joined drain and cold restore |
 | Stability | Bounded memory, native-job occupancy and debt; debt has no sustained positive slope |
 
-Qualify read-only, write-only and simultaneous 10K-write/50K-read load separately.
+Qualify read-only, write-only and simultaneous 2K-write/20K-read load separately.
 Count the client, provider and followers separately from the serving node.
 Docker can simulate the deployment, but sharing one 8-CPU VM between all roles
 does not qualify an 8-CPU serving node. Report KV overwrite and SQL commands with
@@ -83,9 +80,13 @@ Each selection reads its complete new cohort object once from origin, compares
 every byte with the proposal, then verifies header, shards, histories and native
 frames from that operation's read. It retains no cross-operation availability
 cache. Historical objects and every Cell base dependency still require origin
-verification. Selection drops each checked native frame rather than retaining
-reconstruction bodies. The additional 4-MiB buffer is charged before installing
-the producer; workload retention and protocol bounds remain unchanged.
+verification. After the fresh body matches, selection shares the proposal
+allocation and uses its released buffer allowance for 2 MiB of historical scratch
+and at most 2 MiB of compact facts/planning metadata. Eight bounded reads overlap;
+every frame and original Cell chain remains canonically checked. Base traversal
+and individual extents above 2 MiB retain serial verification. Selection retains
+no reconstruction bodies beyond the operation. Working admission remains 20 MiB;
+workload retention and protocol bounds remain unchanged.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
@@ -187,9 +188,16 @@ independently addressed locator histories:
 
 Those are protocol bounds, not host admission. The materializer scheduler must
 charge retained history, native verification, scratch and outcomes to the node
-ledgers. Uniform 10K writes over 2,000 Cells means about five commands/Cell/s:
-215 commands span about 43 seconds. Measure the actual native bytes retained
-over that interval and reject the model if the 16-GiB node cannot hold its debt.
+ledgers. At the revised 2K-write target over 2,000 uniform Cells, each Cell
+receives about one command/s: 215 commands span about 215 seconds. The current
+45-second root-age trigger therefore requests a checkpoint at roughly 45
+commands even before byte pressure. The conditional four-PUT model then costs
+about 0.121 PUTs/command, above 0.05. Meeting that separate cost target requires
+a measured change to checkpoint scheduling or publication representation;
+increasing locator capacity alone cannot meet it. Measure actual retained native
+bytes and oldest debt before changing the age policy, and reject a policy that
+cannot stay bounded on the 16-GiB node. Earlier benchmark profiles retain their
+original thresholds and evidence.
 
 ## Remaining implementation and exit gates
 
