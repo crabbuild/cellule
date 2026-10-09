@@ -1,5 +1,11 @@
 # Node write and read performance design
 
+The [submission-timing diagnostic](../../../docs/pr67-submission-timing-measurement.md)
+now measures the missing pre-proof queue: 727.30 ms waiting for the global
+issuance lock, whose holder waits 6.14 ms for publication capacity. The
+instrumented application completes 158.37 writes/s, with all 19,675 ACKs passing
+warm/cold audit. This is diagnosis, not a throughput improvement or qualification.
+
 The [latest replay-pressure verification](../../../docs/pr67-replay-admission-measurement.md)
 preserves original durable outcomes under publication pressure. One fresh Fleet
 pair completes 158.15 writes/s versus 152.92 before, with all 19,542 candidate ACKs

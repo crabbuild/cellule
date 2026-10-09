@@ -1,5 +1,11 @@
 # Bundle coverage implementation
 
+The [submission-timing diagnostic](pr67-submission-timing-measurement.md)
+attributes the main pre-proof delay to publication capacity held under the global
+issuance lock: 727.30 ms mean lock wait, with a 6.14-ms publication wait inside
+the lock. Its 158.37 writes/s result is unqualified; all 19,675 ACKs pass warm/cold
+audit. No throughput gain is claimed for this instrumentation slice.
+
 The [latest replay-pressure diagnostic](pr67-replay-admission-measurement.md)
 preserves original durable command outcomes under node and Cell publication
 pressure. One fresh Fleet pair completes 158.15 writes/s versus 152.92 before
