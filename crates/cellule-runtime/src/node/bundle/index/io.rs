@@ -77,12 +77,7 @@ async fn read_rows(
     Ok(bytes)
 }
 
-fn decode_rows(
-    root: &Root,
-    shard: &Shard,
-    id: u8,
-    bytes: Bytes,
-) -> Result<DecodedRows> {
+fn decode_rows(root: &Root, shard: &Shard, id: u8, bytes: Bytes) -> Result<DecodedRows> {
     let object = shard
         .extent
         .object
