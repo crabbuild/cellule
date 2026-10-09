@@ -2,16 +2,19 @@
 
 **The fast paths are not architecturally equivalent yet.** Both systems use
 SQLite WAL, LTX captures, fenced ownership, follower logs and bucket storage.
-Cellule still couples native admission to a serial, expensive publication
-consumer. That consumer sets the write rate under sustained pressure.
+The diagnosed baseline couples native admission to a serial, expensive
+publication consumer. The [subsequent native-pipeline changes](pr67-native-pipeline-measurement.md)
+remove its slot wait from global ordering and add independent ordered member
+lanes. Their first measured candidate improves latency but regresses TPS;
+serial publication and recoverable debt still limit sustained performance.
 Performance parity remains unmet and PR #67 stays a draft.
 
 ## What the code does
 
-Cellule's [assignment path](../crates/cellule-runtime/src/node/log_shipper/mod.rs)
+The baseline's [assignment path](https://github.com/crabbuild/cellule/blob/10370d20f52c0b2c6103b0df61c56a1252238d33/crates/cellule-runtime/src/node/log_shipper/mod.rs)
 acquires the global ordered lock, then awaits publication queue capacity before
 committing a sequence and enqueueing follower work. The
-[publication feed](../crates/cellule-runtime/src/node/log_shipper/publication/mod.rs)
+[publication feed](https://github.com/crabbuild/cellule/blob/10370d20f52c0b2c6103b0df61c56a1252238d33/crates/cellule-runtime/src/node/log_shipper/publication/mod.rs)
 has 512 submission slots and retains native-byte admission through selection.
 The consumer selects one cohort of at most 64 captures/frames and 4 MiB before
 starting the next. A full publication queue therefore blocks otherwise
@@ -33,7 +36,7 @@ Moving the wait or enlarging the queue alone cannot raise sustainable service.
 Celld's [shipping loop](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/ltx_repl.rs#L4530)
 keeps ordered rounds in flight independently of bucket work. Its
 [follower stream](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L179)
-groups already delivered requests into one durable append. Cellule awaits each
+groups already delivered requests into one durable append. Baseline Cellule awaits each
 append batch, and its example HTTP adapter holds a member grant mutex across
 the RPC. Concurrent futures alone would not establish safe delivery ordering.
 
@@ -45,10 +48,10 @@ catalog metadata, builds and uploads a proposal, freshly verifies its origin,
 base roots and historical chains, and selects a new head by authority CAS.
 These are different publication protocols and service costs.
 
-## Cross-check against the latest retained run
+## Cross-check against the preceding retained run
 
 Re-analysis of the unchanged `10370d2` run in the
-[latest matched comparison](pr67-base-pipeline-measurement.md) verifies the
+[preceding matched comparison](pr67-base-pipeline-measurement.md) verifies the
 start/end telemetry files against the frozen evidence index. This is an
 analysis of that existing 60-second run, not a new benchmark or optimization.
 
@@ -146,7 +149,7 @@ The [older 144.50 versus 4,622.43 result](pr67-bounded-history-measurement.md)
 used 1,000 Cells and 15,000 offered writes/s. Celld dropped 622,398 offers and
 did not complete cold/drain qualification after an OOM during shutdown.
 It establishes neither sustainable 4,622-write/s capacity nor a comparison
-with the current 2,000-Cell profile. The latest
+with the 2,000-Cell profile. The preceding
 [uninstrumented production pair](pr67-base-pipeline-measurement.md) records
 579.10 versus 1,999.83 writes/s, with Cellule errors, drops and failed warm ACK
 availability. The offered-load cap prevents either 2K reference from proving

@@ -1,6 +1,19 @@
 # Node write and read performance design
 
-The [latest fresh write comparison](../../../docs/pr67-base-pipeline-measurement.md)
+The [native-pipeline comparison](../../../docs/pr67-native-pipeline-measurement.md)
+completes 468.38 Fleet writes/s for unchanged production, 404.68/s for the first
+pipeline candidate, 553.53/s for the corrected candidate and 1,993.08/s for celld.
+The correction preserves a four-millisecond assembly window and credits ready
+follower rounds during the next assembly. Compared with the baseline reference,
+its observed TPS is 18.18% higher and successful scheduled p99 falls
+574.13→321.43 ms; one short later run establishes no repeatable causal gain.
+Ordered-lock wait falls 120.61→0.00045 ms. All Cellule warm ACK audits fail with
+HTTP 503s; none reaches cold audit. The corrected owner exceeds the original
+120-second process drain limit. Celld passes all 181,598 warm/cold mutations and
+original retries but drops 403 offers. These diagnostics establish no qualified
+capacity. Publication cost, complete draining and availability remain unresolved.
+
+The [preceding fresh write comparison](../../../docs/pr67-base-pipeline-measurement.md)
 completes 579.10 Fleet writes/s for unchanged production code, 570.25/s for a
 continuous-base-slot trial and 1,999.83/s for celld. The trial has no acceptable
 TPS/latency gain and is reverted. Both Cellule cases fail warm ACK availability
@@ -22,9 +35,10 @@ a draft. The [preceding encoder comparison](../../../docs/pr67-encoder-cost-meas
 and its passing and failed evidence remain separate observations.
 
 The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
-identified publication capacity held under the global issuance lock. Observed ordered wait remains about 119 ms; the latest phase counts
-straddle window boundaries and cannot support an exact successful-submission
-partition. This coupling queues native progress before follower proof starts. Repeated
+identified publication capacity held under the global issuance lock. Earlier
+phase counts straddled window boundaries and could not support an exact
+successful-submission partition. The new byte-bounded feed removes that
+slot wait from global ordering, as measured above. Repeated
 historical/base verification and sparse root checkpoints keep the publication
 consumer expensive. Matching celld requires reducing that work and separating
 native progress from bounded recoverable publication debt; larger queues alone
