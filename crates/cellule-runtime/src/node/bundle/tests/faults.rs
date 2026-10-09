@@ -14,6 +14,7 @@ pub(super) struct ReplyFault {
     pub(super) coverage_puts: AtomicUsize,
     pub(super) range_started: AtomicUsize,
     pub(super) base_started: AtomicUsize,
+    pub(super) held_metadata: std::sync::Mutex<Vec<(String, u64)>>,
     pub(super) pin_started: tokio::sync::Notify,
     pub(super) pin_resume: tokio::sync::Notify,
     pub(super) node_started: tokio::sync::Notify,
@@ -120,6 +121,26 @@ impl ObjectStore for ReplyFault {
     }
     async fn get_opts(&self, path: &Path, opts: GetOptions) -> object_store::Result<GetResult> {
         let mode = self.mode.load(Ordering::SeqCst);
+        let metadata = match &opts.range {
+            Some(object_store::GetRange::Bounded(range)) if path.as_ref().ends_with(".cnb") => {
+                (mode == 14 && range.start != 0)
+                    || (mode == 15
+                        && self
+                            .held_metadata
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .any(|(object, offset)| {
+                                object == path.as_ref() && *offset == range.start
+                            }))
+            }
+            _ => false,
+        };
+        if metadata {
+            self.range_started.fetch_add(1, Ordering::SeqCst);
+            self.node_started.notify_one();
+            self.node_resume.notified().await;
+        }
         if (mode == 12 && path.as_ref().ends_with(".root"))
             || (mode == 13 && path.as_ref().ends_with(".pack"))
         {

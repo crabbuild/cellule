@@ -1,5 +1,9 @@
 //! Bounded origin point lookups and streaming maintenance inventory checks.
 use super::*;
+use futures_util::{StreamExt, future::try_join_all, stream};
+
+const READ_CONCURRENCY: usize = 8;
+type DecodedRows = (Vec<Binding>, BTreeMap<[u8; 32], history::History>);
 
 async fn load_root(
     layout: &cellule_ltx::CellStorageLayout,
@@ -43,7 +47,17 @@ async fn load_rows(
     shard: &Shard,
     id: u8,
     origin: Option<&super::super::origin::OriginBundle>,
-) -> Result<(Vec<Binding>, BTreeMap<[u8; 32], history::History>)> {
+) -> Result<DecodedRows> {
+    let bytes = read_rows(layout, root, shard, origin).await?;
+    decode_rows(root, shard, id, bytes)
+}
+
+async fn read_rows(
+    layout: &cellule_ltx::CellStorageLayout,
+    root: &Root,
+    shard: &Shard,
+    origin: Option<&super::super::origin::OriginBundle>,
+) -> Result<Bytes> {
     let extent = &shard.extent;
     let object = extent
         .object
@@ -57,6 +71,22 @@ async fn load_rows(
         origin,
     )
     .await?;
+    if bytes.len() as u64 != extent.bytes {
+        return Err(Error::Node("bundle catalog shard digest differs"));
+    }
+    Ok(bytes)
+}
+
+fn decode_rows(
+    root: &Root,
+    shard: &Shard,
+    id: u8,
+    bytes: Bytes,
+) -> Result<DecodedRows> {
+    let object = shard
+        .extent
+        .object
+        .ok_or(Error::Node("unresolved bundle catalog shard"))?;
     let (mut leaf, mut histories) = decode_leaf_with_histories(bytes, shard, id, root)?;
     for locator in leaf
         .bindings
@@ -131,10 +161,37 @@ async fn load_inner(
         if wanted.is_some_and(|wanted| !wanted.contains(&id)) {
             continue;
         }
-        let (rows, leaf_histories) = match &root.shards[usize::from(id)] {
-            Some(shard) => load_rows(layout, &root, shard, id, origin).await?,
-            None => (Vec::new(), BTreeMap::new()),
-        };
+        if root.shards[usize::from(id)].is_none() {
+            loaded.insert(id, Vec::new());
+        }
+    }
+    // Aggregate encoded bytes were checked before opening any read. At most
+    // eight raw bodies coexist within that same bound; decode stays serial.
+    // A fixed-header-sized list retains at most 256 one-byte shard IDs and no
+    // decoded siblings. Owned indices keep this future Send at authority seams.
+    let mut shards = Vec::with_capacity(SHARDS);
+    for (id, shard) in root.shards.iter().enumerate() {
+        if shard.is_some() && !wanted.is_some_and(|wanted| !wanted.contains(&(id as u8))) {
+            shards.push(id as u8);
+        }
+    }
+    let mut reads = stream::iter(shards)
+        .map(|id| {
+            let root = &root;
+            async move {
+                let shard = root.shards[usize::from(id)]
+                    .as_ref()
+                    .ok_or(Error::Node("bundle shard plan is absent"))?;
+                Ok::<_, Error>((id, read_rows(layout, root, shard, origin).await?))
+            }
+        })
+        .buffered(READ_CONCURRENCY);
+    while let Some(result) = reads.next().await {
+        let (id, bytes) = result?;
+        let shard = root.shards[usize::from(id)]
+            .as_ref()
+            .ok_or(Error::Node("bundle shard plan is absent"))?;
+        let (rows, leaf_histories) = decode_rows(&root, shard, id, bytes)?;
         for (pin, history) in leaf_histories {
             if histories.insert(pin, history).is_some() {
                 return Err(Error::Node("bundle inventory repeats a Cell pin"));
@@ -143,6 +200,7 @@ async fn load_inner(
         bindings.extend(rows.iter().cloned());
         loaded.insert(id, rows);
     }
+    drop(reads);
     bindings.sort_unstable_by_key(|binding| {
         binding
             .control
@@ -168,40 +226,7 @@ async fn load_inner(
                 .ok_or(Error::Capacity("bundle selected history bytes"))?;
         }
     }
-    for binding in &mut bindings {
-        if cells.is_some_and(|cells| {
-            !cells.contains(&(
-                *binding.application.as_bytes(),
-                *binding.control.cell.as_bytes(),
-            ))
-        }) {
-            continue;
-        }
-        let Some(history) = histories.get_mut(&history::pin(binding)?) else {
-            continue;
-        };
-        let object = history
-            .extent
-            .object
-            .ok_or(Error::Node("unresolved bundle history"))?;
-        let bytes = super::super::origin::read_range(
-            layout,
-            session,
-            head.epoch,
-            object,
-            history.extent.offset..history.extent.offset + history.extent.bytes,
-            origin,
-        )
-        .await?;
-        let mut locators = history::decode(&bytes, session, head.epoch, binding, history)?;
-        for locator in &mut locators {
-            if locator.object.is_none() {
-                locator.object = Some(object);
-            }
-        }
-        history.loaded = Some(locators.clone());
-        binding.locators = locators;
-    }
+    hydrate_histories(layout, &root, cells, origin, &mut bindings, &mut histories).await?;
     // Snapshot after requested histories have loaded: hydration itself must
     // not rewrite a shard that the caller never changes.
     let mut hydrated = BTreeMap::<u8, Vec<Binding>>::new();
@@ -228,6 +253,83 @@ async fn load_inner(
     };
     catalog.validate()?;
     Ok(catalog)
+}
+
+async fn hydrate_histories(
+    layout: &cellule_ltx::CellStorageLayout,
+    root: &Root,
+    cells: Option<&BTreeSet<CellKey>>,
+    origin: Option<&super::super::origin::OriginBundle>,
+    bindings: &mut [Binding],
+    histories: &mut BTreeMap<[u8; 32], history::History>,
+) -> Result<()> {
+    let mut next = 0;
+    while next < bindings.len() {
+        // Only eight compact indices are planned. The already checked shard
+        // plus requested-history aggregate bounds every returned raw body;
+        // shard reads have joined before this phase reuses their allowance.
+        let mut targets = Vec::with_capacity(READ_CONCURRENCY);
+        while targets.len() < READ_CONCURRENCY && next < bindings.len() {
+            let binding = &bindings[next];
+            if !cells.is_some_and(|cells| {
+                !cells.contains(&(
+                    *binding.application.as_bytes(),
+                    *binding.control.cell.as_bytes(),
+                ))
+            }) && histories.contains_key(&history::pin(binding)?)
+            {
+                targets.push(next);
+            }
+            next += 1;
+        }
+        let borrowed_bindings = &*bindings;
+        let borrowed_histories = &*histories;
+        let bodies = try_join_all((0..targets.len()).map(|offset| {
+            let index = targets[offset];
+            async move {
+                let history = borrowed_histories
+                    .get(&history::pin(&borrowed_bindings[index])?)
+                    .ok_or(Error::Node("bundle history plan is absent"))?;
+                let object = history
+                    .extent
+                    .object
+                    .ok_or(Error::Node("unresolved bundle history"))?;
+                let body = super::super::origin::read_range(
+                    layout,
+                    root.session,
+                    root.epoch,
+                    object,
+                    history.extent.offset..history.extent.offset + history.extent.bytes,
+                    origin,
+                )
+                .await?;
+                if body.len() as u64 != history.extent.bytes {
+                    return Err(Error::Node("bundle history digest differs"));
+                }
+                Ok(body)
+            }
+        }))
+        .await?;
+        for (index, bytes) in targets.into_iter().zip(bodies) {
+            let binding = &mut bindings[index];
+            let history = histories
+                .get_mut(&history::pin(binding)?)
+                .ok_or(Error::Node("bundle history plan is absent"))?;
+            let object = history
+                .extent
+                .object
+                .ok_or(Error::Node("unresolved bundle history"))?;
+            let mut locators = history::decode(&bytes, root.session, root.epoch, binding, history)?;
+            for locator in &mut locators {
+                if locator.object.is_none() {
+                    locator.object = Some(object);
+                }
+            }
+            history.loaded = Some(locators.clone());
+            binding.locators = locators;
+        }
+    }
+    Ok(())
 }
 
 /// A clean maintenance result covers every indexed binding. Only one bounded

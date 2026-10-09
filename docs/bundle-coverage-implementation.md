@@ -159,6 +159,10 @@ references without walking a predecessor chain.
 A point lookup fetches one header, one shard and only the requested Cell's
 history, then its exact native frames. A shared shard keeps unrelated histories
 as authenticated references, including when those bodies are unavailable.
+Multi-Cell lookups overlap up to eight shard reads and then eight requested
+history reads, retaining the aggregate 4-MiB metadata preflight and serial
+authentication/decoding. The two phases do not retain their raw bodies together;
+unrequested histories remain references. Cancellation grants no publication.
 Selection verifies every participating Cell's origin and native suffix before
 CAS; point selection grants no sibling drain or collection authority.
 Complete maintenance inventory still verifies every shard, retaining one

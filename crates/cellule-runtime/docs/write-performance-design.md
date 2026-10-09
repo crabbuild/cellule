@@ -97,6 +97,15 @@ bodies beyond the operation. Working admission remains 20 MiB; workload
 retention and protocol bounds remain unchanged. This is a structural charge,
 not allocator-profile qualification.
 
+Catalog shard reads now overlap at most eight raw bodies after the complete
+selected-shard byte preflight. Requested detached histories use a separate
+eight-read phase after the shard jobs join and their aggregate byte preflight
+passes. Both phases retain the original 4-MiB selected-metadata bound and serial
+authenticated decoding. Planning keeps at most 256 one-byte shard IDs and eight
+history indices; unrelated histories remain authenticated references. This
+changes scheduling rather than request count or proof policy. Application
+throughput verification for this change is still pending.
+
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
 The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)
