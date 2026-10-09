@@ -382,11 +382,21 @@ impl DurabilityGate {
         let follower_through = members.iter().map(|member| (*member, 0)).collect();
         // Not a persisted identity: exact assignments cannot be confirmed by a
         // second in-process gate even when boot, epoch and ticket numbers match.
-        let instance = NEXT_GATE_INSTANCE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                next.checked_add(1)
-            })
-            .map_err(|_| Error::Node("durability gate instance overflow"))?;
+        let mut instance = NEXT_GATE_INSTANCE.load(Ordering::Relaxed);
+        loop {
+            let next = instance
+                .checked_add(1)
+                .ok_or(Error::Node("durability gate instance overflow"))?;
+            match NEXT_GATE_INSTANCE.compare_exchange_weak(
+                instance,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(current) => instance = current,
+            }
+        }
         Ok(Self {
             inner: Arc::new(Mutex::new(GateState {
                 instance,
