@@ -100,9 +100,13 @@ verification. After the fresh body matches, selection shares the proposal
 allocation and uses its released buffer allowance for 2 MiB of historical scratch
 and at most 2 MiB of compact facts/planning metadata. Eight bounded reads overlap;
 every frame and original Cell chain remains canonically checked. Fresh small
-packed leaf bases now overlap in a separate phase: eight one-use canonical
-origin plans charge at most 512 KiB each, reusing the same 4-MiB allowance after
-the complete cohort body matches. All base jobs join or drop before historical
+packed leaf bases overlap in a separate phase through eight continuous slots.
+Each slot retains its fresh root read through complete canonical dependency
+verification, then immediately starts the next base; a slow root does not hold
+completed slots behind a group barrier. One-use origin plans charge at most
+512 KiB per slot, reusing the same 4-MiB allowance after the complete cohort
+body matches. All bounded slots join or drop before larger serial graphs run,
+and all base jobs join or drop before historical
 scratch/facts admission. Larger base graphs and individual historical extents
 above 2 MiB retain serial verification. Selection retains no reconstruction
 bodies beyond the operation. Working admission remains 20 MiB; workload
