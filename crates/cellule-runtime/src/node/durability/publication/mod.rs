@@ -281,7 +281,29 @@ async fn run(
             proofs = authority.select(&captures, lease) => proofs?,
             () = lease.wait_fenced() => return Err(Error::Fenced),
         };
-        let selected = original.confirm_selected_captures(&captures, proofs)?;
+        let cohort = receipts::SelectedCaptures::new(&original, &captures, proofs)?;
+        let memory = {
+            let admission = cohort.resources(&original)?.reserve(cohort.cost());
+            tokio::pin!(admission);
+            loop {
+                tokio::select! {
+                    result = &mut admission => break result?,
+                    checkpoint = checkpoints.recv(), if checkpoints_open => {
+                        if let Some(first) = checkpoint {
+                            // Root tasks retain their admission until this callback
+                            // joins. Servicing it while receipt credit is exhausted
+                            // releases credit without repeating the durable CAS.
+                            tokio::select! {
+                                result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
+                                () = lease.wait_fenced() => return Err(Error::Fenced),
+                            }
+                        } else { checkpoints_open = false; }
+                    }
+                    () = lease.wait_fenced() => return Err(Error::Fenced),
+                }
+            }
+        };
+        let selected = cohort.confirm(&original, memory)?;
         progress.send_modify(|state| state.through = selected.selected_through());
         drop(selected);
         drop(captures);

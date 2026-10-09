@@ -6,11 +6,18 @@ and a two-hour durable request/result ledger. It is **SQL application parity**;
 it does not reproduce a bounded KV upsert benchmark.
 
 Use a dedicated Linux Docker context. The current shared-VM profile gives
-nodes an 8-CPU/16-GiB ceiling, tmpfs state of 4 GiB, a 2-CPU/2-GiB RustFS
+nodes an 8-CPU/16-GiB ceiling, tmpfs state of 4 GiB, a 2-CPU/8-GiB RustFS
 provider, and a 4-CPU/4-GiB client. These ceilings exceed the shared VM's total
 CPU; report contention. tmpfs does not qualify physical-device durability.
 HTTP endpoints, certificates, credentials, and placement are fixture policy.
 The credentials in these scripts are synthetic and used only by this fixture.
+
+The default 64-MiB retained-work and 1-GiB managed-disk limits are passed only
+to Cellule. Case metadata records these profile values for both systems, but
+the runner does not configure equivalent celld internal budgets. Matching
+workload and container ceilings does not establish matching effective memory
+admission or disk policies. Report this asymmetry when comparing results;
+neither overloaded completions nor celld OOM establish sustainable capacity.
 
 ## Build and run
 

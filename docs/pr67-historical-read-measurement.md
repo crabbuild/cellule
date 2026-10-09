@@ -3,7 +3,7 @@
 **No performance improvement is accepted.** Experimental commit `399e908` groups
 fresh historical verification reads, but regresses Fleet completion from 201.82
 to 18.18 writes/s and fails ACK availability. It is reverted by `2257384`.
-Production Rust source is byte-identical to the measured baseline `11843f6`.
+After that revert, production Rust matched the measured baseline `11843f6`.
 PR #67 remains a draft; performance parity and merge gates remain unmet.
 
 ## What the experiment established
@@ -23,7 +23,7 @@ Rust 1.99 Clippy: 1,966 workspace tests and 60 local LTX tests pass, with
 24-MiB test are retained externally. Passing these checks did not predict the
 application regression.
 
-## Matched diagnostic
+## Workload-matched diagnostic
 
 Six new sequential cases compare `11843f6cfb97ea86fb2647a37478039dbfbe0f54`,
 `399e908336490063bd0d12bf0383509215225a7d`, and celld
@@ -36,6 +36,12 @@ Client/auditor binary, fixture, image, host and runner provenance match.
 The ARM64 Docker VM shares 8 CPUs and 8 GiB RAM across the cluster. Serving
 containers have 8-CPU/16-GiB ceilings and 4-GiB tmpfs; ceilings exceed VM resources.
 The 64-MiB retained-work and 1-GiB managed-disk budgets remain unchanged.
+These are explicit Cellule admissions. The runner records their profile values
+in every case, but supplies `PARITY_RETAINED_BYTES` and `PARITY_DISK_BYTES` only
+to Cellule. It does not configure equivalent celld internal budgets. Equal
+case metadata therefore does not establish equal effective resource policies;
+the results compare this workload and configuration, not intrinsic maximum
+capacity with matched internal memory limits.
 No build or contributor suite overlaps the timed windows. An initial six-case
 setup attempt fails the original one-million-free-inode precheck and produces
 no TPS result. Expanding the dedicated VM disk from 120 to 240 GiB retains old
@@ -94,6 +100,13 @@ groups already delivered appends before the fsync chain. Cellule still awaits
 one shipper batch before the next, repeatedly verifies live historical/base
 dependencies, and its Bucket adapter publishes through the per-Cell path.
 Cellule's managed SQLite sessions already use WAL NORMAL.
+
+The measured producer reserves receipt metadata after durable selection. An
+isolated real-producer regression with older checkpoint work holding the rest
+of a 32-MiB ledger reproduces terminal receipt admission: the first execution
+returns `Shared(Capacity("resource ledger"))`, and two repeats observe the
+resulting closed checkpoint channel. This establishes a pressure failure at
+that seam; it does not attribute every earlier workload failure to this cause.
 
 The next experiment must bound verification scratch and metadata within the
 existing working credit, pre-admit selected receipt metadata, and preserve

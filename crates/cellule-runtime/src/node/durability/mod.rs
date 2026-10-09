@@ -19,6 +19,7 @@ mod object_coverage;
 use object_coverage::ObjectCoverage;
 mod publication;
 pub use publication::{BundleCheckpoint, NodeBundlePublicationAuthority};
+mod receipts;
 
 /// Original node authority used to enroll and close the Cells of an installed
 /// shared publication feed. Implementations serialize these mutations and shared
@@ -580,68 +581,9 @@ impl NodeDurability {
         captures: &[crate::node::log_shipper::AssignedCapture],
         proofs: Vec<crate::node::bundle::BundleCoverageProof>,
     ) -> Result<crate::node::log_shipper::SelectedBundlePublication> {
-        self.node_lease.check()?;
-        if captures.is_empty() || captures.len() > 64 || proofs.len() > 64 {
-            return Err(Error::Capacity("selected capture cohort"));
-        }
-        let assignments = proofs
-            .iter()
-            .map(|proof| proof.assignment_count())
-            .sum::<usize>();
-        if assignments != captures.len() || proofs.iter().any(|proof| proof.assignment_count() == 0)
-        {
-            return Err(Error::Node("selection omits original captured assignments"));
-        }
-        for (index, capture) in captures.iter().enumerate() {
-            let assignment = capture.assignment();
-            if captures[..index]
-                .iter()
-                .any(|before| before.assignment() == assignment)
-                || proofs
-                    .iter()
-                    .filter(|proof| proof.contains_assignment(&assignment))
-                    .count()
-                    != 1
-            {
-                return Err(Error::Node(
-                    "selection differs from original captured cohort",
-                ));
-            }
-        }
-        let resources = self.selection_resources.get().ok_or(Error::Node(
-            "bundle publication has no installed runtime resource ledger",
-        ))?;
-        let memories = proofs
-            .iter()
-            .map(|proof| {
-                resources.try_reserve(
-                    crate::fleet::resource::ResourceCost::zero()
-                        .with_retained_bytes(proof.retained_metadata_bytes()?),
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
-        // Validate all original gates and leases before sending any receipt.
-        // Receipt waiters also require the gate's confirmed Bundle source.
-        let through =
-            crate::node::bundle::confirm_selected_coverage(&self.gate, &self.node_lease, &proofs)?;
-        let selected = proofs
-            .into_iter()
-            .zip(memories)
-            .map(|(proof, memory)| {
-                Arc::new(crate::node::log_shipper::SelectedBundle {
-                    proof,
-                    _memory: memory,
-                })
-            })
-            .collect::<Vec<_>>();
-        for capture in captures {
-            let proof = selected
-                .iter()
-                .find(|selected| selected.proof.contains_assignment(&capture.assignment()))
-                .ok_or(Error::Node("selected capture lost original assignment"))?;
-            capture.confirm_selection(Arc::clone(proof));
-        }
-        Ok(crate::node::log_shipper::SelectedBundlePublication { through, selected })
+        let cohort = receipts::SelectedCaptures::new(self, captures, proofs)?;
+        let memory = cohort.resources(self)?.try_reserve(cohort.cost())?;
+        cohort.confirm(self, memory)
     }
 
     /// Returns this binding's exact enrolled log epoch.
