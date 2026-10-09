@@ -11,7 +11,13 @@ Fleet writes/s from 525.67 and failed availability/drain. The subsequent
 [coverage-race measurement](pr67-coverage-race-measurement.md) at `e40ecd6`
 passes all-ACK warm/cold audit and joined drain, but completes 100.20 Fleet
 writes/s versus 106.05 before the fix: no demonstrated throughput gain.
-The latest [release-build repeat](pr67-release-repeat-measurement.md) of the same
+The latest [selection-readiness comparison](pr67-selection-readiness-measurement.md)
+at `6c909a6` preserves valid Fleet ACK read/retry visibility while selection
+waits and allows older roots to prepare, with joined cold recovery in its
+real-actor regression. The application completes 184.77 Fleet and 248.68 Bucket
+writes/s versus 195.13 and 247.55 before. Fleet availability still fails;
+Bucket audits pass but delivery targets fail. No throughput gain is established.
+The earlier [release-build repeat](pr67-release-repeat-measurement.md) of the same
 `4a8f55c` binary completes 107.95 Fleet and 268.12 Bucket writes/s. Fleet still
 fails warm ACK availability; Bucket audits pass but delivery targets fail.
 Diagnostic logs identify shared-selection deadlines that fence Cells and

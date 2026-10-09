@@ -99,8 +99,13 @@ cleanup. Its unselected suffix remains in the bounded original queue, allowing
 older root debt to prepare. The existing ten-second cleanup timeout begins
 after selection readiness, rather than timing an origin wait after Fleet ACKs.
 Fencing/removal cancels only observation; original native publication and
-checkpoint/drain obligations remain joined. Performance qualification of this
-change remains required.
+checkpoint/drain obligations remain joined. Its real-actor delayed-selection
+regression passes read/retry visibility, older-root progress and joined cold
+restore. The [paired measurement](../../../docs/pr67-selection-readiness-measurement.md)
+at `6c909a6` completes 184.77 Fleet writes/s versus 195.13 before, with failed
+application availability. Bucket completes 248.68 writes/s versus 247.55 with
+passing ACK audits; its fixture bypasses the managed producer. No throughput
+gain or performance qualification is established.
 
 A follow-up preserves exact selected suffixes across a confirmed checkpoint,
 including receipts selected against intermediate bases while older roots were

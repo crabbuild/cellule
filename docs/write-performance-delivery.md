@@ -6,7 +6,14 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [release-build repeat](pr67-release-repeat-measurement.md) measures
+The latest [selection-readiness comparison](pr67-selection-readiness-measurement.md)
+measures `6c909a6` at **184.77 Fleet writes/s and 248.68 Bucket writes/s**, versus
+195.13 and 247.55 before. Its delayed-selection actor regression passes, but
+Fleet still returns 328,243 measured errors and fails 19,797 of 21,366 warm
+ACK checks. Bucket passes all 26,423 warm/cold checks but drops 104,823 offers.
+No throughput improvement or parity is established; PR #67 remains a draft.
+
+The earlier [release-build repeat](pr67-release-repeat-measurement.md) measures
 the unchanged `4a8f55c` binary at **107.95 Fleet writes/s and 268.12 Bucket
 writes/s**. Fleet returns 499,450 measured errors and fails 16,057 of 16,190
 warm ACK checks. Bucket passes all 24,880 warm/cold checks but drops 103,657
