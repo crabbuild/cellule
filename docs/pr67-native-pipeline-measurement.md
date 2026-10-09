@@ -1,5 +1,9 @@
 # PR 67: native admission and ordered follower pipeline
 
+The later [publication-admission measurement](pr67-publication-admission-measurement.md)
+fixes a demonstrated owner-fencing race and passes its full ACK/drain/cold audit,
+but records worse TPS and successful p99. Results below remain historical observations.
+
 **Performance parity remains unmet; PR #67 stays a draft.** Native admission no
 longer waits for a publication slot under the global ordering lock. The first
 pipeline candidate regresses throughput. Preserving a short commit window and

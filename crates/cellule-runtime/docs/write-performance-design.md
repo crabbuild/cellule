@@ -1,5 +1,14 @@
 # Node write and read performance design
 
+The latest [publication-admission measurement](../../../docs/pr67-publication-admission-measurement.md)
+identifies a post-SQL RAM reservation race and transfers unused original command
+credit to publication. All 47,471 candidate ACKs pass warm/cold mutation and
+original retry audits; fleet drain takes 47.68 seconds. Write performance
+regresses in this short pair: 481.80→451.70 successful writes/s and
+285.52→1,285.01-ms successful scheduled p99; fresh celld completes 1,996.33/s.
+Publication debt and extensive root/history I/O remain. These are diagnostics,
+not performance parity or qualification. The acceptance gates below are unchanged.
+
 The [native-pipeline comparison](../../../docs/pr67-native-pipeline-measurement.md)
 completes 468.38 Fleet writes/s for unchanged production, 404.68/s for the first
 pipeline candidate, 553.53/s for the corrected candidate and 1,993.08/s for celld.
