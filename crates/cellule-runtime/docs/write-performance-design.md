@@ -1,18 +1,19 @@
 # Node write and read performance design
 
-The [current 2,000-Cell measurements](../../../docs/pr67-closure-admission-measurement.md)
-complete joined drain and all-ACK warm/cold read and retry audits after bounding
-provider closure callbacks. Fleet throughput is 339.30 writes/s and read-only
-throughput is 16,410.03/s, both below the previous observations. Successful
-scheduled write p99 is 1,824.77 ms; errors and drops remain. The first read setup
-fails with HTTP 503 before any timed point; its unchanged retry does not erase
-that failure. This is a closure scheduling fix, with no demonstrated throughput
-gain. The previous celld reference completes 1,999.80 writes/s at 2,000 offered/s.
-These short observations remain unqualified; PR #67 is still a draft.
+The [current paired 2,000-Cell measurements](../../../docs/pr67-catalog-overlap-measurement.md)
+complete joined drain and all-ACK warm/cold read and retry audits in all six
+cases. Bounded metadata overlap completes 551.73 Fleet writes/s versus 211.37
+before and 1,999.88 for fresh celld. Successful scheduled write p99 is 566.39 ms;
+errors, drops and growing publication debt remain. Read-only throughput is
+16,631.43/s versus 18,778.07 before and 19,994.58 for celld. The adverse read
+result fails the matched guardrail. This single short pair establishes no
+repeatable gain or regression attributable to the change. Earlier failures remain
+in their [original report](../../../docs/pr67-closure-admission-measurement.md).
+All profiles remain unqualified; PR #67 is still a draft.
 
 The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
 identified publication capacity held under the global issuance lock. The latest
-candidate still spends 99.01% of successful submission time waiting for that
+candidate still spends 98.75% of successful submission time waiting for that
 lock. This coupling queues native progress before follower proof starts. Repeated
 historical/base verification and sparse root checkpoints keep the publication
 consumer expensive. Matching celld requires reducing that work and separating
@@ -103,8 +104,9 @@ eight-read phase after the shard jobs join and their aggregate byte preflight
 passes. Both phases retain the original 4-MiB selected-metadata bound and serial
 authenticated decoding. Planning keeps at most 256 one-byte shard IDs and eight
 history indices; unrelated histories remain authenticated references. This
-changes scheduling rather than request count or proof policy. Application
-throughput verification for this change is still pending.
+changes scheduling rather than request count or proof policy. Its
+[fresh paired diagnostic](../../../docs/pr67-catalog-overlap-measurement.md)
+records a higher write rate and lower read rate; performance qualification fails.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
