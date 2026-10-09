@@ -1,18 +1,20 @@
 # Bundle coverage implementation
 
-The [current paired 2,000-Cell measurements](pr67-catalog-overlap-measurement.md)
-complete joined drain and all-ACK warm/cold read and retry audits in all six
-cases. Bounded metadata overlap completes 551.73 Fleet writes/s versus 211.37
-before and 1,999.88 for fresh celld. Successful scheduled write p99 is 566.39 ms;
-errors, drops and growing publication debt remain. Read-only throughput is
-16,631.43/s versus 18,778.07 before and 19,994.58 for celld. The adverse read
-result fails the matched guardrail. This single short pair establishes no
-repeatable gain or regression; all profiles remain unqualified. Earlier failures
-remain in their [original report](pr67-closure-admission-measurement.md).
+The [current paired 2,000-Cell measurements](pr67-encoder-cost-measurement.md)
+complete joined drain and all-ACK warm/cold read and original-retry audits in
+all six cases. Reduced encoder scanning completes 550.52 Fleet writes/s versus
+512.02 before and 1,994.57 for fresh celld. Successful scheduled write p99 is
+866.06 ms versus 853.65 before; errors increase while dropped offers decrease.
+Read-only throughput is 17,877.42/s versus 13,780.35 before and 19,522.95 for
+celld. Both Cellule read arms drop offers, so the canonical read guardrail fails.
+One short pair establishes no repeatable or attributable gain. Publication
+cost and debt remain; all profiles are unqualified and PR #67 stays a draft.
+The [preceding comparison](pr67-catalog-overlap-measurement.md)
+and its failures remain evidence.
 
 The [submission diagnosis](pr67-submission-timing-measurement.md) identifies
 publication capacity held under the global issuance lock. The latest candidate
-still spends 98.75% of successful submission time waiting for that lock.
+still spends 98.41% of successful submission time waiting for that lock.
 Celld pipelines native progress independently of bucket publication. Similar
 components do not imply the same response path. PR #67 remains a draft.
 

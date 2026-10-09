@@ -6,14 +6,17 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [paired 2,000-Cell comparison](pr67-catalog-overlap-measurement.md)
-measures `98a368a` at **551.73 Fleet writes/s versus 211.37 before and 1,999.88
-for fresh celld**. Read-only throughput falls 18,778.07→16,631.43/s versus
-celld's 19,994.58/s. All six cases pass joined drain and complete ACK warm/cold
-read/retry audits. The candidate still returns 38,642 write errors, drops offers
-and accumulates publication debt; the matched read guardrail fails. One short
-pair establishes no repeatable improvement or regression. Performance parity
-remains unmet and PR #67 stays a draft. Earlier failures below remain evidence.
+The latest [paired 2,000-Cell comparison](pr67-encoder-cost-measurement.md)
+measures `30cd960` at **550.52 Fleet writes/s versus 512.02 before and 1,994.57
+for fresh celld**. Successful scheduled write p99 rises 853.65→866.06 ms;
+returned errors increase and drops decrease. Read-only throughput is
+17,877.42/s versus 13,780.35 before and celld's 19,522.95/s. All six cases pass
+joined drain and complete ACK warm/cold read/retry audits. Publication cost
+and debt remain, both read arms drop offers, and every performance profile
+fails. This single short pair establishes no repeatable or attributable gain.
+PR #67 remains a draft. The
+[preceding catalog-overlap comparison](pr67-catalog-overlap-measurement.md)
+and earlier failures below remain evidence.
 
 The earlier [selection-readiness comparison](pr67-selection-readiness-measurement.md)
 measures `6c909a6` at **184.77 Fleet writes/s and 248.68 Bucket writes/s**, versus

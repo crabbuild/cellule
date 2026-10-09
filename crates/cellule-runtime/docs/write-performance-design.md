@@ -1,19 +1,20 @@
 # Node write and read performance design
 
-The [current paired 2,000-Cell measurements](../../../docs/pr67-catalog-overlap-measurement.md)
-complete joined drain and all-ACK warm/cold read and retry audits in all six
-cases. Bounded metadata overlap completes 551.73 Fleet writes/s versus 211.37
-before and 1,999.88 for fresh celld. Successful scheduled write p99 is 566.39 ms;
-errors, drops and growing publication debt remain. Read-only throughput is
-16,631.43/s versus 18,778.07 before and 19,994.58 for celld. The adverse read
-result fails the matched guardrail. This single short pair establishes no
-repeatable gain or regression attributable to the change. Earlier failures remain
-in their [original report](../../../docs/pr67-closure-admission-measurement.md).
-All profiles remain unqualified; PR #67 is still a draft.
+The [current paired 2,000-Cell measurements](../../../docs/pr67-encoder-cost-measurement.md)
+complete joined drain and all-ACK warm/cold read and original-retry audits in
+all six cases. Reduced encoder scanning completes 550.52 Fleet writes/s versus
+512.02 before and 1,994.57 for fresh celld. Successful scheduled write p99 is
+866.06 ms versus 853.65 before; errors increase while dropped offers decrease.
+Read-only throughput is 17,877.42/s versus 13,780.35 before and 19,522.95 for
+celld. Both Cellule read arms drop offers, so the canonical read guardrail fails.
+One short pair establishes no repeatable or attributable gain. Publication
+cost and debt remain; all profiles are unqualified and PR #67 stays a draft.
+The [preceding comparison](../../../docs/pr67-catalog-overlap-measurement.md)
+and its failures remain evidence.
 
 The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
 identified publication capacity held under the global issuance lock. The latest
-candidate still spends 98.75% of successful submission time waiting for that
+candidate still spends 98.41% of successful submission time waiting for that
 lock. This coupling queues native progress before follower proof starts. Repeated
 historical/base verification and sparse root checkpoints keep the publication
 consumer expensive. Matching celld requires reducing that work and separating
@@ -107,6 +108,15 @@ history indices; unrelated histories remain authenticated references. This
 changes scheduling rather than request count or proof policy. Its
 [fresh paired diagnostic](../../../docs/pr67-catalog-overlap-measurement.md)
 records a higher write rate and lower read rate; performance qualification fails.
+
+Dense encoding now maps the original at-most-64 frame digests to unique
+catalog locations in one locator scan, then assigns extents in issued order.
+Strictly ordered pins support history lookup without full binding scans;
+detached leaf encoding reuses the original shard groups. Fixed planning uses
+about 4 KiB of stack without new retained admission, format or proof changes.
+The [encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
+preserves exact bytes in the external old-encoder oracle, but establishes no
+repeatable application improvement and fails performance qualification.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
