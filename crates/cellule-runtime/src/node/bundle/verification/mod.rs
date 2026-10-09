@@ -7,6 +7,7 @@ use tokio::sync::Semaphore;
 
 const READ_CONCURRENCY: usize = 8;
 mod base;
+pub(super) use base::verify as verify_bases;
 // Together scratch and metadata replace the released fresh-origin buffer;
 // they never add to the producer's original 20-MiB working reservation.
 const SCRATCH_BYTES: u64 = MAX_BUNDLE_BYTES / 2;
@@ -145,7 +146,10 @@ pub(super) async fn verify_cohort(
     }
     // Base and historical verification occupy the released origin allowance
     // in disjoint phases. No historical facts or windows coexist with bases.
-    base::verify(layout, bindings, limits).await?;
+    {
+        let bases = bindings.iter().collect::<Vec<_>>();
+        verify_bases(layout, &bases, limits).await?;
+    }
     let windows = windows(bindings)?;
     let facts = Mutex::new(
         bindings
