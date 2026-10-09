@@ -6,17 +6,18 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [paired 2,000-Cell comparison](pr67-encoder-cost-measurement.md)
-measures `30cd960` at **550.52 Fleet writes/s versus 512.02 before and 1,994.57
-for fresh celld**. Successful scheduled write p99 rises 853.65→866.06 ms;
-returned errors increase and drops decrease. Read-only throughput is
-17,877.42/s versus 13,780.35 before and celld's 19,522.95/s. All six cases pass
-joined drain and complete ACK warm/cold read/retry audits. Publication cost
-and debt remain, both read arms drop offers, and every performance profile
-fails. This single short pair establishes no repeatable or attributable gain.
-PR #67 remains a draft. The
-[preceding catalog-overlap comparison](pr67-catalog-overlap-measurement.md)
-and earlier failures below remain evidence.
+The latest [paired 2,000-Cell comparison](pr67-metadata-window-measurement.md)
+measures `4a5b001` at **502.28 Fleet writes/s versus 455.73 before and 1,999.83
+for fresh celld**. Observed GET/range work falls, but successful scheduled write
+p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only throughput
+falls 17,905.02→17,347.03/s; celld completes 19,983.30/s. The candidate passes all
+48,888 ACK warm/cold reads and original retries and drains in 66.52 seconds.
+The baseline write case fails two warm retries and never reaches cold recovery.
+Both Cellule read arms drop offers, the read guardrail fails and every performance
+profile fails. This single short pair establishes no acceptable, repeatable or
+attributable gain. PR #67 remains a draft. The
+[preceding encoder comparison](pr67-encoder-cost-measurement.md) and earlier
+passing and failed evidence remain separate observations.
 
 The earlier [selection-readiness comparison](pr67-selection-readiness-measurement.md)
 measures `6c909a6` at **184.77 Fleet writes/s and 248.68 Bucket writes/s**, versus

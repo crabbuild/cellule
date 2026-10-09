@@ -1,21 +1,22 @@
 # Node write and read performance design
 
-The [current paired 2,000-Cell measurements](../../../docs/pr67-encoder-cost-measurement.md)
-complete joined drain and all-ACK warm/cold read and original-retry audits in
-all six cases. Reduced encoder scanning completes 550.52 Fleet writes/s versus
-512.02 before and 1,994.57 for fresh celld. Successful scheduled write p99 is
-866.06 ms versus 853.65 before; errors increase while dropped offers decrease.
-Read-only throughput is 17,877.42/s versus 13,780.35 before and 19,522.95 for
-celld. Both Cellule read arms drop offers, so the canonical read guardrail fails.
-One short pair establishes no repeatable or attributable gain. Publication
-cost and debt remain; all profiles are unqualified and PR #67 stays a draft.
-The [preceding comparison](../../../docs/pr67-catalog-overlap-measurement.md)
-and its failures remain evidence.
+The [current paired 2,000-Cell measurements](../../../docs/pr67-metadata-window-measurement.md)
+complete 502.28 Fleet writes/s versus 455.73 before and 1,999.83 for fresh
+celld. Metadata windows reduce observed GET/range work, but successful scheduled
+write p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only
+throughput falls 17,905.02→17,347.03/s; celld completes 19,983.30/s. The candidate
+passes all 48,888 ACK warm/cold reads and original retries and drains in 66.52
+seconds. The baseline write case fails two warm retries and never reaches the
+cold audit. Both Cellule read arms drop offers and the read guardrail fails.
+One short pair establishes no acceptable, repeatable or attributable gain.
+Publication cost and debt remain; all profiles are unqualified and PR #67 stays
+a draft. The [preceding encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
+and its passing and failed evidence remain separate observations.
 
 The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
-identified publication capacity held under the global issuance lock. The latest
-candidate still spends 98.41% of successful submission time waiting for that
-lock. This coupling queues native progress before follower proof starts. Repeated
+identified publication capacity held under the global issuance lock. Observed ordered wait remains about 119 ms; the latest phase counts
+straddle window boundaries and cannot support an exact successful-submission
+partition. This coupling queues native progress before follower proof starts. Repeated
 historical/base verification and sparse root checkpoints keep the publication
 consumer expensive. Matching celld requires reducing that work and separating
 native progress from bounded recoverable publication debt; larger queues alone
