@@ -1,66 +1,20 @@
 # Bundle coverage implementation
 
-The latest [historical-read experiment](pr67-historical-read-measurement.md)
-reduces an isolated 64-Cell historical read cohort from 64 requests to one, but
-regresses Fleet completion from 201.82 to 18.18 writes/s and fails ACK availability
-with resource-ledger pressure. Commit `399e908` is reverted; production source
-returns to baseline `11843f6`. No performance improvement is accepted.
+The [latest receipt-pressure diagnostic](pr67-receipt-admission-measurement.md)
+reproduces a fatal post-selection admission failure and verifies waiting for
+credit while joining older checkpoints. One fresh Fleet pair completes 154.72
+writes/s versus 122.97 before and 4,001.65 for celld. All three fail warm ACK
+availability and qualification; resource policies are asymmetric. No repeatable
+throughput improvement or parity is established. PR #67 remains a draft.
 
-The connected protocol APIs now implement shared selection, independently
-awaitable root materialization and complete live-writer closure. An explicitly
-installed original feed can now provide admitted receipts to the actor.
-`NodeDurability::start_bundle_publication` retains a bounded producer and joins
-exact checkpoint callbacks under the original authority. The Fleet SQL example
-installs it; Bucket-only performance wiring bypasses it. Its first
-[measured connection](pr67-managed-producer-measurement.md) regressed to 93.57
-Fleet writes/s from 525.67 and failed availability/drain. The subsequent
-[coverage-race measurement](pr67-coverage-race-measurement.md) at `e40ecd6`
-passes all-ACK warm/cold audit and joined drain, but completes 100.20 Fleet
-writes/s versus 106.05 before the fix: no demonstrated throughput gain.
-The latest [selection-readiness comparison](pr67-selection-readiness-measurement.md)
-at `6c909a6` preserves valid Fleet ACK read/retry visibility while selection
-waits and allows older roots to prepare, with joined cold recovery in its
-real-actor regression. The application completes 184.77 Fleet and 248.68 Bucket
-writes/s versus 195.13 and 247.55 before. Fleet availability still fails;
-Bucket audits pass but delivery targets fail. No throughput gain is established.
-The earlier [release-build repeat](pr67-release-repeat-measurement.md) of the same
-`4a8f55c` binary completes 107.95 Fleet and 268.12 Bucket writes/s. Fleet still
-fails warm ACK availability; Bucket audits pass but delivery targets fail.
-Diagnostic logs identify shared-selection deadlines that fence Cells and
-publication backlog refusals. No acceptable improvement or parity is established.
-The earlier [checkpoint-continuity comparison](pr67-checkpoint-continuity-measurement.md)
-at `4a8f55c` verifies live writes across a confirmed root and successive
-intermediate-base receipts, with bounded, admitted prefix witnesses. It measures
-185.83 Fleet writes/s versus 164.73, but still returns 304,151 errors and fails
-warm ACK availability. Bucket completes 215.08 writes/s versus 227.15 with
-passing audits and higher p99. All contributor checks pass; no acceptable
-performance improvement or parity is established. PR #67 remains a draft.
-
-The earlier [asynchronous-root comparison](pr67-async-root-measurement.md) at
-`6d62d41` retires exact selected captures and schedules admitted roots separately.
-It completes 183.65 Fleet writes/s versus 115.27 before, but returns 297,811
-measured request errors and fails its warm ACK audit. Cold recovery and successful
-drain are unverified. Root density rises to 10.25, but retained pressure and
-publication age grow. This is an availability regression; PR #67 is a draft.
-The earlier [cohort-origin comparison](pr67-cohort-origin-measurement.md) at
-`9d4e632` reduces one fresh 64-Cell bundle's origin reads from 187 to one.
-It completes 95.35 Fleet writes/s versus 88.28 in a fresh paired window, with
-passing ACK audits and drain. Total GET/range work remains near 20.4 requests
-per completed write, root density is 1.08, and steady Bundle ACKs remain zero.
-The producer charges its new buffer under the unchanged retention budget.
-Every point fails qualification; a repeatable throughput gain remains unproved.
-This slice establishes ordering and reconstruction evidence.
-The [earlier application-path benchmark](pr67-performance-reevaluation.md)
-measures `7fc0793`; it does not exercise bundle-based responses or establish
-write parity. The [WAL NORMAL comparison](pr67-normal-wal-reevaluation.md)
-separately records seven completed diagnostic cases and an interrupted matrix.
-
-The [earlier sparse-root coverage measurement](pr67-sparse-root-coverage-measurement.md)
-exercises the ordinary application path at `b185672`: 378.88 completed writes/s
-versus 282.43 before the change in one five-minute Fleet-configured pair.
-Successful-write p99 improved, median latency worsened, and audit, drain and
-debt gates failed. The paired celld owner exited during load. This is diagnostic
-evidence, not repeatable improvement or qualified parity.
+The installed original producer provides admitted shared receipts, independent
+root materialization and complete live-writer closure. The Fleet SQL example
+installs it; Bucket benchmark wiring bypasses it. Remaining gaps are publication
+and verification cost, pressure-safe read/retry and materializer progress,
+ordered shipping, safe collection and full lifecycle/performance qualification.
+The [historical-read experiment](pr67-historical-read-measurement.md) was reverted
+after a severe Fleet regression. Earlier measured slices remain linked from the
+[delivery record](write-performance-delivery.md).
 
 ## Celld reference and Cellule adaptation
 
@@ -95,6 +49,14 @@ Uploading an immutable object supplies no coverage proof.
 | Cell departure CAS | Refuse release, takeover and tombstone until Closed, exact materialization and catalog checkpoint; migration refuses while bound |
 | Node withdrawal/maintenance | Refuse unresolved bindings; stale fencing preserves the catalog head; one bundle-bound boot cannot rotate its native log to another epoch |
 | Backup and collection | Backup refuses bound Cells. Coverage objects have no deletion path; this is retention, not a qualified collection implementation |
+
+The producer admits receipt metadata for the complete original cohort together.
+When credit is exhausted, it retains that verified cohort and services canonical
+checkpoint callbacks whose joining can release older materializer credit. It
+then transfers the admitted memory and rechecks the original live gate/lease
+before confirming coverage. It never repeats durable selection to obtain credit.
+This fixes a reproduced terminal capacity failure; sustained progress and
+pressure-safe read/retry still require application qualification.
 
 Live confirmation now reports `DurabilitySource::Bundle` separately from a
 materialized Cell root. Adjacent exact ranges merge into compact source
