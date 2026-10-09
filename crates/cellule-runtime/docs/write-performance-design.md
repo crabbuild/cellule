@@ -79,7 +79,11 @@ and accepted member I/O keep that credit through their original lifetimes.
 Eight original rounds can overlap in per-member FIFO lanes, with ordered credit
 application and bounded grouping into canonical follower append/fsync. Every
 lane joins before epoch shutdown, including after cancellation of a join waiter.
-This changes native execution; the bundle publisher still runs expensive
+Selection reuses its encoder-checked binding metadata only after this operation's
+complete fresh origin read matches the proposal bytes. It avoids a second catalog
+decode and hydrates no duplicate selected histories; referenced base and native
+history bodies still pass fresh canonical verification before CAS. This changes
+native execution and selection CPU work; the bundle publisher still runs expensive
 selection cohorts serially. Publication staging, reduced repeated verification
 and complete application performance qualification remain required. Component
 passes establish no new TPS claim.

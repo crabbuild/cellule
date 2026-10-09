@@ -123,6 +123,24 @@ async fn selection_groups_fresh_historical_extents_across_sixty_four_cells() {
         .prepare_node_bundle(&f.node, &frames, &assignments, now)
         .await
         .unwrap();
+    let wanted = cells
+        .iter()
+        .map(|cell| {
+            (
+                *cell.authority.layout().application_id(),
+                *cell.control.value().cell.as_bytes(),
+            )
+        })
+        .collect();
+    let decoded = catalog_index::load_cells(
+        &f.layout,
+        prepared.catalog.session,
+        prepared.head,
+        &wanted,
+        None,
+    )
+    .await
+    .unwrap();
     f.count.reset();
     let (node, proofs) = f
         .directory
@@ -148,6 +166,15 @@ async fn selection_groups_fresh_historical_extents_across_sixty_four_cells() {
     );
     assert_eq!(proofs.len(), MAX_FRAMES);
     for proof in &proofs {
+        let canonical = decoded
+            .bindings
+            .iter()
+            .find(|binding| binding.control.bundle_binding == Some(proof.binding()))
+            .unwrap();
+        assert_eq!(
+            &proof.binding, canonical,
+            "selected metadata must equal an independent fresh canonical decode"
+        );
         assert_eq!(proof.commit_sequence(), 3);
         assert_eq!(proof.locator_count(), 2);
         let restored = proof

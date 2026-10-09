@@ -215,46 +215,12 @@ impl NodeDirectory {
         if prepared.assignments.is_empty() {
             return Err(Error::Node("native bundle has no complete assignments"));
         }
-        let cells = prepared
-            .catalog
-            .bindings
-            .iter()
-            .filter(|binding| {
-                binding
-                    .locators
-                    .iter()
-                    .any(|locator| locator.object.is_none())
-            })
-            .map(|binding| {
-                (
-                    *binding.application.as_bytes(),
-                    *binding.control.cell.as_bytes(),
-                )
-            })
-            .collect();
         let origin = origin::OriginBundle::load(&self.layout, prepared).await?;
-        let catalog = index::load_cells(
-            &self.layout,
-            prepared.catalog.session,
-            prepared.head,
-            &cells,
-            Some(&origin),
-        )
-        .await?;
-        let bindings = catalog
-            .bindings
-            .into_iter()
-            .filter(|binding| {
-                cells.contains(&(
-                    *binding.application.as_bytes(),
-                    *binding.control.cell.as_bytes(),
-                ))
-            })
-            .collect::<Vec<_>>();
+        let bindings = origin.selected_bindings(prepared)?;
         verification::verify_cohort(
             &self.layout,
-            catalog.session,
-            catalog.epoch,
+            prepared.catalog.session,
+            prepared.catalog.epoch,
             &bindings,
             limits,
             &origin,
@@ -270,7 +236,7 @@ impl NodeDirectory {
                 pin,
                 binding,
                 head: prepared.head,
-                session: catalog.session,
+                session: prepared.catalog.session,
                 live: None,
             });
         }

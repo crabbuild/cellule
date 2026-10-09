@@ -38,6 +38,37 @@ impl OriginBundle {
         })
     }
 
+    pub(super) fn selected_bindings(&self, prepared: &PreparedNodeBundle) -> Result<Vec<Binding>> {
+        if self.session != prepared.catalog.session || self.head != prepared.head {
+            return Err(Error::Node("bundle metadata origin differs"));
+        }
+        // Encoding checked these exact private rows and their canonical extents.
+        // This operation's complete fresh read matched the encoded bytes before
+        // this view can exist. Re-decoding their shards/histories repeats that
+        // work; it supplies no additional origin observation. Dependency bodies
+        // remain independently verified in the canonical cohort verifier.
+        Ok(prepared
+            .catalog
+            .bindings
+            .iter()
+            .filter(|binding| {
+                binding
+                    .locators
+                    .iter()
+                    .any(|locator| locator.object.is_none())
+            })
+            .cloned()
+            .map(|mut binding| {
+                for locator in &mut binding.locators {
+                    if locator.object.is_none() {
+                        locator.object = Some(self.head.digest);
+                    }
+                }
+                binding
+            })
+            .collect())
+    }
+
     pub(super) fn range(
         &self,
         session: SessionId,

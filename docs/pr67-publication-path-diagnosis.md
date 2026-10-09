@@ -38,7 +38,7 @@ append batch, and its example HTTP adapter holds a member grant mutex across
 the RPC. Concurrent futures alone would not establish safe delivery ordering.
 
 Publication also does different work. Celld's
-[bundle flush](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L6436)
+[bundle flush](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L6628)
 uploads new native entries, then reads the original log record to check that
 the epoch remains open before crediting the upload. Cellule reloads selected
 catalog metadata, builds and uploads a proposal, freshly verifies its origin,
