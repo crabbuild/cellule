@@ -80,7 +80,9 @@ Its loopback ports must be free of other workloads.
 For a read-only point, supply `--write-rates 0 --read-rate N`. For a mixed
 point, use the same offered write rate on both systems and add `--read-rate N`.
 Use `--cells 2000` for the node capacity contract; the population sets both the
-Cellule application and client, and verifies celld's complete owner placement.
+Cellule application and client, writes celld's per-case deployment configuration,
+and verifies celld's complete owner placement. The original build fixture stays
+immutable; each celld case retains its deployed application and configuration.
 The simultaneous target is `--cells 2000 --write-rates 2000 --read-rate 20000`.
 Add `--hot-read-cells 10` for the 1% hot-read case. Record qualification of
 read-only and mixed profiles separately; an aggregate read/write rate is not a

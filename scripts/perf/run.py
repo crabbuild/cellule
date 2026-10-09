@@ -301,7 +301,15 @@ def run_case(system, durability):
         ready = docker('exec', CONTROL, 'python3', '/work/wait-store-ready.py', timeout=70)
         put(directory / 'store-readiness.json', json.loads(ready.stdout))
         if system == 'celld':
-            p = docker('run', '--rm', '--network', 'host', '--cpus', '2', '--memory', '2g', '--memory-swap', '2g', '--ulimit', 'nofile=65536:65536', '-v', f"{BASE}/{'celld-app'}:/app:ro", *CREDS, CELLD, 'deploy', '/app', '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1')
+            # Keep the build fixture immutable while recording the exact
+            # population deployed for this fresh case.
+            application = directory / 'celld-app'
+            shutil.copytree(BASE / 'celld-app', application)
+            deployment = application / 'wrangler.json'
+            settings = json.loads(deployment.read_text())
+            settings['vars']['CELLS'] = str(ARGS.cells)
+            put(deployment, settings)
+            p = docker('run', '--rm', '--network', 'host', '--cpus', '2', '--memory', '2g', '--memory-swap', '2g', '--ulimit', 'nofile=65536:65536', '-v', f'{application}:/app:ro', *CREDS, CELLD, 'deploy', '/app', '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1')
             (directory / 'deploy.log').write_text(p.stdout + p.stderr)
         elif durability == 'fleet':
             for i in [1, 2]:
@@ -504,8 +512,8 @@ if __name__ == '__main__':
         parser.error('artifacts must stay outside the repository')
     if not 1 <= ARGS.repetitions <= 10 or not 1 <= ARGS.seconds <= 3600 or (not 1 <= ARGS.warmup <= 60):
         parser.error('invalid bounded duration/repetition')
-    if ARGS.cells <= 0:
-        parser.error('Cell population must be positive')
+    if not 1 <= ARGS.cells <= 2000:
+        parser.error('Cell population must be between 1 and 2000')
     if ARGS.overload_capacity is not None and ARGS.overload_capacity <= 0:
         parser.error('overload capacity must be positive')
     DOCKER = ['docker', '--context', CTX]
