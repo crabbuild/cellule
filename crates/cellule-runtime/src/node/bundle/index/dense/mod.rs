@@ -1,6 +1,8 @@
 //! One immutable upload holds changed shards, native frames and small histories.
 use super::*;
 
+mod native;
+
 pub(super) fn encode(
     catalog: &mut Catalog,
     frames: &[cellule_ltx::VerifiedNodeFrame],
@@ -104,42 +106,21 @@ pub(super) fn encode(
             .checked_add(bytes)
             .ok_or(Error::Capacity("bundle shard bytes"))?;
     }
-    let mut native = Vec::with_capacity(frames.len());
-    for frame in frames {
-        let digest = Digest::from_bytes(frame.digest());
-        let mut matches = 0;
-        for binding in &mut catalog.bindings {
-            let id = binding_shard(binding);
-            for locator in &mut binding.locators {
-                if locator.object.is_none() && locator.frame_digest == digest {
-                    if !changed.contains(&id) {
-                        return Err(Error::Node("native frame belongs to an unchanged shard"));
-                    }
-                    locator.offset = offset;
-                    locator.bytes = frame.encoded().len() as u64;
-                    matches += 1;
-                }
-            }
-        }
-        if matches != 1 {
-            return Err(Error::Node("bundle frame locator is not unique"));
-        }
-        native.push(Locator {
-            object: None,
-            offset,
-            bytes: frame.encoded().len() as u64,
-            frame_digest: digest,
-        });
-        offset = offset
-            .checked_add(frame.encoded().len() as u64)
-            .ok_or(Error::Capacity("bundle bytes"))?;
-    }
+    let native = native::assign(catalog, frames, &changed, &mut offset)?;
     let mut history_bodies = Vec::new();
     for pin in new {
+        // Catalog validation established strict pin order before mutation;
+        // assigning native extents changes no pin or control field.
         let binding = catalog
             .bindings
-            .iter()
-            .find(|binding| history::pin(binding).ok() == Some(pin))
+            .binary_search_by_key(&Some(pin), |binding| {
+                binding
+                    .control
+                    .bundle_binding
+                    .map(|pin| *pin.digest.as_bytes())
+            })
+            .ok()
+            .and_then(|index| catalog.bindings.get(index))
             .ok_or(Error::Node("bundle history binding is absent"))?;
         let bytes = history::encode(catalog.session, catalog.epoch, binding)?;
         let reference = histories
@@ -159,7 +140,9 @@ pub(super) fn encode(
     if offset > MAX_BUNDLE_BYTES {
         return Err(Error::Capacity("bundle bytes"));
     }
-    let groups = grouped(catalog);
+    // Detached leaf encoding replaces every nonempty locator array with its
+    // authenticated history extent. Native offset updates cannot change those
+    // compact rows, so retain the original groups instead of cloning them again.
     let mut bodies = Vec::new();
     for id in &changed {
         if let Some(reference) = &mut shards[usize::from(*id)] {
