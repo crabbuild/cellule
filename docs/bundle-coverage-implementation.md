@@ -1,5 +1,11 @@
 # Bundle coverage implementation
 
+The latest [historical-read experiment](pr67-historical-read-measurement.md)
+reduces an isolated 64-Cell historical read cohort from 64 requests to one, but
+regresses Fleet completion from 201.82 to 18.18 writes/s and fails ACK availability
+with resource-ledger pressure. Commit `399e908` is reverted; production source
+returns to baseline `11843f6`. No performance improvement is accepted.
+
 The connected protocol APIs now implement shared selection, independently
 awaitable root materialization and complete live-writer closure. An explicitly
 installed original feed can now provide admitted receipts to the actor.
