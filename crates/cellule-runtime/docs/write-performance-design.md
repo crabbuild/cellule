@@ -22,6 +22,15 @@ consumer expensive. Matching celld requires reducing that work and separating
 native progress from bounded recoverable publication debt; larger queues alone
 do not increase sustainable throughput.
 
+The separate [fresh timing-only diagnosis](../../../docs/pr67-publication-path-diagnosis.md)
+reproduces 468.42 writes/s versus 1,999.77 for celld. Serial selection averages
+106.68 ms for 59.30 captures; checkpoint callbacks occupy another 14.83% of the
+interval, explaining an approximate 473-capture/s service rate. Its submission
+phases reconcile exactly: ordered wait averages 108.52 ms, 98.26% of submission
+time. All 51,923 Cellule ACKs pass warm/cold reads and original retries, but
+write errors/drops persist. This diagnostic adds timing only and establishes
+no new production optimization or qualification.
+
 Status: implementation in progress. The application path is not qualified at
 the targets below. Component I/O reductions are not application TPS.
 

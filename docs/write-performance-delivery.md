@@ -19,6 +19,14 @@ attributable gain. PR #67 remains a draft. The
 [preceding encoder comparison](pr67-encoder-cost-measurement.md) and earlier
 passing and failed evidence remain separate observations.
 
+The separate [publication-path diagnosis](pr67-publication-path-diagnosis.md)
+adds external timing only to the same production revision. It reproduces
+468.42 writes/s versus 1,999.77 for celld and reconciles complete warm/cold
+ACK audits. Serial selection takes 106.68 ms per 59.30 captures, with checkpoint
+work consuming another 14.83% of the interval. Ordered-lock wait averages
+108.52 ms in an exact submission partition. Write errors/drops remain; this
+supports the bottleneck mechanism and makes no new production gain claim.
+
 The earlier [selection-readiness comparison](pr67-selection-readiness-measurement.md)
 measures `6c909a6` at **184.77 Fleet writes/s and 248.68 Bucket writes/s**, versus
 195.13 and 247.55 before. Its delayed-selection actor regression passes, but
