@@ -179,6 +179,14 @@ history, then its exact native frames. A shared shard keeps unrelated histories
 as authenticated references, including when those bodies are unavailable.
 Selection verifies every participating Cell's origin and native suffix before
 CAS; point selection grants no sibling drain or collection authority.
+Historical native extents in one selection now share bounded object/offset
+windows. A window is at most 4 MiB and twice the useful requested union bytes;
+at most eight reads share 4 MiB of scratch. The canonical frame verifier checks
+every exact digest and scope, then folds each Cell chain in locator order.
+Checked facts retain no bodies or cross-operation availability. Base dependencies
+keep their serial fresh verification. The managed producer admits another 3 MiB
+for cohort metadata, raising its working reservation from 20 to 23 MiB under the
+unchanged workload budget. This request reduction still needs paired TPS evidence.
 Complete maintenance inventory still verifies every shard, retaining one
 bounded shard at a time and at most 4,096 duplicate-pin entries. An unresolved
 history remains a drain obligation.

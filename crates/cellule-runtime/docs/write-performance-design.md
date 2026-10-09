@@ -53,7 +53,8 @@ feed can now deliver admitted exact bundle receipts through the actor's existing
 command, worker and read/retry gate. `NodeDurability::start_bundle_publication`
 now retains one producer under the installed runtime ledger. It selects complete
 cohorts of at most 64 captures, 64 frames and 4 MiB, with a 1-ms assembly window
-and a 20-MiB working reservation, including one bounded fresh origin read.
+and a 23-MiB working reservation, including bounded origin-read scratch and
+cohort verification metadata.
 Startup admission precedes installation of the
 irreversible feed. Selection and exact root checkpoints use the same original
 binding/heartbeat authority; 512 checkpoint requests are bounded and their
@@ -64,10 +65,15 @@ Bucket-only performance adapter bypasses it.
 Each selection reads its complete new cohort object once from origin, compares
 every byte with the proposal, then verifies header, shards, histories and native
 frames from that operation's read. It retains no cross-operation availability
-cache. Historical objects and every Cell base dependency still require origin
-verification. Selection drops each checked native frame rather than retaining
-reconstruction bodies. The additional 4-MiB buffer is charged before installing
-the producer; workload retention and protocol bounds remain unchanged.
+cache. Historical native locators are grouped by immutable object and offset for that
+selection. Each window reads at most 4 MiB and at most twice the useful union of
+requested bytes. Up to eight window reads share 4 MiB of scratch admission;
+checked frame facts retain no native bodies. Every frame still passes its exact
+digest, scope and Cell-chain checks. Every Cell base dependency still requires
+serial origin verification. The producer separately admits 3 MiB of bounded
+cohort metadata, raising its working charge from 20 to 23 MiB under the unchanged
+workload ledger. Fresh proposal bytes are compared in full before sharing the
+already admitted proposal. No observation carries availability across selections.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.

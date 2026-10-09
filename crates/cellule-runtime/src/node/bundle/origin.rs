@@ -31,11 +31,14 @@ impl OriginBundle {
         Ok(Self {
             session: prepared.catalog.session,
             head: prepared.head,
-            body,
+            // The fresh body was compared byte-for-byte above. Sharing the
+            // admitted proposal now releases the extra origin-read buffer;
+            // these bytes grant no availability in any later operation.
+            body: prepared.body.clone(),
         })
     }
 
-    fn range(
+    pub(super) fn range(
         &self,
         session: SessionId,
         epoch: u64,

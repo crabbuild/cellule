@@ -46,6 +46,7 @@ mod origin;
 mod proof;
 pub(crate) mod recovery;
 mod selection;
+mod verification;
 pub(crate) use continuation::MaterializedBundlePrefix;
 #[cfg(test)]
 use proof::checkpoint_prefix;
@@ -58,6 +59,7 @@ pub(crate) mod store;
 mod tests;
 
 pub(crate) const MAX_BUNDLE_BYTES: u64 = 4 << 20;
+pub(crate) const COHORT_VERIFICATION_BYTES: u64 = 3 << 20;
 const MAX_BINDINGS: usize = 4_096;
 const MAX_LOCATORS: usize = 256;
 const MAX_INLINE_LOCATORS: usize = 32;

@@ -128,19 +128,6 @@ pub(super) async fn verify_binding(
     Ok(frames)
 }
 
-pub(super) async fn verify_selected_binding(
-    layout: &cellule_ltx::CellStorageLayout,
-    session: SessionId,
-    epoch: u64,
-    binding: &Binding,
-    limits: cellule_ltx::Limits,
-    origin: &origin::OriginBundle,
-) -> Result<()> {
-    // Selection needs exact locators, not retained native bodies. Keep the same
-    // verifier as reconstruction while dropping each checked frame promptly.
-    verify_binding_into(layout, session, epoch, binding, limits, Some(origin), None).await
-}
-
 async fn verify_binding_into(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
@@ -151,19 +138,7 @@ async fn verify_binding_into(
     mut frames: Option<&mut Vec<cellule_ltx::VerifiedNodeFrame>>,
 ) -> Result<()> {
     verify_base(layout, binding, limits).await?;
-    let mut position = binding
-        .control
-        .ltx_root()
-        .ok_or(Error::Node("bundle base absent"))?
-        .position;
-    let mut commit = binding
-        .control
-        .root
-        .as_ref()
-        .ok_or(Error::Node("bundle base absent"))?
-        .commit_sequence;
-    let mut sequence = 0;
-    let mut first_commit = commit;
+    let mut chain = BindingChain::new(binding)?;
     for locator in &binding.locators {
         let object = locator
             .object
@@ -174,43 +149,113 @@ async fn verify_binding_into(
             .ok_or(Error::Node("bundle locator overflow"))?;
         let bytes =
             origin::read_range(layout, session, epoch, object, locator.offset..end, origin).await?;
-        if bytes.len() as u64 != locator.bytes
-            || *blake3::hash(&bytes).as_bytes() != *locator.frame_digest.as_bytes()
-        {
-            return Err(Error::Node("bundle frame digest differs"));
-        }
-        let frame = cellule_ltx::inspect_node_frame(bytes, limits)?;
-        let scope = frame.scope();
-        if scope.leader_session != *session.as_bytes()
-            || scope.log_epoch != epoch
-            || scope.application != *binding.application.as_bytes()
-            || scope.cell != *binding.control.cell.as_bytes()
-            || scope.incarnation != *binding.control.incarnation.as_bytes()
-            || scope.cell_epoch != binding.control.epoch
-            || scope.node_sequence <= sequence
-            || (scope.commit_sequence == commit && frame.first_commit_sequence() != first_commit)
-            || (scope.commit_sequence != commit
-                && commit.checked_add(1) != Some(frame.first_commit_sequence()))
-            || position.txid.checked_add(1) != Some(frame.segment().min_txid)
-            || position.checksum != frame.segment().pre_checksum
-        {
-            return Err(Error::Node("bundle locator violates exact Cell range"));
-        }
-        first_commit = frame.first_commit_sequence();
-        position = frame.segment().position();
-        commit = scope.commit_sequence;
-        sequence = scope.node_sequence;
+        let frame = checked_frame(session, epoch, binding, locator, bytes, limits)?;
+        chain.accept(FrameStep::from_frame(&frame))?;
         if let Some(frames) = &mut frames {
             frames.push(frame);
         }
     }
-    if position != binding.selected_position
-        || commit != binding.selected_commit
-        || (!binding.locators.is_empty() && sequence != binding.selected_sequence)
-    {
-        return Err(Error::Node("bundle proof endpoint differs"));
+    chain.finish(binding)
+}
+
+/// Checked frame facts retained only within one verification operation. They
+/// grant no proof or availability outside that operation and hold no body.
+#[derive(Clone, Copy)]
+pub(super) struct FrameStep {
+    sequence: u64,
+    first_commit: u64,
+    commit: u64,
+    min_txid: u64,
+    pre_checksum: u64,
+    position: cellule_ltx::Position,
+}
+
+impl FrameStep {
+    pub(super) fn from_frame(frame: &cellule_ltx::VerifiedNodeFrame) -> Self {
+        Self {
+            sequence: frame.scope().node_sequence,
+            first_commit: frame.first_commit_sequence(),
+            commit: frame.scope().commit_sequence,
+            min_txid: frame.segment().min_txid,
+            pre_checksum: frame.segment().pre_checksum,
+            position: frame.segment().position(),
+        }
     }
-    Ok(())
+}
+
+pub(super) struct BindingChain {
+    position: cellule_ltx::Position,
+    commit: u64,
+    sequence: u64,
+    first_commit: u64,
+}
+
+impl BindingChain {
+    pub(super) fn new(binding: &Binding) -> Result<Self> {
+        let base = binding
+            .control
+            .ltx_root()
+            .ok_or(Error::Node("bundle base absent"))?;
+        Ok(Self {
+            position: base.position,
+            commit: base.commit_sequence,
+            sequence: 0,
+            first_commit: base.commit_sequence,
+        })
+    }
+
+    pub(super) fn accept(&mut self, step: FrameStep) -> Result<()> {
+        if step.sequence <= self.sequence
+            || (step.commit == self.commit && step.first_commit != self.first_commit)
+            || (step.commit != self.commit && self.commit.checked_add(1) != Some(step.first_commit))
+            || self.position.txid.checked_add(1) != Some(step.min_txid)
+            || self.position.checksum != step.pre_checksum
+        {
+            return Err(Error::Node("bundle locator violates exact Cell range"));
+        }
+        self.position = step.position;
+        self.commit = step.commit;
+        self.sequence = step.sequence;
+        self.first_commit = step.first_commit;
+        Ok(())
+    }
+
+    pub(super) fn finish(self, binding: &Binding) -> Result<()> {
+        if self.position != binding.selected_position
+            || self.commit != binding.selected_commit
+            || (!binding.locators.is_empty() && self.sequence != binding.selected_sequence)
+        {
+            return Err(Error::Node("bundle proof endpoint differs"));
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn checked_frame(
+    session: SessionId,
+    epoch: u64,
+    binding: &Binding,
+    locator: &Locator,
+    bytes: Bytes,
+    limits: cellule_ltx::Limits,
+) -> Result<cellule_ltx::VerifiedNodeFrame> {
+    if bytes.len() as u64 != locator.bytes
+        || *blake3::hash(&bytes).as_bytes() != *locator.frame_digest.as_bytes()
+    {
+        return Err(Error::Node("bundle frame digest differs"));
+    }
+    let frame = cellule_ltx::inspect_node_frame(bytes, limits)?;
+    let scope = frame.scope();
+    if scope.leader_session != *session.as_bytes()
+        || scope.log_epoch != epoch
+        || scope.application != *binding.application.as_bytes()
+        || scope.cell != *binding.control.cell.as_bytes()
+        || scope.incarnation != *binding.control.incarnation.as_bytes()
+        || scope.cell_epoch != binding.control.epoch
+    {
+        return Err(Error::Node("bundle locator violates exact Cell range"));
+    }
+    Ok(frame)
 }
 
 pub(super) async fn verify_base(

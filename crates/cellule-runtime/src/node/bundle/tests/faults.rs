@@ -12,6 +12,7 @@ pub(super) struct ReplyFault {
     pub(super) mode: AtomicU8,
     pub(super) node_updates: AtomicUsize,
     pub(super) coverage_puts: AtomicUsize,
+    pub(super) range_started: AtomicUsize,
     pub(super) pin_started: tokio::sync::Notify,
     pub(super) pin_resume: tokio::sync::Notify,
     pub(super) node_started: tokio::sync::Notify,
@@ -117,6 +118,14 @@ impl ObjectStore for ReplyFault {
         self.inner.put_multipart_opts(path, opts).await
     }
     async fn get_opts(&self, path: &Path, opts: GetOptions) -> object_store::Result<GetResult> {
+        if self.mode.load(Ordering::SeqCst) == 11
+            && path.as_ref().ends_with(".cnb")
+            && opts.range.is_some()
+        {
+            self.range_started.fetch_add(1, Ordering::SeqCst);
+            self.node_started.notify_one();
+            self.node_resume.notified().await;
+        }
         self.inner.get_opts(path, opts).await
     }
     fn delete_stream(
