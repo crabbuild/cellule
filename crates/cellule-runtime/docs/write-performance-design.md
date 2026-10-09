@@ -1,6 +1,16 @@
 # Node write and read performance design
 
-The latest [publication-admission measurement](../../../docs/pr67-publication-admission-measurement.md)
+The latest [sparse-shard diagnostic](../../../docs/pr67-shard-window-measurement.md)
+rejects and reverts wide metadata reads. Its component fixture improves 49→2
+reads, but fresh application TPS falls 510.13→300.63/s and successful scheduled
+p99 rises 1,314.72→2,554.88 ms. Node-authority range bytes rise 61.17% despite
+fewer requests. Fresh celld completes 1,999.82/s with 14.06-ms p99 and zero
+errors/drops. The prototype passes all 44,314 warm/cold ACK checks; the retained
+baseline fails 110 warm checks with HTTP 503s. Prioritize total publication
+bytes/work and warm availability under backlog. No arm is qualified; the
+acceptance gates below remain unchanged.
+
+The preceding [publication-admission measurement](../../../docs/pr67-publication-admission-measurement.md)
 identifies a post-SQL RAM reservation race and transfers unused original command
 credit to publication. All 47,471 candidate ACKs pass warm/cold mutation and
 original retry audits; fleet drain takes 47.68 seconds. Write performance

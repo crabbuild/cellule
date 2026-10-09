@@ -1,5 +1,9 @@
 # PR 67: publication admission handoff and write measurement
 
+The newer [sparse-shard diagnostic](pr67-shard-window-measurement.md) rejects
+wide metadata reads after a fresh TPS/latency regression. Its retained-runtime
+baseline also fails warm ACK availability; those results are a separate pair.
+
 **ACK availability and draining improve in this diagnostic; write performance
 regresses and parity remains unmet. PR #67 stays a draft.** The corrected runtime
 completes 451.70 Fleet writes/s versus 481.80 before and 1,996.33 for fresh celld.
