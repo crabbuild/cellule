@@ -236,6 +236,8 @@ impl CellHandle {
             .send(Message::Execute(Box::new(QueuedCommand {
                 group: None,
                 refused_mutation,
+                publication_probe: false,
+                publication_probed: false,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_execution",
@@ -292,6 +294,8 @@ impl CellHandle {
             .send(Message::Execute(Box::new(QueuedCommand {
                 group: None,
                 refused_mutation: None,
+                publication_probe: false,
+                publication_probed: false,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_effect_execution",

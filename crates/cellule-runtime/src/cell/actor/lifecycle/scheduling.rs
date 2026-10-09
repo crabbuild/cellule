@@ -16,13 +16,17 @@ pub(in crate::cell::actor) fn schedule(
         && let Some(QueuedWork::Command(command)) = active.queue.front_mut()
         && matches!(command.operation, QueuedOperation::Mutation { .. })
     {
-        // A full debt queue must not hide prior Fleet/bundle outcomes or hold
-        // every later query behind a mutation that cannot yet be admitted.
-        command
-            .refused_mutation
-            .get_or_insert(Error::PendingPublication);
-        command._work.kind = AdmissionKind::Resolve;
-        publication_blocked = false;
+        // Probe once for an original durable result. A missing identity retains
+        // its accepted FIFO position and handler until debt capacity returns.
+        if command.refused_mutation.is_some() {
+            publication_blocked = false;
+        } else if !command.publication_probed {
+            command.publication_probe = true;
+            publication_blocked = false;
+        }
+    } else if let Some(QueuedWork::Command(command)) = active.queue.front_mut() {
+        command.publication_probe = false;
+        command.publication_probed = false;
     }
     active.coordination.step(CoordinationInput::Schedule {
         queue_empty: active.queue.is_empty(),
@@ -50,7 +54,8 @@ pub(in crate::cell::actor) fn start_next(
         return;
     };
     active.cancel_compaction_admission();
-    if matches!(&work, QueuedWork::Command(command) if command.refused_mutation.is_none())
+    if matches!(&work, QueuedWork::Command(command)
+        if command.refused_mutation.is_none() && !command.publication_probe)
         || matches!(&work, QueuedWork::Migration(_))
     {
         // Durable command outcomes, effects, Queue rows, and Workflow runs
@@ -88,6 +93,7 @@ pub(in crate::cell::actor) fn start_next(
     match work {
         QueuedWork::Command(mut command) => {
             if command.refused_mutation.is_none()
+                && !command.publication_probe
                 && matches!(command.operation, QueuedOperation::Mutation { .. })
             {
                 let mut members = Vec::new();
@@ -95,6 +101,7 @@ pub(in crate::cell::actor) fn start_next(
                     && active.queue.front().is_some_and(|work| {
                         matches!(work, QueuedWork::Command(next)
                             if next.refused_mutation.is_none()
+                                && !next.publication_probe
                                 && matches!(next.operation, QueuedOperation::Mutation { .. }))
                     })
                 {

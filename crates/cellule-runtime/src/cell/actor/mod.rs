@@ -35,6 +35,7 @@ mod maintenance;
 mod materialization;
 pub use maintenance::MaintenanceCellRelease;
 mod receiver;
+mod replay;
 mod requests;
 pub(crate) mod routes;
 mod runtime;

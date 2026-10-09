@@ -225,17 +225,6 @@ async fn pressure_case(node_pressure: bool) {
         first
     );
     assert!(matches!(
-        tokio::time::timeout(
-            Duration::from_secs(3),
-            handle.execute(identity(201), digest, 22, 1024, 1024, |_| panic!(
-                "new mutation executed under Cell pressure"
-            ),)
-        )
-        .await
-        .unwrap(),
-        Err(Error::PendingPublication)
-    ));
-    assert!(matches!(
         handle
             .execute(identity(1), digest, 10_000, 1024, 1024, |_| {
                 panic!("expired retry executed at the Cell debt limit")
@@ -253,8 +242,31 @@ async fn pressure_case(node_pressure: bool) {
             .unwrap(),
         (MAX_PENDING_PUBLICATIONS as i64).to_le_bytes()
     );
+    let ran = Arc::new(AtomicBool::new(false));
+    let executed = ran.clone();
+    let fresh = handle.execute(identity(201), digest, 22, 1024, 1024, move |tx| {
+        assert!(!executed.swap(true, Ordering::SeqCst));
+        tx.execute("UPDATE counter SET value=value+1", [])?;
+        Ok(HandlerOutcome::Success(b"accepted".to_vec()))
+    });
+    tokio::pin!(fresh);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), fresh.as_mut())
+            .await
+            .is_err()
+    );
+    assert!(!ran.load(Ordering::SeqCst));
     delayed.held.store(false, Ordering::Release);
     delayed.changed.notify_waiters();
+    let accepted = tokio::time::timeout(Duration::from_secs(5), fresh.as_mut())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        accepted.commit_sequence(),
+        MAX_PENDING_PUBLICATIONS as u64 + 1
+    );
+    assert!(ran.load(Ordering::SeqCst));
     super::managed::renew_actor_lease(&authority, &f.lease).await;
     tokio::time::timeout(Duration::from_secs(15), runtime.shutdown())
         .await
@@ -268,7 +280,7 @@ async fn pressure_case(node_pressure: bool) {
     assert_eq!(control.value().state, ControlState::Idle);
     assert!(control.value().bundle_binding.is_none());
     let root = control.value().ltx_root().unwrap();
-    assert_eq!(root.commit_sequence, MAX_PENDING_PUBLICATIONS as u64);
+    assert_eq!(root.commit_sequence, MAX_PENDING_PUBLICATIONS as u64 + 1);
     let path = f.scratch.path().join("cold-pressure.sqlite");
     replica
         .open_root(&root)
@@ -281,13 +293,13 @@ async fn pressure_case(node_pressure: bool) {
     assert_eq!(
         cold.query_row("SELECT value FROM counter", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        MAX_PENDING_PUBLICATIONS as i64
+        MAX_PENDING_PUBLICATIONS as i64 + 1
     );
     assert_eq!(
         cold.query_row("SELECT COUNT(*) FROM sys_requests", [], |row| row
             .get::<_, i64>(0))
             .unwrap(),
-        MAX_PENDING_PUBLICATIONS as i64
+        MAX_PENDING_PUBLICATIONS as i64 + 1
     );
     assert_eq!(resources.snapshot().unwrap().used.retained_bytes(), 0);
 }

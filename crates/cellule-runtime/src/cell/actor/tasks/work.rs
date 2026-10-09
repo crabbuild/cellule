@@ -47,6 +47,12 @@ pub(super) fn handle_executed(
         return;
     }
     match result {
+        Ok(CommandTaskResult::AwaitPublication) => {
+            finish_work(active, false);
+            command.publication_probe = false;
+            command.publication_probed = true;
+            active.queue.push_front(QueuedWork::Command(command));
+        }
         Ok(CommandTaskResult::GroupRecorded) => {
             finish_work(active, false);
             release_command_request_slots(&mut command);

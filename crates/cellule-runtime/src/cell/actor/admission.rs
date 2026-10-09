@@ -181,6 +181,7 @@ pub(super) fn send_command_task_reply(
             return;
         }
         Ok(CommandTaskResult::Recorded(outcome)) => Ok(outcome),
+        Ok(CommandTaskResult::AwaitPublication) => Err(Error::Fenced),
         Ok(CommandTaskResult::Pending { .. }) => Err(command.operation.unknown(Error::Fenced)),
         Err(error) => Err(error),
     };

@@ -165,6 +165,8 @@ pub(super) struct QueuedCommand {
     // Pressure may admit only an original durable outcome lookup. An absent
     // identity returns this refusal without invoking the mutation handler.
     pub(super) refused_mutation: Option<Error>,
+    pub(super) publication_probe: bool,
+    pub(super) publication_probed: bool,
     pub(super) trace: tracing::Span,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) queued_at: std::time::Instant,
@@ -638,6 +640,7 @@ pub(super) enum TaskResult {
 
 pub(super) enum CommandTaskResult {
     Recorded(StoredOutcome),
+    AwaitPublication,
     GroupRecorded,
     Pending {
         pending: Box<PendingCommit>,
