@@ -143,14 +143,6 @@ impl ObjectStore for ReplyFault {
         }
         if (mode == 12 && path.as_ref().ends_with(".root"))
             || (mode == 13 && path.as_ref().ends_with(".pack"))
-            || (mode == 16
-                && path.as_ref().ends_with(".root")
-                && self
-                    .held_metadata
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|(object, _)| object == path.as_ref()))
         {
             self.base_started.fetch_add(1, Ordering::SeqCst);
             self.node_started.notify_one();
