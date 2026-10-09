@@ -103,6 +103,7 @@ async fn stale_actor_probe_cannot_clear_newer_mutation_markers_or_replace_newer_
         durability_submitter: publisher.durability_submitter(),
         publisher: Some(publisher),
         publications: VecDeque::new(),
+        selection_waiter: None,
         publishing_since: None,
         root_debt: None,
         materializing: false,

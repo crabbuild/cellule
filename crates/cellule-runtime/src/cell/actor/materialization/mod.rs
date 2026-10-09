@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod readiness;
+
 pub(super) const CHECKPOINT_COMMANDS: u64 = 215;
 const MAX_ROOT_AGE: std::time::Duration = std::time::Duration::from_secs(45);
 const MAX_MATERIALIZERS: usize = 8;
@@ -22,9 +24,27 @@ pub(super) fn start_selection(
     active: &mut ActiveCell,
     pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
-    publisher: CellPublisher,
 ) {
-    let coverage: Vec<_> = active.publications.drain(..).collect();
+    let ready = active
+        .publications
+        .iter()
+        .take_while(|queued| {
+            queued
+                .durability
+                .as_ref()
+                .is_some_and(PendingDurability::selection_ready)
+        })
+        .count();
+    if ready == 0 {
+        readiness::wait(cell, active, tasks);
+        return;
+    }
+    let Some(publisher) = active.publisher.take() else {
+        return;
+    };
+    // Retire only a selected oldest prefix. The bounded unselected suffix
+    // stays in the original queue, without excluding root preparation.
+    let coverage: Vec<_> = active.publications.drain(..ready).collect();
     let covered = coverage.len() as u64;
     let retained_bytes = coverage
         .iter()
@@ -34,7 +54,7 @@ pub(super) fn start_selection(
     let effect_id = active.begin_task(CoordinationEffect::Publication);
     active.publishing_since = coverage.first().map(|queued| queued.submitted_at);
     // Worker cleanup is dispatched through the same owned pool as SQL. The
-    // publisher token excludes root preparation throughout exact selection.
+    // publisher token excludes root preparation only during verified cleanup.
     let pool = pool.clone();
     tasks.spawn(async move {
         let result = async {

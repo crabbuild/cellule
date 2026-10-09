@@ -56,6 +56,7 @@ pub(super) fn finish_migration(active: &mut ActiveCell, fenced: bool) -> Coordin
 
 pub(super) fn fence_active(active: &mut ActiveCell) {
     active.cancel_compaction_admission();
+    drop(active.selection_waiter.take());
     active.coordination.step(CoordinationInput::Fence);
     fence_admission(&active.admission);
     if let Some(transfer) = active.transfer.take() {

@@ -22,6 +22,7 @@ mod index;
 mod lifecycle;
 mod managed;
 mod ranges;
+mod readiness;
 mod receipts;
 mod recovery;
 struct Fixture {

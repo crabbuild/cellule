@@ -1245,6 +1245,14 @@ impl PendingDurability {
         self.has_bundle_capture() && self.durability.managed_bundle_publication()
     }
 
+    /// Readiness grants no ACK or authority; retirement verifies exact coverage.
+    pub(crate) fn selection_ready(&self) -> bool {
+        self.capture
+            .as_ref()
+            .and_then(|capture| capture.submitted.selection.as_ref())
+            .is_some_and(|selection| selection.is_ready())
+    }
+
     pub(crate) async fn selected_capture_prefix(&self) -> Result<Option<VerifiedBundleCapture>> {
         let Some(mut capture) = self.selected_capture().await? else {
             return Ok(None);

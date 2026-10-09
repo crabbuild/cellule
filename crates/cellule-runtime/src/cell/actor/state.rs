@@ -283,6 +283,9 @@ pub(super) struct ActiveCell {
     pub(super) publisher: Option<CellPublisher>,
     pub(super) durability_submitter: CellDurabilitySubmitter,
     pub(super) publications: VecDeque<QueuedPublication>,
+    // One observer per resident Cell, retaining only its original receipt.
+    // Dropping/fencing the Cell cancels observation, never native publication.
+    pub(super) selection_waiter: Option<tokio_util::sync::DropGuard>,
     pub(super) root_debt: Option<RootDebt>,
     pub(super) materializing: bool,
     pub(super) publishing_since: Option<std::time::Instant>,
@@ -541,6 +544,11 @@ pub(super) enum TaskResult {
         effect_id: u64,
         publisher: Box<CellPublisher>,
         result: crate::Result<Box<PublicationAdmission>>,
+    },
+    BundleSelectionReady {
+        cell: CellId,
+        generation: u64,
+        result: crate::Result<()>,
     },
     BundleSelected {
         cell: CellId,

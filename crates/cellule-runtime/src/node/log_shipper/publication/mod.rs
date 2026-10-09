@@ -17,6 +17,11 @@ pub(crate) struct CaptureSelection {
 }
 
 impl CaptureSelection {
+    /// A scheduling hint only; consumers still verify the original receipt.
+    pub(crate) fn is_ready(&self) -> bool {
+        self.receiver.borrow().is_some()
+    }
+
     pub(crate) async fn selected(&self) -> Result<Arc<SelectedBundle>> {
         let mut receiver = self.receiver.clone();
         loop {

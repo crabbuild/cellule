@@ -92,6 +92,16 @@ locator/byte pressure gates new commands. Root age of 45 seconds, drain,
 migration and fallback also request materialization. Due hints expose the exact
 selected head while a root lags.
 
+Selection readiness is observed once per Cell without owning its publisher.
+The observer shares the original receipt and admitted metadata; it grants no
+ACK, narrowed proof or new authority. Only a ready oldest prefix enters exact
+cleanup. Its unselected suffix remains in the bounded original queue, allowing
+older root debt to prepare. The existing ten-second cleanup timeout begins
+after selection readiness, rather than timing an origin wait after Fleet ACKs.
+Fencing/removal cancels only observation; original native publication and
+checkpoint/drain obligations remain joined. Performance qualification of this
+change remains required.
+
 A follow-up preserves exact selected suffixes across a confirmed checkpoint,
 including receipts selected against intermediate bases while older roots were
 preparing. Process-local hash-chain witnesses retain no frame bodies and expire

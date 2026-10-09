@@ -2,6 +2,36 @@
 
 use super::*;
 
+pub(super) fn handle_selection_ready(
+    context: TaskContext<'_>,
+    cell: CellId,
+    generation: u64,
+    result: crate::Result<()>,
+) {
+    let TaskContext {
+        pool,
+        cells,
+        transitioning,
+        tasks,
+        node_lease,
+        ..
+    } = context;
+    let Some(active) = cells.get_mut(&cell) else {
+        return;
+    };
+    if active.generation != generation || active.selection_waiter.take().is_none() {
+        return;
+    }
+    let result = result.and_then(|()| node_lease.check());
+    if let Err(error) = result {
+        tracing::warn!(cell = ?cell, error = ?error, "original selection observation failed");
+        fence_active(active);
+    } else if !active.coordination.is_fenced() {
+        start_publication(cell, active, pool, tasks);
+    }
+    continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+}
+
 pub(super) fn handle_bundle_selected(
     context: TaskContext<'_>,
     cell: CellId,

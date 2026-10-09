@@ -576,7 +576,7 @@ async fn managed_actor_case(
     );
 }
 
-async fn renew_actor_lease(authority: &Authority, lease: &NodeLeaseGuard) {
+pub(super) async fn renew_actor_lease(authority: &Authority, lease: &NodeLeaseGuard) {
     // Advance the original guard only after a signed authoritative heartbeat.
     let mut node = authority.observed.lock().await;
     let mut next = node.advertisement().clone();

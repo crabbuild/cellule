@@ -395,11 +395,7 @@ pub(super) fn start_publication(
     pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
-    let Some(mut publisher) = active.publisher.take() else {
-        return;
-    };
     if active.publications.is_empty() {
-        active.publisher = Some(publisher);
         return;
     }
     if active.publications.iter().all(|queued| {
@@ -408,9 +404,12 @@ pub(super) fn start_publication(
             .as_ref()
             .is_some_and(PendingDurability::has_managed_bundle_capture)
     }) {
-        super::materialization::start_selection(cell, active, pool, tasks, publisher);
+        super::materialization::start_selection(cell, active, pool, tasks);
         return;
     }
+    let Some(mut publisher) = active.publisher.take() else {
+        return;
+    };
     if active.root_debt.is_some() {
         active.publisher = Some(publisher);
         return;
