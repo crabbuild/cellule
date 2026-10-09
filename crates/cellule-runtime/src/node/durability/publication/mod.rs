@@ -81,14 +81,9 @@ impl Publisher {
             .ok_or(Error::PendingPublication)?;
         resources.try_reserve(
             crate::fleet::resource::ResourceCost::zero()
-                // Fresh origin bytes share the proposal after exact comparison.
-                // One scratch buffer serves bounded historical windows; checked
-                // cohort facts/jobs have their own pre-admitted metadata bound.
-                .with_retained_bytes(
-                    (5 * crate::node::bundle::MAX_BUNDLE_BYTES
-                        + crate::node::bundle::COHORT_VERIFICATION_BYTES)
-                        as usize,
-                ),
+                // The fifth bounded buffer is the fresh cohort origin read;
+                // its bytes are shared only within one verification operation.
+                .with_retained_bytes((5 * crate::node::bundle::MAX_BUNDLE_BYTES) as usize),
         )
     }
 
