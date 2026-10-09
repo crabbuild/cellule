@@ -1,16 +1,18 @@
 # Bundle coverage implementation
 
-The [bounded historical-read comparison](pr67-bounded-history-measurement.md)
-groups fresh ranges within the original 20-MiB admission. One original-profile
-pair completes 307.60 writes/s versus 144.50 before, with worse successful p99.
-A 1-GiB control with zero request errors reaches 237.67 versus 181.45/s.
-Complete Cellule warm/cold ACK audits pass, but all capacity profiles remain
-unqualified.
+The [2,000-Cell comparison](pr67-base-cohort-measurement.md) overlaps fresh
+small-base verification within the original 20-MiB admission. One Fleet write
+pair completes 372.87 writes/s versus 271.00 before; celld completes 1,999.80/s
+at 2,000 offered/s. Candidate successful scheduled p99 improves to 932.77 ms,
+but errors, drops and joined drain fail. All warm ACKs pass; Cellule cold audit
+is not reached. Read-only throughput is 17,456.38/s versus celld's 19,973.25/s
+at 20,000 offered/s, with drops in both. All profiles remain unqualified.
 
 The [submission diagnosis](pr67-submission-timing-measurement.md) identifies
-publication capacity held under the global issuance lock. The current selector
-still gates native progress before follower proof. Celld pipelines that progress
-independently of bucket publication. PR #67 remains a draft.
+publication capacity held under the global issuance lock. The latest candidate
+still spends about 99% of successful submission time waiting for that lock.
+Celld pipelines native progress independently of bucket publication. Similar
+components do not imply the same response path. PR #67 remains a draft.
 
 The installed original producer provides admitted shared receipts, independent
 root materialization and complete live-writer closure. The Fleet SQL example

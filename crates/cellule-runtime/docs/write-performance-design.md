@@ -1,15 +1,18 @@
 # Node write and read performance design
 
-The [bounded historical-read comparison](../../../docs/pr67-bounded-history-measurement.md)
-now groups fresh ranges within the original 20-MiB admission. One original-profile
-Fleet pair completes 307.60 writes/s versus 144.50 before, with worse successful
-p99 latency. A matched 1-GiB control reaches 237.67 versus 181.45/s, with zero
-request errors. All Cellule ACKs pass warm/cold audit. These short overloaded
-observations remain unqualified; PR #67 is still a draft.
+The [2,000-Cell comparison](../../../docs/pr67-base-cohort-measurement.md)
+overlaps fresh small-base verification within the original 20-MiB admission.
+One Fleet pair completes 372.87 writes/s versus 271.00 before; celld completes
+1,999.80/s at 2,000 offered/s. Successful scheduled p99 improves to 932.77 ms,
+but Cellule errors, drops and joined drain fail. All warm ACKs pass; cold audit
+is not reached. Read-only throughput is 17,456.38/s versus celld's 19,973.25/s
+at 20,000 offered/s, with drops in both. These short observations remain
+unqualified; PR #67 is still a draft.
 
 The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
-identified publication capacity held under the global issuance lock. That
-coupling still queues native progress before follower proof starts. Repeated
+identified publication capacity held under the global issuance lock. The latest
+candidate still spends about 99% of successful submission time waiting for that
+lock. This coupling queues native progress before follower proof starts. Repeated
 historical/base verification and sparse root checkpoints keep the publication
 consumer expensive. Matching celld requires reducing that work and separating
 native progress from bounded recoverable publication debt; larger queues alone
@@ -83,10 +86,15 @@ cache. Historical objects and every Cell base dependency still require origin
 verification. After the fresh body matches, selection shares the proposal
 allocation and uses its released buffer allowance for 2 MiB of historical scratch
 and at most 2 MiB of compact facts/planning metadata. Eight bounded reads overlap;
-every frame and original Cell chain remains canonically checked. Base traversal
-and individual extents above 2 MiB retain serial verification. Selection retains
-no reconstruction bodies beyond the operation. Working admission remains 20 MiB;
-workload retention and protocol bounds remain unchanged.
+every frame and original Cell chain remains canonically checked. Fresh small
+packed leaf bases now overlap in a separate phase: eight one-use canonical
+origin plans charge at most 512 KiB each, reusing the same 4-MiB allowance after
+the complete cohort body matches. All base jobs join or drop before historical
+scratch/facts admission. Larger base graphs and individual historical extents
+above 2 MiB retain serial verification. Selection retains no reconstruction
+bodies beyond the operation. Working admission remains 20 MiB; workload
+retention and protocol bounds remain unchanged. This is a structural charge,
+not allocator-profile qualification.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
