@@ -1,6 +1,8 @@
 //! Bounded origin point lookups and streaming maintenance inventory checks.
 use super::*;
-use futures_util::{StreamExt, future::try_join_all, stream};
+use futures_util::future::try_join_all;
+
+mod metadata;
 
 const READ_CONCURRENCY: usize = 8;
 type DecodedRows = (Vec<Binding>, BTreeMap<[u8; 32], history::History>);
@@ -160,42 +162,51 @@ async fn load_inner(
             loaded.insert(id, Vec::new());
         }
     }
-    // Aggregate encoded bytes were checked before opening any read. At most
-    // eight raw bodies coexist within that same bound; decode stays serial.
-    // A fixed-header-sized list retains at most 256 one-byte shard IDs and no
-    // decoded siblings. Owned indices keep this future Send at authority seams.
+    // Selected shard bytes were preflighted before any read. Shard windows
+    // spend no gap credit: requested history sizes are still unknown here.
+    // Up to eight joined windows retain the same raw-body byte allowance.
     let mut shards = Vec::with_capacity(SHARDS);
     for (id, shard) in root.shards.iter().enumerate() {
         if shard.is_some() && !wanted.is_some_and(|wanted| !wanted.contains(&(id as u8))) {
-            shards.push(id as u8);
+            shards.push(id as u16);
         }
     }
-    let mut reads = stream::iter(shards)
-        .map(|id| {
-            let root = &root;
-            async move {
+    let shard_extent = |id: u16| {
+        root.shards
+            .get(usize::from(id))
+            .and_then(Option::as_ref)
+            .map(|shard| &shard.extent)
+            .ok_or(Error::Node("bundle shard plan is absent"))
+    };
+    metadata::sort(&mut shards, shard_extent)?;
+    let mut next = 0;
+    let mut padding = 0;
+    while next < shards.len() {
+        let windows = metadata::cohort(&shards, &mut next, &mut padding, shard_extent)?;
+        let bodies = try_join_all(
+            windows
+                .into_iter()
+                .map(|window| metadata::read(layout, &root, origin, window)),
+        )
+        .await?;
+        for (window, bytes) in bodies {
+            for index in window.indices.clone() {
+                let id = shards[index] as u8;
                 let shard = root.shards[usize::from(id)]
                     .as_ref()
                     .ok_or(Error::Node("bundle shard plan is absent"))?;
-                Ok::<_, Error>((id, read_rows(layout, root, shard, origin).await?))
-            }
-        })
-        .buffered(READ_CONCURRENCY);
-    while let Some(result) = reads.next().await {
-        let (id, bytes) = result?;
-        let shard = root.shards[usize::from(id)]
-            .as_ref()
-            .ok_or(Error::Node("bundle shard plan is absent"))?;
-        let (rows, leaf_histories) = decode_rows(&root, shard, id, bytes)?;
-        for (pin, history) in leaf_histories {
-            if histories.insert(pin, history).is_some() {
-                return Err(Error::Node("bundle inventory repeats a Cell pin"));
+                let body = window.slice(&bytes, &shard.extent)?;
+                let (rows, leaf_histories) = decode_rows(&root, shard, id, body)?;
+                for (pin, history) in leaf_histories {
+                    if histories.insert(pin, history).is_some() {
+                        return Err(Error::Node("bundle inventory repeats a Cell pin"));
+                    }
+                }
+                bindings.extend(rows.iter().cloned());
+                loaded.insert(id, rows);
             }
         }
-        bindings.extend(rows.iter().cloned());
-        loaded.insert(id, rows);
     }
-    drop(reads);
     bindings.sort_unstable_by_key(|binding| {
         binding
             .control
@@ -221,7 +232,16 @@ async fn load_inner(
                 .ok_or(Error::Capacity("bundle selected history bytes"))?;
         }
     }
-    hydrate_histories(layout, &root, cells, origin, &mut bindings, &mut histories).await?;
+    hydrate_histories(
+        layout,
+        &root,
+        cells,
+        origin,
+        MAX_BUNDLE_BYTES - selected_bytes,
+        &mut bindings,
+        &mut histories,
+    )
+    .await?;
     // Snapshot after requested histories have loaded: hydration itself must
     // not rewrite a shard that the caller never changes.
     let mut hydrated = BTreeMap::<u8, Vec<Binding>>::new();
@@ -250,81 +270,89 @@ async fn load_inner(
     Ok(catalog)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the original aggregate preflight supplies this phase's gap credit"
+)]
 async fn hydrate_histories(
     layout: &cellule_ltx::CellStorageLayout,
     root: &Root,
     cells: Option<&BTreeSet<CellKey>>,
     origin: Option<&super::super::origin::OriginBundle>,
+    mut padding: u64,
     bindings: &mut [Binding],
     histories: &mut BTreeMap<[u8; 32], history::History>,
 ) -> Result<()> {
-    let mut next = 0;
-    while next < bindings.len() {
-        // Only eight compact indices are planned. The already checked shard
-        // plus requested-history aggregate bounds every returned raw body;
-        // shard reads have joined before this phase reuses their allowance.
-        let mut targets = Vec::with_capacity(READ_CONCURRENCY);
-        while targets.len() < READ_CONCURRENCY && next < bindings.len() {
-            let binding = &bindings[next];
-            if !cells.is_some_and(|cells| {
-                !cells.contains(&(
-                    *binding.application.as_bytes(),
-                    *binding.control.cell.as_bytes(),
-                ))
-            }) && histories.contains_key(&history::pin(binding)?)
-            {
-                targets.push(next);
-            }
-            next += 1;
+    let mut targets = Vec::with_capacity(bindings.len());
+    for (index, binding) in bindings.iter().enumerate() {
+        if !cells.is_some_and(|cells| {
+            !cells.contains(&(
+                *binding.application.as_bytes(),
+                *binding.control.cell.as_bytes(),
+            ))
+        }) && histories.contains_key(&history::pin(binding)?)
+        {
+            targets.push(
+                u16::try_from(index)
+                    .map_err(|_| Error::Capacity("bundle history planning indices"))?,
+            );
         }
-        let borrowed_bindings = &*bindings;
-        let borrowed_histories = &*histories;
-        let bodies = try_join_all((0..targets.len()).map(|offset| {
-            let index = targets[offset];
-            async move {
-                let history = borrowed_histories
-                    .get(&history::pin(&borrowed_bindings[index])?)
+    }
+    metadata::sort(&mut targets, |index| {
+        history_extent(bindings, histories, index)
+    })?;
+    let mut next = 0;
+    while next < targets.len() {
+        // Only eight window descriptors and at most MAX_BINDINGS compact u16
+        // indices are retained. Gaps charge the unused original shard/history
+        // aggregate; this phase joins after all shard bodies have dropped.
+        let windows = metadata::cohort(&targets, &mut next, &mut padding, |index| {
+            history_extent(bindings, histories, index)
+        })?;
+        let bodies = try_join_all(
+            windows
+                .into_iter()
+                .map(|window| metadata::read(layout, root, origin, window)),
+        )
+        .await?;
+        for (window, bytes) in bodies {
+            for target in window.indices.clone() {
+                let binding = &mut bindings[usize::from(targets[target])];
+                let history = histories
+                    .get_mut(&history::pin(binding)?)
                     .ok_or(Error::Node("bundle history plan is absent"))?;
                 let object = history
                     .extent
                     .object
                     .ok_or(Error::Node("unresolved bundle history"))?;
-                let body = super::super::origin::read_range(
-                    layout,
-                    root.session,
-                    root.epoch,
-                    object,
-                    history.extent.offset..history.extent.offset + history.extent.bytes,
-                    origin,
-                )
-                .await?;
-                if body.len() as u64 != history.extent.bytes {
-                    return Err(Error::Node("bundle history digest differs"));
+                let body = window.slice(&bytes, &history.extent)?;
+                let mut locators =
+                    history::decode(&body, root.session, root.epoch, binding, history)?;
+                for locator in &mut locators {
+                    if locator.object.is_none() {
+                        locator.object = Some(object);
+                    }
                 }
-                Ok(body)
+                history.loaded = Some(locators.clone());
+                binding.locators = locators;
             }
-        }))
-        .await?;
-        for (index, bytes) in targets.into_iter().zip(bodies) {
-            let binding = &mut bindings[index];
-            let history = histories
-                .get_mut(&history::pin(binding)?)
-                .ok_or(Error::Node("bundle history plan is absent"))?;
-            let object = history
-                .extent
-                .object
-                .ok_or(Error::Node("unresolved bundle history"))?;
-            let mut locators = history::decode(&bytes, root.session, root.epoch, binding, history)?;
-            for locator in &mut locators {
-                if locator.object.is_none() {
-                    locator.object = Some(object);
-                }
-            }
-            history.loaded = Some(locators.clone());
-            binding.locators = locators;
         }
     }
     Ok(())
+}
+
+fn history_extent<'a>(
+    bindings: &[Binding],
+    histories: &'a BTreeMap<[u8; 32], history::History>,
+    index: u16,
+) -> Result<&'a Locator> {
+    let binding = bindings
+        .get(usize::from(index))
+        .ok_or(Error::Node("bundle history plan is absent"))?;
+    histories
+        .get(&history::pin(binding)?)
+        .map(|history| &history.extent)
+        .ok_or(Error::Node("bundle history plan is absent"))
 }
 
 /// A clean maintenance result covers every indexed binding. Only one bounded

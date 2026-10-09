@@ -25,26 +25,26 @@ async fn held_metadata(mode: u8) {
         .map(|cell| catalog_index::shard(&[9; 16], cell.control.value().cell.as_bytes()))
         .collect::<std::collections::BTreeSet<_>>();
     assert!(shards.len() > 8);
-    let mut frames = Vec::new();
-    let mut assigned = Vec::new();
-    for cell in &mut cells {
-        let (_, capture, range) = f.append(cell, 2);
-        frames.extend(capture);
-        assigned.push(range);
-    }
+    // Separate immutable sources preserve the concurrency requirement after
+    // same-object metadata is coalesced. Every requested history has its own
+    // source and more than eight selected shards have distinct latest sources.
     let now = f.node.advertisement().issued_at_ms();
-    let first = f
-        .directory
-        .prepare_node_bundle(&f.node, &frames, &assigned, now)
-        .await
-        .unwrap();
-    f.node = f
-        .directory
-        .select_node_bundle(&f.node, &first, &f.lease, Limits::default(), now)
-        .await
-        .unwrap()
-        .0;
-    let catalog = load_catalog(&f.layout, head_session(&f), first.head)
+    for cell in &mut cells {
+        let (_, frames, assigned) = f.append(cell, 2);
+        let first = f
+            .directory
+            .prepare_node_bundle(&f.node, &frames, &[assigned], now)
+            .await
+            .unwrap();
+        f.node = f
+            .directory
+            .select_node_bundle(&f.node, &first, &f.lease, Limits::default(), now)
+            .await
+            .unwrap()
+            .0;
+    }
+    let head = f.node.advertisement().bundle_head().unwrap();
+    let catalog = load_catalog(&f.layout, head_session(&f), head)
         .await
         .unwrap();
     for cell in &cells {
@@ -54,15 +54,15 @@ async fn held_metadata(mode: u8) {
             f.layout
                 .node_coverage_bundle_path(
                     head_session(&f).as_bytes(),
-                    first.head.epoch,
+                    head.epoch,
                     history.object.unwrap().as_bytes(),
                 )
                 .to_string(),
             history.offset,
         ));
     }
-    frames.clear();
-    assigned.clear();
+    let mut frames = Vec::new();
+    let mut assigned = Vec::new();
     for cell in &mut cells {
         let (_, capture, range) = f.append(cell, 3);
         frames.extend(capture);

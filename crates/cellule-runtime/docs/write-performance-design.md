@@ -99,14 +99,27 @@ bodies beyond the operation. Working admission remains 20 MiB; workload
 retention and protocol bounds remain unchanged. This is a structural charge,
 not allocator-profile qualification.
 
-Catalog shard reads now overlap at most eight raw bodies after the complete
-selected-shard byte preflight. Requested detached histories use a separate
-eight-read phase after the shard jobs join and their aggregate byte preflight
-passes. Both phases retain the original 4-MiB selected-metadata bound and serial
-authenticated decoding. Planning keeps at most 256 one-byte shard IDs and eight
-history indices; unrelated histories remain authenticated references. This
-changes scheduling rather than request count or proof policy. Its
-[fresh paired diagnostic](../../../docs/pr67-catalog-overlap-measurement.md)
+Catalog loading coalesces contiguous same-object shard extents after the
+complete selected-shard byte preflight. Requested detached histories use a
+separate phase after the shard jobs join and the combined metadata preflight
+passes. History windows may bridge gaps of at most 32 KiB, charging every gap
+once against the unused original 4-MiB selected-metadata allowance. Shard
+windows spend no gap credit. Exhausted credit preserves separate valid reads.
+Each phase joins at most eight windows before canonical decoding of every
+original authenticated extent. Padding confers no authority; unrelated
+histories remain references. Planning retains at most 256 shard and 4,096
+history indices as compact `u16` values, plus eight window descriptors within
+the existing structural working charge. No availability cache, producer
+reservation increase or protocol change is introduced. Coalescing can trade
+more transferred bytes for fewer requests; measure both costs.
+
+The real 64-Cell, 2,000-binding preparation regression needs 123 metadata
+reads on the unchanged loader and three after coalescing. Three repetitions
+reproduce each result; every participating Cell cold-restores its exact seed
+and outcomes. Separate-object fixtures continue to enforce eight reads with
+no ninth read, cancellation without publication and missing-origin rejection.
+These are component results, not new application TPS or qualification. The
+preceding [catalog overlap diagnostic](../../../docs/pr67-catalog-overlap-measurement.md)
 records a higher write rate and lower read rate; performance qualification fails.
 
 Dense encoding now maps the original at-most-64 frame digests to unique

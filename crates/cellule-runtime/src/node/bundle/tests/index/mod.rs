@@ -49,3 +49,4 @@ mod encoding;
 mod history_cohort;
 mod inventory;
 mod metadata_cohort;
+mod metadata_windows;
