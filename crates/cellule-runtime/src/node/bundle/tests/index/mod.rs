@@ -49,4 +49,5 @@ mod encoding;
 mod history_cohort;
 mod inventory;
 mod metadata_cohort;
+mod metadata_sparse;
 mod metadata_windows;

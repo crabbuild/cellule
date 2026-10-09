@@ -156,19 +156,33 @@ bodies beyond the operation. Working admission remains 20 MiB; workload
 retention and protocol bounds remain unchanged. This is a structural charge,
 not allocator-profile qualification.
 
-Catalog loading coalesces contiguous same-object shard extents after the
-complete selected-shard byte preflight. Requested detached histories use a
-separate phase after the shard jobs join and the combined metadata preflight
-passes. History windows may bridge gaps of at most 32 KiB, charging every gap
-once against the unused original 4-MiB selected-metadata allowance. Shard
-windows spend no gap credit. Exhausted credit preserves separate valid reads.
-Each phase joins at most eight windows before canonical decoding of every
-original authenticated extent. Padding confers no authority; unrelated
-histories remain references. Planning retains at most 256 shard and 4,096
+Catalog loading coalesces selected same-object shard extents after the
+complete selected-shard byte preflight. Shard windows charge each bridged gap
+once against that phase's unused original 4-MiB raw-body allowance; all requested
+bytes and padding in the phase stay within that bound. Only the requested authenticated extents are decoded. All
+shard jobs and their bodies join/drop before requested detached histories use
+the separate history phase; the combined encoded shard/history preflight stays
+at 4 MiB. History windows retain their 32-KiB maximum gap and spend their
+existing unused selected-metadata allowance.
+Exhausted gap credit preserves separate valid reads. Each phase joins at most
+eight windows before canonical decoding of every original extent. Padding
+confers no authority; unrelated histories remain references. Overfetch can
+increase total transferred bytes across the two disjoint phases; measure bytes
+as well as requests and application throughput. Planning retains at most 256 shard and 4,096
 history indices as compact `u16` values, plus eight window descriptors within
 the existing structural working charge. No availability cache, producer
 reservation increase or protocol change is introduced. Coalescing can trade
 more transferred bytes for fewer requests; measure both costs.
+
+A separate sparse 64-Cell preparation against 2,000 binding rows now needs
+two fresh metadata reads versus 49 before shard windowing. Three fixed
+repetitions cold-restore every participating Cell and its exact outcomes; all
+101 bundle tests pass, including missing/corrupt origin, range and cancellation
+checks. The initial history-gap-limited trial needs 11 reads and fails the new
+five-read regression bound; the final shard phase uses its full original byte
+credit while history keeps its prior gap limit. These component observations
+establish no application TPS or latency gain; transferred bytes and end-to-end
+qualification still need measurement.
 
 The real 64-Cell, 2,000-binding preparation regression needs 123 metadata
 reads on the unchanged loader and three after coalescing. Three repetitions

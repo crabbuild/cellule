@@ -162,9 +162,11 @@ async fn load_inner(
             loaded.insert(id, Vec::new());
         }
     }
-    // Selected shard bytes were preflighted before any read. Shard windows
-    // spend no gap credit: requested history sizes are still unknown here.
-    // Up to eight joined windows retain the same raw-body byte allowance.
+    // Selected shard bytes were preflighted before any read. Sparse windows
+    // spend only this phase's unused raw-body allowance; decode/authenticate
+    // the original requested extents, never the intervening padding. Every
+    // shard body joins/drops before history I/O, so no padding buffer overlaps
+    // that phase. The combined encoded metadata preflight remains unchanged.
     let mut shards = Vec::with_capacity(SHARDS);
     for (id, shard) in root.shards.iter().enumerate() {
         if shard.is_some() && !wanted.is_some_and(|wanted| !wanted.contains(&(id as u8))) {
@@ -180,9 +182,15 @@ async fn load_inner(
     };
     metadata::sort(&mut shards, shard_extent)?;
     let mut next = 0;
-    let mut padding = 0;
+    let mut padding = MAX_BUNDLE_BYTES - selected_bytes;
     while next < shards.len() {
-        let windows = metadata::cohort(&shards, &mut next, &mut padding, shard_extent)?;
+        let windows = metadata::cohort(
+            &shards,
+            &mut next,
+            &mut padding,
+            MAX_BUNDLE_BYTES,
+            shard_extent,
+        )?;
         let bodies = try_join_all(
             windows
                 .into_iter()
@@ -306,9 +314,13 @@ async fn hydrate_histories(
         // Only eight window descriptors and at most MAX_BINDINGS compact u16
         // indices are retained. Gaps charge the unused original shard/history
         // aggregate; this phase joins after all shard bodies have dropped.
-        let windows = metadata::cohort(&targets, &mut next, &mut padding, |index| {
-            history_extent(bindings, histories, index)
-        })?;
+        let windows = metadata::cohort(
+            &targets,
+            &mut next,
+            &mut padding,
+            history::MAX_HISTORY_BYTES,
+            |index| history_extent(bindings, histories, index),
+        )?;
         let bodies = try_join_all(
             windows
                 .into_iter()
