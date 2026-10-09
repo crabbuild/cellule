@@ -81,8 +81,9 @@ impl Publisher {
             .ok_or(Error::PendingPublication)?;
         resources.try_reserve(
             crate::fleet::resource::ResourceCost::zero()
-                // The fifth bounded buffer is the fresh cohort origin read;
-                // its bytes are shared only within one verification operation.
+                // The fifth buffer covers the fresh cohort origin read. After
+                // matching the proposal, its allocation is released for 2 MiB
+                // of historical scratch and bounded operation-local facts.
                 .with_retained_bytes((5 * crate::node::bundle::MAX_BUNDLE_BYTES) as usize),
         )
     }

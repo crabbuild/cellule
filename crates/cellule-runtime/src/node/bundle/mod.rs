@@ -46,6 +46,7 @@ mod origin;
 mod proof;
 pub(crate) mod recovery;
 mod selection;
+mod verification;
 pub(crate) use continuation::MaterializedBundlePrefix;
 #[cfg(test)]
 use proof::checkpoint_prefix;

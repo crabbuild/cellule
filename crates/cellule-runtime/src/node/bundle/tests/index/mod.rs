@@ -44,4 +44,5 @@ mod cohort;
 mod compatibility;
 mod copy_on_write;
 mod density;
+mod history_cohort;
 mod inventory;

@@ -241,23 +241,27 @@ impl NodeDirectory {
             Some(&origin),
         )
         .await?;
+        let bindings = catalog
+            .bindings
+            .into_iter()
+            .filter(|binding| {
+                cells.contains(&(
+                    *binding.application.as_bytes(),
+                    *binding.control.cell.as_bytes(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        verification::verify_cohort(
+            &self.layout,
+            catalog.session,
+            catalog.epoch,
+            &bindings,
+            limits,
+            &origin,
+        )
+        .await?;
         let mut proofs = Vec::new();
-        for binding in catalog.bindings {
-            if !cells.contains(&(
-                *binding.application.as_bytes(),
-                *binding.control.cell.as_bytes(),
-            )) {
-                continue;
-            }
-            proof::verify_selected_binding(
-                &self.layout,
-                catalog.session,
-                catalog.epoch,
-                &binding,
-                limits,
-                &origin,
-            )
-            .await?;
+        for binding in bindings {
             let pin = binding
                 .control
                 .bundle_binding

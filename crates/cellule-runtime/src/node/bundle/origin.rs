@@ -31,11 +31,14 @@ impl OriginBundle {
         Ok(Self {
             session: prepared.catalog.session,
             head: prepared.head,
-            body,
+            // Reuse the proposal's allocation only after this operation's
+            // complete fresh read matched it. The original 4-MiB read buffer
+            // can then cover bounded historical scratch and checked facts.
+            body: prepared.body.clone(),
         })
     }
 
-    fn range(
+    pub(super) fn range(
         &self,
         session: SessionId,
         epoch: u64,
