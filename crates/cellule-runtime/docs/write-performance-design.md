@@ -1,6 +1,18 @@
 # Node write and read performance design
 
-The latest [sparse-shard diagnostic](../../../docs/pr67-shard-window-measurement.md)
+The latest [checkpoint-cohort diagnostic](../../../docs/pr67-checkpoint-cohort-measurement.md)
+rejects and reverts bounded parallel checkpoint verification. The controlled
+fixture overlaps eight fresh roots rather than one, but application TPS falls
+583.20→537.28/s and successful scheduled p99 barely changes, 368.89→367.03 ms.
+Fresh celld completes 1,999.90/s with 14.48-ms p99. The prototype passes all
+62,011 warm/cold ACK checks; the retained baseline has 18 post-SQL publication
+capacity fences, 1,652 warm HTTP 503s and an owner cleanup timeout. Shared root
+packing counters are zero in both arms: bundle materialization bypasses the
+existing shared producer. Prioritize that integration, publication bytes per
+write and the remaining capacity-fencing failure. All profiles remain unqualified;
+the acceptance gates below are unchanged.
+
+The preceding [sparse-shard diagnostic](../../../docs/pr67-shard-window-measurement.md)
 rejects and reverts wide metadata reads. Its component fixture improves 49→2
 reads, but fresh application TPS falls 510.13→300.63/s and successful scheduled
 p99 rises 1,314.72→2,554.88 ms. Node-authority range bytes rise 61.17% despite
