@@ -137,5 +137,8 @@ Every canonical report fails qualification. No production code changes or new
 read/Bucket measurements were made in this diagnostic turn.
 
 Raw sources, timing overlays, binaries, journals, audits and phase/model data
-remain outside Git under
+were recorded outside Git under
 `/Volumes/Workspace/crabbuild-target/cellule-write-perf-8ad1/publication-path-20261009-*`.
+That external directory later disappeared; its missing raw evidence is not
+claimed to be reverified. The [fresh write comparison](pr67-base-pipeline-measurement.md)
+retains newly rebuilt sources, verification and journals in a separate directory.

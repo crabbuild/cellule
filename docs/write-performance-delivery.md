@@ -6,7 +6,14 @@ comparison retains exact retry and cold-state audits. **Celld write parity
 has not been established.** The [proposal](write-performance-proposal.md) remains
 the acceptance contract; completing tests or a load run does not pass its gates.
 
-The latest [paired 2,000-Cell comparison](pr67-metadata-window-measurement.md)
+The latest [fresh write comparison](pr67-base-pipeline-measurement.md) completes
+579.10 Fleet writes/s for unchanged production code, 570.25/s for the trial and
+1,999.83/s for celld. The trial is reverted: this pair establishes no acceptable
+TPS/latency improvement. Cellule's warm ACK audits fail with 467 and 2,779 HTTP
+503s; neither reaches cold audit. Celld passes all 182,001 warm/cold mutations
+and original retries. All profiles remain unqualified and PR #67 stays a draft.
+
+The preceding [paired 2,000-Cell comparison](pr67-metadata-window-measurement.md)
 measures `4a5b001` at **502.28 Fleet writes/s versus 455.73 before and 1,999.83
 for fresh celld**. Observed GET/range work falls, but successful scheduled write
 p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only throughput

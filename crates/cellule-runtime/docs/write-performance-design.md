@@ -1,6 +1,14 @@
 # Node write and read performance design
 
-The [current paired 2,000-Cell measurements](../../../docs/pr67-metadata-window-measurement.md)
+The [latest fresh write comparison](../../../docs/pr67-base-pipeline-measurement.md)
+completes 579.10 Fleet writes/s for unchanged production code, 570.25/s for a
+continuous-base-slot trial and 1,999.83/s for celld. The trial has no acceptable
+TPS/latency gain and is reverted. Both Cellule cases fail warm ACK availability
+checks with HTTP 503s and never reach cold audit; celld passes all 182,001 warm
+and cold mutations and original retries. These short shared-VM runs establish
+no qualified capacity. The acceptance contract below is unchanged.
+
+The [preceding paired 2,000-Cell measurements](../../../docs/pr67-metadata-window-measurement.md)
 complete 502.28 Fleet writes/s versus 455.73 before and 1,999.83 for fresh
 celld. Metadata windows reduce observed GET/range work, but successful scheduled
 write p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only
