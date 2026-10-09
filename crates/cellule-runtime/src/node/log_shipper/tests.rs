@@ -859,6 +859,56 @@ async fn encoding_failure_does_not_consume_a_node_sequence() {
 }
 
 #[tokio::test]
+async fn completed_follower_round_is_credited_during_next_batch_assembly() {
+    let (_directory, cuts) = capture();
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    gate.activate_fleet().unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let transport = Arc::new(RecordingTransport {
+        held: Some((node(2), entered.clone(), release.clone())),
+        ..RecordingTransport::default()
+    });
+    let shipper = NodeLogShipper::start(
+        gate.clone(),
+        transport,
+        cellule_ltx::Limits::default(),
+        crate::fleet::telemetry::CellTelemetryHandle::default(),
+        Duration::from_millis(250),
+    )
+    .unwrap();
+    let first = shipper
+        .submit(publication_submission(&cuts, 0))
+        .await
+        .unwrap();
+    entered.notified().await;
+    let second = shipper
+        .submit(publication_submission(&cuts, 1))
+        .await
+        .unwrap();
+    let sender = shipper.sender.lock().unwrap().clone().unwrap();
+    // The first member I/O is held. Reclaimed FIFO capacity establishes that
+    // the dispatcher has received the second capture and begun its assembly.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while sender.capacity() != MAX_QUEUED_SUBMISSIONS {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(sender);
+    release.notify_one();
+    let credited =
+        tokio::time::timeout(Duration::from_millis(50), gate.wait_followers(first)).await;
+    gate.wait_followers(second).await.unwrap();
+    shipper.shutdown().await.unwrap();
+    assert!(
+        matches!(credited, Ok(Ok(_))),
+        "a completed original round must not wait for the next assembly deadline"
+    );
+}
+
+#[tokio::test]
 async fn ordered_member_lanes_advance_independently_and_group_queued_rounds() {
     let (_directory, cuts) = capture();
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(2), node(3)]).unwrap();

@@ -113,6 +113,10 @@ async fn lost_ack_suffix_recovers_an_ambiguous_command_without_reexecution() {
                 .unwrap();
             if current.value().root.as_ref().unwrap().commit_sequence == 1
                 && runtime.stats().unpublished_node_log_bytes() == 0
+                // An object response can precede the first follower append.
+                // Establish that append before submitting the lost-ACK cut;
+                // otherwise group commit can acknowledge both as its first RPC.
+                && lost_ack_transport.acknowledged_once.load(Ordering::Acquire)
             {
                 break;
             }

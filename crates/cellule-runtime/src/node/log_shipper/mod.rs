@@ -2,7 +2,7 @@
 use std::{collections::VecDeque, io::Read as _, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use futures_util::stream::StreamExt;
+use futures_util::{FutureExt, stream::StreamExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 
 use crate::identity::{ApplicationId, CellId};
@@ -567,6 +567,18 @@ async fn run_rounds(
     let mut closed = false;
     let mut rounds = futures_util::stream::FuturesOrdered::new();
     loop {
+        // Member tasks can have completed while this dispatcher was receiving
+        // captures. Credit ready original rounds before assembling more work.
+        while !rounds.is_empty() {
+            let Some(Some(round)) = rounds.next().now_or_never() else {
+                break;
+            };
+            if !complete_round(gate, telemetry, round) {
+                stop_shipper(gate, bytes, stopping);
+                receiver.close();
+                return;
+            }
+        }
         if closed && pending.is_empty() && rounds.is_empty() {
             bytes.close();
             stopping.send_replace(true);
@@ -633,13 +645,24 @@ async fn run_rounds(
             {
                 break;
             }
-            match tokio::time::timeout_at(deadline, receiver.recv()).await {
-                Ok(Some(submission)) => pending.extend(submission.frames),
-                Ok(None) => {
-                    closed = true;
-                    break;
+            tokio::select! {
+                round = rounds.next(), if !rounds.is_empty() => {
+                    if let Some(round) = round
+                        && !complete_round(gate, telemetry, round)
+                    {
+                        stop_shipper(gate, bytes, stopping);
+                        receiver.close();
+                        return;
+                    }
                 }
-                Err(_) => break,
+                submission = tokio::time::timeout_at(deadline, receiver.recv()) => match submission {
+                    Ok(Some(submission)) => pending.extend(submission.frames),
+                    Ok(None) => {
+                        closed = true;
+                        break;
+                    }
+                    Err(_) => break,
+                }
             }
         }
         // Enqueue synchronously, in original sequence order, before returning a
