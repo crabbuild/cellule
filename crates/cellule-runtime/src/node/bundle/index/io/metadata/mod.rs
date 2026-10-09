@@ -45,7 +45,6 @@ pub(super) fn cohort<'a>(
     indices: &[u16],
     next: &mut usize,
     padding: &mut u64,
-    maximum_gap: u64,
     extent: impl Fn(u16) -> Result<&'a Locator>,
 ) -> Result<Vec<Window>> {
     let mut windows = Vec::with_capacity(READ_CONCURRENCY);
@@ -64,7 +63,10 @@ pub(super) fn cohort<'a>(
         while let Some(index) = indices.get(*next) {
             let candidate = extent(*index)?;
             let gap = candidate.offset.saturating_sub(range.end);
-            if candidate.object != Some(object) || gap > *padding || gap > maximum_gap {
+            if candidate.object != Some(object)
+                || gap > *padding
+                || gap > history::MAX_HISTORY_BYTES
+            {
                 break;
             }
             let end = candidate

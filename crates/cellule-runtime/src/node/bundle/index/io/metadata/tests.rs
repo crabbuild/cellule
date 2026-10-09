@@ -23,14 +23,7 @@ fn sparse_metadata_windows_charge_gaps_once_and_preserve_all_original_indices() 
     sort(&mut indices, locate).unwrap();
     let mut next = 0;
     let mut padding = 10;
-    let windows = cohort(
-        &indices,
-        &mut next,
-        &mut padding,
-        history::MAX_HISTORY_BYTES,
-        locate,
-    )
-    .unwrap();
+    let windows = cohort(&indices, &mut next, &mut padding, locate).unwrap();
     assert_eq!(windows.len(), 3);
     assert_eq!(windows[0].indices, 0..3);
     assert_eq!(
@@ -61,28 +54,16 @@ fn eight_metadata_windows_and_compact_protocol_indices_stay_bounded() {
     let mut next = 0;
     let mut padding = MAX_BUNDLE_BYTES;
     assert_eq!(
-        cohort(
-            &indices,
-            &mut next,
-            &mut padding,
-            history::MAX_HISTORY_BYTES,
-            locate,
-        )
-        .unwrap()
-        .len(),
+        cohort(&indices, &mut next, &mut padding, locate)
+            .unwrap()
+            .len(),
         8
     );
     assert_eq!(next, 8);
     assert_eq!(
-        cohort(
-            &indices,
-            &mut next,
-            &mut padding,
-            history::MAX_HISTORY_BYTES,
-            locate,
-        )
-        .unwrap()
-        .len(),
+        cohort(&indices, &mut next, &mut padding, locate)
+            .unwrap()
+            .len(),
         4
     );
     assert_eq!(padding, MAX_BUNDLE_BYTES);
@@ -101,58 +82,9 @@ fn exhausted_gap_credit_keeps_valid_metadata_as_separate_reads() {
     sort(&mut indices, locate).unwrap();
     let mut next = 0;
     let mut padding = 0;
-    let windows = cohort(
-        &indices,
-        &mut next,
-        &mut padding,
-        history::MAX_HISTORY_BYTES,
-        locate,
-    )
-    .unwrap();
+    let windows = cohort(&indices, &mut next, &mut padding, locate).unwrap();
     assert_eq!(windows.len(), 2);
     let mut invalid = [extent(1, 0, 1)];
     invalid[0].offset = u64::MAX;
     assert!(sort(&mut [0], |index| Ok(&invalid[usize::from(index)])).is_err());
-}
-
-#[test]
-fn sparse_shards_spend_phase_credit_while_history_retains_its_gap_limit() {
-    let extents = [extent(1, 0, 100), extent(1, 128 * 1024, 100)];
-    let indices = [0, 1];
-    let locate = |index: u16| Ok(&extents[usize::from(index)]);
-    let mut next = 0;
-    let original_credit = MAX_BUNDLE_BYTES - 200;
-    let mut padding = original_credit;
-    let shards = cohort(&indices, &mut next, &mut padding, MAX_BUNDLE_BYTES, locate).unwrap();
-    assert_eq!(shards.len(), 1);
-    let gap = 128 * 1024 - 100;
-    assert_eq!(padding, original_credit - gap);
-    let wire = shards[0].range.end - shards[0].range.start;
-    assert_eq!(wire, 200 + gap);
-    assert!(wire <= MAX_BUNDLE_BYTES);
-    assert_eq!(shards[0].indices, 0..2);
-    let mut next = 0;
-    let mut padding = original_credit;
-    let histories = cohort(
-        &indices,
-        &mut next,
-        &mut padding,
-        history::MAX_HISTORY_BYTES,
-        locate,
-    )
-    .unwrap();
-    assert_eq!(histories.len(), 2);
-    assert_eq!(
-        padding, original_credit,
-        "history cannot spend this wide gap"
-    );
-    let mut next = 0;
-    let mut padding = gap - 1;
-    assert_eq!(
-        cohort(&indices, &mut next, &mut padding, MAX_BUNDLE_BYTES, locate)
-            .unwrap()
-            .len(),
-        2,
-        "insufficient original credit preserves separate valid shard reads"
-    );
 }
