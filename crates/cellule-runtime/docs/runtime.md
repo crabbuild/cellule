@@ -75,8 +75,8 @@ Caller cancellation does not remove accepted members or their drain obligations.
 While follower-proven work awaits object publication, new mutations are refused
 before SQL when retained RAM or local disk reaches three quarters of its node
 budget. The remaining headroom belongs to accepted work and publication.
-Queries remain eligible. A command refused by node publication pressure or a
-full Cell publication queue can still replay its original durable request
+Queries remain eligible. Under node publication pressure or a full Cell
+publication queue, a command can still replay its original durable request
 outcome through the same bounded FIFO and read-only resolution path. Node
 pressure keeps an absent or unproven outcome refused without invoking its handler.
 At a full Cell queue, an absent request keeps its already accepted FIFO position

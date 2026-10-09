@@ -1,13 +1,16 @@
 # Node write and read performance design
 
-The [historical-read experiment](../../../docs/pr67-historical-read-measurement.md)
-is withdrawn: grouping historical requests passes its isolated regression but
-regresses Fleet completion from 201.82 to 18.18 writes/s and fails ACK availability.
-The subsequent [receipt admission verification](../../../docs/pr67-receipt-admission-measurement.md)
-fixes a reproduced producer pressure failure, but completes only 154.72 Fleet
-writes/s and fails ACK availability. Resource policies in the celld comparison
-are asymmetric. Reuse bounded working credit and qualify the original
-application workload before accepting another publication optimization.
+The [latest replay-pressure verification](../../../docs/pr67-replay-admission-measurement.md)
+preserves original durable outcomes under publication pressure. One fresh Fleet
+pair completes 158.15 writes/s versus 152.92 before, with all 19,542 candidate ACKs
+passing warm/cold audit and joined drain. A separate 1-GiB budget control reaches
+only 191.08 writes/s; its latency worsens versus the matching baseline. Neither
+establishes repeatable performance improvement or parity. Native ticket issuance
+still waits for the bounded publication lane before follower proof can begin,
+and historical/base verification remains expensive. Resource policies in the
+celld comparison are asymmetric. The
+[historical-read experiment](../../../docs/pr67-historical-read-measurement.md)
+remains withdrawn after its severe application regression.
 
 Status: implementation in progress. The application path is not qualified at
 the targets below. Component I/O reductions are not application TPS.

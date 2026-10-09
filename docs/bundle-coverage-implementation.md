@@ -1,17 +1,19 @@
 # Bundle coverage implementation
 
-The [latest receipt-pressure diagnostic](pr67-receipt-admission-measurement.md)
-reproduces a fatal post-selection admission failure and verifies waiting for
-credit while joining older checkpoints. One fresh Fleet pair completes 154.72
-writes/s versus 122.97 before and 4,001.65 for celld. All three fail warm ACK
-availability and qualification; resource policies are asymmetric. No repeatable
+The [latest replay-pressure diagnostic](pr67-replay-admission-measurement.md)
+preserves original durable command outcomes under node and Cell publication
+pressure. One fresh Fleet pair completes 158.15 writes/s versus 152.92 before
+and 4,473.32 for celld. Candidate warm/cold audits pass for all 19,542 ACKs;
+all three fail performance qualification. A separate 1-GiB retained-credit control
+reaches only 191.08 writes/s. Resource policies are asymmetric, and no repeatable
 throughput improvement or parity is established. PR #67 remains a draft.
 
 The installed original producer provides admitted shared receipts, independent
 root materialization and complete live-writer closure. The Fleet SQL example
 installs it; Bucket benchmark wiring bypasses it. Remaining gaps are publication
-and verification cost, pressure-safe read/retry and materializer progress,
-ordered shipping, safe collection and full lifecycle/performance qualification.
+and verification cost, publication-coupled native admission, materializer
+progress and remaining overload availability, ordered shipping, safe collection
+and full lifecycle/performance qualification.
 The [historical-read experiment](pr67-historical-read-measurement.md) was reverted
 after a severe Fleet regression. Earlier measured slices remain linked from the
 [delivery record](write-performance-delivery.md).
