@@ -1,7 +1,7 @@
 //! Finite, nonblocking runtime and provider measurements for this application.
 use cellule_runtime::fleet::telemetry::{
-    CellTelemetry, CommandResponseSource, DurabilitySubmissionOutcome, PrimitiveOperationKind,
-    PrimitiveOperationOutcome, PublicationTiming, SharedPublicationTiming,
+    CellTelemetry, CommandResponseSource, DurabilitySubmissionOutcome, NodeLogSubmissionTiming,
+    PrimitiveOperationKind, PrimitiveOperationOutcome, PublicationTiming, SharedPublicationTiming,
 };
 use cellule_store::{StorageObservation, StorageObserver, StorageOperation, StorageOutcome};
 use std::{
@@ -11,6 +11,7 @@ use std::{
 
 mod capture;
 mod storage;
+mod submission;
 use capture::CaptureMetrics;
 
 #[cfg(test)]
@@ -37,6 +38,7 @@ pub(super) struct QueryMetrics {
     log_append_successes: AtomicU64,
     log_append_failures: AtomicU64,
     log_append_bytes: AtomicU64,
+    submission: submission::SubmissionMetrics,
     selected_roots: AtomicU64,
     materialized_commits: AtomicU64,
     shared: SharedMetrics,
@@ -288,6 +290,9 @@ impl CellTelemetry for QueryMetrics {
         }
         self.log_append_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
+    fn node_log_submission(&self, _cell: cellule_runtime::CellId, timing: NodeLogSubmissionTiming) {
+        self.submission.observe(timing);
+    }
     fn command_execution(&self, queue: Duration, worker: Duration, _succeeded: bool) {
         self.writes.queue.observe(queue);
         self.writes.worker.observe(worker);
@@ -421,6 +426,7 @@ impl QueryMetrics {
             histograms.insert(name.into(), histogram.raw());
         }
         histograms.extend(self.capture.window_snapshot());
+        histograms.extend(self.submission.window_snapshot());
         value["histograms"] = histograms.into();
         value
     }
@@ -512,6 +518,7 @@ impl QueryMetrics {
                 "failures": self.log_append_failures.load(Ordering::Relaxed),
                 "bytes": self.log_append_bytes.load(Ordering::Relaxed)
             },
+            "node_log_submission": self.submission.snapshot(),
             "follower_append": {
                 "input_frames": self.follower_frames.load(Ordering::Relaxed),
                 "data_sync_calls": self.follower_sync_calls.load(Ordering::Relaxed),

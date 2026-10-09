@@ -19,11 +19,19 @@ struct RecordingTransport {
 #[derive(Default)]
 struct RecordingTelemetry {
     appends: Mutex<Vec<(bool, u64)>>,
+    submissions: Mutex<Vec<(CellId, crate::fleet::telemetry::NodeLogSubmissionTiming)>>,
 }
 
 impl crate::fleet::telemetry::CellTelemetry for RecordingTelemetry {
     fn node_log_append(&self, acknowledged: bool, bytes: u64) {
         self.appends.lock().unwrap().push((acknowledged, bytes));
+    }
+    fn node_log_submission(
+        &self,
+        cell: CellId,
+        timing: crate::fleet::telemetry::NodeLogSubmissionTiming,
+    ) {
+        self.submissions.lock().unwrap().push((cell, timing));
     }
 }
 
@@ -388,10 +396,12 @@ async fn cancelled_full_publication_queue_does_not_issue_a_native_gap() {
     let (_directory, cuts) = capture();
     let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
     gate.activate_fleet().unwrap();
-    let shipper = NodeLogShipper::new(
+    let telemetry = Arc::new(RecordingTelemetry::default());
+    let shipper = NodeLogShipper::new_with_telemetry(
         gate.clone(),
         Arc::new(RecordingTransport::default()),
         cellule_ltx::Limits::default(),
+        crate::fleet::telemetry::CellTelemetryHandle::from_sink(telemetry.clone()),
     )
     .unwrap();
     let mut feed = shipper.take_publication_feed().unwrap();
@@ -410,6 +420,30 @@ async fn cancelled_full_publication_queue_does_not_issue_a_native_gap() {
             .is_err()
     );
     assert_eq!(gate.issued_through(), 512);
+    {
+        let observed = telemetry.submissions.lock().unwrap();
+        assert_eq!(observed.len(), 513);
+        let (cell, blocked) = observed.last().unwrap();
+        assert_eq!(*cell, publication_submission(&cuts, 512).cell);
+        assert!(blocked.cancelled);
+        assert!(!blocked.succeeded);
+        assert!(blocked.publication_slot > Duration::ZERO);
+        for (_, timing) in observed.iter() {
+            assert_eq!(
+                timing.validation
+                    + timing.native_bytes
+                    + timing.shipping_slot
+                    + timing.local_load
+                    + timing.ordered_lane
+                    + timing.publication_slot
+                    + timing.assignment,
+                timing.total
+            );
+            assert_eq!(timing.first_commit_sequence, 4);
+            assert_eq!(timing.commit_sequence, 4);
+            assert_eq!(timing.frames, 1);
+        }
+    }
     let first = feed.recv().await.unwrap();
     assert_eq!(first.assignment().ticket().first_sequence(), 1);
     first.assignment().verify(first.frames()).unwrap();

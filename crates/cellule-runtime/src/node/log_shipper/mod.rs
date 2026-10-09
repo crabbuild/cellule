@@ -12,6 +12,7 @@ use crate::node::log_transport::{AppendRequest, NodeLogTransport};
 use crate::{Error, Result};
 
 mod publication;
+mod submission;
 pub use publication::{AssignedCapture, NodePublicationFeed, SelectedBundlePublication};
 pub(crate) use publication::{SelectedBundle, SubmittedCapture};
 
@@ -201,6 +202,7 @@ pub struct NodeLogShipper {
     limits: cellule_ltx::Limits,
     publication: publication::PublicationState,
     stopping: tokio::sync::watch::Sender<bool>,
+    telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
 impl NodeLogShipper {
@@ -266,6 +268,7 @@ impl NodeLogShipper {
             limits,
             publication: publication::PublicationState::default(),
             stopping,
+            telemetry,
         })
     }
 
@@ -322,7 +325,26 @@ impl NodeLogShipper {
         &self,
         submission: NodeLogSubmission,
     ) -> Result<SubmittedCapture> {
+        let mut observation = submission::Observation::new(
+            self.telemetry.clone(),
+            submission.cell,
+            submission.first_commit_sequence,
+            submission.commit_sequence,
+            submission.encoded_bytes,
+        );
+        let result = self.assign_capture(submission, &mut observation).await;
+        observation.finish(result.is_ok());
+        result
+    }
+
+    async fn assign_capture(
+        &self,
+        submission: NodeLogSubmission,
+        observation: &mut submission::Observation,
+    ) -> Result<SubmittedCapture> {
+        use submission::Stage;
         let frame_count = submission.frame_count()?;
+        observation.frames(frame_count);
         if submission
             .segments
             .iter()
@@ -336,10 +358,12 @@ impl NodeLogShipper {
             .ok()
             .filter(|bytes| *bytes != 0)
             .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        observation.enter(Stage::NativeBytes);
         let reservation = Arc::clone(&self.bytes)
             .acquire_many_owned(permit_count)
             .await
             .map_err(|_| Error::RuntimeClosed)?;
+        observation.enter(Stage::ShippingSlot);
         let sender = self
             .sender
             .lock()
@@ -350,6 +374,7 @@ impl NodeLogShipper {
             .reserve_owned()
             .await
             .map_err(|_| Error::RuntimeClosed)?;
+        observation.enter(Stage::LocalLoad);
         let limits = self.limits;
         let (leader, log_epoch, _) = self.gate.shipping_scope()?;
         let loaded =
@@ -359,13 +384,16 @@ impl NodeLogShipper {
         // Expensive LTX validation is parallel and bounded by outstanding-byte
         // admission. This lane only patches exclusively owned envelopes and
         // atomically commits their consecutive ticket before enqueueing.
+        observation.enter(Stage::OrderedLane);
         let _ordered = self.order.lock().await;
         // Reserve both consumers before committing a sequence. Cancellation or
         // a full publication queue therefore cannot leave an unselectable gap.
+        observation.enter(Stage::PublicationSlot);
         let publication = self.publication.reserve(&self.stopping).await?;
         if *self.stopping.borrow() {
             return Err(Error::RuntimeClosed);
         }
+        observation.enter(Stage::Assignment);
         let ticket = self.gate.preview(frame_count)?;
         let encoded = loaded.encode(ticket)?;
         let assignment = self

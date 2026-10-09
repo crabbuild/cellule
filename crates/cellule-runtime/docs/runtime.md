@@ -305,6 +305,18 @@ read-only setup, and handler execution. Compare it with the registered
 primitive's duration to distinguish SQL work from dispatch and waiting.
 Pre-dispatch refusals are excluded; SQL deadline failures are included.
 
+`CellTelemetry::node_log_submission` partitions one capture's lifetime after SQL
+and before its follower-log assignment: validation, native-byte admission,
+shipping slot, local load/validation, ordered lane, publication slot and final
+assignment. The same observation carries the original logical range and reports
+completion, failure or cancellation. A slow publication feed can block issuance
+while the ordered mutex is held; this wait is outside worker and proof timers.
+The callback grants no assignment or durability. Sinks must remain nonblocking
+and use finite phase labels, never Cell identities or sequences as labels.
+The SQL example exports matching successful-assignment histograms and separate
+failure/cancellation counts. Compare phases from that same cohort; response and
+background-root histograms describe different lifetimes.
+
 **Automatic rollback**
 
 - SQLite may automatically roll back the whole command on capacity or interruption errors. The managed LTX writer recognizes completed rollback using autocommit and its WAL commit observer, preserves the original error, and keeps the Cell servable.

@@ -73,6 +73,43 @@ pub struct FollowerAppendTiming {
     pub succeeded: bool,
 }
 
+/// One native capture's submission before follower durability can be observed.
+///
+/// The durations partition the same submission lifetime, including cancelled
+/// futures. They exclude SQL execution, subsequent shipping and object selection.
+/// Cell identity and sequences are for local trace correlation, never labels.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NodeLogSubmissionTiming {
+    /// Original inclusive logical command range represented by this capture.
+    pub first_commit_sequence: u64,
+    /// Original inclusive logical command range endpoint.
+    pub commit_sequence: u64,
+    /// Number of native frames in the submitted capture.
+    pub frames: u64,
+    /// Expected canonical framed bytes admitted by the native lane.
+    pub bytes: u64,
+    /// Initial scope, length and capacity validation.
+    pub validation: Duration,
+    /// Waiting for the original outstanding native-byte reservation.
+    pub native_bytes: Duration,
+    /// Acquiring the shipping sender and reserving its bounded queue slot.
+    pub shipping_slot: Duration,
+    /// Blocking-worker dispatch, local file reads and native frame validation.
+    pub local_load: Duration,
+    /// Waiting for the original ordered issuance mutex.
+    pub ordered_lane: Duration,
+    /// Waiting for the bounded publication feed while owning the issuance mutex.
+    pub publication_slot: Duration,
+    /// Ticket validation, final encoding, assignment and enqueueing both consumers.
+    pub assignment: Duration,
+    /// Entire submission lifetime, partitioned by the phases above.
+    pub total: Duration,
+    /// Whether one complete original capture was assigned and enqueued.
+    pub succeeded: bool,
+    /// Whether the submission future was dropped before returning a result.
+    pub cancelled: bool,
+}
+
 /// Outcome of an actor-owned resident route lookup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResidentRouteOutcome {
@@ -256,6 +293,10 @@ pub trait CellTelemetry: Send + Sync {
     /// Records bytes sent to follower append lanes and whether every lane acknowledged them.
     fn node_log_append(&self, _acknowledged: bool, _bytes: u64) {}
 
+    /// Records pre-issuance waits for one complete native capture. This grants
+    /// no ticket or durability proof. Cancellation is observed without new work.
+    fn node_log_submission(&self, _cell: CellId, _timing: NodeLogSubmissionTiming) {}
+
     /// Reports native follower work separately from peer HTTP and authorization.
     fn follower_append(&self, _timing: FollowerAppendTiming) {}
 
@@ -438,6 +479,12 @@ impl CellTelemetryHandle {
     pub(crate) fn node_log_append(&self, acknowledged: bool, bytes: u64) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.node_log_append(acknowledged, bytes);
+        }
+    }
+
+    pub(crate) fn node_log_submission(&self, cell: CellId, timing: NodeLogSubmissionTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.node_log_submission(cell, timing);
         }
     }
 
