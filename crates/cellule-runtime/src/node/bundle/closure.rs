@@ -25,8 +25,6 @@ impl NodeDirectory {
     /// index upload and one shared node CAS. Each root must match its opaque
     /// complete-capture proof; any missing/stale participant leaves the catalog
     /// unchanged. Callers retain their admissions until this operation joins.
-    /// Fresh small-root verification overlaps at most eight operations within
-    /// the original 4-MiB working allowance; larger graphs remain serial.
     pub async fn checkpoint_bundle_cells(
         &self,
         observed: &VersionedNodeAdvertisement,
@@ -59,7 +57,7 @@ impl NodeDirectory {
         let mut catalog =
             store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
                 .await?;
-        let mut changed = Vec::with_capacity(checkpoints.len());
+        let mut changed = false;
         for (authority, proof) in checkpoints {
             let pin = proof.binding();
             let binding = catalog.binding_mut(pin.digest)?;
@@ -92,33 +90,15 @@ impl NodeDirectory {
                 continue;
             }
             binding.control = control.clone();
+            verify_base(&self.layout, binding, limits).await?;
             binding.locators.drain(..prefix);
             if binding.locators.is_empty() {
                 binding.first_commit = binding.selected_commit;
             }
-            changed.push(pin.digest);
+            changed = true;
         }
-        if changed.is_empty() {
+        if !changed {
             return Ok(observed.clone());
-        }
-        {
-            // These are only the original changed participants, never siblings.
-            // Catalog edits remain private until every fresh root/dependency
-            // joins the same admitted verifier used by shared selection.
-            let bases = catalog
-                .bindings
-                .iter()
-                .filter(|binding| {
-                    binding
-                        .control
-                        .bundle_binding
-                        .is_some_and(|pin| changed.contains(&pin.digest))
-                })
-                .collect::<Vec<_>>();
-            if bases.len() != changed.len() {
-                return Err(Error::Node("bundle checkpoint participant is absent"));
-            }
-            verification::verify_bases(&self.layout, &bases, limits).await?;
         }
         let prepared = self.upload_catalog(Some(head), catalog, &[]).await?;
         self.select_catalog(observed, &prepared, now_ms).await

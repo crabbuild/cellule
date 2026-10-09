@@ -146,14 +146,7 @@ Startup admission precedes installation of the
 irreversible feed. Selection and exact root checkpoints use the same original
 binding/heartbeat authority; 512 checkpoint requests are bounded and their
 callbacks join before Cell closure. Fair turns alternate queued native work and
-checkpoint cohorts. Exact checkpoints reuse selection's canonical fresh-base
-verifier for changed participants: at most eight small-root operations with a
-4-MiB operation charge, within the original producer working reservation.
-Larger graphs stay serial. No catalog upload or CAS occurs before every original
-participant joins verification; no prior availability proof is cached. The real
-held-root/body fixture verifies this overlap, cancellation and exact cold results;
-application throughput still requires a fresh measurement.
-The Fleet SQL example installs this producer; the current
+checkpoint cohorts. The Fleet SQL example installs this producer; the current
 Bucket-only performance adapter bypasses it.
 
 Each selection reads its complete new cohort object once from origin, compares

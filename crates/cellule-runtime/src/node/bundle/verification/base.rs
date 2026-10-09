@@ -1,9 +1,9 @@
 //! Admitted fresh small-base verification; larger graphs stay serial.
 use super::*;
 
-pub(in crate::node::bundle) async fn verify(
+pub(super) async fn verify(
     layout: &cellule_ltx::CellStorageLayout,
-    bindings: &[&Binding],
+    bindings: &[Binding],
     limits: cellule_ltx::Limits,
 ) -> Result<()> {
     for cohort in bindings.chunks(READ_CONCURRENCY) {
@@ -13,7 +13,7 @@ pub(in crate::node::bundle) async fn verify(
             .map(|index| async move {
                 Ok::<_, Error>((
                     index,
-                    proof::prepare_base_origin(layout, cohort[index], limits).await?,
+                    proof::prepare_base_origin(layout, &cohort[index], limits).await?,
                 ))
             })
             .buffer_unordered(READ_CONCURRENCY);
@@ -43,7 +43,7 @@ pub(in crate::node::bundle) async fn verify(
         // All bounded operations have joined/dropped before a larger graph
         // takes the original serial working set. No partial plan grants CAS.
         for index in serial {
-            proof::verify_base(layout, cohort[index], limits).await?;
+            proof::verify_base(layout, &cohort[index], limits).await?;
         }
     }
     Ok(())
