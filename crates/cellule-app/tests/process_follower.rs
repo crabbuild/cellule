@@ -1,6 +1,6 @@
 //! Test-only authenticated network transport for private-disk follower lanes.
 
-use super::performance_fixture::{DurabilityRecorder, now_ms};
+use super::performance_fixture::{DurabilityRecorder, TransportAppendTiming, now_ms};
 use bytes::Bytes;
 use cellule_host::{FacilityResult, NodeDurabilityProvider};
 use cellule_ltx::Limits;
@@ -36,6 +36,8 @@ const RESPONSE_DOMAIN: &[u8] = b"cellule.test-follower.response.v1\0";
 const MAX_REQUEST_BYTES: usize = 8 << 20;
 const MAX_RESPONSE_BYTES: usize = 2 << 20;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+// Retire an idle client socket before the receiver's per-message idle deadline.
+const CONNECTION_IDLE_LIMIT: Duration = Duration::from_secs(5);
 const MAX_DEADLINE_AHEAD_MS: i64 = 10_000;
 const MAX_APPEND_FRAMES: usize = 64;
 
@@ -227,7 +229,13 @@ pub(super) struct ProcessFollowerTransport {
     key: SigningKey,
     directory: NodeDirectory,
     members: StdMutex<HashMap<NodeId, CachedMember>>,
+    connections: HashMap<NodeId, Mutex<Option<MemberConnection>>>,
     observation: Option<Arc<DurabilityRecorder>>,
+}
+
+struct MemberConnection {
+    socket: TcpStream,
+    idle_since: Instant,
 }
 
 struct CachedMember {
@@ -251,6 +259,10 @@ impl ProcessFollowerTransport {
             key,
             directory,
             observation,
+            connections: members
+                .keys()
+                .map(|member| (*member, Mutex::new(None)))
+                .collect(),
             members: StdMutex::new(
                 members
                     .into_iter()
@@ -320,13 +332,17 @@ impl ProcessFollowerTransport {
     async fn round_trip(&self, member: NodeId, mut request: RequestWire) -> Result<ResponseWire> {
         let append = request.operation == Operation::Append as u32;
         let append_bytes = request.frames.iter().map(Vec::len).sum::<usize>();
-        let started = Instant::now();
-        let result = self.round_trip_inner(member, &mut request).await;
+        let started = (append && self.observation.is_some()).then(Instant::now);
+        let mut timing = TransportAppendTiming::default();
+        let result = self
+            .round_trip_inner(member, &mut request, started, &mut timing)
+            .await;
         if append && let Some(observation) = &self.observation {
+            timing.total = elapsed(started);
             observation.record_follower_network(
                 result.is_ok(),
                 u64::try_from(append_bytes).unwrap_or(u64::MAX),
-                started.elapsed(),
+                timing,
             );
         }
         result
@@ -336,11 +352,28 @@ impl ProcessFollowerTransport {
         &self,
         member: NodeId,
         request: &mut RequestWire,
+        observed: Option<Instant>,
+        timing: &mut TransportAppendTiming,
     ) -> Result<ResponseWire> {
-        let enrolled = self.member(member).await?;
+        let started = observed.map(|_| Instant::now());
+        let connection = self
+            .connections
+            .get(&member)
+            .ok_or(Error::PeerAuthorization("follower member was not enrolled"))?;
+        let pooled = tokio::time::timeout(REQUEST_TIMEOUT, connection.lock()).await;
+        timing.pool_wait = elapsed(started);
+        let mut pooled = pooled.map_err(|source| Error::PeerTransportUnknown {
+            context: "follower fixture connection admission deadline",
+            source: Box::new(source),
+        })?;
+        let started = observed.map(|_| Instant::now());
+        let enrolled = self.member(member).await;
+        timing.member_resolution = elapsed(started);
+        let enrolled = enrolled?;
         if enrolled.node() != member || enrolled.expires_at_ms() <= now_ms() {
             return Err(Error::Fenced);
         }
+        let started = observed.map(|_| Instant::now());
         request.sender = self.session.as_bytes().to_vec();
         request.member = member.as_bytes().to_vec();
         request.deadline_ms = now_ms()
@@ -349,36 +382,96 @@ impl ProcessFollowerTransport {
         let body = request.encode_to_vec();
         let request_digest = blake3::hash(&body);
         let encoded = signed(body, &self.key, REQUEST_DOMAIN);
+        timing.encoding = elapsed(started);
         if encoded.len() > MAX_REQUEST_BYTES {
             return Err(Error::Peer("follower request exceeds byte limit"));
         }
-        let address = follower_address(&enrolled).await?;
+        // The in-flight future owns the socket. Cancellation, a partial frame,
+        // or an untrusted response leaves the pool empty, never half framed.
+        let reused = pooled
+            .take()
+            .filter(|connection| connection.idle_since.elapsed() < CONNECTION_IDLE_LIMIT);
+        let address = if reused.is_none() {
+            let started = observed.map(|_| Instant::now());
+            let address = follower_address(&enrolled).await;
+            timing.address_resolution = elapsed(started);
+            Some(address?)
+        } else {
+            None
+        };
+        let mut active_phase = None;
         let response = tokio::time::timeout(REQUEST_TIMEOUT, async {
-            let mut socket = TcpStream::connect(address).await.map_err(transport_io)?;
-            send(&mut socket, &encoded, MAX_REQUEST_BYTES).await?;
-            receive(&mut socket, MAX_RESPONSE_BYTES).await
+            let mut socket = match reused {
+                Some(connection) => connection.socket,
+                None => {
+                    let address = address.ok_or(Error::Peer("missing follower address"))?;
+                    let started = observed.map(|_| Instant::now());
+                    active_phase = started.map(|started| (true, started));
+                    timing.connection_attempts += 1;
+                    let socket = TcpStream::connect(address).await.map_err(transport_io);
+                    timing.connection = elapsed(started);
+                    active_phase = None;
+                    let socket = socket?;
+                    socket.set_nodelay(true).map_err(transport_io)?;
+                    socket
+                }
+            };
+            let started = observed.map(|_| Instant::now());
+            active_phase = started.map(|started| (false, started));
+            let response = async {
+                send(&mut socket, &encoded, MAX_REQUEST_BYTES).await?;
+                receive(&mut socket, MAX_RESPONSE_BYTES).await
+            }
+            .await;
+            timing.wire = elapsed(started);
+            active_phase = None;
+            response.map(|response| (socket, response))
         })
-        .await
-        .map_err(|source| Error::PeerTransportUnknown {
+        .await;
+        // A deadline cancels the in-flight future. Preserve the interrupted
+        // phase duration instead of exporting its ten-second wait as zero.
+        if let Some((connecting, started)) = active_phase {
+            if connecting {
+                timing.connection = started.elapsed();
+            } else {
+                timing.wire = started.elapsed();
+            }
+        }
+        let (socket, response) = response.map_err(|source| Error::PeerTransportUnknown {
             context: "follower fixture deadline",
             source: Box::new(source),
         })??;
-        let body = verify(&response, enrolled.verifying_key()?, RESPONSE_DOMAIN)?;
-        let response = ResponseWire::decode(body.as_slice())
-            .map_err(|_| Error::Peer("invalid follower response"))?;
-        if response.member != member.as_bytes()
-            || response.request_digest != request_digest.as_bytes()
-        {
-            return Err(Error::PeerAuthorization(
-                "follower response was not bound to request",
-            ));
+        let started = observed.map(|_| Instant::now());
+        let verification = (|| {
+            let body = verify(&response, enrolled.verifying_key()?, RESPONSE_DOMAIN)?;
+            let response = ResponseWire::decode(body.as_slice())
+                .map_err(|_| Error::Peer("invalid follower response"))?;
+            if response.member != member.as_bytes()
+                || response.request_digest != request_digest.as_bytes()
+            {
+                return Err(Error::PeerAuthorization(
+                    "follower response was not bound to request",
+                ));
+            }
+            match response.status {
+                0 => Ok(response),
+                1 => Err(Error::PeerAuthorization("follower request was refused")),
+                _ => Err(Error::Peer("follower operation failed")),
+            }
+        })();
+        timing.verification = elapsed(started);
+        if verification.is_ok() {
+            *pooled = Some(MemberConnection {
+                socket,
+                idle_since: Instant::now(),
+            });
         }
-        match response.status {
-            0 => Ok(response),
-            1 => Err(Error::PeerAuthorization("follower request was refused")),
-            _ => Err(Error::Peer("follower operation failed")),
-        }
+        verification
     }
+}
+
+fn elapsed(started: Option<Instant>) -> Duration {
+    started.map_or(Duration::ZERO, |started| started.elapsed())
 }
 
 fn request(operation: Operation, leader: SessionId, epoch: u64) -> RequestWire {
@@ -489,33 +582,45 @@ pub(super) fn serve(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let slots = Arc::new(Semaphore::new(512));
-        while let Ok((socket, _)) = listener.accept().await {
-            let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
-                continue;
-            };
-            let store = store.clone();
-            let directory = directory.clone();
-            let key = key.clone();
-            tokio::spawn(async move {
-                let _slot = slot;
-                let _ = tokio::time::timeout(
-                    REQUEST_TIMEOUT,
-                    serve_one(socket, member, store, directory, key),
-                )
-                .await;
-            });
+        // Connection tasks belong to this listener. Aborting the test server
+        // closes idle sockets too, instead of leaving detached session tasks.
+        let mut connections = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((mut socket, _)) = accepted else { break };
+                    let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else { continue };
+                    let store = store.clone();
+                    let directory = directory.clone();
+                    let key = key.clone();
+                    connections.spawn(async move {
+                        let _slot = slot;
+                        if socket.set_nodelay(true).is_err() { return }
+                        loop {
+                            match tokio::time::timeout(
+                                REQUEST_TIMEOUT,
+                                serve_one(&mut socket, member, &store, &directory, &key),
+                            ).await {
+                                Ok(Ok(())) => {},
+                                _ => return,
+                            }
+                        }
+                    });
+                },
+                _ = connections.join_next(), if !connections.is_empty() => {},
+            }
         }
     })
 }
 
 async fn serve_one(
-    mut socket: TcpStream,
+    socket: &mut TcpStream,
     member: NodeId,
-    store: FollowerStore,
-    directory: NodeDirectory,
-    key: SigningKey,
+    store: &FollowerStore,
+    directory: &NodeDirectory,
+    key: &SigningKey,
 ) -> Result<()> {
-    let encoded = receive(&mut socket, MAX_REQUEST_BYTES).await?;
+    let encoded = receive(socket, MAX_REQUEST_BYTES).await?;
     let envelope = SignedWire::decode(encoded.as_slice())
         .map_err(|_| Error::Peer("invalid follower envelope"))?;
     let request = RequestWire::decode(envelope.body.as_slice())
@@ -533,7 +638,15 @@ async fn serve_one(
         REQUEST_DOMAIN,
     )?;
     let digest = blake3::hash(&envelope.body);
-    let result = execute(member, store, directory, sender, leader, request).await;
+    let result = execute(
+        member,
+        store.clone(),
+        directory.clone(),
+        sender,
+        leader,
+        request,
+    )
+    .await;
     let mut reply = ResponseWire {
         member: member.as_bytes().to_vec(),
         request_digest: digest.as_bytes().to_vec(),
@@ -559,8 +672,8 @@ async fn serve_one(
         Err(Error::PeerAuthorization(_)) | Err(Error::Fenced) => reply.status = 1,
         Err(_) => reply.status = 2,
     }
-    let encoded = signed(reply.encode_to_vec(), &key, RESPONSE_DOMAIN);
-    send(&mut socket, &encoded, MAX_RESPONSE_BYTES).await
+    let encoded = signed(reply.encode_to_vec(), key, RESPONSE_DOMAIN);
+    send(socket, &encoded, MAX_RESPONSE_BYTES).await
 }
 
 enum Reply {
@@ -1039,6 +1152,124 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_pooled_request_discards_its_socket_before_the_next_request() {
+        let leader = SessionId::from_bytes([1; 16]);
+        let member = NodeId::from_bytes([2; 16]);
+        let leader_key = SigningKey::from_bytes(&[21; 32]);
+        let member_key = SigningKey::from_bytes(&[22; 32]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!(
+            "https://127.0.0.1:{}",
+            listener
+                .local_addr()
+                .unwrap()
+                .port()
+                .checked_sub(1)
+                .unwrap()
+        );
+        let layout = CellStorageLayout::new(
+            Store::new(Arc::new(InMemory::new())),
+            Path::from("cancelled-follower-connection"),
+            [15; 16],
+        );
+        let directory = NodeDirectory::new(
+            layout,
+            Digest::from_bytes([10; 32]),
+            Digest::from_bytes([12; 32]),
+            Digest::from_bytes([13; 32]),
+        );
+        let member_record = directory
+            .create(
+                advertisement(
+                    member,
+                    SessionId::from_bytes([2; 16]),
+                    &member_key,
+                    endpoint,
+                    now_ms(),
+                    30_000,
+                ),
+                now_ms(),
+            )
+            .await
+            .unwrap();
+        let transport = Arc::new(
+            ProcessFollowerTransport::new(
+                leader,
+                leader_key.clone(),
+                directory,
+                HashMap::from([(member, member_record.advertisement().clone())]),
+                None,
+            )
+            .unwrap(),
+        );
+        let (entered, observed) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            async fn respond(
+                socket: &mut TcpStream,
+                member: NodeId,
+                leader_key: &SigningKey,
+                member_key: &SigningKey,
+            ) {
+                let encoded = receive(socket, MAX_REQUEST_BYTES).await.unwrap();
+                let body = verify(&encoded, leader_key.verifying_key(), REQUEST_DOMAIN).unwrap();
+                let reply = ResponseWire {
+                    member: member.as_bytes().to_vec(),
+                    request_digest: blake3::hash(&body).as_bytes().to_vec(),
+                    status: 0,
+                    base_sequence: 1,
+                    durable_through: 1,
+                    frames: Vec::new(),
+                    next_sequence: None,
+                };
+                send(
+                    socket,
+                    &signed(reply.encode_to_vec(), member_key, RESPONSE_DOMAIN),
+                    MAX_RESPONSE_BYTES,
+                )
+                .await
+                .unwrap();
+            }
+            let (mut first, _) = listener.accept().await.unwrap();
+            respond(&mut first, member, &leader_key, &member_key).await;
+            let interrupted = receive(&mut first, MAX_REQUEST_BYTES).await.unwrap();
+            verify(&interrupted, leader_key.verifying_key(), REQUEST_DOMAIN).unwrap();
+            entered.send(()).unwrap();
+            // Keep the old socket alive with an unanswered request. The next
+            // caller must establish a new socket, never consume its late reply.
+            let (mut replacement, _) = listener.accept().await.unwrap();
+            respond(&mut replacement, member, &leader_key, &member_key).await;
+        });
+        let request = SealRequest {
+            leader_session: leader,
+            log_epoch: 1,
+        };
+        assert_eq!(
+            transport
+                .seal(member, request)
+                .await
+                .unwrap()
+                .durable_through,
+            1
+        );
+        let caller = {
+            let transport = Arc::clone(&transport);
+            tokio::spawn(async move { transport.seal(member, request).await })
+        };
+        tokio::time::timeout(Duration::from_secs(2), observed)
+            .await
+            .unwrap()
+            .unwrap();
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        let receipt = tokio::time::timeout(Duration::from_secs(2), transport.seal(member, request))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.durable_through, 1);
+        peer.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn owner_loss_seals_and_reads_exact_unpublished_network_tail() {
         let limits = Limits::default();
         let layout = CellStorageLayout::new(
@@ -1104,12 +1335,13 @@ mod tests {
         .unwrap();
         let server = serve(listener, member, store, directory.clone(), member_key);
         let members = HashMap::from([(member, member_record.advertisement().clone())]);
+        let observations = Arc::new(DurabilityRecorder::default());
         let transport = ProcessFollowerTransport::new(
             leader,
             leader_key.clone(),
             directory.clone(),
             members.clone(),
-            None,
+            Some(Arc::clone(&observations)),
         )
         .unwrap();
         assert!(
@@ -1169,6 +1401,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(retried.durable_through, 1);
+        // Real signed requests reach the durable follower, including an exact
+        // retry after a separate caller loses its response. Stable enrollment
+        // should reuse the first connection without caching append authority.
+        assert_eq!(
+            observations
+                .follower_transport()
+                .into_iter()
+                .filter(|(_, acknowledged, _, _)| *acknowledged)
+                .map(|(_, _, _, timing)| timing.connection_attempts)
+                .collect::<Vec<_>>(),
+            [1, 0]
+        );
+        // Force the idle-age boundary without making this contract test wait
+        // for the receiver's real ten-second idle timeout.
+        transport.connections[&member]
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .idle_since = Instant::now().checked_sub(CONNECTION_IDLE_LIMIT).unwrap();
+        assert_eq!(
+            transport
+                .append(
+                    member,
+                    AppendRequest {
+                        leader_session: leader,
+                        log_epoch: 1,
+                        frames: vec![expected.clone()],
+                        covered_through: 0,
+                    },
+                )
+                .await
+                .unwrap()
+                .durable_through,
+            1
+        );
+        assert_eq!(
+            observations
+                .follower_transport()
+                .into_iter()
+                .filter(|(_, acknowledged, _, _)| *acknowledged)
+                .map(|(_, _, _, timing)| timing.connection_attempts)
+                .collect::<Vec<_>>(),
+            [1, 0, 1]
+        );
         let enrollment = ProcessEnrollment::new(enrolled, directory.clone(), leader, None);
         let next = advertisement(
             NodeId::from_bytes([1; 16]),

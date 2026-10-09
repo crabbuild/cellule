@@ -217,6 +217,7 @@ impl QueuedOperation {
 }
 
 pub(super) struct QueuedQuery {
+    pub(super) timing: Option<Arc<crate::cell::worker::QueryTrace>>,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) queued_at: std::time::Instant,
     pub(super) cell: CellId,
@@ -278,7 +279,7 @@ pub(super) struct ActiveCell {
     pub(super) schema: u32,
     pub(super) role: CatalogRole,
     pub(super) catalog: CatalogProof,
-    pub(super) interrupt: Arc<cellule_ltx::rusqlite::InterruptHandle>,
+    pub(super) interrupt: Arc<cellule_ltx::DbInterruptHandle>,
     pub(super) publisher: Option<CellPublisher>,
     pub(super) durability_submitter: CellDurabilitySubmitter,
     pub(super) publications: VecDeque<QueuedPublication>,
@@ -463,7 +464,7 @@ pub(super) enum TaskResult {
         admission: Arc<CellAdmission>,
         reply: oneshot::Sender<crate::Result<Arc<CellAdmission>>>,
         result: crate::Result<(
-            Arc<cellule_ltx::rusqlite::InterruptHandle>,
+            Arc<cellule_ltx::DbInterruptHandle>,
             Option<cellule_ltx::Hydration>,
         )>,
         inventory: crate::Result<crate::cell::worker::WorkerCellInventory>,

@@ -281,3 +281,272 @@ fn declared_admission_limits_become_capacity_errors() {
     let fenced = admission_error(cellule_ltx::LtxError::Fenced);
     assert!(matches!(fenced, Error::Ltx(cellule_ltx::LtxError::Fenced)));
 }
+
+fn schema_cache_executor() -> (tempfile::TempDir, CellExecutor) {
+    let directory = tempfile::TempDir::new().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let cell = CellId::from_bytes([81; 32]);
+    let incarnation = IncarnationId::from_bytes([82; 16]);
+    let mut connection = cellule_ltx::rusqlite::Connection::open(&path).unwrap();
+    crate::cell::schema::install_runtime_schema(&mut connection, cell, incarnation, 1).unwrap();
+    drop(connection);
+    let db = Db::open(&path, cellule_ltx::Limits::default()).unwrap();
+    (directory, CellExecutor::new(db, cell, incarnation, 1))
+}
+
+fn schema_cache_identity(number: u8) -> MutationIdentity {
+    MutationIdentity {
+        request_id: RequestId::from_bytes([number; 16]),
+        issued_at_ms: 10,
+        expires_at_ms: 10_000,
+    }
+}
+
+#[test]
+fn failed_schema_validation_cannot_poison_a_later_same_cookie_command() {
+    let (_directory, mut executor) = schema_cache_executor();
+    executor
+        .execute(
+            schema_cache_identity(1),
+            Digest::from_bytes([1; 32]),
+            20,
+            32,
+            |transaction| {
+                transaction.execute_batch(crate::primitives::capacity::SCHEMA)?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .unwrap();
+    executor.confirm_durable(1).unwrap();
+
+    let failure = executor.execute(
+        schema_cache_identity(2),
+        Digest::from_bytes([2; 32]),
+        20,
+        32,
+        |transaction| {
+            transaction.execute_batch("DROP TABLE capacity_total")?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        },
+    );
+    assert!(matches!(
+        failure,
+        Err(Error::Command("database reservation schema is incomplete"))
+    ));
+
+    // Both the rejected DROP and this CREATE increment the cookie once.
+    // Retaining the rejected observation would refuse this valid command.
+    executor
+        .execute(
+            schema_cache_identity(3),
+            Digest::from_bytes([3; 32]),
+            20,
+            32,
+            |transaction| {
+                transaction.execute_batch("CREATE TABLE application_state (value BLOB)")?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        executor
+            .latest_pending()
+            .unwrap()
+            .outcome()
+            .commit_sequence(),
+        2
+    );
+    executor.confirm_durable(2).unwrap();
+    executor
+        .query(32, |connection| {
+            let requests: i64 =
+                connection.query_row("SELECT COUNT(*) FROM sys_requests", [], |row| row.get(0))?;
+            assert_eq!(requests, 2);
+            crate::primitives::capacity::validate(connection)?;
+            Ok(Vec::new())
+        })
+        .unwrap();
+}
+
+#[test]
+fn newly_installed_primitive_deadlines_are_visible_after_a_warm_command() {
+    let (_directory, mut executor) = schema_cache_executor();
+    executor
+        .execute(
+            schema_cache_identity(1),
+            Digest::from_bytes([1; 32]),
+            20,
+            32,
+            |_| Ok(HandlerOutcome::Success(Vec::new())),
+        )
+        .unwrap();
+    assert!(executor.latest_pending().unwrap().next_due_ms().unwrap() > 50);
+    executor.confirm_durable(1).unwrap();
+    executor
+        .execute(
+            schema_cache_identity(2),
+            Digest::from_bytes([2; 32]),
+            20,
+            32,
+            |transaction| {
+                crate::primitives::kv::install_kv_schema(transaction)?;
+                transaction.execute(
+                    "INSERT INTO kv_entries VALUES (X'01', X'02', zeroblob(28), X'03', 50)",
+                    [],
+                )?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .unwrap();
+    assert_eq!(executor.latest_pending().unwrap().next_due_ms(), Some(50));
+}
+
+#[test]
+fn mixed_owner_reads_preserve_warm_kv_write_statements() {
+    use crate::primitives::kv::{KvAtomicRequest, KvMutation, kv_atomic};
+    use cellule_ltx::rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let (_directory, mut executor) = schema_cache_executor();
+    let preparations = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&preparations);
+    executor
+        .db
+        .transaction(|transaction| {
+            crate::primitives::kv::install_kv_schema(transaction).map_err(|error| {
+                cellule_ltx::rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+            })?;
+            transaction.authorizer(Some(move |context: AuthContext<'_>| {
+                if matches!(
+                    context.action,
+                    AuthAction::Read { .. } | AuthAction::Insert { .. } | AuthAction::Update { .. }
+                ) {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                }
+                Authorization::Allow
+            }));
+            Ok(())
+        })
+        .unwrap();
+    let request = KvAtomicRequest {
+        scope: vec![1],
+        checks: Vec::new(),
+        mutations: vec![KvMutation::Put {
+            key: vec![2],
+            value: vec![3; 96],
+            expires_at_ms: None,
+        }],
+    };
+    for sequence in 1..=2 {
+        let before = preparations.load(Ordering::Relaxed);
+        executor
+            .execute(
+                schema_cache_identity(sequence),
+                Digest::from_bytes([sequence; 32]),
+                20,
+                32,
+                |transaction| {
+                    kv_atomic(transaction, 20, &request)?;
+                    Ok(HandlerOutcome::Success(Vec::new()))
+                },
+            )
+            .unwrap();
+        executor.confirm_durable(u64::from(sequence)).unwrap();
+        let newly_prepared = preparations.load(Ordering::Relaxed) - before;
+        if sequence == 1 {
+            assert!(newly_prepared > 0);
+        } else {
+            assert_eq!(newly_prepared, 0, "warm fixed SQL must not compile again");
+        }
+    }
+    executor
+        .query(128, |connection| {
+            Ok(crate::primitives::kv::kv_get(connection, &[1], &[2], 20)?
+                .unwrap()
+                .value)
+        })
+        .unwrap();
+    let before = preparations.load(Ordering::Relaxed);
+    executor
+        .execute(
+            schema_cache_identity(3),
+            Digest::from_bytes([3; 32]),
+            20,
+            32,
+            |transaction| {
+                kv_atomic(transaction, 20, &request)?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        preparations.load(Ordering::Relaxed),
+        before,
+        "owner read must preserve the writer cache"
+    );
+}
+
+#[test]
+fn grouped_schema_changes_cache_only_the_committed_member_schemas() {
+    let (_directory, mut executor) = schema_cache_executor();
+    let handlers: Vec<crate::cell::worker::Handler> = vec![
+        Box::new(|transaction| {
+            crate::primitives::kv::install_kv_schema(transaction)?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        }),
+        Box::new(|transaction| {
+            crate::primitives::workflow::install_workflow_schema(transaction)?;
+            Err(Error::Command("discard this member's DDL"))
+        }),
+        Box::new(|transaction| {
+            crate::primitives::queue::install_queue_schema(transaction)?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        }),
+    ];
+    let commands = handlers
+        .into_iter()
+        .enumerate()
+        .map(|(index, handler)| NativeCommand {
+            identity: schema_cache_identity(index as u8 + 1),
+            operation_digest: Digest::from_bytes([index as u8 + 1; 32]),
+            now_ms: 20,
+            max_result_bytes: 32,
+            handler,
+        })
+        .collect();
+    let group = executor
+        .execute_group(
+            commands,
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
+        )
+        .unwrap();
+    assert_eq!(group.outcomes[0].as_ref().unwrap().commit_sequence(), 1);
+    assert!(matches!(
+        group.outcomes[1],
+        Err(Error::Command("discard this member's DDL"))
+    ));
+    assert_eq!(group.outcomes[2].as_ref().unwrap().commit_sequence(), 2);
+    let observation = executor
+        .db
+        .query_with(|connection| executor.schema_cache.observe(connection))
+        .unwrap();
+    assert!(
+        observation
+            .capabilities
+            .contains(crate::primitives::kv::KV_TABLE)
+    );
+    assert!(
+        observation
+            .capabilities
+            .contains(crate::primitives::queue::QUEUE_TABLE)
+    );
+    assert!(
+        !observation
+            .capabilities
+            .contains(crate::primitives::workflow::WORKFLOW_TABLE)
+    );
+    executor.confirm_durable(2).unwrap();
+}

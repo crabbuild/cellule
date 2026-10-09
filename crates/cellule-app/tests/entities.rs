@@ -7,6 +7,20 @@ use std::collections::HashMap;
 
 const ENTITIES_PER_NODE: usize = 4;
 
+mod write_workload;
+
+pub(crate) fn primary_write_profile() -> bool {
+    write_workload::enabled()
+}
+
+pub(crate) fn population_management_profile() -> bool {
+    write_workload::population_enabled()
+}
+
+pub(crate) fn small_kv_write_profile() -> bool {
+    write_workload::small_kv_enabled()
+}
+
 pub(crate) struct EntityReferenceApplication;
 
 impl CellApplication for EntityReferenceApplication {
@@ -46,6 +60,13 @@ fn entity_key(entity: usize) -> OrderId {
     OrderId(format!("order-{entity}").into_bytes())
 }
 
+fn entity_incarnation(entity: usize) -> IncarnationId {
+    let mut bytes = [0; 16];
+    bytes[..8].copy_from_slice(&(entity as u64).to_be_bytes());
+    bytes[8..].copy_from_slice(b"order-v1");
+    IncarnationId::from_bytes(bytes)
+}
+
 fn entity_target(application: &cellule_app::CompiledApplication, entity: usize) -> CellTarget {
     let partition = application.cell_types()[0]
         .entity_partition(&entity_key(entity).0)
@@ -67,6 +88,27 @@ async fn provision_entity(
     entity: usize,
     endpoint: String,
 ) -> CellHandle {
+    provision_entity_with_schema(
+        host,
+        layout,
+        directory,
+        node,
+        entity,
+        endpoint,
+        super::performance_fixture::install_sql_tables,
+    )
+    .await
+}
+
+async fn provision_entity_with_schema(
+    host: &cellule_host::CellNode,
+    layout: &CellStorageLayout,
+    directory: &std::path::Path,
+    node: usize,
+    entity: usize,
+    endpoint: String,
+    schema: super::performance_fixture::Schema,
+) -> CellHandle {
     let application = host.application();
     let registry = application.registry();
     let cell_type = application.cell_types()[0];
@@ -84,8 +126,9 @@ async fn provision_entity(
         )
         .await
         .unwrap();
-    let authority = CellAuthority::new(layout.clone());
-    let incarnation = IncarnationId::from_bytes([u8::try_from(entity + 1).unwrap(); 16]);
+    let authority =
+        CellAuthority::with_telemetry(layout.clone(), host.runtime().telemetry_handle());
+    let incarnation = entity_incarnation(entity);
     let observed = authority
         .create_initial(
             &proof,
@@ -115,7 +158,7 @@ async fn provision_entity(
             authority,
             observed,
             directory.join(format!("order-{entity}.sqlite")),
-            super::performance_fixture::install_sql_tables,
+            schema,
         )
         .await
         .unwrap()

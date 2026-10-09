@@ -620,8 +620,15 @@ async fn scale_receipt_requires_observed_open_cells_and_binds_their_resource_pea
     );
     let mut undercharged_memory =
         serde_json::from_slice::<serde_json::Value>(&scale_bytes).unwrap();
-    undercharged_memory["cell_samples"][1]["after"]["rss_bytes"] = serde_json::json!(2_000_000_000);
-    undercharged_memory["cell_samples"][1]["peak"]["rss_bytes"] = serde_json::json!(2_000_000_000);
+    // Reject a marginal RSS slope one byte over the current admission,
+    // including the owner reader and all managed connection caches.
+    let excessive_rss = 400_000_000
+        + 4_000
+            * (crate::fleet::resource::ACTIVE_CELL_NATIVE_BYTES as u64
+                + crate::cell::worker::ACTIVE_CELL_PAGE_CACHE_BYTES)
+        + 1;
+    undercharged_memory["cell_samples"][1]["after"]["rss_bytes"] = serde_json::json!(excessive_rss);
+    undercharged_memory["cell_samples"][1]["peak"]["rss_bytes"] = serde_json::json!(excessive_rss);
     let undercharged_memory_bytes = canonical(undercharged_memory);
     assert!(
         runner
@@ -636,10 +643,13 @@ async fn scale_receipt_requires_observed_open_cells_and_binds_their_resource_pea
             .is_err()
     );
     let mut undercharged_cache = serde_json::from_slice::<serde_json::Value>(&scale_bytes).unwrap();
+    // Exceed the 1,000-to-5,000 Cell cache allowance by one byte even when the
+    // number of managed connections changes; this case must remain rejected.
+    let excessive_cache = 1_024_000 + 4_000 * crate::cell::worker::ACTIVE_CELL_PAGE_CACHE_BYTES + 1;
     undercharged_cache["cell_samples"][1]["after"]["sqlite_cache_bytes"] =
-        serde_json::json!(1_000_000_000);
+        serde_json::json!(excessive_cache);
     undercharged_cache["cell_samples"][1]["peak"]["sqlite_cache_bytes"] =
-        serde_json::json!(1_000_000_000);
+        serde_json::json!(excessive_cache);
     let undercharged_cache_bytes = canonical(undercharged_cache);
     assert!(
         runner
@@ -724,10 +734,12 @@ fn scale_snapshot(cells: u64) -> serde_json::Value {
         "rss_bytes": 100 + cells * 100,
         "allocator_bytes": 100 + cells * 50,
         "threads": 1,
+        // Synthetic observed use is independent of the conservative admission
+        // allowance. Keep the existing measured peak and profile limit intact.
         "file_descriptors": 1 + cells * 8,
         "sqlite_cache_bytes": cells * 1_024,
         "admitted_resident_bytes": cells * crate::fleet::resource::ACTIVE_CELL_NATIVE_BYTES as u64,
-        "admitted_file_descriptors": cells * 8,
+        "admitted_file_descriptors": cells * crate::fleet::resource::ACTIVE_CELL_FILE_DESCRIPTORS as u64,
         "retained_bytes": 0,
         "local_disk_reserved_bytes": cells * 4_096,
         "local_disk_bytes": cells * 4_096,

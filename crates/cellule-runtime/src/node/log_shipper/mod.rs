@@ -16,6 +16,9 @@ const MAX_QUEUED_SUBMISSIONS: usize = 512;
 const NODE_FRAME_HEADER_BYTES: u64 = 240;
 const BATCH_INTERVAL: Duration = Duration::from_millis(1);
 
+mod submission_timing;
+use submission_timing::{SubmissionStage, SubmissionTrace};
+
 /// One captured Cell commit awaiting ordered node-log assignment.
 pub struct NodeLogSubmission {
     application: ApplicationId,
@@ -194,6 +197,7 @@ pub struct NodeLogShipper {
     max_outstanding_bytes: u64,
     gate: DurabilityGate,
     limits: cellule_ltx::Limits,
+    telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
 impl NodeLogShipper {
@@ -255,6 +259,7 @@ impl NodeLogShipper {
             max_outstanding_bytes: batch_bytes,
             gate,
             limits,
+            telemetry,
         })
     }
 
@@ -277,6 +282,17 @@ impl NodeLogShipper {
     /// Queue, byte admission, disk reads, and canonical encoding happen before
     /// the ticket reservation commits, so failures cannot create a sequence gap.
     pub async fn submit(&self, submission: NodeLogSubmission) -> Result<CommitTicket> {
+        let mut trace = SubmissionTrace::new(&self.telemetry, &submission);
+        let result = self.submit_traced(submission, &mut trace).await;
+        trace.finish(&result);
+        result
+    }
+
+    async fn submit_traced(
+        &self,
+        submission: NodeLogSubmission,
+        trace: &mut SubmissionTrace<'_>,
+    ) -> Result<CommitTicket> {
         let frame_count = submission.frame_count()?;
         if submission
             .segments
@@ -291,36 +307,47 @@ impl NodeLogShipper {
             .ok()
             .filter(|bytes| *bytes != 0)
             .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        trace.begin(SubmissionStage::Bytes);
         let reservation = Arc::clone(&self.bytes)
             .acquire_many_owned(permit_count)
             .await
             .map_err(|_| Error::RuntimeClosed)?;
+        trace.complete();
         let sender = self
             .sender
             .lock()
             .map_err(|_| Error::Node("node-log shipper lock poisoned"))?
             .clone()
             .ok_or(Error::RuntimeClosed)?;
+        trace.begin(SubmissionStage::Queue);
         let slot = sender
             .reserve_owned()
             .await
             .map_err(|_| Error::RuntimeClosed)?;
+        trace.complete();
         let limits = self.limits;
+        trace.begin(SubmissionStage::Load);
         let (leader, log_epoch, _) = self.gate.shipping_scope()?;
         let loaded =
             tokio::task::spawn_blocking(move || submission.load(leader, log_epoch, limits))
                 .await
                 .map_err(Error::FollowerWorkerJoin)??;
+        trace.complete();
+        trace.begin(SubmissionStage::Order);
         // Expensive LTX validation is parallel and bounded by outstanding-byte
         // admission. This lane only patches exclusively owned envelopes and
         // atomically commits their consecutive ticket before enqueueing.
         let _ordered = self.order.lock().await;
+        trace.complete();
         let ticket = self.gate.preview(frame_count)?;
+        trace.begin(SubmissionStage::Encode);
         let encoded = loaded.encode(ticket)?;
+        trace.complete();
         self.gate.commit(ticket)?;
         let reservation = Arc::new(OutstandingBytes {
             _permit: reservation,
         });
+        let enqueued_at = self.telemetry.is_enabled().then(std::time::Instant::now);
         let frames = encoded
             .into_iter()
             .enumerate()
@@ -328,6 +355,8 @@ impl NodeLogShipper {
                 sequence: ticket.first_sequence().saturating_add(offset as u64),
                 encoded,
                 _reservation: Arc::clone(&reservation),
+                enqueued_at,
+                completed_capture: offset as u64 + 1 == frame_count,
             })
             .collect();
         slot.send(QueuedSubmission { frames });
@@ -373,6 +402,8 @@ struct QueuedFrame {
     sequence: u64,
     encoded: Bytes,
     _reservation: Arc<OutstandingBytes>,
+    enqueued_at: Option<std::time::Instant>,
+    completed_capture: bool,
 }
 
 #[expect(
@@ -408,6 +439,10 @@ async fn run_shipper(
             }
         }
 
+        let collection_started = telemetry.is_enabled().then(std::time::Instant::now);
+        let queue_wait = collection_started
+            .zip(pending.front().and_then(|frame| frame.enqueued_at))
+            .map_or(Duration::ZERO, |(now, queued)| now.duration_since(queued));
         let deadline = tokio::time::Instant::now() + interval;
         let mut batch = Vec::<QueuedFrame>::new();
         let mut batch_bytes = 0_u64;
@@ -458,6 +493,13 @@ async fn run_shipper(
             })
             .and_then(|bytes| bytes.checked_mul(members.len() as u64))
             .unwrap_or(u64::MAX);
+        let collection = collection_started.map_or(Duration::ZERO, |started| started.elapsed());
+        let frames = batch.len() as u64;
+        let first_sequence = batch.first().map_or(0, |frame| frame.sequence);
+        let last_sequence = batch.last().map_or(0, |frame| frame.sequence);
+        let completed_captures =
+            batch.iter().filter(|frame| frame.completed_capture).count() as u64;
+        let append_started = telemetry.is_enabled().then(std::time::Instant::now);
         let result = append_batch(
             &gate,
             Arc::clone(&transport),
@@ -467,6 +509,20 @@ async fn run_shipper(
             batch,
         )
         .await;
+        telemetry.node_log_batch(crate::fleet::telemetry::NodeLogBatchTiming {
+            leader_session: leader,
+            log_epoch,
+            first_sequence,
+            last_sequence,
+            queue_wait,
+            collection,
+            append: append_started.map_or(Duration::ZERO, |started| started.elapsed()),
+            frames,
+            completed_captures,
+            encoded_bytes: batch_bytes,
+            members: members.len() as u64,
+            succeeded: result.is_ok(),
+        });
         telemetry.node_log_append(result.is_ok(), append_bytes);
         if result.is_err() {
             stop_shipper(&gate, &bytes);

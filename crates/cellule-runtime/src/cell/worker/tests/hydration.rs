@@ -135,7 +135,8 @@ async fn expired_worker_deadline_preserves_sparse_cell_for_retry() {
             Box::new(move |_| {
                 executed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
-            })
+            }),
+            None,
         )
         .await,
         Err(Error::Deadline)

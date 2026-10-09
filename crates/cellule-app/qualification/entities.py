@@ -6,6 +6,7 @@ import bisect
 from collections import Counter
 import csv
 import hashlib
+import re
 from pathlib import Path
 
 STAGES = (3, 5, 10, 20)
@@ -19,9 +20,13 @@ SECONDS = 10
 CAPACITY_DRAIN_GRACE_US = 2_000_000
 
 
-def rows(path: Path) -> list[dict]:
+def iter_rows(path: Path):
     with path.open(newline="") as source:
-        return list(csv.DictReader(source, delimiter="\t"))
+        yield from csv.DictReader(source, delimiter="\t")
+
+
+def rows(path: Path) -> list[dict]:
+    return list(iter_rows(path))
 
 
 def destination(shape: str, arrival: int, cells: int) -> tuple[int, str]:
@@ -54,6 +59,149 @@ def verify_object_operations(control: Path, node: int, observations: list[dict])
     return samples
 
 
+def write_phase_summary(store: list[dict], batches: list[dict]) -> dict:
+    return dict(
+        follower_store=dict(
+            attempts=len(store), failures=sum(row["succeeded"] == "false" for row in store),
+            frames=sum(int(row["frames"]) for row in store),
+            encoded_bytes=sum(int(row["encoded_bytes"]) for row in store),
+            data_sync_calls=sum(int(row["data_sync_calls"]) for row in store),
+            directory_sync_calls=sum(int(row["directory_sync_calls"]) for row in store),
+            recounts=sum(int(row["recounts"]) for row in store),
+            **{phase: distribution([int(row[f"{phase}_us"]) for row in store])
+               for phase in ("blocking_queue", "accounting_wait", "accounting_hold", "lane_wait",
+                             "append", "prune", "data_sync", "directory_sync", "recount", "total")}),
+        node_log_batch=dict(
+            batches=len(batches), failures=sum(row["succeeded"] == "false" for row in batches),
+            frames=sum(int(row["frames"]) for row in batches),
+            completed_captures=sum(int(row["completed_captures"]) for row in batches),
+            encoded_bytes=sum(int(row["encoded_bytes"]) for row in batches),
+            replica_bytes=sum(int(row["encoded_bytes"]) * int(row["members"]) for row in batches),
+            **{phase: distribution([int(row[f"{phase}_us"]) for row in batches])
+               for phase in ("queue_wait", "collection", "append")}))
+
+
+def verify_write_phases(store: list[dict], batches: list[dict], appends: list[dict]) -> dict:
+    for row in store:
+        assert int(row["at_ms"]) > 0 and row["succeeded"] in {"true", "false"}
+        assert re.fullmatch(r"SessionId\([0-9a-f]{32}\)", row["leader"]) and int(row["epoch"]) > 0
+        assert 1 <= int(row["frames"]) <= 64 and int(row["encoded_bytes"]) > 0
+        assert int(row["data_sync_calls"]) >= 0 and int(row["recounts"]) >= 0
+        assert int(row["directory_sync_calls"]) >= 0
+        total = int(row["total_us"])
+        assert total >= 0
+        for phase in ("blocking_queue", "accounting_wait", "accounting_hold", "lane_wait",
+                      "append", "prune", "data_sync", "directory_sync", "recount"):
+            assert 0 <= int(row[f"{phase}_us"]) <= total, "follower phase exceeds total"
+        assert int(row["prune_us"]) <= int(row["append_us"]), "prune exceeds append"
+        assert int(row["data_sync_us"]) <= int(row["append_us"]), "data sync exceeds append"
+        assert int(row["directory_sync_us"]) <= int(row["append_us"]), "directory sync exceeds append"
+    assert len(batches) == len(appends), "missing node-log batch evidence"
+    for row, append in zip(batches, appends):
+        assert int(row["at_ms"]) > 0 and row["succeeded"] in {"true", "false"}
+        assert re.fullmatch(r"SessionId\([0-9a-f]{32}\)", row["leader"]) and int(row["epoch"]) > 0
+        assert 1 <= int(row["frames"]) <= 64
+        assert 0 < int(row["first_sequence"]) <= int(row["last_sequence"])
+        assert int(row["last_sequence"]) - int(row["first_sequence"]) + 1 == int(row["frames"]), \
+            "batch sequence range differs from frames"
+        assert 0 <= int(row["completed_captures"]) <= int(row["frames"])
+        assert int(row["encoded_bytes"]) > 0 and 1 <= int(row["members"]) <= 2
+        for phase in ("queue_wait", "collection", "append"):
+            assert int(row[f"{phase}_us"]) >= 0
+        assert row["succeeded"] == append["acknowledged"], "batch outcome differs from append"
+        assert int(row["encoded_bytes"]) * int(row["members"]) == int(append["bytes"]), \
+            "batch replica bytes differ from append"
+    return write_phase_summary(store, batches)
+
+
+def transport_phase_summary(transport: list[dict]) -> dict:
+    return dict(connection_attempts=sum(int(row["connection_attempts"]) for row in transport),
+                **{key.removesuffix("_us"): distribution([int(row[key]) for row in transport])
+                   for key in ("pool_wait_us", "member_resolution_us", "encoding_us", "address_resolution_us", "connection_us", "wire_us", "verification_us", "total_us")})
+
+
+SUBMISSION_PHASES = ("byte_admission", "queue_admission", "capture_load", "ticket_order", "encoding")
+CONTROL_TRANSITIONS = {"Renew", "Activate", "Publish", "Migrate", "Release", "AttachRecovery",
+                       "PublishRecovery", "Takeover", "Tombstone"}
+
+
+def submission_phase_summary(submissions: list[dict]) -> dict:
+    return dict(attempts=len(submissions),
+                outcomes=dict(Counter(row["enqueued"] or "cancelled" for row in submissions)),
+                **{phase: distribution([int(row[f"{phase}_us"]) for row in submissions
+                                        if row[f"{phase}_us"] != ""])
+                   for phase in (*SUBMISSION_PHASES, "total")})
+
+
+def verify_submission_timings(submissions: list[dict]) -> dict:
+    seen = set()
+    for row in submissions:
+        assert int(row["at_ms"]) > 0 and re.fullmatch(r"CellId\([0-9a-f]{64}\)", row["cell"])
+        key = (row["cell"], int(row["commit_sequence"]))
+        assert key not in seen and key[1] > 0, "duplicate or invalid node-log submission"
+        seen.add(key)
+        assert int(row["encoded_bytes"]) > 0 and int(row["total_us"]) >= 0
+        assert row["enqueued"] in {"true", "false", ""}
+        values = [row[f"{phase}_us"] for phase in SUBMISSION_PHASES]
+        missing = False
+        for value in values:
+            if value == "":
+                missing = True
+            else:
+                assert not missing, "submission completed a phase after a missing boundary"
+                assert 0 <= int(value) <= int(row["total_us"])
+        assert sum(int(value) for value in values if value != "") <= int(row["total_us"]), \
+            "disjoint submission phases exceed total"
+        if row["enqueued"] == "true":
+            assert all(value != "" for value in values), "enqueued submission has incomplete phases"
+            assert int(row["first_sequence"]) > 0
+        else:
+            assert row["first_sequence"] == "", "uncommitted submission has a node sequence"
+    return submission_phase_summary(submissions)
+
+
+def control_transition_summary(transitions: list[dict]) -> dict:
+    return {transition: dict(attempts=len(selected),
+                             outcomes=dict(Counter(row["succeeded"] or "cancelled" for row in selected)),
+                             duration=distribution([int(row["elapsed_us"]) for row in selected]))
+            for transition in sorted({row["transition"] for row in transitions})
+            for selected in [[row for row in transitions if row["transition"] == transition]]}
+
+
+def verify_control_transitions(transitions: list[dict]) -> dict:
+    for row in transitions:
+        assert int(row["at_ms"]) > 0 and re.fullmatch(r"CellId\([0-9a-f]{64}\)", row["cell"])
+        assert row["transition"] in CONTROL_TRANSITIONS
+        assert int(row["elapsed_us"]) >= 0 and row["succeeded"] in {"true", "false", ""}
+    return control_transition_summary(transitions)
+
+
+def verify_trace_counts(control: Path, node: int) -> dict:
+    files = dict(object_operations="object-operations", proofs="durability",
+                 responses="responses", executions="executions", queries="queries", sql_slots="sql-slots", publications="publications",
+                 phases="phases", captures="captures", publication_costs="publication-costs",
+                 follower_appends="follower-appends", follower_network="follower-network",
+                 follower_transport="follower-transport",
+                 follower_store="follower-store", node_log_batches="node-log-batches",
+                 node_log_submissions="node-log-submissions", control_transitions="control-transitions",
+                 node_log_events="node-log-events")
+    counts = rows(control / f"node-{node}-trace-counts.tsv")
+    assert len(counts) == len(files) and {row["buffer"] for row in counts} == set(files), "missing or duplicate trace buffer counts"
+    report = {}
+    for row in counts:
+        name = row["buffer"]
+        assert int(row["capacity"]) == 65_536, "trace buffer bound changed"
+        assert int(row["dropped"]) == 0, f"{name}: lost trace events"
+        assert int(row["buffered"]) == 0, f"{name}: trace events were not drained"
+        recorded = int(row["recorded"])
+        exported = sum(1 for _ in iter_rows(control / f"node-{node}-{files[name]}.tsv"))
+        # The legacy durability file contains only object proofs; Fleet proofs
+        # remain represented by the command-response and node-log evidence.
+        assert (recorded >= exported if name == "proofs" else recorded == exported), f"{name}: trace count differs from exported rows"
+        report[name] = dict(recorded=recorded, exported=exported, dropped=0)
+    return report
+
+
 def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dict:
     responses = rows(control / f"node-{node}-responses.tsv")
     executions = rows(control / f"node-{node}-executions.tsv")
@@ -63,6 +211,13 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
     costs = rows(control / f"node-{node}-publication-costs.tsv")
     appends = rows(control / f"node-{node}-follower-appends.tsv")
     network = rows(control / f"node-{node}-follower-network.tsv")
+    transport = rows(control / f"node-{node}-follower-transport.tsv")
+    store = rows(control / f"node-{node}-follower-store.tsv")
+    batches = rows(control / f"node-{node}-node-log-batches.tsv")
+    submissions = rows(control / f"node-{node}-node-log-submissions.tsv")
+    transitions = rows(control / f"node-{node}-control-transitions.tsv")
+    verify_submission_timings(submissions)
+    verify_control_transitions(transitions)
     log_events = rows(control / f"node-{node}-node-log-events.tsv")
     assert responses, f"node {node}: missing command response evidence"
     assert executions, f"node {node}: missing command execution evidence"
@@ -108,6 +263,15 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         assert int(row["at_ms"]) > 0
         assert int(row["bytes"]) >= 0 and int(row["duration_us"]) >= 0
         assert row["acknowledged"] in {"true", "false"}
+    assert len(transport) == len(network), "missing transport phase evidence"
+    for row, aggregate in zip(transport, network, strict=True):
+        assert (row["at_ms"], row["acknowledged"], row["bytes"], row["total_us"]) == (
+            aggregate["at_ms"], aggregate["acknowledged"], aggregate["bytes"], aggregate["duration_us"]), "transport phases differ from aggregate"
+        total = int(row["total_us"])
+        for key in ("pool_wait_us", "member_resolution_us", "encoding_us", "address_resolution_us", "connection_us", "wire_us", "verification_us"):
+            assert 0 <= int(row[key]) <= total, f"{key}: transport phase exceeds total"
+        assert 0 <= int(row["connection_attempts"]) <= 1
+    write_phases = verify_write_phases(store, batches, appends)
     last_covered = 0
     for row in log_events:
         assert int(row["at_ms"]) > 0 and int(row["epoch"]) > 0
@@ -130,6 +294,11 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
         selected_costs = [row for row in costs if start <= int(row["at_ms"]) <= end]
         selected_appends = [row for row in appends if start <= int(row["at_ms"]) <= end]
         selected_network = [row for row in network if start <= int(row["at_ms"]) <= end]
+        selected_transport = [row for row in transport if start <= int(row["at_ms"]) <= end]
+        selected_store = [row for row in store if start <= int(row["at_ms"]) <= end]
+        selected_batches = [row for row in batches if start <= int(row["at_ms"]) <= end]
+        selected_submissions = [row for row in submissions if start <= int(row["at_ms"]) <= end]
+        selected_transitions = [row for row in transitions if start <= int(row["at_ms"]) <= end]
         covered_before_end = [int(row["covered_through"]) for row in log_events
                               if row["phase"] in {"coverage", "closed"} and int(row["at_ms"]) <= end]
         response_sources = {source: sum(row["source"] == source for row in selected_responses)
@@ -165,7 +334,11 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
             follower_append_bytes=sum(int(row["bytes"]) for row in selected_appends),
             follower_network_latency=distribution([int(row["duration_us"]) for row in selected_network]),
             follower_network_bytes=sum(int(row["bytes"]) for row in selected_network),
-            node_log_covered_through=max(covered_before_end, default=0))
+            follower_transport=transport_phase_summary(selected_transport),
+            node_log_submission=submission_phase_summary(selected_submissions),
+            control_transitions=control_transition_summary(selected_transitions),
+            node_log_covered_through=max(covered_before_end, default=0),
+            **write_phase_summary(selected_store, selected_batches))
     return dict(response_sources={source: sum(row["source"] == source for row in responses)
                                   for source in sorted(sources)},
                 response_latency=distribution([int(row["response_us"]) for row in responses]),
@@ -180,11 +353,15 @@ def verify_timing_evidence(control: Path, node: int, windows: list[dict]) -> dic
                 follower_append_bytes=sum(int(row["bytes"]) for row in appends),
                 acknowledged_network_appends=sum(row["acknowledged"] == "true" for row in network),
                 follower_network_latency=distribution([int(row["duration_us"]) for row in network]),
+                follower_transport=transport_phase_summary(transport),
+                node_log_submission=submission_phase_summary(submissions),
+                control_transitions=control_transition_summary(transitions),
                 node_log_phases=dict(Counter(row["phase"] for row in log_events)),
                 node_log_epochs=sorted({int(row["epoch"]) for row in log_events}),
                 node_log_covered_through=last_covered,
                 completed_publications=sum(row["succeeded"] == "true" for row in publications),
-                failed_publications=sum(row["succeeded"] == "false" for row in publications))
+                failed_publications=sum(row["succeeded"] == "false" for row in publications),
+                **write_phases)
 
 
 def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
@@ -204,18 +381,23 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
     samples = sorted(rows(control / f"{label}.tsv"), key=lambda row: int(row["arrival"]))
     assert [int(row["arrival"]) for row in samples] == list(range(planned)), "missing or duplicate arrival"
     successes, arrival_latencies, scheduled_latencies, writes, actions = [], [], [], [0] * nodes, [0] * nodes
+    generator_latencies, handoff_latencies = [], []
     outcomes, intervals = {}, []
     new_positions = {entity: [] for entity in range(nodes * CELLS_PER_NODE)}
     for sample in samples:
         arrival = int(sample["arrival"])
         scheduled = int(sample["scheduled_us"])
         started = int(sample["started_us"])
+        generated = int(sample["generator_started_us"])
         elapsed = int(sample["elapsed_us"])
         entity = int(sample["entity"])
         sequence, read_sequence, count = [int(sample[key]) for key in ("sequence", "read_sequence", "count")]
         outcome = sample["outcome"]
         assert scheduled == arrival * 1_000_000 // rate
         assert started >= scheduled and elapsed >= 0
+        assert scheduled <= generated <= started, "generator timing is outside scheduled dispatch"
+        generator_latencies.append(generated - scheduled)
+        handoff_latencies.append(started - generated)
         assert (entity, sample["kind"]) == destination(shape, arrival, nodes * CELLS_PER_NODE)
         assert outcome in {"ok", "resolved", "write_only", "not_started", "absent", "client_full", "scheduler_late", "read_failed"}
         outcomes[outcome] = outcomes.get(outcome, 0) + 1
@@ -263,6 +445,8 @@ def verify_window(control: Path, nodes: int, shape: str, rate_per_node: int,
         peak = max(peak, inflight)
     assert inflight == 0 and peak <= concurrency
     return dict(nodes=nodes, shape=shape, rate_per_node=rate_per_node, concurrency=concurrency,
+                generator_lateness=distribution(generator_latencies),
+                generator_handoff=distribution(handoff_latencies),
                 planned=planned, outcomes=outcomes, fully_served_arrivals=len(successes) == planned,
                 acknowledged_writes_by_node=writes, completed_actions=len(successes),
                 completed_actions_by_node=actions,
@@ -470,6 +654,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
                                gateway_local=local, gateway_forwarded=forwarded, object_wait=distribution(waits),
                                logical_object_operations=sum(int(row["count"]) for row in observations))
         resources[node]["durability"] = verify_timing_evidence(control, node, windows)
+        resources[node]["trace_counts"] = verify_trace_counts(control, node)
         for window in windows:
             if node >= window["nodes"]:
                 continue

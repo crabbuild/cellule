@@ -338,6 +338,10 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Query(Box::new(QueuedQuery {
+                timing: crate::cell::worker::QueryTrace::new(
+                    &self.inner.telemetry,
+                    &self.inner.resources,
+                )?,
                 telemetry: self.inner.telemetry.clone(),
                 queued_at: std::time::Instant::now(),
                 cell: self.cell,

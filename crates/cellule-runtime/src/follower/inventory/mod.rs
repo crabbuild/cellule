@@ -160,13 +160,13 @@ impl FollowerStore {
         let memory = IndexReservation::new(&self.index_used, INVENTORY_BYTES)?;
         let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            // All lane creation, append, seal, retire, and collection mutate under
-            // this same disk lane. A completed cordon plus this barrier includes
-            // enrollments accepted before cordon; queued new lanes cannot appear.
-            let _disk = store
-                .retained
-                .lock()
-                .map_err(|_| Error::Node("follower disk reservation lock poisoned"))?;
+            // Accounting no longer spans filesystem I/O. Take the mutation
+            // barrier exclusively so a completed cordon plus this scan includes
+            // every earlier accepted enrollment and stable retirement markers.
+            let _maintenance = store
+                .maintenance
+                .write()
+                .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
             collect_page(&store, cursor, limit, now_ms, memory)
         })
         .await

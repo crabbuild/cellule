@@ -342,7 +342,13 @@ class Fleet:
             if rustfs:
                 self.run("docker", "cp", f"{rustfs}:/data/logs", str(self.evidence / "rustfs-logs"))
         finally:
-            self.compose("stop")
+            # Compose stop does not own the one-off container created by run.
+            # Do not leave its marker wait alive after a failed node audit.
+            try:
+                if self.driver:
+                    self.run("docker", "stop", self.driver, timeout=30)
+            finally:
+                self.compose("stop")
 
 
 def main() -> None:

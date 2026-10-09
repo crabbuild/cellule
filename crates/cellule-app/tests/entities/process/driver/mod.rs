@@ -18,6 +18,87 @@ mod tests;
 
 const WINDOW_SECONDS: usize = 10;
 
+pub(super) mod pacing;
+mod primary;
+
+use pacing::paced_arrivals;
+
+struct DriverClient {
+    typed: ApplicationHandle<EntityReferenceApplication>,
+    entities: EntityReferenceClient,
+    application: Arc<cellule_app::CompiledApplication>,
+    primary: bool,
+    cells: usize,
+    payload_bytes: usize,
+}
+
+impl DriverClient {
+    fn orders(&self, key: &OrderId) -> Result<EntityOrderCell> {
+        self.entities.orders(key)
+    }
+
+    async fn resolve(
+        &self,
+        pending: &cellule_runtime::client::PendingMutation,
+    ) -> std::result::Result<Resolution, InvocationError<Vec<u8>>> {
+        self.entities.resolve(pending).await
+    }
+
+    async fn submit(
+        &self,
+        entity: usize,
+        request: usize,
+    ) -> std::result::Result<cellule_runtime::client::Committed<()>, InvocationError<()>> {
+        let identity = qualification_identity(request as u64, now_ms());
+        if !self.primary {
+            return self
+                .orders(&entity_key(entity))
+                .unwrap()
+                .receive_cron(
+                    identity,
+                    CronInvocation {
+                        schedule_id: [117; 16],
+                        generation: 1,
+                        occurrence: request as u64 + 1,
+                        scheduled_at_ms: now_ms(),
+                        payload: b"distributed-entity-invoice".to_vec(),
+                    },
+                )
+                .await;
+        }
+        let sql = self
+            .typed
+            .sql::<ReferenceSql>(entity_target(&self.application, entity))
+            .unwrap();
+        match sql
+            .batch(
+                identity,
+                write_workload::batch(
+                    request as u64,
+                    write_workload::payload(request as u64, self.payload_bytes),
+                ),
+            )
+            .await
+        {
+            Ok(committed) => Ok(cellule_runtime::client::Committed {
+                output: (),
+                receipt: committed.receipt,
+            }),
+            Err(InvocationError::NotStarted(error)) => Err(InvocationError::NotStarted(error)),
+            Err(InvocationError::Pending(pending)) => Err(InvocationError::Pending(pending)),
+            Err(InvocationError::InvalidPublishedResult { receipt, source }) => {
+                Err(InvocationError::InvalidPublishedResult { receipt, source })
+            }
+            Err(InvocationError::Rejected(committed)) => Err(InvocationError::Rejected(Box::new(
+                cellule_runtime::client::Committed {
+                    output: (),
+                    receipt: committed.receipt,
+                },
+            ))),
+        }
+    }
+}
+
 struct Window {
     id: usize,
     prefix: &'static str,
@@ -40,6 +121,7 @@ struct Sample {
     arrival: usize,
     scheduled_us: u64,
     started_us: u64,
+    generator_started_us: u64,
     elapsed_us: u64,
     entity: usize,
     write: bool,
@@ -71,7 +153,12 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
     let sync = env::var("CELLULE_PERF_PROCESS_SYNC").unwrap();
     let sync = Path::new(&sync);
     let mut controller = Controller::new(sync);
-    let application = compiled_entities();
+    let primary = write_workload::enabled();
+    let application = if primary {
+        write_workload::compiled()
+    } else {
+        compiled_entities()
+    };
     let layout = CellStorageLayout::new(
         rustfs_store(),
         env::var("CELLULE_PERF_PROCESS_ROOT").unwrap().into(),
@@ -129,15 +216,22 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             ApplicationId::from_bytes([82; 16]),
         )
         .unwrap();
-        let client = Arc::new(EntityReferenceClient::new(handle).unwrap());
-        expected.resize(nodes * ENTITIES_PER_NODE, 0_u64);
+        let client = Arc::new(DriverClient {
+            entities: EntityReferenceClient::new(handle.clone()).unwrap(),
+            typed: handle,
+            application: application.clone(),
+            primary,
+            cells: write_workload::cell_count(nodes),
+            payload_bytes: write_workload::write_payload_bytes(),
+        });
+        expected.resize(write_workload::cell_count(nodes), 0_u64);
         latest_sequences.resize(expected.len(), 0_u64);
         let mut original_controls = Vec::with_capacity(expected.len());
         for (entity, count) in expected.iter().enumerate() {
             let target = entity_target(&application, entity);
             let control = authority.load(target.cell_id()).await.unwrap().unwrap();
             let owner = control.value().owner.as_ref().unwrap();
-            let node = entity / ENTITIES_PER_NODE;
+            let node = write_workload::owner(entity);
             assert_eq!(owner.session, node_session(node));
             assert_eq!(owner.endpoint, format!("https://{}", addresses[node]));
             original_controls.push(control.value().clone());
@@ -248,7 +342,7 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         .unwrap();
         for (entity, control) in captured.values.iter().enumerate() {
             let owner = control.owner.as_ref().unwrap();
-            let node = entity / ENTITIES_PER_NODE;
+            let node = write_workload::owner(entity);
             assert_eq!(owner.session, node_session(node));
             let root = control.root.as_ref().unwrap();
             // Restore this bounded capture's exact root, preserving its receipt
@@ -336,7 +430,7 @@ fn destination(shape: &str, arrival: usize, cells: usize) -> (usize, bool) {
 async fn run_window(
     sync: &Path,
     window: &Window,
-    client: Arc<EntityReferenceClient>,
+    client: Arc<DriverClient>,
     expected: &mut [u64],
     latest_sequences: &mut [u64],
 ) -> bool {
@@ -347,13 +441,15 @@ async fn run_window(
     let mut output = BufWriter::new(File::create(sync.join(format!("{label}.tsv"))).unwrap());
     writeln!(
         output,
-        "arrival\tscheduled_us\tstarted_us\telapsed_us\tentity\tkind\toutcome\tsequence\tread_sequence\tcount"
+        "arrival\tscheduled_us\tstarted_us\tgenerator_started_us\telapsed_us\tentity\tkind\toutcome\tsequence\tread_sequence\tcount"
     )
     .unwrap();
     output.flush().unwrap();
-    let started_ms = now_ms();
-    let started_boot_ms = boot_ms();
-    let started = Instant::now();
+    // Leave time for the dedicated pacer to start on the same absolute clock.
+    let start_delay = Duration::from_millis(20);
+    let started_ms = now_ms() + start_delay.as_millis() as i64;
+    let started_boot_ms = boot_ms() + start_delay.as_millis() as u64;
+    let started = Instant::now() + start_delay;
     let mut samples = collect_arrivals(
         window,
         planned,
@@ -434,9 +530,9 @@ where
     let mut jobs = JoinSet::new();
     let mut samples = Vec::with_capacity(planned);
     let rate = window.nodes * window.rate_per_node;
-    for arrival in 0..planned {
+    let (mut arrivals, pacer) = paced_arrivals(started, planned, rate, window.concurrency);
+    while let Some((arrival, generator_started_us)) = arrivals.recv().await {
         let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
-        tokio::time::sleep_until((started + Duration::from_micros(scheduled_us)).into()).await;
         while let Some(result) = jobs.try_join_next() {
             samples.push(result.unwrap());
         }
@@ -446,6 +542,7 @@ where
             arrival,
             scheduled_us,
             started_us,
+            generator_started_us,
             elapsed_us: 0,
             entity,
             write,
@@ -461,10 +558,11 @@ where
             samples.push(sample);
             continue;
         }
-        let request = window.id * 1_000_000 + arrival;
+        let request = (window.id << 32) | arrival;
         let admitted = started + Duration::from_micros(sample.started_us);
         jobs.spawn(dispatch(sample, request, admitted));
     }
+    pacer.await.unwrap();
     while let Some(result) = jobs.join_next().await {
         samples.push(result.unwrap());
     }
@@ -482,10 +580,11 @@ fn write_samples(output: &mut impl Write, samples: &[Sample]) -> std::io::Result
     for sample in samples {
         writeln!(
             output,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             sample.arrival,
             sample.scheduled_us,
             sample.started_us,
+            sample.generator_started_us,
             sample.elapsed_us,
             sample.entity,
             if sample.write { "write" } else { "read" },
@@ -499,24 +598,14 @@ fn write_samples(output: &mut impl Write, samples: &[Sample]) -> std::io::Result
 }
 
 async fn execute(
-    client: Arc<EntityReferenceClient>,
+    client: Arc<DriverClient>,
     mut sample: Sample,
     request: usize,
     started: Instant,
 ) -> Sample {
     let order = client.orders(&entity_key(sample.entity)).unwrap();
     let minimum = if sample.write {
-        let input = CronInvocation {
-            schedule_id: [117; 16],
-            generation: 1,
-            occurrence: request as u64 + 1,
-            scheduled_at_ms: now_ms(),
-            payload: b"distributed-entity-invoice".to_vec(),
-        };
-        match order
-            .receive_cron(qualification_identity(request as u64, now_ms()), input)
-            .await
-        {
+        match client.submit(sample.entity, request).await {
             Ok(committed) => {
                 sample.outcome = "ok";
                 Some(committed.receipt)

@@ -6,17 +6,64 @@
 
 use super::*;
 
-pub(super) fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>) {
+pub(super) fn run_worker(
+    mut receiver: mpsc::Receiver<WorkerCommand>,
+    slots: Arc<admission::ExecutionSlots>,
+    shard: usize,
+) {
     let mut cells = HashMap::new();
-    while let Some(command) = receiver.blocking_recv() {
+    let admission = admission::NativeAdmission::new(slots, shard);
+    let mut deferred = std::collections::LinkedList::new();
+    loop {
+        let command = deferred.pop_front().or_else(|| receiver.blocking_recv());
+        let Some(command) = command else {
+            break;
+        };
         match command {
             WorkerCommand::Reserved {
                 command,
                 reservation,
+            } => run_worker_command(*command, &mut cells, Some(reservation)),
+            WorkerCommand::Queued {
+                command,
+                reservation,
             } => {
-                run_worker_command(*command, &mut cells, Some(reservation));
+                if command.is_abandoned() {
+                    continue;
+                }
+                let reservation =
+                    admission.reserve(reservation, |context| match receiver.poll_recv(context) {
+                        std::task::Poll::Ready(Some(queued @ WorkerCommand::Queued { .. })) => {
+                            deferred.push_back(queued);
+                            true
+                        }
+                        std::task::Poll::Ready(Some(control)) => {
+                            run_worker_command(control, &mut cells, None);
+                            true
+                        }
+                        _ => false,
+                    });
+                match reservation {
+                    Ok(reservation) => {
+                        // Recheck after a borrowed snapshot slot has returned.
+                        // Once execution starts, it retains normal ownership
+                        // regardless of whether its caller subsequently leaves.
+                        if command.is_abandoned() {
+                            continue;
+                        }
+                        if let WorkerCommand::Query {
+                            timing: Some(timing),
+                            ..
+                        } = &*command
+                        {
+                            timing.admitted(reservation.trace.as_ref().map(|trace| trace.id));
+                        }
+                        run_worker_command(*command, &mut cells, Some(reservation));
+                    }
+                    Err(error) => command.reject_admission(error),
+                }
             }
-            command => run_worker_command(command, &mut cells, None),
+            control => run_worker_command(control, &mut cells, None),
         }
     }
 }
@@ -26,12 +73,25 @@ fn run_worker_command(
     cells: &mut HashMap<CellId, ActiveCell>,
     mut reservation: Option<WorkerJobReservation>,
 ) {
+    if let Some(trace) = reservation
+        .as_mut()
+        .and_then(|reservation| reservation.trace.as_mut())
+    {
+        trace.started();
+    }
     match command {
         WorkerCommand::Reserved {
             command,
             reservation,
         } => {
             run_worker_command(*command, cells, Some(reservation));
+        }
+        WorkerCommand::Queued {
+            command,
+            reservation,
+        } => {
+            drop(reservation);
+            command.reject_admission(Error::Control("nested SQL job descriptor"));
         }
         WorkerCommand::Activate {
             cell,
@@ -235,11 +295,18 @@ fn run_worker_command(
             max_result_bytes,
             deadline,
             handler,
+            timing,
             reply,
         } => {
+            if let Some(timing) = &timing {
+                timing.dequeued();
+            }
             let result = run_native_callback(cells, cell, deadline, move |active| {
                 active.executor.query(max_result_bytes, handler)
             });
+            if let Some(timing) = &timing {
+                timing.completed();
+            }
             drop(reservation.take());
             let _ = reply.send(result);
         }

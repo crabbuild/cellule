@@ -8,6 +8,7 @@ CellWritableDatabase
 CheckpointMode
 LtxError
 Db
+DbInterruptHandle
 DirectoryCacheStats
 DiskBudget
 DiskBudgetAdmission

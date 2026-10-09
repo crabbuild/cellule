@@ -141,7 +141,7 @@ async fn historical_closed_chunks_larger_than_live_target_remain_readable() {
     let root = tempfile::TempDir::new().unwrap();
     let leader = SessionId::from_bytes([1; 16]);
     let lane = Lane { leader, epoch: 2 };
-    ensure_lane_directories(root.path(), lane).unwrap();
+    ensure_lane_directories(root.path(), lane, &Mutex::new(()), None).unwrap();
     let chunks = lane_directory(root.path(), lane).join("chunks");
     let path = chunks.join(format!("{:020}-{:020}.log", 1, 3));
     let mut file = std::fs::File::create(&path).unwrap();

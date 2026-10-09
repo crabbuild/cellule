@@ -214,7 +214,16 @@ pub(super) fn send_finished_migration_reply(
 
 pub(super) fn send_query_reply(query: &mut QueuedQuery, result: crate::Result<Vec<u8>>) {
     if let Some(reply) = query.reply.take() {
-        let _ = reply.send(result);
+        let succeeded = result.is_ok();
+        let timing = query
+            .timing
+            .as_ref()
+            .map(|timing| timing.snapshot(succeeded));
+        let delivered = reply.send(result).is_ok();
+        if let (Some(trace), Some(mut timing)) = (&query.timing, timing) {
+            timing.delivered = delivered;
+            trace.emit(query.cell, timing);
+        }
     }
 }
 

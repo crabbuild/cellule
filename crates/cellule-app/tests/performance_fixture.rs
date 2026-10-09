@@ -9,7 +9,11 @@ use std::{
 
 use cellule_host::{CellNode, CellNodeBuilder};
 use cellule_ltx::{CaptureTiming, LtxPhase};
-use cellule_runtime::fleet::telemetry::{CellTelemetry, CommandResponseSource, PublicationTiming};
+use cellule_runtime::SessionId;
+use cellule_runtime::fleet::telemetry::{
+    CellTelemetry, CommandResponseSource, ControlTransitionTiming, FollowerAppendTiming,
+    NodeLogBatchTiming, NodeLogSubmissionTiming, PublicationTiming, QueryTiming, SqlSlotTiming,
+};
 use cellule_runtime::node::lease::NodeLeaseGuard;
 use cellule_runtime::node::log::DurabilitySource;
 use cellule_runtime::peer::{
@@ -144,89 +148,323 @@ pub(super) struct PerfFixture {
     servers: Vec<tokio::task::JoinHandle<()>>,
 }
 
+// A stalled exporter has a fixed memory budget. Dropped observations are
+// counted and invalidate qualification; callbacks never perform filesystem I/O.
+pub(super) const TRACE_CAPACITY: usize = 65_536;
+
+pub(super) struct Trace<T> {
+    inner: Mutex<TraceBuffer<T>>,
+}
+
+struct TraceBuffer<T> {
+    samples: Vec<T>,
+    recorded: u64,
+    dropped: u64,
+}
+
+impl<T> Default for Trace<T> {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(TraceBuffer {
+                samples: Vec::new(),
+                recorded: 0,
+                dropped: 0,
+            }),
+        }
+    }
+}
+
+impl<T> Trace<T> {
+    pub(super) fn push(&self, sample: T) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.recorded += 1;
+        if inner.samples.len() == TRACE_CAPACITY {
+            inner.dropped += 1;
+        } else {
+            inner.samples.push(sample);
+        }
+    }
+
+    pub(super) fn drain(&self) -> Vec<T> {
+        std::mem::take(&mut self.inner.lock().unwrap().samples)
+    }
+
+    pub(super) fn counts(&self) -> (u64, u64, usize) {
+        let inner = self.inner.lock().unwrap();
+        (inner.recorded, inner.dropped, inner.samples.len())
+    }
+
+    fn take(&self) -> Self {
+        let samples = self.drain();
+        let recorded = samples.len() as u64;
+        Self {
+            inner: Mutex::new(TraceBuffer {
+                samples,
+                recorded,
+                dropped: 0,
+            }),
+        }
+    }
+}
+
+impl<T: Clone> Trace<T> {
+    pub(super) fn snapshot(&self) -> Vec<T> {
+        self.inner.lock().unwrap().samples.clone()
+    }
+}
+
+#[test]
+fn trace_drain_is_bounded_and_loss_remains_visible() {
+    let trace = Trace::default();
+    for sample in 0..TRACE_CAPACITY + 2 {
+        trace.push(sample);
+    }
+    assert_eq!(
+        trace.counts(),
+        ((TRACE_CAPACITY + 2) as u64, 2, TRACE_CAPACITY)
+    );
+    assert_eq!(trace.drain(), (0..TRACE_CAPACITY).collect::<Vec<_>>());
+    assert_eq!(trace.counts(), ((TRACE_CAPACITY + 2) as u64, 2, 0));
+    trace.push(42);
+    assert_eq!(trace.drain(), vec![42]);
+    assert_eq!(trace.counts(), ((TRACE_CAPACITY + 3) as u64, 2, 0));
+}
+
+#[derive(Clone, Default)]
+pub(super) struct TransportAppendTiming {
+    pub pool_wait: Duration,
+    pub member_resolution: Duration,
+    pub encoding: Duration,
+    pub address_resolution: Duration,
+    pub connection: Duration,
+    pub wire: Duration,
+    pub verification: Duration,
+    pub total: Duration,
+    pub connection_attempts: u64,
+}
+
 #[derive(Default)]
 pub(super) struct DurabilityRecorder {
-    proofs: Mutex<Vec<(DurabilitySource, Duration)>>,
-    responses: Mutex<Vec<(i64, CommandResponseSource, Duration, Duration)>>,
-    executions: Mutex<Vec<(i64, Duration, Duration, bool)>>,
-    publications: Mutex<Vec<(i64, cellule_runtime::CellId, PublicationTiming)>>,
-    phases: Mutex<Vec<(i64, LtxPhase, Duration, bool)>>,
-    captures: Mutex<Vec<(i64, CaptureTiming, bool)>>,
-    publication_costs: Mutex<Vec<(i64, u64, u64)>>,
-    follower_appends: Mutex<Vec<(i64, bool, u64)>>,
-    follower_network: Mutex<Vec<(i64, bool, u64, Duration)>>,
-    node_log_events: Mutex<Vec<(i64, u64, &'static str, u64)>>,
+    proofs: Trace<(DurabilitySource, Duration)>,
+    responses: Trace<(i64, CommandResponseSource, Duration, Duration)>,
+    executions: Trace<(i64, Duration, Duration, bool)>,
+    queries: Trace<(i64, cellule_runtime::CellId, QueryTiming)>,
+    sql_slots: Trace<(i64, SqlSlotTiming)>,
+    publications: Trace<(i64, cellule_runtime::CellId, PublicationTiming)>,
+    phases: Trace<(i64, LtxPhase, Duration, bool)>,
+    captures: Trace<(i64, CaptureTiming, bool)>,
+    publication_costs: Trace<(i64, u64, u64)>,
+    follower_appends: Trace<(i64, bool, u64)>,
+    follower_network: Trace<(i64, bool, u64, Duration)>,
+    follower_transport: Trace<(i64, bool, u64, TransportAppendTiming)>,
+    follower_store: Trace<(i64, SessionId, u64, FollowerAppendTiming)>,
+    node_log_batches: Trace<(i64, NodeLogBatchTiming)>,
+    node_log_submissions: Trace<(i64, cellule_runtime::CellId, NodeLogSubmissionTiming)>,
+    control_transitions: Trace<(i64, cellule_runtime::CellId, ControlTransitionTiming)>,
+    node_log_events: Trace<(i64, u64, &'static str, u64)>,
 }
 
 impl DurabilityRecorder {
+    pub(super) fn drain(&self) -> Self {
+        Self {
+            proofs: self.proofs.take(),
+            responses: self.responses.take(),
+            executions: self.executions.take(),
+            queries: self.queries.take(),
+            sql_slots: self.sql_slots.take(),
+            publications: self.publications.take(),
+            phases: self.phases.take(),
+            captures: self.captures.take(),
+            publication_costs: self.publication_costs.take(),
+            follower_appends: self.follower_appends.take(),
+            follower_network: self.follower_network.take(),
+            follower_transport: self.follower_transport.take(),
+            follower_store: self.follower_store.take(),
+            node_log_batches: self.node_log_batches.take(),
+            node_log_submissions: self.node_log_submissions.take(),
+            control_transitions: self.control_transitions.take(),
+            node_log_events: self.node_log_events.take(),
+        }
+    }
+
+    pub(super) fn trace_counts(&self) -> Vec<(&'static str, u64, u64, usize)> {
+        vec![
+            {
+                let (recorded, dropped, buffered) = self.proofs.counts();
+                ("proofs", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.responses.counts();
+                ("responses", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.executions.counts();
+                ("executions", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.queries.counts();
+                ("queries", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.sql_slots.counts();
+                ("sql_slots", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.publications.counts();
+                ("publications", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.phases.counts();
+                ("phases", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.captures.counts();
+                ("captures", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.publication_costs.counts();
+                ("publication_costs", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.follower_appends.counts();
+                ("follower_appends", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.follower_network.counts();
+                ("follower_network", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.follower_transport.counts();
+                ("follower_transport", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.follower_store.counts();
+                ("follower_store", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.node_log_batches.counts();
+                ("node_log_batches", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.node_log_submissions.counts();
+                ("node_log_submissions", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.control_transitions.counts();
+                ("control_transitions", recorded, dropped, buffered)
+            },
+            {
+                let (recorded, dropped, buffered) = self.node_log_events.counts();
+                ("node_log_events", recorded, dropped, buffered)
+            },
+        ]
+    }
+
     pub(super) fn object_waits(&self) -> Vec<Duration> {
         self.proofs
-            .lock()
-            .unwrap()
+            .snapshot()
             .iter()
             .filter_map(|(source, waited)| (*source == DurabilitySource::Object).then_some(*waited))
             .collect()
     }
 
     pub(super) fn responses(&self) -> Vec<(i64, CommandResponseSource, Duration, Duration)> {
-        self.responses.lock().unwrap().clone()
+        self.responses.snapshot()
     }
 
     pub(super) fn executions(&self) -> Vec<(i64, Duration, Duration, bool)> {
-        self.executions.lock().unwrap().clone()
+        self.executions.snapshot()
+    }
+
+    pub(super) fn queries(&self) -> Vec<(i64, cellule_runtime::CellId, QueryTiming)> {
+        self.queries.snapshot()
+    }
+
+    pub(super) fn sql_slots(&self) -> Vec<(i64, SqlSlotTiming)> {
+        self.sql_slots.snapshot()
     }
 
     pub(super) fn publications(&self) -> Vec<(i64, cellule_runtime::CellId, PublicationTiming)> {
-        self.publications.lock().unwrap().clone()
+        self.publications.snapshot()
     }
 
     pub(super) fn phases(&self) -> Vec<(i64, LtxPhase, Duration, bool)> {
-        self.phases.lock().unwrap().clone()
+        self.phases.snapshot()
     }
 
     pub(super) fn captures(&self) -> Vec<(i64, CaptureTiming, bool)> {
-        self.captures.lock().unwrap().clone()
+        self.captures.snapshot()
     }
 
     pub(super) fn publication_costs(&self) -> Vec<(i64, u64, u64)> {
-        self.publication_costs.lock().unwrap().clone()
+        self.publication_costs.snapshot()
     }
 
     pub(super) fn follower_appends(&self) -> Vec<(i64, bool, u64)> {
-        self.follower_appends.lock().unwrap().clone()
+        self.follower_appends.snapshot()
     }
 
     pub(super) fn record_follower_network(
         &self,
         acknowledged: bool,
         bytes: u64,
-        elapsed: Duration,
+        timing: TransportAppendTiming,
     ) {
+        let at_ms = now_ms();
         self.follower_network
-            .lock()
-            .unwrap()
-            .push((now_ms(), acknowledged, bytes, elapsed));
+            .push((at_ms, acknowledged, bytes, timing.total));
+        self.follower_transport
+            .push((at_ms, acknowledged, bytes, timing));
     }
 
     pub(super) fn follower_network(&self) -> Vec<(i64, bool, u64, Duration)> {
-        self.follower_network.lock().unwrap().clone()
+        self.follower_network.snapshot()
+    }
+
+    pub(super) fn follower_transport(&self) -> Vec<(i64, bool, u64, TransportAppendTiming)> {
+        self.follower_transport.snapshot()
+    }
+
+    pub(super) fn follower_store(&self) -> Vec<(i64, SessionId, u64, FollowerAppendTiming)> {
+        self.follower_store.snapshot()
+    }
+
+    pub(super) fn node_log_batches(&self) -> Vec<(i64, NodeLogBatchTiming)> {
+        self.node_log_batches.snapshot()
+    }
+
+    pub(super) fn node_log_submissions(
+        &self,
+    ) -> Vec<(i64, cellule_runtime::CellId, NodeLogSubmissionTiming)> {
+        self.node_log_submissions.snapshot()
+    }
+
+    pub(super) fn control_transitions(
+        &self,
+    ) -> Vec<(i64, cellule_runtime::CellId, ControlTransitionTiming)> {
+        self.control_transitions.snapshot()
     }
 
     pub(super) fn record_node_log_event(&self, epoch: u64, phase: &'static str, through: u64) {
-        self.node_log_events
-            .lock()
-            .unwrap()
-            .push((now_ms(), epoch, phase, through));
+        self.node_log_events.push((now_ms(), epoch, phase, through));
     }
 
     pub(super) fn node_log_events(&self) -> Vec<(i64, u64, &'static str, u64)> {
-        self.node_log_events.lock().unwrap().clone()
+        self.node_log_events.snapshot()
     }
 }
 
 impl CellTelemetry for DurabilityRecorder {
+    fn sql_slot_released(&self, timing: SqlSlotTiming) {
+        self.sql_slots.push((now_ms(), timing));
+    }
+
+    fn query_completed(&self, cell: cellule_runtime::CellId, timing: QueryTiming) {
+        self.queries.push((now_ms(), cell, timing));
+    }
+
     fn durability_proof(&self, source: DurabilitySource, waited: Duration) {
-        self.proofs.lock().unwrap().push((source, waited));
+        self.proofs.push((source, waited));
     }
 
     fn command_response(
@@ -236,8 +474,6 @@ impl CellTelemetry for DurabilityRecorder {
         confirmation: Duration,
     ) {
         self.responses
-            .lock()
-            .unwrap()
             .push((now_ms(), source, elapsed, confirmation));
     }
 
@@ -248,44 +484,45 @@ impl CellTelemetry for DurabilityRecorder {
         succeeded: bool,
     ) {
         self.executions
-            .lock()
-            .unwrap()
             .push((now_ms(), queue_wait, worker_round_trip, succeeded));
     }
 
     fn publication_completed(&self, cell: cellule_runtime::CellId, timing: PublicationTiming) {
-        self.publications
-            .lock()
-            .unwrap()
-            .push((now_ms(), cell, timing));
+        self.publications.push((now_ms(), cell, timing));
     }
 
     fn ltx_phase(&self, phase: LtxPhase, elapsed: Duration, succeeded: bool) {
-        self.phases
-            .lock()
-            .unwrap()
-            .push((now_ms(), phase, elapsed, succeeded));
+        self.phases.push((now_ms(), phase, elapsed, succeeded));
     }
 
     fn ltx_capture(&self, timing: &CaptureTiming, succeeded: bool) {
-        self.captures
-            .lock()
-            .unwrap()
-            .push((now_ms(), *timing, succeeded));
+        self.captures.push((now_ms(), *timing, succeeded));
     }
 
     fn publication_cost(&self, objects: u64, bytes: u64) {
-        self.publication_costs
-            .lock()
-            .unwrap()
-            .push((now_ms(), objects, bytes));
+        self.publication_costs.push((now_ms(), objects, bytes));
     }
 
     fn node_log_append(&self, acknowledged: bool, bytes: u64) {
-        self.follower_appends
-            .lock()
-            .unwrap()
-            .push((now_ms(), acknowledged, bytes));
+        self.follower_appends.push((now_ms(), acknowledged, bytes));
+    }
+
+    fn follower_append(&self, timing: FollowerAppendTiming) {
+        let leader = timing.leader.unwrap();
+        let epoch = timing.epoch;
+        self.follower_store.push((now_ms(), leader, epoch, timing));
+    }
+
+    fn node_log_batch(&self, timing: NodeLogBatchTiming) {
+        self.node_log_batches.push((now_ms(), timing));
+    }
+
+    fn node_log_submission(&self, cell: cellule_runtime::CellId, timing: NodeLogSubmissionTiming) {
+        self.node_log_submissions.push((now_ms(), cell, timing));
+    }
+
+    fn control_transition(&self, cell: cellule_runtime::CellId, timing: ControlTransitionTiming) {
+        self.control_transitions.push((now_ms(), cell, timing));
     }
 }
 

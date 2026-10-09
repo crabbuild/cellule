@@ -4,8 +4,9 @@ import csv
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock
 
-from scale import verify_mixed_load, verify_reader_loss
+from scale import Fleet, verify_mixed_load, verify_reader_loss
 
 
 class MixedLoadEvidence(unittest.TestCase):
@@ -119,6 +120,34 @@ class ReaderLossEvidence(unittest.TestCase):
     def test_wrong_killed_node_is_rejected(self):
         with self.assertRaises(AssertionError):
             verify_reader_loss(self.root, 4)
+
+
+class OwnedProcessCleanup(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.fleet = object.__new__(Fleet)
+        self.fleet.evidence = Path(temporary.name)
+        self.fleet.driver = "owned-one-off-driver"
+        self.fleet.run = Mock(return_value="")
+
+    def test_failed_evidence_capture_stops_the_one_off_driver_and_services(self):
+        def compose(*args):
+            if args[0] == "logs":
+                raise RuntimeError("capture failed")
+            return ""
+        self.fleet.compose = Mock(side_effect=compose)
+        with self.assertRaisesRegex(RuntimeError, "capture failed"):
+            self.fleet.retain()
+        self.fleet.run.assert_called_once_with("docker", "stop", self.fleet.driver, timeout=30)
+        self.fleet.compose.assert_any_call("stop")
+
+    def test_driver_stop_failure_still_stops_services(self):
+        self.fleet.compose = Mock(return_value="")
+        self.fleet.run.side_effect = RuntimeError("driver stop failed")
+        with self.assertRaisesRegex(RuntimeError, "driver stop failed"):
+            self.fleet.retain()
+        self.fleet.compose.assert_any_call("stop")
 
 
 if __name__ == "__main__":

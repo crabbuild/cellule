@@ -92,7 +92,7 @@ mod format_tests;
 
 pub use capture::CheckpointMode;
 pub use db::{
-    Db, MANAGED_CONNECTION_LOOKASIDE_BYTES, MANAGED_CONNECTION_PAGE_CACHE_BYTES,
+    Db, DbInterruptHandle, MANAGED_CONNECTION_LOOKASIDE_BYTES, MANAGED_CONNECTION_PAGE_CACHE_BYTES,
     MANAGED_SQLITE_CONNECTIONS,
 };
 pub use error::{FailureClass, LimitKind, LtxError, QueryError, Result, TransactionError};

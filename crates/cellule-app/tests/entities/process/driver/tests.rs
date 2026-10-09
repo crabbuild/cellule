@@ -5,6 +5,7 @@ fn sample(arrival: usize, outcome: &'static str) -> Sample {
         arrival,
         scheduled_us: 1_000,
         started_us: 2_000,
+        generator_started_us: 2_500,
         elapsed_us: 3_000,
         entity: 4,
         write: true,
@@ -36,7 +37,7 @@ fn deferred_evidence_retains_every_outcome_and_original_timing() {
         .iter()
         .enumerate()
         .map(|(arrival, outcome)| {
-            format!("{arrival}\t1000\t2000\t3000\t4\twrite\t{outcome}\t5\t6\t7\n")
+            format!("{arrival}\t1000\t2000\t2500\t3000\t4\twrite\t{outcome}\t5\t6\t7\n")
         })
         .collect::<String>();
     assert_eq!(output, expected);

@@ -716,8 +716,10 @@ Sparse opening claims its canonical path under a short registry lock.
 
 | API | Contract |
 | --- | --- |
-| `Db::open` | Claims a fresh exclusive session and owns the writer, control, and read-lock SQLite connections |
+| `Db::open` | Claims a fresh exclusive session and owns the writer, owner reader, control, and capture read-lock SQLite connections |
 | `Db::transaction` | Commits one local SQL transaction; does not claim remote durability |
+| `Db::query_with` | Runs a synchronous callback in a fresh read-only transaction on the same serialized owner; ends the snapshot before returning |
+| `Db::interrupt_handle` | Returns a `DbInterruptHandle` that interrupts either active owner SQL connection; the caller still waits for completion or reconciliation |
 | `Db::capture` | Returns every new ordered cut plus its exact TXID/checksum endpoint |
 | `Db::capture_deferred` | Returns complete, readable LTX files whose durability remains pending |
 | `Db::durability_barrier` | Flushes deferred files concurrently, then syncs their parent and the new directory chain once; failure fences the session |
@@ -862,16 +864,33 @@ These are per-operation correctness bounds, not an RSS quota.
 - **Failed merge.** A failed sidecar merge fences the session. This changes local
   bookkeeping, not the LTX format or the authenticated metadata walk required for
   activation.
-- **Connections and caches.** Each open `Db` retains three SQLite connections
+- **Connections and caches.** Each open `Db` retains four SQLite connections
   with a 64 KiB page-cache target and an 8 KiB lookaside arena per connection.
   Lookaside reduces allocator contention during small SQL preparations;
-  larger or excess allocations use SQLite's normal heap. Runtime native
-  admission charges all three arenas, raising the per-writer reservation
-  from 64 KiB to 88 KiB. These reservations are not RSS limits.
-  `Host` can share disk, I/O,
+  larger or excess allocations use SQLite's normal heap. Runtime admission
+  charges 256 KiB of page-cache targets separately from the 160 KiB native
+  reservation, including the owner reader and all four lookaside arenas.
+  These reservations are not RSS limits. `Host` can share disk, I/O,
   blocking-job, recovery, dirty-job, scratch, and telemetry admission across many
   databases. Sparse page read-ahead is capped at 64 pages or 1 MiB per request,
   and the shared decoded page cache is capped at 8 MiB.
+
+- **Owner reader.** `query_with` uses a separate read-only connection with
+  `query_only` enabled once at open. Reads and writes remain serialized by the
+  caller; each callback gets a fresh transaction that ends before return, so
+  an idle reader does not retain an old WAL snapshot. The callback must not
+  change pragmas, control transactions, or retain borrowed SQLite values.
+  An application failure preserves its error after the transaction ends;
+  failure to establish or end the managed transaction fences the session.
+- **Sparse reader.** The owner reader uses the same authenticated sparse VFS.
+  Its backing file permits internal installation of verified missing pages,
+  while SQLite sees a read-only main database and the VFS rejects SQL writes
+  and truncation. This live owner connection does not use immutable-view flags.
+- **Interrupt ownership.** `Db::interrupt_handle` now returns
+  `DbInterruptHandle`, rather than a single `rusqlite::InterruptHandle`.
+  Update callers that store the explicit type. Its `interrupt()` reaches the
+  active writer or reader, becomes inert after close, and does not prove that
+  dispatched work has finished.
 
 - **Demand reads.** Demand reads and asynchronous hydration stop a missing prefix
   before pages already cached in the same view. This avoids transferring and
