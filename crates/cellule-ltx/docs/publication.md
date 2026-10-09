@@ -146,3 +146,26 @@ Directory digests obey that bound while descriptor work keeps the existing fixed
 root/segment ceilings. The caller owns memory admission, bounded Store stream
 chunks and the enclosing deadline. This graph proof grants no selected authority,
 retention pin or current serving.
+
+`small_root_origin_verification` begins the same origin walk with a fresh exact
+root read. Packed leaf graphs with at most 32 inline descriptors return a
+one-use `RootOriginVerification`. Its 512-KiB working charge includes metadata,
+one bounded body and verification scratch. The host owns admission and scheduling;
+the root/decode phase also requires admission before starting. `verify` consumes
+the operation, freshly checks every dependency through the canonical verifier
+and returns the complete inventory. No body or availability cache survives it.
+Other graph shapes return `None` and require the original complete traversal.
+
+```rust
+use cellule_ltx::{CellReplica, RootObjectRef, RootRef};
+
+async fn origin_inventory(
+    replica: &CellReplica,
+    root: &RootRef,
+) -> cellule_ltx::Result<Vec<RootObjectRef>> {
+    match replica.small_root_origin_verification(root, 65_536).await? {
+        Some(operation) => operation.verify().await,
+        None => replica.reachable_objects_bounded(root, 65_536).await,
+    }
+}
+```

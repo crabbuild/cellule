@@ -50,6 +50,15 @@ impl CellReplica {
     ) -> Result<Vec<RootObjectRef>> {
         // Inventory must prove origin presence even for metadata uploaded here.
         let graph = self.load_graph_with_cache(root, false).await?;
+        self.inventory_graph(root, max_objects, graph).await
+    }
+
+    pub(super) async fn inventory_graph(
+        &self,
+        root: &RootRef,
+        max_objects: Option<usize>,
+        graph: LoadedGraph,
+    ) -> Result<Vec<RootObjectRef>> {
         let extents = object_extents(&graph.descriptors)?;
         let verification = directory::Verification {
             layout: &self.layout,
@@ -230,6 +239,16 @@ impl CellReplica {
     }
 
     async fn load_graph_inner(&self, root: &RootRef, use_cache: bool) -> Result<LoadedGraph> {
+        let (document, cached_root) = self.read_root_document(root, use_cache).await?;
+        self.load_graph_document(root, use_cache, document, cached_root)
+            .await
+    }
+
+    pub(super) async fn read_root_document(
+        &self,
+        root: &RootRef,
+        use_cache: bool,
+    ) -> Result<(RootDocument, Option<usize>)> {
         self.check_scope(root)?;
         let (bytes, cached_root) = self
             .read_object(&root.digest, CellObjectKind::Root, ROOT_BYTES, use_cache)
@@ -251,6 +270,16 @@ impl CellReplica {
         {
             return Err(LtxError::LTXCorrupted);
         }
+        Ok((document, cached_root.then_some(bytes.len())))
+    }
+
+    pub(super) async fn load_graph_document(
+        &self,
+        root: &RootRef,
+        use_cache: bool,
+        document: RootDocument,
+        cached_root: Option<usize>,
+    ) -> Result<LoadedGraph> {
         let pages = stream::iter(
             document
                 .segment_pages
@@ -274,8 +303,8 @@ impl CellReplica {
         .try_collect::<Vec<_>>()
         .await?;
         let mut cached_metadata = Vec::new();
-        if cached_root {
-            cached_metadata.push((root.digest, bytes.len()));
+        if let Some(bytes) = cached_root {
+            cached_metadata.push((root.digest, bytes));
         }
         let mut descriptors = Vec::new();
         for (page, cached) in pages {

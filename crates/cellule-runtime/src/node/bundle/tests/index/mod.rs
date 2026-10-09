@@ -38,6 +38,7 @@ fn head_session(f: &Fixture) -> SessionId {
     f.node.advertisement().session()
 }
 
+mod base_cohort;
 mod bootstrap;
 mod checkpoint;
 mod cohort;

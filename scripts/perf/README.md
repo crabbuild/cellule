@@ -1,12 +1,12 @@
 # Docker write verification
 
 This harness runs the same SQL application on Cellule and pinned celld v0.6.1.
-It uses 1,000 Cells, 96-byte values, INSERT plus SELECT in one transaction,
+It defaults to 1,000 Cells, 96-byte values, INSERT plus SELECT in one transaction,
 and a two-hour durable request/result ledger. It is **SQL application parity**;
 it does not reproduce a bounded KV upsert benchmark.
 
 Use a dedicated Linux Docker context. The current shared-VM profile gives
-nodes an 8-CPU/16-GiB ceiling, tmpfs state of 4 GiB, a 2-CPU/8-GiB RustFS
+nodes an 8-CPU/16-GiB ceiling, tmpfs state of 4 GiB, a 2-CPU/2-GiB RustFS
 provider, and a 4-CPU/4-GiB client. These ceilings exceed the shared VM's total
 CPU; report contention. tmpfs does not qualify physical-device durability.
 HTTP endpoints, certificates, credentials, and placement are fixture policy.
@@ -79,6 +79,9 @@ Its loopback ports must be free of other workloads.
 
 For a read-only point, supply `--write-rates 0 --read-rate N`. For a mixed
 point, use the same offered write rate on both systems and add `--read-rate N`.
+Use `--cells 2000` for the node capacity contract; the population sets both the
+Cellule application and client, and verifies celld's complete owner placement.
+The simultaneous target is `--cells 2000 --write-rates 2000 --read-rate 20000`.
 Add `--hot-read-cells 10` for the 1% hot-read case. Record qualification of
 read-only and mixed profiles separately; an aggregate read/write rate is not a
 read-capacity result.

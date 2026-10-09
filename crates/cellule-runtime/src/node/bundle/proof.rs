@@ -274,6 +274,31 @@ pub(super) async fn verify_base(
     binding: &Binding,
     limits: cellule_ltx::Limits,
 ) -> Result<()> {
+    let (replica, base) = base_replica(layout, binding, limits)?;
+    // Reconstructability requires origin dependencies, even if metadata was
+    // authenticated earlier in this process. A cached root is not availability.
+    replica
+        .reachable_objects_bounded(&base, MAX_BASE_OBJECTS)
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn prepare_base_origin(
+    layout: &cellule_ltx::CellStorageLayout,
+    binding: &Binding,
+    limits: cellule_ltx::Limits,
+) -> Result<Option<cellule_ltx::RootOriginVerification>> {
+    let (replica, base) = base_replica(layout, binding, limits)?;
+    Ok(replica
+        .small_root_origin_verification(&base, MAX_BASE_OBJECTS)
+        .await?)
+}
+
+fn base_replica(
+    layout: &cellule_ltx::CellStorageLayout,
+    binding: &Binding,
+    limits: cellule_ltx::Limits,
+) -> Result<(cellule_ltx::CellReplica, cellule_ltx::RootRef)> {
     let base = binding
         .control
         .ltx_root()
@@ -284,12 +309,7 @@ pub(super) async fn verify_base(
         *binding.control.incarnation.as_bytes(),
         limits,
     )?;
-    // Reconstructability requires origin dependencies, even if metadata was
-    // authenticated earlier in this process. A cached root is not availability.
-    replica
-        .reachable_objects_bounded(&base, MAX_BASE_OBJECTS)
-        .await?;
-    Ok(())
+    Ok((replica, base))
 }
 
 impl BundleCoverageProof {

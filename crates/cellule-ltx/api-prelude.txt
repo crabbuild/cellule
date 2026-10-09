@@ -38,6 +38,7 @@ ReadOnlyRoot
 RecoveryOverlay
 Result
 RootObjectRef
+RootOriginVerification
 RootPreparation
 RootPreparationFuture
 RootPreparationMetadata

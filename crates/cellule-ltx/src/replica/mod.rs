@@ -24,11 +24,13 @@ pub use shared::{SHARED_PUBLICATION_BYTES, SHARED_PUBLICATION_ROWS, SharedAppend
 mod preparation;
 mod prepare;
 pub use preparation::{RootPreparation, RootPreparationFuture, RootPreparationMetadata};
+mod origin;
 mod read_only;
 mod restore;
 pub(crate) mod root;
 mod upload;
 mod verify;
+pub use origin::RootOriginVerification;
 
 use directory::{DirectoryEntry, DirectorySpan, DirectoryTree, ObjectExtent};
 pub use read_only::ReadOnlyRoot;
