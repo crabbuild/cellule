@@ -10,8 +10,20 @@ use crate::node::advertisement::validate_successor;
 use super::*;
 
 mod advertisement;
+mod closure;
+mod enrollment;
+mod inventory;
 mod log;
+mod recovered;
 mod recovery;
+pub use closure::{NodeSessionClosure, NodeSessionFence, NodeSessionRecovery};
+pub use recovered::RecoveredLogRetirementAuthorization;
+
+pub use enrollment::{
+    NodeLogEnrollmentAttempt, NodeLogEnrollmentProof, NodeLogEnrollmentRefusalProof,
+    PreparedNodeLogEnrollment,
+};
+pub use inventory::{FollowerLogObservation, LogInventoryCursor, LogInventoryPage, LogLeaderState};
 
 /// Object-store directory for one fleet and compiled release.
 #[derive(Clone)]
@@ -27,6 +39,7 @@ pub struct NodeDirectory {
     // Reader placement is advisory. Authority, session authentication and
     // maintenance continue to read their canonical records directly.
     reader_membership: Arc<RwLock<Option<advertisement::ReaderMembership>>>,
+    inventory_scope: [u8; 16],
 }
 
 /// Request verifier bound to one mTLS-authenticated enrollment observation.
@@ -81,6 +94,7 @@ impl NodeDirectory {
             release,
             recovery_scan: Arc::new(RwLock::new(None)),
             reader_membership: Arc::new(RwLock::new(None)),
+            inventory_scope: rand::random(),
         }
     }
 
@@ -97,7 +111,9 @@ impl NodeDirectory {
         now_ms: i64,
     ) -> Result<VersionedNodeAdvertisement> {
         self.validate(&advertisement, now_ms)?;
-        let encoded = advertisement.encode()?;
+        // validate authenticated both signature sets; serialize this exact
+        // immutable value without repeating their cryptographic verification.
+        let encoded = advertisement.canonical_bytes()?;
         let path = self.layout.node_path(advertisement.session.as_bytes());
         let result = match self
             .layout
@@ -127,7 +143,10 @@ impl NodeDirectory {
         let Some((advertisement, token)) = self.load_canonical(session).await? else {
             return Ok(None);
         };
-        self.validate(&advertisement, now_ms)?;
+        // This fresh canonical decode already verified both immutable signature
+        // sets. Apply current time/scope policy to those same bytes once.
+        advertisement.validate_at(now_ms)?;
+        self.validate_scope(&advertisement)?;
         Ok(Some(VersionedNodeAdvertisement {
             advertisement,
             token,
@@ -155,7 +174,8 @@ impl NodeDirectory {
         if advertisement.expires_at_ms <= now_ms {
             return Ok(None);
         }
-        self.validate(&advertisement, now_ms)?;
+        // load_canonical authenticated this exact read, including placement.
+        advertisement.validate_at(now_ms)?;
         Ok(Some(VersionedNodeAdvertisement {
             advertisement,
             token,
@@ -175,7 +195,7 @@ impl NodeDirectory {
             return Ok(None);
         };
         advertisement.validate_shape()?;
-        advertisement.verify_signature()?;
+        // load_canonical authenticated the exact immutable record, even expired.
         self.validate_scope(&advertisement)?;
         if advertisement.issued_at_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
             return Err(Error::Node("advertisement issue time is in the future"));
@@ -201,7 +221,9 @@ impl NodeDirectory {
     /// Reports whether an exact session has a permanent canonical tombstone.
     ///
     /// Missing or advertised sessions return false. This does not grant ownership
-    /// or permit reuse of the retired identity.
+    /// or permit reuse of the retired identity. A tombstone can retain a recovery
+    /// claim or unresolved node-log authority; this alone is not clean withdrawal
+    /// or fleet role-settlement evidence.
     pub async fn is_retired(&self, session: SessionId) -> Result<bool> {
         let path = self.layout.node_path(session.as_bytes());
         let Some((record, _)) = self.load_record_at(&path).await? else {
@@ -209,6 +231,20 @@ impl NodeDirectory {
         };
         validate_record_path(&self.layout, record.session(), &path)?;
         Ok(matches!(record, NodeRecord::Tombstone(_)))
+    }
+
+    /// Confirms an exact session's permanent withdrawal without retained log
+    /// authority or a recovery claimant. Missing or advertised sessions return
+    /// false. Callers still prove local shutdown and complete foreign roles;
+    /// this query cannot establish fleet maintenance completion by itself.
+    pub async fn is_withdrawn(&self, session: SessionId) -> Result<bool> {
+        let path = self.layout.node_path(session.as_bytes());
+        let Some((record, _)) = self.load_record_at(&path).await? else {
+            return Ok(false);
+        };
+        validate_record_path(&self.layout, record.session(), &path)?;
+        Ok(matches!(record, NodeRecord::Tombstone(current)
+            if current.claimant.is_none() && current.log.is_none()))
     }
 
     pub(super) fn validate(&self, advertisement: &NodeAdvertisement, now_ms: i64) -> Result<()> {
@@ -385,13 +421,14 @@ impl RecoveryCandidateWindow {
     }
 }
 
-pub(super) fn recovery_executor_eligible(advertisement: &NodeAdvertisement) -> bool {
+pub(super) fn recovery_executor_eligible(advertisement: &NodeAdvertisement, now_ms: i64) -> bool {
     let capacity = advertisement.capacity();
     let placement_has_headroom = advertisement.placement_capacity().is_none_or(|placement| {
         placement.active_cells < placement.max_active_cells
             && placement.running_jobs < placement.job_capacity
     });
-    capacity.log_protocol == NODE_LOG_PROTOCOL_VERSION
+    advertisement.accepts_new_roles(now_ms)
+        && capacity.log_protocol == NODE_LOG_PROTOCOL_VERSION
         && capacity.free_memory_bytes != 0
         && capacity.free_disk_bytes != 0
         && capacity.job_credits != 0

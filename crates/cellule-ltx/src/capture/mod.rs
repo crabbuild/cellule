@@ -117,8 +117,8 @@ pub(crate) struct CaptureEngine {
     ///
     /// A commit whose delta cannot fit this bound is captured as a full
     /// database image instead, which is bounded by the host's `max_file_bytes`.
-    /// The commit-time admission in `Db::transaction_with` normally refuses such
-    /// a commit before SQLite publishes it.
+    /// The managed database admits file growth and reserves the bounded image
+    /// before COMMIT; an oversized delta does not itself refuse the transaction.
     max_incremental_bytes: u64,
     #[cfg(feature = "replica")]
     sealed_l0_captured_indexes: HashMap<u64, Vec<u8>>,
@@ -160,6 +160,10 @@ impl CaptureEngine {
         conn.busy_timeout(Self::DEFAULT_BUSY_TIMEOUT)
             .map_err(LtxError::Sqlite)?;
         conn.pragma_update(None, "wal_autocheckpoint", 0)
+            .map_err(LtxError::Sqlite)?;
+        // Release obsolete physical WAL slack only after SQLite safely resets
+        // its generation; capture's read mark still protects uncaptured pages.
+        conn.pragma_update(None, "journal_size_limit", 0)
             .map_err(LtxError::Sqlite)?;
         conn.pragma_update(None, "synchronous", "FULL")
             .map_err(LtxError::Sqlite)?;

@@ -5,6 +5,7 @@ BlobNamespace
 BuildDescriptor
 CatalogRole
 CellClient
+CellPublicationProgress
 CellReadReplica
 CellId
 CellModule
@@ -33,6 +34,7 @@ NodeLeaseGuard
 Observed
 PendingMutation
 PreparedCommand
+PreparedCommandSnapshot
 QualificationExecution
 QualificationOperation
 QualificationOperationExecutor
@@ -43,6 +45,7 @@ Query
 QueueModule
 QueueNamespace
 Receipt
+ReadReplicaSource
 Registry
 RegistryBuilder
 Resolution

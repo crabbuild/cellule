@@ -4,6 +4,7 @@
 //! takeover proof into a running local handle, and refuses when the
 //! authority, capacity ledger, or node lease does not agree.
 
+use super::acquire_resume::TakeoverActivation;
 use super::*;
 
 impl CellRuntime {
@@ -13,6 +14,17 @@ impl CellRuntime {
     /// the peer transport remains responsible for resolving remote authority.
     pub(crate) async fn has_local_owner(&self, cell: CellId) -> crate::Result<bool> {
         self.ensure_running()?;
+        if self.inner.pool.active_cells() == 0 {
+            // Activation reserves a Cell before enqueueing it and holds that
+            // charge through worker teardown. Zero therefore proves a local
+            // miss without waking the dispatcher. A concurrent activation can
+            // change the destination hint; the peer still verifies ownership.
+            self.ensure_running()?;
+            if self.inner.sender.is_closed() {
+                return Err(Error::RuntimeClosed);
+            }
+            return Ok(false);
+        }
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
@@ -200,6 +212,11 @@ impl CellRuntime {
                     }
                 }
             };
+            // Keep the actual successful input before initialization can admit
+            // an actor. Rootless takeover has no acknowledged database prefix.
+            authority
+                .retain_acquisition(current.value(), claimed.value())
+                .await?;
             let incarnation = claimed.value().incarnation;
             let schema = claimed.value().schema;
             return self
@@ -249,6 +266,7 @@ impl CellRuntime {
             observed,
             destination,
             reservation,
+            None,
         )
         .await
     }
@@ -263,9 +281,32 @@ impl CellRuntime {
         destination: PathBuf,
         owner: Owner,
     ) -> crate::Result<CellHandle> {
+        self.acquire_idle_restored_observed(
+            catalog,
+            replica,
+            authority,
+            observed,
+            destination,
+            owner,
+            None,
+        )
+        .await
+    }
+
+    /// Acquires an Idle root with confirmed durable recording before CAS and
+    /// before actor admission. Uses the same canonical acquisition and rollback.
+    pub async fn acquire_idle_restored_observed(
+        &self,
+        catalog: CatalogProof,
+        replica: cellule_ltx::CellReplica,
+        authority: CellAuthority,
+        observed: VersionedControl,
+        destination: PathBuf,
+        owner: Owner,
+        observer: Option<Arc<dyn AcquisitionObserver>>,
+    ) -> crate::Result<CellHandle> {
         self.ensure_acquiring()?;
         self.check_application_limits(&catalog, replica.limits())?;
-        let rollback_node_lease = self.inner.node_lease.guard()?;
         self.claiming_cell(&catalog, &observed, &owner)?;
         if observed.value().state != crate::control::ControlState::Idle
             || observed.value().owner.is_some()
@@ -279,7 +320,53 @@ impl CellRuntime {
             .replica_with_directory_cache(replica, &destination)
             .await?;
         let reservation = self.inner.pool.reserve_activation()?;
+        self.acquire_idle_reserved(
+            catalog,
+            replica,
+            authority,
+            observed,
+            destination,
+            owner,
+            reservation,
+            None,
+            observer,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "canonical idle acquisition consumes its explicit prepaid resources"
+    )]
+    pub(super) async fn acquire_idle_reserved(
+        &self,
+        catalog: CatalogProof,
+        replica: cellule_ltx::CellReplica,
+        authority: CellAuthority,
+        observed: VersionedControl,
+        destination: PathBuf,
+        owner: Owner,
+        reservation: CellReservation,
+        job: Option<crate::cell::worker::WorkerJobReservation>,
+        observer: Option<Arc<dyn AcquisitionObserver>>,
+    ) -> crate::Result<CellHandle> {
+        self.ensure_acquiring()?;
+        self.check_application_limits(&catalog, replica.limits())?;
+        let rollback_node_lease = self.inner.node_lease.guard()?;
+        self.claiming_cell(&catalog, &observed, &owner)?;
+        if observed.value().state != crate::control::ControlState::Idle
+            || observed.value().owner.is_some()
+            || observed.value().root.is_none()
+        {
+            return Err(Error::Control(
+                "idle acquisition requires a published idle control",
+            ));
+        }
         let successor = observed.value().takeover(owner)?;
+        if let Some(observer) = &observer {
+            observer.before_claim(observed.value()).await?;
+        }
+        self.ensure_acquiring()?;
         let ownership_started = std::time::Instant::now();
         let claimed = match authority
             .transition(&observed, successor.clone(), Transition::Takeover)
@@ -304,17 +391,28 @@ impl CellRuntime {
         let rollback_authority = authority.clone();
         let rollback_claim = claimed.clone();
         let rollback_replica = replica.clone();
-        match self
-            .activate_restored_reserved(
+        let activation = async {
+            authority
+                .retain_acquisition(observed.value(), claimed.value())
+                .await?;
+            if let Some(observer) = &observer {
+                observer
+                    .before_activation(observed.value(), claimed.value())
+                    .await?;
+            }
+            self.activate_restored_reserved(
                 catalog,
                 replica,
                 authority,
                 claimed,
                 destination,
                 reservation,
+                job,
             )
             .await
-        {
+        }
+        .await;
+        match activation {
             Ok(handle) => Ok(handle),
             Err(error) => {
                 match rollback_failed_acquisition(
@@ -342,11 +440,44 @@ impl CellRuntime {
         catalog: CatalogProof,
         replica: cellule_ltx::CellReplica,
         authority: CellAuthority,
+        observed: VersionedControl,
+        takeover: crate::node::NodeTakeoverProof,
+        recovery_store: crate::recovery::manifest::RecoveryManifestStore,
+        destination: PathBuf,
+        owner: Owner,
+    ) -> crate::Result<CellHandle> {
+        self.takeover_restored_observed(
+            catalog,
+            replica,
+            authority,
+            observed,
+            takeover,
+            recovery_store,
+            destination,
+            owner,
+            None,
+        )
+        .await
+    }
+
+    /// Takes over a fenced predecessor with durable input and recovery-position
+    /// recording. Callback failure cannot admit an actor; post-CAS failure uses
+    /// the ordinary rollback path. A lost waiter must remain caller-owned.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the recorder supplements explicit recovery and authority inputs"
+    )]
+    pub async fn takeover_restored_observed(
+        &self,
+        catalog: CatalogProof,
+        replica: cellule_ltx::CellReplica,
+        authority: CellAuthority,
         mut observed: VersionedControl,
         takeover: crate::node::NodeTakeoverProof,
         recovery_store: crate::recovery::manifest::RecoveryManifestStore,
         destination: PathBuf,
         owner: Owner,
+        observer: Option<Arc<dyn AcquisitionObserver>>,
     ) -> crate::Result<CellHandle> {
         self.ensure_acquiring()?;
         self.check_application_limits(&catalog, replica.limits())?;
@@ -355,8 +486,6 @@ impl CellRuntime {
             .replica_with_directory_cache(replica, &destination)
             .await?;
         let rollback_node_lease = self.inner.node_lease.guard()?;
-        let rollback_authority = authority.clone();
-        let rollback_replica = replica.clone();
         let cell = self.claiming_cell(&catalog, &observed, &owner)?;
         if owner.session != takeover.claimant() {
             return Err(Error::Fenced);
@@ -386,6 +515,10 @@ impl CellRuntime {
             }
             let reservation = self.inner.pool.reserve_activation()?;
             let successor = current.value().takeover(owner.clone())?;
+            if let Some(observer) = &observer {
+                observer.before_claim(current.value()).await?;
+            }
+            self.ensure_acquiring()?;
             let claimed = match authority
                 .transition(&current, successor.clone(), Transition::Takeover)
                 .await
@@ -406,57 +539,24 @@ impl CellRuntime {
                     }
                 }
             };
-            let recovery_rollback_claim = claimed.clone();
-            let claimed = match self
-                .publish_attached_recovery(&replica, &authority, claimed, &recovery_store)
-                .await
-            {
-                Ok(claimed) => claimed,
-                Err(error) => {
-                    match rollback_failed_acquisition(
-                        &rollback_authority,
-                        &recovery_rollback_claim,
-                        &rollback_replica,
-                        rollback_node_lease.clone(),
-                    )
-                    .await
-                    {
-                        Ok(()) => return Err(error),
-                        Err(cleanup) => return Err(cleanup),
-                    }
-                }
-            };
-            let rollback_claim = claimed.clone();
-            return match self
-                .activate_restored_reserved(
+            return self
+                .finish_takeover_restored(TakeoverActivation {
                     catalog,
                     replica,
                     authority,
+                    input: current.value().clone(),
                     claimed,
+                    recovery_store,
                     destination,
                     reservation,
-                )
-                .await
-            {
-                Ok(handle) => Ok(handle),
-                Err(error) => {
-                    match rollback_failed_acquisition(
-                        &rollback_authority,
-                        &rollback_claim,
-                        &rollback_replica,
-                        rollback_node_lease,
-                    )
-                    .await
-                    {
-                        Ok(()) => Err(error),
-                        Err(cleanup) => Err(cleanup),
-                    }
-                }
-            };
+                    node_lease: rollback_node_lease,
+                    observer,
+                })
+                .await;
         }
     }
 
-    async fn publish_attached_recovery(
+    pub(super) async fn publish_attached_recovery(
         &self,
         replica: &cellule_ltx::CellReplica,
         authority: &CellAuthority,
@@ -480,6 +580,7 @@ impl CellRuntime {
         let successor = observed
             .value()
             .publish_recovery(&prepared, observed.value().next_due_ms)?;
+        authority.retain_root_lineage(&prepared).await?;
         match authority
             .transition(&observed, successor.clone(), Transition::PublishRecovery)
             .await
@@ -499,7 +600,7 @@ impl CellRuntime {
         }
     }
 
-    async fn activate_restored_reserved(
+    pub(super) async fn activate_restored_reserved(
         &self,
         catalog: CatalogProof,
         replica: cellule_ltx::CellReplica,
@@ -507,7 +608,9 @@ impl CellRuntime {
         observed: VersionedControl,
         destination: PathBuf,
         reservation: CellReservation,
+        job: Option<crate::cell::worker::WorkerJobReservation>,
     ) -> crate::Result<CellHandle> {
+        self.ensure_acquiring()?;
         // Acquisition installed one cache owner before recovery. Keep that
         // replica through root verification, SQLite and publisher activation.
         let cell = self.activation_cell(&catalog, &observed)?;
@@ -545,6 +648,7 @@ impl CellRuntime {
                     .await?
             }
         };
+        self.ensure_acquiring()?;
         let current = authority.load(cell).await?.ok_or(Error::Fenced)?;
         if !current.value().is_same_or_pure_renewal_of(observed.value()) {
             return Err(Error::Fenced);
@@ -560,6 +664,7 @@ impl CellRuntime {
                     schema,
                     root,
                     reservation,
+                    job,
                 })),
                 replica,
                 authority,
@@ -627,7 +732,7 @@ impl CellRuntime {
         Ok(cell)
     }
 
-    fn check_application_limits(
+    pub(super) fn check_application_limits(
         &self,
         catalog: &CatalogProof,
         limits: cellule_ltx::Limits,
@@ -649,7 +754,7 @@ impl CellRuntime {
         Ok(())
     }
 
-    fn activation_cell(
+    pub(super) fn activation_cell(
         &self,
         catalog: &CatalogProof,
         observed: &VersionedControl,
@@ -676,12 +781,9 @@ impl CellRuntime {
         self.inner.node_lease.check()
     }
 
-    fn ensure_acquiring(&self) -> crate::Result<()> {
+    pub(super) fn ensure_acquiring(&self) -> crate::Result<()> {
         self.ensure_running()?;
-        if !self.inner.accepting_cells.load(Ordering::Acquire) {
-            return Err(Error::CellDraining);
-        }
-        Ok(())
+        self.inner.node_admission.check_new_role()
     }
 
     async fn activate_inner(
@@ -733,18 +835,23 @@ impl CellRuntime {
         })
     }
 
-    async fn replica_with_directory_cache(
+    pub(super) async fn replica_with_directory_cache(
         &self,
         replica: cellule_ltx::CellReplica,
+        destination: &Path,
+    ) -> crate::Result<cellule_ltx::CellReplica> {
+        Self::replica_with_host_cache(replica, self.inner.replica_host.clone(), destination).await
+    }
+
+    pub(super) async fn replica_with_host_cache(
+        replica: cellule_ltx::CellReplica,
+        host: cellule_ltx::Host,
         destination: &Path,
     ) -> crate::Result<cellule_ltx::CellReplica> {
         let scratch_directory = destination
             .parent()
             .ok_or(Error::Control("Cell activation destination has no parent"))?;
-        let host = self
-            .inner
-            .replica_host
-            .clone()
+        let host = host
             .with_directory_cache(scratch_directory.join(".cellule-directory-cache"))
             .await?;
         Ok(replica.with_host(host))

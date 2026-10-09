@@ -3,12 +3,13 @@ name = "cellule-ltx-perf-celld"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "cellule-ltx-perf-celld"
 
 [workspace]
 resolver = "2"
 
 [dependencies]
-celld-ltx = { git = "https://github.com/denoland/celld.git", rev = "10cb1303dac710dcb3b557e318e08c855261f68b", default-features = false }
+celld-ltx = { git = "https://github.com/denoland/celld.git", rev = "10cb1303dac710dcb3b557e318e08c855261f68b", default-features = false, features = ["s3"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

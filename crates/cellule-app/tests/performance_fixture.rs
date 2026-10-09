@@ -208,7 +208,7 @@ impl<T> Trace<T> {
 }
 
 impl<T: Clone> Trace<T> {
-    fn snapshot(&self) -> Vec<T> {
+    pub(super) fn snapshot(&self) -> Vec<T> {
         self.inner.lock().unwrap().samples.clone()
     }
 }
@@ -507,7 +507,9 @@ impl CellTelemetry for DurabilityRecorder {
         self.follower_appends.push((now_ms(), acknowledged, bytes));
     }
 
-    fn follower_append(&self, leader: SessionId, epoch: u64, timing: FollowerAppendTiming) {
+    fn follower_append(&self, timing: FollowerAppendTiming) {
+        let leader = timing.leader.unwrap();
+        let epoch = timing.epoch;
         self.follower_store.push((now_ms(), leader, epoch, timing));
     }
 
@@ -805,11 +807,44 @@ impl PerfFixture {
                 Ok(()) => {}
                 // The simulated lost owner closes locally but cannot release
                 // authority after its lease is fenced.
-                Err(Error::Fenced) if self.leases[index].check().is_err() => {}
+                Err(error)
+                    if self.leases[index].check().is_err() && fenced_runtime_drain(&error) =>
+                {
+                    let stats = node.stats();
+                    assert_eq!(stats.active_cells(), 0);
+                    assert_eq!(stats.resident_bytes(), 0);
+                    assert_eq!(stats.retained_bytes(), 0);
+                    assert_eq!(stats.worker_jobs(), 0);
+                    assert_eq!(stats.file_descriptors(), 0);
+                    assert_eq!(stats.local_disk_reserved_bytes(), 0);
+                }
                 Err(error) => panic!("CellNode shutdown failed: {error}"),
             }
         }
     }
+}
+
+fn fenced_runtime_drain(error: &Error) -> bool {
+    if matches!(error, Error::Fenced) {
+        return true;
+    }
+    if !matches!(
+        error,
+        Error::Facility {
+            name: "cell-runtime-drain",
+            ..
+        }
+    ) {
+        return false;
+    }
+    // Retained shutdown errors wrap the original runtime failure so repeated
+    // callers can inspect it. Only the exact terminal fencing error is expected
+    // after simulated owner loss; unrelated facility failures must still fail.
+    let mut cause: &(dyn std::error::Error + 'static) = error;
+    while let Some(source) = cause.source() {
+        cause = source;
+    }
+    matches!(cause.downcast_ref::<Error>(), Some(Error::Fenced))
 }
 
 pub(super) fn node_session(node: usize) -> cellule_runtime::SessionId {

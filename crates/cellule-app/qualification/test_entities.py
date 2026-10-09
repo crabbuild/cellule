@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from entities import destination, verify_capacity_windows, verify_follower_proof, verify_object_operations, verify_root_coverage, verify_timing_evidence, verify_trace_counts, verify_window, verify_submission_timings, verify_control_transitions, SUBMISSION_PHASES
+from entities import destination, verify_capacity_windows, verify_follower_proof, verify_follower_roots, verify_object_operations, verify_root_barrier, verify_root_coverage, verify_timing_evidence, verify_window, verify_trace_counts, verify_submission_timings, verify_control_transitions, SUBMISSION_PHASES
 
 
 class EntityWindowEvidence(unittest.TestCase):
@@ -298,6 +298,250 @@ class CapacityScheduleEvidence(unittest.TestCase):
         with patch("entities.verify_window", return_value=dict(fully_served_arrivals=False)):
             with self.assertRaisesRegex(AssertionError, "mislabeled fully served rate"):
                 verify_capacity_windows(self.root, {})
+
+
+class RootBarrierEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.control = Path(temporary.name)
+        self.path = self.control / "capacity-root-barrier-3.tsv"
+        self.metadata = dict(nodes="3", cells="12", limit_us="2000000", elapsed_us="10000",
+                             reads="24", started_boot_ms="110000", ended_boot_ms="110010", clock_read_us="0")
+        self.roots = [dict(entity=str(entity), minimum_sequence="5") for entity in range(12)]
+        self.positions = {entity: [2, 3, 5] for entity in range(12)}
+        self.windows = [dict(nodes=3, ended_boot_ms=110000)]
+
+    def verify(self):
+        self.path.write_text("\t".join(self.metadata) + "\n" + "\t".join(self.metadata.values()) + "\n")
+        return verify_root_barrier(self.control, "capacity", 3, self.roots, self.positions, self.windows)
+
+    def test_complete_original_roster_and_budget_are_required(self):
+        self.assertEqual(self.verify()["reads"], 24)
+
+    def test_missing_barrier_is_rejected(self):
+        with self.assertRaises(FileNotFoundError):
+            verify_root_barrier(self.control, "capacity", 3, self.roots, self.positions, self.windows)
+
+    def test_late_and_extended_barriers_are_rejected(self):
+        for field, value, message in [("elapsed_us", "2000000", "exceeded original budget"),
+                                      ("elapsed_us", "2000001", "exceeded original budget"),
+                                      ("elapsed_us", "-1", "exceeded original budget"),
+                                      ("limit_us", "2000001", "budget changed")]:
+            with self.subTest(field=field, value=value):
+                original = self.metadata[field]
+                self.metadata[field] = value
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.metadata[field] = original
+
+    def test_incomplete_roster_and_read_passes_are_rejected(self):
+        for field, value, message in [("cells", "11", "roster changed"),
+                                      ("nodes", "2", "roster changed"),
+                                      ("reads", "11", "complete roster"),
+                                      ("reads", "13", "complete roster")]:
+            with self.subTest(field=field, value=value):
+                original = self.metadata[field]
+                self.metadata[field] = value
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.metadata[field] = original
+
+    def test_barrier_cannot_precede_client_work_or_forge_elapsed_time(self):
+        for field, value, message in [("started_boot_ms", "109999", "preceded accepted"),
+                                      ("ended_boot_ms", "109999", "preceded accepted"),
+                                      ("elapsed_us", "21001", "clocks disagree")]:
+            with self.subTest(field=field, value=value):
+                original = self.metadata[field]
+                self.metadata[field] = value
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.metadata[field] = original
+
+    def test_each_minimum_is_derived_from_all_independent_acknowledgements(self):
+        for minimum in ("3", "6"):
+            self.roots[-1]["minimum_sequence"] = minimum
+            with self.assertRaisesRegex(AssertionError, "omitted an acknowledged sequence"):
+                self.verify()
+
+    def test_clock_read_duration_is_measured_inside_the_original_budget(self):
+        for duration in ("-1", "10001"):
+            self.metadata["clock_read_us"] = duration
+            with self.assertRaisesRegex(AssertionError, "clock-read duration"):
+                self.verify()
+        self.metadata.update(clock_read_us="100", elapsed_us="20100")
+        self.assertEqual(self.verify()["clock_read_us"], 100)
+
+
+class FollowerRootDrainEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.identity = {0: ("cell", "0", "1", "incarnation")}
+        self.positions = {0: [1, 2]}
+        self.before = [dict(entity="0", cell="cell", owner="0", epoch="1",
+                            incarnation="incarnation", root_sequence="1", root_digest="Digest(" + "a" * 64 + ")",
+                            root_txid="1", root_checksum="101", restored_digest="Digest(" + "c" * 64 + ")")]
+        self.final = dict(entity="0", cell="cell", owner="0", epoch="1",
+                          incarnation="incarnation", root_sequence="2", root_digest="Digest(" + "b" * 64 + ")",
+                          root_txid="2", root_checksum="202", restored_digest="Digest(" + "d" * 64 + ")",
+                          state="Idle", owner_present="false", restored_sequence="2", restored_count="2")
+        (self.root / "stop").touch()
+        (self.root / "node-0.done").touch()
+        self.write_final()
+
+    def write_final(self):
+        with (self.root / "capacity-final-roots.tsv").open("w", newline="") as target:
+            writer = csv.DictWriter(target, fieldnames=self.final, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(self.final)
+
+    def verify(self):
+        return verify_follower_roots(self.root, self.before, self.positions, self.identity, 1)
+
+    def test_follower_acknowledgements_are_covered_after_shutdown_drain(self):
+        result = self.verify()
+        self.assertEqual(result["verified_cells"], 1)
+        self.assertEqual(result["pre_drain_root_lag_commits_by_entity"], {0: 1})
+
+    def test_compacted_manifest_at_same_endpoint_requires_identical_restored_bytes(self):
+        self.before[0].update(root_sequence="2", root_txid="2", root_checksum="202",
+                              restored_digest=self.final["restored_digest"])
+        result = self.verify()
+        self.assertEqual(result["verified_cells"], 1)
+
+    def test_publication_logs_cannot_replace_fresh_authority_roots(self):
+        (self.root / "capacity-final-roots.tsv").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.verify()
+
+    def test_missing_shutdown_or_owner_drain_is_rejected(self):
+        for name, message in [("stop", "missing shutdown request"),
+                              ("node-0.done", "missing completed owner drain")]:
+            with self.subTest(name=name):
+                (self.root / name).unlink()
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                (self.root / name).touch()
+
+    def test_final_root_still_requires_every_acknowledged_sequence(self):
+        self.final.update(root_sequence="1", restored_sequence="1", restored_count="1")
+        self.write_final()
+        with self.assertRaisesRegex(AssertionError, "published root does not cover writes"):
+            self.verify()
+
+    def test_changed_cell_owner_epoch_or_incarnation_is_rejected(self):
+        for field in ("cell", "owner", "epoch", "incarnation"):
+            for row in (self.before[0], self.final):
+                with self.subTest(field=field, final=row is self.final):
+                    original = row[field]
+                    row[field] = "different"
+                    self.write_final()
+                    with self.assertRaises(AssertionError):
+                        self.verify()
+                    row[field] = original
+                    self.write_final()
+
+    def test_serving_owner_or_incomplete_restore_is_rejected(self):
+        for field, value, message in [
+            ("state", "Serving", "still has an owner"),
+            ("owner_present", "true", "still has an owner"),
+            ("restored_sequence", "1", "restored metadata disagrees"),
+            ("restored_count", "1", "lost or duplicated write"),
+            ("restored_count", "3", "lost or duplicated write"),
+        ]:
+            with self.subTest(field=field, value=value):
+                original = self.final[field]
+                self.final[field] = value
+                self.write_final()
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+                self.final[field] = original
+                self.write_final()
+
+    def test_root_regression_or_changed_bytes_at_same_sequence_is_rejected(self):
+        self.before[0]["root_sequence"] = "3"
+        with self.assertRaisesRegex(AssertionError, "drained root regressed"):
+            self.verify()
+        self.before[0].update(root_sequence="2", root_txid="2", root_checksum="202")
+        with self.assertRaisesRegex(AssertionError, "same sequence changed restored database"):
+            self.verify()
+
+    def test_same_sequence_cannot_change_transaction_or_checksum(self):
+        self.before[0].update(root_sequence="2", root_txid="2", root_checksum="202",
+                              restored_digest=self.final["restored_digest"])
+        for field, value in (("root_txid", "3"), ("root_checksum", "203")):
+            with self.subTest(field=field):
+                original = self.final[field]
+                self.final[field] = value
+                self.write_final()
+                with self.assertRaisesRegex(AssertionError, "same sequence changed root position"):
+                    self.verify()
+                self.final[field] = original
+                self.write_final()
+
+    def test_root_transaction_cannot_regress_or_remain_at_an_advanced_sequence(self):
+        for value, message in (("0", "invalid root position"),
+                               ("1", "advanced sequence did not advance transaction")):
+            with self.subTest(value=value):
+                self.final["root_txid"] = value
+                self.write_final()
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.verify()
+        self.before[0]["root_txid"] = "3"
+        self.final["root_txid"] = "2"
+        self.write_final()
+        with self.assertRaisesRegex(AssertionError, "drained root transaction regressed"):
+            self.verify()
+
+    def test_positions_and_restored_digests_are_required_in_both_snapshots(self):
+        for field in ("root_txid", "root_checksum", "restored_digest"):
+            for row in (self.before[0], self.final):
+                with self.subTest(field=field, final=row is self.final):
+                    original = row.pop(field)
+                    self.write_final()
+                    with self.assertRaises(KeyError):
+                        self.verify()
+                    row[field] = original
+                    self.write_final()
+
+    def test_invalid_positions_or_restored_digests_are_rejected(self):
+        for field, value, message in (("root_txid", "-1", "invalid root position"),
+                                      ("root_txid", str(2**64), "invalid root position"),
+                                      ("root_checksum", "-1", "invalid root position"),
+                                      ("root_checksum", str(2**64), "invalid root position"),
+                                      ("restored_digest", "Digest(" + "g" * 64 + ")", "invalid restored database digest")):
+            for row in (self.before[0], self.final):
+                with self.subTest(field=field, value=value, final=row is self.final):
+                    original = row[field]
+                    row[field] = value
+                    self.write_final()
+                    with self.assertRaisesRegex(AssertionError, message):
+                        self.verify()
+                    row[field] = original
+                    self.write_final()
+
+    def test_missing_or_duplicate_final_cell_is_rejected(self):
+        path = self.root / "capacity-final-roots.tsv"
+        lines = path.read_text().splitlines()
+        for content in (lines[:1], lines + [lines[-1]]):
+            with self.subTest(content=content):
+                path.write_text("\n".join(content) + "\n")
+                with self.assertRaises(AssertionError):
+                    self.verify()
+
+    def test_malformed_digest_is_rejected_in_both_snapshots(self):
+        for value in ("a" * 64, "Digest(" + "a" * 63 + ")", "Digest(" + "g" * 64 + ")"):
+            for row in (self.before[0], self.final):
+                with self.subTest(value=value, final=row is self.final):
+                    original = row["root_digest"]
+                    row["root_digest"] = value
+                    self.write_final()
+                    with self.assertRaisesRegex(AssertionError, "invalid root digest"):
+                        self.verify()
+                    row["root_digest"] = original
+                    self.write_final()
 
 
 class ObjectOperationEvidence(unittest.TestCase):

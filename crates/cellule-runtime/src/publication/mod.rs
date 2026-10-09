@@ -10,6 +10,8 @@ use crate::node::log_shipper::NodeLogSubmission;
 use crate::retry::{Backoff, retry_hint, retryable_storage_error};
 use crate::{Error, Result};
 
+mod lineage;
+
 const COMPACTION_CHECK_INTERVAL: u8 = 8;
 const COMPACTION_DEBT_SEGMENTS: usize = 32;
 const MAX_COMPACTION_CASCADE: usize = 9;
@@ -46,6 +48,21 @@ pub struct CellPublisher {
     node_lease: Option<crate::NodeLeaseGuard>,
     node_durability: Option<NodeDurabilitySlot>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
+    lineage_confirmed: Option<cellule_ltx::RootPreparation>,
+}
+
+enum AppendBase {
+    Published(Option<cellule_ltx::RootRef>),
+    Compacted(Box<cellule_ltx::PreparedRoot>),
+}
+
+impl AppendBase {
+    fn published(&self) -> Option<cellule_ltx::RootRef> {
+        match self {
+            Self::Published(root) => *root,
+            Self::Compacted(prepared) => prepared.predecessor(),
+        }
+    }
 }
 
 impl CellPublisher {
@@ -70,6 +87,7 @@ impl CellPublisher {
             node_lease: None,
             node_durability: None,
             telemetry: crate::fleet::telemetry::CellTelemetryHandle::default(),
+            lineage_confirmed: None,
         }
     }
 
@@ -128,6 +146,10 @@ impl CellPublisher {
         &self.observed
     }
 
+    pub(crate) fn resource_limits(&self) -> cellule_ltx::Limits {
+        self.replica.limits()
+    }
+
     /// Returns the Cell storage layout this publisher writes through.
     #[must_use]
     pub(crate) fn layout(&self) -> &cellule_ltx::CellStorageLayout {
@@ -135,7 +157,7 @@ impl CellPublisher {
     }
 
     pub(crate) fn renewal_due(&self, now: std::time::Instant) -> bool {
-        now >= self.renew_at
+        self.node_lease.is_none() && now >= self.renew_at
     }
 
     pub(crate) fn renewal_at(&self) -> std::time::Instant {
@@ -147,15 +169,32 @@ impl CellPublisher {
             && self.appends_since_compaction_check >= COMPACTION_CHECK_INTERVAL
     }
 
+    pub(crate) fn compaction_admission(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, Result<Option<cellule_ltx::CellReplica>>> {
+        let lease = self.check_node_lease();
+        let replica = self.replica.clone();
+        Box::pin(async move {
+            lease?;
+            match replica.admit_scheduled_compaction().await {
+                Ok(admitted) => Ok(Some(admitted)),
+                Err(error) if retryable_ltx_error(&error) => Ok(None),
+                Err(error) => Err(error.into()),
+            }
+        })
+    }
+
     /// Runs at most one promotion while the actor owns the publisher token.
     /// Retryable preparation failures leave the debt for a later quiet period.
-    pub(crate) async fn compact_one_quiet(&mut self) -> Result<Option<bool>> {
+    pub(crate) async fn compact_one_quiet(
+        &mut self,
+        replica: cellule_ltx::CellReplica,
+    ) -> Result<Option<bool>> {
         self.check_node_lease()?;
         let Some(base) = self.observed.value().ltx_root() else {
             self.appends_since_compaction_check = 0;
             return Ok(Some(false));
         };
-        let replica = self.replica.clone();
         let scratch_directory = self.scratch_directory.clone();
         let attempt = replica.prepare_scheduled_compaction(&base, &scratch_directory);
         tokio::pin!(attempt);
@@ -183,9 +222,16 @@ impl CellPublisher {
         Ok(Some(true))
     }
 
-    /// Advances owner progress or fences when the renewal cannot be proven in time.
+    /// Checks the node lease, or advances unleased owner progress within its deadline.
     pub(crate) async fn renew(&mut self) -> Result<()> {
         self.check_node_lease()?;
+        if self.node_lease.is_some() {
+            // Takeover of a leased owner requires expiry of its exact node
+            // session, not a quiet Cell's progress. Long preparation still
+            // checks that shared lease at this cadence without a Cell CAS.
+            self.renew_at = std::time::Instant::now() + RENEW_INTERVAL;
+            return Ok(());
+        }
         let deadline = std::time::Instant::now() + SELF_FENCE_TIMEOUT;
         let deadline_at = tokio::time::Instant::from_std(deadline);
         let mut backoff = Backoff::default();
@@ -286,6 +332,39 @@ impl CellPublisher {
         }
     }
 
+    pub(crate) async fn admit_publication(&mut self) -> Result<cellule_ltx::CellReplica> {
+        self.check_node_lease()?;
+        let replica = self.replica.clone();
+        let admission = replica.admit_root_preparation();
+        tokio::pin!(admission);
+        loop {
+            tokio::select! {
+                result = &mut admission => return result.map_err(Into::into),
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                    self.renew().await?;
+                }
+            }
+        }
+    }
+
+    pub(crate) async fn prepare_admitted_batch(
+        &mut self,
+        replica: cellule_ltx::CellReplica,
+        cuts: &cellule_ltx::CaptureBatch,
+        commit_sequence: u64,
+    ) -> Result<cellule_ltx::PreparedRoot> {
+        let result = self
+            .prepare_append(
+                cuts,
+                commit_sequence,
+                self.observed.value().schema,
+                Some(replica),
+            )
+            .await;
+        self.record_publication_cost();
+        result
+    }
+
     pub(crate) async fn prepare(
         &mut self,
         pending: &crate::cell::executor::PendingCommit,
@@ -295,6 +374,7 @@ impl CellPublisher {
                 pending.cuts(),
                 pending.outcome().commit_sequence(),
                 self.observed.value().schema,
+                None,
             )
             .await;
         self.record_publication_cost();
@@ -311,7 +391,7 @@ impl CellPublisher {
         commit_sequence: u64,
     ) -> Result<cellule_ltx::PreparedRoot> {
         let result = self
-            .prepare_append(cuts, commit_sequence, self.observed.value().schema)
+            .prepare_append(cuts, commit_sequence, self.observed.value().schema, None)
             .await;
         self.record_publication_cost();
         result
@@ -325,7 +405,13 @@ impl CellPublisher {
             return Err(Error::Control("bootstrap control already has a root"));
         }
         let result = self
-            .prepare_cuts(None, cuts, 0, self.observed.value().schema)
+            .prepare_cuts(
+                &AppendBase::Published(None),
+                cuts,
+                0,
+                self.observed.value().schema,
+                None,
+            )
             .await;
         self.record_publication_cost();
         let prepared = result?;
@@ -346,6 +432,7 @@ impl CellPublisher {
                 pending.cuts(),
                 pending.commit_sequence(),
                 pending.to_schema(),
+                None,
             )
             .await;
         self.record_publication_cost();
@@ -369,25 +456,55 @@ impl CellPublisher {
         cuts: &cellule_ltx::CaptureBatch,
         commit_sequence: u64,
         schema: u32,
+        mut admitted: Option<cellule_ltx::CellReplica>,
     ) -> Result<cellule_ltx::PreparedRoot> {
+        if let Some(root) = self.compaction_pressure(cuts.segments.len()).await? {
+            // Selected coverage can require recovery too. Do not hold half a new
+            // cohort while canonical paired admission negotiates both permits.
+            drop(admitted.take());
+            match self
+                .prepare_compaction_append(&root, cuts, commit_sequence, schema)
+                .await
+            {
+                Ok(Some(prepared)) => {
+                    self.appends_since_compaction_check = 0;
+                    self.note_append(&prepared);
+                    return Ok(prepared);
+                }
+                Ok(None) => {}
+                // Preserve the established cascade/full-compaction fallback
+                // when the combined prospective representation cannot fit.
+                Err(Error::Ltx(error)) if error.is_cell_graph_limit() => {}
+                Err(error) => return Err(error),
+            }
+        }
         let base = self.compact_before_append(cuts.segments.len()).await?;
         let prepared = match self
-            .prepare_cuts(base.as_ref(), cuts, commit_sequence, schema)
+            .prepare_cuts(&base, cuts, commit_sequence, schema, admitted.take())
             .await
         {
             Ok(prepared) => prepared,
             Err(Error::Ltx(error)) if error.is_cell_graph_limit() => {
-                let Some(root) = base else {
+                let Some(root) = base.published() else {
                     return Err(error.into());
                 };
                 let Some(compacted) = self.force_full_compaction(&root).await? else {
                     return Err(error.into());
                 };
-                self.prepare_cuts(Some(&compacted), cuts, commit_sequence, schema)
-                    .await?
+                self.prepare_cuts(
+                    &AppendBase::Published(Some(compacted)),
+                    cuts,
+                    commit_sequence,
+                    schema,
+                    None,
+                )
+                .await?
             }
             Err(error) => return Err(error),
         };
+        if matches!(base, AppendBase::Compacted(_)) {
+            self.appends_since_compaction_check = 0;
+        }
         self.note_append(&prepared);
         Ok(prepared)
     }
@@ -402,11 +519,11 @@ impl CellPublisher {
         );
     }
 
-    async fn compact_before_append(
+    async fn compaction_pressure(
         &mut self,
         incoming_segments: usize,
     ) -> Result<Option<cellule_ltx::RootRef>> {
-        let Some(mut base) = self.observed.value().ltx_root() else {
+        let Some(base) = self.observed.value().ltx_root() else {
             return Ok(None);
         };
         let segment_count = match self.segment_count {
@@ -417,18 +534,76 @@ impl CellPublisher {
                 count
             }
         };
-        let segment_limit = self.replica.limits().max_segments.min(4_096);
-        let projected = segment_count.saturating_add(incoming_segments);
-        let debt_limit = COMPACTION_DEBT_SEGMENTS.min(segment_limit);
-        let under_pressure = projected >= debt_limit;
-        if !under_pressure {
-            return Ok(Some(base));
+        let debt_limit =
+            COMPACTION_DEBT_SEGMENTS.min(self.replica.limits().max_segments.min(4_096));
+        if segment_count.saturating_add(incoming_segments) < debt_limit {
+            return Ok(None);
         }
         tracing::debug!(
             segments = segment_count,
             incoming_segments,
             "Cell LTX compaction pressure"
         );
+        Ok(Some(base))
+    }
+
+    async fn prepare_compaction_append(
+        &mut self,
+        base: &cellule_ltx::RootRef,
+        cuts: &cellule_ltx::CaptureBatch,
+        commit_sequence: u64,
+        schema: u32,
+    ) -> Result<Option<cellule_ltx::PreparedRoot>> {
+        let mut backoff = Backoff::default();
+        let ceiling = COMPACTION_DEBT_SEGMENTS.min(self.replica.limits().max_segments.min(4_096));
+        loop {
+            self.check_node_lease()?;
+            let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
+            let scratch_directory = self.scratch_directory.clone();
+            let attempt = replica.prepare_scheduled_compaction_append(
+                base,
+                cuts,
+                commit_sequence,
+                schema,
+                ceiling,
+                &scratch_directory,
+            );
+            tokio::pin!(attempt);
+            let result = loop {
+                tokio::select! {
+                    result = &mut attempt => break result,
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                        self.renew().await?;
+                    }
+                }
+            };
+            self.record_publication_cost();
+            match result {
+                Ok(Some(prepared)) => {
+                    self.lineage_confirmed = *confirmation
+                        .lock()
+                        .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+                    return Ok(Some(prepared));
+                }
+                Ok(None) => return Ok(None),
+                Err(source) => {
+                    let error = lineage::error(source);
+                    if retryable_publication_error(&error) {
+                        backoff.wait(runtime_retry_hint(&error)).await;
+                    } else {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+    }
+
+    async fn compact_before_append(&mut self, incoming_segments: usize) -> Result<AppendBase> {
+        let Some(mut base) = self.compaction_pressure(incoming_segments).await? else {
+            return Ok(AppendBase::Published(self.observed.value().ltx_root()));
+        };
+        let debt_limit =
+            COMPACTION_DEBT_SEGMENTS.min(self.replica.limits().max_segments.min(4_096));
 
         for _ in 0..MAX_COMPACTION_CASCADE {
             let Some(prepared) = self.prepare_scheduled_compaction(&base).await? else {
@@ -439,16 +614,18 @@ impl CellPublisher {
                     base = compacted;
                 }
                 self.appends_since_compaction_check = 0;
-                return Ok(Some(base));
+                return Ok(AppendBase::Published(Some(base)));
             };
+            let compacted_segments = prepared.verified().segment_count();
+            if compacted_segments.saturating_add(incoming_segments) < debt_limit {
+                // Keep the unchanged-state proposal private. Its append can
+                // replace the original authority root with one fenced CAS.
+                // Cascades that still exceed the bound publish as before.
+                return Ok(AppendBase::Compacted(Box::new(prepared)));
+            }
             let next_due_ms = self.observed.value().next_due_ms;
             base = self.publish_prepared(&prepared, next_due_ms).await?;
-            let compacted_segments = prepared.verified().segment_count();
             self.segment_count = Some(compacted_segments);
-            if compacted_segments.saturating_add(incoming_segments) < debt_limit {
-                self.appends_since_compaction_check = 0;
-                return Ok(Some(base));
-            }
         }
         Err(Error::Control(
             "Cell compaction cascade exceeded level limit",
@@ -526,30 +703,62 @@ impl CellPublisher {
 
     async fn prepare_cuts(
         &mut self,
-        base: Option<&cellule_ltx::RootRef>,
+        base: &AppendBase,
         cuts: &cellule_ltx::CaptureBatch,
         commit_sequence: u64,
         schema: u32,
+        mut admitted: Option<cellule_ltx::CellReplica>,
     ) -> Result<cellule_ltx::PreparedRoot> {
         let mut backoff = Backoff::default();
         loop {
-            let replica = self.replica.clone();
-            let attempt = replica.prepare(base, cuts, commit_sequence, schema);
-            tokio::pin!(attempt);
-            let result = loop {
-                tokio::select! {
-                    result = &mut attempt => break result,
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
-                        self.renew().await?;
+            let (replica, confirmation) = lineage::replica(
+                admitted.take().unwrap_or_else(|| self.replica.clone()),
+                &self.authority,
+            );
+            let result = {
+                let attempt = async {
+                    match base {
+                        AppendBase::Published(root) => {
+                            replica
+                                .prepare(root.as_ref(), cuts, commit_sequence, schema)
+                                .await
+                        }
+                        AppendBase::Compacted(prepared) => {
+                            replica
+                                .prepare_after_compaction(prepared, cuts, commit_sequence, schema)
+                                .await
+                        }
+                    }
+                };
+                tokio::pin!(attempt);
+                loop {
+                    tokio::select! {
+                        result = &mut attempt => break result,
+                        _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                            self.renew().await?;
+                        }
                     }
                 }
             };
+            // Only this native attempt owns the preselected dirty scope. Release
+            // it before authority CAS, provider backoff or recovery fallback;
+            // dispatched native jobs retain their own clones until completion.
+            drop(replica);
             match result {
-                Ok(prepared) => return Ok(prepared),
-                Err(error) if retryable_ltx_error(&error) => {
-                    backoff.wait(ltx_retry_hint(&error)).await;
+                Ok(prepared) => {
+                    self.lineage_confirmed = *confirmation
+                        .lock()
+                        .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+                    return Ok(prepared);
                 }
-                Err(error) => return Err(error.into()),
+                Err(source) => {
+                    let error = lineage::error(source);
+                    if retryable_publication_error(&error) {
+                        backoff.wait(runtime_retry_hint(&error)).await;
+                    } else {
+                        return Err(error);
+                    }
+                }
             }
         }
     }
@@ -598,11 +807,22 @@ impl CellPublisher {
                     Transition::Publish,
                 ),
             };
-            match self
-                .authority
-                .transition(&self.observed, successor.clone(), transition)
-                .await
-            {
+            // Retain verified preparation inputs before the authority can
+            // select this root. A failed CAS leaves only a private proposal;
+            // the same retry/adoption owner handles metadata ambiguity.
+            let publication = async {
+                if self.lineage_confirmed != Some(prepared.preparation()) {
+                    // External preparations and rebased compaction inputs use
+                    // the same canonical metadata path before authority CAS.
+                    self.authority.retain_root_lineage(prepared).await?;
+                    self.lineage_confirmed = Some(prepared.preparation());
+                }
+                self.authority
+                    .transition(&self.observed, successor.clone(), transition)
+                    .await
+            }
+            .await;
+            match publication {
                 Ok(published) => {
                     self.check_node_lease()?;
                     self.observed = published;
@@ -799,11 +1019,55 @@ impl PendingDurability {
             .durability_proof(proof.source(), self.submitted_at.elapsed());
         Ok(())
     }
+
+    pub(crate) async fn prove_objects(pendings: &[Option<Self>]) -> Result<bool> {
+        let mut groups: Vec<Vec<&Self>> = Vec::new();
+        for pending in pendings.iter().flatten() {
+            if let Some(group) = groups.iter_mut().find(|group| {
+                group.first().is_some_and(|first| {
+                    std::sync::Arc::ptr_eq(&first.durability, &pending.durability)
+                })
+            }) {
+                group.push(pending);
+            } else {
+                groups.push(vec![pending]);
+            }
+        }
+        let logged = !groups.is_empty();
+        // A root covers every queued Cell commit, even if its captured cuts
+        // were submitted under different original node-log bindings. Never
+        // combine those bindings just because their epoch numbers match.
+        for group in groups {
+            let Some(first) = group.first() else { continue };
+            let tickets = group
+                .iter()
+                .map(|pending| pending.ticket)
+                .collect::<Vec<_>>();
+            first.durability.confirm_objects(&tickets).await?;
+            for pending in group {
+                pending.telemetry.durability_proof(
+                    crate::node::log::DurabilitySource::Object,
+                    pending.submitted_at.elapsed(),
+                );
+            }
+        }
+        Ok(logged)
+    }
 }
 
 impl CellDurabilitySubmitter {
     pub(crate) async fn submit(
         &self,
+        commit_sequence: u64,
+        cuts: &cellule_ltx::CaptureBatch,
+    ) -> Result<Option<PendingDurability>> {
+        self.submit_range(commit_sequence, commit_sequence, cuts)
+            .await
+    }
+
+    pub(crate) async fn submit_range(
+        &self,
+        first_commit_sequence: u64,
         commit_sequence: u64,
         cuts: &cellule_ltx::CaptureBatch,
     ) -> Result<Option<PendingDurability>> {
@@ -822,11 +1086,12 @@ impl CellDurabilitySubmitter {
             return Ok(None);
         };
         self.check_node_lease()?;
-        let submission = NodeLogSubmission::new(
+        let submission = NodeLogSubmission::new_range(
             application,
             self.cell,
             self.incarnation,
             self.epoch,
+            first_commit_sequence,
             commit_sequence,
             cuts,
         )?;
@@ -865,10 +1130,11 @@ impl CellDurabilitySubmitter {
 }
 
 fn retryable_publication_error(error: &Error) -> bool {
-    let Error::Storage(error) = error else {
-        return false;
-    };
-    retryable_storage_error(error)
+    match error {
+        Error::Storage(error) => retryable_storage_error(error),
+        Error::Ltx(error) => retryable_ltx_error(error),
+        _ => false,
+    }
 }
 
 fn retryable_ltx_error(error: &cellule_ltx::LtxError) -> bool {
@@ -878,10 +1144,11 @@ fn retryable_ltx_error(error: &cellule_ltx::LtxError) -> bool {
 }
 
 fn runtime_retry_hint(error: &Error) -> Option<std::time::Duration> {
-    let Error::Storage(error) = error else {
-        return None;
-    };
-    retry_hint(error)
+    match error {
+        Error::Storage(error) => retry_hint(error),
+        Error::Ltx(error) => ltx_retry_hint(error),
+        _ => None,
+    }
 }
 
 fn ltx_retry_hint(error: &cellule_ltx::LtxError) -> Option<std::time::Duration> {

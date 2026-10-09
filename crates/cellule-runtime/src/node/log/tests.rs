@@ -8,7 +8,25 @@ fn verified_frame(
     incarnation: [u8; 16],
     segment: &cellule_ltx::LocalSegment,
 ) -> cellule_ltx::VerifiedNodeFrame {
-    cellule_ltx::encode_node_frame(
+    verified_range(
+        sequence,
+        commit_sequence,
+        commit_sequence,
+        cell,
+        incarnation,
+        segment,
+    )
+}
+
+fn verified_range(
+    sequence: u64,
+    first_commit: u64,
+    last_commit: u64,
+    cell: [u8; 32],
+    incarnation: [u8; 16],
+    segment: &cellule_ltx::LocalSegment,
+) -> cellule_ltx::VerifiedNodeFrame {
+    cellule_ltx::encode_node_frame_range(
         cellule_ltx::NodeFrameScope {
             leader_session: [1; 16],
             log_epoch: 2,
@@ -17,13 +35,95 @@ fn verified_frame(
             cell,
             incarnation,
             cell_epoch: 3,
-            commit_sequence,
+            commit_sequence: last_commit,
         },
+        first_commit,
         segment.info().clone(),
         Bytes::from(std::fs::read(segment.path()).unwrap()),
         cellule_ltx::Limits::default(),
     )
     .unwrap()
+}
+
+#[test]
+fn grouped_recovery_requires_complete_ranges_in_both_overlay_builders() {
+    let limits = cellule_ltx::Limits::default();
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut database =
+        cellule_ltx::Db::open(&directory.path().join("groups.sqlite"), limits).unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("CREATE TABLE events(v)"))
+        .unwrap();
+    let base = database.capture().unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("INSERT INTO events VALUES (2), (3), (4)"))
+        .unwrap();
+    let first = database.capture().unwrap();
+    database
+        .transaction(|tx| tx.execute_batch("INSERT INTO events VALUES (5), (6), (7)"))
+        .unwrap();
+    let second = database.capture().unwrap();
+    let cell = [4; 32];
+    let incarnation = [5; 16];
+    let frames = vec![
+        verified_range(1, 2, 4, cell, incarnation, &first.segments[0]),
+        verified_range(2, 5, 7, cell, incarnation, &second.segments[0]),
+    ];
+    let bases = [RecoveryBase {
+        application: [9; 16],
+        cell_epoch: 3,
+        root: cellule_ltx::RootRef {
+            cell,
+            incarnation,
+            digest: [10; 32],
+            position: base.position,
+            commit_sequence: 1,
+        },
+    }];
+    for file_backed in [false, true] {
+        let build = |frames, bases: &[RecoveryBase]| {
+            if file_backed {
+                build_recovery_overlays_file_backed(frames, bases, limits, directory.path())
+            } else {
+                build_recovery_overlays(frames, bases, limits)
+            }
+        };
+        let recovered = build(frames.clone(), &bases).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].overlay.final_commit_sequence(), 7);
+        assert_eq!(recovered[0].overlay.final_position(), second.position);
+        let checkpoint_range = vec![
+            verified_range(1, 2, 7, cell, incarnation, &first.segments[0]),
+            verified_range(2, 2, 7, cell, incarnation, &second.segments[0]),
+        ];
+        let recovered = build(checkpoint_range, &bases).unwrap();
+        assert_eq!(recovered[0].overlay.final_commit_sequence(), 7);
+        assert_eq!(recovered[0].overlay.final_position(), second.position);
+        let mut advanced = bases;
+        advanced[0].root.commit_sequence = 4;
+        advanced[0].root.position = first.position;
+        let recovered = build(frames.clone(), &advanced).unwrap();
+        assert_eq!(recovered[0].first_node_sequence, 2);
+
+        advanced[0].root.commit_sequence = 3;
+        assert!(
+            build(frames.clone(), &advanced).is_err(),
+            "base must not split a transaction"
+        );
+        let mut gap = frames.clone();
+        gap[1] = verified_range(2, 6, 7, cell, incarnation, &second.segments[0]);
+        assert!(
+            build(gap, &bases).is_err(),
+            "missing logical command must fail closed"
+        );
+        let mut overlap = frames.clone();
+        overlap[1] = verified_range(2, 4, 7, cell, incarnation, &second.segments[0]);
+        assert!(
+            build(overlap, &bases).is_err(),
+            "overlapping groups must fail closed"
+        );
+    }
+    database.close().unwrap();
 }
 
 fn session(byte: u8) -> SessionId {
@@ -32,6 +132,28 @@ fn session(byte: u8) -> SessionId {
 
 fn node(byte: u8) -> NodeId {
     NodeId::from_bytes([byte; 16])
+}
+
+#[test]
+fn progress_keeps_follower_proof_distinct_from_contiguous_object_coverage() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(3), node(4)]).unwrap();
+    let first = gate.issue(2).unwrap();
+    let second = gate.issue(1).unwrap();
+    gate.acknowledge(node(3), 3).unwrap();
+    gate.acknowledge(node(4), 2).unwrap();
+    gate.prove_object(second).unwrap();
+    let progress = gate.progress().unwrap();
+    assert_eq!(progress.issued_through, 3);
+    assert_eq!(progress.follower_proven_through, 2);
+    assert_eq!(progress.tiered_through, 0);
+    assert_eq!(progress.pending_object_sequences, 3);
+    assert!(!progress.fleet_active);
+    assert!(gate.proof(first).unwrap().is_none());
+    gate.prove_object(first).unwrap();
+    assert_eq!(gate.progress().unwrap().pending_object_sequences, 0);
+    assert_eq!(gate.progress().unwrap().tiered_through, 3);
+    gate.fence();
+    assert!(gate.progress().unwrap().fenced);
 }
 
 #[tokio::test]
@@ -89,6 +211,70 @@ async fn object_proof_wins_independently_and_watermark_stays_contiguous() {
     );
     assert_eq!(gate.prove_object(first).unwrap(), 2);
     assert_eq!(gate.tiered_through(), 2);
+}
+
+#[test]
+fn completed_history_does_not_accumulate_sparse_coverage_entries() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(3)]).unwrap();
+    let first = gate.issue(MAX_TICKET_FRAMES).unwrap();
+    gate.prove_object(first).unwrap();
+    for _ in 1..100 {
+        let ticket = gate.issue(MAX_TICKET_FRAMES).unwrap();
+        gate.prove_object(ticket).unwrap();
+    }
+    assert_eq!(gate.tiered_through(), 100 * MAX_TICKET_FRAMES);
+    assert_eq!(gate.lock().unwrap().object_covered.len(), 0);
+    assert_eq!(
+        gate.proof(first).unwrap().unwrap().source(),
+        DurabilitySource::Object
+    );
+    assert!(gate.uncovered_objects(&[first]).unwrap().is_empty());
+    // Retrying an old root must not allocate its completed history again.
+    gate.prove_object(first).unwrap();
+    assert_eq!(gate.lock().unwrap().object_covered.len(), 0);
+}
+
+#[test]
+fn sparse_coverage_preserves_exact_proofs_in_every_completion_order() {
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let gate = DurabilityGate::new(session(1), node(1), 2, [node(3)]).unwrap();
+        let tickets = [
+            gate.issue(3).unwrap(),
+            gate.issue(3).unwrap(),
+            gate.issue(3).unwrap(),
+        ];
+        let mut completed = [false; 3];
+        for index in order {
+            completed[index] = true;
+            let prefix = completed.iter().take_while(|done| **done).count() as u64 * 3;
+            assert_eq!(gate.preview_objects(&[tickets[index]]).unwrap(), prefix);
+            assert_eq!(gate.prove_object(tickets[index]).unwrap(), prefix);
+            assert_eq!(gate.prove_object(tickets[index]).unwrap(), prefix);
+            let sparse = completed.iter().filter(|done| **done).count() * 3 - prefix as usize;
+            assert_eq!(gate.lock().unwrap().object_covered.len(), sparse);
+            for (ticket, done) in tickets.iter().zip(completed) {
+                assert_eq!(gate.objects_are_covered(&[*ticket]).unwrap(), done);
+                assert_eq!(gate.proof(*ticket).unwrap().is_some(), done);
+            }
+            let expected = tickets
+                .iter()
+                .zip(completed)
+                .filter_map(|(ticket, done)| (!done).then_some(*ticket))
+                .collect::<Vec<_>>();
+            assert_eq!(gate.uncovered_objects(&tickets).unwrap(), expected);
+        }
+        assert!(gate.lock().unwrap().object_covered.is_empty());
+        assert_eq!(gate.begin_rotation().unwrap().covered_through(), 9);
+        gate.fence();
+        assert!(matches!(gate.proof(tickets[0]), Err(Error::Fenced)));
+    }
 }
 
 #[tokio::test]
@@ -158,6 +344,18 @@ fn fencing_rejects_late_object_coverage() {
 
     assert!(matches!(gate.prove_object(ticket), Err(Error::Fenced)));
     assert_eq!(gate.tiered_through(), 0);
+}
+
+#[test]
+fn mixed_scope_object_batch_rejects_every_ticket_before_mutation() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(3)]).unwrap();
+    let other = DurabilityGate::new(session(2), node(1), 2, [node(3)]).unwrap();
+    let valid = gate.issue(1).unwrap();
+    let foreign = other.issue(1).unwrap();
+    assert!(gate.preview_objects(&[valid, foreign]).is_err());
+    assert!(gate.prove_objects(&[valid, foreign]).is_err());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(gate.proof(valid).unwrap().is_none());
 }
 
 #[test]

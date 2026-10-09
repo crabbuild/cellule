@@ -383,16 +383,55 @@ Heartbeat refresh, log activation, object coverage, and clean close share one
 mutex-protected authoritative observation, so their ETag CAS operations cannot
 race through stale local state.
 
+Completed roots from independent Cells queue their exact node-log tickets while
+an object-coverage CAS is in flight. The next publisher confirms the queued
+group with one serialized authority update, without a batching timer. Staging
+does not release a local proof or bridge an unpublished sequence gap. Failed or
+cancelled updates retain the original tickets for retry, including shutdown;
+local confirmation follows a successful CAS and a fresh node-lease check.
+One coalesced Cell root stages its entire covered ticket set before that flush.
+Tickets are grouped by the original durability binding; equal epoch numbers
+alone cannot combine different bindings. Per-command proof telemetry remains
+scoped to every covered commit.
+
 **Retired lane collection.** Retired follower lanes keep their durable
 append-fence marker for ten minutes. The server then:
 
 - Scans at most 64 lanes per minute.
-- Requires the exact node-session record to exist and no longer name that log
-  epoch.
+- Requires the exact node-session record to exist and no longer require local
+  copies of that epoch, including a canonically recovered Retired tombstone.
 - Rechecks the unchanged marker and its filesystem timestamp under the lane
   lock, and only then deletes it and releases disk admission.
 
 Missing authority fails closed.
+
+**Recovered failed-owner retirement.** After the canonical recovery coordinator
+pins the affected overlays and seals the tombstone, use
+`retire_recovered_members` with a `RecoveredNodeLogTransport`. This extends the
+same ordinary transport with an explicit recovery request. The receiver
+authenticates the live requester and calls
+`NodeDirectory::authorize_recovered_log_retire` for its own physical member,
+original leader/epoch and pinned manifest. Open/Recovering records, foreign
+members, changed manifests and expired requesters are refused. A native seal
+alone cannot authorize retirement.
+
+`FollowerStore::retire_recovered` uses the same lane lock, byte ledger, scanner
+and durable retired marker as ordinary retirement. Active lanes require their
+original seal watermark to exactly match verified local records. An inactive
+enrollment can fence an empty lane; unexpected records still block it. The
+caller supplies no truncation watermark. Every original member's retirement
+response is joined and retained, including failures and contradictory receipts.
+Only complete confirmation can authorize `NodeDirectory::retire_recovered_log`.
+
+That CAS preserves the original epoch, ensemble and manifest in the permanent
+Retired tombstone. Takeover remains valid; original recovery completion can
+adopt the terminal record after a lost reply. `retired_recovered_log` rechecks
+exact canonical retirement before effects, including after local grace
+collection; `None` keeps a matching Sealed epoch outstanding. `Retired` stops
+referencing local copies for collection purposes. The existing grace boundary,
+exact marker check and external authority check still apply. This supplies a
+tail retirement boundary, not failed-process joining, fleet enrollment
+publication, replacement policy or permission to stop a physical node.
 
 Deterministic fault coverage includes the two ambiguous recovery boundaries:
 
@@ -560,6 +599,13 @@ CAS-protected mutable authority:
 - A recoverer may change only recovery-owned fields after expiry.
 - Every transition validates all unchanged fields before conditional overwrite.
 
+Canonical directory reads authenticate the identity and understood placement
+signatures on each freshly decoded body. Exact loads and membership/follower
+scans then apply their time, path, fleet and release policies to that same
+immutable value. A later read authenticates its bytes again; an earlier
+signature decision does not carry across versions or scans. Expired signed logs
+remain visible obligations, and forged or noncanonical records fail closed.
+
 | Session state | May route application work? | May append to its follower log? | May a peer recover it? |
 | --- | --- | --- | --- |
 | `live` before published expiry | Yes | Yes | No |
@@ -577,6 +623,12 @@ Per-Cell `progress` remains a monotonic publication field, but takeover no
 longer infers owner death from a quiet Cell. A quiet repository can be healthy
 for months. Only the exact owner session's lease, or a graceful release, permits
 takeover.
+
+An owner with an installed node lease does not write periodic per-Cell control
+renewals. Idle Cells share the node heartbeat; long preparation checks the same
+monotonic lease without advancing Cell progress. Publications still conditionally
+update each Cell's exact owner, epoch and root, and node expiry fences all local
+admission and output. Runtimes without a node lease retain per-Cell renewals.
 
 ### Open the node log before its first fleet proof
 
@@ -617,6 +669,9 @@ earlier frame has an object-store proof:
   completions until the contiguous prefix advances.
 - It then CASes the session record and tells followers what they may truncate.
 - A single later Cell root cannot create a hole in this watermark.
+- The watermark replaces completed prefix entries. Sparse coverage retains
+  only completions above unresolved holes; old tickets remain provable without
+  retaining one entry per historical frame.
 
 <a id="extend-cell-control-with-a-recovery-overlay"></a>
 ## Extend Cell control with a recovery overlay
@@ -710,6 +765,24 @@ durability ticket names the last node sequence in that command's consecutive
 frame range. A follower acknowledgement covers the whole contiguous range, not
 individual Cells.
 
+Native command groups use node-log protocol version **2**. A singleton keeps
+the byte-identical `CNL1` version-one envelope (240 bytes). A group uses envelope
+version two (248 bytes), appending `first_commit_sequence` after the body digest;
+the existing `commit_sequence` is the inclusive endpoint. Every checkpoint cut
+from that transaction carries the same range. The complete encoded frame digest
+and signed append bind both endpoints. Recovery accepts adjacent complete
+ranges and repeated ranges for checkpoint cuts, rejects gaps and overlaps, and
+rejects an authority base inside a physical command group.
+
+New nodes still read persisted version-one frames. They select followers that
+advertise `NODE_LOG_PROTOCOL_VERSION` (currently two); an older enrollment cannot
+join a new range-capable ensemble. Upgrade followers before enabling a new
+owner. Until enough compatible followers are enrolled, the ordinary exact
+object-root proof remains available. Drain an old ensemble before retiring its
+members; frame read compatibility does not authorize changing its selected set.
+Do not downgrade a node while it retains version-two frames. Tier or recover
+and retire those lanes with a compatible reader before rolling back.
+
 Before writing, a follower verifies:
 
 1. The mTLS peer and signed session identity match `leader_session`
@@ -777,6 +850,35 @@ The acknowledgement is sent only after `sync_data` succeeds. Directory sync is
 also required when creating, rotating, renaming, or removing a chunk. A disk
 error, short write, checksum mismatch, gap, or sync error returns a typed NACK
 and never advances `durable_through`.
+
+The live lane index retains digests from fully verified frames, scoped to that
+lane and its immutable validation bounds. Warm scans still read and hash every
+encoded byte. An exact digest match reuses the previous LTX-body validation;
+unknown bytes, changed bounds and cold scans perform full validation. The index
+does not retain frame bodies or persist a verification shortcut.
+
+Pruning reconciles observed file and record changes before releasing another
+receipt. Every previously indexed uncovered frame must still exist with its
+original digest and length. Missing, repaired or substituted history cannot
+silently advance the cached durable range. Authoritative object coverage may
+release its original covered prefix.
+
+An append, seal, tail-read or failed retirement keeps the existing indexed
+witnesses after an error and marks derived locations for reconciliation.
+Repeated retries cannot turn a previously rejected missing or substituted frame
+into accepted history. Reconciliation verifies every still-uncovered witness
+and syncs valid records left by interrupted appends before advancing an index
+or seal watermark. Exact byte repair permits retry; fresh authority-checked
+object coverage releases only the covered prefix. Successful retirement and
+store shutdown release the index reservations.
+
+The live chunk rotates at a 1 MiB target to bound warm scanning and coverage
+rewrites. A single larger valid frame remains accepted and occupies its own
+chunk. Immutable closed chunks retain covered prefixes until their last
+sequence is covered, then pruning removes the whole file. Rotation changes
+chunk sizing only; historical larger chunks use the same record format and
+remain readable. A batch spanning multiple rotations preserves each pending
+record's original closed-chunk location.
 
 `FollowerStore::open` walks every retained lane before the management listener
 starts. It verifies directory shape, closed-chunk names and records, frame
@@ -941,6 +1043,67 @@ publication:
 - A successful retirement response with any other watermark is a protocol error
   and blocks the CAS.
 
+**Maintenance member confirmation.** `NodeDurability::shutdown_for_maintenance`
+uses the same shipper drain and contiguous object-coverage barrier, then requires
+every original member to confirm its exact persisted append fence before calling
+the canonical authority close. A lost response leaves the epoch retryable;
+healthy siblings are joined before a member failure is returned.
+
+| API | Evidence and limit |
+| --- | --- |
+| `shutdown()` | Ordinary authorities use best-effort closure. Managed fleet authorities require all member confirmations and retain retry ownership. |
+| `retirement_observation()` | Latest joined responses for the original leader, epoch, complete member set and watermark; each original transport error is retained. Contradictory receipts return a protocol error. |
+| `NodeLogRetirementObservation::confirmed()` | Opaque confirmation of every member's append fence. This alone does not establish authority closure or lane deletion. |
+| `shutdown_for_maintenance()` | Returns the member proof after canonical authority closure succeeds, and retains it for idempotent calls. Earlier best-effort closure with missing responses cannot be upgraded into proof. |
+
+Before every member confirms, cancellation creates no complete proof; retry
+addresses the same epoch and complete member set. Once every checked response
+is joined, the runtime retains that exact observation before awaiting authority
+closure. A lost closure reply or cancelled closure waiter reuses those fences
+and retries only the original authority callback. It sends no new retirement
+RPCs against an epoch whose directory authorization may already have closed.
+The shutdown proof is returned only after that callback succeeds; applications
+must reconcile their exact original CAS and preserve ownership of accepted work.
+Native follower retirement persists its fence before responding, so a lost
+member reply still requires reconciliation even when the lane is already retired.
+Complete fleet-role observation, journal settlement,
+replacement-policy evidence and failed-process closure still belong to the
+embedding application's maintenance controller. This API alone does not certify
+that a physical node is safe to stop. Unmanaged host rotation retains ordinary
+best-effort closure; the managed fleet binding requires complete member fences.
+
+**Prepared follower enrollment.** A durable fleet producer can separate the
+existing directory selection from its conditional authority write:
+
+| API | Ordering and evidence |
+| --- | --- |
+| `prepare_log_enrollment` | Read-only selection of the complete ensemble through the canonical selector. Retains original signed physical boots and a provider-assigned epoch. |
+| `prepare_log_enrollment_attempt` | Revalidates every original boot, live receiver admission/capacity and the source CAS version. Allows heartbeat updates; never substitutes a new member. |
+| `commit_log_enrollment` | Writes the fixed ensemble using only the retained source version. Fleet producers must accept Pending for every original member before dispatch. |
+| `inspect_log_enrollment` | Reconciles the original leader boot, epoch and complete physical member set across activation, coverage and heartbeats. Absence, expiry, withdrawal or another epoch leaves the result unknown. |
+| `fence_log_enrollment` | Competes against that exact attempt using the same original CAS token. A confirmed no-log successor prevents its delayed write. A newer empty record cannot authorize a rebased fence. |
+
+Prepared values belong to one directory instance and its clones. Providers must
+assign a unique advancing epoch per recruitment request for each leader boot,
+including after ambiguous results and closure. Retain the attempt before its
+first CAS await. Rebase only before registry acceptance; a timeout cannot
+authorize another attempt or another member set. The resulting opaque proof
+observes canonical enrollment. Selected follower boot metadata does not prove
+current receiver authority, fsync, registry publication or retirement. Transport
+construction and fleet producer ownership remain application/host integration
+responsibilities; these APIs alone do not install a journal-bound producer.
+
+The host's [managed follower binding](../../cellule-host/docs/lifecycle.md#managed-follower-enrollment)
+owns this Pending-before-CAS protocol in the existing supervisor. Its authority
+requires confirmed member retirement during automatic rotation and runtime drain.
+`NodeLogAuthority::close` receives the complete joined
+`NodeLogRetirementObservation`; ordinary implementations can use its `barrier()`.
+`observe_retirement` captures responses before confirmation and close, and
+`observe_shutdown_failure` retains failures before observation during managed
+shutdown retries. These diagnostics grant no authority. Managed runtime shutdown
+keeps retrying its original barrier, including across a cancelled drain waiter;
+ordinary authorities retain their best-effort closure behavior.
+
 **Epoch rotation controller.** The long-lived HTTP runtime applies the same
 barrier when shipping stops or the current epoch reaches `1_000_000` issued
 node-log frames:
@@ -948,6 +1111,9 @@ node-log frames:
 - A five-second controller observes the active binding, closes it through the
   idempotent `NodeDurability::shutdown`, and retries `PendingPublication` until
   object coverage is contiguous.
+- It also asks the enrollment provider whether any physical member in the
+  current epoch is no longer live. A failed membership check defers rotation to
+  the next tick; it never shrinks the write-all set in place.
 - It then recruits the next epoch and atomically replaces the runtime binding.
 - New Cell submissions read the current binding at the start of each durability
   attempt; a replacement therefore cannot create a second SQLite writer or a
@@ -1438,47 +1604,69 @@ incarnation, and Cell epoch:
   requires the uncovered suffix to begin at the next commit.
 - Fully rooted groups need no overlay.
 
-The recovery reservation stays owned through immutable pinning.
-It writes shared immutable bundles and one small
-manifest per affected Cell.
+`RecoveryManifestStore::load_manifest` reads every original recovered scope from
+the immutable manifest named by the canonical sealed log. It verifies the bounded
+body, digest, original leader/epoch, canonical encoding and strictly ordered unique
+scopes. The returned `RecoveryManifestInventory` includes every application; the
+store's application does not filter it. A reconstructed controller can still read
+this inventory after successors materialize roots and clear their overlay pointers.
+
+```rust,ignore
+let manifest_digest = sealed.log().recovery_manifest().ok_or(Error::PendingPublication)?;
+let inventory = manifests
+    .load_manifest(sealed.session(), sealed.log().epoch(), manifest_digest)
+    .await?;
+for original in inventory.cells() {
+    // Use the original application's store for byte verification, then check
+    // its current authority and serving state through the ordinary paths.
+    let store = manifest_store_for(original.application)?;
+    let overlay = store
+        .load_overlay(original.cell, original.incarnation, &original.recovery)
+        .await?;
+}
+```
+
+The inventory verifies metadata, not bundle availability or current successors.
+It omits object-covered Cells that needed no overlay. A fleet operation must retain
+the complete original writer set before relocation and separately verify every
+current successor. An empty suffix has no manifest; it cannot prove an empty
+original writer set or authorize node finalization.
+
+The recovery reservation stays owned through immutable pinning. It writes shared
+immutable bundles and one manifest containing all affected scopes. The persisted
+version 1 shape is shown below, formatted for reading; canonical bytes are compact
+JSON, and integers are decimal strings or fixed-width hexadecimal strings.
 
 ```json
 {
   "version": 1,
-  "leader_session": "16-byte-hex",
-  "log_epoch": 3,
-  "application": "16-byte-hex",
-  "cell": "32-byte-hex",
-  "incarnation": "16-byte-hex",
-  "cell_epoch": 12,
-  "predecessor": {
-    "root": "32-byte-hex",
-    "txid": 500,
-    "checksum": 9223372036854776000,
-    "commit_sequence": 700
-  },
-  "entries": [
+  "leader_session": "01010101010101010101010101010101",
+  "log_epoch": "3",
+  "cells": [
     {
-      "node_sequence": 9002,
-      "bundle": "32-byte-hex",
-      "offset": 4096,
-      "length": 8192,
-      "ltx": {
-        "min_txid": 501,
-        "max_txid": 501,
-        "post_checksum": 9223372036854777000,
-        "commit_sequence": 701,
-        "blake3": "32-byte-hex"
-      }
+      "application": "03030303030303030303030303030303",
+      "cell": "0404040404040404040404040404040404040404040404040404040404040404",
+      "incarnation": "05050505050505050505050505050505",
+      "cell_epoch": "12",
+      "first_node_sequence": "9002",
+      "last_node_sequence": "9002",
+      "predecessor_digest": "0606060606060606060606060606060606060606060606060606060606060606",
+      "predecessor_txid": "500",
+      "predecessor_checksum": "8000000000000000",
+      "predecessor_commit_sequence": "700",
+      "final_txid": "501",
+      "final_checksum": "8000000000000001",
+      "final_commit_sequence": "701",
+      "bundle_digest": "0707070707070707070707070707070707070707070707070707070707070707"
     }
   ]
 }
 ```
 
-The final implementation uses canonical strict JSON or the existing canonical
-binary manifest codec; it must not use floating-point numbers or permissive
-unknown fields. The manifest digest covers its canonical bytes. Every bundle
-extent is range-readable and independently BLAKE3-bound.
+The manifest has at most 1,024 strictly ordered unique scopes and a two-MiB body.
+Unknown fields and noncanonical values are rejected. Its digest covers every
+canonical byte. The ordinary overlay loader verifies the referenced bundle and
+retains its disk reservation until the overlay is dropped.
 
 ### Pin every affected Cell
 
@@ -1603,6 +1791,19 @@ sequenceDiagram
 An optional successor hint may prefetch the authenticated root directory and hot
 pages, but it grants no authority.
 
+An empty object-coverage queue needs no new coverage CAS, including after a
+local lease fence. This no-op grants no proof: contiguous coverage, exact
+member retirement, and the current authority close are still required. Pending
+tickets continue to require the original live lease and remain retained after
+fencing.
+
+Cell deactivation can close every native handle while preserving a fenced
+release failure. Shutdown retains that original error even if recovery later
+changes the owner record. Resource closure does not prove an Idle release or
+successful session withdrawal; the host remains draining when a required
+facility fails. A fault test that deliberately fences its source must verify
+the typed original failure and empty resource ledgers alongside exact recovery.
+
 Clean node shutdown is broader:
 
 1. Withdraw public admission and mark the session draining
@@ -1668,6 +1869,13 @@ application runtime is draining.
 
 Follower capacity is accounted separately from Cell residency. It covers
 fragment bytes, open leader lanes, recovery readers, and sync work.
+
+Owner admission also protects publication progress. With uncovered follower
+work, a mutation is refused before dispatch when retained RAM or local disk is
+at three quarters of its node budget. Accepted work retains its ordinary drain
+obligation, and reads remain eligible. The RAM ledger charges the shared capture
+indexes and retained outcome/descriptor metadata; complete LTX bodies remain
+charged to the local disk ledger and physical backlog high water.
 
 | Resource | Required bound |
 | --- | --- |

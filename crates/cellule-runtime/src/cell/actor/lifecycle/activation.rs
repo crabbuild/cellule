@@ -15,6 +15,7 @@ pub(in crate::cell::actor) async fn activate_restored_and_publish(
         schema,
         root,
         reservation,
+        job,
     } = activation;
     pool.activate_restored(
         cell,
@@ -24,6 +25,7 @@ pub(in crate::cell::actor) async fn activate_restored_and_publish(
         schema,
         root,
         reservation,
+        job,
     )
     .await?;
     if let Err(error) = publisher.activate().await {

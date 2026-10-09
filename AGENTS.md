@@ -4,7 +4,7 @@ Read the nearest crate `AGENTS.md` before changing that crate. This workspace is
 
 ## Layers
 
-`cellule-types → cellule-store → cellule-ltx → cellule-runtime → cellule-app → cellule-host`. Higher layers may use lower layers; `cellule-host` also uses `cellule-runtime` directly. The optional `cellule-peer-http` adapter depends only on `cellule-runtime`; applications still own HTTP endpoints and authorization. Keep storage transport separate from authority and application policy. `scripts/check-boundaries.py` checks workspace dependencies and the pure coordination kernel.
+`cellule-types → cellule-store → cellule-ltx → cellule-runtime → cellule-app → cellule-host`. Higher layers may use lower layers; `cellule-host` also uses `cellule-runtime` directly. The optional `cellule-peer-http` adapter depends only on `cellule-runtime`; `cellule-axum` depends on `cellule-app` and `cellule-runtime`. Applications still own HTTP endpoints and authorization. Keep storage transport separate from authority and application policy. `scripts/check-boundaries.py` checks workspace dependencies and the pure coordination kernel.
 
 ## Contracts
 

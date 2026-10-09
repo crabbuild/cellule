@@ -96,6 +96,11 @@ pub fn build_recovery_overlays(
         // prefix; a commit/position mismatch must never hide an uncovered cut.
         for frame in &cell_frames {
             let covered = frame.scope().commit_sequence <= base.root.commit_sequence;
+            if !covered && frame.first_commit_sequence() <= base.root.commit_sequence {
+                return Err(Error::Node(
+                    "published base splits a node-log command group",
+                ));
+            }
             let position = frame.segment().position();
             if covered != (position.txid <= base.root.position.txid)
                 || (position.txid == base.root.position.txid && position != base.root.position)
@@ -118,11 +123,14 @@ pub fn build_recovery_overlays(
             .commit_sequence
             .checked_add(1)
             .ok_or(Error::Node("recovery commit sequence overflow"))?;
-        if first_frame.scope().commit_sequence != first_commit
+        if first_frame.first_commit_sequence() != first_commit
             || !cell_frames.windows(2).all(|pair| {
-                let left = pair[0].scope().commit_sequence;
-                let right = pair[1].scope().commit_sequence;
-                right == left || left.checked_add(1) == Some(right)
+                range_continues(
+                    pair[0].first_commit_sequence(),
+                    pair[0].scope().commit_sequence,
+                    pair[1].first_commit_sequence(),
+                    pair[1].scope().commit_sequence,
+                )
             })
         {
             return Err(Error::Node("recovery Cell commit sequence has a gap"));
@@ -211,6 +219,7 @@ where
         first_node_sequence: u64,
         last_node_sequence: u64,
         last_commit_sequence: u64,
+        last_first_commit_sequence: u64,
         final_position: cellule_ltx::Position,
     }
 
@@ -239,6 +248,11 @@ where
             .copied()
             .ok_or(Error::Node("recovery frame has no exact published base"))?;
         let covered = scope.commit_sequence <= base.root.commit_sequence;
+        if !covered && frame.first_commit_sequence() <= base.root.commit_sequence {
+            return Err(Error::Node(
+                "published base splits a node-log command group",
+            ));
+        }
         let position = frame.segment().position();
         if covered != (position.txid <= base.root.position.txid)
             || (position.txid == base.root.position.txid && position != base.root.position)
@@ -255,9 +269,12 @@ where
         }
 
         if let Some(cell) = grouped.get_mut(&key) {
-            if scope.commit_sequence != cell.last_commit_sequence
-                && cell.last_commit_sequence.checked_add(1) != Some(scope.commit_sequence)
-            {
+            if !range_continues(
+                cell.last_first_commit_sequence,
+                cell.last_commit_sequence,
+                frame.first_commit_sequence(),
+                scope.commit_sequence,
+            ) {
                 return Err(Error::Node("recovery Cell commit sequence has a gap"));
             }
             cell.bundle
@@ -269,6 +286,7 @@ where
                 ))?;
             cell.last_node_sequence = scope.node_sequence;
             cell.last_commit_sequence = scope.commit_sequence;
+            cell.last_first_commit_sequence = frame.first_commit_sequence();
             cell.final_position = position;
             continue;
         }
@@ -278,7 +296,7 @@ where
             .commit_sequence
             .checked_add(1)
             .ok_or(Error::Node("recovery commit sequence overflow"))?;
-        if scope.commit_sequence != first_commit {
+        if frame.first_commit_sequence() != first_commit {
             return Err(Error::Node("recovery Cell commit sequence has a gap"));
         }
         let mut bundle = cellule_ltx::bundle::BundleBuilder::new_temp(scratch, limits)?;
@@ -296,6 +314,7 @@ where
                 first_node_sequence: scope.node_sequence,
                 last_node_sequence: scope.node_sequence,
                 last_commit_sequence: scope.commit_sequence,
+                last_first_commit_sequence: frame.first_commit_sequence(),
                 final_position: position,
             },
         );
@@ -319,4 +338,10 @@ where
             })
         })
         .collect()
+}
+
+fn range_continues(first: u64, last: u64, next_first: u64, next_last: u64) -> bool {
+    // Checkpoint cuts may repeat one complete range. A later transaction must
+    // start immediately after it; sharing only an endpoint cannot hide a gap.
+    (first == next_first && last == next_last) || last.checked_add(1) == Some(next_first)
 }

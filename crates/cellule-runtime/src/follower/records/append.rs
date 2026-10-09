@@ -1,6 +1,7 @@
 //! Lane appends, seals, retirements, and chunk rewrites.
 
 use super::*;
+use std::collections::BTreeSet;
 
 #[expect(
     clippy::too_many_arguments,
@@ -33,50 +34,58 @@ pub(in crate::follower) fn append_sync(
     }
     if state.is_none() {
         reservation.invalidate();
-        let recovered = recover_lane(&chunks, lane, limits, scan_counter, Some(observation))?;
+        let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
+        let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true, None)?;
+        persist_lane_records(&chunks, &retained, &open_records, Some(observation))?;
         *state = Some(lane_memory(
-            recovered.records,
-            &recovered.open_records,
+            lane,
+            limits,
+            retained,
+            &open_records,
             index_used,
         )?);
     }
+    if let Some(memory) = state.as_mut() {
+        // Only the caller's authority-checked object proof releases witnesses.
+        memory.covered_through = memory.covered_through.max(covered_through);
+    }
+    if let Some(memory) = state.as_ref().filter(|memory| !memory.needs_reconciliation) {
+        let open_path = chunks.join("open.log");
+        let actual = match std::fs::metadata(&open_path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => return Err(error.into()),
+        };
+        if actual != expected_open_bytes(memory)? {
+            return Err(Error::Node("follower open length changed after index"));
+        }
+    }
     let started = observation.mark();
-    let has_covered = state.as_ref().is_some_and(|memory| {
-        memory
-            .records
-            .first_key_value()
-            .is_some_and(|(sequence, _)| *sequence <= covered_through)
-    });
-    // Only a fully recovered, durable index reaches this point. Skip unrelated
-    // old-body validation when the authoritative watermark covers no record.
-    let pruned = if has_covered {
-        prune_covered(
-            &chunks,
-            lane,
-            covered_through,
-            limits,
-            reservation,
-            observation,
-        )
-    } else {
-        Ok(None)
-    };
+    let changed = prune_covered(
+        &chunks,
+        lane,
+        covered_through,
+        limits,
+        state.as_ref(),
+        reservation,
+        observation,
+    )?;
     observation.timing.prune = AppendObservation::elapsed(started);
-    let pruned_through = pruned?;
     let state = state
         .as_mut()
         .ok_or(Error::Node("follower lane state did not initialize"))?;
-    if pruned_through.is_some() {
-        let records = scan_lane_counted(&chunks, lane, limits, scan_counter)?;
-        let index_bytes = u64::try_from(records.len())
-            .map_err(|_| Error::Capacity("follower lane index"))?
-            .checked_mul(INDEX_BYTES_PER_RECORD)
-            .ok_or(Error::Capacity("follower lane index"))?;
-        state.index.resize_to(index_bytes)?;
-        state.records = records;
-        let open_records = scan_chunk(&chunks.join("open.log"), lane, limits, true)?;
-        state.open_first = open_records.first().map(|record| record.sequence);
-        state.open_last = open_records.last().map(|record| record.sequence);
+    if changed || state.needs_reconciliation {
+        if state.needs_reconciliation {
+            reservation.invalidate();
+        }
+        reconcile_lane_memory(
+            &chunks,
+            lane,
+            limits,
+            state,
+            scan_counter,
+            Some(observation),
+        )?;
     }
     let mut durable_through = state
         .records
@@ -91,18 +100,7 @@ pub(in crate::follower) fn append_sync(
     let open_path = chunks.join("open.log");
     let mut file = open_append(&open_path, observation)?;
     let mut open_bytes = file.metadata()?.len();
-    let expected_open_bytes = match state.open_last {
-        Some(sequence) => {
-            let last = state
-                .records
-                .get(&sequence)
-                .ok_or(Error::Node("follower open record is missing"))?;
-            last.offset
-                .checked_add(last.length as u64)
-                .ok_or(Error::Node("follower open byte count overflow"))?
-        }
-        None => 0,
-    };
+    let expected_open_bytes = expected_open_bytes(state)?;
     if open_bytes != expected_open_bytes {
         return Err(Error::Node("follower open length changed after index"));
     }
@@ -218,6 +216,22 @@ pub(in crate::follower) fn append_sync(
         durable_through,
     })
 }
+
+fn expected_open_bytes(state: &LaneMemory) -> Result<u64> {
+    match state.open_last {
+        Some(sequence) => {
+            let last = state
+                .records
+                .get(&sequence)
+                .ok_or(Error::Node("follower open record is missing"))?;
+            last.offset
+                .checked_add(last.length as u64)
+                .ok_or(Error::Node("follower open byte count overflow"))
+        }
+        None => Ok(0),
+    }
+}
+
 pub(in crate::follower) fn seal_sync(
     root: &Path,
     lane: Lane,
@@ -242,16 +256,17 @@ pub(in crate::follower) fn seal_sync(
     }
     if state.is_none() {
         accounting.invalidate();
-        let recovered = recover_lane(&chunks, lane, limits, scan_counter, None)?;
-        *state = Some(lane_memory(
-            recovered.records,
-            &recovered.open_records,
-            index_used,
-        )?);
+        let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
+        persist_lane_records(&chunks, &retained, &[], None)?;
+        *state = Some(lane_memory(lane, limits, retained, &[], index_used)?);
     }
     let state = state
-        .as_ref()
+        .as_mut()
         .ok_or(Error::Node("follower lane state did not initialize"))?;
+    if state.needs_reconciliation {
+        accounting.invalidate();
+        reconcile_lane_memory(&chunks, lane, limits, state, scan_counter, None)?;
+    }
     let durable_through = state.records.keys().next_back().copied().unwrap_or(0);
     let base_sequence = state.records.keys().next().copied().unwrap_or(0);
     let marker = directory.join("sealed");
@@ -281,7 +296,7 @@ pub(in crate::follower) fn seal_sync(
 pub(in crate::follower) fn retire_sync(
     root: &Path,
     lane: Lane,
-    covered_through: u64,
+    watermark: RetirementWatermark,
     limits: cellule_ltx::Limits,
     namespace: &Mutex<()>,
     scan_counter: &ScanCounter,
@@ -290,8 +305,35 @@ pub(in crate::follower) fn retire_sync(
     ensure_lane_directories(root, lane, namespace, None)?;
     let directory = lane_directory(root, lane);
     let chunks = directory.join("chunks");
-    let retained = scan_lane_counted(&chunks, lane, limits, scan_counter)?;
+    let retained = scan_lane_counted(&chunks, lane, limits, None, scan_counter)?;
     let durable_through = retained.keys().next_back().copied().unwrap_or(0);
+    let covered_through = match watermark {
+        RetirementWatermark::Covered(value) => value,
+        RetirementWatermark::Recovered { active } => {
+            if !active && durable_through != 0 {
+                return Err(Error::Node("follower lane has uncovered records"));
+            }
+            if directory.join("retired").exists() {
+                read_watermark(
+                    &directory.join("retired"),
+                    "follower retire marker is invalid",
+                )?
+            } else if directory.join("sealed").exists() {
+                let sealed =
+                    read_watermark(&directory.join("sealed"), "follower seal marker is invalid")?;
+                if sealed != durable_through {
+                    return Err(Error::Node("follower seal watermark differs"));
+                }
+                sealed
+            } else if !active {
+                // Inactive enrollment cannot acknowledge a tail. The shared
+                // coverage check still refuses unexpected native records.
+                0
+            } else {
+                return Err(Error::Node("recovered follower lane has no native seal"));
+            }
+        }
+    };
     if durable_through > covered_through {
         return Err(Error::Node("follower lane has uncovered records"));
     }
@@ -415,15 +457,17 @@ pub(in crate::follower) fn prune_covered(
     lane: Lane,
     covered_through: u64,
     limits: cellule_ltx::Limits,
+    known: Option<&LaneMemory>,
     reservation: &LaneAccounting,
     observation: &mut AppendObservation,
-) -> Result<Option<u64>> {
+) -> Result<bool> {
     if !chunks.exists() {
-        return Ok(None);
+        return Ok(known.is_some_and(|known| !known.records.is_empty()));
     }
     let mut removed = false;
     let mut open_removed = false;
-    let mut pruned_through = None;
+    let mut changed;
+    let mut retained_paths = BTreeSet::new();
     for entry in std::fs::read_dir(chunks)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -441,34 +485,45 @@ pub(in crate::follower) fn prune_covered(
             std::fs::remove_file(entry.path())?;
             reservation.removed(bytes)?;
             removed = true;
-            pruned_through = Some(pruned_through.map_or(last, |current: u64| current.max(last)));
+        } else {
+            if !entry.file_type()?.is_file() {
+                return Err(Error::Node("follower chunk is not a regular file"));
+            }
+            retained_paths.insert(entry.path());
         }
     }
     let open_path = chunks.join("open.log");
     if open_path.exists() {
         let original_bytes = std::fs::metadata(&open_path)?.len();
-        let records = scan_chunk(&open_path, lane, limits, true)?;
-        let valid_bytes = match records.last() {
-            Some(record) => record
+        let records = scan_chunk(&open_path, lane, limits, true, known)?;
+        let valid_bytes = records.last().map_or(Ok(0), |record| {
+            record
                 .offset
                 .checked_add(record.length as u64)
-                .ok_or(Error::Node("follower open byte count overflow"))?,
-            None => 0,
-        };
+                .ok_or(Error::Node("follower open byte count overflow"))
+        })?;
         reservation.removed(
             original_bytes
                 .checked_sub(valid_bytes)
                 .ok_or(Error::Node("follower open grew during prune scan"))?,
         )?;
+        changed = known.is_some_and(|known| {
+            known.open_first != records.first().map(|record| record.sequence)
+                || known.open_last != records.last().map(|record| record.sequence)
+                || records.iter().any(|record| {
+                    !known.records.get(&record.sequence).is_some_and(|previous| {
+                        previous.digest == record.digest
+                            && previous.length == record.length
+                            && previous.offset == record.offset
+                            && previous.path == record.path
+                    })
+                })
+        });
         let mut retained = Vec::with_capacity(records.len());
         for record in records {
             if record.sequence <= covered_through {
                 removed = true;
                 open_removed = true;
-                pruned_through = Some(
-                    pruned_through
-                        .map_or(record.sequence, |current: u64| current.max(record.sequence)),
-                );
             } else {
                 retained.push(record);
             }
@@ -476,11 +531,18 @@ pub(in crate::follower) fn prune_covered(
         if open_removed {
             rewrite_open_chunk(&open_path, retained, reservation, observation)?;
         }
+    } else {
+        changed = known.is_some_and(|known| known.open_first.is_some());
     }
+    changed |= known.is_some_and(|known| {
+        known.records.values().any(|record| {
+            record.path.as_ref() != open_path && !retained_paths.contains(record.path.as_ref())
+        })
+    });
     if removed {
         observation.sync_directory(chunks)?;
     }
-    Ok(pruned_through)
+    Ok(removed || changed)
 }
 pub(in crate::follower) fn rewrite_open_chunk(
     path: &Path,

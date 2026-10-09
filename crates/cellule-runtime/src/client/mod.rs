@@ -53,9 +53,11 @@ mod local;
 mod replica;
 mod routing;
 mod runtime;
+mod snapshot;
 
-pub use replica::CellReadReplica;
+pub use replica::{CellReadReplica, ReadReplicaLifecycleObservation, ReadReplicaSource};
 pub use routing::ReplicaReadRouter;
+pub use snapshot::PreparedCommandSnapshot;
 
 pub use local::command_operation_digest;
 pub(crate) use local::{
@@ -289,6 +291,22 @@ pub struct PendingMutation {
 }
 
 impl PendingMutation {
+    pub(crate) const fn admitted(
+        target: CellTarget,
+        incarnation: IncarnationId,
+        identity: MutationIdentity,
+        operation_digest: Digest,
+        max_result_bytes: usize,
+    ) -> Self {
+        Self {
+            target,
+            incarnation,
+            identity,
+            operation_digest,
+            max_result_bytes,
+        }
+    }
+
     /// Returns the identity that resolves this mutation.
     #[must_use]
     pub const fn identity(&self) -> MutationIdentity {
@@ -347,7 +365,28 @@ impl<C: Command> PreparedCommand<C> {
     /// Executes the prepared request once against its validated owner incarnation.
     ///
     /// Returns pending evidence when acceptance is unknown and rejects an expired identity.
+    /// A configured Blob namespace also requires the original artifact store's
+    /// admission. Clones and restored requests cannot dispatch after its closure;
+    /// accepted dispatch remains owned through native completion after waiter loss.
     pub async fn execute(
+        self,
+    ) -> std::result::Result<Committed<C::Output>, InvocationError<C::Output>> {
+        if self
+            .client
+            .registry
+            .namespace_contract(self.evidence.target.namespace())
+            .is_some_and(|(_, namespace)| namespace.role == crate::cell::catalog::CatalogRole::Blob)
+            && let Some(store) = self.client.blob_artifact_store()
+        {
+            return store.run_invocation(self.execute_native()).await;
+        }
+        self.execute_native().await
+    }
+
+    // Namespace convenience mutation already owns staging and dispatch in one
+    // original artifact lifetime. Re-admission here could refuse its accepted
+    // manifest write after closure or consume a second slot at the job bound.
+    pub(crate) async fn execute_native(
         mut self,
     ) -> std::result::Result<Committed<C::Output>, InvocationError<C::Output>> {
         let now_ms = unix_time_ms().map_err(InvocationError::NotStarted)?;
@@ -798,7 +837,8 @@ impl CellClient {
     /// A lease-fenced resident actor supplies a local route without metadata.
     /// Unleased local actors check fresh catalog and authority. A local miss
     /// delegates without those reads; the peer round trip resolves the remote
-    /// owner and verifies enrollment. This does not acquire an idle Cell.
+    /// owner and verifies enrollment. A runtime with no active or activating
+    /// Cells also avoids a dispatcher lookup. This does not acquire an idle Cell.
     #[must_use]
     pub fn runtime_with_peer(
         registry: Arc<Registry>,

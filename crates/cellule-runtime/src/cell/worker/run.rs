@@ -20,6 +20,10 @@ pub(super) fn run_worker(
             break;
         };
         match command {
+            WorkerCommand::Reserved {
+                command,
+                reservation,
+            } => run_worker_command(*command, &mut cells, Some(reservation)),
             WorkerCommand::Queued {
                 command,
                 reservation,
@@ -76,6 +80,12 @@ fn run_worker_command(
         trace.started();
     }
     match command {
+        WorkerCommand::Reserved {
+            command,
+            reservation,
+        } => {
+            run_worker_command(*command, cells, Some(reservation));
+        }
         WorkerCommand::Queued {
             command,
             reservation,
@@ -108,7 +118,7 @@ fn run_worker_command(
             incarnation,
             schema,
             root,
-            reservation,
+            reservation: cell_reservation,
             reply,
         } => {
             let result = match cells.entry(cell) {
@@ -122,10 +132,11 @@ fn run_worker_command(
                 .map(|executor| {
                     entry.insert(ActiveCell {
                         executor,
-                        _reservation: reservation,
+                        _reservation: cell_reservation,
                     });
                 }),
             };
+            drop(reservation.take());
             let _ = reply.send(result);
         }
         WorkerCommand::Bootstrap(bootstrap) => {
@@ -158,6 +169,19 @@ fn run_worker_command(
                 Ok(result) => result,
                 Err(_) => Err(Error::NativePanic),
             };
+            let _ = reply.send(result);
+        }
+        WorkerCommand::ExecuteGroup {
+            cell,
+            commands,
+            deadline,
+            reply,
+        } => {
+            let at = deadline.at();
+            let result = run_native_callback(cells, cell, deadline, move |active| {
+                active.executor.execute_group(commands, at)
+            });
+            drop(reservation.take());
             let _ = reply.send(result);
         }
         WorkerCommand::Execute {
@@ -319,14 +343,6 @@ fn run_worker_command(
                 .and_then(|active| active.executor.hydration());
             let _ = reply.send(result);
         }
-        WorkerCommand::PersistedWork { cell, role, reply } => {
-            let result = cells
-                .get_mut(&cell)
-                .ok_or(Error::CellNotActive)
-                .and_then(|active| active.executor.persisted_work_inventory(role));
-            drop(reservation.take());
-            let _ = reply.send(result);
-        }
         WorkerCommand::TransferWork {
             cell,
             role,
@@ -337,6 +353,19 @@ fn run_worker_command(
                 .get_mut(&cell)
                 .ok_or(Error::CellNotActive)
                 .and_then(|active| active.executor.transfer_work_inventory(role, now_ms));
+            drop(reservation.take());
+            let _ = reply.send(result);
+        }
+        WorkerCommand::FleetInventory {
+            cell,
+            role,
+            now_ms,
+            deadline,
+            reply,
+        } => {
+            let result = run_native_callback(cells, cell, deadline, |active| {
+                active.executor.fleet_inventory(role, now_ms)
+            });
             drop(reservation.take());
             let _ = reply.send(result);
         }

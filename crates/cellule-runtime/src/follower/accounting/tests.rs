@@ -35,6 +35,22 @@ fn settling_one_lane_preserves_other_pending_growth_and_external_reservations() 
 
 struct RejectSettlement(AtomicBool);
 
+#[test]
+fn restored_lane_bytes_are_admitted_before_new_growth_after_an_empty_settlement() {
+    let disk = cellule_ltx::DiskBudget::new(100);
+    let mut ledger = DiskAccounting::new(disk.try_reserve(50).unwrap());
+    ledger.begin(lane(1), 50, 10).unwrap();
+    ledger.settle(lane(1), 0).unwrap();
+    assert_eq!(disk.used(), 0);
+    assert!(ledger.begin(lane(1), 80, 21).is_err());
+    assert_eq!(disk.used(), 80);
+    assert!(ledger.pending.is_empty());
+    ledger.begin(lane(1), 80, 20).unwrap();
+    assert_eq!(disk.used(), 100);
+    ledger.settle(lane(1), 90).unwrap();
+    assert_eq!(disk.used(), 90);
+}
+
 impl cellule_ltx::DiskBudgetAdmission for RejectSettlement {
     fn reconcile(&self, used: u64) -> cellule_ltx::Result<()> {
         if used == 110 && self.0.load(Ordering::Relaxed) {
@@ -74,15 +90,29 @@ fn failed_lane_recount_is_conservative_and_preserves_the_operation_error() {
         disk.try_reserve(0).unwrap(),
     )));
     let mut observation = AppendObservation::unobserved(lane(1));
-    let original =
-        LaneAccounting::begin(shared.clone(), root.path(), lane(1), 10, &mut observation).unwrap();
+    let original = LaneAccounting::begin(
+        shared.clone(),
+        root.path(),
+        lane(1),
+        10,
+        false,
+        &mut observation,
+    )
+    .unwrap();
     std::fs::create_dir_all(&original.directory).unwrap();
     std::fs::write(original.directory.join("bytes"), [0; 10]).unwrap();
     original.added(10).unwrap();
     original.finish(Ok(()), &mut observation).unwrap();
     assert_eq!(shared.lock().unwrap().settled[&lane(1)], 10);
-    let operation =
-        LaneAccounting::begin(shared.clone(), root.path(), lane(1), 10, &mut observation).unwrap();
+    let operation = LaneAccounting::begin(
+        shared.clone(),
+        root.path(),
+        lane(1),
+        10,
+        false,
+        &mut observation,
+    )
+    .unwrap();
     std::fs::create_dir_all(&operation.directory).unwrap();
     std::os::unix::fs::symlink("missing", operation.directory.join("special")).unwrap();
     assert!(matches!(
@@ -91,21 +121,43 @@ fn failed_lane_recount_is_conservative_and_preserves_the_operation_error() {
     ));
     assert_eq!(disk.used(), 20);
     // Another lane releases only its own unused reservation.
-    let other =
-        LaneAccounting::begin(shared.clone(), root.path(), lane(2), 30, &mut observation).unwrap();
+    let other = LaneAccounting::begin(
+        shared.clone(),
+        root.path(),
+        lane(2),
+        30,
+        false,
+        &mut observation,
+    )
+    .unwrap();
     std::fs::create_dir_all(&other.directory).unwrap();
     std::fs::write(other.directory.join("bytes"), [0; 10]).unwrap();
     other.added(10).unwrap();
     other.finish(Ok(()), &mut observation).unwrap();
     assert_eq!(disk.used(), 30);
     assert!(
-        LaneAccounting::begin(shared.clone(), root.path(), lane(1), 0, &mut observation).is_err()
+        LaneAccounting::begin(
+            shared.clone(),
+            root.path(),
+            lane(1),
+            0,
+            false,
+            &mut observation
+        )
+        .is_err()
     );
     assert_eq!(disk.used(), 30);
     std::fs::remove_file(operation.directory.join("special")).unwrap();
     std::fs::write(operation.directory.join("bytes"), [0; 5]).unwrap();
-    let repaired =
-        LaneAccounting::begin(shared.clone(), root.path(), lane(1), 0, &mut observation).unwrap();
+    let repaired = LaneAccounting::begin(
+        shared.clone(),
+        root.path(),
+        lane(1),
+        0,
+        false,
+        &mut observation,
+    )
+    .unwrap();
     repaired.finish(Ok(()), &mut observation).unwrap();
     assert_eq!(disk.used(), 15);
     assert!(shared.lock().unwrap().pending.is_empty());

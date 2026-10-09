@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Cellule honeycomb mark</title>
+  <style>
+    .honey { fill: #e7a525; }
+    .deep { fill: #b87313; }
+    .warm { fill: #d58b1a; }
+    @media (prefers-color-scheme: dark) {
+      .honey { fill: #ffd56a; }
+      .deep { fill: #e8a839; }
+      .warm { fill: #f5be4f; }
+    }
+  </style>
+  <path class="honey" d="M32 3 45 10.5v15L32 33 19 25.5v-15Z"/>
+  <path class="deep" d="M18 29 31 36.5v15L18 59 5 51.5v-15Z"/>
+  <path class="warm" d="M46 29 59 36.5v15L46 59 33 51.5v-15Z"/>
+</svg>

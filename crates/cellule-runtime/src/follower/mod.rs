@@ -8,22 +8,30 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use bytes::Bytes;
 
+use crate::fleet::telemetry::CellTelemetryHandle;
 use crate::identity::SessionId;
 use crate::{Error, Result};
 
 mod accounting;
 mod directory;
+mod inventory;
 mod records;
 mod timing;
 
 use accounting::{DiskAccounting, LaneAccounting};
+pub use inventory::{
+    FollowerInventoryCursor, FollowerInventoryPage, FollowerLaneObservation, FollowerLaneState,
+};
+
 use directory::*;
 use records::*;
 use timing::AppendObservation;
 
 const RECORD_MAGIC: &[u8; 4] = b"CFR1";
 const RECORD_HEADER_BYTES: usize = 52;
-const ROTATE_BYTES: u64 = 64 << 20;
+// Warm scans and coverage rewrites touch the live chunk. Keep that work
+// bounded; a single larger valid frame still occupies its own chunk.
+const ROTATE_BYTES: u64 = 1 << 20;
 const MAX_APPEND_FRAMES: usize = 64;
 const MAX_TAIL_PAGE_BYTES: usize = 1 << 20;
 const MAX_TAIL_PAGE_FRAMES: usize = 4096;
@@ -70,6 +78,11 @@ const fn count_scan(_: &ScanCounter) {}
 struct Lane {
     leader: SessionId,
     epoch: u64,
+}
+
+enum RetirementWatermark {
+    Covered(u64),
+    Recovered { active: bool },
 }
 
 type LaneState = Arc<Mutex<Option<LaneMemory>>>;
@@ -145,7 +158,9 @@ pub struct FollowerStore {
     index_used: Arc<Mutex<u64>>,
     quarantined_entries: usize,
     scan_counter: ScanCounter,
-    telemetry: crate::fleet::telemetry::CellTelemetryHandle,
+    admission: crate::fleet::admission::NodeAdmission,
+    inventory_scope: [u8; 16],
+    telemetry: CellTelemetryHandle,
 }
 
 impl FollowerStore {
@@ -188,8 +203,29 @@ impl FollowerStore {
             index_used: Arc::new(Mutex::new(0)),
             quarantined_entries,
             scan_counter: new_scan_counter(),
+            admission: crate::fleet::admission::NodeAdmission::default(),
+            inventory_scope: rand::random(),
             telemetry,
         })
+    }
+
+    /// Installs the runtime's shared gate before the store is shared or serves
+    /// traffic. Cordon blocks entirely new lanes while existing acknowledged
+    /// tails remain appendable under their normal epoch authorization.
+    #[must_use]
+    pub fn with_node_admission(
+        mut self,
+        admission: crate::fleet::admission::NodeAdmission,
+    ) -> Self {
+        self.admission = admission;
+        self
+    }
+
+    /// Attaches a bounded telemetry sink before sharing the native store.
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: CellTelemetryHandle) -> Self {
+        self.telemetry = telemetry;
+        self
     }
 
     #[cfg(test)]
@@ -231,12 +267,21 @@ impl FollowerStore {
             .try_fold(0_u64, |total, frame| total.checked_add(frame.len() as u64));
         if frames.is_empty()
             || frames.len() > MAX_APPEND_FRAMES
-            || encoded_bytes
-                .is_none_or(|bytes| bytes > self.limits.max_capture_bytes.saturating_add(64 * 240))
+            || encoded_bytes.is_none_or(|bytes| {
+                bytes
+                    > self
+                        .limits
+                        .max_capture_bytes
+                        .saturating_add(64 * cellule_ltx::MAX_NODE_FRAME_HEADER_BYTES as u64)
+            })
         {
             return Err(Error::Node("invalid follower append batch"));
         }
         let lane = Lane { leader, epoch };
+        validate_lane(lane)?;
+        if !lane_directory(&self.root, lane).exists() {
+            self.admission.check_new_role()?;
+        }
         let lock = self.lane_lock(lane)?;
         let root = self.root.clone();
         let limits = self.limits;
@@ -248,6 +293,8 @@ impl FollowerStore {
         let growth = encoded_bytes
             .and_then(|bytes| bytes.checked_add((frames.len() * RECORD_HEADER_BYTES) as u64))
             .ok_or(Error::Node("follower append byte count overflow"))?;
+        let admission = self.admission.clone();
+        let lanes = Arc::clone(&self.lanes);
         let mut observation = AppendObservation::new(
             self.telemetry.clone(),
             leader,
@@ -265,26 +312,55 @@ impl FollowerStore {
                 let state = lock.lock();
                 observation.timing.lane_wait = AppendObservation::elapsed(waiting);
                 let mut state = state.map_err(|_| Error::Node("follower lane lock poisoned"))?;
-                let accounting =
-                    LaneAccounting::begin(retained, &root, lane, growth, &mut observation)?;
-                let started = observation.mark();
-                let result = append_sync(
+                let accounting = LaneAccounting::begin(
+                    retained,
                     &root,
                     lane,
-                    frames,
-                    covered_through,
-                    limits,
-                    &accounting,
-                    &namespace,
-                    &index_used,
-                    &mut state,
-                    &scan_counter,
+                    growth,
+                    state.as_ref().is_some_and(LaneMemory::needs_reconciliation),
                     &mut observation,
-                );
+                )?;
+                let started = observation.mark();
+                let result = (|| {
+                    if !lane_directory(&root, lane).exists() {
+                        admission.admit(|| {
+                            ensure_lane_directories(&root, lane, &namespace, Some(&mut observation))
+                        })?;
+                    }
+                    append_sync(
+                        &root,
+                        lane,
+                        frames,
+                        covered_through,
+                        limits,
+                        &accounting,
+                        &namespace,
+                        &index_used,
+                        &mut state,
+                        &scan_counter,
+                        &mut observation,
+                    )
+                })();
                 observation.timing.append = AppendObservation::elapsed(started);
                 let result = accounting.finish(result, &mut observation);
                 if result.is_err() {
-                    *state = None;
+                    if let Some(memory) = state.as_mut() {
+                        memory.invalidate();
+                    }
+                    if !lane_directory(&root, lane).exists()
+                        && state.as_ref().is_none_or(LaneMemory::is_empty)
+                        && let Ok(mut lanes) = lanes.lock()
+                    {
+                        // Cordon may win after the precheck but before enrollment.
+                        // Rejected transient lanes must not accumulate in memory.
+                        if lanes.get(&lane).is_some_and(|registered| {
+                            Arc::ptr_eq(registered, &lock) && Arc::strong_count(registered) == 2
+                        }) {
+                            *state = None;
+                            lanes.remove(&lane);
+                            let _ = accounting.forget_empty(&mut observation);
+                        }
+                    }
                 }
                 result
             })();
@@ -320,8 +396,14 @@ impl FollowerStore {
                 } else {
                     0
                 };
-            let accounting =
-                LaneAccounting::begin(retained, &root, lane, growth, &mut observation)?;
+            let accounting = LaneAccounting::begin(
+                retained,
+                &root,
+                lane,
+                growth,
+                state.as_ref().is_some_and(LaneMemory::needs_reconciliation),
+                &mut observation,
+            )?;
             let result = seal_sync(
                 &root,
                 lane,
@@ -332,8 +414,10 @@ impl FollowerStore {
                 &scan_counter,
             );
             let result = accounting.finish(result, &mut observation);
-            if result.is_err() {
-                *state = None;
+            if result.is_err()
+                && let Some(memory) = state.as_mut()
+            {
+                memory.invalidate();
             }
             result
         })
@@ -349,6 +433,41 @@ impl FollowerStore {
         covered_through: u64,
     ) -> Result<FollowerReceipt> {
         let lane = Lane { leader, epoch };
+        self.retire_lane(lane, RetirementWatermark::Covered(covered_through))
+            .await
+    }
+
+    /// Retires a canonically recovered lane through its existing durable fence.
+    /// The application binds `member` to this receiver and authenticates the
+    /// requester before obtaining fresh directory authorization. Active lanes
+    /// must retain their actual native seal; no caller watermark is accepted.
+    pub async fn retire_recovered(
+        &self,
+        member: crate::identity::NodeId,
+        authorization: crate::node::RecoveredLogRetirementAuthorization,
+    ) -> Result<FollowerReceipt> {
+        if authorization.member() != member {
+            return Err(Error::Fenced);
+        }
+        let sealed = authorization.sealed();
+        let lane = Lane {
+            leader: sealed.session(),
+            epoch: sealed.log().epoch(),
+        };
+        self.retire_lane(
+            lane,
+            RetirementWatermark::Recovered {
+                active: sealed.log().active(),
+            },
+        )
+        .await
+    }
+
+    async fn retire_lane(
+        &self,
+        lane: Lane,
+        watermark: RetirementWatermark,
+    ) -> Result<FollowerReceipt> {
         let lock = self.lane_lock(lane)?;
         let root = self.root.clone();
         let limits = self.limits;
@@ -369,19 +488,22 @@ impl FollowerStore {
             } else {
                 0
             };
-            let accounting =
-                LaneAccounting::begin(retained, &root, lane, growth, &mut observation)?;
-            accounting.invalidate();
-            let result = retire_sync(
+            let accounting = LaneAccounting::begin(
+                retained,
                 &root,
                 lane,
-                covered_through,
-                limits,
-                &namespace,
-                &scan_counter,
-            );
+                growth,
+                state.as_ref().is_some_and(LaneMemory::needs_reconciliation),
+                &mut observation,
+            )?;
+            accounting.invalidate();
+            let result = retire_sync(&root, lane, watermark, limits, &namespace, &scan_counter);
             let result = accounting.finish(result, &mut observation);
-            *state = None;
+            if result.is_ok() {
+                *state = None;
+            } else if let Some(memory) = state.as_mut() {
+                memory.invalidate();
+            }
             result
         })
         .await
@@ -411,7 +533,14 @@ impl FollowerStore {
             let mut state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
-            let accounting = LaneAccounting::begin(retained, &root, lane, 0, &mut observation)?;
+            let accounting = LaneAccounting::begin(
+                retained,
+                &root,
+                lane,
+                0,
+                state.as_ref().is_some_and(LaneMemory::needs_reconciliation),
+                &mut observation,
+            )?;
             if state.is_none() {
                 accounting.invalidate();
             }
@@ -428,8 +557,10 @@ impl FollowerStore {
             )
             .map(|page| page.frames);
             let result = accounting.finish(result, &mut observation);
-            if result.is_err() {
-                *state = None;
+            if result.is_err()
+                && let Some(memory) = state.as_mut()
+            {
+                memory.invalidate();
             }
             result
         })
@@ -463,7 +594,14 @@ impl FollowerStore {
             let mut state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
-            let accounting = LaneAccounting::begin(retained, &root, lane, 0, &mut observation)?;
+            let accounting = LaneAccounting::begin(
+                retained,
+                &root,
+                lane,
+                0,
+                state.as_ref().is_some_and(LaneMemory::needs_reconciliation),
+                &mut observation,
+            )?;
             if state.is_none() {
                 accounting.invalidate();
             }
@@ -479,8 +617,10 @@ impl FollowerStore {
                 &scan_counter,
             );
             let result = accounting.finish(result, &mut observation);
-            if result.is_err() {
-                *state = None;
+            if result.is_err()
+                && let Some(memory) = state.as_mut()
+            {
+                memory.invalidate();
             }
             result
         })
@@ -532,15 +672,26 @@ impl FollowerStore {
                 .write()
                 .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
             let mut observation = AppendObservation::unobserved(lane);
-            let _lane = lock
+            let state = lock
                 .lock()
                 .map_err(|_| Error::Node("follower lane lock poisoned"))?;
-            let accounting = LaneAccounting::begin(retained, &root, lane, 0, &mut observation)?;
+            let accounting = LaneAccounting::begin(
+                retained,
+                &root,
+                lane,
+                0,
+                state.as_ref().is_some_and(LaneMemory::needs_reconciliation),
+                &mut observation,
+            )?;
             let result = remove_retired_sync(&root, lane, candidate, retired_before_ms);
             if matches!(result, Ok(true)) {
                 accounting.emptied();
             }
-            accounting.finish(result, &mut observation)
+            let removed = accounting.finish(result, &mut observation)?;
+            if removed {
+                accounting.forget_empty(&mut observation)?;
+            }
+            Ok::<_, Error>(removed)
         })
         .await
         .map_err(Error::FollowerWorkerJoin)??;

@@ -3,6 +3,7 @@
 use super::*;
 
 struct RecordingPrimitiveTelemetry {
+    queries: Mutex<Vec<bool>>,
     operations: Mutex<
         Vec<(
             &'static str,
@@ -14,11 +15,15 @@ struct RecordingPrimitiveTelemetry {
 impl Default for RecordingPrimitiveTelemetry {
     fn default() -> Self {
         Self {
+            queries: Mutex::new(Vec::new()),
             operations: Mutex::new(Vec::new()),
         }
     }
 }
 impl CellTelemetry for RecordingPrimitiveTelemetry {
+    fn query_execution(&self, _queue: Duration, _worker: Duration, succeeded: bool) {
+        self.queries.lock().unwrap().push(succeeded);
+    }
     fn primitive_operation(
         &self,
         module: &'static str,
@@ -71,6 +76,7 @@ async fn primitive_operations_are_reported_for_local_and_peer_execution() {
         .query::<CountComments>(&fixture.target, None, ())
         .await
         .unwrap();
+    assert_eq!(*recording.queries.lock().unwrap(), [true]);
 
     let signer = PeerSigner::new(
         SessionId::from_bytes([12; 16]),

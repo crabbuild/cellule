@@ -379,7 +379,9 @@ table-statement compilation after a read between warm writes; this establishes
 cache lifetime, not a throughput gain.
 
 Four managed connections charge 256 KiB of page-cache targets per Cell, and
-active-Cell admission reserves 128 KiB native memory and eleven descriptors.
+active-Cell admission now reserves 160 KiB native memory, including the four
+8 KiB lookaside arenas, and eleven descriptors. The original R2 probe below
+used the 128 KiB native allowance before lookaside integration.
 The added reader adds 125 MiB of page-cache targets at 2,000 Cells. Its Linux
 population probe observed about 671 MiB process RSS, 972 MiB cgroup memory,
 and ten SQLite descriptors per Cell, with complete drain. Nonempty RSS

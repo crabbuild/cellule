@@ -2,6 +2,436 @@
 
 use super::*;
 
+#[tokio::test]
+async fn waiting_compaction_admission_cancels_without_work_and_preserves_closed_source() {
+    for block_dirty in [false, true] {
+        let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+        let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+        let replica = CellReplica::new(
+            CellStorageLayout::new(
+                Store::new(Arc::new(InMemory::new())),
+                ObjectPath::from("waiting-compaction-admission"),
+                [201; 16],
+            ),
+            [202; 32],
+            [203; 16],
+            Limits::default(),
+        )
+        .unwrap()
+        .with_host(
+            Host::default()
+                .with_dirty_slots(dirty.clone())
+                .with_recovery_slots(recovery.clone()),
+        );
+        let occupied_pool = if block_dirty { &dirty } else { &recovery };
+        let occupied = occupied_pool.clone().acquire_owned().await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                replica.admit_scheduled_compaction()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(dirty.available_permits(), usize::from(!block_dirty));
+        assert_eq!(recovery.available_permits(), usize::from(block_dirty));
+        drop(occupied);
+        let admitted = replica.admit_scheduled_compaction().await.unwrap();
+        assert_eq!(dirty.available_permits(), 0);
+        assert_eq!(recovery.available_permits(), 0);
+        drop(admitted);
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+        occupied_pool.close();
+        let error = replica.admit_scheduled_compaction().await.err().unwrap();
+        assert!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .is::<tokio::sync::AcquireError>()
+        );
+        assert_eq!(dirty.available_permits(), 1);
+        assert_eq!(recovery.available_permits(), 1);
+    }
+}
+
+#[cfg(feature = "replica")]
+async fn compaction_case_inputs(
+    replica: &CellReplica,
+    writer: &mut Db,
+    composed: bool,
+    large: bool,
+) -> (cellule_ltx::RootRef, Option<cellule_ltx::CaptureBatch>) {
+    let mut root = replica
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    if !composed {
+        return (root, None);
+    }
+    for sequence in 2..=8 {
+        writer
+            .transaction(|tx| {
+                tx.execute_batch("UPDATE t SET v=randomblob(20000)")?;
+                if large {
+                    tx.execute_batch("UPDATE padding SET v=randomblob(400000)")?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        root = replica
+            .prepare(Some(&root), &writer.capture().unwrap(), sequence, 1)
+            .await
+            .unwrap()
+            .root();
+    }
+    writer
+        .transaction(|tx| tx.execute_batch("UPDATE t SET v=randomblob(20000)"))
+        .unwrap();
+    (root, Some(writer.capture().unwrap()))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn canceled_parallel_output_flushes_retain_both_jobs_and_scratch() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    let (directory, faults, host, mut writer) = fixture();
+    let jobs = Arc::new(tokio::sync::Semaphore::new(2));
+    let dirty = Arc::new(tokio::sync::Semaphore::new(1));
+    let recovery = Arc::new(tokio::sync::Semaphore::new(1));
+    let scratch = Arc::new(tokio::sync::Semaphore::new(128));
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(counted.clone()),
+            ObjectPath::from("cancel-output-flushes"),
+            [181; 16],
+        ),
+        [182; 32],
+        [183; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(
+        host.with_job_slots(jobs.clone())
+            .with_dirty_slots(dirty.clone())
+            .with_recovery_slots(recovery.clone())
+            .with_scratch_slots(scratch.clone()),
+    );
+    let root = replica
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    writer.close().unwrap();
+    counted.reset();
+    let pause = Arc::new(Pause {
+        operation: "compaction_output_sync",
+        entered: tokio::sync::Notify::new(),
+        released: Mutex::new(false),
+        wake: std::sync::Condvar::new(),
+    });
+    let release = Release(pause.clone());
+    *faults.output_pause.lock().unwrap() = Some(pause);
+    let compacting = replica.clone();
+    let destination = directory.path().to_owned();
+    let task = tokio::spawn(async move {
+        compacting
+            .prepare_compaction(&root, 0..1, 9, &destination)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while faults.output_sync_started.load(Ordering::Relaxed) < 2 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    assert_eq!(jobs.available_permits(), 0);
+    assert_eq!(dirty.available_permits(), 0);
+    assert_eq!(recovery.available_permits(), 0);
+    assert!(scratch.available_permits() < 128);
+    assert_eq!(counted.put_requests(), 0);
+    assert_eq!(
+        std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter(|entry| entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".crab-compaction-"))
+            .count(),
+        5,
+        "cancellation must not unlink a dispatched flush's files"
+    );
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        // Cleanup also needs a job slot. Observe release without taking all
+        // slots ahead of the cleanup job we are waiting to verify.
+        while jobs.available_permits() != 2
+            || dirty.available_permits() != 1
+            || recovery.available_permits() != 1
+            || scratch.available_permits() != 128
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "cancelled preparation cannot upload"
+    );
+    assert!(!std::fs::read_dir(directory.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".crab-compaction-")
+    }));
+    replica
+        .open_root(&root)
+        .await
+        .unwrap()
+        .restore(&directory.path().join("original.sqlite"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compaction_dependency_failure_cannot_return_metadata_proposal() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    for (composed, operation, packed) in [false, true].into_iter().flat_map(|composed| {
+        ["compaction_ltx_read", "compaction_index_read"]
+            .into_iter()
+            .flat_map(move |operation| {
+                [false, true]
+                    .into_iter()
+                    .map(move |packed| (composed, operation, packed))
+            })
+    }) {
+        let (directory, faults, host, mut writer) = fixture();
+        let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+        let replica = CellReplica::new(
+            CellStorageLayout::new(
+                Store::new(counted.clone()),
+                ObjectPath::from(operation),
+                [177; 16],
+            ),
+            [178; 32],
+            [179; 16],
+            Limits::default(),
+        )
+        .unwrap()
+        .with_host(host);
+        if !packed {
+            writer
+                .transaction(|tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE padding(v); INSERT INTO padding VALUES(randomblob(400000))",
+                    )
+                })
+                .unwrap();
+        }
+        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed, !packed).await;
+        counted.reset();
+        faults.arm(Some(operation));
+        let result = if let Some(cuts) = &cuts {
+            replica
+                .prepare_scheduled_compaction_append(&root, cuts, 9, 1, 32, directory.path())
+                .await
+                .map(|prepared| prepared.unwrap())
+        } else {
+            replica
+                .prepare_compaction(&root, 0..1, 9, directory.path())
+                .await
+        };
+        assert!(result.is_err(), "metadata upload must not mask {operation}");
+        if packed {
+            assert_eq!(
+                counted.put_requests(),
+                0,
+                "packed identity is not known before source verification"
+            );
+        } else {
+            assert!(
+                counted.put_requests() > 0,
+                "the independent metadata branch should complete: composed={composed}, operation={operation}"
+            );
+        }
+        faults.arm(None);
+        let restored = directory.path().join("original.sqlite");
+        replica
+            .open_root(&root)
+            .await
+            .unwrap()
+            .restore(&restored)
+            .await
+            .unwrap();
+        assert!(!std::fs::read_dir(directory.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".crab-compaction-")
+        }));
+        writer.close().unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compaction_output_sync_failure_waits_for_sibling_and_refuses_upload() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    for operation in ["compaction_ltx_sync", "compaction_index_sync"] {
+        let (directory, faults, host, mut writer) = fixture();
+        let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+        let replica = CellReplica::new(
+            CellStorageLayout::new(
+                Store::new(counted.clone()),
+                ObjectPath::from(operation),
+                [174; 16],
+            ),
+            [175; 32],
+            [176; 16],
+            Limits::default(),
+        )
+        .unwrap()
+        .with_host(host);
+        let root = replica
+            .prepare(None, &writer.capture().unwrap(), 1, 1)
+            .await
+            .unwrap()
+            .root();
+        counted.reset();
+        let pause = Arc::new(Pause {
+            operation: "compaction_output_sync",
+            entered: tokio::sync::Notify::new(),
+            released: Mutex::new(false),
+            wake: std::sync::Condvar::new(),
+        });
+        let release = Release(pause.clone());
+        *faults.output_pause.lock().unwrap() = Some(pause.clone());
+        faults.arm(Some(operation));
+        let destination = directory.path().to_owned();
+        let compacting = replica.clone();
+        let task = tokio::spawn(async move {
+            compacting
+                .prepare_compaction(&root, 0..1, 9, &destination)
+                .await
+        });
+        let sibling = tokio::time::timeout(Duration::from_secs(2), pause.entered.notified()).await;
+        assert_eq!(counted.put_requests(), 0);
+        assert!(
+            !task.is_finished(),
+            "failure must not abandon the sibling flush"
+        );
+        drop(release);
+        let result = task.await.unwrap();
+        assert!(
+            sibling.is_ok(),
+            "sibling flush did not run after {operation}"
+        );
+        injected(result);
+        assert_eq!(counted.put_requests(), 0, "failed outputs must not upload");
+        assert_eq!(faults.output_sync_started.load(Ordering::Relaxed), 2);
+        faults.arm(None);
+        let restored = directory.path().join("original.sqlite");
+        replica
+            .open_root(&root)
+            .await
+            .unwrap()
+            .restore(&restored)
+            .await
+            .unwrap();
+        assert!(!std::fs::read_dir(directory.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".crab-compaction-")
+        }));
+        writer.close().unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compaction_overlaps_output_flushes_before_uploading() {
+    use cellule_store::test_support::CountingObjectStore;
+
+    let (directory, faults, host, mut writer) = fixture();
+    let counted = Arc::new(CountingObjectStore::new(Arc::new(InMemory::new())));
+    let replica = CellReplica::new(
+        CellStorageLayout::new(
+            Store::new(counted.clone()),
+            ObjectPath::from("output-sync"),
+            [171; 16],
+        ),
+        [172; 32],
+        [173; 16],
+        Limits::default(),
+    )
+    .unwrap()
+    .with_host(host);
+    let root = replica
+        .prepare(None, &writer.capture().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    counted.reset();
+    faults.file_syncs.store(0, Ordering::Relaxed);
+    let pause = Arc::new(Pause {
+        operation: "compaction_output_sync",
+        entered: tokio::sync::Notify::new(),
+        released: Mutex::new(false),
+        wake: std::sync::Condvar::new(),
+    });
+    let release = Release(pause.clone());
+    *faults.output_pause.lock().unwrap() = Some(pause);
+    let destination = directory.path().to_owned();
+    let task = tokio::spawn(async move {
+        replica
+            .prepare_compaction(&root, 0..1, 9, &destination)
+            .await
+    });
+    let overlap = tokio::time::timeout(Duration::from_secs(2), async {
+        while faults.output_sync_started.load(Ordering::Relaxed) < 2 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    assert_eq!(
+        counted.put_requests(),
+        0,
+        "outputs must not upload before both barriers"
+    );
+    assert!(!task.is_finished());
+    drop(release);
+    let compacted = task.await.unwrap().unwrap();
+    assert!(overlap.is_ok(), "LTX and index flushes were serialized");
+    assert_eq!(
+        faults.file_syncs.load(Ordering::Relaxed),
+        4,
+        "both source and output files remain synced"
+    );
+    assert_eq!(compacted.root().position, root.position);
+    let restored = directory.path().join("restored.sqlite");
+    compacted.verified().restore(&restored).await.unwrap();
+    assert!(!std::fs::read_dir(directory.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".crab-compaction-")
+    }));
+    writer.close().unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn compaction_reservation_covers_all_coexisting_scratch_files() {
     for page_size in [512, 65_536] {
@@ -82,16 +512,15 @@ async fn compaction_reservation_covers_all_coexisting_scratch_files() {
 #[tokio::test(start_paused = true)]
 async fn compaction_overlaps_independent_remote_transfers() {
     let (_directory, _faults, _host, mut writer) = fixture();
-    let mut captured = writer.capture().unwrap();
+    let mut batches = vec![writer.capture().unwrap()];
     for value in [2, 3, 4] {
         writer
             .transaction(|tx| tx.execute("INSERT INTO t VALUES(?1)", [value]))
             .unwrap();
         let next = writer.capture().unwrap();
-        captured.segments.extend(next.segments);
-        captured.position = next.position;
+        batches.push(next);
     }
-    assert_eq!(captured.segments.len(), 4);
+    assert_eq!(batches.len(), 4);
     let delay = Duration::from_millis(100);
     let backend = InMemory::new();
     let replica = CellReplica::new(
@@ -112,7 +541,19 @@ async fn compaction_overlaps_independent_remote_transfers() {
         Limits::default(),
     )
     .unwrap();
-    let root = replica.prepare(None, &captured, 1, 1).await.unwrap().root();
+    // Publish individually so four independent remote sources exist even when
+    // small captures in one publication are merged before upload.
+    let mut root = None;
+    for (index, captured) in batches.iter().enumerate() {
+        root = Some(
+            replica
+                .prepare(root.as_ref(), captured, index as u64 + 1, 1)
+                .await
+                .unwrap()
+                .root(),
+        );
+    }
+    let root = root.unwrap();
     let scratch = tempfile::TempDir::new().unwrap();
     let started = tokio::time::Instant::now();
 
@@ -121,9 +562,9 @@ async fn compaction_overlaps_independent_remote_transfers() {
         .await
         .unwrap();
 
-    // Cached root metadata is presence-checked in one parallel HEAD wave.
-    // Streaming directory construction still precedes the final root upload.
-    assert_eq!(started.elapsed(), delay * 5);
+    // Cached root HEADs, concurrent packed source transfers, then packed/root
+    // uploads need three waves. The bounded directory leaf stays in the root.
+    assert_eq!(started.elapsed(), delay * 3);
     writer.close().unwrap();
 }
 #[cfg(feature = "replica")]
@@ -283,14 +724,27 @@ async fn cell_compaction_uses_injected_filesystem_and_cleans_failed_scratch() {
 
 #[tokio::test]
 async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
-    for operation in [
-        "create",
-        "open_rw",
-        "read_exact_at",
-        "write_all_at",
-        "write_all",
-        "sync_all",
-    ] {
+    verify_canceled_compaction(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn canceled_pre_admitted_compaction_retains_files_and_admission_through_cleanup() {
+    verify_canceled_compaction(true).await;
+}
+
+async fn verify_canceled_compaction(pre_admitted: bool) {
+    for (composed, operation) in [false, true].into_iter().flat_map(|composed| {
+        [
+            "create",
+            "open_rw",
+            "read_exact_at",
+            "write_all_at",
+            "write_all",
+            "sync_all",
+        ]
+        .into_iter()
+        .map(move |operation| (composed, operation))
+    }) {
         let (directory, faults, host, mut writer) = fixture();
         let jobs = Arc::new(tokio::sync::Semaphore::new(1));
         let dirty = Arc::new(tokio::sync::Semaphore::new(1));
@@ -313,11 +767,7 @@ async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
                 .with_recovery_slots(recovery.clone())
                 .with_scratch_slots(scratch.clone()),
         );
-        let root = replica
-            .prepare(None, &writer.capture().unwrap(), 1, 1)
-            .await
-            .unwrap()
-            .root();
+        let (root, cuts) = compaction_case_inputs(&replica, &mut writer, composed, false).await;
         writer.close().unwrap();
         let pause = Arc::new(Pause {
             operation,
@@ -328,12 +778,24 @@ async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
         let release = Release(pause.clone());
         *faults.pause.lock().unwrap() = Some(pause.clone());
         *faults.forbidden_thread.lock().unwrap() = Some(std::thread::current().id());
-        let task_replica = replica.clone();
+        let task_replica = if pre_admitted {
+            replica.admit_scheduled_compaction().await.unwrap()
+        } else {
+            replica.clone()
+        };
         let destination = directory.path().to_owned();
+        let task_cuts = cuts.clone();
         let task = tokio::spawn(async move {
-            task_replica
-                .prepare_compaction(&root, 0..1, 9, &destination)
-                .await
+            if let Some(cuts) = &task_cuts {
+                task_replica
+                    .prepare_scheduled_compaction_append(&root, cuts, 9, 1, 32, &destination)
+                    .await
+                    .map(|prepared| prepared.unwrap())
+            } else {
+                task_replica
+                    .prepare_compaction(&root, 0..1, 9, &destination)
+                    .await
+            }
         });
         tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
             .await
@@ -385,10 +847,20 @@ async fn canceled_compaction_retains_files_and_admission_through_cleanup() {
             }),
             "{operation}"
         );
-        let compacted = replica
-            .prepare_compaction(&root, 0..1, 9, directory.path())
-            .await
-            .unwrap();
-        assert_eq!(compacted.root().position, root.position);
+        if let Some(cuts) = &cuts {
+            let prepared = replica
+                .prepare_scheduled_compaction_append(&root, cuts, 9, 1, 32, directory.path())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(prepared.root().position, cuts.position);
+            assert_eq!(prepared.predecessor(), Some(root));
+        } else {
+            let compacted = replica
+                .prepare_compaction(&root, 0..1, 9, directory.path())
+                .await
+                .unwrap();
+            assert_eq!(compacted.root().position, root.position);
+        }
     }
 }

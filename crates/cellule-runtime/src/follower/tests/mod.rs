@@ -33,6 +33,8 @@ fn scoped_frame(
 
 mod append;
 mod budget;
+mod integrity;
 mod performance;
+mod rotation;
 mod scan;
 mod telemetry;

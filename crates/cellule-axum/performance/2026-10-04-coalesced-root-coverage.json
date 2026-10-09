@@ -1,0 +1,1444 @@
+{
+  "target_established": false,
+  "capacity_gate_passed": false,
+  "environment": {
+    "vm_vcpus": 8,
+    "vm_memory_bytes": 16732606464,
+    "architecture": "aarch64",
+    "containers": [
+      {
+        "name": "cellule-node-scaling-assets",
+        "image_id": "sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97",
+        "cpu_quota_nanocpus": 8000000000,
+        "memory_limit_bytes": 12884901888,
+        "memory_swap_limit_bytes": 12884901888
+      },
+      {
+        "name": "cellule-node-scaling-rustfs",
+        "image_id": "sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858",
+        "cpu_quota_nanocpus": 4000000000,
+        "memory_limit_bytes": 2147483648,
+        "memory_swap_limit_bytes": 2147483648
+      }
+    ],
+    "scope": "Shared Linux ARM64 development VM; owner, driver and followers share one container. Other workloads uncontrolled. No isolated target qualification."
+  },
+  "config": {
+    "cells": 64,
+    "workers": 8,
+    "clients": 64,
+    "queue_capacity": 256,
+    "write_rate": 100,
+    "read_rate": 10,
+    "warmup_seconds": 30,
+    "measurement_seconds": 180,
+    "disk_budget_bytes": 1073741824,
+    "native_budget_bytes": 536870912,
+    "retained_cuts_budget_bytes": 16777216,
+    "fresh_object_prefix": true,
+    "fresh_empty_follower_stores": true
+  },
+  "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+  "validation": {
+    "root_group_tickets": 64,
+    "baseline_authority_calls": 64,
+    "candidate_authority_calls": 1,
+    "runtime_unit_tests_passed": 616,
+    "runtime_unit_tests_ignored": 3,
+    "strict_runtime_axum_clippy_passed": true,
+    "release_build_passed": true,
+    "local_document_boundary_layout_format_checks_passed": true,
+    "evidence": [
+      {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-red.log",
+        "sha256": "d0279f110e76aec0b16374ebe3ce1275eec17c2533b6ee25b48f1df592517014"
+      },
+      {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-runtime-tests.log",
+        "sha256": "a07aa0474172a40d3b3df997d174d8a0c68d2004ca783979fb918c287d530dec"
+      },
+      {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-clippy.log",
+        "sha256": "340133ee7817ac11fd9d8688fbd446ef7821ec81573b2da89b8567efb1090545"
+      },
+      {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-release.log",
+        "sha256": "c2f88720a74c98b42bbea0472f7765b8716c8fc08937004cb8115302e66b69ac"
+      }
+    ]
+  },
+  "source_provenance": [
+    {
+      "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-source.tar",
+      "sha256": "17446e80f6d9f9a4befe3f404534a016e5b6395ff7eb3d23cfcdb30350017276"
+    },
+    {
+      "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate.patch",
+      "sha256": "630e4879ddee9794b1b38ebd6b82b17943c1ba03c06bcecbdf98ccc2cf11c4c9"
+    },
+    {
+      "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-source-sha256.json",
+      "sha256": "b43aaedb91fb4cdb0e7e8e666db0d29c8ff2f0beb70d2beea86441c3a2377975"
+    }
+  ],
+  "admission_finding": {
+    "max_capture_bytes": 67108864,
+    "transaction_reserved_bytes": 134217728,
+    "eight_concurrent_reservations_bytes": 1073741824,
+    "status": "Source-established conservative reservation; earlier diagnostics reproduced local-disk capacity refusal. Exact internal cause of every failure in these two runs is not established."
+  },
+  "probes": [
+    {
+      "name": "baseline",
+      "revision": "764e70a58fe50ad9872c4d5256092b397f206aec",
+      "binary_sha256": "9a44d876bd84670c6be48f9cc260b2f804c2d8745da0c57a83806a0150d5610e",
+      "command": {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-command.json",
+        "sha256": "ddcab8563386891a840568eb81256c87c76eebd5c3b9eb2574f0e5359dd628b3"
+      },
+      "exit_code": 1,
+      "driver_gate_passed": false,
+      "cold_audit_executed": false,
+      "durability_counters_verified": false,
+      "activation_ms": 1949,
+      "summary": {
+        "drain_seconds": 0.328283142,
+        "reads": {
+          "attempts": 1714,
+          "errors": 215,
+          "generated_offers": 1800,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 291703,
+          "per_cell_successes_including_drain": [
+            27,
+            26,
+            26,
+            15,
+            26,
+            27,
+            28,
+            23,
+            27,
+            26,
+            27,
+            26,
+            22,
+            27,
+            27,
+            27,
+            5,
+            27,
+            4,
+            4,
+            26,
+            26,
+            26,
+            4,
+            4,
+            27,
+            25,
+            27,
+            27,
+            22,
+            27,
+            26,
+            27,
+            27,
+            27,
+            22,
+            27,
+            27,
+            27,
+            27,
+            26,
+            3,
+            27,
+            26,
+            23,
+            28,
+            28,
+            27,
+            28,
+            28,
+            28,
+            3,
+            27,
+            27,
+            27,
+            26,
+            27,
+            6,
+            27,
+            27,
+            27,
+            27,
+            28,
+            23
+          ],
+          "planned_offers": 1800,
+          "producer_unissued": 0,
+          "queue_dropped": 86,
+          "request_histogram_overflow": 0,
+          "request_latency_ms_all_attempts": {
+            "max": 8388.369765,
+            "p50": 0.7,
+            "p95": 630.9,
+            "p99": 1958.1
+          },
+          "scheduled_histogram_overflow": 0,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 9062.991173,
+            "p50": 2.7,
+            "p95": 2921.2,
+            "p99": 6908.8
+          },
+          "successes_after_deadline": 2,
+          "successes_in_window": 1497,
+          "successes_including_drain": 1499,
+          "successful_requests_per_second": 8.316666666666666,
+          "target_requests_per_second": 10,
+          "warmup_attempts": 300,
+          "warmup_errors": 0,
+          "warmup_queue_dropped": 0
+        },
+        "scope": "offered-load development probe; cold recovery is a separate required gate",
+        "setup_seconds": 0.8307171780000147,
+        "task_errors": [],
+        "window_seconds": 180,
+        "writes": {
+          "attempts": 17261,
+          "errors": 2244,
+          "generated_offers": 18000,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 3004481,
+          "per_cell_successes_including_drain": [
+            273,
+            274,
+            271,
+            151,
+            274,
+            271,
+            271,
+            223,
+            273,
+            269,
+            268,
+            268,
+            224,
+            269,
+            267,
+            270,
+            54,
+            270,
+            38,
+            38,
+            268,
+            267,
+            270,
+            38,
+            38,
+            273,
+            270,
+            268,
+            271,
+            219,
+            268,
+            268,
+            268,
+            270,
+            272,
+            223,
+            269,
+            271,
+            270,
+            270,
+            269,
+            29,
+            272,
+            269,
+            225,
+            269,
+            267,
+            271,
+            267,
+            268,
+            269,
+            29,
+            271,
+            268,
+            264,
+            266,
+            267,
+            58,
+            268,
+            268,
+            270,
+            270,
+            272,
+            224
+          ],
+          "planned_offers": 18000,
+          "producer_unissued": 0,
+          "queue_dropped": 739,
+          "request_histogram_overflow": 6,
+          "request_latency_ms_all_attempts": {
+            "max": 11193.967911,
+            "p50": 26.7,
+            "p95": 1364.6,
+            "p99": 3030.5
+          },
+          "scheduled_histogram_overflow": 12,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 11195.35834,
+            "p50": 36.9,
+            "p95": 3748.1,
+            "p99": 7026.6
+          },
+          "successes_after_deadline": 16,
+          "successes_in_window": 15001,
+          "successes_including_drain": 15017,
+          "successful_requests_per_second": 83.33888888888889,
+          "target_requests_per_second": 100,
+          "warmup_attempts": 3000,
+          "warmup_errors": 5,
+          "warmup_queue_dropped": 0
+        }
+      },
+      "completion_intervals": [
+        {
+          "start_seconds": 0,
+          "seconds": 10,
+          "writes": 996,
+          "reads": 100,
+          "write_tps": 99.6,
+          "read_tps": 10.0
+        },
+        {
+          "start_seconds": 10,
+          "seconds": 10,
+          "writes": 887,
+          "reads": 91,
+          "write_tps": 88.7,
+          "read_tps": 9.1
+        },
+        {
+          "start_seconds": 20,
+          "seconds": 10,
+          "writes": 810,
+          "reads": 83,
+          "write_tps": 81.0,
+          "read_tps": 8.3
+        },
+        {
+          "start_seconds": 30,
+          "seconds": 10,
+          "writes": 1126,
+          "reads": 109,
+          "write_tps": 112.6,
+          "read_tps": 10.9
+        },
+        {
+          "start_seconds": 40,
+          "seconds": 10,
+          "writes": 876,
+          "reads": 87,
+          "write_tps": 87.6,
+          "read_tps": 8.7
+        },
+        {
+          "start_seconds": 50,
+          "seconds": 10,
+          "writes": 858,
+          "reads": 89,
+          "write_tps": 85.8,
+          "read_tps": 8.9
+        },
+        {
+          "start_seconds": 60,
+          "seconds": 10,
+          "writes": 894,
+          "reads": 87,
+          "write_tps": 89.4,
+          "read_tps": 8.7
+        },
+        {
+          "start_seconds": 70,
+          "seconds": 10,
+          "writes": 873,
+          "reads": 89,
+          "write_tps": 87.3,
+          "read_tps": 8.9
+        },
+        {
+          "start_seconds": 80,
+          "seconds": 10,
+          "writes": 873,
+          "reads": 86,
+          "write_tps": 87.3,
+          "read_tps": 8.6
+        },
+        {
+          "start_seconds": 90,
+          "seconds": 10,
+          "writes": 592,
+          "reads": 60,
+          "write_tps": 59.2,
+          "read_tps": 6.0
+        },
+        {
+          "start_seconds": 100,
+          "seconds": 10,
+          "writes": 589,
+          "reads": 62,
+          "write_tps": 58.9,
+          "read_tps": 6.2
+        },
+        {
+          "start_seconds": 110,
+          "seconds": 10,
+          "writes": 990,
+          "reads": 95,
+          "write_tps": 99.0,
+          "read_tps": 9.5
+        },
+        {
+          "start_seconds": 120,
+          "seconds": 10,
+          "writes": 875,
+          "reads": 88,
+          "write_tps": 87.5,
+          "read_tps": 8.8
+        },
+        {
+          "start_seconds": 130,
+          "seconds": 10,
+          "writes": 860,
+          "reads": 85,
+          "write_tps": 86.0,
+          "read_tps": 8.5
+        },
+        {
+          "start_seconds": 140,
+          "seconds": 10,
+          "writes": 534,
+          "reads": 56,
+          "write_tps": 53.4,
+          "read_tps": 5.6
+        },
+        {
+          "start_seconds": 150,
+          "seconds": 10,
+          "writes": 650,
+          "reads": 64,
+          "write_tps": 65.0,
+          "read_tps": 6.4
+        },
+        {
+          "start_seconds": 160,
+          "seconds": 10,
+          "writes": 966,
+          "reads": 93,
+          "write_tps": 96.6,
+          "read_tps": 9.3
+        },
+        {
+          "start_seconds": 170,
+          "seconds": 10,
+          "writes": 752,
+          "reads": 73,
+          "write_tps": 75.2,
+          "read_tps": 7.3
+        }
+      ],
+      "owner_peak_rss_bytes": 122003456,
+      "owner_peak_file_descriptors": 654,
+      "first_driver_error": "HTTP 503: missing field `receipt` at line 1 column 67; body={\"code\":\"unavailable\",\"message\":\"Cell is temporarily unavailable.\"}",
+      "raw_evidence": [
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/active-owner-refused.log",
+          "sha256": "12a2bf17b107d3c5b57ea10c4d1f236d436893164fde373c5c2e7943896bc63e"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/initial.log",
+          "sha256": "e5b23ed03d1bdaa96b4b84705d60ecf31668306a09b7168e3f3f93ffb48a6a00"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-0.jsonl",
+          "sha256": "dcfc2fe5c24c8b818268c87fb331120a5595e960cfe70522e0b8383646637c23"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-1.jsonl",
+          "sha256": "94f1fd0910a00a0a62530e54e54449797aeceba8c7611db4dcbac49fcd5f70fc"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-10.jsonl",
+          "sha256": "99510f5b7c6e0ac3ea7072fb939c8a11af5c64231f49cd6ff7f48066f15b68eb"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-11.jsonl",
+          "sha256": "9337e58d7240aaa4bb58408aa4c2305c33f7e94276dd40d2ceaf176e3e506ce3"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-12.jsonl",
+          "sha256": "8c8b887e697b1c0d38aa1e51ba00272bf466851a42d19ac711a32a8e2a114e74"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-13.jsonl",
+          "sha256": "358f2a1a7d00e35aa400ace76999d3f12278fdd340d0a3a78ca9479131bdff1e"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-14.jsonl",
+          "sha256": "3ce20845deee1ef38e47adddd1018f4b26637994f681c9ba6006a46f870cc4be"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-15.jsonl",
+          "sha256": "f32e253c203ad0f554408619fecef93ff2bd9d5219c990f2c5b28bd26864217d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-16.jsonl",
+          "sha256": "19942255f0954011cc99edf7cb5d324890fed16e49a41436da522f875d75354c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-17.jsonl",
+          "sha256": "393b689485805a4231128cf059cad576e543983f6b568cd8acfc66048b82e65d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-18.jsonl",
+          "sha256": "dafef67cebd3b4cd45da79ec5a8a7c817985194c2df70e70ca2e3a696fdf1b59"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-19.jsonl",
+          "sha256": "0232717c38210e682ce024faaeb4ad73f6346219d7f78be7a6c1030d7adb1c86"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-2.jsonl",
+          "sha256": "f0044a146d16052ced6a38af85c5be8b367552283b5747607c520f26da88dd04"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-20.jsonl",
+          "sha256": "01768f68500f245440c4fe56b3f1879fc6385e89ad61a481562250ccc65e9246"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-21.jsonl",
+          "sha256": "c2ae9af497a2d819d18950f47924a5da76a14cceca04f6cd6645ac6c4d50e49f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-22.jsonl",
+          "sha256": "c99d7472bff2f63f6adb842e139c18a1a2196151583ed2c9f22cb2d50dfc8b83"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-23.jsonl",
+          "sha256": "34e2c3992df302d4e01c18ef8a0c7d991d15127bd6e379dbab9aa227a9790ff1"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-24.jsonl",
+          "sha256": "54c3db535d91b0983b1c82474b8576dad5286cc3f6cb1366a6f4cbdfce7426d1"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-25.jsonl",
+          "sha256": "50fd5b133c38e069f02e9c986960118774d97b73f69e4b68db7fc35408b4c1d0"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-26.jsonl",
+          "sha256": "6d61c8d01e041d507c03eed12de1333b26c0e00ea79d74297575da5b737f22cf"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-27.jsonl",
+          "sha256": "af4858358054c1412167b8ce22221a8c8479a039d5d66e1b02fc49315e86e606"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-28.jsonl",
+          "sha256": "dea3f73085a81769c331b4496f405f259b2a0e39115ea0dfb587d064892f5444"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-29.jsonl",
+          "sha256": "6fe1c7f4c5ba43a58f65a582b9f1f40fe571c2e43f76fe3a11bc9de99c448b41"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-3.jsonl",
+          "sha256": "3b8fbb449dc3ef915b1848d1232f40063ea6ecc4743030a5725021f4e8c0ddd3"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-30.jsonl",
+          "sha256": "b6a293dd590bbd7c2a98ffa3d2b6f867e70c71f871ee5b7034c3b1ef3ae2dcd3"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-31.jsonl",
+          "sha256": "5e6561be695ff860502a22ed42d2606d79ce23f9100d63b7101daa1d282c75e0"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-32.jsonl",
+          "sha256": "a3eb9cdb2705e60f8569082df8f1d22f7346b254fe890fd1c12d0c6ff1772a0f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-33.jsonl",
+          "sha256": "ea096a7d4e14eb44cbb233898e3575f8f1df5e8affe79c8a111ea5d752916153"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-34.jsonl",
+          "sha256": "a2ee25fb7fc87fda44300784819748bae851d99638c89f496f8090d6e12575b8"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-35.jsonl",
+          "sha256": "dad7a37a62df45f075291eef31c0083d3aa58e8c413e5c8232c3a57018fbe069"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-36.jsonl",
+          "sha256": "d46fa159ddc081f18beca083f88cdd4978093c0667dfc9c25147e37021d187ca"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-37.jsonl",
+          "sha256": "6db79283049788bf87182310db69d8566b29fe477988c32130849a9d3d000d07"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-38.jsonl",
+          "sha256": "a3147974f0d876d6d34d11c30e988bb8731fc3f9824160036ee0471dae693cf6"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-39.jsonl",
+          "sha256": "e46edb0d7cbb877f106cbae7cde58de3e5d7f3745400655e3b0697b07159d8d9"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-4.jsonl",
+          "sha256": "e5d023dc3010b2a3c7281f2a6c9008049cfefff0da63a7f841239ba387f31453"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-40.jsonl",
+          "sha256": "1572d0cecf2a35b88b939fcd06f0d6cc0e0b56206f8f5f16b4dbea5d7083a6d5"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-41.jsonl",
+          "sha256": "ae6bd71d87cd459ad32f3cd80c95cf4d8bc4ee1218550075212cdfaec0034274"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-42.jsonl",
+          "sha256": "095f17fbeeab17f732b5dbac0eaad4d7dcfa7fadfda5583b939b6e67ef7e7c4f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-43.jsonl",
+          "sha256": "4559aa9d52155416da08fbe938cefbe9d1b2552e0ee281f03c6c5707f973378b"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-44.jsonl",
+          "sha256": "cbbbb96f6a10722d8d3f12ac90b65e8d017ac6e73e1c12a4c955b64a2304915b"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-45.jsonl",
+          "sha256": "b23513f308c1e83801b8cb17a1cc64b265ee5d5a054804c1e4cecbe7e3c4f07a"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-46.jsonl",
+          "sha256": "3aeb70efaecc0002a9a44915ab3a37a4e1a049b56e4c6668688cefbc570923b2"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-47.jsonl",
+          "sha256": "b24a5aca9a120f17029653f61f30f811834deb212f6586b1bc4ce9fdb2c7b8ea"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-48.jsonl",
+          "sha256": "f580568ffaed3025a9a548a25917b110c0c7c37c67e647a4759acd1140232397"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-49.jsonl",
+          "sha256": "61aeabd9fa5ca232a5b65a92e672b81768645fb820bc1a658f111e26ca001b23"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-5.jsonl",
+          "sha256": "f95b33046d75bab490e4840acfb6cfcbbf224d017ea09d4d1de59d877fd2a24a"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-50.jsonl",
+          "sha256": "d282d92b3dcc155f610765b0f4f39f4be180dfc449a74fb517b7d8b346e83661"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-51.jsonl",
+          "sha256": "780b3fbb4801e7a29f6ac4bac33d7d83a3a451d45c9d06c6a8a610c25da7fa50"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-52.jsonl",
+          "sha256": "e9987434c47e332218d0f8a5cbf4b3bf59ec75a8e9fc1b006e3543d22a5d3060"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-53.jsonl",
+          "sha256": "9279f80e3f74ab3d1355eadd2430da776ba74cfad28beafe46613ca0eaea6f06"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-54.jsonl",
+          "sha256": "a5efba8e351157d255279027bbdc9c4e7e505c891b90933a227b7d8dee3a34d4"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-55.jsonl",
+          "sha256": "3978d2cf82cd23762de953ad04b8176cbeb550b1504b8e688d9f7dc79342d159"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-56.jsonl",
+          "sha256": "8af166b89f1dba9214d39dfd97da59d918331048bc84e18f9f55ea0dfad3a02f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-57.jsonl",
+          "sha256": "2ae599295d86db48773b6045b4c7e08ce7f383102d211d2cb18dba9cc849aa29"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-58.jsonl",
+          "sha256": "e6ac4cfb76dc8fab971a2a253ca7f0de9dc6ed8cf199284eff4092c75490307a"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-59.jsonl",
+          "sha256": "811c4dfd5e262f900e8511b12194180c6a1dfb526e0866fe5aeb666d67dd1d0d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-6.jsonl",
+          "sha256": "6425bf08684c20d003f3f7d9c90921397451b5f3534770077d564e00044678e5"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-60.jsonl",
+          "sha256": "9665bfc91ecee6415ea78f8ff9319075c6c94b3c0eb7bf42e0ede221d47d8994"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-61.jsonl",
+          "sha256": "2965885415ca291e3cd5e2b26402c1b50aa1fd2fc40abfc1c5b02d775392a2c2"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-62.jsonl",
+          "sha256": "b3234efca6162109cb8a95500659f1aaf2802fd54209d729bf265afac106dd0d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-63.jsonl",
+          "sha256": "aba2fdd8a4a97a3f3b8d88e09b6b7309020e8e508ab8e05333cc06f9fa62ba36"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-7.jsonl",
+          "sha256": "4f5a4ee26d41cdc909eb7e9a1fdbc2f2c80508b928aa1d1fd6f21698e8f52b2c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-8.jsonl",
+          "sha256": "bb799859fe536452f535a6885e347473d236e56c0cb3f1915357fca0d169c324"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/client-9.jsonl",
+          "sha256": "2f569bc058a6949280d2cd49c04e7c86c659bdf34b2c2f9e8e69726ef110dcb3"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/config.json",
+          "sha256": "5d7dddf80b7fa2e03a87fcc528d004c45876c337a0e9c1a9b9d68db469d0b2eb"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/setup.jsonl",
+          "sha256": "0447527effbdb2775e2aab0d7fd0a3a52e00f643b394de7cb038860db0d8a046"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load/summary.json",
+          "sha256": "6ff8d28c4f0aa0d56c595269e7b7703972af8c4da0a0bc010ab98e9426eb08b4"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load-config.json",
+          "sha256": "c001d34d0aab828b6ce21bf97c9f4866907932b55ebfdf673184439d3df23050"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/load.log",
+          "sha256": "2d42e0cc4428d385b5aa0e888d6e4a9f057b8d69fd1659b03124b613d0ffbe83"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/cells-64-rate-100/owner-resources.jsonl",
+          "sha256": "0335c1b4eeaaa51f33aca679582d27d7a23e14f24881b5b54a0c5031142babe4"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/followers-cells-64-rate-100/follower-1.log",
+          "sha256": "e0bb67f485d19f3338ac91363670c99ff3a85fa785803408581883ee5c12ac9d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/followers-cells-64-rate-100/follower-2.log",
+          "sha256": "d57ffec27b82bf503d7029b2148dbbcb93639735bff751e609f4c93857b486ee"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/followers-cells-64-rate-100/resources.jsonl",
+          "sha256": "25c8f7cce15fbca5d3b315e8111d6f8f523932e11c1b3a5e0bf1394cedd386cc"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64-run/profile.json",
+          "sha256": "b774f34a40b55bee1007c56cc8075320d6590a71f561f74698531c6b2d70848b"
+        }
+      ],
+      "run_log": {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-baseline-64.log",
+        "sha256": "839f8f8fc0a88b7cfbb8215b619e9a69b10f009c82c0ea42ba1c3e783301b317"
+      }
+    },
+    {
+      "name": "candidate",
+      "revision": "bfccadb256ccdc5fcab90f70d53330e768a2b321",
+      "binary_sha256": "79ce70497b6969b2080077de958d381bcd4465e13cd325bd54dd9171bb65f3aa",
+      "command": {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-command.json",
+        "sha256": "dbd00977e196bf07c81e120b94c752255fbb6983662f4aec45e283a1b5ed831b"
+      },
+      "exit_code": 1,
+      "driver_gate_passed": false,
+      "cold_audit_executed": false,
+      "durability_counters_verified": false,
+      "activation_ms": 15971,
+      "summary": {
+        "drain_seconds": 0.117160155,
+        "reads": {
+          "attempts": 1768,
+          "errors": 321,
+          "generated_offers": 1800,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 281563,
+          "per_cell_successes_including_drain": [
+            28,
+            28,
+            28,
+            27,
+            28,
+            28,
+            27,
+            27,
+            27,
+            27,
+            0,
+            27,
+            6,
+            28,
+            26,
+            25,
+            6,
+            28,
+            27,
+            0,
+            27,
+            0,
+            27,
+            28,
+            27,
+            27,
+            27,
+            28,
+            0,
+            28,
+            0,
+            27,
+            27,
+            0,
+            6,
+            27,
+            28,
+            0,
+            28,
+            28,
+            28,
+            28,
+            28,
+            28,
+            7,
+            29,
+            29,
+            7,
+            29,
+            28,
+            29,
+            29,
+            27,
+            28,
+            28,
+            28,
+            27,
+            28,
+            6,
+            27,
+            27,
+            28,
+            28,
+            28
+          ],
+          "planned_offers": 1800,
+          "producer_unissued": 0,
+          "queue_dropped": 32,
+          "request_histogram_overflow": 0,
+          "request_latency_ms_all_attempts": {
+            "max": 3507.746448,
+            "p50": 0.6,
+            "p95": 540.1,
+            "p99": 1368.4
+          },
+          "scheduled_histogram_overflow": 0,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 5109.078216,
+            "p50": 2.2,
+            "p95": 2739.6,
+            "p99": 4151.9
+          },
+          "successes_after_deadline": 0,
+          "successes_in_window": 1447,
+          "successes_including_drain": 1447,
+          "successful_requests_per_second": 8.03888888888889,
+          "target_requests_per_second": 10,
+          "warmup_attempts": 300,
+          "warmup_errors": 24,
+          "warmup_queue_dropped": 0
+        },
+        "scope": "offered-load development probe; cold recovery is a separate required gate",
+        "setup_seconds": 3.0214784789999953,
+        "task_errors": [],
+        "window_seconds": 180,
+        "writes": {
+          "attempts": 17698,
+          "errors": 3231,
+          "generated_offers": 18000,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 2895266,
+          "per_cell_successes_including_drain": [
+            276,
+            278,
+            276,
+            274,
+            277,
+            278,
+            279,
+            277,
+            276,
+            275,
+            0,
+            279,
+            62,
+            275,
+            275,
+            272,
+            61,
+            274,
+            275,
+            0,
+            278,
+            0,
+            278,
+            276,
+            276,
+            276,
+            277,
+            274,
+            0,
+            277,
+            0,
+            273,
+            275,
+            0,
+            64,
+            275,
+            275,
+            0,
+            278,
+            280,
+            280,
+            280,
+            278,
+            274,
+            63,
+            276,
+            277,
+            63,
+            276,
+            275,
+            276,
+            276,
+            276,
+            273,
+            275,
+            277,
+            276,
+            278,
+            62,
+            276,
+            277,
+            277,
+            278,
+            277
+          ],
+          "planned_offers": 18000,
+          "producer_unissued": 0,
+          "queue_dropped": 302,
+          "request_histogram_overflow": 0,
+          "request_latency_ms_all_attempts": {
+            "max": 6228.419025,
+            "p50": 24.7,
+            "p95": 842.3,
+            "p99": 2426.7
+          },
+          "scheduled_histogram_overflow": 0,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 7554.308033,
+            "p50": 28.6,
+            "p95": 3093.5,
+            "p99": 4559.0
+          },
+          "successes_after_deadline": 7,
+          "successes_in_window": 14460,
+          "successes_including_drain": 14467,
+          "successful_requests_per_second": 80.33333333333333,
+          "target_requests_per_second": 100,
+          "warmup_attempts": 3000,
+          "warmup_errors": 240,
+          "warmup_queue_dropped": 0
+        }
+      },
+      "completion_intervals": [
+        {
+          "start_seconds": 0,
+          "seconds": 10,
+          "writes": 881,
+          "reads": 92,
+          "write_tps": 88.1,
+          "read_tps": 9.2
+        },
+        {
+          "start_seconds": 10,
+          "seconds": 10,
+          "writes": 893,
+          "reads": 87,
+          "write_tps": 89.3,
+          "read_tps": 8.7
+        },
+        {
+          "start_seconds": 20,
+          "seconds": 10,
+          "writes": 882,
+          "reads": 90,
+          "write_tps": 88.2,
+          "read_tps": 9.0
+        },
+        {
+          "start_seconds": 30,
+          "seconds": 10,
+          "writes": 775,
+          "reads": 78,
+          "write_tps": 77.5,
+          "read_tps": 7.8
+        },
+        {
+          "start_seconds": 40,
+          "seconds": 10,
+          "writes": 541,
+          "reads": 54,
+          "write_tps": 54.1,
+          "read_tps": 5.4
+        },
+        {
+          "start_seconds": 50,
+          "seconds": 10,
+          "writes": 1016,
+          "reads": 105,
+          "write_tps": 101.6,
+          "read_tps": 10.5
+        },
+        {
+          "start_seconds": 60,
+          "seconds": 10,
+          "writes": 801,
+          "reads": 77,
+          "write_tps": 80.1,
+          "read_tps": 7.7
+        },
+        {
+          "start_seconds": 70,
+          "seconds": 10,
+          "writes": 794,
+          "reads": 83,
+          "write_tps": 79.4,
+          "read_tps": 8.3
+        },
+        {
+          "start_seconds": 80,
+          "seconds": 10,
+          "writes": 794,
+          "reads": 76,
+          "write_tps": 79.4,
+          "read_tps": 7.6
+        },
+        {
+          "start_seconds": 90,
+          "seconds": 10,
+          "writes": 803,
+          "reads": 82,
+          "write_tps": 80.3,
+          "read_tps": 8.2
+        },
+        {
+          "start_seconds": 100,
+          "seconds": 10,
+          "writes": 787,
+          "reads": 79,
+          "write_tps": 78.7,
+          "read_tps": 7.9
+        },
+        {
+          "start_seconds": 110,
+          "seconds": 10,
+          "writes": 804,
+          "reads": 81,
+          "write_tps": 80.4,
+          "read_tps": 8.1
+        },
+        {
+          "start_seconds": 120,
+          "seconds": 10,
+          "writes": 787,
+          "reads": 79,
+          "write_tps": 78.7,
+          "read_tps": 7.9
+        },
+        {
+          "start_seconds": 130,
+          "seconds": 10,
+          "writes": 475,
+          "reads": 48,
+          "write_tps": 47.5,
+          "read_tps": 4.8
+        },
+        {
+          "start_seconds": 140,
+          "seconds": 10,
+          "writes": 1043,
+          "reads": 100,
+          "write_tps": 104.3,
+          "read_tps": 10.0
+        },
+        {
+          "start_seconds": 150,
+          "seconds": 10,
+          "writes": 783,
+          "reads": 76,
+          "write_tps": 78.3,
+          "read_tps": 7.6
+        },
+        {
+          "start_seconds": 160,
+          "seconds": 10,
+          "writes": 805,
+          "reads": 83,
+          "write_tps": 80.5,
+          "read_tps": 8.3
+        },
+        {
+          "start_seconds": 170,
+          "seconds": 10,
+          "writes": 796,
+          "reads": 77,
+          "write_tps": 79.6,
+          "read_tps": 7.7
+        }
+      ],
+      "owner_peak_rss_bytes": 132038656,
+      "owner_peak_file_descriptors": 644,
+      "first_driver_error": "HTTP 503: missing field `receipt` at line 1 column 67; body={\"code\":\"unavailable\",\"message\":\"Cell is temporarily unavailable.\"}",
+      "raw_evidence": [
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/active-owner-refused.log",
+          "sha256": "1fd6a0e1d16f24bec3bac209dd8efb75429081441954b672581c0249671f600a"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/initial.log",
+          "sha256": "37f0311c82d3d11e09cefa5c8b572b38ff2e1756b496e1b26e9279540e0c571f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-0.jsonl",
+          "sha256": "80d8e172b41355a5abe250d7dbe91d9b16755d9117672c1eafb93f068017fc5f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-1.jsonl",
+          "sha256": "252840c4d2a3fddd5cd5e57fb2a35cda5d67099b215744cd033eb3ed3bca2e74"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-10.jsonl",
+          "sha256": "fbe80268952dd967fd128435640317137ed11e3d59b6d4c389748821b8e576c5"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-11.jsonl",
+          "sha256": "ac3d02d34cedf6d9bcf0be3534d96fc2a493f97735e46083e0fbb8de84f2683c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-12.jsonl",
+          "sha256": "a06ae95ea393db4b2891d7243e8c25e852a63578c387fde2d9cf0ad5538fadfb"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-13.jsonl",
+          "sha256": "d64f830950a27407d14e706cc3ba0833a3dc1d0b8bd765917b48766127b18837"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-14.jsonl",
+          "sha256": "f8bb85a310f2ae416aaf2180f427b7c747d13350d95eb8e3769f7e3fd133b895"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-15.jsonl",
+          "sha256": "e151dd4db6f719997e9301ff114187819f405cfcb1d8611d8386044d8d1ae940"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-16.jsonl",
+          "sha256": "cd759192ce72028197668024ba2af9ee9b9d746c003b4e692b078c66210dea0e"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-17.jsonl",
+          "sha256": "7f4f426e167c3608b803cd86ccd9eeaa680e58a43d01353b674c2bec2165565b"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-18.jsonl",
+          "sha256": "13ef0953952ef75d5557d70a0e938c7d19f96e3cd4d4a3a84a5ef6f28f41738f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-19.jsonl",
+          "sha256": "39c4faa1f8633dc66ee0a8e67838bb341c74ec3dfabbdc2a27b2615e870aac2b"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-2.jsonl",
+          "sha256": "1d28079e91239ab2347033763d255071291aa4818472d646c90ea1ee76e1a51e"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-20.jsonl",
+          "sha256": "ffc75d5e80b46aab6b311a6658143c73f6a1d165b8a7cfa9dad1a433e076d292"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-21.jsonl",
+          "sha256": "cd9f2d3777484986643099ce9c96bc5f58cd6339a9637c48b9db3dd8b26f796f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-22.jsonl",
+          "sha256": "0f0b303cc0117e8b78b3534a5ce22a1def70190f91dee443ad7d98dad40ce05f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-23.jsonl",
+          "sha256": "21a2f14b019643ebede1b5fb2e74c6d37424223c27b472cd2d66f220a2a85d2e"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-24.jsonl",
+          "sha256": "d91308b47b5b9dbd8b8f51a0dff5dd7ac0795d20e1e60ae81f7b905d63c2ad51"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-25.jsonl",
+          "sha256": "ee4427b3aa78a8225f385b98acebf993623b4107b394f1e294e0cdd484a33e59"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-26.jsonl",
+          "sha256": "1d6f7ca7ea9f2f9b28a1600af32d12150136c62b0a304c99b888546fb0db0057"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-27.jsonl",
+          "sha256": "2cdbc55ecec27c7b9fe0382139e33720a33d8031ac01748ea6bd8da30822ab65"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-28.jsonl",
+          "sha256": "07e7da0bd4e1e70aba5fedf411c2494091afba08d7587861f11e148c4cba77ff"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-29.jsonl",
+          "sha256": "eca7dd1d4ad02c99d9fdb598420b1f7d4b151fe9af995bbd4cf173e6560d244c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-3.jsonl",
+          "sha256": "b78e0e456176a386118ca5924f42b7a10606c5f12f9f4afb99c06b830142fe9d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-30.jsonl",
+          "sha256": "ee78a32d329899882648b0ea1d413564641ede594717136cab92579f695b6420"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-31.jsonl",
+          "sha256": "5e311fbbfde390252ec7175a6c2746ea3a9a95017b90aa9523fac18302b4e3a4"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-32.jsonl",
+          "sha256": "f049c68f17ec62c0eae49f72e29835e870f2114c8081a11a13ee6847f441a067"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-33.jsonl",
+          "sha256": "a8ce9e1d220c4c669605b3d43fd592465ee6c40dde775284e32d9e55940efcb8"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-34.jsonl",
+          "sha256": "ba5acb92f50e60aea98bc5ed02264ef1ded98bfecadf2aec2eacfb97d537c176"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-35.jsonl",
+          "sha256": "d3703fdd150a9a0ad94385755309fa7cf41d8d62c8b2f4f8bea6cbb2b667e5af"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-36.jsonl",
+          "sha256": "153da6f678cb240b3f7f48ccf46e65448cce3619af769c4da550b99491b50e90"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-37.jsonl",
+          "sha256": "68afe9e946abf350dcc7d4a0b9a7899082e322d3b1b0948a200de5a50e1644f0"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-38.jsonl",
+          "sha256": "da90ddf32998e6eab9e98e79917a0cfbad7771e1807c963bdcdcdc4923ba930c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-39.jsonl",
+          "sha256": "c4e2ec3f84f74e020774e8f03ce69dfde4a7519ab3d38541a422b3fd15ac180d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-4.jsonl",
+          "sha256": "e95e3167d5420dc8ede80df113bae9f338f19940ed75406693675ee3b32d2476"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-40.jsonl",
+          "sha256": "c657d80941211ff7c299cf10dafc328fcfce2cd822c049ce13fd697c7fcb7627"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-41.jsonl",
+          "sha256": "ff9e5412bd0dfe200a76ffb6d285f8f401e3ac6622c3a09cb2c9ac9487c071f8"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-42.jsonl",
+          "sha256": "9323c065b6f1a58e4a462dc000e5e0bb5fe5e3f5cca200fb9382e1e0d7c19833"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-43.jsonl",
+          "sha256": "d10bfcf81adfa98e1b456442c7465cec78cb6aa6712e3526fadac05d982c4ab7"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-44.jsonl",
+          "sha256": "6335dc18b7ed2aedc0b94ed2f220081644f4469b3d6b526f9f5bd2d2f4fc3d2f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-45.jsonl",
+          "sha256": "78e5b612150fafc179705de108b55f53ee2eb9e2590fd3b8e742c0c5243829af"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-46.jsonl",
+          "sha256": "2d146ba4d52fa620722bb766aeaa1293a8db98373820e1eccae635dba221b0d2"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-47.jsonl",
+          "sha256": "765e4571eaeecc2190cbc5510d7a70fdb33c35e7dce0084734edce4a22103180"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-48.jsonl",
+          "sha256": "3903de1a365b9d9b3c4d14b03e296cdc709bb5593c74635086f3fd2837e907c5"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-49.jsonl",
+          "sha256": "23ca5508aeac3099bedf1ba0106bf9dcc1160e51700b8ced95029b310d90376c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-5.jsonl",
+          "sha256": "740ad3699b49a9c428ac721fb5bdf3294c19241acab6b5ff396bef84f7a9d3b2"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-50.jsonl",
+          "sha256": "3918faf7d02b9186cfdbfff26d541a287e9ffa7ca50a36af869dbcb692b34003"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-51.jsonl",
+          "sha256": "fcef4559542841d9726208add4a6a989514cd74bf33d849ad73c2a039f3271de"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-52.jsonl",
+          "sha256": "fe841ffac14a61bcbe64923d38a0294b8c9b4a138fc9ae09f0f0a629f4a4b26c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-53.jsonl",
+          "sha256": "6de44158d1c181598dde88050716e86e113f2932220e4366e6cece309a587b29"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-54.jsonl",
+          "sha256": "f814d26b114e5135ba9d92b6a1abc4256b64defb901575697de511dace57e87c"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-55.jsonl",
+          "sha256": "a2323c4251b45d8830c351ce6e623da5078d519d5f86f4001219d909d7218e3b"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-56.jsonl",
+          "sha256": "2e6c710f89c6c12a7717c674bba9e3f82f86a7b9fdb34d910f8b9b9260750537"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-57.jsonl",
+          "sha256": "f4c25825a73547c7c1eebc8d5b4358cdcb696ae09e1727ae070cd1cb320684c7"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-58.jsonl",
+          "sha256": "e3a4aa7a8191c8237ae183202379fca5dc92c2dfcb51db32a1a8a3b40ad3b098"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-59.jsonl",
+          "sha256": "3dae5c4684d15fe85d75e039939818398a58efa1d1ff1eea8639d6d5d1be1b89"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-6.jsonl",
+          "sha256": "3ab8c13bb159cde93a97858f3491cd7fcb67fdaa4c3f69f995460847501cf094"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-60.jsonl",
+          "sha256": "517abdcfefc34c27cc8ce418f3751f00f21dca4ccb16709f113fb2e0f2c312ad"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-61.jsonl",
+          "sha256": "f022e4e6e7a3966c20794dfb5aed5ebf4cf7528156069efe49d24305a9068573"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-62.jsonl",
+          "sha256": "e069ccf455cc8d3172b1a2e1dca3df2e8b871f37fa9e3aed0d3d16b8208febf1"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-63.jsonl",
+          "sha256": "36090b3e1a5b04b0ad7bdb0065bd61722497903a18edb78d05f454977130a9ea"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-7.jsonl",
+          "sha256": "7e10e33d1151c94e59f0ec01b8db7a4551daea9a353e381b9ed8a000d34a6eca"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-8.jsonl",
+          "sha256": "4d5d42c4b690f12eb2b5f83f7f932982f30287529133360e9b650dac33c3137f"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/client-9.jsonl",
+          "sha256": "b0b7d2c9ce3b95fbc9ebe4dcbd7198088981a81db49f63ef7887b172e18862fc"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/config.json",
+          "sha256": "918a454d69cf50044b3add1da1d789f4864457edc7743f3d0683b85c64e0a37e"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/setup.jsonl",
+          "sha256": "4d4b0e35099f1a83d8f785238cd75aaa6b00574b012a582f9180fafd198beb31"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load/summary.json",
+          "sha256": "2573a49ed39bbb20d8ebbae82602460bef12ab5c46d3a0ce228215137511ebc1"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load-config.json",
+          "sha256": "2c51429d38f5fec7e4596ff7ee4beecee8a42353fe1a8a6cb84d180cab42b7e6"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/load.log",
+          "sha256": "757cf922c30b58ffcaaa6dbb16dd035a692ff52b82ec8fbe7ab8b33023b5ee7a"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/cells-64-rate-100/owner-resources.jsonl",
+          "sha256": "e3e7959388c55be24e8a25326ea9ccca8a239a4f1e24378f2309d3af2211dc78"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/followers-cells-64-rate-100/follower-1.log",
+          "sha256": "4e0e002cbcfe0bebfc0b0e685fd00f5bd4241bbfbcd7eeb20ffd684c74e75286"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/followers-cells-64-rate-100/follower-2.log",
+          "sha256": "6f3b19913ec1c946a76afa0c753e1910aa26e4aedbe5a142dae4510aad791bfa"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/followers-cells-64-rate-100/resources.jsonl",
+          "sha256": "2bc95512111fd653ece0e1b70703ddddc8539e9fb1af47e615be8c3e7515766d"
+        },
+        {
+          "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64-run/profile.json",
+          "sha256": "2a0dc95797b45b6fa324e9efe3853f9ea2beb05e924d0d9be92f0ffae286bad1"
+        }
+      ],
+      "run_log": {
+        "path": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/root-batch-candidate-64.log",
+        "sha256": "55071be35c3f55939db3b3bd26cdbb4f22a1269c78ab8187f440f69dbd6c369a"
+      }
+    }
+  ]
+}

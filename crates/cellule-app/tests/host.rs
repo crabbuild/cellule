@@ -94,6 +94,7 @@ async fn due_workflow_activity_survives_a_clock_rollback() {
         .unwrap();
         let input = encoder.finish();
         let registry = Arc::clone(&fixture.registry);
+        let owner_fence = handle.owner_fence();
         // Publish at a later clock sample, then let the ordinary application
         // supervisor use the earlier wall clock without changing global time.
         let future = now_ms() + 10_000;
@@ -113,6 +114,7 @@ async fn due_workflow_activity_survives_a_clock_rollback() {
                             codec_version: 1,
                             schema: 1,
                             target,
+                            owner_fence,
                             sequence: 1,
                             now_ms: future,
                             input: &input,

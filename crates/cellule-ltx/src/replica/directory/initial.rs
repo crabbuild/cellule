@@ -135,7 +135,16 @@ pub(in crate::replica) async fn build_and_upload(
     if !leaf_entries.is_empty() {
         pending.push(encode_leaf_node(leaf_index, &leaf_entries)?);
     }
-    flush_node_uploads(replica, &mut pending, &mut nodes).await?;
+    // Delay the single-leaf upload until the root chooses inline or external.
+    let retained_leaf = if nodes.is_empty() && pending.len() == 1 {
+        let (node, bytes) = pending.pop().ok_or(LtxError::LTXCorrupted)?;
+        let digest = node.digest;
+        nodes.push(node);
+        vec![super::DirectoryObject { digest, bytes }]
+    } else {
+        flush_node_uploads(replica, &mut pending, &mut nodes).await?;
+        Vec::new()
+    };
     if expected_page == u64::from(lock) {
         expected_page += 1;
     }
@@ -165,7 +174,7 @@ pub(in crate::replica) async fn build_and_upload(
     }
     let root = nodes.pop().ok_or(LtxError::LTXCorrupted)?;
     Ok(DirectoryTree {
-        objects: Vec::new(),
+        objects: retained_leaf,
         root,
         height,
     })

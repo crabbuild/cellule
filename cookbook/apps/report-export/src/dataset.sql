@@ -1,0 +1,5 @@
+CREATE TABLE draft_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=0)) STRICT;
+INSERT INTO draft_meta(singleton,revision) VALUES(1,0);
+CREATE TABLE draft_rows(row_id INTEGER PRIMARY KEY CHECK(row_id BETWEEN 1 AND 512),label TEXT NOT NULL CHECK(length(CAST(label AS BLOB)) BETWEEN 1 AND 128),units INTEGER NOT NULL CHECK(units BETWEEN 0 AND 1000000000)) STRICT;
+CREATE TABLE snapshots(version BLOB PRIMARY KEY CHECK(length(version)=16),revision INTEGER NOT NULL CHECK(revision>=0),row_count INTEGER NOT NULL CHECK(row_count BETWEEN 0 AND 512),digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT;
+CREATE TABLE snapshot_rows(version BLOB NOT NULL REFERENCES snapshots(version),row_id INTEGER NOT NULL CHECK(row_id BETWEEN 1 AND 512),label TEXT NOT NULL CHECK(length(CAST(label AS BLOB)) BETWEEN 1 AND 128),units INTEGER NOT NULL CHECK(units BETWEEN 0 AND 1000000000),PRIMARY KEY(version,row_id)) STRICT;

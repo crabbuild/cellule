@@ -210,7 +210,7 @@ async fn write_process_capacity() {
         let fully_served = rows.iter().all(|row| row.outcome == "ok")
             && p99(&latency) <= 50_000
             && p99(&generator) <= 5_000
-            && elapsed_us <= SECONDS as u64 * 1_000_000 + CAPACITY_DRAIN_GRACE_US;
+            && elapsed_us <= SECONDS as u64 * 1_000_000 + DRAIN_GRACE_US;
         // Resolution proves correctness only. The original terminal time and
         // unknown outcome remain unchanged and cannot become successful TPS.
         resolve_unknowns(&client, &mut rows).await;

@@ -25,7 +25,7 @@ pub(in crate::follower) struct IndexReservation {
     bytes: u64,
 }
 impl IndexReservation {
-    fn new(used: &Arc<Mutex<u64>>, bytes: u64) -> Result<Self> {
+    pub(in crate::follower) fn new(used: &Arc<Mutex<u64>>, bytes: u64) -> Result<Self> {
         let mut current = used
             .lock()
             .map_err(|_| Error::Node("follower index reservation lock poisoned"))?;
@@ -92,8 +92,32 @@ impl Drop for IndexReservation {
     }
 }
 pub(in crate::follower) struct LaneMemory {
+    lane: Lane,
+    limits: cellule_ltx::Limits,
     records: BTreeMap<u64, StoredRecord>,
     open_first: Option<u64>,
     open_last: Option<u64>,
     index: IndexReservation,
+    needs_reconciliation: bool,
+    covered_through: u64,
+}
+
+impl LaneMemory {
+    pub(in crate::follower) fn needs_reconciliation(&self) -> bool {
+        self.needs_reconciliation
+    }
+
+    pub(in crate::follower) fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub(in crate::follower) fn invalidate(&mut self) {
+        // An error invalidates derived locations, not the original byte proof.
+        // Keep its witnesses so retry cannot bless missing or substituted data.
+        self.needs_reconciliation = true;
+        if let Ok(count) = u64::try_from(self.records.len()) {
+            self.index
+                .shrink_to(count.saturating_mul(INDEX_BYTES_PER_RECORD));
+        }
+    }
 }

@@ -1,0 +1,713 @@
+{
+  "status": "valid_r7_fair_admission_comparison_regressed; target_unestablished",
+  "cells": 2000,
+  "window_seconds": 600,
+  "warmup_seconds": 30,
+  "offered_writes_per_second": 1000,
+  "offered_reads_per_second": 10,
+  "regression": {
+    "baseline_32_writers_failures": 3,
+    "candidate_passes": 3,
+    "cancellation_under_held_recovery_passed": true,
+    "full_runtime_tests_passed_before_replica_boxing": true,
+    "final_boxed_source_compaction_subset_passed": 5,
+    "strict_clippy_and_docs_passed": true
+  },
+  "framework_change": "Bounded fair quiet-compaction admission before publisher exclusion; unchanged recovery/native limits and durable response gate",
+  "frozen_inputs": {
+    "build_command": "cargo build -p cellule-axum --example sql --release --locked",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "points": {
+      "baseline": {
+        "commit": "03b9002953133a3dfe90986805882c696e3e072e",
+        "archive_sha256": "b84817bb100b14b3bce5248bd3eca622e6b97574155968a8692d79c750747fdb",
+        "binary_sha256": "2ac9e0d210a44ea185321c6adc0eee6d8d3cdefcba06b10c10e972bf82c38a24",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      },
+      "candidate": {
+        "commit": "8fb50acb40ea50b08a2bed1135283449cc12c76a",
+        "archive_sha256": "1de8f3116da65232197de98b9f75ed5801ec8930f0ef2015bd911097f35b0c68",
+        "binary_sha256": "d0ade47b42b7ed87952a970032a8362c810042f52e40ce1b9e42a4f9d44d213f",
+        "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+        "all_tracked_files_match_archive": true
+      }
+    },
+    "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc"
+  },
+  "r4": {
+    "status": "comparison_invalid_candidate_inode_exhaustion",
+    "baseline": {
+      "raw_journal_audit": {
+        "writes": 72474,
+        "reads": 529
+      },
+      "raw_metrics": {
+        "reads": {
+          "attempts_including_drain": 478,
+          "completion_tps_per_60_seconds": [
+            1.3166666666666667,
+            1.1166666666666667,
+            1.1666666666666667,
+            0.9833333333333333,
+            0.7666666666666667,
+            0.4666666666666667,
+            0.43333333333333335,
+            0.2,
+            0.2833333333333333,
+            1.1833333333333333
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 5.9856240000000005,
+            "0.95": 78.78165800000001,
+            "0.99": 207.43018999999998
+          },
+          "response_body_bytes_in_window": 93419,
+          "response_body_mib_s_in_window": 0.0001484855016072591,
+          "window_successes": 475
+        },
+        "writes": {
+          "attempts_including_drain": 64495,
+          "completion_tps_per_60_seconds": [
+            135.15,
+            138.18333333333334,
+            134.78333333333333,
+            118.85,
+            113.53333333333333,
+            96.83333333333333,
+            59.266666666666666,
+            59.35,
+            79.66666666666667,
+            134.01666666666668
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 398.146124,
+            "0.95": 1871.301171,
+            "0.99": 4315.075622
+          },
+          "response_body_bytes_in_window": 12938457,
+          "response_body_mib_s_in_window": 0.020565123558044435,
+          "window_successes": 64178
+        }
+      },
+      "owner_peak_rss_bytes": 762621952,
+      "owner_peak_file_descriptors": 16149,
+      "owner_cpu_cores_including_setup_warmup_drain": 0.9457188027398961,
+      "drops": {
+        "writes": 535505,
+        "reads": 5522
+      },
+      "errors": {
+        "writes": 0,
+        "reads": 0
+      }
+    },
+    "candidate": {
+      "exit_code": 1,
+      "summary_exists": false,
+      "cold_audit_exists": false,
+      "cause": "Docker ext4 inode exhaustion: 3311 free of5242880; about47GiB free bytes",
+      "provider_oom": false,
+      "no_performance_result": true,
+      "original_journals_and_provider_volume_retained": true
+    }
+  },
+  "r5": {
+    "status": "comparison_invalid_candidate_follower_durability_gate",
+    "baseline": {
+      "raw_journal_audit": {
+        "writes": 85503,
+        "reads": 702
+      },
+      "raw_metrics": {
+        "reads": {
+          "attempts_including_drain": 647,
+          "completion_tps_per_60_seconds": [
+            1.5166666666666666,
+            1.9666666666666666,
+            2.066666666666667,
+            0.75,
+            0.31666666666666665,
+            0.3,
+            0.3,
+            1.3333333333333333,
+            1.0333333333333334,
+            1.2
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 5.719269,
+            "0.95": 70.203188,
+            "0.99": 516.439889
+          },
+          "response_body_bytes_in_window": 127421,
+          "response_body_mib_s_in_window": 0.0002025302251180013,
+          "window_successes": 647
+        },
+        "writes": {
+          "attempts_including_drain": 77778,
+          "completion_tps_per_60_seconds": [
+            159.51666666666668,
+            204.58333333333334,
+            198.91666666666666,
+            117.2,
+            65.65,
+            49.18333333333333,
+            73.18333333333334,
+            175.78333333333333,
+            116.86666666666666,
+            130.08333333333334
+          ],
+          "request_latency_ms_raw_nearest_rank": {
+            "0.5": 320.826459,
+            "0.95": 1722.740765,
+            "0.99": 3611.510166
+          },
+          "response_body_bytes_in_window": 15618228,
+          "response_body_mib_s_in_window": 0.024824504852294923,
+          "window_successes": 77458
+        }
+      },
+      "write_tps": 129.09666666666666,
+      "read_tps": 1.0783333333333334,
+      "owner_peak_rss_bytes": 769036288,
+      "owner_peak_file_descriptors": 16162,
+      "owner_cpu_cores_including_setup_warmup_drain": 0.8647859469949153,
+      "drops": {
+        "writes": 522222,
+        "reads": 5353
+      },
+      "errors": {
+        "writes": 0,
+        "reads": 0
+      }
+    },
+    "candidate": {
+      "exit_code": 1,
+      "load_completed": true,
+      "canonical_result_exists": false,
+      "cold_audit_exists": false,
+      "node_log_append": {
+        "successes": 3333,
+        "failures": 1
+      },
+      "submission_sources": {
+        "fleet": 46124,
+        "rejected": 43367,
+        "unsupported": 0,
+        "unavailable": 0
+      },
+      "response_sources": {
+        "fleet": 41849,
+        "object": 47642,
+        "recorded": 0
+      },
+      "follower_error": "PeerAuthorization invalid capacity log request; condition unknown; follower2",
+      "minimum_free_inodes": 1193221,
+      "originals_retained": true,
+      "no_performance_gain_claim": true,
+      "provider_archive": {
+        "volume": "cellule-node-scaling-rustfs-20261005-fair-admission-candidate-r5",
+        "container": "cellule-node-scaling-rustfs-fair-admission-candidate-r5",
+        "archive": "fair-admission-2000-candidate-r5-provider-volume.tar.gz",
+        "sha256": "fa4eccf9341c241bc28f11cce49aecee627ad736da4f7d39452b5752c969fb76",
+        "original_unique_inodes": 1022389,
+        "archive_entries": 1022389,
+        "producer_exit_code": 0,
+        "gzip_integrity": "passed",
+        "full_tar_list": "passed; matching source unique inode count"
+      },
+      "provider_volume_removed_after_complete_verification": true
+    }
+  },
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "evidence_sha256": {
+    "fair-admission-r5-source-preflight.json": "8410fbcdd4aa4fe464ed9c576facbe66c28c8000997ef92b28db285b3bfb051f",
+    "fair-admission-8fb50ac-verification.json": "a5e71ef952a1158c604a930b74fb5d0201d9fd78ce74180e981dcba3efb93035",
+    "fair-admission-2000-baseline-r4-reverified.json": "d192aa365ac6c15b9e16a7b2ba70bef12ede9518a2ead4feca6116f6c63802f6",
+    "rustfs-resumed-pair-volume-archive.json": "4cd6b1b0768b9c55d2688c8cb4fea39c4babd32c7c9d7c0b534370e834035bb5",
+    "rustfs-long-candidate-r2-volume-archive.json": "c6b7d937b566ac5e074f951d37333514cbb8c1ae7552c4c9fea1c46f58cce4d3",
+    "fair-admission-2000-baseline-r5-reverified.json": "19e4c145a2a934290bb14ef87716fd536402c89d112f7d765b25b82aa61d8d17",
+    "fair-admission-2000-baseline-r5-provider-volume-archive.json": "0b93d0b7c77761544c5d0e76e6c5144e8185325c0732d83276ed1b644f68484f",
+    "fair-admission-2000-candidate-r5-console.log": "549a7f67761e0cff6bed03ee5de938168c08a1ba1c23b7d6ceb0f6fbf7a708fe",
+    "fair-admission-2000-candidate-r5-exit.json": "5ace58fdac447b10ae7402f16202a0b8a5710ac5c27e56385924293251a4ed92",
+    "fair-admission-2000-baseline-r7-run/cells-2000-rate-1000/result.json": "a4760bab98dfc684c149942e4123aaa8087aaf6848397044d44dee5ee4963877",
+    "fair-admission-2000-baseline-r7-reverified.json": "c4dbe5e0f1788003095156f69d4e5a8c45f6de3c076f15435d93b050f541daf7",
+    "fair-admission-2000-baseline-r7-provider-volume-archive.json": "0e963c9e4ae9c74d32767e45cbaf4089b5db86f173e0de3190873184fe0f66ce",
+    "fair-admission-2000-candidate-r7-run/cells-2000-rate-1000/result.json": "3a6430a590c7b24586d4f7389fb7d0fe7b223165e9716e6a153db4b3cd9eb89a",
+    "fair-admission-2000-candidate-r7-reverified.json": "50ed05ac526bda8827673f29cb673b223118f4df417e770366fbdb7ecbb1fec3",
+    "fair-admission-2000-candidate-r7-provider-volume-archive.json": "cecd6a877fe221b4dc38eda47ccd754e859e6a4b5a950f1fb4643dfb9bbe0b8f",
+    "fair-admission-r7-preflight.json": "d8247f105c77c11e0bb625830f0a562bd07dfc5ed18796002c319ea2fe568078",
+    "fair-admission-r7-control-source.json": "589673f1307e5d7e35b8894031fcf7bd69dbfa5972d27870bb941fc40060d4a6",
+    "follower-validation-2000-candidate-r6-provider-volume-archive.json": "d20d118ee9ef5159a62fb4455ce8a1f3098040a3a4a35ae908b42a9c02f9953b"
+  },
+  "qualification": {
+    "target_established": false,
+    "required_original_profiles_unchanged": true
+  },
+  "transport_diagnostics": {
+    "behavior": "distinguish expired and future horizon validation failures; bounded phase and envelope timing; unchanged guards",
+    "tests": {
+      "adversarial_transport_tests": 2,
+      "isolated_snapshot": true,
+      "strict_example_clippy": "passed"
+    },
+    "changed_file_sha256": {
+      "crates/cellule-axum/examples/fleet/wire.rs": "68c894c37a0a021114eb4fd848b339e1f14cf03dec38a8ce03ce6fabfa06ccfd",
+      "crates/cellule-axum/examples/fleet/server.rs": "fc24b42a6049592fc7137b5f71868d9cdc9b13131aa42cf15d6d6a852802a206",
+      "crates/cellule-axum/examples/fleet/tests.rs": "1176c98f24dc715d78adb98c018bd13fa04f872ad1f45ff2d0ef664d235b6cac"
+    },
+    "verification_log_sha256": {
+      "follower-validation-diagnostic-tests.log": "b0915fb24fc487368bdd194e5c64a3faa6b78dbe428e6bcb1f936a3bf2608d03",
+      "follower-validation-diagnostic-clippy.log": "aa8c04bde2040b53ab25beaf1bc0e68b115acfc0d875d2a9c22240b1db791630"
+    }
+  },
+  "r6": {
+    "source_commit": "073e8b9d70ff09cc10539f59b3f5f3ac711f10fd",
+    "status": "invalid_follower_durability_gate; diagnostic_failure_reproduced",
+    "full_cold_audit": false,
+    "no_gain_claim": true,
+    "follower": 2,
+    "phase": "after directory verification",
+    "now_ms": 1791230316817,
+    "deadline_ms": 1791230326899,
+    "frames": 42,
+    "id_lengths_bytes": 16,
+    "epoch": 1,
+    "minimum_proven_backward_wall_clock_step_ms": 82,
+    "cause": "second signed-horizon check rejects a previously admitted request after wall clock rollback",
+    "original_journals_and_provider_retained": true
+  },
+  "clock_fix": {
+    "behavior": "post-directory request time is max observed wall time and initial validated wall time plus monotonic elapsed; same initial shape/signature/horizon limits and signed expiry",
+    "isolated_example_tests": 6,
+    "strict_example_clippy": "passed",
+    "validation_log_sha256": {
+      "follower-clock-rollback-tests.log": "c9c0b5979dc8cb6bc0f8b7e240f09f4db600101d0ebe81dc20230e240a2a194b",
+      "follower-clock-rollback-clippy.log": "40e315bc3d2a210468786b9860516db253fa98fd46b56dc1d27050840bf8d347"
+    },
+    "full_profile_rerun": "both_r7_points_passed_original_follower_gate_and_full_cold_audit",
+    "current_main_validation": {
+      "source_commit": "3290ec81bf2e5b49cbeb46c91761e65b58f5633e",
+      "isolated_snapshot": true,
+      "sql_example_tests_passed": 6,
+      "strict_axum_all_targets_all_features_clippy": "passed",
+      "source_snapshot": "followup-3290ec8-verification",
+      "external_validation_log_sha256": {
+        "followup-current-main-isolated-example-tests.log": "94ad8d45d1b69b5a141eb022dfeb58ec892d772ef6124cd7c4a2892f57c407b9",
+        "followup-current-main-isolated-clippy.log": "166bb125c8ccbc9294b505a97b71fc2d622a5c317644a42376d9c24922c06f12"
+      }
+    }
+  },
+  "r7": {
+    "status": "original_gates_and_full_cold_audits_passed; no_performance_gain",
+    "source_scope": "Historical frozen sources; current main contains additional changes and was not benchmarked by this pair",
+    "order": [
+      "baseline",
+      "candidate"
+    ],
+    "frozen_inputs": {
+      "build_command": "cargo build -p cellule-axum --example sql --release --locked",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+      "points": {
+        "baseline": {
+          "commit": "1672a954096b36482e6b606a765642eda3cca925",
+          "archive_sha256": "70af8f35f47c0e8f8ed9846fbadf23f4dbc4718394f7fc038c49a8b8614c1603",
+          "binary_sha256": "27e00c38cafeedae56345d680b779bd69da0926de557eafb54a598936e3feb26",
+          "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+          "all_tracked_files_match_archive": true
+        },
+        "candidate": {
+          "commit": "4277e16680381e7021cf4054c0ebf41404cbe694",
+          "archive_sha256": "e5fc0b84afbaff27d3d6785033536eec456694026574b8e99956d85f256dc523",
+          "binary_sha256": "5b1a9b74ff9e0efe010588a663abd8238b77c35c7f5cbde15102211f073a585b",
+          "sql_identity_source_sha256": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+          "all_tracked_files_match_archive": true
+        }
+      },
+      "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc"
+    },
+    "control_source": {
+      "control_commit": "1672a954096b36482e6b606a765642eda3cca925",
+      "control_parent": "03b9002953133a3dfe90986805882c696e3e072e",
+      "candidate_commit": "4277e16680381e7021cf4054c0ebf41404cbe694",
+      "application_overlay_files": [
+        "crates/cellule-axum/examples/fleet/wire.rs",
+        "crates/cellule-axum/examples/fleet/server.rs",
+        "crates/cellule-axum/examples/fleet/tests.rs"
+      ],
+      "only_control_changes": [
+        "crates/cellule-axum/examples/fleet/server.rs",
+        "crates/cellule-axum/examples/fleet/tests.rs",
+        "crates/cellule-axum/examples/fleet/wire.rs"
+      ],
+      "git_ref": "refs/codex/perf-controls/clock-fix-4277e16"
+    },
+    "latency_population": "Raw nearest-rank measured request attempts including drain; throughput counts only completions inside the 600-second window",
+    "phase_population": "Lifetime instrumentation includes setup, warmup and drain; phases overlap and have different counts; do not subtract phase means",
+    "qualification": "Shared Colima diagnostic; not target hardware, read capacity, three 30-minute windows, owner-loss or follower-only qualification",
+    "points": {
+      "baseline": {
+        "raw_metrics": {
+          "reads": {
+            "attempts_including_drain": 622,
+            "completion_tps_per_60_seconds": [
+              1.6833333333333333,
+              1.8333333333333333,
+              1.4833333333333334,
+              0.9333333333333333,
+              0.6,
+              0.7666666666666667,
+              0.8666666666666667,
+              0.7,
+              0.7,
+              0.7833333333333333
+            ],
+            "request_latency_ms_raw_nearest_rank": {
+              "0.5": 7.452295,
+              "0.95": 102.637979,
+              "0.99": 320.938789
+            },
+            "response_body_bytes_in_window": 122287,
+            "response_body_mib_s_in_window": 0.00019436995188395182,
+            "window_successes": 621
+          },
+          "writes": {
+            "attempts_including_drain": 80755,
+            "completion_tps_per_60_seconds": [
+              185.75,
+              185.41666666666666,
+              174.01666666666668,
+              152.33333333333334,
+              109.0,
+              129.65,
+              107.66666666666667,
+              97.11666666666666,
+              86.36666666666666,
+              113.28333333333333
+            ],
+            "request_latency_ms_raw_nearest_rank": {
+              "0.5": 342.986497,
+              "0.95": 1426.713323,
+              "0.99": 2678.194286
+            },
+            "response_body_bytes_in_window": 16216245,
+            "response_body_mib_s_in_window": 0.02577502727508545,
+            "window_successes": 80436
+          }
+        },
+        "write_tps": 134.06,
+        "read_tps": 1.035,
+        "startup_ms": 47288.533964001545,
+        "activation_ms": 47231,
+        "raw_journal_audit": {
+          "writes": 88908,
+          "reads": 680
+        },
+        "journal_hashes_and_counts_match_reverification": true,
+        "original_gate_passed": true,
+        "all_cells_idle": 2000,
+        "all_cells_exact_restore_next_write_epoch_checks_passed": 2000,
+        "drops": {
+          "writes": 519245,
+          "reads": 5378
+        },
+        "errors": {
+          "writes": 0,
+          "reads": 0
+        },
+        "scheduled_latency_ms_including_queue_and_drain": {
+          "writes": {
+            "max": 13809.422241,
+            "p50": 2094.3,
+            "p95": 4446.4,
+            "p99": 5538.3
+          },
+          "reads": {
+            "max": 4286.923227,
+            "p50": 1659.9,
+            "p95": 3175.2,
+            "p99": 4022.4
+          }
+        },
+        "owner_peak_rss_bytes": 756740096,
+        "owner_peak_file_descriptors": 16165,
+        "owner_cpu_cores_including_setup_warmup_drain": 0.9885248126800361,
+        "critical_lifetime_phases": {
+          "capture": {
+            "count": 90908,
+            "mean_ms": 7.133970480562767,
+            "overflow": 0,
+            "p50_ms": 1.8,
+            "p95_ms": 28.0,
+            "p99_ms": 64.2,
+            "resolution_us": 100
+          },
+          "worker": {
+            "count": 88908,
+            "mean_ms": 31.06926894503307,
+            "overflow": 15,
+            "p50_ms": 18.1,
+            "p95_ms": 90.7,
+            "p99_ms": 226.6,
+            "resolution_us": 100
+          },
+          "dirty_admission": {
+            "count": 86682,
+            "mean_ms": 3479.435513626889,
+            "overflow": 45975,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_admission": {
+            "count": 86682,
+            "mean_ms": 3998.9915656104727,
+            "overflow": 48228,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_preparation_work": {
+            "count": 86682,
+            "mean_ms": 56.7140257431416,
+            "overflow": 8,
+            "p50_ms": 45.2,
+            "p95_ms": 129.9,
+            "p99_ms": 265.4,
+            "resolution_us": 100
+          },
+          "compaction": {
+            "count": 2279,
+            "mean_ms": 20089.695470094342,
+            "overflow": 2279,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "provider_put": {
+            "count": 599355,
+            "mean_ms": 34.38595899199806,
+            "overflow": 27,
+            "p50_ms": 28.5,
+            "p95_ms": 71.5,
+            "p99_ms": 146.4,
+            "resolution_us": 100
+          }
+        },
+        "node_log_append": {
+          "bytes": 552504874,
+          "failures": 0,
+          "successes": 4346
+        },
+        "submission_sources": {
+          "fleet": 88908,
+          "rejected": 0,
+          "unavailable": 0,
+          "unsupported": 0
+        },
+        "response_sources": {
+          "fleet": 60360,
+          "object": 28548,
+          "recorded": 0
+        },
+        "provider_archive": {
+          "volume": "cellule-node-scaling-rustfs-20261005-fair-admission-baseline-r7",
+          "container": "cellule-node-scaling-rustfs",
+          "archive": "fair-admission-2000-baseline-r7-provider-volume.tar.gz",
+          "sha256": "ecffe7d403b1f9e88f0e36a3c9dc6b7a0a1fbda906f7178297c09d49ec1b9935",
+          "original_unique_inodes": 1043266,
+          "archive_entries": 1043266,
+          "producer_exit_code": 0,
+          "gzip_integrity": "passed",
+          "full_tar_list": "passed; matching source unique inode count"
+        },
+        "owned_provider_removed_after_complete_archive_verification": true
+      },
+      "candidate": {
+        "raw_metrics": {
+          "reads": {
+            "attempts_including_drain": 477,
+            "completion_tps_per_60_seconds": [
+              0.9666666666666667,
+              0.9666666666666667,
+              1.0833333333333333,
+              1.15,
+              0.95,
+              0.5666666666666667,
+              0.5166666666666667,
+              0.26666666666666666,
+              0.43333333333333335,
+              1.0333333333333334
+            ],
+            "request_latency_ms_raw_nearest_rank": {
+              "0.5": 9.197442,
+              "0.95": 144.725358,
+              "0.99": 474.652132
+            },
+            "response_body_bytes_in_window": 93673,
+            "response_body_mib_s_in_window": 0.00014888922373453776,
+            "window_successes": 476
+          },
+          "writes": {
+            "attempts_including_drain": 61986,
+            "completion_tps_per_60_seconds": [
+              107.31666666666666,
+              114.63333333333334,
+              114.08333333333333,
+              127.76666666666667,
+              92.66666666666667,
+              95.48333333333333,
+              99.95,
+              61.18333333333333,
+              81.76666666666667,
+              132.93333333333334
+            ],
+            "request_latency_ms_raw_nearest_rank": {
+              "0.5": 435.580441,
+              "0.95": 1874.384916,
+              "0.99": 3741.117288
+            },
+            "response_body_bytes_in_window": 12434566,
+            "response_body_mib_s_in_window": 0.019764210383097332,
+            "window_successes": 61667
+          }
+        },
+        "write_tps": 102.77833333333334,
+        "read_tps": 0.7933333333333333,
+        "startup_ms": 84348.6125620002,
+        "activation_ms": 84292,
+        "raw_journal_audit": {
+          "writes": 70469,
+          "reads": 543
+        },
+        "journal_hashes_and_counts_match_reverification": true,
+        "original_gate_passed": true,
+        "all_cells_idle": 2000,
+        "all_cells_exact_restore_next_write_epoch_checks_passed": 2000,
+        "drops": {
+          "writes": 538014,
+          "reads": 5523
+        },
+        "errors": {
+          "writes": 0,
+          "reads": 0
+        },
+        "scheduled_latency_ms_including_queue_and_drain": {
+          "writes": {
+            "max": 18747.860119999998,
+            "p50": 2773.9,
+            "p95": 5412.9,
+            "p99": 7515.9
+          },
+          "reads": {
+            "max": 8398.791999000001,
+            "p50": 2286.2,
+            "p95": 4101.6,
+            "p99": 6567.5
+          }
+        },
+        "owner_peak_rss_bytes": 739848192,
+        "owner_peak_file_descriptors": 16163,
+        "owner_cpu_cores_including_setup_warmup_drain": 0.922261132602887,
+        "critical_lifetime_phases": {
+          "capture": {
+            "count": 72469,
+            "mean_ms": 13.258958397770082,
+            "overflow": 0,
+            "p50_ms": 2.4,
+            "p95_ms": 67.5,
+            "p99_ms": 121.0,
+            "resolution_us": 100
+          },
+          "worker": {
+            "count": 70469,
+            "mean_ms": 54.18474692799671,
+            "overflow": 0,
+            "p50_ms": 29.6,
+            "p95_ms": 177.8,
+            "p99_ms": 357.8,
+            "resolution_us": 100
+          },
+          "dirty_admission": {
+            "count": 68025,
+            "mean_ms": 4931.502725797942,
+            "overflow": 37579,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_admission": {
+            "count": 67992,
+            "mean_ms": 5802.241721418962,
+            "overflow": 39502,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_preparation_work": {
+            "count": 67992,
+            "mean_ms": 71.53730991428404,
+            "overflow": 1,
+            "p50_ms": 56.1,
+            "p95_ms": 167.7,
+            "p99_ms": 350.2,
+            "resolution_us": 100
+          },
+          "compaction": {
+            "count": 1990,
+            "mean_ms": 30078.785226147236,
+            "overflow": 1956,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "provider_put": {
+            "count": 486431,
+            "mean_ms": 44.28402482950099,
+            "overflow": 3,
+            "p50_ms": 34.3,
+            "p95_ms": 101.4,
+            "p99_ms": 228.0,
+            "resolution_us": 100
+          }
+        },
+        "node_log_append": {
+          "bytes": 377042632,
+          "failures": 0,
+          "successes": 3933
+        },
+        "submission_sources": {
+          "fleet": 70469,
+          "rejected": 0,
+          "unavailable": 0,
+          "unsupported": 0
+        },
+        "response_sources": {
+          "fleet": 49627,
+          "object": 20842,
+          "recorded": 0
+        },
+        "provider_archive": {
+          "volume": "cellule-node-scaling-rustfs-20261005-fair-admission-candidate-r7",
+          "container": "cellule-node-scaling-rustfs",
+          "archive": "fair-admission-2000-candidate-r7-provider-volume.tar.gz",
+          "sha256": "23764610eaf84560fe2d89a1b7e5ada51ab3c2bd5eabbaa755d269b3d7a9522b",
+          "original_unique_inodes": 859158,
+          "archive_entries": 859158,
+          "producer_exit_code": 0,
+          "gzip_integrity": "passed",
+          "full_tar_list": "passed; matching source unique inode count"
+        },
+        "owned_provider_removed_after_complete_archive_verification": true
+      }
+    },
+    "write_tps_change_percent": -23.33407926798946,
+    "interpretation": "Root admission and provider I/O remain bottlenecks. Capture, SQL worker, startup and provider PUT timings also regress; one ordered shared-VM pair cannot isolate fairness as the cause. Next causal test must distinguish foreground/background admission and provider variation without changing original caps or qualification."
+  }
+}

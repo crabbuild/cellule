@@ -25,6 +25,8 @@ pub enum CellObjectKind {
     Root,
     /// Recovery bundle.
     Bundle,
+    /// Bounded segment and authenticated fixed-width index in one object.
+    Packed,
 }
 
 impl CellObjectKind {
@@ -35,6 +37,7 @@ impl CellObjectKind {
             Self::Directory => "dir",
             Self::Root => "root",
             Self::Bundle => "bundle",
+            Self::Packed => "pack",
         }
     }
 }
@@ -108,6 +111,55 @@ impl CellStorageLayout {
     #[must_use]
     pub fn control_path(&self, cell: &[u8; 32]) -> Path {
         self.application_path(&format!("cells/{}/control.json", encode_hex(cell)))
+    }
+
+    /// Retained runtime owner observation for one Cell incarnation and epoch.
+    /// This metadata path supplies no authority or immutable-root retention pin.
+    #[must_use]
+    pub fn owner_observation_path(
+        &self,
+        cell: &[u8; 32],
+        incarnation: &[u8; 16],
+        epoch: u64,
+    ) -> Path {
+        self.application_path(&format!(
+            "cells/{}/owner-history/v1/{}/{epoch:016x}.json",
+            encode_hex(cell),
+            encode_hex(incarnation),
+        ))
+    }
+
+    /// Runtime acquisition input/materialization metadata for one owner epoch.
+    /// This path grants no authority, native serving or immutable-root pin.
+    #[must_use]
+    pub fn acquisition_record_path(
+        &self,
+        cell: &[u8; 32],
+        incarnation: &[u8; 16],
+        epoch: u64,
+    ) -> Path {
+        self.application_path(&format!(
+            "cells/{}/acquisitions/v1/{}/{epoch:016x}.bin",
+            encode_hex(cell),
+            encode_hex(incarnation),
+        ))
+    }
+
+    /// Runtime-retained verified preparation links for an exact immutable root.
+    /// This metadata path grants no authority or immutable-root retention pin.
+    #[must_use]
+    pub fn root_lineage_path(
+        &self,
+        cell: &[u8; 32],
+        incarnation: &[u8; 16],
+        root: &[u8; 32],
+    ) -> Path {
+        self.application_path(&format!(
+            "cells/{}/root-lineage/v1/{}/{}.bin",
+            encode_hex(cell),
+            encode_hex(incarnation),
+            encode_hex(root),
+        ))
     }
 
     /// Returns the advisory desired read-replica count for one Cell.
@@ -284,6 +336,24 @@ mod tests {
         assert_eq!(
             layout.control_path(&[0xcd; 32]).as_ref(),
             "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/control.json"
+        );
+        assert_eq!(
+            layout
+                .owner_observation_path(&[0xcd; 32], &[0xef; 16], 10)
+                .as_ref(),
+            "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/owner-history/v1/efefefefefefefefefefefefefefefef/000000000000000a.json"
+        );
+        assert_eq!(
+            layout
+                .acquisition_record_path(&[0xcd; 32], &[0xef; 16], 10)
+                .as_ref(),
+            "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/acquisitions/v1/efefefefefefefefefefefefefefefef/000000000000000a.bin"
+        );
+        assert_eq!(
+            layout
+                .root_lineage_path(&[0xcd; 32], &[0xef; 16], &[0xab; 32])
+                .as_ref(),
+            "tenant-root/cells/v1/apps/abababababababababababababababab/cells/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/root-lineage/v1/efefefefefefefefefefefefefefefef/abababababababababababababababababababababababababababababababab.bin"
         );
         assert_eq!(
             layout.node_directory_path().as_ref(),

@@ -1,0 +1,30 @@
+[package]
+name = "cellule-builder-service-example"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+# This is an embedding application, independent of the framework workspace.
+[workspace]
+resolver = "3"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["json", "http1", "tokio"] }
+blake3 = "1.8"
+cellule-app = { path = "../../../cellule-app" }
+cellule-axum = { path = "../..", features = ["openapi"] }
+cellule-cookbook-support = { path = "../../../../cookbook/support" }
+cellule-runtime = { path = "../../../cellule-runtime" }
+cellule-store = { path = "../../../cellule-store" }
+object_store = { version = "0.14.1", default-features = false }
+rusqlite = { version = "0.34", features = ["bundled"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1.49", features = ["macros", "net", "rt-multi-thread", "signal"] }
+uuid = { version = "=1.24.0", features = ["v7"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

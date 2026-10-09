@@ -43,11 +43,12 @@ impl NodeDirectory {
         Ok(log)
     }
 
-    /// Reports whether the authoritative session record still names one log epoch.
+    /// Reports whether authority still requires local copies of one log epoch.
     ///
     /// A missing record is corruption rather than collection authority and fails
     /// closed. Callers may delete an exact grace-aged retired follower lane only
-    /// when this returns `false`.
+    /// when this returns `false`. Recovered Retired tombstones preserve the epoch
+    /// and manifest as history after every original member confirms retirement.
     pub async fn log_epoch_referenced(&self, session: SessionId, epoch: u64) -> Result<bool> {
         if epoch == 0 {
             return Err(Error::Node("node-log epoch is zero"));
@@ -60,11 +61,13 @@ impl NodeDirectory {
             return Err(Error::Node("node advertisement path and session differ"));
         }
         if let NodeRecord::Advertisement(advertisement) = &record {
+            // load_record_at already verified this exact canonical body.
             self.validate_scope(advertisement)?;
             advertisement.validate_shape()?;
-            advertisement.verify_signature()?;
         }
-        Ok(record.log().is_some_and(|log| log.epoch() == epoch))
+        Ok(record
+            .log()
+            .is_some_and(|log| log.epoch() == epoch && log.phase() != NodeLogPhase::Retired))
     }
 
     /// Verifies a live claimant may seal or read this follower's failed-owner lane.
@@ -119,30 +122,24 @@ impl NodeDirectory {
         live_node_limit: usize,
         now_ms: i64,
     ) -> Result<Option<VersionedNodeAdvertisement>> {
-        self.validate(&observed.advertisement, now_ms)?;
-        if observed.advertisement.log.is_some() {
-            return Err(Error::Node("node session already has an enrolled log"));
-        }
-        let members = self
-            .select_log_members(
-                observed.advertisement.session,
+        let Some(prepared) = self
+            .prepare_log_enrollment(
+                observed,
+                log_epoch,
                 required_follower_bytes,
-                now_ms,
                 live_node_limit,
+                now_ms,
             )
-            .await?;
-        if members.is_empty() {
+            .await?
+        else {
             return Ok(None);
-        }
-        let mut next = observed.advertisement.clone();
-        next.generation = next
-            .generation
-            .checked_add(1)
-            .ok_or(Error::Node("node session generation overflow"))?;
-        next.log = Some(NodeLogStatus::open(next.node, log_epoch, members)?);
-        self.update_advertisement(observed, next, now_ms)
+        };
+        // Preserve the ordinary API's observed-version CAS contract. Managed
+        // producers explicitly rebase before accepting their registry records.
+        let attempt = self.enrollment_attempt(&prepared, observed.clone())?;
+        self.commit_log_enrollment(&attempt, now_ms)
             .await
-            .map(Some)
+            .map(|proof| Some(proof.enrollment().clone()))
     }
 
     /// CAS-activates the exact enrolled epoch after every member fsyncs its first batch.

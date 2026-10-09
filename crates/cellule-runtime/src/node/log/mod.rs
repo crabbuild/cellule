@@ -3,16 +3,20 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use futures_util::future::join_all;
 use tokio::sync::Notify;
 
 use crate::identity::NodeId;
 use crate::identity::SessionId;
-use crate::node::log_transport::{NodeLogTransport, RetireRequest};
+use crate::node::log_transport::NodeLogTransport;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 use crate::{Error, Result};
 
 mod recovery;
+mod retirement;
+pub(crate) use retirement::retire_node_log;
+pub use retirement::{
+    NodeLogMemberRetirement, NodeLogRetirementObservation, NodeLogRetirementProof,
+};
 
 pub use recovery::*;
 
@@ -137,11 +141,37 @@ pub struct DurabilityGate {
     changed: Arc<Notify>,
 }
 
+/// One consistent observation of an epoch's durability frontiers.
+///
+/// Observations grant no durability, recovery, rotation, or deletion authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeLogProgress {
+    /// Epoch these frontiers describe.
+    pub log_epoch: u64,
+    /// Highest issued node-log sequence.
+    pub issued_through: u64,
+    /// Highest sequence fsynced by every enrolled follower.
+    pub follower_proven_through: u64,
+    /// Contiguous prefix covered by authoritative object publication.
+    pub tiered_through: u64,
+    /// Issued sequences beyond the contiguous object-covered prefix.
+    pub pending_object_sequences: u64,
+    /// Whether authoritative activation enabled fleet proofs.
+    pub fleet_active: bool,
+    /// Whether issuance has stopped for rotation.
+    pub rotating: bool,
+    /// Whether the gate has been fenced.
+    pub fenced: bool,
+}
+
 struct GateState {
     leader_session: SessionId,
+    leader_node: NodeId,
     log_epoch: u64,
     members: HashSet<NodeId>,
     follower_through: HashMap<NodeId, u64>,
+    // Keep only completed sequences above the contiguous prefix. The prefix
+    // proves older tickets without one allocation per historical frame.
     object_covered: BTreeSet<u64>,
     tiered_through: u64,
     next_sequence: u64,
@@ -151,6 +181,27 @@ struct GateState {
 }
 
 impl DurabilityGate {
+    /// Samples all frontiers under one lock without issuing a proof.
+    pub fn progress(&self) -> Result<NodeLogProgress> {
+        let state = self.lock()?;
+        let issued_through = state.next_sequence.saturating_sub(1);
+        Ok(NodeLogProgress {
+            log_epoch: state.log_epoch,
+            issued_through,
+            follower_proven_through: state
+                .members
+                .iter()
+                .map(|member| state.follower_through.get(member).copied().unwrap_or(0))
+                .min()
+                .unwrap_or(0),
+            tiered_through: state.tiered_through,
+            pending_object_sequences: issued_through.saturating_sub(state.tiered_through),
+            fleet_active: state.fleet_active,
+            rotating: state.rotating,
+            fenced: state.fenced,
+        })
+    }
+
     /// Creates one inactive gate for the exact recruited follower ensemble.
     pub fn new(
         leader_session: SessionId,
@@ -174,6 +225,7 @@ impl DurabilityGate {
         Ok(Self {
             inner: Arc::new(Mutex::new(GateState {
                 leader_session,
+                leader_node,
                 log_epoch,
                 members,
                 follower_through,
@@ -260,6 +312,18 @@ impl DurabilityGate {
             .checked_add(1)
             .ok_or(Error::Node("node sequence overflow"))?;
         Ok(())
+    }
+
+    /// Returns this gate's immutable enrolled epoch, including after rotation.
+    pub fn log_epoch(&self) -> Result<u64> {
+        Ok(self.lock()?.log_epoch)
+    }
+
+    /// Returns the immutable configured boot, physical node and epoch. This
+    /// metadata is not a signed authority observation or durability proof.
+    pub fn identity(&self) -> Result<(SessionId, NodeId, u64)> {
+        let state = self.lock()?;
+        Ok((state.leader_session, state.leader_node, state.log_epoch))
     }
 
     pub(crate) fn shipping_scope(&self) -> Result<(SessionId, u64, Vec<NodeId>)> {
@@ -351,16 +415,57 @@ impl DurabilityGate {
 
     /// Marks exactly the frame range now reachable through an authoritative root.
     pub fn prove_object(&self, ticket: CommitTicket) -> Result<u64> {
-        let mut state = self.lock()?;
-        validate_ticket(&state, ticket)?;
+        self.prove_objects(&[ticket])
+    }
+
+    pub(crate) fn objects_are_covered(&self, tickets: &[CommitTicket]) -> Result<bool> {
+        let state = self.lock()?;
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
+        }
         if state.fenced {
             return Err(Error::Fenced);
         }
-        for sequence in ticket.first_sequence..=ticket.last_sequence {
-            state.object_covered.insert(sequence);
+        Ok(tickets.iter().all(|ticket| object_covers(&state, *ticket)))
+    }
+
+    pub(crate) fn uncovered_objects(&self, tickets: &[CommitTicket]) -> Result<Vec<CommitTicket>> {
+        let state = self.lock()?;
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
         }
-        while state.object_covered.contains(&(state.tiered_through + 1)) {
-            state.tiered_through += 1;
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        Ok(tickets
+            .iter()
+            .copied()
+            .filter(|ticket| !object_covers(&state, *ticket))
+            .collect())
+    }
+
+    pub(crate) fn prove_objects(&self, tickets: &[CommitTicket]) -> Result<u64> {
+        let mut state = self.lock()?;
+        // Validate the entire batch before changing any proof. One bad scope
+        // cannot release valid siblings before the caller observes an error.
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
+        }
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        for ticket in tickets {
+            for sequence in ticket.first_sequence..=ticket.last_sequence {
+                if sequence > state.tiered_through {
+                    state.object_covered.insert(sequence);
+                }
+            }
+        }
+        while let Some(next) = state.tiered_through.checked_add(1) {
+            if !state.object_covered.remove(&next) {
+                break;
+            }
+            state.tiered_through = next;
         }
         let tiered_through = state.tiered_through;
         drop(state);
@@ -368,17 +473,21 @@ impl DurabilityGate {
         Ok(tiered_through)
     }
 
-    pub(crate) fn preview_object(&self, ticket: CommitTicket) -> Result<u64> {
+    pub(crate) fn preview_objects(&self, tickets: &[CommitTicket]) -> Result<u64> {
         let state = self.lock()?;
-        validate_ticket(&state, ticket)?;
+        for ticket in tickets {
+            validate_ticket(&state, *ticket)?;
+        }
         if state.fenced {
             return Err(Error::Fenced);
         }
+        let covered = tickets
+            .iter()
+            .flat_map(|ticket| ticket.first_sequence..=ticket.last_sequence)
+            .collect::<BTreeSet<_>>();
         let mut tiered_through = state.tiered_through;
         while let Some(next) = tiered_through.checked_add(1) {
-            if state.object_covered.contains(&next)
-                || (ticket.first_sequence..=ticket.last_sequence).contains(&next)
-            {
+            if state.object_covered.contains(&next) || covered.contains(&next) {
                 tiered_through = next;
             } else {
                 break;
@@ -452,9 +561,7 @@ impl DurabilityGate {
         if state.fenced {
             return Err(Error::Fenced);
         }
-        if (ticket.first_sequence..=ticket.last_sequence)
-            .all(|sequence| state.object_covered.contains(&sequence))
-        {
+        if object_covers(&state, ticket) {
             return Ok(Some(DurabilityProof {
                 ticket,
                 source: DurabilitySource::Object,
@@ -537,30 +644,11 @@ pub async fn close_node_log(
     directory.close_log(observed, &barrier, now_ms).await
 }
 
-pub(crate) async fn retire_node_log(
-    transport: Arc<dyn NodeLogTransport>,
-    barrier: &NodeLogRotationBarrier,
-) -> Result<()> {
-    let retirements = join_all(barrier.members().iter().map(|member| {
-        let transport = Arc::clone(&transport);
-        let member = *member;
-        let request = RetireRequest {
-            leader_session: barrier.leader_session(),
-            log_epoch: barrier.log_epoch(),
-            covered_through: barrier.covered_through(),
-        };
-        async move { transport.retire(member, request).await }
-    }))
-    .await;
-    let expected_base = barrier.covered_through().saturating_add(1);
-    for receipt in retirements.into_iter().flatten() {
-        if receipt.base_sequence != expected_base
-            || receipt.durable_through != barrier.covered_through()
-        {
-            return Err(Error::Node("follower retire receipt differs"));
-        }
-    }
-    Ok(())
+fn object_covers(state: &GateState, ticket: CommitTicket) -> bool {
+    ticket.last_sequence <= state.tiered_through
+        || (ticket.first_sequence..=ticket.last_sequence).all(|sequence| {
+            sequence <= state.tiered_through || state.object_covered.contains(&sequence)
+        })
 }
 
 fn validate_ticket(state: &GateState, ticket: CommitTicket) -> Result<()> {

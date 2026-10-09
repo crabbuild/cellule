@@ -1,5 +1,5 @@
 /target
 .DS_Store
-
-# Local qualification interpreter caches
+node_modules/
 __pycache__/
+*.pyc

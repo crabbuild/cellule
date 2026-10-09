@@ -6,6 +6,7 @@ use crate::follower::FollowerStore;
 use crate::follower::{FollowerReceipt, FollowerTailPage};
 use crate::identity::NodeId;
 use crate::identity::SessionId;
+use crate::node::{NodeDirectory, SealedNodeLog};
 use crate::{Error, Result};
 
 /// One ordered follower append with the leader's safe truncation watermark.
@@ -39,6 +40,27 @@ pub struct RetireRequest {
     pub log_epoch: u64,
     /// Highest sequence object storage covers.
     pub covered_through: u64,
+}
+
+/// Exact canonically sealed failed-owner log whose pinned tail may be retired.
+/// This carries no caller-selected truncation watermark. Remote receivers must
+/// authenticate the live requester and obtain fresh directory authorization.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveredRetireRequest {
+    /// Opaque canonical recovery completion, including its original ensemble.
+    pub sealed: SealedNodeLog,
+}
+
+/// Recovery retirement capability of the same authenticated node-log transport.
+/// Implement this explicit request path with the ordinary transport; do not
+/// reinterpret a live-owner retirement or infer authorization from expiry.
+pub trait RecoveredNodeLogTransport: NodeLogTransport {
+    /// Retires only after receiver-side canonical sealed-log authorization.
+    fn retire_recovered<'a>(
+        &'a self,
+        member: NodeId,
+        request: RecoveredRetireRequest,
+    ) -> BoxFuture<'a, Result<FollowerReceipt>>;
 }
 
 /// Bounded read of one already sealed follower tail.
@@ -232,6 +254,109 @@ impl NodeLogTransport for LocalFollowerTransport {
                     request.log_epoch,
                     request.first_sequence,
                 )
+                .await
+        })
+    }
+}
+
+/// In-process recovery capability with fresh canonical receiver authorization.
+/// This wraps the same ordinary store/transport. Construction pins the trusted
+/// requester identity; remote applications own authenticated request encoding.
+pub struct LocalRecoveredFollowerTransport {
+    local: LocalFollowerTransport,
+    directory: NodeDirectory,
+    claimant: SessionId,
+    clock: std::sync::Arc<dyn Fn() -> Result<i64> + Send + Sync>,
+}
+impl LocalRecoveredFollowerTransport {
+    /// Binds the existing local transport to its canonical authority and clock.
+    pub fn new(
+        local: LocalFollowerTransport,
+        directory: NodeDirectory,
+        claimant: SessionId,
+        clock: impl Fn() -> Result<i64> + Send + Sync + 'static,
+    ) -> Result<Self> {
+        if claimant.as_bytes() == &[0; 16] {
+            return Err(Error::Fenced);
+        }
+        Ok(Self {
+            local,
+            directory,
+            claimant,
+            clock: std::sync::Arc::new(clock),
+        })
+    }
+}
+impl NodeLogTransport for LocalRecoveredFollowerTransport {
+    fn append<'a>(
+        &'a self,
+        member: NodeId,
+        request: AppendRequest,
+    ) -> BoxFuture<'a, Result<FollowerReceipt>> {
+        self.local.append(member, request)
+    }
+    fn seal<'a>(
+        &'a self,
+        member: NodeId,
+        request: SealRequest,
+    ) -> BoxFuture<'a, Result<FollowerReceipt>> {
+        self.local.seal(member, request)
+    }
+    fn retire<'a>(
+        &'a self,
+        member: NodeId,
+        request: RetireRequest,
+    ) -> BoxFuture<'a, Result<FollowerReceipt>> {
+        self.local.retire(member, request)
+    }
+    fn tail<'a>(
+        &'a self,
+        member: NodeId,
+        request: TailRequest,
+    ) -> BoxFuture<'a, Result<Vec<Bytes>>> {
+        self.local.tail(member, request)
+    }
+    fn tail_page<'a>(
+        &'a self,
+        member: NodeId,
+        request: TailRequest,
+    ) -> BoxFuture<'a, Result<FollowerTailPage>> {
+        self.local.tail_page(member, request)
+    }
+}
+impl RecoveredNodeLogTransport for LocalRecoveredFollowerTransport {
+    fn retire_recovered<'a>(
+        &'a self,
+        member: NodeId,
+        request: RecoveredRetireRequest,
+    ) -> BoxFuture<'a, Result<FollowerReceipt>> {
+        Box::pin(async move {
+            self.local.validate_member(member)?;
+            let authorization = self
+                .directory
+                .authorize_recovered_log_retire(
+                    self.claimant,
+                    member,
+                    request.sealed.session(),
+                    request.sealed.log().epoch(),
+                    request.sealed.log().recovery_manifest(),
+                    (self.clock)()?,
+                )
+                .await?;
+            // Match every immutable field, including complete original ensemble,
+            // before handing the fresh authorization to the native lane owner.
+            let actual = authorization.sealed();
+            if actual.session() != request.sealed.session()
+                || actual.log().epoch() != request.sealed.log().epoch()
+                || actual.log().members() != request.sealed.log().members()
+                || actual.log().active() != request.sealed.log().active()
+                || actual.log().tiered_through() != request.sealed.log().tiered_through()
+            {
+                return Err(Error::Fenced);
+            }
+            self.local
+                .store
+                .retire_recovered(member, authorization)
                 .await
         })
     }

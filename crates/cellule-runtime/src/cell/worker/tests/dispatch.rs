@@ -1,6 +1,66 @@
 use super::*;
 
 #[tokio::test(flavor = "current_thread")]
+async fn prepaid_activation_progresses_while_a_queued_query_waits_for_its_slot() {
+    let first = sparse_activation(1, Store::new(Arc::new(InMemory::new())), 0).await;
+    let incoming = sparse_activation(2, Store::new(Arc::new(InMemory::new())), 0).await;
+    let pool = SqlWorkerPool::new(1, 2).unwrap();
+    pool.configure_retained_capacity(1 << 20).unwrap();
+    pool.activate_restored(
+        first.cell,
+        RestoredDatabase::Paged(Box::new(first.database)),
+        first.destination,
+        first.incarnation,
+        1,
+        first.root,
+        pool.reserve_activation().unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let prepaid = pool.try_reserve_job(incoming.cell).unwrap();
+    let query = pool.query(
+        first.cell,
+        64,
+        SqlDeadline::new(Instant::now() + Duration::from_secs(10)),
+        Box::new(|_| Ok(vec![1])),
+        None,
+    );
+    tokio::pin!(query);
+    assert!(futures_util::poll!(&mut query).is_pending());
+    // This FIFO control reply proves the worker has reached the query's slot
+    // wait. Incoming activation already owns that slot and must run there.
+    tokio::time::timeout(Duration::from_secs(5), pool.state(first.cell))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        pool.activate_restored(
+            incoming.cell,
+            RestoredDatabase::Paged(Box::new(incoming.database)),
+            incoming.destination,
+            incoming.incarnation,
+            1,
+            incoming.root,
+            pool.reserve_activation().unwrap(),
+            Some(prepaid),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(query.await.unwrap(), [1]);
+    pool.deactivate(first.cell).await.unwrap();
+    pool.deactivate(incoming.cell).await.unwrap();
+    pool.shutdown().await.unwrap();
+    assert_eq!(
+        pool.resource_ledger().snapshot().unwrap().used,
+        ResourceCost::zero()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn queued_native_work_progresses_without_rescheduling_its_async_submitter() {
     let fixture = sparse_activation(1, Store::new(Arc::new(InMemory::new())), 0).await;
     let pool = SqlWorkerPool::new(1, 1).unwrap();
@@ -13,6 +73,7 @@ async fn queued_native_work_progresses_without_rescheduling_its_async_submitter(
         1,
         fixture.root,
         pool.reserve_activation().unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -76,6 +137,7 @@ async fn a_fence_is_processed_while_snapshot_admission_blocks_a_native_query() {
         1,
         fixture.root,
         pool.reserve_activation().unwrap(),
+        None,
     )
     .await
     .unwrap();

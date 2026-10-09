@@ -1,4 +1,5 @@
 //! Compiled primitive registry: descriptors, schemas, handlers, and builder.
+pub use crate::control::OwnerFence;
 mod descriptor;
 pub use builder::{Registry, RegistryBuilder};
 pub use handlers::{
@@ -17,7 +18,7 @@ use descriptor::{encode_release, requires_persisted_work_inventory, verify_rolli
 
 use crate::cell::catalog::CatalogRole;
 use crate::cell::executor::{HandlerOutcome, MutationIdentity};
-use crate::client::{CellClient, Committed, InvocationError};
+use crate::client::{CellClient, Committed, InvocationError, PendingMutation};
 use crate::codec::WireValue;
 use crate::codec::{decode_wire, encode_wire};
 use crate::identity::{ApplicationId, CellId, CellTarget, Digest, NamespaceId, TenantId};

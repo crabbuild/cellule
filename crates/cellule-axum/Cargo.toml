@@ -1,0 +1,45 @@
+[package]
+name = "cellule-axum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Axum extractors and outcome-aware HTTP responses for Cellule applications"
+
+[features]
+default = []
+openapi = ["dep:utoipa", "dep:utoipa-axum"]
+
+[dependencies]
+axum = { workspace = true, features = ["json"] }
+cellule-app.workspace = true
+cellule-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+utoipa = { version = "6", optional = true, features = ["uuid", "axum_extras"] }
+utoipa-axum = { version = "0.3", optional = true }
+
+[dev-dependencies]
+axum = { workspace = true, features = ["http1", "tokio"] }
+blake3.workspace = true
+bytes.workspace = true
+cellule-peer-http.workspace = true
+cellule-ltx = { workspace = true, features = ["replica"] }
+cellule-store.workspace = true
+object_store.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+prost.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+rusqlite.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tower = { version = "0.5", features = ["util"] }
+
+[[example]]
+name = "typed-api-service"
+path = "examples/typed-api-service/main.rs"
+required-features = ["openapi"]

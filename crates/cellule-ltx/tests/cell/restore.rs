@@ -196,7 +196,7 @@ impl ObjectStore for InstrumentedStore {
         self.puts.fetch_add(1, Ordering::SeqCst);
         self.check_upload_fault()?;
         let result = self.inner.put_opts(location, payload, options).await?;
-        if location.extension() == Some("ltx")
+        if matches!(location.extension(), Some("ltx" | "pack"))
             && self
                 .fault
                 .compare_exchange(
@@ -484,7 +484,9 @@ async fn failed_upload_returns_no_proposal_and_the_retry_is_identical() {
 
 #[tokio::test(start_paused = true)]
 async fn cold_open_and_restore_improve_p95_under_object_latency() {
-    let fixture = fixture(192).await;
+    // Three complete external pages still exercise the original parallel-read
+    // gate; the final descriptor is now authenticated inside the root.
+    let fixture = fixture(288).await;
     for delay_ms in [5, 20, 100] {
         let delay = Duration::from_millis(delay_ms);
         let (store, replica) = delayed_replica(&fixture, delay, 8);

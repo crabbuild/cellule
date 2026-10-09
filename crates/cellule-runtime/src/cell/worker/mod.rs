@@ -19,25 +19,27 @@ use crate::cell::executor::{
     PendingMigration, StoredOutcome,
 };
 use crate::cell::executor::{MutationIdentity, Resolution};
+use crate::cell::executor::{NativeCommand, NativeGroupExecution};
 use crate::fleet::resource::ResourceCost;
 use crate::fleet::resource::{
     ACTIVE_CELL_NATIVE_BYTES, HYDRATION_JOB_CAPACITY, ResourceLedger, ResourceReservation,
 };
 use crate::identity::{CellId, Digest};
 use crate::primitives::effects::InboxDelivery;
-use crate::primitives::maintenance::PersistedWorkInventory;
 use crate::primitives::maintenance::TransferWorkInventory;
 use crate::registry::MigrationPlan;
 use crate::{Error, Result};
 
 mod admission;
+mod inventory;
 mod query_timing;
 mod run;
 mod slot;
+pub(crate) use inventory::WorkerCellInventory;
 pub(crate) use query_timing::QueryTrace;
 
 const MAX_WORKERS: usize = 16;
-const MAX_ACTIVE_CELLS: usize = 10_000;
+pub(crate) const MAX_ACTIVE_CELLS: usize = 10_000;
 const WORKER_QUEUE: usize = 256;
 const DEFAULT_PAGE_IO_DEADLINE: Duration = Duration::from_secs(30);
 
@@ -123,8 +125,16 @@ pub(crate) struct BootstrapExecution {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkerState {
     Ready,
+    /// Every logical commit has proof, but object publication still needs drain.
+    DurablePending,
     Pending,
     Fenced,
+}
+
+impl WorkerState {
+    pub(crate) fn is_reusable(self) -> bool {
+        matches!(self, Self::Ready | Self::DurablePending)
+    }
 }
 
 #[derive(Debug)]
@@ -217,6 +227,7 @@ impl SqlWorkerPool {
     /// The default covers the configured writer count. Hosts admitting read
     /// replicas must also budget their snapshots, including overlapping refreshes.
     /// This is reserved native memory, not an RSS limit; retained cuts are separate.
+    /// Each writer reserves 88 KiB, including three 8 KiB SQLite lookaside arenas.
     /// Zero or a ceiling below existing reservations returns a capacity error.
     pub fn with_native_memory_limit(self, bytes: usize) -> Result<Self> {
         self.inner.resources.set_resident_limit(bytes)?;
@@ -297,6 +308,10 @@ impl SqlWorkerPool {
     }
 
     /// Opens and verifies one exact immutable root on its assigned SQL worker.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "restore transfers both lasting Cell and optional prepaid job ownership"
+    )]
     pub(crate) async fn activate_restored(
         &self,
         cell: CellId,
@@ -306,22 +321,31 @@ impl SqlWorkerPool {
         schema: u32,
         root: cellule_ltx::RootRef,
         reservation: CellReservation,
+        job: Option<WorkerJobReservation>,
     ) -> Result<()> {
         let (reply, response) = oneshot::channel();
-        self.send(
+        let command = WorkerCommand::ActivateRestored {
             cell,
-            WorkerCommand::ActivateRestored {
+            database: Box::new(database),
+            destination,
+            incarnation,
+            schema,
+            root,
+            reservation,
+            reply,
+        };
+        if let Some(reservation) = job {
+            self.send(
                 cell,
-                database: Box::new(database),
-                destination,
-                incarnation,
-                schema,
-                root,
-                reservation,
-                reply,
-            },
-        )
-        .await?;
+                WorkerCommand::Reserved {
+                    command: Box::new(command),
+                    reservation,
+                },
+            )
+            .await?;
+        } else {
+            self.send_worker_job(cell, command).await?;
+        }
         receive(response).await
     }
 
@@ -377,6 +401,26 @@ impl SqlWorkerPool {
                 max_result_bytes,
                 deadline,
                 handler,
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
+    pub(crate) async fn execute_group(
+        &self,
+        cell: CellId,
+        commands: Vec<NativeCommand<Handler>>,
+        deadline: SqlDeadline,
+    ) -> Result<NativeGroupExecution> {
+        let (reply, response) = oneshot::channel();
+        self.send_worker_job(
+            cell,
+            WorkerCommand::ExecuteGroup {
+                cell,
+                commands,
+                deadline,
                 reply,
             },
         )
@@ -567,17 +611,6 @@ impl SqlWorkerPool {
         receive(response).await
     }
 
-    pub(crate) async fn persisted_work_inventory(
-        &self,
-        cell: CellId,
-        role: CatalogRole,
-    ) -> Result<PersistedWorkInventory> {
-        let (reply, response) = oneshot::channel();
-        self.send_worker_job(cell, WorkerCommand::PersistedWork { cell, role, reply })
-            .await?;
-        receive(response).await
-    }
-
     pub(crate) async fn transfer_work_inventory(
         &self,
         cell: CellId,
@@ -591,6 +624,28 @@ impl SqlWorkerPool {
                 cell,
                 role,
                 now_ms,
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
+    pub(crate) async fn fleet_inventory(
+        &self,
+        cell: CellId,
+        role: CatalogRole,
+        now_ms: i64,
+        deadline: SqlDeadline,
+    ) -> Result<WorkerCellInventory> {
+        let (reply, response) = oneshot::channel();
+        self.send_worker_job(
+            cell,
+            WorkerCommand::FleetInventory {
+                cell,
+                role,
+                now_ms,
+                deadline,
                 reply,
             },
         )
@@ -944,6 +999,34 @@ impl SqlWorkerPool {
         )
     }
 
+    /// Holds the incoming Cell's affine worker without waiting or widening the cap.
+    pub(crate) fn try_reserve_job(&self, cell: CellId) -> Result<WorkerJobReservation> {
+        let shard = worker_index(cell, self.inner.worker_count);
+        let requested = self.inner.slots.probe.request();
+        let permits = {
+            let lifecycle = self
+                .inner
+                .lifecycle
+                .lock()
+                .map_err(|_| Error::RuntimeClosed)?;
+            if lifecycle.closing {
+                return Err(Error::RuntimeClosed);
+            }
+            Arc::clone(&self.inner.slots.permits[shard])
+        };
+        let permit = permits.try_acquire_owned().map_err(|error| match error {
+            tokio::sync::TryAcquireError::Closed => Error::RuntimeClosed,
+            tokio::sync::TryAcquireError::NoPermits => Error::Capacity("incoming Cell worker"),
+        })?;
+        self.inner.slots.finish(
+            permit,
+            requested,
+            shard,
+            crate::fleet::telemetry::SqlJobKind::Control,
+            None,
+        )
+    }
+
     #[cfg(test)]
     async fn reserve_job(
         &self,
@@ -979,6 +1062,13 @@ impl SqlWorkerPool {
     }
 
     pub(crate) fn reserve_activation(&self) -> Result<CellReservation> {
+        self.reserve_activation_cost(ResourceCost::active_cell())
+    }
+
+    pub(crate) fn reserve_activation_cost(&self, cost: ResourceCost) -> Result<CellReservation> {
+        if cost.active_cells() != 1 {
+            return Err(Error::Capacity("activation must reserve exactly one Cell"));
+        }
         let lifecycle = self
             .inner
             .lifecycle
@@ -990,7 +1080,7 @@ impl SqlWorkerPool {
         let reservation = self
             .inner
             .resources
-            .try_reserve(ResourceCost::active_cell())
+            .try_reserve(cost)
             .map_err(|error| match error {
                 Error::Capacity(_) => Error::Capacity("active Cells per node"),
                 error => error,
@@ -1059,6 +1149,10 @@ pub(crate) enum RestoredDatabase {
 }
 
 enum WorkerCommand {
+    Reserved {
+        command: Box<WorkerCommand>,
+        reservation: WorkerJobReservation,
+    },
     Queued {
         command: Box<WorkerCommand>,
         reservation: admission::QueuedJob,
@@ -1080,6 +1174,12 @@ enum WorkerCommand {
         reply: oneshot::Sender<Result<()>>,
     },
     Bootstrap(Box<WorkerBootstrap>),
+    ExecuteGroup {
+        cell: CellId,
+        commands: Vec<NativeCommand<Handler>>,
+        deadline: SqlDeadline,
+        reply: oneshot::Sender<Result<NativeGroupExecution>>,
+    },
     Execute {
         trace: tracing::Span,
         queued_at: Instant,
@@ -1135,16 +1235,18 @@ enum WorkerCommand {
         cell: CellId,
         reply: oneshot::Sender<Result<Option<cellule_ltx::Hydration>>>,
     },
-    PersistedWork {
-        cell: CellId,
-        role: CatalogRole,
-        reply: oneshot::Sender<Result<PersistedWorkInventory>>,
-    },
     TransferWork {
         cell: CellId,
         role: CatalogRole,
         now_ms: i64,
         reply: oneshot::Sender<Result<TransferWorkInventory>>,
+    },
+    FleetInventory {
+        cell: CellId,
+        role: CatalogRole,
+        now_ms: i64,
+        deadline: SqlDeadline,
+        reply: oneshot::Sender<Result<WorkerCellInventory>>,
     },
     Resolve {
         cell: CellId,
@@ -1263,12 +1365,12 @@ impl WorkerCommand {
         use crate::fleet::telemetry::SqlJobKind;
         match self {
             Self::Query { .. } => SqlJobKind::Query,
-            Self::Execute { .. } => SqlJobKind::Command,
+            Self::Execute { .. } | Self::ExecuteGroup { .. } => SqlJobKind::Command,
             Self::Migrate { .. } => SqlJobKind::Migration,
             Self::DeliverEffect { .. } => SqlJobKind::Effect,
             Self::PrepareHydration { .. } => SqlJobKind::HydrationPrepare,
             Self::InstallHydration { .. } => SqlJobKind::HydrationInstall,
-            Self::PersistedWork { .. } | Self::TransferWork { .. } => SqlJobKind::Inventory,
+            Self::TransferWork { .. } | Self::FleetInventory { .. } => SqlJobKind::Inventory,
             Self::Resolve { .. } | Self::ResolveEffect { .. } => SqlJobKind::Resolve,
             _ => SqlJobKind::Control,
         }

@@ -143,6 +143,9 @@ sequenceDiagram
 - The host wires `CellClient::with_read_replicas`, `ReplicaReadRouter`, and an
   authenticated `ReplicaPeerClient`.
 - Selection and retries share one five-second deadline.
+- Replica retries preserve each reader's original placement position, so a
+  fallback does not reset round-robin ties for the next query. Outstanding
+  attempts still take priority when choosing the least busy reader.
 - Authors receive typed capabilities, not storage or transport handles.
 
 ## Verification map
@@ -164,6 +167,19 @@ cargo test -p cellule-app --locked
 - Public-host fixtures share one process.
 - RustFS, constrained containers, and continuous-traffic rollout require the
   separate qualification environment.
+
+The provider-backed `process_performance::reference_replica_retry_three_process_fleet`
+case injects one initial replica refusal across three independent hosts. It
+checks the same 12 successful reads, balanced receiver counts, automatic
+recruitment/refresh, receipt readback, policy eviction and joined shutdown as the
+ordinary process smoke. With an isolated RustFS bucket, prefix and explicit
+credentials configured, run:
+
+```sh
+cargo test -p cellule-app --test integration --locked \
+  process_performance::reference_replica_retry_three_process_fleet \
+  -- --ignored --exact --nocapture
+```
 
 See [PERFORMANCE.md](../PERFORMANCE.md), [AGENTS.md](../AGENTS.md), and the
 [framework quickstart](../../../docs/quickstart.md).

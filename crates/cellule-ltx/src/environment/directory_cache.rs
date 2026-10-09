@@ -5,7 +5,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -23,9 +23,39 @@ pub(super) struct CacheFills {
 struct CacheFillState {
     paths: HashSet<PathBuf>,
     opening: HashSet<PathBuf>,
+    caches: HashMap<PathBuf, Vec<Weak<DirectoryCache>>>,
 }
 
 impl CacheFills {
+    pub(super) fn cached(
+        &self,
+        root: &Path,
+        filesystem: &Arc<dyn FileSystem>,
+        budget: &DiskBudget,
+    ) -> Option<Arc<DirectoryCache>> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let caches = state.caches.get_mut(root)?;
+        caches.retain(|cache| cache.strong_count() != 0);
+        caches.iter().filter_map(Weak::upgrade).find(|cache| {
+            Arc::ptr_eq(&cache.filesystem, filesystem) && cache.budget.same_scope(budget)
+        })
+    }
+
+    pub(super) fn remember(&self, cache: &Arc<DirectoryCache>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        // A node can retire directories over its lifetime. Keep registry
+        // metadata bounded by live owners without retaining their disk charges.
+        state.caches.retain(|_, caches| {
+            caches.retain(|cache| cache.strong_count() != 0);
+            !caches.is_empty()
+        });
+        state
+            .caches
+            .entry(cache.root.clone())
+            .or_default()
+            .push(Arc::downgrade(cache));
+    }
+
     pub(super) fn claim(self: &Arc<Self>, path: PathBuf) -> Option<CacheFill> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if path

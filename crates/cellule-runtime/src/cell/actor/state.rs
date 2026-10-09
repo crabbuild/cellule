@@ -8,10 +8,11 @@ pub(super) struct RuntimeInner {
     pub(super) resources: ResourceLedger,
     pub(super) primitive_jobs: Arc<Semaphore>,
     pub(super) shutting_down: AtomicBool,
-    pub(super) accepting_cells: AtomicBool,
+    pub(super) node_admission: NodeAdmission,
     pub(super) session: SessionId,
     pub(super) pool: SqlWorkerPool,
     pub(super) replica_host: cellule_ltx::Host,
+    pub(super) receivers: std::sync::Mutex<receiver::ReceiverRegistry>,
     pub(super) application_limits: OnceLock<HashMap<crate::identity::NamespaceId, (u64, u64)>>,
     pub(super) node_lease: Arc<RuntimeNodeLease>,
     pub(super) node_durability: NodeDurabilitySlot,
@@ -63,6 +64,7 @@ pub(super) struct RestoredActivation {
     pub(super) schema: u32,
     pub(super) root: cellule_ltx::RootRef,
     pub(super) reservation: CellReservation,
+    pub(super) job: Option<crate::cell::worker::WorkerJobReservation>,
 }
 
 pub(super) struct BootstrapActivation {
@@ -77,6 +79,9 @@ pub(super) struct BootstrapActivation {
 pub(super) type IdleTransferCandidates = Vec<(CellId, u64, i64, CatalogRole)>;
 
 pub(super) enum Message {
+    PublicationProgress {
+        reply: oneshot::Sender<crate::Result<CellPublicationProgress>>,
+    },
     Activate {
         cell: CellId,
         role: CatalogRole,
@@ -115,6 +120,13 @@ pub(super) enum Message {
     IdleTransferCandidates {
         reply: oneshot::Sender<crate::Result<IdleTransferCandidates>>,
     },
+    FleetCellsPage {
+        session: SessionId,
+        cursor: Option<CellInventoryCursor>,
+        limit: usize,
+        retained: ResourceReservation,
+        reply: oneshot::Sender<crate::Result<CellInventoryPage>>,
+    },
     ActiveCatalogEntries {
         reply: oneshot::Sender<crate::Result<Vec<crate::cell::catalog::CatalogEntry>>>,
     },
@@ -124,10 +136,19 @@ pub(super) enum Message {
     UnreleasedCellCount {
         reply: oneshot::Sender<crate::Result<usize>>,
     },
+    QuiesceCell {
+        cell: CellId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+        reply: oneshot::Sender<crate::Result<()>>,
+    },
+    ReleaseMaintenanceCell(maintenance::ReleaseRequest),
     ReleaseIdleCell {
         cell: CellId,
         generation: u64,
-        reply: oneshot::Sender<crate::Result<()>>,
+        expected: Option<(crate::identity::IncarnationId, u64)>,
+        reply: DrainReply,
     },
     ObservePressure {
         sample: PressureSample,
@@ -139,6 +160,7 @@ pub(super) enum Message {
 }
 
 pub(super) struct QueuedCommand {
+    pub(super) group: Option<CommandGroup>,
     pub(super) trace: tracing::Span,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) queued_at: std::time::Instant,
@@ -151,6 +173,16 @@ pub(super) struct QueuedCommand {
     pub(super) handler: Option<Handler>,
     pub(super) reply: Option<oneshot::Sender<crate::Result<StoredOutcome>>>,
     pub(super) _work: WorkAdmission,
+}
+
+pub(super) struct CommandGroup {
+    pub(super) members: Vec<QueuedCommand>,
+    pub(super) execution: Option<GroupOutcomes>,
+}
+
+pub(super) struct GroupOutcomes {
+    pub(super) outcomes: Vec<crate::Result<StoredOutcome>>,
+    pub(super) base_sequence: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -186,6 +218,8 @@ impl QueuedOperation {
 
 pub(super) struct QueuedQuery {
     pub(super) timing: Option<Arc<crate::cell::worker::QueryTrace>>,
+    pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
+    pub(super) queued_at: std::time::Instant,
     pub(super) cell: CellId,
     pub(super) admission: Arc<CellAdmission>,
     pub(super) max_result_bytes: usize,
@@ -249,19 +283,25 @@ pub(super) struct ActiveCell {
     pub(super) publisher: Option<CellPublisher>,
     pub(super) durability_submitter: CellDurabilitySubmitter,
     pub(super) publications: VecDeque<QueuedPublication>,
+    pub(super) publishing_since: Option<std::time::Instant>,
     pub(super) publication_bytes: u64,
     pub(super) unpublished_node_logs: usize,
     pub(super) queue: VecDeque<QueuedWork>,
     pub(super) coordination: CoordinationState,
     pub(super) persisted_work: crate::primitives::maintenance::PersistedWorkInventory,
+    pub(super) demand: inventory::CellDemandState,
+    pub(super) resource_limits: cellule_ltx::Limits,
     pub(super) inventory_refreshing: bool,
-    pub(super) drain: Option<oneshot::Sender<crate::Result<()>>>,
+    pub(super) inventory_revision: u64,
+    pub(super) drain: Option<DrainReply>,
     // Transfer closes the old capability and installs a fresh one; failed fresh
     // inventory must leave the current owner serving through that capability.
     pub(super) transfer: Option<TransferPreflight>,
+    pub(super) resident_since_ms: i64,
     pub(super) last_used_ms: i64,
     pub(super) last_work_at: std::time::Instant,
     pub(super) compaction_retry_at: std::time::Instant,
+    pub(super) compaction_admission: Option<CompactionAdmission>,
     pub(super) hydration_retry_at: std::time::Instant,
     // The published head's due time and commit sequence, mirrored from the
     // authoritative control so a resident Cell can be ticked without a
@@ -271,8 +311,68 @@ pub(super) struct ActiveCell {
     pub(super) published_sequence: u64,
 }
 
+/// Only admission is cancellable. Once dispatched, compaction owns its native
+/// work and reservations until completion, even if this guard is cancelled.
+pub(super) struct CompactionAdmission {
+    pub(super) cancel: tokio_util::sync::CancellationToken,
+    pub(super) pending: bool,
+}
+
+impl Drop for CompactionAdmission {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
 pub(super) struct TransferPreflight {
-    pub(super) reply: oneshot::Sender<crate::Result<()>>,
+    pub(super) reply: DrainReply,
+    pub(super) maintenance: Option<maintenance::ReleaseState>,
+}
+
+pub(super) enum DrainReply {
+    Maintenance(oneshot::Sender<crate::Result<MaintenanceCellRelease>>),
+    Unit(oneshot::Sender<crate::Result<()>>),
+    Position(oneshot::Sender<crate::Result<crate::fleet::operations::PublishedPosition>>),
+}
+
+impl DrainReply {
+    /// Only call before this request transfers its reply to canonical close.
+    /// A later close/publication error must remain an uncertain release.
+    pub(super) fn refuse(self, blocker: DrainBlocker, error: Error) {
+        let error = if matches!(&self, Self::Position(_)) {
+            Error::CellReleaseRefused {
+                blocker,
+                source: Box::new(error),
+            }
+        } else {
+            error
+        };
+        let _ = self.send(Err(error));
+    }
+
+    pub(super) fn send(self, result: crate::Result<()>) -> Result<(), crate::Result<()>> {
+        self.send_released(result, None)
+    }
+
+    pub(super) fn send_released(
+        self,
+        result: crate::Result<()>,
+        released: Option<crate::fleet::operations::PublishedPosition>,
+    ) -> Result<(), crate::Result<()>> {
+        match self {
+            Self::Maintenance(reply) => reply
+                .send(
+                    result
+                        .and_then(|()| released.ok_or(Error::Fenced))
+                        .map(MaintenanceCellRelease::Released),
+                )
+                .map_err(|result| result.map(|_| ())),
+            Self::Unit(reply) => reply.send(result),
+            Self::Position(reply) => reply
+                .send(result.and_then(|()| released.ok_or(Error::Fenced)))
+                .map_err(|result| result.map(|_| ())),
+        }
+    }
 }
 
 pub(super) struct QueuedPublication {
@@ -310,6 +410,14 @@ impl ActiveCell {
             CoordinationDecision::EffectCompleted
         )
     }
+
+    pub(super) fn cancel_compaction_admission(&self) {
+        if let Some(admission) = &self.compaction_admission
+            && admission.pending
+        {
+            admission.cancel.cancel();
+        }
+    }
 }
 
 /// Retains unobserved release failures even before shutdown is requested.
@@ -340,6 +448,12 @@ pub(super) struct DueResidentCell {
     pub(super) next_due_ms: i64,
 }
 
+/// Preparation admission carries the retry boundary from original dispatch.
+pub(super) struct PublicationAdmission {
+    pub(super) replica: cellule_ltx::CellReplica,
+    pub(super) fleet_deadline: std::time::Instant,
+}
+
 pub(super) enum TaskResult {
     Activated {
         cell: CellId,
@@ -353,7 +467,7 @@ pub(super) enum TaskResult {
             Arc<cellule_ltx::DbInterruptHandle>,
             Option<cellule_ltx::Hydration>,
         )>,
-        persisted_work: crate::Result<crate::primitives::maintenance::PersistedWorkInventory>,
+        inventory: crate::Result<crate::cell::worker::WorkerCellInventory>,
     },
     Hydrated {
         cell: CellId,
@@ -365,13 +479,20 @@ pub(super) enum TaskResult {
         cell: CellId,
         generation: u64,
         effect_id: u64,
-        result: crate::Result<crate::primitives::maintenance::PersistedWorkInventory>,
+        inventory_revision: u64,
+        result: crate::Result<crate::cell::worker::WorkerCellInventory>,
     },
     TransferPreflight {
         cell: CellId,
         generation: u64,
         effect_id: u64,
         result: crate::Result<crate::primitives::maintenance::TransferWorkInventory>,
+    },
+    MaintenancePreflight {
+        cell: CellId,
+        generation: u64,
+        effect_id: u64,
+        result: crate::Result<crate::primitives::maintenance_readiness::MaintenanceWorkInventory>,
     },
     Executed {
         cell: CellId,
@@ -388,6 +509,13 @@ pub(super) enum TaskResult {
         command: Box<QueuedCommand>,
         result: crate::Result<StoredOutcome>,
         fenced: bool,
+    },
+    PublicationAdmitted {
+        cell: CellId,
+        generation: u64,
+        effect_id: u64,
+        publisher: Box<CellPublisher>,
+        result: crate::Result<Box<PublicationAdmission>>,
     },
     Published {
         cell: CellId,
@@ -406,6 +534,11 @@ pub(super) enum TaskResult {
         commit_sequence: u64,
         result: crate::Result<()>,
         fenced: bool,
+    },
+    CompactionAdmitted {
+        cell: CellId,
+        generation: u64,
+        result: crate::Result<Option<Box<cellule_ltx::CellReplica>>>,
     },
     Compacted {
         cell: CellId,
@@ -451,14 +584,16 @@ pub(super) enum TaskResult {
     Deactivated {
         cell: CellId,
         generation: u64,
-        reply: Option<oneshot::Sender<crate::Result<()>>>,
+        reply: Option<DrainReply>,
         shutdown_drain: bool,
         result: crate::Result<()>,
+        released: Option<crate::fleet::operations::PublishedPosition>,
     },
 }
 
 pub(super) enum CommandTaskResult {
     Recorded(StoredOutcome),
+    GroupRecorded,
     Pending {
         pending: Box<PendingCommit>,
         durability: Option<PendingDurability>,

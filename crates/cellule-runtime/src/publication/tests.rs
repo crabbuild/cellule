@@ -15,7 +15,505 @@ use crate::identity::IncarnationId;
 use crate::identity::{CellId, Digest, SessionId};
 
 #[tokio::test]
+async fn leased_preparation_checkpoint_checks_liveness_without_cell_cas() {
+    let cell = CellId::from_bytes([91; 32]);
+    let incarnation = IncarnationId::from_bytes([92; 16]);
+    let layout = CellStorageLayout::new(
+        Store::new(Arc::new(InMemory::new())),
+        Path::from("leased-preparation-checkpoint"),
+        [93; 16],
+    );
+    let control = Control::initial(
+        cell,
+        incarnation,
+        Owner {
+            session: SessionId::from_bytes([94; 16]),
+            endpoint: "https://node.internal:8081".into(),
+        },
+        Digest::from_bytes([95; 32]),
+        1,
+    )
+    .unwrap();
+    layout
+        .store()
+        .create_strict(
+            &layout.control_path(cell.as_bytes()),
+            Bytes::from(control.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout.clone());
+    let before = authority.load(cell).await.unwrap().unwrap();
+    let replica = CellReplica::new(
+        layout,
+        *cell.as_bytes(),
+        *incarnation.as_bytes(),
+        Limits::default(),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let lease = crate::NodeLeaseGuard::new(0, 60_000).unwrap();
+    let mut publisher = CellPublisher::new(
+        replica,
+        authority.clone(),
+        before.clone(),
+        directory.path().to_owned(),
+    )
+    .with_node_lease(lease.clone());
+    publisher.renew_at = std::time::Instant::now();
+    assert!(!publisher.renewal_due(std::time::Instant::now()));
+    publisher.renew().await.unwrap();
+    assert!(publisher.renewal_at() > std::time::Instant::now());
+    assert_eq!(publisher.control().value(), before.value());
+    assert_eq!(
+        authority.load(cell).await.unwrap().unwrap().value(),
+        before.value()
+    );
+    lease.fence();
+    assert!(matches!(publisher.renew().await, Err(Error::Fenced)));
+    assert_eq!(
+        authority.load(cell).await.unwrap().unwrap().value(),
+        before.value()
+    );
+}
+
+#[derive(Default)]
+struct CoverageAuthority(std::sync::Mutex<Vec<(u64, u64)>>);
+
+#[tokio::test]
+async fn fenced_node_cleanup_preserves_selected_authority_for_takeover() {
+    verify_node_cleanup(CleanupFence::BeforeRead).await;
+}
+
+#[tokio::test]
+async fn node_fence_during_cleanup_read_preserves_selected_authority() {
+    verify_node_cleanup(CleanupFence::DuringRead).await;
+}
+
+#[tokio::test]
+async fn live_node_cleanup_still_releases_selected_authority() {
+    verify_node_cleanup(CleanupFence::Live).await;
+}
+
+#[derive(Clone, Copy)]
+enum CleanupFence {
+    Live,
+    BeforeRead,
+    DuringRead,
+}
+
+async fn verify_node_cleanup(fence: CleanupFence) {
+    let cell = CellId::from_bytes([101; 32]);
+    let incarnation = IncarnationId::from_bytes([102; 16]);
+    let lease = crate::NodeLeaseGuard::new(0, 60_000).unwrap();
+    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let store = Store::new(Arc::new(InMemory::new())).with_read_request_observer({
+        let armed = armed.clone();
+        let lease = lease.clone();
+        Arc::new(move |_| {
+            if armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                lease.fence();
+            }
+        })
+    });
+    let layout = CellStorageLayout::new(store, Path::from("fenced-node-cleanup"), [103; 16]);
+    let control = Control::initial(
+        cell,
+        incarnation,
+        Owner {
+            session: SessionId::from_bytes([104; 16]),
+            endpoint: "https://node.internal:8081".into(),
+        },
+        Digest::from_bytes([105; 32]),
+        1,
+    )
+    .unwrap();
+    layout
+        .store()
+        .create_strict(
+            &layout.control_path(cell.as_bytes()),
+            Bytes::from(control.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+    let authority = CellAuthority::new(layout.clone());
+    let observed = authority.load(cell).await.unwrap().unwrap();
+    let replica = CellReplica::new(
+        layout.clone(),
+        *cell.as_bytes(),
+        *incarnation.as_bytes(),
+        Limits::default(),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut publisher = CellPublisher::new(
+        replica,
+        authority.clone(),
+        observed,
+        directory.path().to_owned(),
+    )
+    .with_node_lease(lease.clone());
+    let mut database = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
+    database
+        .transaction(|tx| {
+            tx.execute_batch("CREATE TABLE counter(value INTEGER); INSERT INTO counter VALUES(42)")
+        })
+        .unwrap();
+    let cuts = database.capture_deferred().unwrap();
+    let prepared = publisher.prepare_append(&cuts, 1, 1, None).await.unwrap();
+    publisher.publish_prepared(&prepared, None).await.unwrap();
+    let selected = layout
+        .store()
+        .get_with_etag(&layout.control_path(cell.as_bytes()))
+        .await
+        .unwrap();
+    match fence {
+        CleanupFence::BeforeRead => lease.fence(),
+        CleanupFence::DuringRead => armed.store(true, std::sync::atomic::Ordering::SeqCst),
+        CleanupFence::Live => {}
+    }
+    // Node fencing is terminal. Local cleanup grants no Idle release, root
+    // selection or new proof; the exact owner/root stays available to takeover.
+    let result = publisher.release_after_fence().await;
+    match fence {
+        CleanupFence::Live => result.unwrap(),
+        CleanupFence::BeforeRead | CleanupFence::DuringRead => {
+            assert!(matches!(result, Err(Error::Fenced)));
+        }
+    }
+    let after = layout
+        .store()
+        .get_with_etag(&layout.control_path(cell.as_bytes()))
+        .await
+        .unwrap();
+    match fence {
+        CleanupFence::Live => {
+            assert_ne!(after.1, selected.1);
+            let current = authority.load(cell).await.unwrap().unwrap();
+            assert_eq!(current.value().state, crate::control::ControlState::Idle);
+            assert!(current.value().owner.is_none());
+            assert_eq!(current.value().ltx_root(), Some(prepared.root()));
+        }
+        CleanupFence::BeforeRead | CleanupFence::DuringRead => {
+            assert_eq!(after, selected);
+            assert!(matches!(publisher.release().await, Err(Error::Fenced)));
+            assert!(matches!(publisher.renew().await, Err(Error::Fenced)));
+        }
+    }
+    database.close().unwrap();
+}
+
+#[derive(Default)]
+struct CoverageTelemetry(std::sync::atomic::AtomicUsize);
+
+impl crate::fleet::telemetry::CellTelemetry for CoverageTelemetry {
+    fn durability_proof(
+        &self,
+        source: crate::node::log::DurabilitySource,
+        _waited: std::time::Duration,
+    ) {
+        assert_eq!(source, crate::node::log::DurabilitySource::Object);
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl crate::node::durability::NodeLogAuthority for CoverageAuthority {
+    fn activate<'a>(
+        &'a self,
+        _epoch: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn advance_coverage<'a>(
+        &'a self,
+        epoch: u64,
+        through: u64,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push((epoch, through));
+            Ok(())
+        })
+    }
+    fn close<'a>(
+        &'a self,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn coverage_binding(
+    byte: u8,
+) -> (
+    Arc<crate::node::durability::NodeDurability>,
+    crate::node::log::DurabilityGate,
+    Arc<CoverageAuthority>,
+) {
+    use crate::node::{
+        durability::NodeDurability, log::DurabilityGate, log_shipper::NodeLogShipper,
+        log_transport::NodeLogTransport,
+    };
+    let gate = DurabilityGate::new(
+        SessionId::from_bytes([byte; 16]),
+        crate::identity::NodeId::from_bytes([byte; 16]),
+        2,
+        [crate::identity::NodeId::from_bytes([byte + 1; 16])],
+    )
+    .unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(RefusingTransport);
+    let shipper = NodeLogShipper::new(gate.clone(), transport.clone(), Limits::default()).unwrap();
+    let authority = Arc::new(CoverageAuthority::default());
+    let durability = Arc::new(NodeDurability::new(
+        gate.clone(),
+        shipper,
+        authority.clone(),
+        transport,
+        crate::NodeLeaseGuard::new(0, 30_000).unwrap(),
+    ));
+    (durability, gate, authority)
+}
+
+fn coverage_pending(
+    durability: &Arc<crate::node::durability::NodeDurability>,
+    ticket: crate::node::log::CommitTicket,
+) -> Option<super::PendingDurability> {
+    Some(super::PendingDurability {
+        durability: durability.clone(),
+        ticket,
+        submitted_at: std::time::Instant::now(),
+        telemetry: Default::default(),
+    })
+}
+
+#[tokio::test]
+async fn one_coalesced_root_confirms_all_covered_tickets_with_one_authority_update() {
+    let (durability, gate, authority) = coverage_binding(1);
+    let mut pendings = (0..64)
+        .map(|_| coverage_pending(&durability, gate.issue(1).unwrap()))
+        .collect::<Vec<_>>();
+    let recording = Arc::new(CoverageTelemetry::default());
+    let telemetry = crate::fleet::telemetry::CellTelemetryHandle::default();
+    telemetry.install(recording.clone()).unwrap();
+    for pending in pendings.iter_mut().flatten() {
+        pending.telemetry = telemetry.clone();
+    }
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .unwrap()
+    );
+    assert_eq!(gate.tiered_through(), 64);
+    assert_eq!(*authority.0.lock().unwrap(), vec![(2, 64)]);
+    assert_eq!(recording.0.load(std::sync::atomic::Ordering::Relaxed), 64);
+    durability.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn coalesced_root_keeps_original_bindings_with_equal_epoch_numbers_separate() {
+    let (left, left_gate, left_authority) = coverage_binding(1);
+    let (right, right_gate, right_authority) = coverage_binding(3);
+    let pendings = vec![
+        coverage_pending(&left, left_gate.issue(1).unwrap()),
+        coverage_pending(&right, right_gate.issue(1).unwrap()),
+        None,
+        coverage_pending(&left, left_gate.issue(1).unwrap()),
+        coverage_pending(&right, right_gate.issue(1).unwrap()),
+    ];
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .unwrap()
+    );
+    assert_eq!(*left_authority.0.lock().unwrap(), vec![(2, 2)]);
+    assert_eq!(*right_authority.0.lock().unwrap(), vec![(2, 2)]);
+    assert_eq!(left_gate.tiered_through(), 2);
+    assert_eq!(right_gate.tiered_through(), 2);
+    assert!(
+        !super::PendingDurability::prove_objects(&[None, None])
+            .await
+            .unwrap()
+    );
+    left.shutdown().await.unwrap();
+    right.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_ticket_in_root_group_stages_no_siblings() {
+    let (durability, gate, authority) = coverage_binding(1);
+    let (other, foreign, _) = coverage_binding(3);
+    let valid = gate.issue(1).unwrap();
+    let wrong = foreign.issue(1).unwrap();
+    let pendings = vec![
+        coverage_pending(&durability, valid),
+        coverage_pending(&durability, wrong),
+    ];
+    assert!(
+        super::PendingDurability::prove_objects(&pendings)
+            .await
+            .is_err()
+    );
+    assert!(authority.0.lock().unwrap().is_empty());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(matches!(
+        durability.shutdown().await,
+        Err(Error::PendingPublication)
+    ));
+    assert!(authority.0.lock().unwrap().is_empty());
+    durability.prove_object(valid).await.unwrap();
+    other.prove_object(wrong).await.unwrap();
+    durability.shutdown().await.unwrap();
+    other.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
+    verify_compaction_append(1).await;
+}
+
+#[tokio::test]
+async fn schema_migration_combines_foreground_compaction_without_an_intermediate_cas() {
+    verify_compaction_append(2).await;
+}
+
+#[tokio::test]
+async fn pressure_append_avoids_intermediate_root_metadata() {
+    for schema in [1, 2] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut database =
+            Db::open(&directory.path().join("writer.sqlite"), Limits::default()).unwrap();
+        let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+            Arc::new(InMemory::new()),
+        ));
+        let cell = CellId::from_bytes([111; 32]);
+        let incarnation = IncarnationId::from_bytes([112; 16]);
+        let layout = CellStorageLayout::new(
+            Store::new(counted.clone()),
+            Path::from("composed-compaction"),
+            [113; 16],
+        );
+        let replica = CellReplica::new(
+            layout.clone(),
+            *cell.as_bytes(),
+            *incarnation.as_bytes(),
+            Limits::default(),
+        )
+        .unwrap();
+        let initial = Control::initial(
+            cell,
+            incarnation,
+            Owner {
+                session: SessionId::from_bytes([114; 16]),
+                endpoint: "https://owner.internal".into(),
+            },
+            Digest::from_bytes([115; 32]),
+            1,
+        )
+        .unwrap();
+        layout
+            .store()
+            .create_strict(
+                &layout.control_path(cell.as_bytes()),
+                Bytes::from(initial.encode().unwrap()),
+            )
+            .await
+            .unwrap();
+        let authority = CellAuthority::new(layout);
+        let observed = authority.load(cell).await.unwrap().unwrap();
+        let mut publisher = CellPublisher::new(
+            replica.clone(),
+            authority.clone(),
+            observed,
+            directory.path().to_owned(),
+        );
+        for sequence in 1..=31 {
+            database
+                .transaction(|transaction| {
+                    if sequence == 1 {
+                        transaction.execute_batch("CREATE TABLE events(id INTEGER PRIMARY KEY)")?;
+                    }
+                    transaction.execute("INSERT INTO events VALUES (?1)", [sequence])?;
+                    Ok(())
+                })
+                .unwrap();
+            let cuts = database.capture_deferred().unwrap();
+            let prepared = publisher
+                .prepare_append(&cuts, sequence, 1, None)
+                .await
+                .unwrap();
+            publisher.publish_prepared(&prepared, None).await.unwrap();
+        }
+        let before = publisher.control().value().ltx_root().unwrap();
+        let revision = publisher.control().value().revision;
+        database
+            .transaction(|transaction| {
+                transaction.execute("INSERT INTO events VALUES (32)", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let cuts = database.capture_deferred().unwrap();
+        counted.reset();
+        let composed = publisher
+            .prepare_append(&cuts, 32, schema, None)
+            .await
+            .unwrap();
+        let requests = (counted.put_requests(), counted.counts().heads);
+        assert_eq!(composed.predecessor(), Some(before));
+        assert_eq!(publisher.lineage_confirmed, Some(composed.preparation()));
+        let lineage = authority
+            .root_lineage(composed.root())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lineage.predecessors(), &[before]);
+        assert_eq!(
+            authority.load(cell).await.unwrap().unwrap().value(),
+            publisher.control().value()
+        );
+
+        // Verify before the reference producer can fill any missing objects.
+        replica.reachable_objects(&composed.root()).await.unwrap();
+        let restored = directory.path().join("restored.sqlite");
+        composed.verified().restore(&restored).await.unwrap();
+        let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+        let rows: Vec<u64> = connection
+            .prepare("SELECT id FROM events ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<cellule_ltx::rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(rows, (1..=32).collect::<Vec<_>>());
+        // The old two-step producer remains the immutable-format reference.
+        let compacted = replica
+            .prepare_scheduled_compaction(&before, directory.path())
+            .await
+            .unwrap()
+            .unwrap();
+        let reference = replica
+            .prepare_after_compaction(&compacted, &cuts, 32, schema)
+            .await
+            .unwrap();
+        assert_eq!(composed.root(), reference.root());
+        if schema == 1 {
+            publisher.publish_prepared(&composed, None).await.unwrap();
+        } else {
+            publisher
+                .publish_migration(&composed, None, Digest::from_bytes([116; 32]), schema)
+                .await
+                .unwrap();
+        }
+        assert_eq!(publisher.control().value().revision, revision + 1);
+        assert_eq!(publisher.control().value().schema, schema);
+        database.close().unwrap();
+        assert_eq!(
+            requests,
+            (4, 1),
+            "two packed segments, the final root and lineage are retained"
+        );
+    }
+}
+
+async fn verify_compaction_append(schema: u32) {
     let directory = tempfile::tempdir().unwrap();
     let mut database = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
     let cell = CellId::from_bytes([41; 32]);
@@ -59,6 +557,7 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
         observed,
         directory.path().to_owned(),
     );
+    let mut prefix = None;
     for sequence in 1..=8_u64 {
         database
             .transaction(|transaction| {
@@ -71,18 +570,39 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
             })
             .unwrap();
         let cuts = database.capture_deferred().unwrap();
-        let prepared = publisher.prepare_append(&cuts, sequence, 1).await.unwrap();
+        let prepared = publisher
+            .prepare_append(&cuts, sequence, 1, None)
+            .await
+            .unwrap();
         publisher.publish_prepared(&prepared, None).await.unwrap();
+        if sequence == 1 {
+            prefix = Some(prepared.root());
+        }
     }
     assert!(publisher.compaction_due());
     let before = publisher.control().value().ltx_root().unwrap();
     assert_eq!(replica.open_root(&before).await.unwrap().segment_count(), 8);
-    assert_eq!(publisher.compact_one_quiet().await.unwrap(), Some(true));
+    assert_eq!(
+        publisher.compact_one_quiet(replica.clone()).await.unwrap(),
+        Some(true)
+    );
     let after = publisher.control().value().ltx_root().unwrap();
     assert_eq!(after.position, before.position);
     assert_eq!(after.commit_sequence, before.commit_sequence);
     assert_eq!(replica.open_root(&after).await.unwrap().segment_count(), 1);
-    assert_eq!(publisher.compact_one_quiet().await.unwrap(), Some(false));
+    let prefix = prefix.unwrap();
+    let proof = publisher
+        .authority
+        .verify_root_prefix(prefix, after, &replica, 64)
+        .await
+        .unwrap();
+    assert_eq!(proof.prefix(), prefix);
+    assert_eq!(proof.root(), after);
+    assert!(proof.inspected_roots() >= 8 && proof.dependency_count() > 0);
+    assert_eq!(
+        publisher.compact_one_quiet(replica.clone()).await.unwrap(),
+        Some(false)
+    );
     assert!(!publisher.compaction_due());
 
     let mut segments = Vec::new();
@@ -104,16 +624,18 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
         timing: Default::default(),
     };
     assert_eq!(cuts.segments.len(), 2);
-    let prepared = publisher.prepare_append(&cuts, 9, 1).await.unwrap();
+    let prepared = publisher.prepare_append(&cuts, 9, 1, None).await.unwrap();
     publisher.publish_prepared(&prepared, None).await.unwrap();
     let extended = publisher.control().value().ltx_root().unwrap();
     assert_eq!(extended.position, position);
     assert_eq!(
         replica.open_root(&extended).await.unwrap().segment_count(),
-        3
+        2
     );
 
-    for sequence in 10..=37_u64 {
+    // The two captured writes now share one delta. Add another individually
+    // published cut so the foreground test still reaches the same ceiling.
+    for sequence in 10..=38_u64 {
         database
             .transaction(|transaction| {
                 transaction.execute("INSERT INTO events VALUES (?1)", [sequence + 1])?;
@@ -121,7 +643,10 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
             })
             .unwrap();
         let cuts = database.capture_deferred().unwrap();
-        let prepared = publisher.prepare_append(&cuts, sequence, 1).await.unwrap();
+        let prepared = publisher
+            .prepare_append(&cuts, sequence, 1, None)
+            .await
+            .unwrap();
         publisher.publish_prepared(&prepared, None).await.unwrap();
     }
     let at_ceiling = publisher.control().value().ltx_root().unwrap();
@@ -135,15 +660,71 @@ async fn quiet_compaction_publishes_exact_root_after_eight_appends() {
     );
     database
         .transaction(|transaction| {
-            transaction.execute("INSERT INTO events VALUES (39)", [])?;
+            transaction.execute("INSERT INTO events VALUES (40)", [])?;
             Ok(())
         })
         .unwrap();
     let cuts = database.capture_deferred().unwrap();
-    let prepared = publisher.prepare_append(&cuts, 38, 1).await.unwrap();
-    publisher.publish_prepared(&prepared, None).await.unwrap();
+    let before_revision = publisher.control().value().revision;
+    assert!(matches!(
+        publisher.prepare_append(&cuts, 38, schema, None).await,
+        Err(Error::Ltx(cellule_ltx::LtxError::InvalidState(_)))
+    ));
+    assert_eq!(publisher.control().value().revision, before_revision);
+    assert_eq!(
+        publisher
+            .authority
+            .load(cell)
+            .await
+            .unwrap()
+            .unwrap()
+            .value(),
+        publisher.control().value(),
+        "a rejected successor must leave its compaction private"
+    );
+    let prepared = publisher
+        .prepare_append(&cuts, 39, schema, None)
+        .await
+        .unwrap();
+    assert_eq!(publisher.control().value().ltx_root(), Some(at_ceiling));
+    assert_eq!(
+        publisher
+            .authority
+            .load(cell)
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .ltx_root(),
+        Some(at_ceiling)
+    );
+    assert_eq!(prepared.predecessor(), Some(at_ceiling));
+    if schema == 1 {
+        publisher.publish_prepared(&prepared, None).await.unwrap();
+    } else {
+        publisher
+            .publish_migration(&prepared, None, Digest::from_bytes([46; 32]), schema)
+            .await
+            .unwrap();
+    }
+    assert_eq!(publisher.control().value().schema, schema);
+    assert_eq!(publisher.control().value().revision, before_revision + 1);
     let forced = publisher.control().value().ltx_root().unwrap();
     assert!(replica.open_root(&forced).await.unwrap().segment_count() < 32);
+    let proof = publisher
+        .authority
+        .verify_root_prefix(prefix, forced, &replica, 64)
+        .await
+        .unwrap();
+    assert_eq!(proof.root(), forced);
+    assert!(proof.inspected_roots() > 30);
+    assert!(matches!(
+        publisher
+            .authority
+            .verify_root_prefix(prefix, forced, &replica, 2)
+            .await,
+        Err(Error::Capacity(_))
+    ));
     database.close().unwrap();
 }
 
@@ -254,7 +835,7 @@ impl crate::node::durability::NodeLogAuthority for RefusingAuthority {
 
     fn close<'a>(
         &'a self,
-        _barrier: &'a crate::node::log::NodeLogRotationBarrier,
+        _retirement: &'a crate::node::log::NodeLogRetirementObservation,
     ) -> futures_util::future::BoxFuture<'a, crate::Result<()>> {
         Box::pin(async { Err(Error::Node("test authority refuses closing")) })
     }

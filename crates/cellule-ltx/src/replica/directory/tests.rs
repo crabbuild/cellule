@@ -189,13 +189,16 @@ async fn incremental_update_rebuilds_the_last_height_two_branch() {
             incarnation: &incarnation,
             page_size,
             database_pages: base_pages,
+            inline_root: None,
             extents: &base_extents,
             host: &replica.host,
             origin: crate::LtxReadOrigin::Cold,
         },
-        base_tree.root_digest(),
-        base_tree.height(),
-        base_tree.root.aggregate,
+        DirectoryRoot {
+            digest: base_tree.root_digest(),
+            height: base_tree.height(),
+            aggregate: base_tree.root.aggregate,
+        },
         changes,
         base_pages,
         Verification {
@@ -204,11 +207,13 @@ async fn incremental_update_rebuilds_the_last_height_two_branch() {
             incarnation: &incarnation,
             page_size,
             database_pages: final_pages,
+            inline_root: None,
             extents: &final_extents,
             host: &replica.host,
             origin: crate::LtxReadOrigin::Cold,
         },
         final_tree.checksum(),
+        None,
     )
     .await
     .unwrap();

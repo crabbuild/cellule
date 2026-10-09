@@ -1,0 +1,222 @@
+{
+  "status": "all original 2000-cell development audits passed; diagnostic is unpaired and not a capacity qualification",
+  "source": {
+    "commit": "03b9002953133a3dfe90986805882c696e3e072e",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "files": {
+      "/candidate-target/release/examples/sql": "641ef79a394e60edcbb7b376396d5cabfe3ee065eee4a48b13383616f26bf60b",
+      "/candidate-target/release/examples/http_capacity": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+      "/candidate-source/crates/cellule-axum/examples/sql.rs": "c64c15a66141fcd2e4d03bdef5e059e943564d5a77f3de09e362a214e2956818",
+      "/evidence/native-capture-03b9002-source.tar.gz": "b84817bb100b14b3bce5248bd3eca622e6b97574155968a8692d79c750747fdb"
+    }
+  },
+  "measurement_seconds": 180,
+  "warmup_seconds": 30,
+  "cells": 2000,
+  "offered_write_tps": 1000,
+  "offered_read_tps": 10,
+  "native_capture": {
+    "checkpoint_busy": 0,
+    "checkpoint_runs": 6331,
+    "failures": 0,
+    "fallback_reads": 0,
+    "full_reads": 14337,
+    "largest_wal_image_bytes": 65952,
+    "ltx_bytes": 65315881,
+    "phases": {
+      "checkpoint": {
+        "count": 41352,
+        "mean_ms": 1.2259320981089186,
+        "overflow": 0,
+        "p50_ms": 0.0,
+        "p95_ms": 8.4,
+        "p99_ms": 15.9,
+        "resolution_us": 100
+      },
+      "encode": {
+        "count": 41352,
+        "mean_ms": 0.09937522248017024,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 0.4,
+        "p99_ms": 1.2,
+        "resolution_us": 100
+      },
+      "fsync": {
+        "count": 41352,
+        "mean_ms": 0.0,
+        "overflow": 0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "resolution_us": 100
+      },
+      "local_write": {
+        "count": 41352,
+        "mean_ms": 0.2400714331350358,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 1.3,
+        "p99_ms": 5.1,
+        "resolution_us": 100
+      },
+      "page_collection": {
+        "count": 41352,
+        "mean_ms": 0.0202567041255562,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 0.1,
+        "p99_ms": 0.2,
+        "resolution_us": 100
+      },
+      "parent_sync": {
+        "count": 41352,
+        "mean_ms": 0.31602102703617724,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 1.8,
+        "p99_ms": 5.3,
+        "resolution_us": 100
+      },
+      "position_resolution": {
+        "count": 41352,
+        "mean_ms": 0.14455728953859548,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 0.7,
+        "p99_ms": 2.2,
+        "resolution_us": 100
+      },
+      "preparation": {
+        "count": 41352,
+        "mean_ms": 0.10480100812536275,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 0.5,
+        "p99_ms": 2.4,
+        "resolution_us": 100
+      },
+      "schema_check": {
+        "count": 41352,
+        "mean_ms": 0.35628552599632424,
+        "overflow": 0,
+        "p50_ms": 0.2,
+        "p95_ms": 1.6,
+        "p99_ms": 4.0,
+        "resolution_us": 100
+      },
+      "total": {
+        "count": 41352,
+        "mean_ms": 5.7762084504739795,
+        "overflow": 0,
+        "p50_ms": 1.6,
+        "p95_ms": 25.7,
+        "p99_ms": 46.3,
+        "resolution_us": 100
+      },
+      "verification": {
+        "count": 41352,
+        "mean_ms": 0.0,
+        "overflow": 0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "resolution_us": 100
+      },
+      "wal_existence": {
+        "count": 41352,
+        "mean_ms": 0.008245130948926292,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 0.1,
+        "p99_ms": 0.1,
+        "resolution_us": 100
+      },
+      "wal_read": {
+        "count": 41352,
+        "mean_ms": 0.17747817912071967,
+        "overflow": 0,
+        "p50_ms": 0.1,
+        "p95_ms": 0.6,
+        "p99_ms": 1.9,
+        "resolution_us": 100
+      }
+    },
+    "snapshot_reads": 2000,
+    "sparse_reads": 46008,
+    "wal_bytes": 806444680,
+    "wal_read_bytes": 2464882928
+  },
+  "worker": {
+    "count": 39352,
+    "mean_ms": 31.41517041809819,
+    "overflow": 0,
+    "p50_ms": 23.1,
+    "p95_ms": 82.7,
+    "p99_ms": 154.9,
+    "resolution_us": 100
+  },
+  "root_admission": {
+    "count": 38014,
+    "mean_ms": 6166.855166806861,
+    "overflow": 33609,
+    "p50_ms": null,
+    "p95_ms": null,
+    "p99_ms": null,
+    "resolution_us": 100
+  },
+  "root_preparation_work": {
+    "count": 38014,
+    "mean_ms": 48.784094172199715,
+    "overflow": 0,
+    "p50_ms": 43.3,
+    "p95_ms": 95.3,
+    "p99_ms": 190.4,
+    "resolution_us": 100
+  },
+  "response_sources": {
+    "fleet": 39237,
+    "object": 115,
+    "recorded": 0
+  },
+  "node_log_append": {
+    "bytes": 143299612,
+    "failures": 0,
+    "successes": 3186
+  },
+  "cold_audit": {
+    "writes": 39352,
+    "reads": 349
+  },
+  "owner_peak_sampled_rss_bytes": 717733888,
+  "owner_peak_file_descriptors": 16142,
+  "metrics": {
+    "writes": {
+      "successful_requests_per_second": 165.7111111111111,
+      "errors": 0,
+      "queue_dropped": 149854,
+      "request_latency_ms_all_attempts": {
+        "max": 1363.207378,
+        "p50": 333.3,
+        "p95": 709.6,
+        "p99": 934.3
+      }
+    },
+    "reads": {
+      "successful_requests_per_second": 1.5166666666666666,
+      "errors": 0,
+      "queue_dropped": 1524,
+      "request_latency_ms_all_attempts": {
+        "max": 347.084655,
+        "p50": 11.7,
+        "p95": 95.0,
+        "p99": 275.0
+      }
+    }
+  },
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "evidence": "native-capture-2000-candidate-r3-run/cells-2000-rate-1000/result.json",
+  "reverification": "native-capture-r3-reverified.json",
+  "reverification_sha256": "7f37d864243af30581b4339a6b380aced4abe11061e61756b0084299ae011cb8",
+  "timing_limits": "Capture includes bootstrap and workload captures; worker excludes bootstrap. They are overlapping populations. Capture fsync is zero for deferred LTX cuts; SQLite COMMIT and follower fsync are outside CaptureTiming and remain required."
+}

@@ -177,7 +177,7 @@ pub struct SqlSlotTiming {
 /// response has already been released for the same commit sequence.
 #[derive(Clone, Copy, Debug)]
 pub struct PublicationTiming {
-    /// Time spent queued behind earlier roots for this Cell.
+    /// Time queued for this Cell's publisher and shared preparation admission.
     pub queue_wait: Duration,
     /// Time spent preparing the immutable root, including bounded retries.
     pub preparation: Duration,
@@ -189,6 +189,9 @@ pub struct PublicationTiming {
     pub succeeded: bool,
     /// Sequence used to correlate this observation with a request trace.
     pub commit_sequence: u64,
+    /// Logical commits included in this publication attempt. Count these only
+    /// when `succeeded` is true when calculating commands per selected root.
+    pub covered_commits: u64,
 }
 
 /// One follower append attempt, measured on the blocking worker.
@@ -201,7 +204,13 @@ pub struct PublicationTiming {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FollowerAppendTiming {
     /// Time from dispatch to the blocking worker starting.
-    pub blocking_queue: Duration,
+    pub worker_queue: Duration,
+    /// Time on the blocking worker, including storage locks and settlement.
+    pub worker: Duration,
+    /// Leader scope for local trace correlation, never a metric label.
+    pub leader: Option<crate::SessionId>,
+    /// Node-log epoch for local trace correlation, never a metric label.
+    pub epoch: u64,
     /// Sum of time waiting for the shared disk reservation mutex.
     pub accounting_wait: Duration,
     /// Sum of time holding the shared disk reservation mutex.
@@ -412,6 +421,17 @@ pub trait CellTelemetry: Send + Sync {
     ) {
     }
 
+    /// Records an owner query's actor queue wait and SQL worker round trip.
+    /// The round trip includes worker admission, read-only setup, and the handler.
+    /// Queries refused before dispatch are excluded; deadline failures are included.
+    fn query_execution(
+        &self,
+        _queue_wait: Duration,
+        _worker_round_trip: Duration,
+        _succeeded: bool,
+    ) {
+    }
+
     /// Records background root progress separately from the response winner.
     /// Cell IDs and sequences are for local trace correlation, never metric labels.
     fn publication_completed(&self, _cell: CellId, _timing: PublicationTiming) {}
@@ -433,13 +453,7 @@ pub trait CellTelemetry: Send + Sync {
 
     /// Records one follower worker attempt after its storage locks are released.
     /// Leader and epoch are trace correlation keys, never metric labels.
-    fn follower_append(
-        &self,
-        _leader: crate::SessionId,
-        _epoch: u64,
-        _timing: FollowerAppendTiming,
-    ) {
-    }
+    fn follower_append(&self, _timing: FollowerAppendTiming) {}
 
     /// Records collection, fill, and receipt wait separately from replica bytes.
     fn node_log_batch(&self, _timing: NodeLogBatchTiming) {}
@@ -565,6 +579,17 @@ impl CellTelemetryHandle {
         }
     }
 
+    pub(crate) fn query_execution(
+        &self,
+        queue_wait: Duration,
+        worker_round_trip: Duration,
+        succeeded: bool,
+    ) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.query_execution(queue_wait, worker_round_trip, succeeded);
+        }
+    }
+
     pub(crate) fn publication_completed(&self, cell: CellId, timing: PublicationTiming) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.publication_completed(cell, timing);
@@ -625,14 +650,9 @@ impl CellTelemetryHandle {
         }
     }
 
-    pub(crate) fn follower_append(
-        &self,
-        leader: crate::SessionId,
-        epoch: u64,
-        timing: FollowerAppendTiming,
-    ) {
+    pub(crate) fn follower_append(&self, timing: FollowerAppendTiming) {
         if let Some(telemetry) = self.inner.get() {
-            telemetry.follower_append(leader, epoch, timing);
+            telemetry.follower_append(timing);
         }
     }
 

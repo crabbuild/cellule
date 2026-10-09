@@ -20,7 +20,7 @@ pub(super) fn handle_activated(
         Arc<cellule_ltx::DbInterruptHandle>,
         Option<cellule_ltx::Hydration>,
     )>,
-    persisted_work: crate::Result<crate::primitives::maintenance::PersistedWorkInventory>,
+    inventory: crate::Result<crate::cell::worker::WorkerCellInventory>,
 ) {
     let TaskContext {
         pool,
@@ -34,7 +34,9 @@ pub(super) fn handle_activated(
     } = context;
     match result {
         Ok((interrupt, hydration)) => {
-            if node_lease.check().is_err() {
+            if node_lease.check().is_err()
+                || publisher.control().value().owner_fence() != admission.owner_fence
+            {
                 fence_admission(&admission);
                 let _ = reply.send(Err(Error::Fenced));
                 start_orphan_deactivate(
@@ -91,9 +93,19 @@ pub(super) fn handle_activated(
                     Residency::Sparse
                 }
             });
-            let persisted_work = match persisted_work {
-                Ok(inventory) => inventory,
-                Err(_) => {
+            let resource_limits = publisher.resource_limits();
+            let mut demand = inventory::CellDemandState::default();
+            let persisted_work = match inventory {
+                Ok(sample) => {
+                    if let Err(error) = demand.record(sample, resource_limits, published_sequence) {
+                        tracing::debug!(cell = ?cell, error = ?error, "Cell demand remains unknown after activation");
+                        crate::primitives::maintenance::PersistedWorkInventory::unknown()
+                    } else {
+                        sample.persisted_work
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(cell = ?cell, error = ?error, "Cell inventory remains unknown after activation");
                     // An inventory read is a safety precondition for
                     // eviction. Unknown accounting must remain ineligible.
                     crate::primitives::maintenance::PersistedWorkInventory::unknown()
@@ -102,6 +114,7 @@ pub(super) fn handle_activated(
             // A restored or bootstrapped owner can already have a reader policy.
             // Its hint is advisory; receivers still reload the new authority.
             let _ = publications.send(catalog.entry().clone());
+            let resident_since_ms = unix_millis();
             cells.insert(
                 cell,
                 ActiveCell {
@@ -116,17 +129,23 @@ pub(super) fn handle_activated(
                     publisher: Some(*publisher),
                     durability_submitter,
                     publications: VecDeque::new(),
+                    publishing_since: None,
                     publication_bytes: 0,
                     unpublished_node_logs: 0,
                     queue: VecDeque::new(),
                     coordination: CoordinationState::serving_with_residency(true, residency),
                     persisted_work,
+                    demand,
+                    resource_limits,
                     inventory_refreshing: false,
+                    inventory_revision: 1,
                     drain: None,
                     transfer: None,
-                    last_used_ms: unix_millis(),
+                    resident_since_ms,
+                    last_used_ms: resident_since_ms,
                     last_work_at: std::time::Instant::now(),
                     compaction_retry_at: std::time::Instant::now(),
+                    compaction_admission: None,
                     hydration_retry_at: std::time::Instant::now(),
                     next_due_ms,
                     published_sequence,

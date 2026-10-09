@@ -32,6 +32,7 @@ async fn multiple_rotations_in_one_batch_preserve_warm_and_cold_tail_locations()
         .await
         .unwrap();
     let chunks = lane_directory(root.path(), Lane { leader, epoch: 2 }).join("chunks");
+    assert!(inputs[0].len() as u64 > ROTATE_BYTES);
     assert_eq!(
         std::fs::read_dir(chunks)
             .unwrap()
@@ -40,7 +41,7 @@ async fn multiple_rotations_in_one_batch_preserve_warm_and_cold_tail_locations()
                     .is_some()
             )
             .count(),
-        2
+        inputs.len() - 1
     );
     assert_eq!(disk.used(), follower_bytes(root.path()).unwrap());
     store.seal(leader, 2).await.unwrap();
@@ -102,11 +103,12 @@ async fn rotation_and_closed_chunk_collection_settle_exact_physical_bytes() {
         .await
         .unwrap();
     assert_eq!(disk.used(), follower_bytes(root.path()).unwrap());
-    assert!(
-        std::fs::read_dir(&chunks)
-            .unwrap()
-            .all(|entry| entry.unwrap().file_name() == "open.log")
-    );
+    assert!(std::fs::read_dir(&chunks).unwrap().all(|entry| {
+        let name = entry.unwrap().file_name();
+        name == "open.log"
+            || parse_chunk_name(name.to_str().unwrap())
+                .is_some_and(|(first, last)| first > closed_last && last < 10)
+    }));
     store.seal(leader, 2).await.unwrap();
     drop(store);
     assert_eq!(disk.used(), 0);
@@ -211,13 +213,8 @@ async fn concurrent_cold_lanes_create_and_sync_shared_parent_directories() {
 async fn a_blocked_cancelled_lane_does_not_hold_other_lanes_accounting() {
     struct Completed(Mutex<Option<tokio::sync::oneshot::Sender<bool>>>);
     impl crate::fleet::telemetry::CellTelemetry for Completed {
-        fn follower_append(
-            &self,
-            leader: SessionId,
-            _: u64,
-            timing: crate::fleet::telemetry::FollowerAppendTiming,
-        ) {
-            if leader == SessionId::from_bytes([1; 16])
+        fn follower_append(&self, timing: crate::fleet::telemetry::FollowerAppendTiming) {
+            if timing.leader == Some(SessionId::from_bytes([1; 16]))
                 && let Some(completed) = self.0.lock().unwrap().take()
             {
                 completed.send(timing.succeeded).unwrap();

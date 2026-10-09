@@ -46,7 +46,7 @@ pub mod read_policy;
 pub mod recovery;
 pub mod registry;
 
-pub use cell::actor::{CellRuntime, CellRuntimeStats};
+pub use cell::actor::{CellPublicationProgress, CellRuntime, CellRuntimeStats};
 
 pub use cell::catalog::CatalogRole;
 pub use cell::executor::{MutationIdentity, Resolution};
@@ -54,7 +54,7 @@ pub use cell::executor::{MutationIdentity, Resolution};
 pub use cell::worker::SqlWorkerPool;
 pub use client::{
     CellClient, CellReadReplica, Committed, InvocationError, Observed, PendingMutation,
-    PreparedCommand, Receipt,
+    PreparedCommand, PreparedCommandSnapshot, ReadReplicaSource, Receipt,
 };
 
 pub use error::{Error, Result};

@@ -1,0 +1,25 @@
+{
+  "name": "matched-orders",
+  "main": "index.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-01-01",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ORDERS",
+        "class_name": "Orders"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Orders"
+      ]
+    }
+  ],
+  "vars": {
+    "CELLS": "1000"
+  }
+}

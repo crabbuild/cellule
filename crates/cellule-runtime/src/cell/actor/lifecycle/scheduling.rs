@@ -36,17 +36,25 @@ pub(in crate::cell::actor) fn start_next(
     let Some(work) = active.queue.pop_front() else {
         return;
     };
+    active.cancel_compaction_admission();
     if matches!(&work, QueuedWork::Command(_) | QueuedWork::Migration(_)) {
         // Durable command outcomes, effects, Queue rows, and Workflow runs
         // remain release obligations until a fresh inventory proves otherwise.
         active.persisted_work = crate::primitives::maintenance::PersistedWorkInventory::unknown();
+        active.demand.clear();
+        let Some(revision) = active.inventory_revision.checked_add(1) else {
+            active.queue.push_front(work);
+            fence_active(active);
+            return;
+        };
+        active.inventory_revision = revision;
     }
     let generation = active.generation;
     active.last_used_ms = unix_millis();
     active.last_work_at = std::time::Instant::now();
     let kind = match &work {
-        QueuedWork::Command(_) => AdmissionKind::Command,
-        QueuedWork::Query(_) => AdmissionKind::Query,
+        QueuedWork::Command(command) => command._work.kind,
+        QueuedWork::Query(query) => query._work.kind,
         QueuedWork::Resolve(_) => AdmissionKind::Resolve,
         QueuedWork::Migration(_) => AdmissionKind::Migration,
     };
@@ -63,7 +71,27 @@ pub(in crate::cell::actor) fn start_next(
     let pool = pool.clone();
     let interrupt = active.interrupt.clone();
     match work {
-        QueuedWork::Command(command) => {
+        QueuedWork::Command(mut command) => {
+            if matches!(command.operation, QueuedOperation::Mutation { .. }) {
+                let mut members = Vec::new();
+                while members.len() + 1 < MAX_NATIVE_GROUP
+                    && active.queue.front().is_some_and(|work| {
+                        matches!(work, QueuedWork::Command(next)
+                            if matches!(next.operation, QueuedOperation::Mutation { .. }))
+                    })
+                {
+                    let Some(QueuedWork::Command(next)) = active.queue.pop_front() else {
+                        break;
+                    };
+                    members.push(*next);
+                }
+                if !members.is_empty() {
+                    command.group = Some(CommandGroup {
+                        members,
+                        execution: None,
+                    });
+                }
+            }
             let durability = active.durability_submitter.clone();
             let effect_id = active.begin_task(CoordinationEffect::Work(kind));
             tasks.spawn(async move {
@@ -117,6 +145,14 @@ pub(in crate::cell::actor) fn start_transfer_inspection(
     let Some(active) = cells.get_mut(&cell) else {
         return;
     };
+    if active
+        .transfer
+        .as_ref()
+        .is_some_and(|transfer| transfer.maintenance.is_some())
+    {
+        maintenance::inspect(cell, pool, cells, tasks, node_lease);
+        return;
+    }
     if active.transfer.is_none()
         || active.inventory_refreshing
         || !active.queue.is_empty()
@@ -269,10 +305,12 @@ pub(in crate::cell::actor) fn start_deactivate(
     let Some(active) = cells.remove(&cell) else {
         return;
     };
+    active.cancel_compaction_admission();
     transitioning.insert(cell);
     let generation = active.generation;
     let pool = pool.clone();
     tasks.spawn(async move {
+        let mut released = None;
         let result = async {
             let mut publisher = active.publisher.ok_or(Error::Fenced)?;
             // A release that already published its root may leave a resume
@@ -284,6 +322,17 @@ pub(in crate::cell::actor) fn start_deactivate(
                 None => pool.deactivate(cell).await?,
             }
             publisher.release().await?;
+            let final_control = publisher.control().value();
+            if final_control.state != crate::control::ControlState::Idle
+                || final_control.owner.is_some()
+            {
+                return Err(Error::Fenced);
+            }
+            released = Some(crate::fleet::operations::PublishedPosition {
+                incarnation: final_control.incarnation,
+                epoch: final_control.epoch,
+                root: final_control.root.clone().ok_or(Error::Fenced)?,
+            });
             // A released Cell that still has a deadline publishes one bounded
             // hint key, so the scheduler finds it without scanning every shard.
             // The hint is an accelerator: a failed write costs a later Tick
@@ -308,6 +357,7 @@ pub(in crate::cell::actor) fn start_deactivate(
             reply: active.drain,
             shutdown_drain: active.coordination.is_shutdown(),
             result,
+            released,
         }
     });
 }
@@ -323,6 +373,7 @@ pub(in crate::cell::actor) fn start_fenced_deactivate(
     let Some(active) = cells.remove(&cell) else {
         return;
     };
+    active.cancel_compaction_admission();
     transitioning.insert(cell);
     let generation = active.generation;
     let pool = pool.clone();
@@ -344,6 +395,7 @@ pub(in crate::cell::actor) fn start_fenced_deactivate(
             reply: active.drain,
             shutdown_drain: active.coordination.is_shutdown(),
             result,
+            released: None,
         }
     });
 }
@@ -374,6 +426,7 @@ pub(in crate::cell::actor) fn start_orphan_deactivate(
             reply: None,
             shutdown_drain,
             result,
+            released: None,
         }
     });
     transitioning.insert(cell);

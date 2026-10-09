@@ -101,9 +101,19 @@ mod node {
         Arc::new(builder.finish().unwrap())
     }
 
+    pub mod application;
+    mod blob_artifacts;
     pub mod builder;
     pub mod components;
+    pub mod durability;
+    pub mod fleet_actions;
+    pub mod fleet_maintenance;
+    pub mod fleet_receivers;
+    pub mod fleet_snapshots;
+    pub mod inventory;
     pub mod lifecycle;
+    pub mod movement;
     pub mod qualification;
+    pub mod reader_closure;
     pub mod tasks;
 }

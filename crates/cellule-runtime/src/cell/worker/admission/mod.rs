@@ -190,11 +190,12 @@ impl WorkerCommand {
         // even after the author has stopped waiting for the final response.
         match self {
             Self::Execute { reply, .. } | Self::DeliverEffect { reply, .. } => reply.is_closed(),
+            Self::ExecuteGroup { reply, .. } => reply.is_closed(),
             Self::Migrate { reply, .. } => reply.is_closed(),
             Self::Query { reply, .. } => reply.is_closed(),
             Self::PrepareHydration { reply, .. } => reply.is_closed(),
             Self::InstallHydration { reply, .. } => reply.is_closed(),
-            Self::PersistedWork { reply, .. } => reply.is_closed(),
+
             Self::TransferWork { reply, .. } => reply.is_closed(),
             Self::Resolve { reply, .. } | Self::ResolveEffect { reply, .. } => reply.is_closed(),
             _ => false,
@@ -205,7 +206,9 @@ impl WorkerCommand {
         // Preserve the source admission error through the existing result
         // channel; dropping its sender would replace it with RuntimeClosed.
         match self {
-            Self::Queued { command, .. } => command.reject_admission(error),
+            Self::Queued { command, .. } | Self::Reserved { command, .. } => {
+                command.reject_admission(error)
+            }
             Self::Activate { reply, .. }
             | Self::ActivateRestored { reply, .. }
             | Self::BindPrepared { reply, .. }
@@ -224,6 +227,12 @@ impl WorkerCommand {
             Self::Execute { reply, .. } | Self::DeliverEffect { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
+            Self::ExecuteGroup { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
+            Self::FleetInventory { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
             Self::Migrate { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
@@ -237,9 +246,6 @@ impl WorkerCommand {
                 let _ = reply.send(Err(error));
             }
             Self::Hydration { reply, .. } => {
-                let _ = reply.send(Err(error));
-            }
-            Self::PersistedWork { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
             Self::TransferWork { reply, .. } => {

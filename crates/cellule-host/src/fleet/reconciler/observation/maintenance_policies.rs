@@ -1,0 +1,82 @@
+use super::*;
+
+impl FleetObservation {
+    /// Matches every original role and currently unresolved related request to
+    /// the supplied fresh policy checks. Attach the original capture and all
+    /// available reader/follower checks first. Missing checks become explicit
+    /// blockers, including source-side succession and unknown nonexecution.
+    /// This cannot upgrade `complete` or grant SettleRoles/Finalize rights.
+    pub fn check_maintenance_policies(mut self, roster: &FleetRoster, now_ms: i64) -> Result<Self> {
+        if self.maintenance_policies.is_some() {
+            return Err(Error::Control(
+                "maintenance policy coverage already retained",
+            ));
+        }
+        self.placements(now_ms)?;
+        let original = self.maintenance_enrollments.as_ref().ok_or(Error::Control(
+            "original maintenance enrollments are required for policy coverage",
+        ))?;
+        let coverage = FleetMaintenancePolicyCoverage::check(
+            original,
+            roster,
+            self.reader_evacuations().unwrap_or(&[]),
+            self.follower_evacuations().unwrap_or(&[]),
+            super::super::super::maintenance_policies::FleetMaintenancePolicyEvidence {
+                nonexecution: self.maintenance_nonexecution.as_ref(),
+                source_readers: self.source_reader_policies.as_ref(),
+                failed_boots: self.failed_boot_closures.as_deref().unwrap_or(&[]),
+                recovered_followers: self.recovered_follower_closures.as_deref().unwrap_or(&[]),
+            },
+            self.maintenance_policy_inputs()?,
+        )?;
+        self.maintenance_policies = Some(coverage);
+        self.validate_role_coverage()?;
+        Ok(self)
+    }
+    /// Complete request-policy matching, including every explicit remaining gap.
+    #[must_use]
+    pub fn maintenance_policy_coverage(&self) -> Option<&FleetMaintenancePolicyCoverage> {
+        self.maintenance_policies.as_ref()
+    }
+    pub(super) fn validate_maintenance_policies(&self) -> Result<()> {
+        let Some(coverage) = &self.maintenance_policies else {
+            return Ok(());
+        };
+        let original = self.maintenance_enrollments.as_ref().ok_or(Error::Fenced)?;
+        if coverage.snapshot() != original.snapshot()
+            || coverage.roster_digest() != original.roster_digest()
+            || coverage.inputs() != self.maintenance_policy_inputs()?
+            || coverage.interval().0 < self.capture_started_at_ms
+            || coverage.interval().1 > self.capture_finished_at_ms
+        {
+            return Err(Error::Node("maintenance policy coverage inputs differ"));
+        }
+        Ok(())
+    }
+    fn maintenance_policy_inputs(&self) -> Result<Digest> {
+        let original = self.maintenance_enrollments.as_ref().ok_or(Error::Fenced)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"cellule.fleet-maintenance-policy-inputs.v4\0");
+        hash.update(original.digest()?.as_bytes());
+        self.hash_role_evacuations(&mut hash)?;
+        self.hash_source_reader_policies(&mut hash)?;
+        hash.update(&[u8::from(self.failed_boot_closures.is_some())]);
+        if let Some(closures) = &self.failed_boot_closures {
+            let mut ordered = closures.iter().collect::<Vec<_>>();
+            ordered.sort_by_key(|closure| {
+                let target = closure.boot().spec().target;
+                (*target.node.as_bytes(), *target.session.as_bytes())
+            });
+            hash.update(&(ordered.len() as u64).to_be_bytes());
+            for closure in ordered {
+                hash.update(closure.digest().as_bytes());
+            }
+        }
+        self.hash_recovered_follower_closures(&mut hash)?;
+        hash.update(&[u8::from(self.maintenance_nonexecution.is_some())]);
+        if let Some(nonexecution) = &self.maintenance_nonexecution {
+            hash.update(nonexecution.digest().as_bytes());
+        }
+        Ok(Digest::from_bytes(*hash.finalize().as_bytes()))
+    }
+}

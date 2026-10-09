@@ -1,0 +1,15 @@
+{
+  "title": "cellule-runtime",
+  "pages": [
+    "overview",
+    "execution",
+    "authority",
+    "reads",
+    "work",
+    "lifecycle",
+    "docs",
+    "[Crate reference](/docs/crates/runtime)",
+    "model",
+    "qualification"
+  ]
+}

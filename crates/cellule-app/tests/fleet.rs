@@ -181,10 +181,26 @@ pub(super) async fn send_tcp(
     request: Vec<u8>,
     remaining_ms: u32,
 ) -> Result<Vec<u8>> {
-    tokio::time::timeout(Duration::from_millis(u64::from(remaining_ms)), async {
+    send_tcp_connecting(TcpStream::connect(address), request, remaining_ms).await
+}
+
+async fn send_tcp_connecting(
+    connection: impl Future<Output = std::io::Result<TcpStream>>,
+    request: Vec<u8>,
+    remaining_ms: u32,
+) -> Result<Vec<u8>> {
+    let remaining = Duration::from_millis(u64::from(remaining_ms));
+    tokio::time::timeout(remaining, async {
+        // A killed private-network peer can blackhole SYNs. No request has
+        // been dispatched yet, so bound setup separately to preserve failover
+        // time without shortening the reply budget of a connected peer.
         let mut socket =
-            TcpStream::connect(address)
+            tokio::time::timeout(remaining.min(Duration::from_millis(250)), connection)
                 .await
+                .map_err(|source| Error::PeerTransport {
+                    context: "fleet peer connect deadline",
+                    source: Box::new(source),
+                })?
                 .map_err(|source| Error::PeerTransport {
                     context: "fleet peer connect",
                     source: Box::new(source),
@@ -409,4 +425,58 @@ async fn serve_peer(
         .map_err(peer_io)?;
     socket.write_all(&reply).await.map_err(peer_io)?;
     Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn stalled_connect_preserves_failover_budget() {
+    for (remaining_ms, connect_ms) in [(5_000, 250), (100, 100)] {
+        let started = tokio::time::Instant::now();
+        let error = send_tcp_connecting(std::future::pending(), vec![1], remaining_ms)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::PeerTransport {
+                    context: "fleet peer connect deadline",
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(started.elapsed(), Duration::from_millis(connect_ms));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatched_request_keeps_full_reply_budget() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (received, dispatched) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0; 5];
+        socket.read_exact(&mut request).await.unwrap();
+        assert_eq!(request, [0, 0, 0, 1, 42]);
+        received.send(()).unwrap();
+        std::future::pending::<()>().await;
+        drop(socket);
+    });
+    let started = Instant::now();
+    let result = send_tcp(address, vec![42], 1_000).await;
+    let elapsed = started.elapsed();
+    server.abort();
+    let _ = server.await;
+    dispatched.await.unwrap();
+    assert!(
+        matches!(
+            result,
+            Err(Error::PeerTransportUnknown {
+                context: "fleet peer deadline",
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    assert!(elapsed >= Duration::from_millis(1_000), "{elapsed:?}");
 }

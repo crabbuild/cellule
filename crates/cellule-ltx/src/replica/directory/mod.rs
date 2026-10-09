@@ -18,6 +18,9 @@ const HEADER_BYTES: usize = 32;
 const LEAF_RECORD_BYTES: usize = 88;
 const BRANCH_RECORD_BYTES: usize = 56;
 const FANOUT: usize = 256;
+pub(in crate::replica) fn fits_leaf(database_pages: u32) -> bool {
+    database_pages > 0 && database_pages as usize <= FANOUT
+}
 const MAX_NODE_BYTES: u64 = (HEADER_BYTES + FANOUT * LEAF_RECORD_BYTES) as u64;
 
 #[derive(Clone)]
@@ -132,26 +135,30 @@ impl DirectoryTree {
 
     pub(super) async fn update(
         base: Verification<'_>,
-        root: [u8; 32],
-        height: u32,
-        aggregate: Aggregate,
+        root: DirectoryRoot,
         changes: BTreeMap<u32, DirectoryEntry>,
         retain_through: u32,
         final_state: Verification<'_>,
         expected_checksum: u64,
+        private_leaf: Option<&Self>,
     ) -> Result<Self> {
         update::run(
             base,
             root,
-            height,
-            aggregate,
             changes,
             retain_through,
             final_state,
             expected_checksum,
+            private_leaf,
         )
         .await
     }
+}
+
+pub(super) struct DirectoryRoot {
+    pub digest: [u8; 32],
+    pub height: u32,
+    pub aggregate: Aggregate,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,6 +254,7 @@ pub(super) struct Verification<'a> {
     pub incarnation: &'a [u8; 16],
     pub page_size: u32,
     pub database_pages: u32,
+    pub inline_root: Option<&'a [u8]>,
     pub extents: &'a BTreeMap<[u8; 32], ObjectExtent>,
     pub host: &'a Host,
     pub origin: crate::LtxReadOrigin,
@@ -300,6 +308,7 @@ pub(super) async fn reachable_digests(
     root: [u8; 32],
     height: u32,
     expected_root: Aggregate,
+    max_objects: Option<usize>,
 ) -> Result<Vec<[u8; 32]>> {
     if height > 3 || verification.database_pages == 0 {
         return Err(LtxError::LTXCorrupted);
@@ -317,7 +326,12 @@ pub(super) async fn reachable_digests(
         if (remaining == 0) != (header.kind == 0) {
             return Err(LtxError::LTXCorrupted);
         }
-        digests.push(digest);
+        if max_objects.is_some_and(|limit| digests.len() == limit) {
+            return Err(LtxError::Limit(crate::LimitKind::RootInventoryObjects));
+        }
+        if inline_node(&verification, digest)?.is_none() {
+            digests.push(digest);
+        }
         if header.kind == 0 {
             let (aggregate, entries) = verify_leaf(
                 &bytes,
@@ -539,7 +553,20 @@ pub(super) async fn lookup_spans(
     Ok(spans)
 }
 
+fn inline_node(verification: &Verification<'_>, digest: [u8; 32]) -> Result<Option<Arc<[u8]>>> {
+    let Some(bytes) = verification.inline_root else {
+        return Ok(None);
+    };
+    if bytes.len() > super::root::INLINE_DIRECTORY_BYTES || bytes.is_empty() {
+        return Err(LtxError::LTXCorrupted);
+    }
+    Ok((*blake3::hash(bytes).as_bytes() == digest).then(|| Arc::from(bytes)))
+}
+
 async fn read_node(verification: &Verification<'_>, digest: [u8; 32]) -> Result<Arc<[u8]>> {
+    if let Some(bytes) = inline_node(verification, digest)? {
+        return Ok(bytes);
+    }
     let path = verification.layout.incarnation_object_path(
         verification.cell,
         verification.incarnation,
@@ -620,6 +647,9 @@ async fn read_node_uncached(
     verification: &Verification<'_>,
     digest: [u8; 32],
 ) -> Result<Arc<[u8]>> {
+    if let Some(bytes) = inline_node(verification, digest)? {
+        return Ok(bytes);
+    }
     let path = verification.layout.incarnation_object_path(
         verification.cell,
         verification.incarnation,

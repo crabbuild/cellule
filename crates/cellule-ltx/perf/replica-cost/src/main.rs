@@ -10,6 +10,9 @@
 //! same workload at an S3-compatible provider such as RustFS. Object and byte
 //! counts are provider independent; only latency changes.
 
+#[path = "../../payload.rs"]
+mod fixture;
+
 mod activation;
 mod filesystem;
 mod storage;
@@ -46,6 +49,7 @@ struct Sample {
     live_rows: usize,
     objects: u64,
     bytes: u64,
+    command_total_us: u64,
     commit_us: u64,
     capture_us: u64,
     capture_preparation_us: u64,
@@ -101,6 +105,8 @@ struct Report {
     payload_pattern: &'static str,
     measured_commands: usize,
     restored_rows: usize,
+    restore_us: u64,
+    restore_io: Vec<storage::BackendCost>,
     bootstrap_capture_us: u64,
     bootstrap_parent_sync_us: u64,
     objects_per_command: u64,
@@ -223,7 +229,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .checked_add(config.churn_rows.unwrap_or(0))
             .ok_or("payload seed overflow")?;
         let payload = payload(seed, config.payload_bytes, config.random_payload);
-        let commit_started = Instant::now();
+        let command_started = Instant::now();
+        let commit_started = command_started;
         let changed = database.transaction(|transaction| {
             if mutation == "delete" {
                 transaction.execute(sql, [row])
@@ -262,6 +269,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let prune_io = backend.take();
         let sample = Sample {
             command,
+            command_total_us: command_started.elapsed().as_micros() as u64,
             mutation,
             row,
             live_rows: expected.len(),
@@ -315,11 +323,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Validate the final selected root independently of the writer and its
     // pruned local cuts. This work stays outside all measured phases.
     let restored = directory.path().join("restored.sqlite");
+    let restore_started = Instant::now();
     replica
         .open_root(root.as_ref().ok_or("final root missing")?)
         .await?
         .restore(&restored)
         .await?;
+    let restore_us = restore_started.elapsed().as_micros() as u64;
+    let restore_io = backend.take();
     let connection = cellule_ltx::rusqlite::Connection::open_with_flags(
         restored,
         cellule_ltx::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -354,7 +365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         first_command: first_command.ok_or("first command missing")?,
     };
     let bootstrap = (bootstrap_capture_us, bootstrap_parent_sync_us);
-    let report = summarize(
+    let mut report = summarize(
         config,
         store_label,
         prefix,
@@ -363,6 +374,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         restored_rows,
         activation,
     );
+    report.restore_us = restore_us;
+    report.restore_io = restore_io;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
@@ -411,17 +424,7 @@ fn payload(command: usize, bytes: usize, random: bool) -> Vec<u8> {
             .map(|index| ((command * 131 + index) % 251) as u8)
             .collect();
     }
-    let mut state = (command as u64).wrapping_add(1);
-    let mut payload = vec![0; bytes];
-    for chunk in payload.chunks_mut(8) {
-        // A fixed command seed makes this high-entropy workload repeatable.
-        // This generator is only test data, never a security primitive.
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        chunk.copy_from_slice(&state.to_le_bytes()[..chunk.len()]);
-    }
-    payload
+    fixture::high_entropy(command, bytes)
 }
 
 fn percentile(values: &[u64], percent: usize) -> u64 {
@@ -465,6 +468,8 @@ fn summarize(
         },
         measured_commands: samples.len(),
         restored_rows,
+        restore_us: 0,
+        restore_io: Vec::new(),
         bootstrap_capture_us: bootstrap.0,
         bootstrap_parent_sync_us: bootstrap.1,
         objects_per_command: total_objects / samples.len() as u64,

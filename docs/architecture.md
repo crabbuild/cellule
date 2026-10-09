@@ -11,6 +11,9 @@ flowchart TD
     Service[Application: ingress, auth, credentials] --> Host[cellule-host: node lifecycle]
     Service --> App[cellule-app: descriptor and typed handles]
     Service --> Peer[cellule-peer-http: optional transport]
+    Service --> Axum[cellule-axum: optional HTTP integration]
+    Axum --> App
+    Axum --> Runtime
     Host --> Runtime[cellule-runtime: owner, actors, receipts]
     App --> Runtime
     Peer --> Runtime
@@ -36,6 +39,7 @@ runtime contracts; it never becomes an application authorization layer. See the
 | `cellule-store` | Bounded object operations, conditional writes, retries, classified provider failures. | Which Cell owner or root is current. |
 | `cellule-types` | Stable dependency-light provider and bucket identities. | Application behavior. |
 | `cellule-peer-http` | Optional signed owner routing and pinned mTLS transport. | Public receivers and user authorization. |
+| `cellule-axum` | Extract existing scoped capabilities and convert HTTP outputs and failures. | Routes, listeners, authentication, or tenant selection. |
 
 The [framework integration guide](framework.md) covers assembly of a serving
 node. The [API guide](api.md) covers application-facing methods and typed

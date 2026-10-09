@@ -14,10 +14,14 @@ use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use crate::{CaptureBatch, Host, Limits, LtxError, Position, Result};
 
 mod cache;
+mod coalesce;
 mod compaction;
 pub(crate) mod directory;
 mod merge;
+mod packed;
+mod preparation;
 mod prepare;
+pub use preparation::{RootPreparation, RootPreparationFuture, RootPreparationMetadata};
 mod read_only;
 mod restore;
 pub(crate) mod root;
@@ -35,6 +39,8 @@ const ROOT_BYTES: u64 = 32 << 10;
 const SEGMENT_PAGE_BYTES: u64 = 64 << 10;
 const MAX_SEGMENTS: usize = 4096;
 const SEGMENTS_PER_PAGE: usize = 96;
+// A bounded tail fits with the maximum page-digest list inside ROOT_BYTES.
+const MAX_INLINE_SEGMENTS: usize = 32;
 const MAX_SEGMENT_PAGES: usize = 64;
 const COMPACTION_FANOUT: usize = 8;
 const MAX_COMPACTION_INPUTS: usize = 128;
@@ -211,6 +217,15 @@ impl RecoveryOverlay {
 }
 
 impl PreparedRoot {
+    /// Returns the exact native derivation after all immutable uploads completed.
+    #[must_use]
+    pub fn preparation(&self) -> RootPreparation {
+        RootPreparation {
+            root: self.root(),
+            predecessor: self.predecessor,
+        }
+    }
+
     /// Returns the exact root that was prepared.
     #[must_use]
     pub fn root(&self) -> RootRef {
@@ -313,6 +328,7 @@ pub struct CellPagedDatabase {
     replica: CellReplica,
     directory_digest: [u8; 32],
     directory_height: u32,
+    directory_inline: Option<Arc<[u8]>>,
     extents: Arc<BTreeMap<[u8; 32], ObjectExtent>>,
     page_size: u32,
     database_pages: u32,
@@ -410,6 +426,7 @@ impl CellPagedDatabase {
                 incarnation: &self.replica.incarnation,
                 page_size: self.page_size,
                 database_pages: self.database_pages,
+                inline_root: self.directory_inline.as_deref(),
                 extents: &self.extents,
                 host: &self.replica.host,
                 origin: crate::LtxReadOrigin::Cold,
@@ -454,6 +471,7 @@ impl CellPagedDatabase {
                 incarnation: &self.replica.incarnation,
                 page_size: self.page_size,
                 database_pages: self.database_pages,
+                inline_root: self.directory_inline.as_deref(),
                 extents: &self.extents,
                 host: &self.replica.host,
                 origin,
@@ -577,6 +595,7 @@ impl CellPagedDatabase {
                 incarnation: &self.replica.incarnation,
                 page_size: self.page_size,
                 database_pages: self.database_pages,
+                inline_root: self.directory_inline.as_deref(),
                 extents: &self.extents,
                 host: &self.replica.host,
                 origin,
@@ -695,6 +714,10 @@ pub struct CellReplica {
     limits: Limits,
     host: Host,
     cost: Arc<PublicationLedger>,
+    root_metadata: Option<Arc<dyn RootPreparationMetadata>>,
+    // Set only by verified representation-only compaction composition. It
+    // follows this one preparation and never survives in a prepared read view.
+    preparation_predecessor: Option<RootRef>,
 }
 
 impl CellReplica {
@@ -715,6 +738,8 @@ impl CellReplica {
             limits: limits.validate()?,
             host: Host::default(),
             cost: Arc::new(PublicationLedger::default()),
+            root_metadata: None,
+            preparation_predecessor: None,
         })
     }
 
@@ -722,6 +747,13 @@ impl CellReplica {
     #[must_use]
     pub const fn limits(&self) -> Limits {
         self.limits
+    }
+
+    /// Returns the fixed Cell and incarnation binding of every immutable operation.
+    /// This scope provides no authority or selected root.
+    #[must_use]
+    pub const fn scope(&self) -> ([u8; 32], [u8; 16]) {
+        (self.cell, self.incarnation)
     }
 
     /// Returns the cumulative immutable publication cost this replica paid.
@@ -743,6 +775,14 @@ impl CellReplica {
     #[must_use]
     pub fn take_publication_cost(&self) -> PublicationCost {
         self.cost.take()
+    }
+
+    /// Joins caller-owned verified-derivation metadata with root uploads.
+    /// This replaces the one metadata facility; it supplies no authority policy.
+    #[must_use]
+    pub fn with_root_metadata(mut self, metadata: Arc<dyn RootPreparationMetadata>) -> Self {
+        self.root_metadata = Some(metadata);
+        self
     }
 
     /// Selects the caller's bounded I/O and blocking execution facilities.
@@ -821,6 +861,44 @@ fn scheduled_compaction_range(
     None
 }
 
+/// Authenticated directory and descriptors, without claiming that root metadata
+/// has been uploaded. Compaction may supply this state directly to an append.
+struct AppendBaseState {
+    // Only a bounded, privately verified compaction leaf may skip origin I/O.
+    private_directory: Option<DirectoryTree>,
+    aggregate: directory::Aggregate,
+    directory_digest: [u8; 32],
+    directory_height: u32,
+    directory_inline: Option<Arc<[u8]>>,
+    page_size: u32,
+    database_pages: u32,
+    inherited_segment_pages: Vec<[u8; 32]>,
+    descriptors: Vec<SegmentDescriptor>,
+}
+
+impl From<LoadedGraph> for AppendBaseState {
+    fn from(graph: LoadedGraph) -> Self {
+        Self {
+            private_directory: None,
+            aggregate: graph.aggregate,
+            directory_digest: graph.document.directory_digest,
+            directory_height: graph.document.directory_height,
+            directory_inline: graph.document.directory_inline,
+            page_size: graph.document.page_size,
+            database_pages: graph.document.database_pages,
+            inherited_segment_pages: graph.document.segment_pages,
+            descriptors: graph.descriptors,
+        }
+    }
+}
+
+struct CompactionAppend {
+    inputs: Vec<AppendInput>,
+    position: Position,
+    commit_sequence: u64,
+    schema: u32,
+}
+
 struct LoadedGraph {
     aggregate: directory::Aggregate,
     document: RootDocument,
@@ -867,6 +945,8 @@ struct AppendInput {
 
 enum AppendBody {
     Native(Arc<upload::PinnedCapture>),
+    Frozen(Bytes),
+    Packed(Arc<dyn cellule_store::MultipartUploadSource>),
     Bundle,
 }
 

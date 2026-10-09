@@ -29,7 +29,7 @@ use cellule_store::{
 };
 use object_store::path::Path;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     sync::{
         OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -38,6 +38,39 @@ use std::{
 
 const MODULE: &str = "routing-measurement";
 const NAMESPACE: NamespaceId = NamespaceId::from_bytes([71; 16]);
+
+// The driver serializes adjacent baseline/candidate windows. Coordination
+// runs outside request timers; waiting for stdin consumes no Tokio worker.
+struct MeasurementGate(bool);
+impl MeasurementGate {
+    fn from_env() -> Self {
+        Self(std::env::var("CELLULE_PERF_COORDINATED").is_ok_and(|value| value == "1"))
+    }
+
+    async fn exchange(&self, event: &str, stage: &str, response: &str) {
+        if !self.0 {
+            return;
+        }
+        println!("RUSTFS gate {event}={stage}");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        let expected = format!("{response} {stage}\n");
+        tokio::task::spawn_blocking(move || {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).unwrap();
+            assert_eq!(line, expected, "measurement coordinator disconnected");
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn start(&self, stage: &str) {
+        self.exchange("ready", stage, "start").await;
+    }
+
+    async fn finish(&self, stage: &str) {
+        self.exchange("done", stage, "next").await;
+    }
+}
 const SCHEMA: &str = "CREATE TABLE counter(value INTEGER NOT NULL); INSERT INTO counter VALUES(0)";
 const OPERATION: OperationDescriptor = OperationDescriptor {
     id: 1,
@@ -162,37 +195,132 @@ impl PeerCellResolver for UncachedResident {
 }
 
 #[derive(Default)]
-struct PublicationSamples(Mutex<HashMap<u64, PublicationTiming>>);
+struct PublicationSamples(Mutex<BTreeMap<u64, PublicationTiming>>);
 impl CellTelemetry for PublicationSamples {
     fn publication_completed(&self, _: CellId, timing: PublicationTiming) {
-        self.0
-            .lock()
-            .unwrap()
-            .insert(timing.commit_sequence, timing);
+        assert!(
+            self.0
+                .lock()
+                .unwrap()
+                .insert(timing.commit_sequence, timing)
+                .is_none(),
+            "duplicate publication event"
+        );
     }
 }
 impl PublicationSamples {
-    fn report(&self, lane: &str, concurrency: usize, first: u64, last: u64) {
+    fn covered_publications(&self, first: u64, last: u64) -> Vec<(u64, PublicationTiming)> {
+        assert!(first > 0 && first <= last);
         let samples = self.0.lock().unwrap();
-        let timings = (first..=last)
-            .map(|sequence| samples[&sequence])
+        let timings = samples
+            .range(first..=last)
+            .map(|(_, timing)| *timing)
             .collect::<Vec<_>>();
         assert!(timings.iter().all(|timing| timing.succeeded));
+        assert_eq!(
+            timings.last().map(|timing| timing.commit_sequence),
+            Some(last),
+            "last publication must cover the final accepted command"
+        );
+        // This fixture uses one Cell and sequential, settled lanes. A root
+        // covers every logical sequence since the preceding root; retain the
+        // actual callback once, even when several commands share that root.
+        let mut next = first;
+        timings
+            .into_iter()
+            .map(|timing| {
+                let covered_first = next;
+                next = timing.commit_sequence.checked_add(1).unwrap();
+                (covered_first, timing)
+            })
+            .collect()
+    }
+
+    fn report(&self, lane: &str, concurrency: usize, first: u64, last: u64) {
+        let publications = self.covered_publications(first, last);
         let mean = |phase: fn(&PublicationTiming) -> Duration| {
-            timings
+            publications
                 .iter()
-                .map(|timing| phase(timing).as_secs_f64() * 1000.0)
+                .map(|(_, timing)| phase(timing).as_secs_f64() * 1000.0)
                 .sum::<f64>()
-                / timings.len() as f64
+                / publications.len() as f64
         };
         println!(
-            "RUSTFS publication lane={lane} concurrency={concurrency} calls={} preparation_mean_ms={:.6} authority_mean_ms={:.6} total_mean_ms={:.6}",
-            timings.len(),
+            "RUSTFS publication lane={lane} concurrency={concurrency} calls={} publications={} preparation_mean_ms={:.6} authority_mean_ms={:.6} total_mean_ms={:.6}",
+            last - first + 1,
+            publications.len(),
             mean(|t| t.preparation),
             mean(|t| t.authority),
             mean(|t| t.total)
         );
+        if let Ok(directory) = std::env::var("CELLULE_PERF_EVIDENCE") {
+            let mut output = String::from(
+                "first_sequence\tsequence\tqueue_wait_ns\tpreparation_ns\tauthority_ns\ttotal_ns\n",
+            );
+            for (covered_first, timing) in &publications {
+                output.push_str(&format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\n",
+                    covered_first,
+                    timing.commit_sequence,
+                    timing.queue_wait.as_nanos(),
+                    timing.preparation.as_nanos(),
+                    timing.authority.as_nanos(),
+                    timing.total.as_nanos(),
+                ));
+            }
+            std::fs::write(
+                std::path::Path::new(&directory)
+                    .join(format!("{lane}-c{concurrency}.publication.tsv")),
+                output,
+            )
+            .unwrap();
+        }
     }
+}
+
+#[test]
+fn publication_samples_cover_grouped_commands_without_inventing_events() {
+    let publications = PublicationSamples::default();
+    for sequence in [1, 5] {
+        publications.publication_completed(
+            CellId::from_bytes([1; 32]),
+            PublicationTiming {
+                queue_wait: Duration::from_millis(sequence),
+                preparation: Duration::from_millis(sequence),
+                authority: Duration::from_millis(sequence),
+                total: Duration::from_millis(sequence * 3),
+                succeeded: true,
+                commit_sequence: sequence,
+                covered_commits: if sequence == 1 { 1 } else { 4 },
+            },
+        );
+    }
+    publications.report("grouped_fixture", 16, 1, 5);
+    let covered = publications.covered_publications(1, 5);
+    assert_eq!(covered.len(), 2);
+    assert_eq!((covered[0].0, covered[0].1.commit_sequence), (1, 1));
+    assert_eq!((covered[1].0, covered[1].1.commit_sequence), (2, 5));
+    assert_eq!(covered[0].1.total, Duration::from_millis(3));
+    assert_eq!(covered[1].1.total, Duration::from_millis(15));
+}
+
+#[test]
+#[should_panic(expected = "last publication must cover the final accepted command")]
+fn publication_samples_reject_missing_final_root() {
+    let publications = PublicationSamples::default();
+    publications.publication_completed(
+        CellId::from_bytes([1; 32]),
+        PublicationTiming {
+            queue_wait: Duration::ZERO,
+            preparation: Duration::ZERO,
+            authority: Duration::ZERO,
+            total: Duration::ZERO,
+            succeeded: true,
+            commit_sequence: 1,
+            covered_commits: 1,
+        },
+    );
+    publications.covered_publications(1, 5);
 }
 impl PeerAuthorizer for Authorizer {
     fn authorize(&self, request: &VerifiedPeerRequest) -> cellule_runtime::Result<()> {
@@ -249,6 +377,17 @@ fn report(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires isolated RustFS endpoint, bucket, prefix and explicit fixture credentials"]
 async fn rustfs_owner_routing_latency_throughput() {
+    run_rustfs_owner_routing_latency_throughput(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated RustFS endpoint, bucket, prefix and explicit fixture credentials"]
+async fn rustfs_object_only_routing_latency_throughput() {
+    run_rustfs_owner_routing_latency_throughput(false).await;
+}
+
+async fn run_rustfs_owner_routing_latency_throughput(leased: bool) {
+    let gate = MeasurementGate::from_env();
     let Some((certificate_dir, tls)) = super::tests::generate_peer_identity("rustfs-routing")
     else {
         panic!("OpenSSL 3 is required for this explicit mTLS qualification");
@@ -337,7 +476,12 @@ async fn rustfs_owner_routing_latency_throughput() {
         )
         .await
         .unwrap();
-    let runtime = CellRuntime::new_with_replica_host_requiring_node_lease(
+    let constructor = if leased {
+        CellRuntime::new_with_replica_host_requiring_node_lease
+    } else {
+        CellRuntime::new_with_replica_host
+    };
+    let runtime = constructor(
         SqlWorkerPool::new(2, 32).unwrap(),
         16 << 20,
         owner_session,
@@ -346,7 +490,9 @@ async fn rustfs_owner_routing_latency_throughput() {
     .unwrap();
     let lease =
         NodeLeaseGuard::new(now_ms().unwrap(), enrolled.advertisement().expires_at_ms()).unwrap();
-    runtime.install_node_lease(lease.clone()).unwrap();
+    if leased {
+        runtime.install_node_lease(lease.clone()).unwrap();
+    }
     let publications = Arc::new(PublicationSamples::default());
     runtime.install_telemetry(publications.clone()).unwrap();
     let disk = tempfile::tempdir().unwrap();
@@ -506,6 +652,11 @@ async fn rustfs_owner_routing_latency_throughput() {
         .ok()
         .map(|v| v.parse::<usize>().unwrap())
         .unwrap_or(128);
+    let paced_bursts = std::env::var("CELLULE_PERF_BURSTS")
+        .ok()
+        .map(|value| value.parse::<usize>().unwrap())
+        .unwrap_or(12);
+    assert!(paced_bursts > 0);
     assert!(
         queries >= 16
             && queries.is_multiple_of(16)
@@ -514,6 +665,8 @@ async fn rustfs_owner_routing_latency_throughput() {
     );
     let mut expected = 0_u64;
     for (route, client) in [("local", &local), ("forwarded", &peer)] {
+        let cold_stage = format!("{route}_query_cold-c1");
+        gate.start(&cold_stage).await;
         counted.reset();
         hops.store(0, Ordering::Relaxed);
         let cold = Instant::now();
@@ -535,10 +688,25 @@ async fn rustfs_owner_routing_latency_throughput() {
             counted.put_requests(),
             hops.load(Ordering::Relaxed),
         );
+        gate.finish(&cold_stage).await;
+        // Keep warm-route samples separate from the 30-second Describe cache.
+        // The fixture's observed contract is fixed; every request still crosses
+        // the receiver's authority/lease and actor admission gates.
+        let query_client =
+            client
+                .clone()
+                .with_observed_description(cellule_runtime::client::CellDescription {
+                    cell: target.cell_id(),
+                    incarnation: IncarnationId::from_bytes([77; 16]),
+                    code: registry.module_code(MODULE).unwrap(),
+                    schema: 1,
+                });
         if route == "local" {
             // Separate first-request throughput from warm reused-client throughput.
             // Each fresh transport must establish its description and route.
             for concurrency in [1, 16] {
+                let stage = format!("local_query_fresh_client-c{concurrency}");
+                gate.start(&stage).await;
                 counted.reset();
                 let started = Instant::now();
                 let mut samples = Vec::new();
@@ -570,15 +738,17 @@ async fn rustfs_owner_routing_latency_throughput() {
                     counted.put_requests(),
                     0,
                 );
+                gate.finish(&stage).await;
             }
             // Adjacent direct-handle reads control for workstation scheduling
             // noise when evaluating the warm route's CPU overhead.
             let direct = CellClient::local(registry.clone(), handle.clone());
+            gate.start("local_read_control").await;
             let mut ratios = Vec::new();
             for index in 0..queries {
                 let mut durations = [Duration::ZERO; 2];
                 for lane in if index % 2 == 0 { [0, 1] } else { [1, 0] } {
-                    let selected = if lane == 0 { &direct } else { client };
+                    let selected = if lane == 0 { &direct } else { &query_client };
                     let started = Instant::now();
                     assert_eq!(
                         selected
@@ -597,8 +767,15 @@ async fn rustfs_owner_routing_latency_throughput() {
                 "RUSTFS warm_route_control calls={queries} median_runtime_to_direct_ratio={:.6}",
                 ratios[queries / 2]
             );
+            gate.finish("local_read_control").await;
         }
         for concurrency in [1, 16] {
+            let stage = format!("{route}_query-c{concurrency}");
+            gate.start(&stage).await;
+            if route == "forwarded" {
+                transport.routes().invalidate(&target, owner_session);
+                transport.routes().route(&target).await.unwrap();
+            }
             counted.reset();
             hops.store(0, Ordering::Relaxed);
             let started = Instant::now();
@@ -606,7 +783,7 @@ async fn rustfs_owner_routing_latency_throughput() {
             for _ in 0..queries / concurrency {
                 let results = futures_util::future::join_all((0..concurrency).map(|_| async {
                     let start = Instant::now();
-                    let result = client.query::<Read>(&target, None, ()).await.unwrap();
+                    let result = query_client.query::<Read>(&target, None, ()).await.unwrap();
                     assert_eq!(result.output, expected);
                     start.elapsed()
                 }))
@@ -622,8 +799,10 @@ async fn rustfs_owner_routing_latency_throughput() {
                 counted.put_requests(),
                 hops.load(Ordering::Relaxed),
             );
+            gate.finish(&stage).await;
         }
         if route == "forwarded" {
+            gate.start("forwarded_read_control").await;
             let mut ratios = Vec::new();
             for index in 0..queries {
                 let mut durations = [Duration::ZERO; 2];
@@ -631,7 +810,7 @@ async fn rustfs_owner_routing_latency_throughput() {
                     uncached_receiver.store(lane == 0, Ordering::Release);
                     let started = Instant::now();
                     assert_eq!(
-                        client
+                        query_client
                             .query::<Read>(&target, None, ())
                             .await
                             .unwrap()
@@ -648,8 +827,10 @@ async fn rustfs_owner_routing_latency_throughput() {
                 "RUSTFS forwarded_route_control calls={queries} median_cached_to_uncached_ratio={:.6}",
                 ratios[queries / 2]
             );
+            gate.finish("forwarded_read_control").await;
             // Force the same cold owner-hint burst in both revisions. The
             // shared adapter must enroll once, even when all callers miss.
+            gate.start("forwarded_query_uncached_route-c16").await;
             counted.reset();
             hops.store(0, Ordering::Relaxed);
             let started = Instant::now();
@@ -660,7 +841,7 @@ async fn rustfs_owner_routing_latency_throughput() {
                     futures_util::future::join_all((0..16).map(|_| async {
                         let started = Instant::now();
                         assert_eq!(
-                            client
+                            query_client
                                 .query::<Read>(&target, None, ())
                                 .await
                                 .unwrap()
@@ -681,6 +862,7 @@ async fn rustfs_owner_routing_latency_throughput() {
                 counted.put_requests(),
                 hops.load(Ordering::Relaxed),
             );
+            gate.finish("forwarded_query_uncached_route-c16").await;
         }
         // Repeated bursts cross the former two-second route-cache lifetime.
         let mut samples = Vec::new();
@@ -688,14 +870,24 @@ async fn rustfs_owner_routing_latency_throughput() {
         let mut puts = 0;
         let mut peer_hops = 0;
         let burst_window = Instant::now();
-        for _ in 0..4 {
+        for burst in 0..paced_bursts {
             tokio::time::sleep(Duration::from_millis(2100)).await;
+            // Both versions cross the idle boundary before either burst runs.
+            // The driver reverses burst order to balance the first wake-up.
+            let stage = format!("{route}_paced-{burst}");
+            gate.start(&stage).await;
+            if route == "forwarded" {
+                // Isolate the receiver's expired admission-cache window from
+                // the sender's independent 15-second background refresh.
+                transport.routes().invalidate(&target, owner_session);
+                transport.routes().route(&target).await.unwrap();
+            }
             counted.reset();
             hops.store(0, Ordering::Relaxed);
             let results = futures_util::future::join_all((0..16).map(|_| async {
                 let start = Instant::now();
                 assert_eq!(
-                    client
+                    query_client
                         .query::<Read>(&target, None, ())
                         .await
                         .unwrap()
@@ -709,6 +901,7 @@ async fn rustfs_owner_routing_latency_throughput() {
             reads += counted.counts().body_requests();
             puts += counted.put_requests();
             peer_hops += hops.load(Ordering::Relaxed);
+            gate.finish(&stage).await;
         }
         let elapsed = burst_window.elapsed();
         report(
@@ -722,6 +915,8 @@ async fn rustfs_owner_routing_latency_throughput() {
         );
         let target = &target;
         for concurrency in [1, 16] {
+            let stage = format!("{route}_command-c{concurrency}");
+            gate.start(&stage).await;
             counted.reset();
             hops.store(0, Ordering::Relaxed);
             let started = Instant::now();
@@ -759,6 +954,11 @@ async fn rustfs_owner_routing_latency_throughput() {
                 }
             }
             expected += commands as u64;
+            assert_eq!(sequences.len(), commands);
+            assert!(
+                (expected - commands as u64 + 1..=expected)
+                    .all(|sequence| sequences.contains(&sequence))
+            );
             assert_eq!(
                 client.query::<Read>(target, None, ()).await.unwrap().output,
                 expected
@@ -778,11 +978,13 @@ async fn rustfs_owner_routing_latency_throughput() {
                 expected - commands as u64 + 1,
                 expected,
             );
+            gate.finish(&stage).await;
         }
     }
     // Paired writes use the same actor, immutable publication and authority
     // gate. Alternate order so provider pauses cannot always favor one route.
     let direct = CellClient::local(registry.clone(), handle.clone());
+    gate.start("write_route_control").await;
     let mut ratios = Vec::new();
     for index in 0..commands {
         let mut durations = [Duration::ZERO; 2];
@@ -818,6 +1020,8 @@ async fn rustfs_owner_routing_latency_throughput() {
         "RUSTFS write_route_control calls={commands} median_runtime_to_direct_ratio={:.6}",
         ratios[commands / 2]
     );
+    gate.finish("write_route_control").await;
+    gate.start("recovery").await;
     handle.drain().await.unwrap();
     runtime.shutdown().await.unwrap();
     ingress.shutdown().await.unwrap();
@@ -877,4 +1081,5 @@ async fn rustfs_owner_routing_latency_throughput() {
     println!(
         "RUSTFS correctness=passed commands={expected} final_sequence={expected} peer=mTLS+signed+authorized"
     );
+    gate.finish("recovery").await;
 }

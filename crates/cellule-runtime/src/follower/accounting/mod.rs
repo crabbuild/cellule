@@ -40,11 +40,7 @@ impl DiskAccounting {
             .ok_or(Error::Node("follower disk settlement overflow"))?;
         self.reservation.resize(next)?;
         self.pending.remove(&lane);
-        if actual == 0 {
-            self.settled.remove(&lane);
-        } else {
-            self.settled.insert(lane, actual);
-        }
+        self.settled.insert(lane, actual);
         Ok(())
     }
 
@@ -53,6 +49,19 @@ impl DiskAccounting {
         // race this reconciliation, and other lanes' charges remain untouched.
         if self.pending.contains_key(&lane) {
             self.settle(lane, actual)?;
+        }
+        if let Some(previous) = self.settled.get(&lane).copied()
+            && previous != actual
+        {
+            // Recovery can observe externally restored or truncated bytes.
+            // Reconcile only this lane before reserving any new write growth.
+            let next = self
+                .bytes()
+                .checked_sub(previous)
+                .and_then(|bytes| bytes.checked_add(actual))
+                .ok_or(Error::Node("follower disk settlement overflow"))?;
+            self.reservation.resize(next)?;
+            self.settled.insert(lane, actual);
         }
         let charged = actual
             .checked_add(growth)
@@ -90,6 +99,7 @@ impl LaneAccounting {
         root: &Path,
         lane: Lane,
         growth: u64,
+        reconcile: bool,
         observation: &mut AppendObservation,
     ) -> Result<Self> {
         let operation = Self {
@@ -99,7 +109,7 @@ impl LaneAccounting {
             actual: ByteCount::new(None),
         };
         let cached = operation.update(observation, |accounting| {
-            Ok(if accounting.pending.contains_key(&lane) {
+            Ok(if reconcile || accounting.pending.contains_key(&lane) {
                 None
             } else {
                 accounting.settled.get(&lane).copied()
@@ -143,6 +153,15 @@ impl LaneAccounting {
 
     pub fn emptied(&self) {
         self.actual.set(Some(0));
+    }
+
+    pub fn forget_empty(&self, observation: &mut AppendObservation) -> Result<()> {
+        self.update(observation, |accounting| {
+            if accounting.settled.get(&self.lane) == Some(&0) {
+                accounting.settled.remove(&self.lane);
+            }
+            Ok(())
+        })
     }
 
     pub fn try_grow(&self, growth: u64, observation: &mut AppendObservation) -> Result<()> {

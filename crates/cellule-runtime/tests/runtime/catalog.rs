@@ -545,3 +545,306 @@ fn nibble(byte: u8) -> u8 {
         _ => panic!("catalog digest must be lowercase hex"),
     }
 }
+
+#[tokio::test]
+async fn complete_catalog_scan_covers_empty_heads_and_rechecks_them() {
+    let (layout, _, target) = fixture();
+    let recorder = Arc::new(CatalogReadRecorder::default());
+    let catalog = CellCatalog::with_telemetry(
+        layout,
+        target.tenant(),
+        cellule_runtime::fleet::telemetry::CellTelemetryHandle::from_sink(recorder.clone()),
+    );
+    assert_eq!(catalog.tenant(), target.tenant());
+    let mut scan = catalog.scan_all(1).await.unwrap();
+    assert_eq!(recorder.reads.lock().unwrap().len(), 256);
+    assert!(scan.next_page().await.unwrap().is_none());
+    let receipt = scan.finish().await.unwrap();
+    assert_eq!(receipt.tenant(), target.tenant());
+    assert_eq!(receipt.application(), target.application());
+    assert_eq!(receipt.entry_count(), 0);
+    for shard in 0..=u8::MAX {
+        assert_eq!(receipt.revision(shard), 0);
+        assert!(receipt.page_digests(shard).is_empty());
+    }
+    assert_eq!(recorder.reads.lock().unwrap().len(), 512);
+    assert!(
+        recorder
+            .reads
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|read| *read == (CatalogReadKind::Head, true))
+    );
+    receipt.revalidate().await.unwrap();
+}
+
+#[tokio::test]
+async fn complete_catalog_scan_streams_multiple_pages_and_shards_in_one_scope() {
+    let (layout, tenant, _, mut entries) = provisioned_shard(257).await;
+    let first_shard = entries[0].cell().as_bytes()[0];
+    let application = ApplicationId::from_bytes(*layout.application_id());
+    let target = (0_u32..)
+        .map(|partition| {
+            CellTarget::new(
+                tenant,
+                application,
+                NamespaceId::from_bytes([22; 16]),
+                &partition.to_be_bytes(),
+            )
+            .unwrap()
+        })
+        .find(|target| target.cell_id().as_bytes()[0] != first_shard)
+        .unwrap();
+    let catalog = CellCatalog::new(layout.clone(), tenant);
+    let other = entry(&target, CatalogRole::Sql, 10);
+    catalog.provision(other.clone()).await.unwrap();
+    entries.push(other);
+    entries.sort_unstable_by_key(|entry| *entry.cell().as_bytes());
+    let foreign_tenant = TenantId::from_bytes([98; 16]);
+    let foreign =
+        CellTarget::new(foreign_tenant, application, target.namespace(), b"foreign").unwrap();
+    CellCatalog::new(layout.clone(), foreign_tenant)
+        .provision(entry(&foreign, CatalogRole::Kv, 11))
+        .await
+        .unwrap();
+    // Independent adapter; no resident cache or caller-supplied shard subset.
+    let mut scan = CellCatalog::new(layout.clone(), tenant)
+        .scan_all(258)
+        .await
+        .unwrap();
+    let mut actual = Vec::new();
+    let mut page_count = 0;
+    while let Some(page) = scan.next_page().await.unwrap() {
+        assert!(page.entries().len() <= 256);
+        assert!(
+            page.entries()
+                .iter()
+                .all(|proof| proof.revision() == page.revision())
+        );
+        actual.extend(page.entries().iter().map(|proof| proof.entry().clone()));
+        page_count += 1;
+    }
+    assert_eq!(actual, entries);
+    assert_eq!(page_count, 3);
+    let receipt = scan.finish().await.unwrap();
+    assert_eq!(receipt.entry_count(), 258);
+    assert_eq!(receipt.revision(first_shard), 257);
+    let head = head_json(&layout, tenant, first_shard).await;
+    let digests = head["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|page| Digest::from_bytes(decode_digest(page["digest"].as_str().unwrap())))
+        .collect::<Vec<_>>();
+    assert_eq!(receipt.page_digests(first_shard), digests);
+    assert_eq!(receipt.revision(target.cell_id().as_bytes()[0]), 1);
+}
+
+#[tokio::test]
+async fn complete_catalog_scan_refuses_partial_finish() {
+    let (_, catalog, target) = fixture();
+    catalog
+        .provision(entry(&target, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    assert!(matches!(
+        catalog.scan_all(1).await.unwrap().finish().await,
+        Err(cellule_runtime::Error::Catalog(
+            "complete catalog scan is not exhausted"
+        ))
+    ));
+    let mut scan = catalog.scan_all(1).await.unwrap();
+    assert!(scan.next_page().await.unwrap().is_some());
+    // Even after the last page, the consumer must observe end of traversal.
+    assert!(matches!(
+        scan.finish().await,
+        Err(cellule_runtime::Error::Catalog(
+            "complete catalog scan is not exhausted"
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn complete_catalog_scan_limits_are_checked_before_io_and_failure_is_terminal() {
+    let (layout, _, first) = fixture();
+    let recorder = Arc::new(CatalogReadRecorder::default());
+    let catalog = CellCatalog::with_telemetry(
+        layout,
+        first.tenant(),
+        cellule_runtime::fleet::telemetry::CellTelemetryHandle::from_sink(recorder.clone()),
+    );
+    for limit in [0, 16_777_217] {
+        assert!(matches!(
+            catalog.scan_all(limit).await,
+            Err(cellule_runtime::Error::Capacity(_))
+        ));
+    }
+    assert!(recorder.reads.lock().unwrap().is_empty());
+    catalog
+        .provision(entry(&first, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    let second = (0_u32..)
+        .map(|partition| {
+            CellTarget::new(
+                first.tenant(),
+                first.application(),
+                first.namespace(),
+                &partition.to_be_bytes(),
+            )
+            .unwrap()
+        })
+        .find(|target| target.cell_id().as_bytes()[0] != first.cell_id().as_bytes()[0])
+        .unwrap();
+    catalog
+        .provision(entry(&second, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    let mut scan = catalog.scan_all(1).await.unwrap();
+    assert!(scan.next_page().await.unwrap().is_some());
+    assert!(matches!(
+        scan.next_page().await,
+        Err(cellule_runtime::Error::Capacity(_))
+    ));
+    assert!(matches!(
+        scan.next_page().await,
+        Err(cellule_runtime::Error::Catalog(
+            "complete catalog scan previously failed"
+        ))
+    ));
+    assert!(scan.finish().await.is_err());
+}
+
+#[tokio::test]
+async fn complete_catalog_scan_refuses_changed_populated_and_absent_heads() {
+    let (_, catalog, first, second) = same_shard_targets();
+    catalog
+        .provision(entry(&first, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    let mut scan = catalog.scan_all(2).await.unwrap();
+    catalog
+        .provision(entry(&second, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    let page = scan.next_page().await.unwrap().unwrap();
+    assert_eq!(page.entries().len(), 1);
+    assert_eq!(page.entries()[0].entry().cell(), first.cell_id());
+    assert!(scan.next_page().await.unwrap().is_none());
+    assert!(matches!(
+        scan.finish().await,
+        Err(cellule_runtime::Error::Catalog(
+            "complete catalog scan head changed"
+        ))
+    ));
+    let (_, empty, target) = fixture();
+    let mut scan = empty.scan_all(1).await.unwrap();
+    empty
+        .provision(entry(&target, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    assert!(scan.next_page().await.unwrap().is_none());
+    assert!(scan.finish().await.is_err());
+}
+
+#[tokio::test]
+async fn complete_catalog_scan_refuses_head_deletion_and_same_body_rewrite() {
+    for delete in [false, true] {
+        let (layout, catalog, target) = fixture();
+        catalog
+            .provision(entry(&target, CatalogRole::Sql, 4))
+            .await
+            .unwrap();
+        let mut scan = catalog.scan_all(1).await.unwrap();
+        while scan.next_page().await.unwrap().is_some() {}
+        let path =
+            layout.catalog_head_path(target.tenant().as_bytes(), target.cell_id().as_bytes()[0]);
+        if delete {
+            layout.store().delete(&path).await.unwrap();
+        } else {
+            let (body, token) = layout
+                .store()
+                .get_with_etag_bounded(&path, 64 * 1024)
+                .await
+                .unwrap();
+            layout.store().update(&path, body, token).await.unwrap();
+        }
+        assert!(matches!(
+            scan.finish().await,
+            Err(cellule_runtime::Error::Catalog(
+                "complete catalog scan head changed"
+            ))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn complete_catalog_scan_preserves_missing_page_error_and_cannot_skip_it() {
+    let (layout, catalog, target) = fixture();
+    catalog
+        .provision(entry(&target, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    let mut scan = catalog.scan_all(1).await.unwrap();
+    let head = head_json(&layout, target.tenant(), target.cell_id().as_bytes()[0]).await;
+    let digest = decode_digest(head["pages"][0]["digest"].as_str().unwrap());
+    let path = layout.catalog_object_path(&digest);
+    layout.store().delete(&path).await.unwrap();
+    assert!(matches!(scan.next_page().await,
+        Err(cellule_runtime::Error::Storage(cellule_store::StorageError::NotFound { path: missing })) if missing == path.to_string()));
+    assert!(scan.next_page().await.is_err());
+    assert!(scan.finish().await.is_err());
+}
+
+#[tokio::test]
+async fn complete_catalog_scan_reuses_digest_validation_and_receipt_rechecks() {
+    let (layout, catalog, target) = fixture();
+    catalog
+        .provision(entry(&target, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    let mut scan = catalog.scan_all(1).await.unwrap();
+    while scan.next_page().await.unwrap().is_some() {}
+    let receipt = scan.finish().await.unwrap();
+    catalog
+        .provision(entry(&target, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    receipt.revalidate().await.unwrap(); // Idempotent provisioning did not write a head.
+    let head = head_json(&layout, target.tenant(), target.cell_id().as_bytes()[0]).await;
+    let digest = decode_digest(head["pages"][0]["digest"].as_str().unwrap());
+    let mut scan = catalog.scan_all(1).await.unwrap();
+    layout
+        .store()
+        .put_overwrite(
+            &layout.catalog_object_path(&digest),
+            Bytes::from_static(b"{}"),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        scan.next_page().await,
+        Err(cellule_runtime::Error::Catalog("page digest mismatch"))
+    ));
+    assert!(scan.finish().await.is_err());
+    // A head receipt verifies head identity only, not continuing page availability.
+    receipt.revalidate().await.unwrap();
+    let fresh = (0_u32..)
+        .map(|partition| {
+            CellTarget::new(
+                target.tenant(),
+                target.application(),
+                target.namespace(),
+                &partition.to_be_bytes(),
+            )
+            .unwrap()
+        })
+        .find(|candidate| candidate.cell_id().as_bytes()[0] != target.cell_id().as_bytes()[0])
+        .unwrap();
+    catalog
+        .provision(entry(&fresh, CatalogRole::Sql, 4))
+        .await
+        .unwrap();
+    assert!(receipt.revalidate().await.is_err());
+}

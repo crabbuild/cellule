@@ -15,7 +15,7 @@ and the path from declaration to a typed request.
 | Domain | `CellApplication`, `CellModule`, `CellType` | Which modules, schemas, and stable IDs ship in this binary. |
 | Storage | `Store`, `CellStorageLayout`, `probe_storage` | Provider, credentials, bucket/prefix, capacity and readiness policy. |
 | Node | `CellNodeBuilder`, `CellNode` | Session identity, lease enrollment, facilities, task supervision. |
-| Requests | `ApplicationHandle`, optional `cellule-peer-http` | Public route, user authorization, peer receiver and admission policy. |
+| Requests | `ApplicationHandle`, optional `cellule-axum` and `cellule-peer-http` | Public route, user authorization, peer receiver and admission policy. |
 | Background work | Activity and Effect supervisors | Which runners to install, schedule, drain, and cancel. |
 
 ## Bring one node to readiness
@@ -65,6 +65,17 @@ is not a shortcut for serving readiness. The
 installed components and drain behavior.
 
 ## Public and peer request boundaries
+
+For Axum 0.8 services, [`cellule-axum`](../crates/cellule-axum/README.md)
+extracts an existing scoped application handle, returns JSON outputs with
+receipts, and maps errors while retaining pending or published evidence.
+Compose these helpers into your own router and authorization middleware. The
+[runnable orders service](../crates/cellule-axum/examples/sql.rs) shows a local
+SQL command, a receipt-bound query, and HTTP drain before runtime shutdown.
+The optional `openapi` feature supplies shared wire schemas and typed endpoint
+registration. Its [integration recipes](../crates/cellule-axum/docs/README.md)
+cover request-scoped authorization, atomic prepared-command custody, resolution,
+readiness and generated SDK receipt/retry contracts.
 
 `cellule-peer-http` supplies owner routing, HTTP response classification, and
 pinned mTLS transport using runtime peer contracts. It does not install a

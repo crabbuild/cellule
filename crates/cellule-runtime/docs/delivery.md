@@ -87,7 +87,7 @@ Each layer has one owner and one primary evidence surface.
 | Boundary | Primary source | Evidence |
 | --- | --- | --- |
 | Identity and Cell derivation | `src/identity.rs` | `src/identity.rs` tests, `tests/contracts/application.rs`, `tests/runtime/catalog.rs` |
-| Control CAS and transitions | `src/control.rs`, `src/control/authority.rs` | authority and actor tests |
+| Control CAS and transitions | `src/control/mod.rs`, `src/control/authority/mod.rs` | authority and actor tests |
 | SQLite command ledger | `src/cell/executor.rs`, `src/cell/schema.rs` | `tests/runtime/lifecycle.rs`, `tests/runtime/migration.rs` |
 | Fixed SQL workers | `src/cell/worker.rs` | `tests/runtime/workers.rs` |
 | Publication and exact-root recovery | `src/publication.rs`, `cellule-ltx` | `tests/runtime/publication.rs`, `cellule-ltx/tests/cell/roots.rs` |

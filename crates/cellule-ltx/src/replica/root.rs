@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::{Limits, LtxError, Result, SegmentInfo};
 
-use super::{MAX_SEGMENT_PAGES, ROOT_BYTES, SEGMENT_PAGE_BYTES};
+use super::{MAX_INLINE_SEGMENTS, MAX_SEGMENT_PAGES, ROOT_BYTES, SEGMENT_PAGE_BYTES};
 
 use crate::hex::encode_hex;
 
@@ -14,10 +15,12 @@ pub(super) struct RootDocument {
     pub database_pages: u32,
     pub directory_digest: [u8; 32],
     pub directory_height: u32,
+    pub directory_inline: Option<Arc<[u8]>>,
     pub incarnation: [u8; 16],
     pub page_size: u32,
     pub schema: u32,
     pub segment_pages: Vec<[u8; 32]>,
+    pub segments: Vec<SegmentDescriptor>,
     pub txid: u64,
 }
 
@@ -30,6 +33,7 @@ pub(super) struct SegmentDescriptor {
     offset: u64,
     length: u64,
     level: u8,
+    packed: bool,
 }
 
 impl SegmentDescriptor {
@@ -44,6 +48,7 @@ impl SegmentDescriptor {
             offset: 0,
             length,
             level: 0,
+            packed: false,
         }
     }
 
@@ -63,6 +68,38 @@ impl SegmentDescriptor {
             offset,
             length,
             level: 0,
+            packed: false,
+        }
+    }
+
+    pub(super) fn packed(
+        info: SegmentInfo,
+        index_digest: [u8; 32],
+        index_length: u64,
+        object_digest: [u8; 32],
+    ) -> Self {
+        let length = info.size_bytes;
+        Self {
+            info,
+            index_digest,
+            index_length,
+            object_digest,
+            offset: super::packed::HEADER_BYTES,
+            length,
+            level: 0,
+            packed: true,
+        }
+    }
+
+    pub(super) fn index_extent(&self) -> ([u8; 32], crate::CellObjectKind, u64) {
+        if self.packed {
+            (
+                self.object_digest,
+                crate::CellObjectKind::Packed,
+                self.offset + self.length,
+            )
+        } else {
+            (self.index_digest, crate::CellObjectKind::Index, 0)
         }
     }
 
@@ -89,7 +126,9 @@ impl SegmentDescriptor {
     }
 
     pub(super) fn object_kind(&self) -> crate::CellObjectKind {
-        if self.object_digest == self.info.blake3 {
+        if self.packed {
+            crate::CellObjectKind::Packed
+        } else if self.object_digest == self.info.blake3 {
             crate::CellObjectKind::Ltx
         } else {
             crate::CellObjectKind::Bundle
@@ -119,6 +158,13 @@ impl SegmentDescriptor {
             || self.length != info.size_bytes
             || self.offset.checked_add(self.length).is_none()
             || (self.object_kind() == crate::CellObjectKind::Ltx && self.offset != 0)
+            || (self.packed
+                && (self.offset != super::packed::HEADER_BYTES
+                    || self
+                        .offset
+                        .checked_add(self.length)
+                        .and_then(|n| n.checked_add(self.index_length))
+                        .is_none_or(|end| end > super::upload::SINGLE_PUT_BYTES)))
             || self
                 .offset
                 .checked_add(self.length)
@@ -149,10 +195,12 @@ struct RootWire {
     database_pages: u32,
     directory_digest: String,
     directory_height: u32,
+    directory_inline: Option<String>,
     incarnation: String,
     page_size: u32,
     schema: u32,
     segment_pages: Vec<String>,
+    segments: Vec<SegmentWire>,
     txid: String,
     version: u32,
 }
@@ -170,20 +218,49 @@ struct SegmentWire {
     min_txid: String,
     object_digest: String,
     offset: String,
+    packed: bool,
     page_size: u32,
     post_checksum: String,
     pre_checksum: String,
     size_bytes: String,
 }
 
+pub(super) const INLINE_DIRECTORY_BYTES: usize = 2 << 10;
+
+fn parse_inline(value: &str) -> Result<Arc<[u8]>> {
+    if value.is_empty()
+        || !value.len().is_multiple_of(2)
+        || value.len() > INLINE_DIRECTORY_BYTES * 2
+    {
+        return Err(LtxError::LTXCorrupted);
+    }
+    value
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| Ok((nibble(pair[0])? << 4) | nibble(pair[1])?))
+        .collect::<Result<Vec<_>>>()
+        .map(Into::into)
+}
+
 pub(super) fn encode_root(root: &RootDocument) -> Result<Vec<u8>> {
+    if let Some(bytes) = &root.directory_inline
+        && (root.directory_height != 0
+            || bytes.is_empty()
+            || bytes.len() > INLINE_DIRECTORY_BYTES
+            || *blake3::hash(bytes).as_bytes() != root.directory_digest)
+    {
+        return Err(LtxError::LTXCorrupted);
+    }
     if root.schema == 0
         || root.txid == 0
         || root.checksum & crate::CHECKSUM_FLAG == 0
         || root.commit_sequence > i64::MAX as u64
         || root.database_pages == 0
-        || root.segment_pages.is_empty()
+        || (root.segment_pages.is_empty() && root.segments.is_empty())
         || root.segment_pages.len() > MAX_SEGMENT_PAGES
+        || root.segments.len() > MAX_INLINE_SEGMENTS
     {
         return Err(LtxError::LTXCorrupted);
     }
@@ -194,6 +271,10 @@ pub(super) fn encode_root(root: &RootDocument) -> Result<Vec<u8>> {
         database_pages: root.database_pages,
         directory_digest: encode_hex(&root.directory_digest),
         directory_height: root.directory_height,
+        directory_inline: root
+            .directory_inline
+            .as_ref()
+            .map(|bytes| encode_hex(bytes)),
         incarnation: encode_hex(&root.incarnation),
         page_size: root.page_size,
         schema: root.schema,
@@ -202,8 +283,9 @@ pub(super) fn encode_root(root: &RootDocument) -> Result<Vec<u8>> {
             .iter()
             .map(|value| encode_hex(value))
             .collect(),
+        segments: root.segments.iter().map(segment_wire).collect(),
         txid: root.txid.to_string(),
-        version: 1,
+        version: 2,
     })?;
     if bytes.len() as u64 > ROOT_BYTES {
         return Err(LtxError::Limit(crate::LimitKind::CellRootBytes));
@@ -226,7 +308,7 @@ pub(super) fn decode_root(bytes: &[u8]) -> Result<RootDocument> {
         return Err(LtxError::Limit(crate::LimitKind::CellRootBytes));
     }
     let wire: RootWire = serde_json::from_slice(bytes)?;
-    if wire.version != 1 {
+    if wire.version != 2 {
         return Err(LtxError::LTXCorrupted);
     }
     let root = RootDocument {
@@ -236,6 +318,10 @@ pub(super) fn decode_root(bytes: &[u8]) -> Result<RootDocument> {
         database_pages: wire.database_pages,
         directory_digest: parse_hex(&wire.directory_digest)?,
         directory_height: wire.directory_height,
+        directory_inline: wire
+            .directory_inline
+            .map(|value| parse_inline(&value))
+            .transpose()?,
         incarnation: parse_hex(&wire.incarnation)?,
         page_size: wire.page_size,
         schema: wire.schema,
@@ -243,6 +329,11 @@ pub(super) fn decode_root(bytes: &[u8]) -> Result<RootDocument> {
             .segment_pages
             .iter()
             .map(|value| parse_hex(value))
+            .collect::<Result<Vec<_>>>()?,
+        segments: wire
+            .segments
+            .into_iter()
+            .map(segment_descriptor)
             .collect::<Result<Vec<_>>>()?,
         txid: decimal(&wire.txid)?,
     };
@@ -253,25 +344,7 @@ pub(super) fn decode_root(bytes: &[u8]) -> Result<RootDocument> {
 }
 
 pub(super) fn encode_segment_page(segments: &[SegmentDescriptor]) -> Result<Vec<u8>> {
-    let wire = segments
-        .iter()
-        .map(|segment| SegmentWire {
-            blake3: encode_hex(&segment.info.blake3),
-            database_pages: segment.info.database_pages,
-            index_digest: encode_hex(&segment.index_digest),
-            index_length: segment.index_length.to_string(),
-            length: segment.length.to_string(),
-            level: segment.level,
-            max_txid: segment.info.max_txid.to_string(),
-            min_txid: segment.info.min_txid.to_string(),
-            object_digest: encode_hex(&segment.object_digest),
-            offset: segment.offset.to_string(),
-            page_size: segment.info.page_size,
-            post_checksum: checksum(segment.info.post_checksum),
-            pre_checksum: checksum(segment.info.pre_checksum),
-            size_bytes: segment.info.size_bytes.to_string(),
-        })
-        .collect::<Vec<_>>();
+    let wire = segments.iter().map(segment_wire).collect::<Vec<_>>();
     let bytes = serde_json::to_vec(&wire)?;
     if bytes.len() as u64 > SEGMENT_PAGE_BYTES {
         return Err(LtxError::Limit(crate::LimitKind::CellSegmentPageBytes));
@@ -286,32 +359,54 @@ pub(super) fn decode_segment_page(bytes: &[u8]) -> Result<Vec<SegmentDescriptor>
     let wire: Vec<SegmentWire> = serde_json::from_slice(bytes)?;
     let segments = wire
         .into_iter()
-        .map(|segment| {
-            let object_digest = parse_hex(&segment.object_digest)?;
-            Ok(SegmentDescriptor {
-                info: SegmentInfo {
-                    min_txid: decimal(&segment.min_txid)?,
-                    max_txid: decimal(&segment.max_txid)?,
-                    page_size: segment.page_size,
-                    database_pages: segment.database_pages,
-                    pre_checksum: parse_checksum(&segment.pre_checksum)?,
-                    post_checksum: parse_checksum(&segment.post_checksum)?,
-                    size_bytes: decimal(&segment.size_bytes)?,
-                    blake3: parse_hex(&segment.blake3)?,
-                },
-                index_digest: parse_hex(&segment.index_digest)?,
-                index_length: decimal(&segment.index_length)?,
-                object_digest,
-                offset: decimal(&segment.offset)?,
-                length: decimal(&segment.length)?,
-                level: segment.level,
-            })
-        })
+        .map(segment_descriptor)
         .collect::<Result<Vec<_>>>()?;
     if encode_segment_page(&segments)? != bytes {
         return Err(LtxError::LTXCorrupted);
     }
     Ok(segments)
+}
+
+fn segment_wire(segment: &SegmentDescriptor) -> SegmentWire {
+    SegmentWire {
+        blake3: encode_hex(&segment.info.blake3),
+        database_pages: segment.info.database_pages,
+        index_digest: encode_hex(&segment.index_digest),
+        index_length: segment.index_length.to_string(),
+        length: segment.length.to_string(),
+        level: segment.level,
+        max_txid: segment.info.max_txid.to_string(),
+        min_txid: segment.info.min_txid.to_string(),
+        object_digest: encode_hex(&segment.object_digest),
+        packed: segment.packed,
+        offset: segment.offset.to_string(),
+        page_size: segment.info.page_size,
+        post_checksum: checksum(segment.info.post_checksum),
+        pre_checksum: checksum(segment.info.pre_checksum),
+        size_bytes: segment.info.size_bytes.to_string(),
+    }
+}
+
+fn segment_descriptor(segment: SegmentWire) -> Result<SegmentDescriptor> {
+    Ok(SegmentDescriptor {
+        info: SegmentInfo {
+            min_txid: decimal(&segment.min_txid)?,
+            max_txid: decimal(&segment.max_txid)?,
+            page_size: segment.page_size,
+            database_pages: segment.database_pages,
+            pre_checksum: parse_checksum(&segment.pre_checksum)?,
+            post_checksum: parse_checksum(&segment.post_checksum)?,
+            size_bytes: decimal(&segment.size_bytes)?,
+            blake3: parse_hex(&segment.blake3)?,
+        },
+        index_digest: parse_hex(&segment.index_digest)?,
+        index_length: decimal(&segment.index_length)?,
+        object_digest: parse_hex(&segment.object_digest)?,
+        offset: decimal(&segment.offset)?,
+        length: decimal(&segment.length)?,
+        level: segment.level,
+        packed: segment.packed,
+    })
 }
 
 fn decimal(value: &str) -> Result<u64> {
@@ -372,10 +467,12 @@ mod tests {
             database_pages: 9,
             directory_digest: [2; 32],
             directory_height: 0,
+            directory_inline: None,
             incarnation: [3; 16],
             page_size: 4096,
             schema: 1,
             segment_pages: vec![[4; 32]],
+            segments: Vec::new(),
             txid: 2,
         }
     }
@@ -450,6 +547,66 @@ mod tests {
             "one maximum descriptor occupies {} bytes",
             one.len()
         );
+    }
+
+    #[test]
+    fn maximum_inline_tail_and_page_list_fit_the_existing_root_bound() {
+        let info = SegmentInfo {
+            min_txid: u64::MAX - 1,
+            max_txid: u64::MAX,
+            page_size: 65536,
+            database_pages: u32::MAX,
+            pre_checksum: u64::MAX,
+            post_checksum: u64::MAX,
+            size_bytes: u64::MAX,
+            blake3: [1; 32],
+        };
+        let descriptor = SegmentDescriptor::bundled(info, [2; 32], u64::MAX, [3; 32], u64::MAX);
+        let mut document = root();
+        document.segment_pages = vec![[4; 32]; MAX_SEGMENT_PAGES];
+        document.segments = vec![descriptor; MAX_INLINE_SEGMENTS];
+        let bytes = encode_root(&document).unwrap();
+        assert!(bytes.len() as u64 <= ROOT_BYTES);
+        let decoded = decode_root(&bytes).unwrap();
+        assert_eq!(decoded.segments.len(), MAX_INLINE_SEGMENTS);
+        assert_eq!(decoded.segment_pages.len(), MAX_SEGMENT_PAGES);
+        document.segments.push(document.segments[0].clone());
+        assert!(encode_root(&document).is_err());
+    }
+
+    #[test]
+    fn inline_descriptors_require_canonical_numbers_and_one_current_schema() {
+        let descriptor = SegmentDescriptor::native(
+            SegmentInfo {
+                min_txid: 1,
+                max_txid: 2,
+                page_size: 4096,
+                database_pages: 9,
+                pre_checksum: 0,
+                post_checksum: crate::CHECKSUM_FLAG | 7,
+                size_bytes: 512,
+                blake3: [1; 32],
+            },
+            [2; 32],
+            60,
+        );
+        let mut document = root();
+        document.segment_pages.clear();
+        document.segments.push(descriptor);
+        let bytes = encode_root(&document).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            decode_root(
+                text.replace("\"min_txid\":\"1\"", "\"min_txid\":\"01\"")
+                    .as_bytes()
+            )
+            .is_err()
+        );
+        let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        wire.as_object_mut().unwrap().remove("segments");
+        assert!(decode_root(&serde_json::to_vec(&wire).unwrap()).is_err());
+        document.segments.clear();
+        assert!(encode_root(&document).is_err());
     }
 
     #[test]

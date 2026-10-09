@@ -343,9 +343,9 @@ async fn covered_queued_prefix_keeps_the_uncovered_suffix_fleet_durable() {
         .into_iter()
         .flat_map(|ticket| {
             submission(&cuts)
-                .load(limits)
+                .load(ticket.leader_session(), ticket.log_epoch(), limits)
                 .unwrap()
-                .encode(ticket, limits)
+                .encode(ticket)
                 .unwrap()
         })
         .enumerate()
@@ -563,7 +563,9 @@ async fn encoding_failure_does_not_consume_a_node_sequence() {
     assert_eq!(traces.len(), 2);
     assert_eq!(traces[0].1.enqueued, Some(false));
     assert_eq!(traces[0].1.first_sequence, None);
-    assert!(traces[0].1.ticket_order.is_some());
+    // Main validates immutable LTX captures before entering ticket order.
+    assert!(traces[0].1.capture_load.is_none());
+    assert!(traces[0].1.ticket_order.is_none());
     assert!(traces[0].1.encoding.is_none());
     assert_eq!(traces[1].1.enqueued, Some(true));
     assert_eq!(traces[1].1.first_sequence, Some(1));

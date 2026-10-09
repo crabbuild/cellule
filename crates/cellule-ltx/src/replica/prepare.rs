@@ -7,6 +7,43 @@
 use super::*;
 
 impl CellReplica {
+    /// Appends captured cuts to a private representation-only compaction.
+    ///
+    /// The successor retains the compaction's original predecessor for one
+    /// authority CAS. Both proposals remain immutable and fully uploaded;
+    /// this method neither publishes the compaction nor grants ownership.
+    pub async fn prepare_after_compaction(
+        &self,
+        compacted: &PreparedRoot,
+        cuts: &CaptureBatch,
+        commit_sequence: u64,
+        schema: u32,
+    ) -> Result<PreparedRoot> {
+        let predecessor = compacted
+            .predecessor
+            .ok_or(LtxError::InvalidState("compaction has no predecessor"))?;
+        let root = compacted.root();
+        if root.cell != self.cell
+            || root.incarnation != self.incarnation
+            || root.cell != predecessor.cell
+            || root.incarnation != predecessor.incarnation
+            || root.position != predecessor.position
+            || root.commit_sequence != predecessor.commit_sequence
+        {
+            return Err(LtxError::InvalidState(
+                "append requires a representation-only compaction",
+            ));
+        }
+        // The private compaction authenticates identical logical state. The
+        // native factory must name the final authority predecessor before
+        // exposing derivation metadata, not rebase it after retention.
+        let mut replica = self.clone();
+        replica.preparation_predecessor = Some(predecessor);
+        replica
+            .prepare(Some(&root), cuts, commit_sequence, schema)
+            .await
+    }
+
     /// Verifies and uploads a new immutable root without changing authority.
     pub async fn prepare(
         &self,
@@ -18,10 +55,20 @@ impl CellReplica {
         let started = self.host.now_monotonic();
         let result = async {
             let mut replica = self.clone();
-            replica.host = self.host.for_dirty().await?;
-            replica
+            let admitted = self.host.for_dirty().await;
+            self.host
+                .observe_ltx_phase(crate::LtxPhase::RootAdmission, started, admitted.is_ok());
+            replica.host = admitted?;
+            let work_started = self.host.now_monotonic();
+            let prepared = replica
                 .prepare_captured(base, cuts, commit_sequence, schema)
-                .await
+                .await;
+            self.host.observe_ltx_phase(
+                crate::LtxPhase::RootPreparationWork,
+                work_started,
+                prepared.is_ok(),
+            );
+            prepared
         }
         .await;
         self.host
@@ -37,23 +84,7 @@ impl CellReplica {
         schema: u32,
     ) -> Result<PreparedRoot> {
         self.validate_metadata(commit_sequence, schema)?;
-        if cuts.segments.is_empty() {
-            return Err(LtxError::InvalidState("empty Cell append"));
-        }
-        let captured_bytes = cuts.segments.iter().try_fold(0_u64, |total, segment| {
-            // A full database image may legitimately exceed the incremental
-            // bound; the per-representation check below rejects an oversized
-            // delta after its index proves the coverage.
-            if segment.info().size_bytes > self.limits.max_file_bytes {
-                return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
-            }
-            total
-                .checked_add(segment.info().size_bytes)
-                .ok_or(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes))
-        })?;
-        if captured_bytes > self.limits.max_plan_bytes {
-            return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
-        }
+        self.admit_capture_batch(cuts)?;
         let load_base = async {
             match base {
                 Some(root) => self.load_graph(root).await.map(Some),
@@ -80,12 +111,12 @@ impl CellReplica {
         );
         self.validate_chain(&descriptors, cuts.position)?;
 
-        // Keep each exact capture handle open through verification and upload.
-        // A path replacement cannot redirect retries, while the inspected LTX
-        // digest still rejects in-place mutation before authority may publish.
+        // Keep each exact capture handle open through verification. Upload
+        // retains either that handle or a verified immutable merged body;
+        // path replacement cannot redirect a proposal or its retries.
         self.prepare_append(
             base,
-            base_graph,
+            base_graph.map(AppendBaseState::from),
             inputs,
             cuts.position,
             commit_sequence,
@@ -93,6 +124,27 @@ impl CellReplica {
             None,
         )
         .await
+    }
+
+    fn admit_capture_batch(&self, cuts: &CaptureBatch) -> Result<()> {
+        if cuts.segments.is_empty() {
+            return Err(LtxError::InvalidState("empty Cell append"));
+        }
+        let captured_bytes = cuts.segments.iter().try_fold(0_u64, |total, segment| {
+            // A full database image may legitimately exceed the incremental
+            // bound; the per-representation check below rejects an oversized
+            // delta after its index proves the coverage.
+            if segment.info().size_bytes > self.limits.max_file_bytes {
+                return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
+            }
+            total
+                .checked_add(segment.info().size_bytes)
+                .ok_or(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes))
+        })?;
+        if captured_bytes > self.limits.max_plan_bytes {
+            return Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes));
+        }
+        Ok(())
     }
 
     async fn prepare_captured_inputs(
@@ -130,7 +182,7 @@ impl CellReplica {
     /// image: its encoded index has to cover every page the commit published.
     /// The capture writer already escalates an oversized delta to that
     /// representation, so a large partial index is a corrupt or foreign cut.
-    fn admit_segment_representation(
+    pub(super) fn admit_segment_representation(
         &self,
         info: &crate::SegmentInfo,
         index_bytes: usize,
@@ -278,7 +330,7 @@ impl CellReplica {
         self.validate_chain(&prospective, target)?;
         self.prepare_append(
             base,
-            base_graph,
+            base_graph.map(AppendBaseState::from),
             inputs,
             target,
             commit_sequence,
@@ -309,12 +361,46 @@ impl CellReplica {
             let graph = replica.load_graph(base).await?;
             let scratch_bytes = compaction_scratch_bytes(&graph, range.clone())?;
             replica.host = replica.host.for_scratch(scratch_bytes).await?;
-            compaction::prepare(&replica, base, graph, range, level, scratch_directory).await
+            compaction::prepare(&replica, base, graph, range, level, scratch_directory, None).await
         }
         .await;
         self.host
             .observe_ltx_phase(crate::LtxPhase::Compaction, started, result.is_ok());
         result
+    }
+
+    /// Waits for the existing dirty-memory reservation before selecting captures.
+    ///
+    /// The returned scoped clone retains admission. Prepare through that clone,
+    /// then drop it to release the reservation; dispatched native jobs retain
+    /// their own clones until completion. Waiting starts no work, grants no
+    /// authority and changes no resource ceiling. Cancellation releases admission.
+    pub async fn admit_root_preparation(&self) -> Result<Self> {
+        Ok(self.clone().with_host(self.host.for_dirty().await?))
+    }
+
+    /// Tries to admit scheduled compaction without waiting for shared capacity.
+    ///
+    /// Returns a scoped clone retaining the existing dirty-memory and recovery
+    /// reservations, or `None` when unavailable or a new cohort is already queued.
+    /// Prepare through the returned clone and retain it through publication;
+    /// dropping its last owner releases admission. This grants no authority and
+    /// changes no resource ceiling. Closed admission preserves its source error.
+    pub fn try_admit_scheduled_compaction(&self) -> Result<Option<Self>> {
+        Ok(self
+            .host
+            .try_for_recovery()?
+            .map(|host| self.clone().with_host(host)))
+    }
+
+    /// Waits for the existing dirty-memory and recovery reservations.
+    ///
+    /// The returned scoped clone retains both reservations through preparation
+    /// and publication. Waiting starts no native work and grants no authority;
+    /// cancellation releases any partially negotiated pair. The host must bound
+    /// waiters and recheck scheduling and authority before dispatching work.
+    pub async fn admit_scheduled_compaction(&self) -> Result<Self> {
+        Ok(self.clone().with_host(self.host.for_recovery().await?))
     }
 
     /// Prepares one bounded level promotion, or an emergency full compaction.
@@ -329,10 +415,46 @@ impl CellReplica {
     ) -> Result<Option<PreparedRoot>> {
         let started = self.host.now_monotonic();
         let result = self
-            .prepare_scheduled_compaction_inner(base, scratch_directory)
+            .prepare_scheduled_compaction_inner(base, scratch_directory, None)
             .await;
         self.host
             .observe_ltx_phase(crate::LtxPhase::Compaction, started, result.is_ok());
+        result
+    }
+
+    /// Compacts a pinned predecessor and appends captures with one final root.
+    ///
+    /// Returns `None` without uploading objects when no scheduled compaction
+    /// puts the final chain strictly below `segment_ceiling`. The caller can
+    /// continue its existing compaction cascade. This ceiling does not change
+    /// storage limits. Every dependency is verified and uploaded before a
+    /// proposal escapes; only the original predecessor is named for authority CAS.
+    pub async fn prepare_scheduled_compaction_append(
+        &self,
+        base: &RootRef,
+        cuts: &CaptureBatch,
+        commit_sequence: u64,
+        schema: u32,
+        segment_ceiling: usize,
+        scratch_directory: &Path,
+    ) -> Result<Option<PreparedRoot>> {
+        self.validate_metadata(commit_sequence, schema)?;
+        self.admit_capture_batch(cuts)?;
+        if segment_ceiling == 0 || segment_ceiling > MAX_SEGMENTS.min(self.limits.max_segments) {
+            return Err(LtxError::InvalidState("invalid compaction append ceiling"));
+        }
+        let started = self.host.now_monotonic();
+        let result = self
+            .prepare_scheduled_compaction_inner(
+                base,
+                scratch_directory,
+                Some((cuts, commit_sequence, schema, segment_ceiling)),
+            )
+            .await;
+        self.host
+            .observe_ltx_phase(crate::LtxPhase::Compaction, started, result.is_ok());
+        self.host
+            .observe_ltx_phase(crate::LtxPhase::RootPreparation, started, result.is_ok());
         result
     }
 
@@ -340,9 +462,38 @@ impl CellReplica {
         &self,
         base: &RootRef,
         scratch_directory: &Path,
+        append: Option<(&CaptureBatch, u64, u32, usize)>,
+    ) -> Result<Option<PreparedRoot>> {
+        let composed = append.is_some();
+        let started = self.host.now_monotonic();
+        let mut replica = self.clone();
+        let admitted = self.host.for_recovery().await;
+        if composed {
+            self.host
+                .observe_ltx_phase(crate::LtxPhase::RootAdmission, started, admitted.is_ok());
+        }
+        replica.host = admitted?;
+        let work_started = self.host.now_monotonic();
+        let result = replica
+            .prepare_scheduled_compaction_admitted(base, scratch_directory, append)
+            .await;
+        if composed {
+            self.host.observe_ltx_phase(
+                crate::LtxPhase::RootPreparationWork,
+                work_started,
+                result.is_ok(),
+            );
+        }
+        result
+    }
+
+    async fn prepare_scheduled_compaction_admitted(
+        &self,
+        base: &RootRef,
+        scratch_directory: &Path,
+        append: Option<(&CaptureBatch, u64, u32, usize)>,
     ) -> Result<Option<PreparedRoot>> {
         let mut replica = self.clone();
-        replica.host = self.host.for_recovery().await?;
         let graph = replica.load_graph(base).await?;
         let segment_limit = MAX_SEGMENTS.min(replica.limits.max_segments);
         let stored_bytes = graph
@@ -377,24 +528,49 @@ impl CellReplica {
         let Some((range, level)) = selected else {
             return Ok(None);
         };
+        let append = match append {
+            Some((cuts, commit_sequence, schema, ceiling)) => {
+                if graph.descriptors.len() - range.len() + 1 + cuts.segments.len() >= ceiling {
+                    return Ok(None);
+                }
+                if commit_sequence <= graph.document.commit_sequence {
+                    return Err(LtxError::InvalidState("commit sequence did not advance"));
+                }
+                Some(CompactionAppend {
+                    inputs: replica.prepare_captured_inputs(&cuts.segments).await?,
+                    position: cuts.position,
+                    commit_sequence,
+                    schema,
+                })
+            }
+            None => None,
+        };
         let scratch_bytes = compaction_scratch_bytes(&graph, range.clone())?;
         replica.host = replica.host.for_scratch(scratch_bytes).await?;
-        compaction::prepare(&replica, base, graph, range, level, scratch_directory)
-            .await
-            .map(Some)
+        compaction::prepare(
+            &replica,
+            base,
+            graph,
+            range,
+            level,
+            scratch_directory,
+            append,
+        )
+        .await
+        .map(Some)
     }
 
-    async fn prepare_append(
+    pub(super) async fn prepare_append(
         &self,
         base: Option<&RootRef>,
-        base_graph: Option<LoadedGraph>,
+        base_graph: Option<AppendBaseState>,
         inputs: Vec<AppendInput>,
         target: Position,
         commit_sequence: u64,
         schema: u32,
         bundle: Option<&crate::bundle::Bundle>,
     ) -> Result<PreparedRoot> {
-        let prepared = inputs
+        let mut prepared = inputs
             .into_iter()
             .map(|input| {
                 let digest = *blake3::hash(&input.index).as_bytes();
@@ -423,7 +599,27 @@ impl CellReplica {
             .map(|graph| graph.descriptors.clone())
             .unwrap_or_default();
         descriptors.extend(prepared.iter().map(|segment| segment.descriptor.clone()));
+        // Admit every original cut before reducing its representation. A merge
+        // cannot rescue a gap, invalid endpoint, or over-budget original chain.
         self.validate_chain(&descriptors, target)?;
+        if bundle.is_none() {
+            prepared = coalesce::run(self, prepared).await?;
+            prepared = stream::iter(
+                prepared
+                    .into_iter()
+                    .map(|segment| packed::freeze(self, segment)),
+            )
+            .buffered(SEGMENT_TRANSFER_CONCURRENCY)
+            .try_collect()
+            .await?;
+            descriptors.truncate(
+                base_graph
+                    .as_ref()
+                    .map_or(0, |graph| graph.descriptors.len()),
+            );
+            descriptors.extend(prepared.iter().map(|segment| segment.descriptor.clone()));
+            self.validate_chain(&descriptors, target)?;
+        }
         let directory_inputs = prepared
             .iter()
             .map(|segment| DirectoryInput {
@@ -465,7 +661,7 @@ impl CellReplica {
     async fn finish_preparation(
         &self,
         base: Option<&RootRef>,
-        base_graph: Option<LoadedGraph>,
+        base_graph: Option<AppendBaseState>,
         descriptors: Vec<SegmentDescriptor>,
         directory_inputs: &[DirectoryInput],
         target: Position,
@@ -481,22 +677,25 @@ impl CellReplica {
         let extents = object_extents(&descriptors)?;
         let directory = if let Some(graph) = &base_graph {
             let (changes, retain_through) =
-                directory_changes(directory_inputs, graph.document.database_pages)?;
+                directory_changes(directory_inputs, graph.database_pages)?;
             let base_extents = object_extents(&graph.descriptors)?;
             DirectoryTree::update(
                 directory::Verification {
                     layout: &self.layout,
                     cell: &self.cell,
                     incarnation: &self.incarnation,
-                    page_size: graph.document.page_size,
-                    database_pages: graph.document.database_pages,
+                    page_size: graph.page_size,
+                    database_pages: graph.database_pages,
+                    inline_root: graph.directory_inline.as_deref(),
                     extents: &base_extents,
                     host: &self.host,
                     origin: crate::LtxReadOrigin::Cold,
                 },
-                graph.document.directory_digest,
-                graph.document.directory_height,
-                graph.aggregate,
+                directory::DirectoryRoot {
+                    digest: graph.directory_digest,
+                    height: graph.directory_height,
+                    aggregate: graph.aggregate,
+                },
                 changes,
                 retain_through,
                 directory::Verification {
@@ -505,11 +704,13 @@ impl CellReplica {
                     incarnation: &self.incarnation,
                     page_size,
                     database_pages,
+                    inline_root: None,
                     extents: &extents,
                     host: &self.host,
                     origin: crate::LtxReadOrigin::Cold,
                 },
                 target.checksum,
+                graph.private_directory.as_ref(),
             )
             .await?
         } else {
@@ -526,16 +727,12 @@ impl CellReplica {
             }
             directory
         };
-        let directory_uploads = self.put_objects(
-            CellObjectKind::Directory,
-            directory
-                .objects()
-                .iter()
-                .map(|node| (node.digest, node.bytes.clone()))
-                .collect(),
-        );
-        let root_uploads = self.finish_root(
+        self.finish_root(
             base,
+            base_graph
+                .as_ref()
+                .map(|graph| graph.inherited_segment_pages.as_slice())
+                .unwrap_or_default(),
             descriptors,
             target,
             commit_sequence,
@@ -543,17 +740,15 @@ impl CellReplica {
             page_size,
             database_pages,
             directory,
-        );
-        // Both object sets are immutable; no proposal escapes unless every
-        // upload succeeds, and a failed sibling leaves only unreachable data.
-        let (_, prepared) = futures_util::future::try_join(directory_uploads, root_uploads).await?;
-        Ok(prepared)
+        )
+        .await
     }
 
     #[expect(clippy::too_many_arguments)]
     pub(super) async fn finish_root(
         &self,
         base: Option<&RootRef>,
+        inherited_segment_pages: &[[u8; 32]],
         descriptors: Vec<SegmentDescriptor>,
         target: Position,
         commit_sequence: u64,
@@ -568,34 +763,68 @@ impl CellReplica {
 
         let mut segment_pages = Vec::new();
         let mut root_objects = Vec::new();
-        for page in descriptors.chunks(SEGMENTS_PER_PAGE) {
+        // Keep full page boundaries stable for reuse. A small final page lives
+        // in the authenticated root; larger tails retain the bounded page path.
+        let tail = descriptors.len() % SEGMENTS_PER_PAGE;
+        let inline_count = if tail <= MAX_INLINE_SEGMENTS { tail } else { 0 };
+        let external_count = descriptors.len() - inline_count;
+        for page in descriptors[..external_count].chunks(SEGMENTS_PER_PAGE) {
             let bytes = encode_segment_page(page)?;
             let digest = *blake3::hash(&bytes).as_bytes();
-            root_objects.push((digest, bytes));
+            // load_graph authenticated these exact predecessor pages and
+            // rechecked cached metadata at origin. Reuse their immutable names;
+            // a duplicate create would otherwise trigger a conflict and GET.
+            if !inherited_segment_pages.contains(&digest) {
+                root_objects.push((digest, bytes));
+            }
             segment_pages.push(digest);
         }
         if segment_pages.len() > MAX_SEGMENT_PAGES {
             return Err(LtxError::Limit(crate::LimitKind::CellRootSegmentPages));
         }
-        let document = RootDocument {
+        let mut document = RootDocument {
             cell: self.cell,
             checksum: target.checksum,
             commit_sequence,
             database_pages,
             directory_digest: directory.root_digest(),
             directory_height: directory.height(),
+            directory_inline: None,
             incarnation: self.incarnation,
             page_size,
             schema,
             segment_pages,
+            segments: descriptors[external_count..].to_vec(),
             txid: target.txid,
         };
+        // Inline only one small leaf authenticated by this root. Large trees
+        // keep streamed directory objects and never grow an unbounded root.
+        if directory.height() == 0
+            && let Some(leaf) = directory
+                .objects()
+                .iter()
+                .find(|node| node.digest == directory.root_digest())
+            && leaf.bytes.len() <= root::INLINE_DIRECTORY_BYTES
+        {
+            document.directory_inline = Some(leaf.bytes.clone().into());
+            if matches!(
+                encode_root(&document),
+                Err(LtxError::Limit(crate::LimitKind::CellRootBytes))
+            ) {
+                document.directory_inline = None;
+            }
+        }
+        let directory_objects = directory
+            .objects()
+            .iter()
+            .filter(|node| {
+                document.directory_inline.is_none() || node.digest != document.directory_digest
+            })
+            .map(|node| (node.digest, node.bytes.clone()))
+            .collect();
         let bytes = encode_root(&document)?;
         let digest = *blake3::hash(&bytes).as_bytes();
         root_objects.push((digest, bytes));
-        // The document and its immutable segment pages can be uploaded in
-        // parallel. The root digest remains private until all uploads finish.
-        self.put_objects(CellObjectKind::Root, root_objects).await?;
         let root = RootRef {
             cell: self.cell,
             incarnation: self.incarnation,
@@ -609,14 +838,37 @@ impl CellReplica {
             .without_recovery()
             .without_dirty()
             .without_scratch();
+        // Check the full native graph before exposing even its derivation. The
+        // verified view carries no preparation callback beyond this owned call.
+        let mut view_replica = self.clone().with_host(host);
+        view_replica.root_metadata = None;
+        view_replica.preparation_predecessor = None;
+        let verified = VerifiedRoot::from_graph(view_replica, root, &document, descriptors)?;
+        let predecessor = self.preparation_predecessor.or_else(|| base.copied());
+        let preparation = RootPreparation { root, predecessor };
+        let metadata = async {
+            if let Some(metadata) = &self.root_metadata {
+                // Metadata shares native origin admission. It owns no second
+                // queue and releases this permit on completion or cancellation.
+                let _permit = self.host.io_permit().await?;
+                metadata
+                    .retain(preparation)
+                    .await
+                    .map_err(|source| LtxError::RootPreparation { source })?;
+            }
+            Ok::<_, LtxError>(())
+        };
+        // Independent immutable objects and derivation metadata can overlap.
+        // Neither the complete proposal nor authority rights escape on failure.
+        futures_util::future::try_join3(
+            self.put_objects(CellObjectKind::Root, root_objects),
+            self.put_objects(CellObjectKind::Directory, directory_objects),
+            metadata,
+        )
+        .await?;
         Ok(PreparedRoot {
-            predecessor: base.copied(),
-            verified: VerifiedRoot::from_graph(
-                self.clone().with_host(host),
-                root,
-                &document,
-                descriptors,
-            )?,
+            predecessor,
+            verified,
         })
     }
 

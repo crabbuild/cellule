@@ -212,6 +212,40 @@ async fn live_listing_is_sorted_bounded_and_ignores_expired_sessions() {
 }
 
 #[tokio::test]
+async fn member_liveness_rechecks_expiry_in_a_cached_membership_snapshot() {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let directory = directory();
+    let first = SessionId::from_bytes([1; 16]);
+    let second = SessionId::from_bytes([2; 16]);
+    for session in [first, second] {
+        directory
+            .create(advertisement_for(session, &key, 1, NOW_MS), NOW_MS)
+            .await
+            .unwrap();
+    }
+
+    let members = [node(first), node(second)];
+    assert!(
+        directory
+            .members_are_live(&members, NOW_MS + 1, 2)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !directory
+            .members_are_live(&members, NOW_MS + 10_000, 2)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !directory
+            .members_are_live(&[node(first), NodeId::from_bytes([3; 16])], NOW_MS + 1, 2)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn maintenance_inventory_retains_expired_session_until_withdrawal() {
     let key = SigningKey::from_bytes(&[7; 32]);
     let directory = directory();
@@ -269,6 +303,8 @@ async fn expired_session_claim_is_atomic_idempotent_and_blocks_refresh() {
         .claim_expired(session, claimant, NOW_MS + 10_000)
         .await
         .unwrap();
+    assert!(directory.is_retired(session).await.unwrap());
+    assert!(!directory.is_withdrawn(session).await.unwrap());
     assert_eq!(fenced.session(), session);
     assert_eq!(
         directory

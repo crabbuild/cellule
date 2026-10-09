@@ -211,3 +211,98 @@ async fn refresh_accepts_new_signed_capacity_for_same_boot_session() {
     assert_eq!(refreshed.advertisement().capacity(), next_capacity);
     assert!(refreshed.advertisement().verify_signature().is_ok());
 }
+
+#[test]
+fn canonical_advertisement_decode_verifies_each_immutable_signature_set_once() {
+    for original in canonical_advertisements() {
+        let bytes = original.encode().unwrap();
+        let before = signature_passes();
+        let decoded = NodeAdvertisement::decode_canonical(&bytes).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(signature_passes() - before, 1);
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+}
+
+pub(super) fn canonical_advertisements() -> [NodeAdvertisement; 3] {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let legacy = advertisement(&key, 1, NOW_MS);
+    let placement = NodePlacementCapacity {
+        memory_capacity_bytes: 2_000,
+        disk_capacity_bytes: 4_000,
+        active_cells: 1,
+        max_active_cells: 8,
+        running_jobs: 0,
+        job_capacity: 3,
+        publication_backlog: 0,
+        hydration_backlog: 0,
+        primitive_backlog: 0,
+    };
+    let bridge = legacy
+        .clone()
+        .with_placement_capacity(placement, &key)
+        .unwrap();
+    let operational = legacy
+        .clone()
+        .with_operational_placement(
+            placement,
+            NodeOperationalSample {
+                mode: NodeMode::Draining,
+                pressure: NodePressure::Critical,
+                sequence: 1,
+                observed_at_ms: NOW_MS,
+            },
+            &key,
+        )
+        .unwrap();
+    [legacy, bridge, operational]
+}
+
+#[test]
+fn canonical_advertisement_decode_keeps_both_signature_gates_and_original_errors() {
+    for original in canonical_advertisements() {
+        let bytes = original.encode().unwrap();
+        let mut base: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        base["identity"]["signature"] = serde_json::Value::String("00".repeat(64));
+        let before = signature_passes();
+        assert!(matches!(
+            NodeAdvertisement::decode_canonical(&serde_json::to_vec(&base).unwrap()),
+            Err(Error::PeerSignature(_)),
+        ));
+        assert_eq!(signature_passes() - before, 1);
+        if original.has_signed_placement() {
+            let mut placement: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let signature = placement["placement_signature"].as_str().unwrap();
+            let mut corrupt = signature.as_bytes().to_vec();
+            corrupt[0] = if corrupt[0] == b'0' { b'1' } else { b'0' };
+            placement["placement_signature"] =
+                serde_json::Value::String(String::from_utf8(corrupt).unwrap());
+            let before = signature_passes();
+            assert!(matches!(
+                NodeAdvertisement::decode_canonical(&serde_json::to_vec(&placement).unwrap()),
+                Err(Error::PeerSignature(_)),
+            ));
+            assert_eq!(signature_passes() - before, 1);
+        }
+    }
+}
+
+#[test]
+fn canonical_advertisement_decode_keeps_exact_byte_and_size_gates() {
+    for original in canonical_advertisements() {
+        let mut bytes = original.encode().unwrap();
+        bytes.push(b' ');
+        let before = signature_passes();
+        assert!(matches!(
+            NodeAdvertisement::decode_canonical(&bytes),
+            Err(Error::Node("advertisement JSON is not canonical")),
+        ));
+        assert_eq!(signature_passes() - before, 1);
+    }
+    let before = signature_passes();
+    assert!(matches!(
+        NodeAdvertisement::decode_canonical(&vec![b' '; MAX_NODE_BYTES as usize + 1]),
+        Err(Error::Node("advertisement exceeds 64 KiB")),
+    ));
+    assert_eq!(signature_passes(), before);
+}

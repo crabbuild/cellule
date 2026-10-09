@@ -155,6 +155,7 @@ and destination transactions. The
 [primitive guide](../crates/cellule-runtime/docs/primitives.md) explains the
 retry and ownership rules.
 
+<a id="exercise-all-primitives-and-recovery"></a>
 ## 6. Exercise all primitives and recovery
 
 ```sh

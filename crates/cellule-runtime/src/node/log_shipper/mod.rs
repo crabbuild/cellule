@@ -26,6 +26,7 @@ pub struct NodeLogSubmission {
     incarnation: IncarnationId,
     cell_epoch: u64,
     commit_sequence: u64,
+    first_commit_sequence: u64,
     segments: Vec<cellule_ltx::LocalSegment>,
     encoded_bytes: u64,
 }
@@ -40,16 +41,45 @@ impl NodeLogSubmission {
         commit_sequence: u64,
         cuts: &cellule_ltx::CaptureBatch,
     ) -> Result<Self> {
+        Self::new_range(
+            application,
+            cell,
+            incarnation,
+            cell_epoch,
+            commit_sequence,
+            commit_sequence,
+            cuts,
+        )
+    }
+
+    /// Binds one physical capture to every logical command committed together.
+    ///
+    /// The range is inclusive. Followers must support node-log protocol two
+    /// before a non-singleton range is enrolled for shipping.
+    pub fn new_range(
+        application: ApplicationId,
+        cell: CellId,
+        incarnation: IncarnationId,
+        cell_epoch: u64,
+        first_commit_sequence: u64,
+        commit_sequence: u64,
+        cuts: &cellule_ltx::CaptureBatch,
+    ) -> Result<Self> {
+        let header_bytes =
+            NODE_FRAME_HEADER_BYTES + u64::from(first_commit_sequence != commit_sequence) * 8;
         let encoded_bytes = cuts.segments.iter().try_fold(0_u64, |total, segment| {
             total
                 .checked_add(segment.info().size_bytes)
-                .and_then(|bytes| bytes.checked_add(NODE_FRAME_HEADER_BYTES))
+                .and_then(|bytes| bytes.checked_add(header_bytes))
         });
         if application.as_bytes().iter().all(|byte| *byte == 0)
             || cell.as_bytes().iter().all(|byte| *byte == 0)
             || incarnation.as_bytes().iter().all(|byte| *byte == 0)
             || cell_epoch == 0
             || commit_sequence == 0
+            || first_commit_sequence == 0
+            || first_commit_sequence > commit_sequence
+            || commit_sequence > i64::MAX as u64
             || cuts.segments.is_empty()
             || encoded_bytes.is_none()
         {
@@ -61,6 +91,7 @@ impl NodeLogSubmission {
             incarnation,
             cell_epoch,
             commit_sequence,
+            first_commit_sequence,
             segments: cuts.segments.clone(),
             encoded_bytes: encoded_bytes.ok_or(Error::Node("node-log byte count overflow"))?,
         })
@@ -70,8 +101,13 @@ impl NodeLogSubmission {
         u64::try_from(self.segments.len()).map_err(|_| Error::Node("node-log frame count overflow"))
     }
 
-    fn load(self, limits: cellule_ltx::Limits) -> Result<LoadedNodeLogSubmission> {
-        let segments = self
+    fn load(
+        self,
+        leader: crate::SessionId,
+        log_epoch: u64,
+        limits: cellule_ltx::Limits,
+    ) -> Result<LoadedNodeLogSubmission> {
+        let frames = self
             .segments
             .into_iter()
             .map(|segment| {
@@ -80,58 +116,51 @@ impl NodeLogSubmission {
                     segment.info().size_bytes,
                     limits.max_capture_bytes,
                 )?);
-                Ok((segment.info().clone(), body))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(LoadedNodeLogSubmission {
-            application: self.application,
-            cell: self.cell,
-            incarnation: self.incarnation,
-            cell_epoch: self.cell_epoch,
-            commit_sequence: self.commit_sequence,
-            segments,
-        })
-    }
-}
-
-struct LoadedNodeLogSubmission {
-    application: ApplicationId,
-    cell: CellId,
-    incarnation: IncarnationId,
-    cell_epoch: u64,
-    commit_sequence: u64,
-    segments: Vec<(cellule_ltx::SegmentInfo, Bytes)>,
-}
-
-impl LoadedNodeLogSubmission {
-    fn encode(self, ticket: CommitTicket, limits: cellule_ltx::Limits) -> Result<Vec<Bytes>> {
-        self.segments
-            .into_iter()
-            .enumerate()
-            .map(|(offset, (segment, body))| {
-                let offset = u64::try_from(offset)
-                    .map_err(|_| Error::Node("node-log frame offset overflow"))?;
-                let node_sequence = ticket
-                    .first_sequence()
-                    .checked_add(offset)
-                    .ok_or(Error::Node("node-log sequence overflow"))?;
-                cellule_ltx::encode_node_frame(
+                cellule_ltx::encode_node_frame_range(
                     cellule_ltx::NodeFrameScope {
-                        leader_session: *ticket.leader_session().as_bytes(),
-                        log_epoch: ticket.log_epoch(),
-                        node_sequence,
+                        leader_session: *leader.as_bytes(),
+                        log_epoch,
+                        // The ordered lane assigns the final sequence only
+                        // after all fallible file reads and verification finish.
+                        node_sequence: 1,
                         application: *self.application.as_bytes(),
                         cell: *self.cell.as_bytes(),
                         incarnation: *self.incarnation.as_bytes(),
                         cell_epoch: self.cell_epoch,
                         commit_sequence: self.commit_sequence,
                     },
-                    segment,
+                    self.first_commit_sequence,
+                    segment.info().clone(),
                     body,
                     limits,
                 )
-                .map(|frame| frame.encoded().clone())
                 .map_err(Error::from)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(LoadedNodeLogSubmission { frames })
+    }
+}
+
+struct LoadedNodeLogSubmission {
+    frames: Vec<cellule_ltx::VerifiedNodeFrame>,
+}
+
+impl LoadedNodeLogSubmission {
+    fn encode(self, ticket: CommitTicket) -> Result<Vec<Bytes>> {
+        self.frames
+            .into_iter()
+            .enumerate()
+            .map(|(offset, frame)| {
+                let offset = u64::try_from(offset)
+                    .map_err(|_| Error::Node("node-log frame offset overflow"))?;
+                let node_sequence = ticket
+                    .first_sequence()
+                    .checked_add(offset)
+                    .ok_or(Error::Node("node-log sequence overflow"))?;
+                frame
+                    .with_node_sequence(node_sequence)
+                    .map(|frame| frame.encoded().clone())
+                    .map_err(Error::from)
             })
             .collect()
     }
@@ -205,14 +234,7 @@ impl NodeLogShipper {
         interval: Duration,
     ) -> Result<Self> {
         let (leader, log_epoch, members) = gate.shipping_scope()?;
-        let batch_bytes = limits
-            .max_capture_bytes
-            .checked_add((MAX_BATCH_FRAMES as u64) * NODE_FRAME_HEADER_BYTES)
-            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
-        let permits = usize::try_from(batch_bytes)
-            .ok()
-            .filter(|bytes| *bytes <= Semaphore::MAX_PERMITS && *bytes <= u32::MAX as usize)
-            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        let (batch_bytes, permits) = Self::validate_limits(limits)?;
         let runtime = tokio::runtime::Handle::try_current().map_err(Error::RuntimeStart)?;
         let (sender, receiver) = mpsc::channel(MAX_QUEUED_SUBMISSIONS);
         let bytes = Arc::new(Semaphore::new(permits));
@@ -241,6 +263,20 @@ impl NodeLogShipper {
         })
     }
 
+    pub(crate) fn validate_limits(limits: cellule_ltx::Limits) -> Result<(u64, usize)> {
+        let batch_bytes = limits
+            .max_capture_bytes
+            .checked_add(
+                (MAX_BATCH_FRAMES as u64) * cellule_ltx::MAX_NODE_FRAME_HEADER_BYTES as u64,
+            )
+            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        let permits = usize::try_from(batch_bytes)
+            .ok()
+            .filter(|bytes| *bytes <= Semaphore::MAX_PERMITS && *bytes <= u32::MAX as usize)
+            .ok_or(Error::Capacity("node-log outstanding bytes"))?;
+        Ok((batch_bytes, permits))
+    }
+
     /// Assigns a consecutive ticket and retains the encoded frames for shipping.
     ///
     /// Queue, byte admission, disk reads, and canonical encoding happen before
@@ -258,7 +294,11 @@ impl NodeLogShipper {
         trace: &mut SubmissionTrace<'_>,
     ) -> Result<CommitTicket> {
         let frame_count = submission.frame_count()?;
-        if frame_count > crate::node::log::MAX_TICKET_FRAMES
+        if submission
+            .segments
+            .iter()
+            .any(|segment| segment.info().size_bytes > self.limits.max_capture_bytes)
+            || frame_count > crate::node::log::MAX_TICKET_FRAMES
             || submission.encoded_bytes > self.max_outstanding_bytes
         {
             return Err(Error::Capacity("node-log submission"));
@@ -287,21 +327,21 @@ impl NodeLogShipper {
         trace.complete();
         let limits = self.limits;
         trace.begin(SubmissionStage::Load);
-        let loaded = tokio::task::spawn_blocking(move || submission.load(limits))
-            .await
-            .map_err(Error::FollowerWorkerJoin)??;
+        let (leader, log_epoch, _) = self.gate.shipping_scope()?;
+        let loaded =
+            tokio::task::spawn_blocking(move || submission.load(leader, log_epoch, limits))
+                .await
+                .map_err(Error::FollowerWorkerJoin)??;
         trace.complete();
         trace.begin(SubmissionStage::Order);
+        // Expensive LTX validation is parallel and bounded by outstanding-byte
+        // admission. This lane only patches exclusively owned envelopes and
+        // atomically commits their consecutive ticket before enqueueing.
         let _ordered = self.order.lock().await;
         trace.complete();
         let ticket = self.gate.preview(frame_count)?;
         trace.begin(SubmissionStage::Encode);
-        let encoded = match tokio::task::spawn_blocking(move || loaded.encode(ticket, limits)).await
-        {
-            Ok(Ok(encoded)) => encoded,
-            Ok(Err(error)) => return Err(error),
-            Err(error) => return Err(Error::FollowerWorkerJoin(error)),
-        };
+        let encoded = loaded.encode(ticket)?;
         trace.complete();
         self.gate.commit(ticket)?;
         let reservation = Arc::new(OutstandingBytes {

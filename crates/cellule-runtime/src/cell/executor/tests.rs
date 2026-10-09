@@ -93,7 +93,9 @@ fn full_pending_publication_budget_refuses_new_commands() {
                         "UPDATE sys_meta SET logical_time_ms = logical_time_ms + 1",
                         [],
                     )?;
-                    Ok(HandlerOutcome::Success(vec![sequence as u8]))
+                    let mut result = Vec::with_capacity(4_096);
+                    result.push(sequence as u8);
+                    Ok(HandlerOutcome::Success(result))
                 },
             )
             .unwrap();
@@ -101,6 +103,13 @@ fn full_pending_publication_budget_refuses_new_commands() {
             matches!(execution, CommandExecution::Pending),
             "sequence {sequence}"
         );
+        match &executor.latest_pending().unwrap().outcome {
+            StoredOutcome::Success { result, .. } => {
+                assert_eq!(result.as_slice(), &[sequence as u8]);
+                assert_eq!(result.capacity(), result.len());
+            }
+            StoredOutcome::Rejected { .. } => panic!("expected success"),
+        }
         executor.confirm_durable(sequence).unwrap();
     }
 
@@ -478,4 +487,66 @@ fn mixed_owner_reads_preserve_warm_kv_write_statements() {
         before,
         "owner read must preserve the writer cache"
     );
+}
+
+#[test]
+fn grouped_schema_changes_cache_only_the_committed_member_schemas() {
+    let (_directory, mut executor) = schema_cache_executor();
+    let handlers: Vec<crate::cell::worker::Handler> = vec![
+        Box::new(|transaction| {
+            crate::primitives::kv::install_kv_schema(transaction)?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        }),
+        Box::new(|transaction| {
+            crate::primitives::workflow::install_workflow_schema(transaction)?;
+            Err(Error::Command("discard this member's DDL"))
+        }),
+        Box::new(|transaction| {
+            crate::primitives::queue::install_queue_schema(transaction)?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        }),
+    ];
+    let commands = handlers
+        .into_iter()
+        .enumerate()
+        .map(|(index, handler)| NativeCommand {
+            identity: schema_cache_identity(index as u8 + 1),
+            operation_digest: Digest::from_bytes([index as u8 + 1; 32]),
+            now_ms: 20,
+            max_result_bytes: 32,
+            handler,
+        })
+        .collect();
+    let group = executor
+        .execute_group(
+            commands,
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
+        )
+        .unwrap();
+    assert_eq!(group.outcomes[0].as_ref().unwrap().commit_sequence(), 1);
+    assert!(matches!(
+        group.outcomes[1],
+        Err(Error::Command("discard this member's DDL"))
+    ));
+    assert_eq!(group.outcomes[2].as_ref().unwrap().commit_sequence(), 2);
+    let observation = executor
+        .db
+        .query_with(|connection| executor.schema_cache.observe(connection))
+        .unwrap();
+    assert!(
+        observation
+            .capabilities
+            .contains(crate::primitives::kv::KV_TABLE)
+    );
+    assert!(
+        observation
+            .capabilities
+            .contains(crate::primitives::queue::QUEUE_TABLE)
+    );
+    assert!(
+        !observation
+            .capabilities
+            .contains(crate::primitives::workflow::WORKFLOW_TABLE)
+    );
+    executor.confirm_durable(2).unwrap();
 }

@@ -11,10 +11,12 @@ use super::*;
 pub struct CommandContext<'borrow, 'connection> {
     pub(super) transaction: &'borrow Transaction<'connection>,
     pub(super) target: CellTarget,
+    pub(super) owner_fence: OwnerFence,
     pub(super) effect_targets: &'static [NamespaceId],
     pub(super) sequence: u64,
     pub(super) now_ms: i64,
     pub(super) issued_at_ms: i64,
+    pub(super) mutation: Option<(MutationIdentity, Digest)>,
     pub(super) input_limit: u32,
     pub(super) output_limit: u32,
     pub(super) effects: Option<EffectBatch>,
@@ -31,6 +33,41 @@ impl CommandContext<'_, '_> {
     #[must_use]
     pub const fn target(&self) -> &CellTarget {
         &self.target
+    }
+
+    /// Returns the incarnation/epoch stamped on the admitted activation.
+    ///
+    /// Compare it with application operation tokens before staging or publishing.
+    /// Client inputs cannot select this value. A recorded result is replayed
+    /// without running the handler again; replay does not substitute a new fence.
+    #[must_use]
+    pub const fn owner_fence(&self) -> OwnerFence {
+        self.owner_fence
+    }
+
+    /// Returns the original SDK mutation admitted by the runtime, when present.
+    ///
+    /// Local and authenticated peer commands expose the same evidence. It is
+    /// absent for direct registry dispatch and effect inbox delivery, which have
+    /// no SDK mutation identity. Client input cannot replace this value. A
+    /// recorded result is replayed without running the handler again.
+    ///
+    /// Applications can bind a durable recovery record to this evidence and
+    /// `sequence()` in the command's SQL transaction. Neither value proves
+    /// durable publication until the runtime returns its committed receipt.
+    #[must_use]
+    pub fn mutation_evidence(&self) -> Option<PendingMutation> {
+        // Copy only the fixed-size stamp at dispatch. Allocate the target's
+        // partition only for handlers that request owned recovery evidence.
+        self.mutation.map(|(identity, digest)| {
+            PendingMutation::admitted(
+                self.target.clone(),
+                self.owner_fence.incarnation,
+                identity,
+                digest,
+                self.output_limit as usize,
+            )
+        })
     }
 
     /// Returns the actor-ordered sequence the command was admitted at.
@@ -325,6 +362,8 @@ pub struct CommandInvocation<'a> {
     pub schema: u32,
     /// Validated target the command must own.
     pub target: CellTarget,
+    /// Fence supplied by the runtime-validated admission, never client input.
+    pub owner_fence: OwnerFence,
     /// Actor-ordered sequence of the command.
     pub sequence: u64,
     /// Logical runtime time for the command.

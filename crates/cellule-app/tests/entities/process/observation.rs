@@ -17,6 +17,39 @@ pub(super) struct StorageCounters {
     bytes_read: AtomicU64,
     bytes_written: AtomicU64,
     samples: Trace<(i64, StorageObservation)>,
+    snapshot_lock: std::sync::Mutex<()>,
+}
+
+struct StorageSnapshot {
+    outcomes: [[u64; 9]; 11],
+    samples: Vec<(i64, StorageObservation)>,
+    trace_counts: (u64, u64, usize),
+}
+
+impl StorageCounters {
+    #[cfg(test)]
+    fn snapshot(&self) -> StorageSnapshot {
+        self.capture(false)
+    }
+
+    fn capture(&self, drain: bool) -> StorageSnapshot {
+        // Counter and trace boundaries stay atomic while peers finish during drain.
+        let _snapshot = self.snapshot_lock.lock().unwrap();
+        let outcomes = std::array::from_fn(|operation| {
+            std::array::from_fn(|outcome| self.outcomes[operation][outcome].load(Ordering::Relaxed))
+        });
+        let samples = if drain {
+            self.samples.drain()
+        } else {
+            self.samples.snapshot()
+        };
+        let trace_counts = self.samples.counts();
+        StorageSnapshot {
+            outcomes,
+            samples,
+            trace_counts,
+        }
+    }
 }
 
 impl StorageObserver for StorageCounters {
@@ -25,6 +58,7 @@ impl StorageObserver for StorageCounters {
     }
 
     fn finished(&self, observation: StorageObservation) {
+        let _snapshot = self.snapshot_lock.lock().unwrap();
         self.outcomes[observation.operation.index()][observation.outcome.index()]
             .fetch_add(1, Ordering::Relaxed);
         self.bytes_read
@@ -198,11 +232,11 @@ impl NodeObservations {
     }
 
     pub(super) fn finish(&mut self, storage: &StorageCounters, durability: &DurabilityRecorder) {
+        let snapshot = storage.capture(true);
         writeln!(self.objects, "operation\toutcome\tcount").unwrap();
         for operation in StorageOperation::ALL {
             for outcome in StorageOutcome::ALL {
-                let count =
-                    storage.outcomes[operation.index()][outcome.index()].load(Ordering::Relaxed);
+                let count = snapshot.outcomes[operation.index()][outcome.index()];
                 writeln!(
                     self.objects,
                     "{}\t{}\t{count}",
@@ -213,14 +247,14 @@ impl NodeObservations {
             }
         }
 
-        self.flush_samples(storage, durability);
+        self.flush_snapshot(snapshot.samples, durability);
         assert!(self.object_waits_exported > 0);
         writeln!(
             self.trace_counts,
             "buffer\tcapacity\trecorded\tdropped\tbuffered"
         )
         .unwrap();
-        let (recorded, dropped, buffered) = storage.samples.counts();
+        let (recorded, dropped, buffered) = snapshot.trace_counts;
         writeln!(
             self.trace_counts,
             "object_operations\t{TRACE_CAPACITY}\t{recorded}\t{dropped}\t{buffered}"
@@ -241,9 +275,17 @@ impl NodeObservations {
         storage: &StorageCounters,
         recorder: &DurabilityRecorder,
     ) {
+        self.flush_snapshot(storage.capture(true).samples, recorder);
+    }
+
+    fn flush_snapshot(
+        &mut self,
+        samples: Vec<(i64, StorageObservation)>,
+        recorder: &DurabilityRecorder,
+    ) {
         // Drain under short locks; all filesystem work happens after they drop.
         let durability = recorder.drain();
-        for (at_ms, observation) in storage.samples.drain() {
+        for (at_ms, observation) in samples {
             writeln!(
                 self.object_operations,
                 "{at_ms}\t{}\t{}\t{}\t{}\t{}",
@@ -422,7 +464,7 @@ impl NodeObservations {
 
         for (at_ms, leader, epoch, timing) in durability.follower_store() {
             let phases = [
-                timing.blocking_queue,
+                timing.worker_queue,
                 timing.accounting_wait,
                 timing.accounting_hold,
                 timing.lane_wait,
@@ -532,6 +574,45 @@ impl NodeObservations {
         self.control_transitions.flush().unwrap();
         self.node_log_events.flush().unwrap();
     }
+}
+
+#[test]
+fn object_counter_snapshots_match_samples_during_peer_completions() {
+    let storage = StorageCounters::default();
+    let barrier = std::sync::Barrier::new(5);
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                barrier.wait();
+                for _ in 0..2_000 {
+                    storage.finished(StorageObservation {
+                        operation: StorageOperation::Get,
+                        outcome: StorageOutcome::Success,
+                        duration: Duration::from_micros(1),
+                        bytes_read: 1,
+                        bytes_written: 0,
+                    });
+                    std::thread::yield_now();
+                }
+            });
+        }
+        barrier.wait();
+        for _ in 0..100 {
+            let snapshot = storage.snapshot();
+            let mut samples = [[0_u64; 9]; 11];
+            for (_, observation) in snapshot.samples {
+                samples[observation.operation.index()][observation.outcome.index()] += 1;
+            }
+            assert_eq!(snapshot.outcomes, samples);
+            std::thread::yield_now();
+        }
+    });
+    let final_snapshot = storage.snapshot();
+    assert_eq!(final_snapshot.samples.len(), 8_000);
+    assert_eq!(
+        final_snapshot.outcomes[StorageOperation::Get.index()][StorageOutcome::Success.index()],
+        8_000
+    );
 }
 
 fn disk_bytes(root: &Path) -> u64 {

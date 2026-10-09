@@ -2,6 +2,142 @@
 
 use super::*;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exact_position_release_rejects_stale_identity_and_keeps_the_final_root() {
+    let fixture = fixture_for(b"exact-release-position");
+    let (runtime, handle, _) = activate_runtime(&fixture, 64 << 20).await;
+    let authority = CellAuthority::new(fixture.layout.clone());
+    let before = authority
+        .load(fixture.target.cell_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, generation, _, _) = runtime.idle_transfer_candidates().await.unwrap()[0];
+    let cell = fixture.target.cell_id();
+    let session = SessionId::from_bytes([4; 16]);
+    let incarnation = handle.incarnation();
+    let epoch = before.value().epoch;
+    for (source, activation, identity, ownership) in [
+        (
+            SessionId::from_bytes([171; 16]),
+            generation,
+            incarnation,
+            epoch,
+        ),
+        (session, generation + 1, incarnation, epoch),
+        (
+            session,
+            generation,
+            IncarnationId::from_bytes([172; 16]),
+            epoch,
+        ),
+        (session, generation, incarnation, epoch + 1),
+        (session, generation, incarnation, 0),
+    ] {
+        assert!(
+            runtime
+                .release_idle_cell_at(cell, source, activation, identity, ownership)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            authority.load(cell).await.unwrap().unwrap().value(),
+            before.value()
+        );
+    }
+    let clock = now_ms();
+    let identity = mutation_identity_window(173, clock, clock + 60_000);
+    let digest = Digest::from_bytes([173; 32]);
+    let acknowledged = handle
+        .execute(identity, digest, clock, 64, 64, |transaction| {
+            transaction.execute("UPDATE counter SET value = 41", [])?;
+            Ok(HandlerOutcome::Success(Vec::new()))
+        })
+        .await
+        .unwrap();
+    let published = authority.load(cell).await.unwrap().unwrap();
+    assert_ne!(published.value().root, before.value().root);
+    let position = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match runtime
+                .release_idle_cell_at(cell, session, generation, incarnation, epoch)
+                .await
+            {
+                Ok(position) => return position,
+                Err(cellule_runtime::Error::CellReleaseRefused { source, .. })
+                    if matches!(*source, cellule_runtime::Error::CellDraining) =>
+                {
+                    tokio::task::yield_now().await
+                }
+                Err(error) => panic!("exact release failed: {error}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(position.incarnation, incarnation);
+    assert_eq!(position.epoch, epoch);
+    assert_eq!(Some(&position.root), published.value().root.as_ref());
+    assert!(position.root.commit_sequence >= acknowledged.commit_sequence());
+    assert_eq!(runtime.stats().active_cells(), 0);
+    let idle = authority.load(cell).await.unwrap().unwrap();
+    assert_eq!(idle.value().state, ControlState::Idle);
+    assert!(idle.value().owner.is_none());
+    assert_eq!(Some(&position.root), idle.value().root.as_ref());
+
+    let receiver = CellRuntime::new_with_replica_host(
+        SqlWorkerPool::new(1, 2).unwrap(),
+        64 << 20,
+        SessionId::from_bytes([174; 16]),
+        ReplicaHost::default().with_local_disk_budget(DiskBudget::new(8 << 30)),
+    )
+    .unwrap();
+    let successor = receiver
+        .acquire_idle_restored(
+            handle.catalog().clone(),
+            fixture.replica.clone(),
+            authority.clone(),
+            idle,
+            fixture._directory.path().join("successor.sqlite"),
+            Owner {
+                session: SessionId::from_bytes([174; 16]),
+                endpoint: "https://successor.internal:8081".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        successor
+            .resolve(identity, digest, now_ms(), 64)
+            .await
+            .unwrap(),
+        Resolution::Committed(acknowledged)
+    );
+    successor
+        .execute(
+            mutation_identity_window(175, clock, clock + 60_000),
+            Digest::from_bytes([175; 32]),
+            now_ms(),
+            64,
+            64,
+            |transaction| {
+                transaction.execute("UPDATE counter SET value = 42", [])?;
+                Ok(HandlerOutcome::Success(Vec::new()))
+            },
+        )
+        .await
+        .unwrap();
+    let advanced = authority.load(cell).await.unwrap().unwrap();
+    assert!(advanced.value().epoch > position.epoch);
+    assert!(
+        advanced.value().root.as_ref().unwrap().commit_sequence > position.root.commit_sequence
+    );
+    assert_eq!(Some(&position.root), published.value().root.as_ref());
+    successor.drain().await.unwrap();
+    receiver.shutdown().await.unwrap();
+    runtime.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn exact_idle_release_checks_generation_and_confirms_authority_release() {
     let fixture = fixture_for(b"exact-idle-release");
@@ -56,11 +192,12 @@ async fn exact_idle_release_blocks_new_work_while_inventory_is_pending() {
         .unwrap();
 
     let (started, started_signal) = tokio::sync::oneshot::channel();
+    let (release, held) = std::sync::mpsc::channel();
     let blocker_task = tokio::spawn(async move {
         blocker
             .query(1, 1, move |_| {
                 let _ = started.send(());
-                std::thread::sleep(std::time::Duration::from_millis(250));
+                let _ = held.recv_timeout(std::time::Duration::from_secs(10));
                 Ok(Vec::new())
             })
             .await
@@ -73,22 +210,31 @@ async fn exact_idle_release_blocks_new_work_while_inventory_is_pending() {
             .release_idle_cell(cell, session, generation)
             .await
     });
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    let observation = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let still_candidate = runtime
                 .idle_transfer_candidates()
-                .await
-                .unwrap()
+                .await?
                 .into_iter()
                 .any(|(candidate, _, _, _)| candidate == cell);
             if !still_candidate {
-                break;
+                let active = runtime
+                    .active_handle(&target_fixture.target, CatalogRole::Application)
+                    .await?;
+                let resident = runtime
+                    .resident_handle(&target_fixture.target, CatalogRole::Application)
+                    .await?;
+                return Ok::<_, cellule_runtime::Error>((
+                    runtime.stats().active_cells(),
+                    active.is_none(),
+                    resident.is_none(),
+                    release_task.is_finished(),
+                ));
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
 
     let result = target
         .execute(
@@ -103,12 +249,17 @@ async fn exact_idle_release_blocks_new_work_while_inventory_is_pending() {
             },
         )
         .await;
+    let _ = release.send(());
+    let blocker_result = blocker_task.await;
+    let release_result = release_task.await;
+    let remaining = runtime.stats().active_cells();
+    let shutdown = runtime.shutdown().await;
+    assert_eq!(observation.unwrap().unwrap(), (2, true, true, false));
     assert!(matches!(result, Err(cellule_runtime::Error::CellDraining)));
-
-    assert!(blocker_task.await.unwrap().is_ok());
-    release_task.await.unwrap().unwrap();
-    assert_eq!(runtime.stats().active_cells(), 1);
-    runtime.shutdown().await.unwrap();
+    blocker_result.unwrap().unwrap();
+    release_result.unwrap().unwrap();
+    assert_eq!(remaining, 1);
+    shutdown.unwrap();
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn exact_idle_release_drains_work_admitted_before_transfer() {
@@ -175,6 +326,12 @@ async fn exact_idle_release_refuses_persisted_work() {
             .is_err()
     );
     assert_eq!(runtime.stats().active_cells(), 1);
+    let refreshed = runtime
+        .resident_handle(&fixture.target, CatalogRole::Application)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.owner_fence(), handle.owner_fence());
     assert!(matches!(
         handle.drain().await,
         Err(cellule_runtime::Error::CellDraining)

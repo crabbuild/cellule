@@ -43,6 +43,56 @@ fn observed_store(observer: &Arc<RecordingObserver>) -> Store {
         .with_storage_observer(Arc::clone(observer) as Arc<dyn StorageObserver>)
 }
 
+struct RoutedObserver(Arc<RecordingObserver>);
+
+impl StorageObserver for RoutedObserver {
+    fn for_object(&self, location: Option<&Path>) -> Option<Arc<dyn StorageObserver>> {
+        assert!(location.is_some());
+        Some(self.0.clone())
+    }
+
+    fn started(&self, _: StorageOperation) {
+        panic!("operation was not routed");
+    }
+
+    fn finished(&self, _: StorageObservation) {
+        panic!("completion was not routed");
+    }
+}
+
+#[tokio::test]
+async fn selected_observer_owns_stream_cancellation_and_multipart_lifetime() {
+    let target = Arc::new(RecordingObserver::default());
+    let store = Store::new(Arc::new(InMemory::new()))
+        .with_storage_observer(Arc::new(RoutedObserver(target.clone())));
+    let path = Path::from("bounded-family/object");
+    let mut upload = store.inner().put_multipart(&path).await.unwrap();
+    upload
+        .put_part(Bytes::from_static(b"payload").into())
+        .await
+        .unwrap();
+    upload.complete().await.unwrap();
+    let result = store.inner().get(&path).await.unwrap();
+    assert_eq!(target.active(StorageOperation::Get), 1);
+    drop(result);
+    assert_eq!(target.active(StorageOperation::Get), 0);
+    let observations = target.observations();
+    assert!(observations.iter().any(|o| o.operation == StorageOperation::Get && o.outcome == StorageOutcome::Cancelled));
+    for operation in [
+        StorageOperation::MultipartStart,
+        StorageOperation::MultipartPart,
+        StorageOperation::MultipartComplete,
+    ] {
+        assert_eq!(
+            observations
+                .iter()
+                .filter(|o| o.operation == operation)
+                .count(),
+            1
+        );
+    }
+}
+
 struct TestMultipartStore;
 
 #[async_trait::async_trait]
@@ -362,4 +412,56 @@ fn provider_failures_use_bounded_outcomes() {
     assert_eq!(classify_error(&throttled), StorageOutcome::Throttled);
     assert_eq!(classify_error(&forbidden), StorageOutcome::Auth);
     assert_eq!(classify_error(&cancelled), StorageOutcome::Cancelled);
+}
+
+#[tokio::test]
+async fn empty_observed_body_can_be_collected_through_get_result() {
+    let observer = Arc::new(RecordingObserver::default());
+    let erased: Arc<dyn StorageObserver> = observer.clone();
+    let provider = InMemory::new();
+    let path = Path::from("repository/empty");
+    provider
+        .put(&path, Bytes::new().into())
+        .await
+        .expect("put empty");
+    let mut result = provider.get(&path).await.expect("get metadata");
+    // S3 can expose a zero-chunk body. GetResult::bytes calls collect_bytes,
+    // which polls twice even when the first poll reaches EOF.
+    result.payload = GetResultPayload::Stream(observe_get_stream(
+        futures_util::stream::empty().boxed(),
+        ActiveObservation::new(StorageOperation::Get, &erased),
+    ));
+    assert!(result.bytes().await.expect("collect empty body").is_empty());
+    assert_eq!(observer.active(StorageOperation::Get), 0);
+    let observations = observer.observations();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].outcome, StorageOutcome::Success);
+    assert_eq!(observations[0].bytes_read, 0);
+}
+
+#[tokio::test]
+async fn observed_streams_remain_finished_after_repeated_eof_polls() {
+    let observer = Arc::new(RecordingObserver::default());
+    let erased: Arc<dyn StorageObserver> = observer.clone();
+    let mut body = observe_get_stream(
+        futures_util::stream::empty().boxed(),
+        ActiveObservation::new(StorageOperation::Get, &erased),
+    );
+    let mut listing = observe_stream::<Path>(
+        futures_util::stream::empty().boxed(),
+        ActiveObservation::new(StorageOperation::List, &erased),
+    );
+    for _ in 0..3 {
+        assert!(body.next().await.is_none());
+        assert!(listing.next().await.is_none());
+    }
+    assert_eq!(observer.active(StorageOperation::Get), 0);
+    assert_eq!(observer.active(StorageOperation::List), 0);
+    let observations = observer.observations();
+    assert_eq!(observations.len(), 2);
+    assert!(
+        observations
+            .iter()
+            .all(|entry| entry.outcome == StorageOutcome::Success)
+    );
 }

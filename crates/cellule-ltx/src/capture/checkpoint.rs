@@ -45,6 +45,19 @@ impl CaptureEngine {
             WAL_HEADER_SIZE as i64,
             new_wal_size.max(WAL_HEADER_SIZE as i64),
         );
+        // A dense runtime can exhaust its shared disk budget before any one
+        // Cell reaches the ordinary 1,000-frame threshold. Capture the exact
+        // committed boundary first, then backfill in bounded 64-frame cohorts
+        // while the node still has progress headroom. Preserve the same read
+        // barrier and every checkpoint cut; this is not SQLite autocheckpoint.
+        let disk = self.host.facilities.local_disk_budget();
+        if self.defer_durability
+            && disk.used() >= disk.capacity().saturating_sub(disk.capacity() / 2)
+            && new_wal_size - backfilled_through
+                >= calc_wal_size(self.page_size, 64) - WAL_HEADER_SIZE as i64
+        {
+            return self.checkpoint(CheckpointMode::Passive);
+        }
         let threshold =
             calc_wal_size(self.page_size, self.min_checkpoint_page_n) - WAL_HEADER_SIZE as i64;
         if new_wal_size - backfilled_through >= threshold {

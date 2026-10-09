@@ -1,0 +1,98 @@
+{
+  "status": "deterministic_dispatch_reduction_verified; node_capacity_unestablished",
+  "baseline_production_commit": "0d17f8ee8f64bb65408df46bbb7ff717b4d7863a",
+  "matched_benchmark_control_commit": "581946b038d574d2dd328b1f16ff6c863a523c6f",
+  "candidate_commit": "738595e699dfe0ab63047b87c121eaa777f36bef",
+  "mechanism": "One admitted pinned length/read/length and verification/merge job per eligible small native cut instead of four separate jobs. Encoding and existing bounds remain unchanged.",
+  "diagnostic": {
+    "fixture": "prepare_opens_captured_segments_concurrently",
+    "original_cuts": 3,
+    "injected_executor_delay_ms": 100,
+    "control_dispatch_waves": 14,
+    "candidate_dispatch_waves": 5,
+    "control_simulated_prepare_ms": 1400,
+    "candidate_simulated_prepare_ms": 500,
+    "interpretation": "Deterministic dispatch-cost diagnostic, not observed node latency or throughput."
+  },
+  "contracts_verified": [
+    "one-slot job pool completes without nested admission",
+    "cancelled dispatched input read retains job and dirty reservations until completion",
+    "injected read error preserves StorageError::ReadRejected and io::ErrorKind::StorageFull before any PUT",
+    "source growth during the pinned read rejects ChecksumMismatch before any PUT",
+    "original digest/index/chain/bounds and byte-identical restore regressions pass"
+  ],
+  "validation": [
+    {
+      "check": "batch-cost",
+      "exit": 0
+    },
+    {
+      "check": "ltx-tests",
+      "exit": 0
+    },
+    {
+      "check": "runtime-tests",
+      "exit": 0
+    },
+    {
+      "check": "local-tests",
+      "exit": 0
+    },
+    {
+      "check": "clippy",
+      "exit": 0
+    },
+    {
+      "check": "docs",
+      "exit": 0
+    },
+    {
+      "check": "fmt",
+      "exit": 0
+    },
+    {
+      "check": "boundaries",
+      "exit": 0
+    },
+    {
+      "check": "module-layout",
+      "exit": 0
+    },
+    {
+      "check": "doc-rust-fences",
+      "exit": 0
+    },
+    {
+      "check": "doc-links",
+      "exit": 0
+    },
+    {
+      "check": "sql-docs",
+      "exit": 0
+    }
+  ],
+  "matched_rust_and_cargo_files": 1232,
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "evidence_sha256": {
+    "pinned-coalescing-dispatch-red2.log": "cdb8002ce04060004a80a4811951f0bdf74bd3229956f6deebae785245ff7207",
+    "pinned-coalescing-validation-source.json": "780bdf0eaeaef97c3c465f734b1b9412b88a5793d32d999815e716c5b2bb6969",
+    "pinned-coalescing-validation-results.json": "9c692280ffe348a15a32a34c2acdead35f44e9bc0205f828d30a554613d538ab",
+    "pinned-coalescing-batch-cost-validation.log": "8a3917a94d475006028349d5889c10f487144615e143b46ac2ac5d8ed7186c81",
+    "pinned-coalescing-ltx-tests-validation.log": "60d00866a9a34829e6a14a1f6c2dbd9afa80b73fe21318cf93c8995a2e7c8692",
+    "pinned-coalescing-runtime-tests-validation.log": "40be6b1ac8ad528eceb40df2a7b71fc90608f85280b400466c970428dfcbc431",
+    "pinned-coalescing-local-tests-validation.log": "922bd4ec48fa44cf835d4c8fc39649de6f5818e67871fa3b10c5532cc07ea492",
+    "pinned-coalescing-clippy-validation.log": "2bd3737a8c0d8cac6fc266a8c15656b525ac4847ae30061f620028fac71bcd5b",
+    "pinned-coalescing-docs-validation.log": "b12e7afd4f566626e9e54a20216cdcd9c0ec139ac9acfbfc4c406759f751bd0b",
+    "pinned-coalescing-fmt-validation.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "pinned-coalescing-boundaries-validation.log": "5bb6622d24b0e87117e5a9e352d6596500b74555f947fc827ec1f25caeabf135",
+    "pinned-coalescing-module-layout-validation.log": "c73aa019cf3727a1856a8c9ca7bbfc4982b321d96890216a1ac691fa9abbb3e6",
+    "pinned-coalescing-doc-rust-fences-validation.log": "08dfdc9de7c4dbeadb5b88af6a31505cfecbf0aa4474a063e74bd5d3e66fa4fe",
+    "pinned-coalescing-doc-links-validation.log": "aa241cd5f19ce8fec81a6a867efcc5a46fadd1e59ef3172dbbcbb026a4af11bd",
+    "pinned-coalescing-sql-docs-validation.log": "e943bd2029dec31a2b2bb2b3f5d22434767f87b8accb220959aacc77f20355e2"
+  },
+  "qualification": {
+    "target_established": false,
+    "original_profiles_unchanged": true,
+    "remaining": "Original three 30-minute target-hardware windows for 2000 Cells, 10K durable write TPS and 50K owner-ordered read TPS, and original owner-loss/follower-only recovery gates."
+  }
+}

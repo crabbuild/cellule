@@ -1,16 +1,69 @@
 # cellule-app
 
 Declare a stable Cell topology, compile native Rust modules, and expose typed
-application handles. The host owns runtime lifecycle and network wiring.
+application handles. `cellule-host` manages runtime lifecycle; the embedding
+service owns network wiring and authorization.
 
-```mermaid
-flowchart LR
-    Modules[Native modules] --> Builder[ApplicationBuilder]
-    Topology[Cell types] --> Builder
-    Builder --> Descriptor[CompiledApplication]
-    Descriptor --> Host[CellNode]
-    Descriptor --> Handle[ApplicationHandle]
+Each SQL Cell owns its SQLite database, request ledger, and capture/recovery
+lineage. Cells can share worker threads and resource budgets within a host,
+and run on different nodes under separate fenced ownership. The application
+builder declares Cell types, partitions, schemas, and operations; the host
+handles placement, activation, routing, and recovery.
+
+```text
+Module descriptor + explicit CellBinding
+                    │
+                    ▼
+          ApplicationBuilder::module
+                    │
+                    ▼
+           CompiledApplication
+                    │
+                    ▼
+      ApplicationBinding + existing client
+                    │
+      authorize tenant → scope(tenant)
+                    │
+                    ▼
+          ApplicationHandle → typed operations
 ```
+
+Register each module and all its namespace bindings together. The module supplies
+role, shards, and schema range; you choose stable Cell names, namespace IDs,
+partition modes, and limits. The compiler validates the choices before calling
+the module's registration hook, then uses the existing canonical descriptor path.
+
+This helper accepts an already declared single-namespace module:
+
+```rust,no_run
+use cellule_app::{ApplicationBuilder, CellBinding};
+use cellule_runtime::{CellModule, NamespaceId};
+
+fn register_orders<M: CellModule>(
+    builder: &mut ApplicationBuilder,
+    module: M,
+    namespace: NamespaceId,
+) -> cellule_runtime::Result<()> {
+    builder.module(
+        module,
+        [CellBinding::entity(namespace, "orders").with_limits(64 << 20, 16 << 20)],
+    )
+}
+```
+
+Use `CellBinding::sharded` for fixed shards, `entity` for hashed entity keys,
+or `entity_uuid` for canonical UUID SQL Cells. Their descriptor bytes match the
+equivalent explicit `CellType` declarations. Include every namespace in the
+module exactly once. Module registration errors abort compilation; typed
+registration hooks are not rolled back.
+
+Bind your configured `CellClient`, compiled artifact, and installation ID once
+with `ApplicationBinding::<A>::new`. Authorize each tenant before calling
+`binding.scope(tenant)`. `cellule-host` provides
+`CellNode::bind_local_application` to create this factory from its existing
+runtime and a supplied storage layout. The same artifact can feed Axum/OpenAPI;
+the [complete service example](../cellule-axum/examples/application-builder-service/README.md)
+uses these framework building blocks.
 
 | Guide | Topic |
 | --- | --- |

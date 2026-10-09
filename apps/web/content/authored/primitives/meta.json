@@ -1,0 +1,14 @@
+{
+  "title": "Primitives",
+  "pages": [
+    "index",
+    "sql",
+    "kv",
+    "blob",
+    "queue",
+    "cron",
+    "workflow",
+    "activities",
+    "effects"
+  ]
+}

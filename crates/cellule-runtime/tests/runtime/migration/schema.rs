@@ -111,6 +111,7 @@ async fn migration_replaces_capability_publishes_schema_and_restores_exact_root(
             .await
             .unwrap()
             .unwrap();
+    assert_eq!(migrated.handle.owner_fence(), old_handle.owner_fence());
     object_store.started.wait().await;
     let queued_handle = migrated.handle.clone();
     let mut queued = tokio::spawn(async move {
@@ -325,6 +326,7 @@ async fn code_only_migration_publishes_new_code_without_schema_ledger_entry() {
     assert_eq!(plan.sql(), None);
 
     let migrated = handle.migrate(plan, 10).await.unwrap();
+    assert_eq!(migrated.handle.owner_fence(), old_handle.owner_fence());
     assert_eq!(migrated.outcome.code, code);
     assert_eq!(migrated.outcome.schema, 2);
     assert_eq!(migrated.outcome.commit_sequence, 1);

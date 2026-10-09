@@ -3,10 +3,13 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::{Error, Result};
 
-// Include the owner reader's native schema/statement state. The pinned R2
-// population's nonempty RSS slopes exceed the former 64 KiB allowance plus
-// page-cache targets; loaded and platform-specific qualification remain gates.
-pub(crate) const ACTIVE_CELL_NATIVE_BYTES: usize = 128 * 1024;
+// Include the owner reader's native schema/statement state and every managed
+// connection's lookaside arena. Page caches have their separate worker charge.
+// The pinned R2 population informs the 128 KiB base allowance; loaded and
+// platform-specific qualification remain gates.
+pub(crate) const ACTIVE_CELL_NATIVE_BYTES: usize = 128 * 1024
+    + (cellule_ltx::MANAGED_SQLITE_CONNECTIONS * cellule_ltx::MANAGED_CONNECTION_LOOKASIDE_BYTES)
+        as usize;
 /// Persistent database, WAL, SHM and capture descriptors reserved per active Cell.
 // Retain the original writer/capture allowance and charge the owner reader's
 // main, WAL and SHM descriptors before the database is opened.
@@ -767,6 +770,35 @@ mod tests {
         drop(reservation);
         assert_eq!(budget.used(), 0);
         assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 0);
+    }
+
+    #[test]
+    fn prepared_ltx_disk_credit_inherits_one_runtime_charge() {
+        let ledger = ResourceLedger::new(ResourceCost::zero().with_disk_bytes(10));
+        let parent = cellule_ltx::DiskBudget::new(10);
+        parent
+            .install_admission(Arc::new(LedgerDiskAdmission::new(
+                crate::identity::SessionId::from_bytes([10; 16]),
+                &ledger,
+            )))
+            .unwrap();
+        let prepared = parent.try_reserve(10).unwrap().into_budget();
+        let file = prepared.try_reserve(6).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        prepared.finish_preparation().unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 6);
+        let competing = parent.try_reserve(4).unwrap();
+        assert!(file.try_grow(1).is_err());
+        assert_eq!(file.bytes(), 6);
+        assert_eq!(prepared.used(), 6);
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        drop(competing);
+        file.try_grow(4).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        drop(prepared);
+        assert_eq!(ledger.snapshot().unwrap().used.disk_bytes(), 10);
+        drop(file);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
     }
 
     #[test]

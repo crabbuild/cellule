@@ -9,10 +9,12 @@ story or the [quickstart](quickstart.md) to run it locally.
 Dependencies point downward through the main stack. `cellule-host` also uses
 `cellule-runtime` directly; the optional peer adapter depends on runtime
 contracts and stays outside the storage layers.
+The optional Axum adapter uses application and runtime contracts.
 
 ```text
 cellule-host → cellule-app → cellule-runtime → cellule-ltx → cellule-store → cellule-types
                       cellule-peer-http → cellule-runtime
+                      cellule-axum → cellule-app + cellule-runtime
 ```
 
 | Crate | Owns | Read next |
@@ -24,6 +26,7 @@ cellule-host → cellule-app → cellule-runtime → cellule-ltx → cellule-sto
 | [cellule-app](../crates/cellule-app/README.md) | Application descriptors, module registration, and typed author handles. | [SQL example](../crates/cellule-app/examples/sql.rs) |
 | [cellule-host](../crates/cellule-host/README.md) | Node startup, admission, drain, and shutdown. | [Host lifecycle](../crates/cellule-host/docs/lifecycle.md) |
 | [cellule-peer-http](../crates/cellule-peer-http/README.md) | Optional peer transport and pinned mTLS. | Application-owned ingress in the [framework guide](framework.md). |
+| [cellule-axum](../crates/cellule-axum/README.md) | Typed Axum extraction and outcome-aware HTTP responses. | [SQL HTTP service](../crates/cellule-axum/examples/sql.rs) |
 
 ## Find an example or test
 
@@ -31,12 +34,14 @@ cellule-host → cellule-app → cellule-runtime → cellule-ltx → cellule-sto
 | --- | --- |
 | Compile two Cell types; write KV and claim Queue work | [Basic example](../crates/cellule-app/examples/basic.rs) |
 | Commit SQL, read at a receipt, drain | [SQL example](../crates/cellule-app/examples/sql.rs) |
+| Serve SQL operations through Axum | [Axum orders service](../crates/cellule-axum/examples/sql.rs) |
 | Stage and read Blob content | [Blob example](../crates/cellule-app/examples/blob.rs) |
 | Run a Workflow and supervised Activity | [Workflow example](../crates/cellule-app/examples/workflow.rs) |
 | Fire a Cron occurrence and deliver its Effect | [Schedules example](../crates/cellule-app/examples/schedules.rs) |
 | Exercise public primitives and recovery | [Application integration suite](../crates/cellule-app/tests/integration.rs) and [primitive suite](../crates/cellule-app/tests/primitives.rs) |
 | Understand shutdown behavior | [Host lifecycle tests](../crates/cellule-host/tests) |
 | Study qualification and measured evidence | [Qualification profiles](../crates/cellule-runtime/qualification/README.md) |
+| Plan complete application crates and their acceptance criteria | [Application cookbook catalog](cookbook.md) |
 
 ## Verification routes
 

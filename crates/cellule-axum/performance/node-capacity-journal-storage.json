@@ -1,0 +1,58 @@
+{
+  "finished_utc": "2026-10-05T15:45:12.046374+00:00",
+  "baseline_production_commit": "19752ad",
+  "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+  "source_directory": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/actual-growth-2000-c1k-r4-run/cells-2000-rate-1000/load",
+  "observed_journal": {
+    "seed": {
+      "records": 2000,
+      "bytes": 1148400,
+      "min_bytes": 557,
+      "max_bytes": 596,
+      "errors": 0,
+      "mean_bytes": 574.2
+    },
+    "write": {
+      "records": 26153,
+      "bytes": 15136489,
+      "min_bytes": 560,
+      "max_bytes": 600,
+      "errors": 0,
+      "mean_bytes": 578.7668336328528
+    },
+    "read": {
+      "records": 222,
+      "bytes": 95397,
+      "min_bytes": 415,
+      "max_bytes": 447,
+      "errors": 0,
+      "mean_bytes": 429.7162162162162
+    }
+  },
+  "profile": {
+    "cells": 2000,
+    "write_rate": 10000,
+    "read_rate": 50000,
+    "warmup_seconds": 30,
+    "seconds": 1800
+  },
+  "projected_records": {
+    "seed": 2000,
+    "write": 18300000,
+    "read": 91500000
+  },
+  "projected_journal_bytes": {
+    "min": 48221614000,
+    "mean": 49911615239.26499,
+    "max": 51881692000
+  },
+  "mean_bytes_per_second": 27273479.147139337,
+  "projection_not_a_measurement": true,
+  "projection_scope": "One full-success run only: journals, excluding object/follower data, owner/provider logs, profiler files, binaries and build caches; record sizes will change with identifiers, sequence and timing digits",
+  "last_measured_vm_free_bytes": 23335063552,
+  "current_vm_free_bytes": null,
+  "vm_state": "Colima stopped",
+  "raw_evidence": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/node-capacity-journal-storage-preflight.json",
+  "three_window_mean_journal_bytes": 149734845717.79498,
+  "observed_sha256_manifest": "files[] in raw evidence; every setup/client journal hashed"
+}

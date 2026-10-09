@@ -124,23 +124,18 @@ async fn small_appends_report_a_bounded_publication_cost() {
     )
     .unwrap();
 
-    // A bootstrap root uploads one body, one index, the changed directory
-    // nodes, and the root document. The bound documents the per-command
-    // object-store amplification the runtime budgets against.
+    // A small root uses one packed body/index and an authenticated inline leaf.
+    // Runtime lineage and control selection add two authority PUTs.
     let first = writer.capture().unwrap();
     let root = replica.prepare(None, &first, 1, 1).await.unwrap().root();
     let initial = replica.take_publication_cost();
-    assert!(
-        (4..=12).contains(&initial.objects),
-        "bootstrap objects: {initial:?}"
-    );
+    assert_eq!(initial.objects, 2, "bootstrap objects: {initial:?}");
     assert!(
         initial.bytes >= first.segments[0].info().size_bytes,
         "{initial:?}"
     );
 
-    // One appended command pays at least a body and index, and no more than the
-    // same bounded set of metadata objects.
+    // The appended command retains the same bounded representation.
     writer
         .transaction(|transaction| {
             transaction.execute_batch("INSERT INTO t VALUES(randomblob(4096))")
@@ -149,10 +144,7 @@ async fn small_appends_report_a_bounded_publication_cost() {
     let second = writer.capture().unwrap();
     replica.prepare(Some(&root), &second, 2, 1).await.unwrap();
     let append = replica.take_publication_cost();
-    assert!(
-        (3..=12).contains(&append.objects),
-        "append objects: {append:?}"
-    );
+    assert_eq!(append.objects, 2, "append objects: {append:?}");
     assert!(
         append.bytes >= second.segments[0].info().size_bytes,
         "{append:?}"
@@ -379,6 +371,21 @@ async fn exact_root_inventory_verifies_every_remote_dependency() {
     writer.close().unwrap();
 
     let objects = replica.reachable_objects(&root).await.unwrap();
+    assert_eq!(
+        replica
+            .reachable_objects_bounded(&root, objects.len())
+            .await
+            .unwrap(),
+        objects
+    );
+    for limit in [0, 1, objects.len() - 1] {
+        assert!(matches!(
+            replica.reachable_objects_bounded(&root, limit).await,
+            Err(cellule_ltx::LtxError::Limit(
+                cellule_ltx::LimitKind::RootInventoryObjects
+            ))
+        ));
+    }
     assert!(objects.windows(2).all(|pair| pair[0] < pair[1]));
     for kind in [
         CellObjectKind::Ltx,
@@ -407,7 +414,7 @@ async fn warm_root_cache_does_not_mask_missing_metadata() {
     let directory = tempfile::TempDir::new().unwrap();
     let mut writer = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
     writer
-        .transaction(|transaction| transaction.execute_batch("CREATE TABLE values_(v)"))
+        .transaction(|transaction| transaction.execute_batch("CREATE TABLE values_(v); CREATE TABLE padding(v); INSERT INTO padding VALUES(zeroblob(300000))"))
         .unwrap();
     let backend = Arc::new(InMemory::new());
     let cell = [41; 32];
@@ -415,11 +422,22 @@ async fn warm_root_cache_does_not_mask_missing_metadata() {
     let layout =
         CellStorageLayout::new(Store::new(backend.clone()), Path::from("runtime"), [3; 16]);
     let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
-    let root = replica
-        .prepare(None, &writer.capture().unwrap(), 1, 1)
-        .await
-        .unwrap()
-        .root();
+    // An external tail exercises descriptor-page origin checks independently
+    // of the small-root inline representation.
+    // Keep the decoded working set beyond the small-delta merge bound so
+    // this fixture still exercises external descriptor origin verification.
+    let mut cuts = writer.capture_deferred().unwrap();
+    for value in 0..32 {
+        writer
+            .transaction(|transaction| {
+                transaction.execute("INSERT INTO values_ VALUES(?1)", [value])
+            })
+            .unwrap();
+        let next = writer.capture_deferred().unwrap();
+        cuts.position = next.position;
+        cuts.segments.extend(next.segments);
+    }
+    let root = replica.prepare(None, &cuts, 1, 1).await.unwrap().root();
     let path =
         layout.incarnation_object_path(&cell, &incarnation, &root.digest, CellObjectKind::Root);
     let root_bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
@@ -447,6 +465,7 @@ async fn warm_root_cache_does_not_mask_missing_metadata() {
     );
     backend.delete(&segment_path).await.unwrap();
     assert!(replica.prepare(Some(&root), &next, 2, 1).await.is_err());
+    writer.durability_barrier().unwrap();
     writer.close().unwrap();
 }
 #[tokio::test]
@@ -466,6 +485,76 @@ async fn root_scope_and_commit_sequence_are_fenced() {
         ..root
     };
     assert!(replica.open_root(&wrong).await.is_err());
+    writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn invalid_inline_descriptors_cannot_justify_a_successor_upload() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut writer = Db::open(&directory.path().join("cell.sqlite"), Limits::default()).unwrap();
+    writer
+        .transaction(|transaction| {
+            transaction.execute_batch("CREATE TABLE counter(v); INSERT INTO counter VALUES(0)")
+        })
+        .unwrap();
+    let backend = Arc::new(InMemory::new());
+    let counted = Arc::new(cellule_store::test_support::CountingObjectStore::new(
+        backend.clone(),
+    ));
+    let layout = CellStorageLayout::new(
+        Store::new(counted.clone()),
+        Path::from("invalid-inline"),
+        [8; 16],
+    );
+    let cell = [157; 32];
+    let incarnation = [158; 16];
+    let replica = CellReplica::new(layout.clone(), cell, incarnation, Limits::default()).unwrap();
+    let root = replica
+        .prepare(None, &writer.capture_deferred().unwrap(), 1, 1)
+        .await
+        .unwrap()
+        .root();
+    let path =
+        layout.incarnation_object_path(&cell, &incarnation, &root.digest, CellObjectKind::Root);
+    let bytes = backend.get(&path).await.unwrap().bytes().await.unwrap();
+    let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&original).unwrap(), bytes.as_ref());
+    assert_eq!(original["segments"].as_array().unwrap().len(), 1);
+    writer
+        .transaction(|transaction| transaction.execute_batch("UPDATE counter SET v = v + 1"))
+        .unwrap();
+    let cuts = writer.capture_deferred().unwrap();
+    for (field, value) in [
+        ("level", serde_json::json!(10)),
+        ("index_length", serde_json::json!("0")),
+        ("offset", serde_json::json!("1")),
+        ("max_txid", serde_json::json!("2")),
+        ("database_pages", serde_json::json!(0)),
+    ] {
+        let mut wire = original.clone();
+        wire["segments"][0][field] = value;
+        let bytes = serde_json::to_vec(&wire).unwrap();
+        let bad = RootRef {
+            digest: *blake3::hash(&bytes).as_bytes(),
+            ..root
+        };
+        let path =
+            layout.incarnation_object_path(&cell, &incarnation, &bad.digest, CellObjectKind::Root);
+        backend.put(&path, Bytes::from(bytes).into()).await.unwrap();
+        assert!(replica.open_root(&bad).await.is_err(), "{field}");
+        assert!(replica.reachable_objects(&bad).await.is_err(), "{field}");
+        counted.reset();
+        assert!(
+            replica.prepare(Some(&bad), &cuts, 2, 1).await.is_err(),
+            "{field}"
+        );
+        assert_eq!(
+            counted.put_requests(),
+            0,
+            "invalid {field} must fail before immutable uploads"
+        );
+    }
+    writer.durability_barrier().unwrap();
     writer.close().unwrap();
 }
 #[tokio::test(flavor = "multi_thread")]

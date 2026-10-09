@@ -576,11 +576,19 @@ at 1 MiB per captured batch; descriptor construction, directory updates, and
 immutable upload reuse those same bytes without another full index copy. Larger
 batches use the inspection fallback.
 
+For deferred runtime capture, shared disk pressure starts passive checkpoint
+cohorts at 64 frames once half of the local disk budget is reserved. Capture
+still verifies the complete commit boundary before checkpointing and returns
+every resulting cut. SQLite releases physical WAL slack only after a safe
+generation reset; it never truncates uncaptured pages. Standalone synchronous
+capture retains its ordinary checkpoint threshold.
+
 - **Overlap.** Immutable preparation overlaps independent uploads without
-  weakening the root gate: each LTX body uploads alongside its index, changed
-  directory nodes upload concurrently, initial directory construction streams
-  nodes in eight-object waves, and the root document uploads alongside its
-  segment pages.
+  weakening the root gate: small segment/index pairs share one authenticated
+  packed object and a bounded directory leaf lives in its root. Larger bodies,
+  indexes and directories retain parallel streaming uploads. Root documents
+  upload alongside their segment pages. The [current root format](packed-root-format.md)
+  defines the exact bounds and development cutover.
 - **Concurrency ceiling.** Up to four captured segments and eight small metadata
   objects progress concurrently; the shared host I/O permits remain the
   process-wide request ceiling.
@@ -641,8 +649,9 @@ async fn objects_to_pin(
   directory asynchronously and dispatches local checksum creation, buffered
   writes, metadata checks, and failure cleanup through the bounded host
   executor.
-- **Cancellation.** Dispatched jobs retain their admission until completion even
-  if the caller cancels.
+- **Cancellation.** Dispatched jobs retain both semaphore slots and node ledger
+  charges until completion even if the caller cancels. A charge releases before
+  its slot wakes the next waiter, so handoff cannot report false capacity pressure.
 - **Durability.** Checksum bases and sparse/immutable placeholders are derived
   session files, so activation does not sync them or their names. SQLite retains
   its normal WAL durability policy; warm reuse separately writes and syncs a
@@ -832,9 +841,10 @@ These are per-operation correctness bounds, not an RSS quota.
   `take_publication_cost` report the exact object count and bytes per root, so a
   host can budget object-store cost per command instead of inferring it from the
   database size.
-- **Measured cost.** The local measurement frozen in `tests/cell/roots/lifecycle.rs`
-  is five objects per small append (about 7 KiB for a 4 KiB payload);
-  provider-scale cost distributions remain outstanding.
+- **Measured cost.** `tests/cell/roots/prepare_cost.rs` verifies two immutable
+  PUTs per small selected root through 32 successive cuts, with a predecessor
+  origin check. Runtime lineage and fenced control selection add two PUTs.
+  Larger roots and maintenance retain their own measured operation counts.
 - **Plan memory.** Each live `VerifiedPlan` retains one reconstructed database
   image, bounded by `max_database_bytes`, plus its checksum state and segment
   metadata.
@@ -855,7 +865,12 @@ These are per-operation correctness bounds, not an RSS quota.
   bookkeeping, not the LTX format or the authenticated metadata walk required for
   activation.
 - **Connections and caches.** Each open `Db` retains four SQLite connections
-  with a 64 KiB page-cache target per connection, or 256 KiB in total. `Host` can share disk, I/O,
+  with a 64 KiB page-cache target and an 8 KiB lookaside arena per connection.
+  Lookaside reduces allocator contention during small SQL preparations;
+  larger or excess allocations use SQLite's normal heap. Runtime admission
+  charges 256 KiB of page-cache targets separately from the 160 KiB native
+  reservation, including the owner reader and all four lookaside arenas.
+  These reservations are not RSS limits. `Host` can share disk, I/O,
   blocking-job, recovery, dirty-job, scratch, and telemetry admission across many
   databases. Sparse page read-ahead is capped at 64 pages or 1 MiB per request,
   and the shared decoded page cache is capped at 8 MiB.
@@ -890,9 +905,11 @@ These are per-operation correctness bounds, not an RSS quota.
   persistent cache membership on an admitted blocking job. Restart reads at most
   16 MiB of index input and retains at most 16,384 entries within the shared disk
   budget.
-- **Cache ownership.** The runtime creates one cache owner beside the
-  activation's database and shares its host through recovery, SQLite and
-  publication. Cancellation keeps dispatched work and its reservations alive
+- **Cache ownership.** Clones of a node's host share one live cache owner for
+  the same directory, filesystem and disk budget. Activating another Cell reuses
+  its membership and charges each physical entry once. After the last owner
+  drops, reopening reads persistent membership through admitted blocking work.
+  Each activation shares its host through recovery, SQLite and publication. Cancellation keeps dispatched work and its reservations alive
   until completion. Local capture APIs remain synchronous and retain their
   caller-owned worker contract.
 - **Fill admission.** Verified directory reads release object-store admission

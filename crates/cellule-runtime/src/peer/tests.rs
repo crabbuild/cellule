@@ -534,3 +534,55 @@ fn replica_behind_error_preserves_both_positions_over_peer_wire() {
         }
     ));
 }
+
+#[test]
+fn incomplete_owner_history_cannot_be_reported_as_success_or_empty_inventory() {
+    let reply = dispatch::error_reply(Error::OwnerHistoryIncomplete {
+        cell: crate::CellId::from_bytes([1; 32]),
+        incarnation: IncarnationId::from_bytes([2; 16]),
+        epoch: 3,
+    });
+    let decoded = decode_peer_reply(&encode_peer_reply(&reply).unwrap()).unwrap();
+    let Some(wire::peer_reply::Outcome::Error(error)) = decoded.outcome else {
+        panic!("expected history blocker");
+    };
+    assert_eq!(error.code, wire::error::Code::Unavailable as i32);
+    assert_eq!(error.outcome, wire::error::Outcome::NotStarted as i32);
+    assert_eq!(error.message, "original Cell owner history is incomplete");
+    assert!(error.application_details.is_empty());
+}
+
+#[test]
+fn missing_or_unproven_root_lineage_cannot_be_reported_as_success() {
+    let root = cellule_ltx::RootRef {
+        cell: [1; 32],
+        incarnation: [2; 16],
+        digest: [3; 32],
+        position: cellule_ltx::Position {
+            txid: 1,
+            checksum: cellule_ltx::types::CHECKSUM_FLAG,
+        },
+        commit_sequence: 1,
+    };
+    for source in [
+        Error::AcquisitionHistoryIncomplete {
+            cell: crate::identity::CellId::from_bytes(root.cell),
+            incarnation: crate::identity::IncarnationId::from_bytes(root.incarnation),
+            epoch: 2,
+        },
+        Error::RootLineageIncomplete { root },
+        Error::RootPrefixUnproven {
+            prefix: Box::new(root),
+            root: Box::new(root),
+        },
+    ] {
+        let reply = dispatch::error_reply(source);
+        let decoded = decode_peer_reply(&encode_peer_reply(&reply).unwrap()).unwrap();
+        let Some(wire::peer_reply::Outcome::Error(error)) = decoded.outcome else {
+            panic!("expected prefix blocker");
+        };
+        assert_eq!(error.code, wire::error::Code::Unavailable as i32);
+        assert_eq!(error.outcome, wire::error::Outcome::NotStarted as i32);
+        assert!(error.application_details.is_empty());
+    }
+}

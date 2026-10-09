@@ -436,3 +436,81 @@ async fn typed_application_uses_typed_handle_for_a_real_commit() {
     assert_eq!(committed.output[0].rows.len(), 1);
     runtime.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn application_handle_restores_exact_command_only_inside_its_scope() {
+    let fixture = PerfFixture::start(1).await;
+    let prepared = fixture
+        .typed
+        .prepare_command::<ReferenceCronReceiver>(
+            &fixture.sql_target,
+            reference_identity(91, super::performance_fixture::now_ms()),
+            CronInvocation {
+                schedule_id: [92; 16],
+                generation: 1,
+                occurrence: 1,
+                scheduled_at_ms: super::performance_fixture::now_ms(),
+                payload: b"durable-command".to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    let snapshot = prepared.snapshot();
+    let body = prepared.input_bytes().to_vec();
+    drop(prepared);
+    let restored = fixture
+        .typed
+        .restore_command::<ReferenceCronReceiver>(snapshot.clone(), body.clone())
+        .unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    for (tenant, application) in [
+        (
+            TenantId::from_bytes([99; 16]),
+            fixture.sql_target.application(),
+        ),
+        (
+            fixture.sql_target.tenant(),
+            ApplicationId::from_bytes([99; 16]),
+        ),
+    ] {
+        let foreign = ApplicationHandle::<ReferenceApplication>::new(
+            fixture.client.clone(),
+            Arc::new(compiled()),
+            tenant,
+            application,
+        )
+        .unwrap();
+        assert!(
+            foreign
+                .restore_command::<ReferenceCronReceiver>(snapshot.clone(), body.clone())
+                .is_err()
+        );
+    }
+    assert!(
+        fixture
+            .typed
+            .restore_command::<KvAtomicCommand<ReferenceKv>>(snapshot.clone(), body.clone())
+            .is_err()
+    );
+    let committed = restored.execute().await.unwrap();
+    let replay = fixture
+        .typed
+        .restore_command::<ReferenceCronReceiver>(snapshot, body)
+        .unwrap()
+        .execute()
+        .await
+        .unwrap();
+    assert_eq!(committed.receipt, replay.receipt);
+    let client = ReferenceClient::new(fixture.typed.clone()).unwrap();
+    assert_eq!(
+        client
+            .orders(&OrderId(b"order-42".to_vec()))
+            .unwrap()
+            .receipt_count(Some(replay.receipt), ())
+            .await
+            .unwrap()
+            .output,
+        1
+    );
+    fixture.shutdown().await;
+}

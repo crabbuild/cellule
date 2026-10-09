@@ -8,8 +8,8 @@ use super::super::{
     CellReplica, LoadedGraph, OBJECT_UPLOAD_CONCURRENCY, SegmentDescriptor, object_extents,
 };
 use super::{
-    DirectoryEntry, DirectoryTree, Header, Node, ObjectExtent, Verification, encode_branch,
-    encode_leaf, read_node, verify_branch, verify_leaf,
+    DirectoryEntry, DirectoryObject, DirectoryTree, Header, Node, ObjectExtent, Verification,
+    encode_branch, encode_leaf, read_node, verify_branch, verify_leaf,
 };
 use crate::{CellObjectKind, LtxError, Result};
 
@@ -19,7 +19,11 @@ pub(in crate::replica) async fn run(
     descriptors: &[SegmentDescriptor],
     selected: &[SegmentDescriptor],
     entries: impl Stream<Item = Result<DirectoryEntry>> + Send,
+    retain_leaf: bool,
 ) -> Result<DirectoryTree> {
+    if retain_leaf && graph.document.directory_height != 0 {
+        return Err(LtxError::LTXCorrupted);
+    }
     let base_extents = object_extents(&graph.descriptors)?;
     let final_extents = object_extents(descriptors)?;
     let selected_extents = object_extents(selected)?;
@@ -29,6 +33,7 @@ pub(in crate::replica) async fn run(
         incarnation: &replica.incarnation,
         page_size: graph.document.page_size,
         database_pages: graph.document.database_pages,
+        inline_root: graph.document.directory_inline.as_deref(),
         extents: &base_extents,
         host: &replica.host,
         origin: crate::LtxReadOrigin::Cold,
@@ -53,9 +58,20 @@ pub(in crate::replica) async fn run(
     if state.next.is_some() || root.aggregate != graph.aggregate {
         return Err(LtxError::ChecksumMismatch);
     }
-    state.flush().await?;
+    let objects = if retain_leaf {
+        // A single leaf is at most MAX_NODE_BYTES. Keep it private through the
+        // following append; large directories retain bounded streaming uploads.
+        state
+            .pending
+            .into_iter()
+            .map(|(digest, bytes)| DirectoryObject { digest, bytes })
+            .collect()
+    } else {
+        state.flush().await?;
+        Vec::new()
+    };
     Ok(DirectoryTree {
-        objects: Vec::new(),
+        objects,
         root,
         height: graph.document.directory_height,
     })

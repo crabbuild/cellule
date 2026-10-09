@@ -620,8 +620,15 @@ async fn scale_receipt_requires_observed_open_cells_and_binds_their_resource_pea
     );
     let mut undercharged_memory =
         serde_json::from_slice::<serde_json::Value>(&scale_bytes).unwrap();
-    undercharged_memory["cell_samples"][1]["after"]["rss_bytes"] = serde_json::json!(2_000_000_000);
-    undercharged_memory["cell_samples"][1]["peak"]["rss_bytes"] = serde_json::json!(2_000_000_000);
+    // Reject a marginal RSS slope one byte over the current admission,
+    // including the owner reader and all managed connection caches.
+    let excessive_rss = 400_000_000
+        + 4_000
+            * (crate::fleet::resource::ACTIVE_CELL_NATIVE_BYTES as u64
+                + crate::cell::worker::ACTIVE_CELL_PAGE_CACHE_BYTES)
+        + 1;
+    undercharged_memory["cell_samples"][1]["after"]["rss_bytes"] = serde_json::json!(excessive_rss);
+    undercharged_memory["cell_samples"][1]["peak"]["rss_bytes"] = serde_json::json!(excessive_rss);
     let undercharged_memory_bytes = canonical(undercharged_memory);
     assert!(
         runner

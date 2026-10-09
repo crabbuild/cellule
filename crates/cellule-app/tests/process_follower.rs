@@ -9,7 +9,6 @@ use cellule_runtime::follower::{FollowerReceipt, FollowerStore, FollowerTailPage
 use cellule_runtime::identity::NodeId;
 use cellule_runtime::node::durability::{NodeDurabilityConfig, NodeLogAuthority};
 use cellule_runtime::node::lease::NodeLeaseGuard;
-use cellule_runtime::node::log::NodeLogRotationBarrier;
 use cellule_runtime::node::log_transport::{
     AppendRequest, NodeLogTransport, RetireRequest, SealRequest, TailRequest,
 };
@@ -840,7 +839,11 @@ impl NodeLogAuthority for ProcessEnrollment {
         })
     }
 
-    fn close<'a>(&'a self, barrier: &'a NodeLogRotationBarrier) -> BoxFuture<'a, Result<()>> {
+    fn close<'a>(
+        &'a self,
+        retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
+    ) -> BoxFuture<'a, Result<()>> {
+        let barrier = retirement.barrier();
         Box::pin(async move {
             let mut observed = self.observed.lock().await;
             if observed
@@ -964,6 +967,33 @@ impl NodeDurabilityProvider for ProcessDurabilityProvider {
                     self.telemetry.clone(),
                 )
                 .map(Some)
+            }
+            .await;
+            result.map_err(|source| Box::new(source) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
+
+    fn rotation_required(
+        self: Arc<Self>,
+        live_node_limit: usize,
+    ) -> Pin<Box<dyn Future<Output = FacilityResult<bool>> + Send>> {
+        Box::pin(async move {
+            let result: Result<bool> = async {
+                let members = {
+                    let observed = self.enrollment.observed.lock().await;
+                    observed
+                        .advertisement()
+                        .log()
+                        .ok_or(Error::Node("active follower log is missing"))?
+                        .members()
+                        .to_vec()
+                };
+                let members_live = self
+                    .enrollment
+                    .directory
+                    .members_are_live(&members, now_ms(), live_node_limit)
+                    .await?;
+                Ok(!members_live)
             }
             .await;
             result.map_err(|source| Box::new(source) as Box<dyn std::error::Error + Send + Sync>)

@@ -2,7 +2,14 @@
 
 use super::*;
 use crate::builder::append_required_components;
-use crate::durability::run_node_durability_supervisor;
+use crate::durability::DurabilitySupervisor;
+
+mod finalize;
+
+pub(crate) struct FleetStartup {
+    pub(crate) intent: cellule_runtime::fleet::operations::NodeIntent,
+    pub(crate) boot: Option<cellule_runtime::fleet::operations::EnrollmentRecord>,
+}
 
 /// One started application host with an ordered drain/shutdown boundary.
 pub struct CellNode {
@@ -12,11 +19,49 @@ pub struct CellNode {
     pub(super) state: Arc<Mutex<NodeState>>,
     pub(super) lease_installed: AtomicBool,
     pub(super) shutdown_lock: Arc<tokio::sync::Mutex<()>>,
+    pub(super) drain_owner: Arc<drain::DrainOwner>,
+    pub(super) fleet_finalize: Arc<finalize::FleetFinalizeOwner>,
     pub(super) facilities: Arc<Mutex<Vec<CellNodeFacility>>>,
     pub(super) required_components: Arc<Mutex<Vec<&'static str>>>,
     pub(super) task_group: Arc<Mutex<Option<Arc<CellNodeTaskGroup>>>>,
+    pub(super) fleet_startup: Mutex<Option<FleetStartup>>,
 }
 impl CellNode {
+    pub(crate) fn from_runtime(
+        application: Arc<CompiledApplication>,
+        runtime: CellRuntime,
+        session: SessionId,
+        required_components: Vec<&'static str>,
+        fleet_startup: Option<cellule_runtime::fleet::operations::NodeIntent>,
+    ) -> Self {
+        let state = Arc::new(Mutex::new(NodeState::Starting));
+        let facilities = Arc::new(Mutex::new(Vec::new()));
+        let task_group = Arc::new(Mutex::new(None));
+        let drain_owner = Arc::new(drain::DrainOwner::new(
+            runtime.clone(),
+            Arc::clone(&state),
+            Arc::clone(&facilities),
+            Arc::clone(&task_group),
+        ));
+        let fleet_finalize = Arc::new(finalize::FleetFinalizeOwner::new());
+        Self {
+            application,
+            runtime,
+            session,
+            state,
+            lease_installed: AtomicBool::new(false),
+            shutdown_lock: Arc::new(tokio::sync::Mutex::new(())),
+            drain_owner,
+            fleet_finalize,
+            facilities,
+            required_components: Arc::new(Mutex::new(required_components)),
+            task_group,
+            fleet_startup: Mutex::new(
+                fleet_startup.map(|intent| FleetStartup { intent, boot: None }),
+            ),
+        }
+    }
+
     /// Returns the compiled application artifact owned by this node.
     #[must_use]
     pub fn application(&self) -> &CompiledApplication {
@@ -46,6 +91,20 @@ impl CellNode {
                 .and_then(|task_group| task_group.as_ref().map(|group| group.is_healthy()))
                 .unwrap_or(false)
     }
+    /// Reports management/recovery availability, including a drained-mode boot
+    /// whose durable enrollment is confirmed but whose serving gate stays shut.
+    #[must_use]
+    pub fn is_management_ready(&self) -> bool {
+        matches!(
+            self.state(),
+            NodeState::Ready | NodeState::ScalingDown | NodeState::Maintenance
+        ) && self
+            .task_group
+            .lock()
+            .ok()
+            .and_then(|tasks| tasks.as_ref().map(|group| group.is_healthy()))
+            .unwrap_or(false)
+    }
     /// Returns current shared runtime admission metrics.
     #[must_use]
     pub fn stats(&self) -> CellRuntimeStats {
@@ -74,11 +133,15 @@ impl CellNode {
         tenant: TenantId,
         application: ApplicationId,
     ) -> cellule_runtime::Result<ApplicationHandle<A>> {
-        ApplicationHandle::new(client, Arc::clone(&self.application), tenant, application)
+        Ok(self.bind_application(client, application)?.scope(tenant))
     }
 }
 
+mod application;
+mod blob_artifacts;
 mod components;
+mod drain;
+mod fleet;
 mod lifecycle;
 mod qualification;
 mod scale_down;

@@ -4,6 +4,8 @@ Cellule is an embedded Rust framework for distributed, SQLite-backed **Cells**.
 An application defines typed modules and Cell topology; Cellule runs commands
 through a fenced owner, publishes durable outcomes, and restores exact state.
 The application owns HTTP ingress, authorization, credentials, and deployment.
+For Axum services, the optional [`cellule-axum`](crates/cellule-axum/README.md)
+adapter supplies typed handle extraction and responses with Cell receipts.
 
 ![Cellule architecture: application ownership, framework components, one durable Cell, and the eight primitives](diagram/cellule-components.svg)
 
@@ -308,6 +310,7 @@ and durability mechanics; provider and process qualification have separate
 | Embed Cellule in a serving service | [Framework integration](docs/framework.md) |
 | Understand Cells and integration options visually | [Cellule at a glance](docs/at-a-glance.md) |
 | Find the right crate or test | [Workspace reference](docs/reference.md) |
+| Run reference applications and explore the cookbook plan | [Runnable cookbook](cookbook/README.md) and [application catalog](docs/cookbook.md) |
 | Evaluate current support and gaps | [Roadmap](docs/roadmap.md) |
 | Qualify and publish a matched crate set | [Release guide](docs/releasing.md) |
 
@@ -320,6 +323,13 @@ tests from provider and production evidence. The dated
 [verification report](docs/verification.md) and
 [performance evidence](crates/cellule-app/PERFORMANCE.md) describe their
 recorded revisions and environments.
+
+## Website development
+
+The Next.js and Fumadocs website lives in [apps/web](apps/web/README.md).
+With Node.js 22+ and npm 11, run `npm ci` and `npm run dev:web` from this
+repository root. The site renders the canonical guides, crate references,
+and measured evidence with searchable navigation and SVG diagrams.
 
 ## License
 

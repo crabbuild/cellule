@@ -1,6 +1,108 @@
 use super::{CellRuntimeStats, bounded_u32};
 
 #[tokio::test]
+async fn empty_runtime_miss_does_not_wait_for_the_dispatcher() {
+    use super::*;
+    use futures_util::FutureExt;
+
+    let pool = SqlWorkerPool::new(1, 1).unwrap();
+    let runtime = CellRuntime::new(pool, 1 << 20, SessionId::from_bytes([62; 16])).unwrap();
+    // On this current-thread executor the actor has not been polled. An empty
+    // runtime must forward without first waking that actor for a negative lookup.
+    assert!(matches!(
+        runtime
+            .has_local_owner(CellId::from_bytes([62; 32]))
+            .now_or_never(),
+        Some(Ok(false))
+    ));
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_runtime_miss_preserves_lease_and_closed_dispatcher_errors() {
+    use super::*;
+
+    let fenced = CellRuntime::new_with_replica_host_requiring_node_lease(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        1 << 20,
+        SessionId::from_bytes([64; 16]),
+        cellule_ltx::Host::default(),
+    )
+    .unwrap();
+    let cell = CellId::from_bytes([64; 32]);
+    assert!(matches!(
+        fenced.has_local_owner(cell).await,
+        Err(Error::Fenced)
+    ));
+    fenced.shutdown().await.unwrap();
+
+    let mut runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        1 << 20,
+        SessionId::from_bytes([65; 16]),
+    )
+    .unwrap();
+    let (sender, receiver) = mpsc::channel(1);
+    drop(receiver);
+    let original = std::mem::replace(
+        &mut Arc::get_mut(&mut runtime.inner).unwrap().sender,
+        sender,
+    );
+    assert!(matches!(
+        runtime.has_local_owner(cell).await,
+        Err(Error::RuntimeClosed)
+    ));
+    Arc::get_mut(&mut runtime.inner).unwrap().sender = original;
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn activation_reservation_prevents_the_empty_runtime_shortcut() {
+    use super::*;
+    use futures_util::FutureExt;
+
+    let pool = SqlWorkerPool::new(1, 1).unwrap();
+    let mut runtime =
+        CellRuntime::new(pool.clone(), 1 << 20, SessionId::from_bytes([63; 16])).unwrap();
+    let cell = CellId::from_bytes([63; 32]);
+    let (sender, mut receiver) = mpsc::channel(1);
+    let original = std::mem::replace(
+        &mut Arc::get_mut(&mut runtime.inner).unwrap().sender,
+        sender,
+    );
+    let reservation = pool.reserve_activation().unwrap();
+    {
+        let lookup = runtime.has_local_owner(cell);
+        tokio::pin!(lookup);
+        assert!(lookup.as_mut().now_or_never().is_none());
+        match receiver.try_recv().unwrap() {
+            Message::Lookup {
+                cell: requested,
+                require_resident,
+                reply,
+            } => {
+                assert_eq!(requested, cell);
+                assert!(!require_resident);
+                assert!(reply.send(None).is_ok());
+            }
+            _ => panic!("activation in progress must consult actor admission"),
+        }
+        assert!(!lookup.await.unwrap());
+    }
+    drop(reservation);
+    assert!(matches!(
+        runtime.has_local_owner(cell).now_or_never(),
+        Some(Ok(false))
+    ));
+    Arc::get_mut(&mut runtime.inner).unwrap().sender = original;
+    runtime.shutdown().await.unwrap();
+    assert!(matches!(
+        runtime.has_local_owner(cell).await,
+        Err(Error::RuntimeClosed)
+    ));
+}
+
+#[tokio::test]
 async fn shutdown_reports_deactivation_failure_completed_before_it_started() {
     assert!(matches!(
         shutdown_after_release(Err(super::Error::Fenced), None).await,
@@ -55,9 +157,10 @@ async fn shutdown_after_release(
         TaskResult::Deactivated {
             cell,
             generation: 1,
-            reply,
+            reply: reply.map(DrainReply::Unit),
             shutdown_drain: false,
             result,
+            released: None,
         },
         &pool,
         &mut cells,
@@ -86,6 +189,7 @@ async fn shutdown_after_release(
         &node_lease,
         &crate::fleet::telemetry::CellTelemetryHandle::default(),
         &mut pressure,
+        &NodeAdmission::default(),
         &mut movement,
         &mut permits,
         &mut generation,
@@ -141,4 +245,69 @@ fn placement_projection_saturates_large_node_counters() {
     assert_eq!(stats.placement_active_cell_capacity(), u32::MAX);
     assert_eq!(stats.placement_running_jobs(), u32::MAX);
     assert_eq!(stats.placement_job_capacity(), u32::MAX);
+}
+
+#[tokio::test]
+async fn publication_pressure_preserves_fenced_and_draining_admission_errors() {
+    use super::*;
+    use crate::identity::{ApplicationId, IncarnationId, NamespaceId, TenantId};
+
+    let runtime = CellRuntime::new(
+        SqlWorkerPool::new(1, 1).unwrap(),
+        1 << 20,
+        SessionId::from_bytes([66; 16]),
+    )
+    .unwrap();
+    let target = CellTarget::new(
+        TenantId::from_bytes([1; 16]),
+        ApplicationId::from_bytes([3; 16]),
+        NamespaceId::from_bytes([6; 16]),
+        b"admission-errors",
+    )
+    .unwrap();
+    let incarnation = IncarnationId::from_bytes([2; 16]);
+    let code = Digest::from_bytes([5; 32]);
+    let handle = CellHandle {
+        cell: target.cell_id(),
+        incarnation,
+        code,
+        schema: 1,
+        catalog: CatalogProof::local(
+            CatalogEntry::new(&target, CatalogRole::Application, code, 1).unwrap(),
+            &target,
+        ),
+        inner: runtime.inner.clone(),
+        admission: admission::new_cell_admission(crate::control::OwnerFence {
+            incarnation,
+            epoch: 1,
+        }),
+    };
+    let retained = runtime
+        .inner
+        .resources
+        .try_reserve(ResourceCost::zero().with_retained_bytes(3 * (1 << 20) / 4))
+        .unwrap();
+    runtime
+        .inner
+        .unpublished_node_log_bytes
+        .store(1, Ordering::Release);
+    assert!(matches!(
+        handle.reserve_work(1, 1),
+        Err(Error::Capacity("publication backlog"))
+    ));
+    handle.admission.fenced.store(true, Ordering::Release);
+    assert!(matches!(handle.reserve_work(1, 1), Err(Error::Fenced)));
+    handle.admission.fenced.store(false, Ordering::Release);
+    handle.admission.draining.store(true, Ordering::Release);
+    assert!(matches!(
+        handle.reserve_work(1, 1),
+        Err(Error::CellDraining)
+    ));
+    runtime
+        .inner
+        .unpublished_node_log_bytes
+        .store(0, Ordering::Release);
+    drop(retained);
+    drop(handle);
+    runtime.shutdown().await.unwrap();
 }

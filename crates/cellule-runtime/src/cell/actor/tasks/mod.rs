@@ -7,12 +7,14 @@
 
 use super::admission::{
     fail_shutdown, fence_active, fence_admission, finish_migration, finish_work, rejection_error,
-    send_command_reply, send_command_task_reply, send_migration_reply, send_query_reply,
-    send_resolve_reply, subtract_unpublished_bytes,
+    release_command_request_slots, send_command_task_reply, send_finished_command_reply,
+    send_finished_migration_reply, send_finished_query_reply, send_finished_resolve_reply,
+    subtract_unpublished_bytes,
 };
 use super::*;
 
 mod activation;
+mod maintenance_transfer;
 mod movement;
 mod publication;
 mod residency;
@@ -71,18 +73,10 @@ pub(super) fn handle_task(
             admission,
             reply,
             result,
-            persisted_work,
+            inventory,
         } => activation::handle_activated(
-            context,
-            cell,
-            generation,
-            role,
-            catalog,
-            publisher,
-            admission,
-            reply,
-            result,
-            persisted_work,
+            context, cell, generation, role, catalog, publisher, admission, reply, result,
+            inventory,
         ),
         TaskResult::Hydrated {
             cell,
@@ -128,6 +122,15 @@ pub(super) fn handle_task(
         } => publication::handle_proven(
             context, cell, generation, effect_id, command, result, fenced,
         ),
+        TaskResult::PublicationAdmitted {
+            cell,
+            generation,
+            effect_id,
+            publisher,
+            result,
+        } => publication::handle_publication_admitted(
+            context, cell, generation, effect_id, publisher, result,
+        ),
         TaskResult::Published {
             cell,
             generation,
@@ -156,6 +159,11 @@ pub(super) fn handle_task(
             result,
             fenced,
         ),
+        TaskResult::CompactionAdmitted {
+            cell,
+            generation,
+            result,
+        } => publication::handle_compaction_admitted(context, cell, generation, result),
         TaskResult::Compacted {
             cell,
             generation,
@@ -169,6 +177,12 @@ pub(super) fn handle_task(
             effect_id,
             result,
         } => movement::handle_transfer_preflight(context, cell, generation, effect_id, result),
+        TaskResult::MaintenancePreflight {
+            cell,
+            generation,
+            effect_id,
+            result,
+        } => maintenance_transfer::handle(context, cell, generation, effect_id, result),
         TaskResult::Migrated {
             cell,
             generation,
@@ -195,8 +209,16 @@ pub(super) fn handle_task(
             cell,
             generation,
             effect_id,
+            inventory_revision,
             result,
-        } => residency::handle_inventory_refreshed(context, cell, generation, effect_id, result),
+        } => residency::handle_inventory_refreshed(
+            context,
+            cell,
+            generation,
+            effect_id,
+            inventory_revision,
+            result,
+        ),
         TaskResult::Renewed {
             cell,
             generation,
@@ -210,8 +232,15 @@ pub(super) fn handle_task(
             reply,
             shutdown_drain,
             result,
-        } => {
-            residency::handle_deactivated(context, cell, generation, reply, shutdown_drain, result)
-        }
+            released,
+        } => residency::handle_deactivated(
+            context,
+            cell,
+            generation,
+            reply,
+            shutdown_drain,
+            result,
+            released,
+        ),
     }
 }

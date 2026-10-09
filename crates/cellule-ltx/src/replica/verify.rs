@@ -23,6 +23,31 @@ impl CellReplica {
     /// Callers may use this bounded inventory for backup pinning and reachability
     /// collection. A missing or corrupt dependency fails the traversal closed.
     pub async fn reachable_objects(&self, root: &RootRef) -> Result<Vec<RootObjectRef>> {
+        self.reachable_objects_inner(root, None).await
+    }
+
+    /// Verifies the same complete origin graph with an explicit inventory bound.
+    ///
+    /// Zero or excess objects refuse with `RootInventoryObjects`; no partial
+    /// inventory is returned. The bound covers retained directory digests and
+    /// the final distinct inventory. Descriptor work retains the existing fixed
+    /// root/segment limits. The caller owns memory admission and the deadline.
+    pub async fn reachable_objects_bounded(
+        &self,
+        root: &RootRef,
+        max_objects: usize,
+    ) -> Result<Vec<RootObjectRef>> {
+        if max_objects == 0 {
+            return Err(LtxError::Limit(crate::LimitKind::RootInventoryObjects));
+        }
+        self.reachable_objects_inner(root, Some(max_objects)).await
+    }
+
+    async fn reachable_objects_inner(
+        &self,
+        root: &RootRef,
+        max_objects: Option<usize>,
+    ) -> Result<Vec<RootObjectRef>> {
         // Inventory must prove origin presence even for metadata uploaded here.
         let graph = self.load_graph_with_cache(root, false).await?;
         let extents = object_extents(&graph.descriptors)?;
@@ -32,6 +57,7 @@ impl CellReplica {
             incarnation: &self.incarnation,
             page_size: graph.document.page_size,
             database_pages: graph.document.database_pages,
+            inline_root: graph.document.directory_inline.as_deref(),
             extents: &extents,
             host: &self.host,
             origin: crate::LtxReadOrigin::Cold,
@@ -41,6 +67,7 @@ impl CellReplica {
             graph.document.directory_digest,
             graph.document.directory_height,
             graph.aggregate,
+            max_objects,
         )
         .await?;
 
@@ -61,6 +88,32 @@ impl CellReplica {
                 }),
         );
         for descriptor in &graph.descriptors {
+            if descriptor.object_kind() == CellObjectKind::Packed {
+                let path = self.layout.incarnation_object_path(
+                    &self.cell,
+                    &self.incarnation,
+                    &descriptor.object_digest(),
+                    CellObjectKind::Packed,
+                );
+                let _permit = self.host.io_permit().await?;
+                let result = self
+                    .layout
+                    .store()
+                    .get_with_etag_bounded(&path, upload::SINGLE_PUT_BYTES)
+                    .await;
+                self.host.observe_ltx_origin_request(
+                    crate::LtxReadOrigin::Cold,
+                    result.is_ok(),
+                    result.as_ref().map_or(0, |(bytes, _)| bytes.len()),
+                );
+                let (bytes, _) = result?;
+                packed::verify(&bytes, descriptor)?;
+                objects.insert(RootObjectRef {
+                    digest: descriptor.object_digest(),
+                    kind: CellObjectKind::Packed,
+                });
+                continue;
+            }
             let body = RootObjectRef {
                 digest: descriptor.object_digest(),
                 kind: descriptor.object_kind(),
@@ -100,6 +153,9 @@ impl CellReplica {
             digest,
             kind: CellObjectKind::Directory,
         }));
+        if max_objects.is_some_and(|limit| objects.len() > limit) {
+            return Err(LtxError::Limit(crate::LimitKind::RootInventoryObjects));
+        }
         Ok(objects.into_iter().collect())
     }
 
@@ -183,7 +239,9 @@ impl CellReplica {
         {
             return Err(LtxError::InvalidState("Cell root reference mismatch"));
         }
-        if document.segment_pages.is_empty() || document.segment_pages.len() > MAX_SEGMENT_PAGES {
+        if (document.segment_pages.is_empty() && document.segments.is_empty())
+            || document.segment_pages.len() > MAX_SEGMENT_PAGES
+        {
             return Err(LtxError::LTXCorrupted);
         }
         let pages = stream::iter(
@@ -217,6 +275,9 @@ impl CellReplica {
             descriptors.extend(page);
             cached_metadata.extend(cached);
         }
+        // These descriptors are authenticated by the root digest itself. Its
+        // cached bytes still require the same origin-presence check below.
+        descriptors.extend(document.segments.iter().cloned());
         // A cached predecessor cannot justify a new root if its metadata has
         // disappeared from origin. Check all cached objects in one bounded wave.
         self.verify_cached_metadata(&cached_metadata).await?;
@@ -240,6 +301,7 @@ impl CellReplica {
                 incarnation: &self.incarnation,
                 page_size: document.page_size,
                 database_pages: document.database_pages,
+                inline_root: document.directory_inline.as_deref(),
                 extents: &extents,
                 host: &self.host,
                 origin: crate::LtxReadOrigin::Cold,
@@ -401,6 +463,7 @@ impl VerifiedRoot {
                 replica,
                 directory_digest: document.directory_digest,
                 directory_height: document.directory_height,
+                directory_inline: document.directory_inline.clone(),
                 extents: Arc::new(extents),
                 page_size: document.page_size,
                 database_pages: document.database_pages,

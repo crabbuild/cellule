@@ -9,6 +9,14 @@ pub(crate) enum AdmissionKind {
     Query,
     Resolve,
     Migration,
+    LeaseCommand,
+    LeaseQuery,
+}
+
+impl AdmissionKind {
+    pub(crate) const fn allowed_while_quiescing(self) -> bool {
+        matches!(self, Self::LeaseCommand | Self::LeaseQuery | Self::Resolve)
+    }
 }
 
 /// The adapter intent associated with one in-flight effect.
@@ -72,6 +80,7 @@ pub(crate) enum CoordinationInput {
         fenced: bool,
     },
     BeginDrain,
+    BeginMaintenanceQuiescence,
     BeginShutdown,
     BeginMigration,
     FinishMigration {
@@ -118,6 +127,13 @@ pub(crate) enum CoordinationInput {
         publication_idle: bool,
         inventory_unknown: bool,
         refreshing: bool,
+        lease_live: bool,
+    },
+    BeginMaintenanceInventory {
+        refreshing: bool,
+        finalizing: bool,
+        queue_empty: bool,
+        publisher_ready: bool,
         lease_live: bool,
     },
     BeginTransferPreflight {
@@ -191,6 +207,7 @@ pub(crate) struct CoordinationState {
     residency: Residency,
     shutdown_requested: bool,
     transfer_preparing: bool,
+    maintenance_quiescing: bool,
     next_effect_id: u64,
     pending_effects: BTreeMap<u64, CoordinationEffect>,
 }
@@ -213,6 +230,7 @@ impl CoordinationState {
             residency: Residency::Resident,
             shutdown_requested: false,
             transfer_preparing: false,
+            maintenance_quiescing: false,
             next_effect_id: 0,
             pending_effects: BTreeMap::new(),
         }
@@ -231,6 +249,7 @@ impl CoordinationState {
             residency,
             shutdown_requested: false,
             transfer_preparing: false,
+            maintenance_quiescing: false,
             next_effect_id: 0,
             pending_effects: BTreeMap::new(),
         }
@@ -254,6 +273,10 @@ impl CoordinationState {
 
     pub(crate) fn is_transfer_preparing(&self) -> bool {
         self.transfer_preparing
+    }
+
+    pub(crate) fn is_maintenance_quiescing(&self) -> bool {
+        self.maintenance_quiescing
     }
 
     pub(crate) fn is_busy(&self) -> bool {
@@ -405,6 +428,18 @@ impl CoordinationState {
                     CoordinationDecision::Ignored
                 }
             }
+            CoordinationInput::BeginMaintenanceQuiescence => {
+                if self.is_fenced() {
+                    CoordinationDecision::Reject(RejectReason::Fenced)
+                } else if self.is_draining() || self.transfer_preparing {
+                    CoordinationDecision::Reject(RejectReason::Draining)
+                } else {
+                    // Unlike idle preflight, this is sticky even while busy.
+                    // Accepted work and exact lease completions keep scheduling.
+                    self.maintenance_quiescing = true;
+                    CoordinationDecision::Started
+                }
+            }
             CoordinationInput::BeginDrain => {
                 if self.is_fenced() {
                     CoordinationDecision::Reject(RejectReason::Fenced)
@@ -483,7 +518,7 @@ impl CoordinationState {
                     CoordinationDecision::Fence
                 } else if self.is_fenced()
                     || self.is_draining()
-                    || self.transfer_preparing
+                    || (self.transfer_preparing && !self.maintenance_quiescing)
                     || self.renewing
                 {
                     CoordinationDecision::Reject(if self.is_fenced() {
@@ -550,7 +585,10 @@ impl CoordinationState {
                     CoordinationDecision::Fence
                 } else if self.is_fenced() {
                     CoordinationDecision::Reject(RejectReason::Fenced)
-                } else if self.is_draining() || self.transfer_preparing {
+                } else if self.is_draining()
+                    || self.transfer_preparing
+                    || self.maintenance_quiescing
+                {
                     CoordinationDecision::Reject(RejectReason::Draining)
                 } else if self.busy {
                     CoordinationDecision::Reject(RejectReason::Busy)
@@ -585,6 +623,33 @@ impl CoordinationState {
                 } else if !queue_empty || !publication_idle || !inventory_unknown || refreshing {
                     CoordinationDecision::Ignored
                 } else {
+                    CoordinationDecision::Started
+                }
+            }
+            CoordinationInput::BeginMaintenanceInventory {
+                refreshing,
+                finalizing,
+                queue_empty,
+                publisher_ready,
+                lease_live,
+            } => {
+                if !lease_live {
+                    self.lifecycle = Lifecycle::Fenced;
+                    CoordinationDecision::Fence
+                } else if self.is_fenced() {
+                    CoordinationDecision::Reject(RejectReason::Fenced)
+                } else if self.is_draining() || !self.maintenance_quiescing {
+                    CoordinationDecision::Reject(RejectReason::Draining)
+                } else if refreshing
+                    || !publisher_ready
+                    || (finalizing
+                        && (!self.transfer_preparing || !queue_empty || !self.can_deactivate()))
+                {
+                    CoordinationDecision::Ignored
+                } else {
+                    // The worker serializes this read behind already executing SQL.
+                    // Its owned Inventory effect prevents the next queued work from
+                    // starving the first maintenance observation.
                     CoordinationDecision::Started
                 }
             }
@@ -663,6 +728,7 @@ impl CoordinationState {
                 } else if self.is_fenced()
                     || self.is_draining()
                     || self.transfer_preparing
+                    || self.maintenance_quiescing
                     || self.busy
                     || self.renewing
                     || !queue_empty
@@ -727,6 +793,9 @@ impl CoordinationState {
             };
         }
         if self.transfer_preparing {
+            return CoordinationDecision::Reject(RejectReason::Draining);
+        }
+        if self.maintenance_quiescing && !kind.allowed_while_quiescing() {
             return CoordinationDecision::Reject(RejectReason::Draining);
         }
         // Migration swaps the admission capability before its durable cut is

@@ -154,6 +154,7 @@ impl CellRuntime {
         let publications = broadcast::Sender::new(PUBLICATION_NOTIFICATIONS);
         let node_lease = Arc::new(node_lease);
         let unpublished_node_log_bytes = Arc::new(AtomicU64::new(0));
+        let node_admission = NodeAdmission::default();
         runtime.spawn(run(
             receiver,
             pool.clone(),
@@ -161,6 +162,7 @@ impl CellRuntime {
             Arc::clone(&unpublished_node_log_bytes),
             telemetry.clone(),
             publications.clone(),
+            node_admission.clone(),
         ));
         Ok(Self {
             inner: Arc::new(RuntimeInner {
@@ -169,10 +171,11 @@ impl CellRuntime {
                 resources,
                 primitive_jobs,
                 shutting_down: AtomicBool::new(false),
-                accepting_cells: AtomicBool::new(true),
+                node_admission,
                 session,
                 pool,
                 replica_host,
+                receivers: std::sync::Mutex::new(receiver::ReceiverRegistry::default()),
                 application_limits: OnceLock::new(),
                 node_lease,
                 node_durability: Arc::new(std::sync::RwLock::new(None)),
@@ -295,6 +298,9 @@ impl CellRuntime {
         durability: Arc<NodeDurability>,
     ) -> crate::Result<()> {
         self.ensure_running()?;
+        if durability.identity()?.0 != self.inner.session {
+            return Err(Error::Control("Cell runtime node durability boot differs"));
+        }
         let mut slot = self
             .inner
             .node_durability
@@ -312,17 +318,28 @@ impl CellRuntime {
     /// Returns the currently installed node-log durability binding.
     #[must_use]
     pub fn node_durability(&self) -> Option<(ApplicationId, Arc<NodeDurability>)> {
+        self.try_node_durability().ok().flatten()
+    }
+
+    /// Reads the original local binding, preserving a failed lock as an error.
+    /// Absence supplies no directory authority or supervisor-completion proof.
+    pub fn try_node_durability(
+        &self,
+    ) -> crate::Result<Option<(ApplicationId, Arc<NodeDurability>)>> {
         self.inner
             .node_durability
             .read()
-            .ok()
-            .and_then(|slot| slot.clone())
+            .map(|slot| slot.clone())
+            .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))
     }
 
-    /// Replaces the active node-log durability binding after an epoch close.
+    /// Replaces the expected node-log binding after an epoch close. The identity
+    /// check and replacement share one write lock; stale supervisors cannot
+    /// overwrite a different binding installed while they awaited provider I/O.
     pub fn replace_node_durability(
         &self,
         application: ApplicationId,
+        expected: &Arc<NodeDurability>,
         durability: Arc<NodeDurability>,
     ) -> crate::Result<Arc<NodeDurability>> {
         self.ensure_running()?;
@@ -331,7 +348,7 @@ impl CellRuntime {
             .node_durability
             .write()
             .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))?;
-        let Some((installed_application, _)) = slot.as_ref() else {
+        let Some((installed_application, installed)) = slot.as_ref() else {
             return Err(Error::Control(
                 "Cell runtime node durability is not installed",
             ));
@@ -339,6 +356,23 @@ impl CellRuntime {
         if *installed_application != application {
             return Err(Error::Control(
                 "Cell runtime node durability application changed",
+            ));
+        }
+        if !Arc::ptr_eq(installed, expected) {
+            return Err(Error::Control(
+                "Cell runtime node durability binding changed",
+            ));
+        }
+        let previous_identity = installed.identity()?;
+        let identity = durability.identity()?;
+        if identity.0 != previous_identity.0 || identity.1 != previous_identity.1 {
+            return Err(Error::Control(
+                "Cell runtime node durability identity changed",
+            ));
+        }
+        if identity.2 <= previous_identity.2 {
+            return Err(Error::Control(
+                "Cell runtime node durability epoch did not advance",
             ));
         }
         let (_, previous) = slot
@@ -352,6 +386,7 @@ impl CellRuntime {
     /// Returns the first unobserved background release failure, including one
     /// completed before shutdown was requested, after closing the remaining work.
     pub async fn shutdown(&self) -> crate::Result<()> {
+        self.inner.node_admission.begin_drain()?;
         if self
             .inner
             .shutting_down
@@ -361,6 +396,9 @@ impl CellRuntime {
             return Err(Error::RuntimeClosed);
         }
         self.inner.primitive_jobs.close();
+        // Cancel unused receiver credit and join accepted takeover before the
+        // actor/worker close barrier. Retained caller handles are weak references.
+        let receivers = self.drain_prepared_receivers().await;
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
@@ -376,21 +414,32 @@ impl CellRuntime {
         // Admission and replica work are stopped. Optional fills outlive their
         // readers, so keep artifacts/executors until accepted fills complete.
         self.inner.replica_host.drain_cache_fills().await;
-        drain.and(workers).and(durability)
+        receivers.and(drain).and(workers).and(durability)
     }
 
     /// Stops new Cell acquisition while existing owners continue serving.
     pub fn stop_acquiring(&self) -> crate::Result<()> {
         self.ensure_running()?;
-        self.inner.accepting_cells.store(false, Ordering::Release);
-        Ok(())
+        self.inner.node_admission.cordon()
     }
 
     /// Reports whether a new owner may be acquired on this node.
     #[must_use]
     pub fn is_acquiring(&self) -> bool {
         !self.inner.shutting_down.load(Ordering::Acquire)
-            && self.inner.accepting_cells.load(Ordering::Acquire)
+            && self.inner.node_admission.check_new_role().is_ok()
+    }
+
+    /// Shares the node's lifecycle and pressure gate with local role facilities.
+    /// The host installs this gate on its follower store before readiness.
+    #[must_use]
+    pub fn node_admission(&self) -> NodeAdmission {
+        self.inner.node_admission.clone()
+    }
+
+    /// Returns the stable local classifier sample without refreshing its time.
+    pub fn operational_sample(&self) -> crate::Result<Option<crate::node::NodeOperationalSample>> {
+        self.inner.node_admission.sample()
     }
 
     /// Starts bounded, actor-owned eviction of safe idle Cells.
@@ -441,6 +490,39 @@ impl CellRuntime {
         response.await.map_err(|_| Error::RuntimeClosed)?
     }
 
+    /// Observes a bounded page of all local owners and lifecycle transitions.
+    ///
+    /// The cursor pins ownership topology, not SQL state or authority. Changed
+    /// topology rejects the cursor; restart the scan. Busy/draining Cells are
+    /// retained, and each release still needs fresh generation/authority checks.
+    /// The page owns retained-byte admission until dropped, including when its
+    /// caller cancels before receiving the actor's response.
+    pub async fn fleet_cells_page(
+        &self,
+        cursor: Option<CellInventoryCursor>,
+        limit: usize,
+    ) -> crate::Result<CellInventoryPage> {
+        self.ensure_running()?;
+        inventory::validate_limit(limit)?;
+        let retained = self.inner.resources.try_reserve(
+            ResourceCost::zero()
+                .with_retained_bytes(crate::fleet::operations::MAX_PAGE_BYTES as usize),
+        )?;
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::FleetCellsPage {
+                session: self.inner.session,
+                cursor,
+                limit,
+                retained,
+                reply,
+            })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
     /// Lists tenant-scoped targets of active, non-draining owners for maintenance.
     ///
     /// Targets come from verified activation proofs, including owners whose
@@ -476,21 +558,143 @@ impl CellRuntime {
         source: SessionId,
         generation: u64,
     ) -> crate::Result<()> {
+        let (reply, response) = oneshot::channel();
+        self.request_idle_release(cell, source, generation, None, DrainReply::Unit(reply))
+            .await?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    /// Stops new foreground work for one exact maintenance source.
+    ///
+    /// Already actor-admitted work and native exact-lease completion/validation
+    /// continue through the normal transaction and durability gates. This
+    /// transition is sticky for this activation and returns once installed;
+    /// it does not prove primitive settlement, release, or fleet relocation.
+    /// Applications authorize maintenance and retain its durable node intent
+    /// before invoking this local boundary for a selected Cell.
+    pub async fn quiesce_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+    ) -> crate::Result<()> {
         self.ensure_running()?;
-        if source != self.inner.session || generation == 0 {
+        if source != self.inner.session || generation == 0 || epoch == 0 {
             return Err(Error::Fenced);
         }
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
-            .send(Message::ReleaseIdleCell {
+            .send(Message::QuiesceCell {
                 cell,
                 generation,
+                incarnation,
+                epoch,
                 reply,
             })
             .await
             .map_err(|_| Error::RuntimeClosed)?;
         response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    /// Quiesces and releases a busy maintenance source through canonical publication.
+    ///
+    /// The deadline bounds preflight, not an already confirmed release. A refused
+    /// preflight proves this request started no canonical release. Foreground
+    /// closure remains sticky; native completion remains available after refusal.
+    /// The runtime owns accepted work independently of the caller's waiter.
+    pub async fn release_maintenance_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+        deadline: tokio::time::Instant,
+    ) -> crate::Result<MaintenanceCellRelease> {
+        self.ensure_running()?;
+        if source != self.inner.session || generation == 0 || epoch == 0 {
+            return Err(Error::Fenced);
+        }
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::ReleaseMaintenanceCell(
+                maintenance::ReleaseRequest {
+                    cell,
+                    generation,
+                    incarnation,
+                    epoch,
+                    deadline: deadline.into_std(),
+                    reply,
+                },
+            ))
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    /// Releases an exact source identity and returns the canonical final position.
+    ///
+    /// The actor checks incarnation and ownership epoch before closing admission,
+    /// then its existing worker-close/publication path captures the exact released
+    /// root. A later authority read cannot replace this proof with a newer root.
+    /// [`Error::CellReleaseRefused`] identifies a definite refusal before this
+    /// request began canonical close; all other errors retain uncertainty.
+    pub async fn release_idle_cell_at(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        incarnation: crate::identity::IncarnationId,
+        epoch: u64,
+    ) -> crate::Result<crate::fleet::operations::PublishedPosition> {
+        if epoch == 0 {
+            return Err(Error::CellReleaseRefused {
+                blocker: DrainBlocker::IncompleteObservation,
+                source: Box::new(Error::Fenced),
+            });
+        }
+        let (reply, response) = oneshot::channel();
+        self.request_idle_release(
+            cell,
+            source,
+            generation,
+            Some((incarnation, epoch)),
+            DrainReply::Position(reply),
+        )
+        .await
+        .map_err(|source| Error::CellReleaseRefused {
+            blocker: DrainBlocker::IncompleteObservation,
+            source: Box::new(source),
+        })?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
+    }
+
+    async fn request_idle_release(
+        &self,
+        cell: CellId,
+        source: SessionId,
+        generation: u64,
+        expected: Option<(crate::identity::IncarnationId, u64)>,
+        reply: DrainReply,
+    ) -> crate::Result<()> {
+        self.ensure_running()?;
+        if source != self.inner.session || generation == 0 {
+            return Err(Error::Fenced);
+        }
+        self.inner
+            .sender
+            .send(Message::ReleaseIdleCell {
+                cell,
+                generation,
+                expected,
+                reply,
+            })
+            .await
+            .map_err(|_| Error::RuntimeClosed)
     }
 
     /// Feeds one measured node sample into the actor-owned hysteretic pressure
@@ -515,6 +719,18 @@ impl CellRuntime {
     #[must_use]
     pub fn is_shutting_down(&self) -> bool {
         self.inner.shutting_down.load(Ordering::Acquire)
+    }
+
+    /// Samples committed command publication debt through the bounded actor lane.
+    /// This diagnostic performs no provider I/O and grants no writer authority.
+    pub async fn publication_progress(&self) -> crate::Result<CellPublicationProgress> {
+        let (reply, response) = oneshot::channel();
+        self.inner
+            .sender
+            .send(Message::PublicationProgress { reply })
+            .await
+            .map_err(|_| Error::RuntimeClosed)?;
+        response.await.map_err(|_| Error::RuntimeClosed)?
     }
 
     /// Samples node-wide admission usage without waiting for actor work.
@@ -620,6 +836,23 @@ impl CellRuntime {
     /// and returns `RuntimeClosed` once terminal drain begins.
     pub fn try_reserve_node_bytes(&self, bytes: usize) -> crate::Result<NodeByteReservation> {
         self.ensure_running()?;
+        self.try_reserve_node_metadata_bytes(bytes)
+    }
+
+    /// Reserves bounded node lifecycle metadata in the same retained-byte ledger.
+    ///
+    /// Metadata owners may be installed before a live node lease exists, or
+    /// observed after fencing. This token grants no native work, role admission
+    /// or authority. Native work still uses [`Self::try_reserve_node_bytes`].
+    /// Zero/full reservations fail with capacity; terminal drain closes new
+    /// metadata admission with `RuntimeClosed`. Dropping the token releases it.
+    pub fn try_reserve_node_metadata_bytes(
+        &self,
+        bytes: usize,
+    ) -> crate::Result<NodeByteReservation> {
+        if self.inner.shutting_down.load(Ordering::Acquire) {
+            return Err(Error::RuntimeClosed);
+        }
         if bytes == 0 {
             return Err(Error::Capacity("node retained bytes"));
         }

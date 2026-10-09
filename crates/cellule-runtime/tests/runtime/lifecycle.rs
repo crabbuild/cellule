@@ -52,22 +52,28 @@ use crate::support::fixtures::{mutation_identity_window, now_ms};
 pub mod durability;
 pub mod execution;
 pub mod idle;
+pub mod inventory;
+pub mod maintenance;
 pub mod ownership;
 pub mod read_replica;
+pub mod receiver;
 pub mod residency;
 
 #[derive(Debug)]
-struct PausingStore {
+pub(super) struct PausingStore {
     inner: Arc<InMemory>,
     armed: AtomicBool,
     update_armed: AtomicBool,
     failing: AtomicBool,
     transient_put_failures: AtomicUsize,
+    put_delay_ms: AtomicUsize,
     lost_update_response: AtomicBool,
+    acquisition_fault: AtomicUsize,
     failed: AtomicBool,
     blocked: AtomicBool,
     released: AtomicBool,
     get_armed: AtomicBool,
+    get_calls: AtomicUsize,
     fail_next_get: AtomicBool,
     transient_get_failures: AtomicUsize,
     get_blocked: AtomicBool,
@@ -81,18 +87,21 @@ struct PausingStore {
 }
 
 impl PausingStore {
-    fn new(inner: Arc<InMemory>) -> Self {
+    pub(super) fn new(inner: Arc<InMemory>) -> Self {
         Self {
             inner,
             armed: AtomicBool::new(false),
             update_armed: AtomicBool::new(false),
             failing: AtomicBool::new(false),
             transient_put_failures: AtomicUsize::new(0),
+            put_delay_ms: AtomicUsize::new(0),
             lost_update_response: AtomicBool::new(false),
+            acquisition_fault: AtomicUsize::new(0),
             failed: AtomicBool::new(false),
             blocked: AtomicBool::new(false),
             released: AtomicBool::new(false),
             get_armed: AtomicBool::new(false),
+            get_calls: AtomicUsize::new(0),
             fail_next_get: AtomicBool::new(false),
             transient_get_failures: AtomicUsize::new(0),
             get_blocked: AtomicBool::new(false),
@@ -114,7 +123,7 @@ impl PausingStore {
         self.armed.store(true, Ordering::Release);
     }
 
-    fn arm_next_update(&self) {
+    pub(super) fn arm_next_update(&self) {
         self.update_armed.store(true, Ordering::Release);
     }
 
@@ -124,6 +133,10 @@ impl PausingStore {
 
     fn fail_next_put_transiently(&self) {
         self.transient_put_failures.store(1, Ordering::Release);
+    }
+
+    fn delay_puts(&self, milliseconds: usize) {
+        self.put_delay_ms.store(milliseconds, Ordering::Release);
     }
 
     fn lose_next_update_response(&self) {
@@ -144,13 +157,13 @@ impl PausingStore {
         }
     }
 
-    async fn wait_until_blocked(&self) {
+    pub(super) async fn wait_until_blocked(&self) {
         while !self.blocked.load(Ordering::Acquire) {
             self.entered.notified().await;
         }
     }
 
-    fn release(&self) {
+    pub(super) fn release(&self) {
         self.released.store(true, Ordering::Release);
         self.release.notify_waiters();
     }
@@ -189,9 +202,27 @@ impl ObjectStore for PausingStore {
         payload: PutPayload,
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
+        let delay = self.put_delay_ms.load(Ordering::Acquire);
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
+        }
+        let acquisition_fault = if location.as_ref().contains("/acquisitions/") {
+            self.acquisition_fault.swap(0, Ordering::AcqRel)
+        } else {
+            0
+        };
+        if acquisition_fault == 1 {
+            return Err(object_store::Error::PermissionDenied {
+                path: location.to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected acquisition metadata failure",
+                )),
+            });
+        }
         if self
             .transient_put_failures
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()
@@ -228,6 +259,15 @@ impl ObjectStore for PausingStore {
             }
         }
         let result = self.inner.put_opts(location, payload, options).await?;
+        if acquisition_fault == 2 {
+            return Err(object_store::Error::PermissionDenied {
+                path: location.to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "acquisition metadata response lost after commit",
+                )),
+            });
+        }
         if update && self.lost_update_response.swap(false, Ordering::AcqRel) {
             return Err(object_store::Error::Generic {
                 store: "pausing-store",
@@ -253,6 +293,7 @@ impl ObjectStore for PausingStore {
         location: &Path,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
+        self.get_calls.fetch_add(1, Ordering::AcqRel);
         if self.get_armed.load(Ordering::Acquire) && !self.get_blocked.swap(true, Ordering::AcqRel)
         {
             self.get_entered.notify_waiters();
@@ -268,7 +309,7 @@ impl ObjectStore for PausingStore {
         if options.range.is_some()
             && self
                 .transient_get_failures
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok()
@@ -319,7 +360,7 @@ impl ObjectStore for PausingStore {
 }
 
 #[derive(Default)]
-struct TestNodeAuthority {
+pub(super) struct TestNodeAuthority {
     activations: Mutex<Vec<u64>>,
     coverage: Mutex<Vec<(u64, u64)>>,
     closes: Mutex<Vec<u64>>,
@@ -352,8 +393,9 @@ impl NodeLogAuthority for TestNodeAuthority {
 
     fn close<'a>(
         &'a self,
-        barrier: &'a NodeLogRotationBarrier,
+        retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
     ) -> futures_util::future::BoxFuture<'a, cellule_runtime::Result<()>> {
+        let barrier = retirement.barrier();
         Box::pin(async move {
             self.closes.lock().unwrap().push(barrier.log_epoch());
             Ok(())
@@ -481,7 +523,7 @@ impl NodeLogTransport for LostAckFollowerTransport {
     }
 }
 
-async fn fence_log_session(
+pub(super) async fn fence_log_session(
     layout: &CellStorageLayout,
     session: SessionId,
     claimant: SessionId,
@@ -531,7 +573,7 @@ async fn fence_log_session(
         .unwrap();
     directory
         .create(
-            signed(member, "https://follower.internal:8081", 10_000, 20_000),
+            signed(member, "https://follower.internal:8081", 1, 20_000),
             2,
         )
         .await
@@ -547,7 +589,7 @@ async fn fence_log_session(
     if claimant != member {
         directory
             .create(
-                signed(claimant, "https://claimant.internal:8081", 10_000, 20_000),
+                signed(claimant, "https://claimant.internal:8081", 1, 20_000),
                 3,
             )
             .await

@@ -142,7 +142,7 @@ fn validate_stored_lane(root: &Path, lane: Lane, limits: cellule_ltx::Limits) ->
             return Err(Error::Node("follower lane contains an invalid entry"));
         }
     }
-    let records = scan_lane(&directory.join("chunks"), lane, limits)?;
+    let records = scan_lane(&directory.join("chunks"), lane, limits, None)?;
     let durable_through = records.keys().next_back().copied().unwrap_or(0);
     let sealed = directory.join("sealed");
     if sealed.exists()
@@ -279,7 +279,7 @@ fn modified_at_ms(path: &Path) -> Result<i64> {
     i64::try_from(duration.as_millis()).map_err(|_| Error::Node("follower marker time exceeds i64"))
 }
 
-fn parse_session_directory(path: &Path) -> Result<SessionId> {
+pub(super) fn parse_session_directory(path: &Path) -> Result<SessionId> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -302,7 +302,7 @@ fn parse_session_directory(path: &Path) -> Result<SessionId> {
     Ok(session)
 }
 
-fn parse_epoch_directory(path: &Path) -> Result<u64> {
+pub(super) fn parse_epoch_directory(path: &Path) -> Result<u64> {
     let epoch = path
         .file_name()
         .and_then(|name| name.to_str())

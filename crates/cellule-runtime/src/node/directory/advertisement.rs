@@ -80,6 +80,7 @@ impl NodeDirectory {
             .filter(|candidate| {
                 let capacity = candidate.capacity();
                 candidate.expires_at_ms() > now_ms
+                    && candidate.accepts_new_roles(now_ms)
                     && candidate.node() != owner_node
                     && candidate.module_digests().contains(&code)
                     && capacity.free_memory_bytes
@@ -189,6 +190,21 @@ impl NodeDirectory {
         Ok(advertisements)
     }
 
+    /// Reports whether every physical node in an enrolled member set is live.
+    pub async fn members_are_live(
+        &self,
+        members: &[NodeId],
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<bool> {
+        let live = self.reader_membership(now_ms, limit).await?;
+        Ok(members.iter().all(|member| {
+            live.iter().any(|advertisement| {
+                advertisement.node == *member && advertisement.expires_at_ms > now_ms
+            })
+        }))
+    }
+
     /// Chooses a destination using only authenticated, measured placement
     /// blocks advertised by the current live fleet.
     ///
@@ -241,6 +257,21 @@ impl NodeDirectory {
         now_ms: i64,
         limit: usize,
     ) -> Result<Vec<NodeId>> {
+        Ok(self
+            .select_log_advertisements(leader, required_follower_bytes, now_ms, limit)
+            .await?
+            .into_iter()
+            .map(|advertisement| advertisement.node)
+            .collect())
+    }
+
+    pub(super) async fn select_log_advertisements(
+        &self,
+        leader: SessionId,
+        required_follower_bytes: u64,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<NodeAdvertisement>> {
         if required_follower_bytes == 0 {
             return Err(Error::Node("node-log follower byte requirement is zero"));
         }
@@ -260,11 +291,7 @@ impl NodeDirectory {
             .iter()
             .filter(|candidate| {
                 candidate.node != leader.node
-                    && candidate.capacity.log_protocol == NODE_LOG_PROTOCOL_VERSION
-                    && candidate.capacity.follower_free_bytes >= required_follower_bytes
-                    && candidate.capacity.free_memory_bytes != 0
-                    && candidate.capacity.free_disk_bytes != 0
-                    && candidate.capacity.job_credits != 0
+                    && accepts_log_enrollment(candidate, required_follower_bytes, now_ms)
             })
             .map(|candidate| {
                 let mut hasher = blake3::Hasher::new();
@@ -292,9 +319,9 @@ impl NodeDirectory {
         }
         let mut selected = selected_advertisements
             .into_iter()
-            .map(|advertisement| advertisement.node)
+            .cloned()
             .collect::<Vec<_>>();
-        selected.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+        selected.sort_unstable_by(|left, right| left.node.as_bytes().cmp(right.node.as_bytes()));
         Ok(selected)
     }
 
@@ -349,16 +376,18 @@ impl NodeDirectory {
                         return Ok(None);
                     };
                     validate_record_path(&self.layout, advertisement.session, &meta.location)?;
+                    // Canonical decoding above verifies the signatures on each
+                    // fresh body. These policies neither mutate nor reuse it.
                     match scan {
                         AdvertisementScan::LiveRelease => {
                             if advertisement.expires_at_ms <= now_ms {
                                 return Ok(None);
                             }
-                            self.validate(&advertisement, now_ms)?;
+                            advertisement.validate_at(now_ms)?;
+                            self.validate_scope(&advertisement)?;
                         }
                         AdvertisementScan::AdvertisedFleet => {
                             advertisement.validate_shape()?;
-                            advertisement.verify_signature()?;
                             if advertisement.fleet != self.fleet
                                 || advertisement.issued_at_ms
                                     > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
@@ -491,7 +520,18 @@ impl NodeDirectory {
             Ok(_) => Ok(()),
             Err(update_error) => match self.load_record_at(&path).await? {
                 None => Ok(()),
-                Some((NodeRecord::Tombstone(current), _)) if current.claimant.is_none() => Ok(()),
+                Some((NodeRecord::Tombstone(current), _)) if current.claimant.is_none() => {
+                    // Stale collection fences the boot but retains its log.
+                    // A token captured before recruitment must not turn that
+                    // unresolved authority into successful planned withdrawal.
+                    if current.log.is_some() {
+                        Err(Error::Node(
+                            "node log must be sealed before session withdrawal",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
                 Some((NodeRecord::Tombstone(_), _)) => Err(Error::Fenced),
                 Some((NodeRecord::Advertisement(current), _))
                     if *current == observed.advertisement =>
@@ -630,11 +670,13 @@ impl NodeDirectory {
             candidate.log.clone_from(&base.advertisement.log);
             self.validate(&candidate, now_ms)?;
             validate_successor(&base.advertisement, &candidate)?;
+            // The validated candidate remains immutable through its CAS body.
+            let encoded = candidate.canonical_bytes()?;
             let path = self.layout.node_path(candidate.session.as_bytes());
             match self
                 .layout
                 .store()
-                .update(&path, Bytes::from(candidate.encode()?), base.token.clone())
+                .update(&path, Bytes::from(encoded), base.token.clone())
                 .await
             {
                 Ok(token) => {
@@ -659,4 +701,17 @@ impl NodeDirectory {
         }
         Err(Error::Node("node session changed during heartbeat refresh"))
     }
+}
+
+pub(super) fn accepts_log_enrollment(
+    candidate: &NodeAdvertisement,
+    required_follower_bytes: u64,
+    now_ms: i64,
+) -> bool {
+    candidate.accepts_new_roles(now_ms)
+        && candidate.capacity.log_protocol == NODE_LOG_PROTOCOL_VERSION
+        && candidate.capacity.follower_free_bytes >= required_follower_bytes
+        && candidate.capacity.free_memory_bytes != 0
+        && candidate.capacity.free_disk_bytes != 0
+        && candidate.capacity.job_credits != 0
 }

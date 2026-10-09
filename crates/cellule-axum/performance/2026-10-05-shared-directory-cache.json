@@ -1,0 +1,99 @@
+{
+  "baseline_production_commit": "19752ad",
+  "baseline_report_commit": "02b25a3",
+  "fixed_source": "same branch; shared live directory cache; see shared-directory-cache-source.json external manifest",
+  "recovery_probe": {
+    "captured_from": "docker --context colima exec cellule-node-scaling-assets; /evidence/cold-ledger-r4-repro-v2/cold.log",
+    "binary_sha256": "901e12af1ce4d7efc59fe07790eb40619508ef2be4f77f71ee05fd32c1d5b63d",
+    "baseline_production_commit": "19752ad",
+    "probe": "ensure_acquiring error-only stats; original sql.rs/application identity preserved",
+    "error": "Capacity(\"node pressure\")",
+    "sample": {
+      "mode": "Active",
+      "pressure": "Constrained",
+      "sequence": 111,
+      "observed_at_ms": 1791187719260
+    },
+    "stats": {
+      "active_cells": 993,
+      "active_cell_capacity": 2000,
+      "resident_bytes": 89481216,
+      "resident_capacity_bytes": 536870912,
+      "file_descriptors": 7944,
+      "file_descriptor_capacity": 16000,
+      "retained_bytes": 0,
+      "retained_capacity_bytes": 16777216,
+      "worker_jobs": 0,
+      "worker_job_capacity": 16,
+      "primitive_jobs": 0,
+      "primitive_job_capacity": 16,
+      "hydration_jobs": 0,
+      "hydration_job_capacity": 2,
+      "io_slots": 0,
+      "io_slot_capacity": 32,
+      "blocking_jobs": 0,
+      "blocking_job_capacity": 8,
+      "recovery_jobs": 0,
+      "recovery_job_capacity": 2,
+      "dirty_jobs": 0,
+      "dirty_job_capacity": 8,
+      "scratch_units": 0,
+      "scratch_unit_capacity": 65536,
+      "local_disk_reserved_bytes": 706099184,
+      "local_disk_capacity_bytes": 1073741824,
+      "unpublished_node_log_bytes": 0
+    },
+    "full_original_log_copy_pending_vm_start": true,
+    "full_cold_audit": false,
+    "raw_probe_source_sha256": "f07bdf8e9a96b669d5669e28810132db70ee8e96c46d53c115353ef8a3ea6dd5"
+  },
+  "cache_regression": {
+    "live_cloned_hosts": 21,
+    "physical_entry_bytes": 8,
+    "baseline_reserved_bytes": 168,
+    "fixed_reserved_bytes": 8,
+    "shared_membership_visible": true,
+    "reserved_bytes_after_last_drop": 0,
+    "reopened_persistent_entries": 2,
+    "reopened_reserved_bytes": 15,
+    "red_test": "cloned_hosts_share_live_directory_cache_and_its_disk_charge",
+    "concurrent_openers": 32,
+    "selected_budget_isolation_test": true
+  },
+  "validation": {
+    "ltx_units_passed": 123,
+    "ltx_cells_passed": 75,
+    "ltx_host_passed": 72,
+    "ltx_no_default_units_passed": 47,
+    "clippy": "LTX/runtime/Axum all targets and features passed; isolated macOS snapshot",
+    "runtime": {
+      "all_features": "passed",
+      "units_passed": 619,
+      "runtime_integration_passed": 234,
+      "existing_ignored_tests_preserved": true
+    },
+    "api_docs": "LTX/runtime/Axum all features, no dependencies, warnings denied; passed"
+  },
+  "qualification": {
+    "post_fix_rustfs_cold_restore": null,
+    "post_fix_tps": null,
+    "post_fix_latency_ms": null,
+    "original_receipt_audit": false,
+    "target_established": false,
+    "blocker": "Colima is stopped; start approval requested"
+  },
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "raw_evidence": [
+    "shared-directory-cache-red.log",
+    "shared-directory-cache-source.json",
+    "shared-directory-cache-ltx-final.log",
+    "shared-directory-cache-ltx-local.log",
+    "shared-directory-cache-clippy.log",
+    "cold-ledger-observation.json",
+    "cold-ledger-source-v2.json",
+    "cold-ledger-r4-console-v2.log",
+    "shared-directory-cache-runtime.log",
+    "shared-directory-cache-doc.log"
+  ],
+  "next": "Restore VM; archive full probe logs; remove temporary isolated probe; rerun cold recovery/audit and same steady workload; preserve gates and budgets"
+}

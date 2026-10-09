@@ -8,6 +8,7 @@ members = [
     "crates/cellule-app",
     "crates/cellule-host",
     "crates/cellule-peer-http",
+    "crates/cellule-axum",
 ]
 
 [workspace.package]
@@ -25,6 +26,8 @@ cellule-runtime = { version = "0.1.0", path = "crates/cellule-runtime", default-
 cellule-app = { version = "0.1.0", path = "crates/cellule-app", default-features = false }
 cellule-host = { version = "0.1.0", path = "crates/cellule-host", default-features = false }
 cellule-peer-http = { version = "0.1.0", path = "crates/cellule-peer-http", default-features = false }
+cellule-axum = { version = "0.1.0", path = "crates/cellule-axum", default-features = false }
+axum = { version = "0.8.9", default-features = false }
 uuid = { version = "=1.24.0", features = ["v7", "serde"] }
 async-trait = "0.1"
 blake3 = "1.8"

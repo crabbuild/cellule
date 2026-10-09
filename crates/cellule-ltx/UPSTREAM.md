@@ -226,12 +226,13 @@ policy.
   disk, and runtime-ledger admission.
 - Cancellation does not pretend to roll back dispatched work. Admission and
   scratch stay owned until that work actually finishes.
-- Each managed SQLite connection uses a 64 KiB page-cache target; one
-  `Db` retains four connections: writer, owner reader, capture control, and
-  capture read-lock. The owner reader uses a fresh read-only transaction for
-  each synchronous callback on the same serialized SQL worker. Sparse owner
-  reads authenticate and materialize pages through the writable activation's
-  VFS while its SQL handle remains read-only.
+- Each managed SQLite connection uses a 64 KiB page-cache target and an 8 KiB
+  lookaside arena. One `Db` retains four connections: writer, owner reader,
+  capture control, and capture read-lock. The owner reader uses a fresh
+  read-only transaction for each synchronous callback on the serialized SQL
+  worker. Sparse reads use the writable activation's authenticated VFS while
+  their SQL handle stays read-only. Runtime admission charges all four arenas
+  on top of its 128 KiB native allowance, for 160 KiB per active Cell.
 
 <a id="compatibility-boundary"></a>
 ## Compatibility boundary

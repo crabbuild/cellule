@@ -514,6 +514,90 @@ def verify_root_coverage(roots: list[dict], positions: dict[int, list[int]],
         assert int(row["root_sequence"]) >= max(positions[entity]), "published root does not cover writes"
 
 
+def verify_root_barrier(control: Path, prefix: str, nodes: int, roots: list[dict],
+                        positions: dict[int, list[int]], windows: list[dict]) -> dict:
+    metadata, = rows(control / f"{prefix}-root-barrier-{nodes}.tsv")
+    cells = nodes * CELLS_PER_NODE
+    assert int(metadata["nodes"]) == nodes and int(metadata["cells"]) == cells, "root barrier roster changed"
+    assert int(metadata["limit_us"]) == CAPACITY_DRAIN_GRACE_US, "root barrier budget changed"
+    elapsed_us, reads = int(metadata["elapsed_us"]), int(metadata["reads"])
+    assert 0 <= elapsed_us < CAPACITY_DRAIN_GRACE_US, "root barrier exceeded original budget"
+    assert reads >= cells and reads % cells == 0, "root barrier did not traverse the complete roster"
+    started, ended = int(metadata["started_boot_ms"]), int(metadata["ended_boot_ms"])
+    last_window = max(window["ended_boot_ms"] for window in windows if window["nodes"] == nodes)
+    assert started >= last_window and ended >= started, "root barrier preceded accepted client work"
+    # /proc/uptime has 10ms resolution. Bound the difference by that bucket
+    # plus the measured clock reads enclosed by the driver's elapsed timer.
+    clock_read_us = int(metadata["clock_read_us"])
+    assert 0 <= clock_read_us <= elapsed_us, "invalid root barrier clock-read duration"
+    assert abs((ended - started) * 1000 - elapsed_us) <= 10_000 + clock_read_us, "root barrier clocks disagree"
+    assert [int(row["entity"]) for row in roots] == list(range(cells))
+    for row in roots:
+        entity = int(row["entity"])
+        assert int(row["minimum_sequence"]) == max(positions[entity]), "root barrier omitted an acknowledged sequence"
+    return dict(nodes=nodes, cells=cells, limit_us=CAPACITY_DRAIN_GRACE_US,
+                elapsed_us=elapsed_us, reads=reads, started_boot_ms=started, ended_boot_ms=ended,
+                clock_read_us=clock_read_us)
+
+
+def verify_follower_roots(control: Path, roots: list[dict], positions: dict[int, list[int]],
+                          identity: dict[int, tuple], cells: int) -> dict:
+    # A follower proof may precede object publication. Retain the serving
+    # snapshot and its lag, then require full object coverage after shutdown.
+    assert [int(row["entity"]) for row in roots] == list(range(cells))
+    lags = {}
+    for row in roots:
+        entity = int(row["entity"])
+        assert (row["cell"], row["owner"], row["epoch"], row["incarnation"]) == identity[entity], \
+            "pre-drain Cell identity changed"
+        assert positions[entity], f"Cell {entity} received no acknowledged writes"
+        assert int(row["root_sequence"]) > 0
+        verify_root_digest(row["root_digest"])
+        verify_root_position(row)
+        verify_root_digest(row["restored_digest"], "restored database")
+        lags[entity] = max(0, max(positions[entity]) - int(row["root_sequence"]))
+    assert (control / "stop").is_file(), "missing shutdown request"
+    for node in range((cells + CELLS_PER_NODE - 1) // CELLS_PER_NODE):
+        assert (control / f"node-{node}.done").is_file(), "missing completed owner drain"
+    final = rows(control / "capacity-final-roots.tsv")
+    # Keep the same strict coverage assertion; publication events alone cannot
+    # stand in for a new authoritative root read and authenticated restoration.
+    verify_root_coverage(final, positions, identity, cells)
+    for before, after in zip(roots, final, strict=True):
+        entity = int(after["entity"])
+        assert after["state"] == "Idle" and after["owner_present"] == "false", \
+            "Cell still has an owner after drain"
+        sequence = int(after["root_sequence"])
+        assert sequence >= int(before["root_sequence"]), "drained root regressed"
+        verify_root_digest(after["root_digest"])
+        before_position, after_position = verify_root_position(before), verify_root_position(after)
+        assert after_position[0] >= before_position[0], "drained root transaction regressed"
+        verify_root_digest(after["restored_digest"], "restored database")
+        if sequence == int(before["root_sequence"]):
+            # Compaction can replace the manifest at the exact same endpoint.
+            # Authenticate both roots and compare their restored bytes instead.
+            assert after_position == before_position, "same sequence changed root position"
+            assert after["restored_digest"] == before["restored_digest"], \
+                "same sequence changed restored database"
+        else:
+            assert after_position[0] > before_position[0], "advanced sequence did not advance transaction"
+        assert int(after["restored_sequence"]) == sequence, "restored metadata disagrees with root"
+        assert int(after["restored_count"]) == len(positions[entity]), "restored root lost or duplicated write"
+    return dict(verified_cells=cells, pre_drain_root_lag_commits_by_entity=lags)
+
+
+def verify_root_position(row: dict) -> tuple[int, int]:
+    txid, checksum = int(row["root_txid"]), int(row["root_checksum"])
+    assert 0 < txid < 2**64 and 0 <= checksum < 2**64, "invalid root position"
+    return txid, checksum
+
+
+def verify_root_digest(value: str, label: str = "root") -> None:
+    assert (len(value) == 72 and value.startswith("Digest(") and value.endswith(")")
+            and all(character in "0123456789abcdef" for character in value[7:-1])), \
+        f"invalid {label} digest"
+
+
 def verify_entities(control: Path, capacity: bool = False, follower: bool = False) -> dict:
     assert not follower or capacity
     stages = (3,) if capacity else STAGES
@@ -531,7 +615,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
         ingress = list(map(int, (control / f"{evidence_prefix}-ingress-{stage}.txt").read_text().split()))
         assert len(ingress) == stage and min(ingress) > 0 and max(ingress) - min(ingress) <= 1
     assert len({value[0] for value in identity.values()}) == stages[-1] * CELLS_PER_NODE, "entity targets collapsed"
-    windows, positions = [], {}
+    windows, positions, root_barriers, root_recovery = [], {}, [], None
     for nodes in stages:
         if capacity:
             windows.extend(verify_capacity_windows(control, positions))
@@ -541,6 +625,9 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
                     windows.append(verify_window(control, nodes, shape, rate, concurrency, len(windows), positions))
         roots = rows(control / f"{evidence_prefix}-roots-{nodes}.tsv")
         verify_root_coverage(roots, positions, identity, nodes * CELLS_PER_NODE)
+        root_barriers.append(verify_root_barrier(control, evidence_prefix, nodes, roots, positions, windows))
+        if follower:
+            root_recovery = verify_follower_roots(control, roots, positions, identity, nodes * CELLS_PER_NODE)
         for node in range(nodes):
             assert sum(window["acknowledged_writes_by_node"][node] for window in windows if window["nodes"] == nodes) > 0
     resources = {}
@@ -601,6 +688,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
     if capacity:
         if follower:
             extra.update(verify_follower_proof(resources))
+            extra["drained_root_recovery"] = root_recovery
         for window in windows:
             root_lags = {}
             for entity, acknowledged in window["latest_write_sequence_by_entity"].items():
@@ -626,7 +714,7 @@ def verify_entities(control: Path, capacity: bool = False, follower: bool = Fals
                     node["published_roots_per_second"] for node in fully_served["node_durability"].values()),
             )
         extra["capacity_curves"] = capacity_curves
-    return dict(integrity_verified=True, windows=windows, resources=resources,
+    return dict(integrity_verified=True, windows=windows, resources=resources, root_barriers=root_barriers,
                 verified_cells=len(positions), acknowledged_writes=sum(map(len, positions.values())),
                 raw_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in sorted(control.glob("*.tsv"))}, **extra)

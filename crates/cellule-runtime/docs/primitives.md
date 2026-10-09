@@ -300,6 +300,12 @@ bounded part to the configured object store before committing its digest and
 size in SQLite. The manifest is the durable publication boundary; unreferenced
 content-addressed parts are safe to retry.
 
+`BlobNamespace::prepare_mutation` performs the same bounded staging and returns
+a typed prepared command before Cell dispatch. Retain its evidence before
+execution and resolve it after cancellation or an uncertain reply. Staging
+alone does not publish the object; the existing `mutate` convenience method
+uses this same preparation and execution path.
+
 The configured object-store lifecycle policy must reclaim abandoned parts. The
 `BlobArtifactStore::sweep_unreferenced` building block limits each pass to 128
 deletions but scans the unordered listing until that limit is reached.
@@ -311,6 +317,50 @@ A product-level collector must:
 - Use a grace cutoff
 
 The helper is not wired to a product collector yet.
+
+### Own accepted Blob operations during shutdown
+
+All clones of one `BlobArtifactStore` share one irreversible admission word.
+The store admits at most 64 original operations. A public namespace mutation
+retains staging through its command response; a range read retains metadata
+lookup and every part read. Closing between parts cannot interrupt that accepted
+read. Cancellation removes the caller's waiter while the original operation
+continues. GC retains an `Arc<BTreeSet<[u8; 32]>>` with the complete supplied
+reference set through original listing/deletion, even after caller loss.
+
+| API | Local guarantee |
+| --- | --- |
+| `close()` | Refuse new namespace operations and GC through every clone. |
+| `close_and_join()` | Close admission and join known original operations; return an error if any original native join was lost. Cancelled join waiters do not cancel work or reopen admission. |
+| `lifecycle_observation()` | Capture admission, accepted-operation count, unjoined original work and the first source-bearing failure. Local joining requires closed admission, zero accepted operations and zero unjoined work. |
+
+A joined operation can have failed or returned an uncertain command result.
+Forced Tokio runtime teardown can discard a supervisor while an original
+provider worker still runs. This irreversibly closes admission and retains an
+unproven join even after that worker finishes. Zero accepted operations cannot
+clear it; `locally_joined()` remains false and repeated close/join returns an
+error. Native joining cannot be reconstructed from a later object-store read.
+Retained diagnostics preserve the original source; they do not establish remote
+absence or success. Preparing a mutation still returns a caller-owned
+`PreparedCommand`: after return it holds no running store job. Execution through
+that configured client acquires the same store admission and retains dispatch
+through its response, including after caller cancellation. Closed admission
+refuses new execution from clones and reconstructed snapshots. Convenience
+mutation already holds its original operation and does not reacquire admission
+between staging and dispatch. Request digests, snapshot bytes, normal Cell
+admission and durability are unchanged. Retain evidence and resolve uncertain
+earlier execution; local closure cannot prove its outcome or that writes through
+other client/provider capabilities in the object-store scope are quiesced.
+
+Install the same store with `CellNode::install_blob_artifact_store` before
+readiness, after the task group, and pass its returned clone to
+`CellClient::with_blob_artifact_store`. The existing host drain closes and joins
+it before runtime shutdown. This local lifetime boundary supplies no complete
+Cell-scoped upload, stream, pin, migration or cross-Cell retention proof.
+`BlobInventory` therefore still blocks maintenance release. The global collector
+must protect outstanding read/pin obligations as well as authoritative manifest
+references and quiesced writes; the store's local count alone cannot authorize
+deletion or fleet finalization.
 
 <a id="cron"></a>
 ## Use Cron for failover-safe recurring triggers

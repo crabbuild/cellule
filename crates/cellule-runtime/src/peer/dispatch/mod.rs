@@ -567,6 +567,7 @@ impl PeerDispatcher {
         let registry = Arc::clone(&self.registry);
         let telemetry = self.telemetry.clone();
         let schema = transport.handle.schema();
+        let owner_fence = transport.handle.owner_fence();
         let input = command.input.clone();
         let operation_id = command.command_id;
         let codec_version = command.codec_version;
@@ -588,6 +589,7 @@ impl PeerDispatcher {
                             codec_version,
                             schema,
                             target: target.clone(),
+                            owner_fence,
                             sequence,
                             now_ms: logical_time_ms,
                             input: &input,

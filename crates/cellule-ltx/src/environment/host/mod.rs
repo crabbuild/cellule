@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(feature = "replica")]
+mod admission;
 mod budget;
 
 pub use budget::{DiskBudget, DiskReservation};
@@ -169,6 +171,8 @@ pub struct Host {
     #[cfg(feature = "replica")]
     job_capacity: usize,
     #[cfg(feature = "replica")]
+    memory_pair_gate: Arc<admission::PairGate>,
+    #[cfg(feature = "replica")]
     recovery_slots: Arc<tokio::sync::Semaphore>,
     #[cfg(feature = "replica")]
     recovery_capacity: usize,
@@ -199,11 +203,10 @@ pub struct Host {
 }
 
 #[cfg(feature = "replica")]
+// The ledger charge must drop before the semaphore wakes a new contender.
+// Cohort clones and dispatched jobs share this pair, including after cancellation.
 pub(crate) struct HostPermit {
-    // Fields drop in declaration order. Release the node charge before the
-    // semaphore wakes a successor; otherwise valid reuse can fail admission.
-    // Cohort clones retain this pair, including jobs whose waiter cancelled.
-    _resource: Option<Box<dyn HostResourcePermit>>,
+    _resource: Option<Arc<dyn HostResourcePermit>>,
     semaphore: tokio::sync::OwnedSemaphorePermit,
 }
 
@@ -281,6 +284,9 @@ impl Host {
     /// and job admission until that dispatched work completes.
     /// Admission or dispatch failure returns an error. Invalid optional cache
     /// membership is ignored and subsequent reads verify origin objects.
+    /// Clones using the same root, filesystem and budget reuse live membership
+    /// and reservations after joining its fills. The last owner releases those
+    /// reservations; a later open reconstructs membership on a blocking job.
     #[cfg(feature = "replica")]
     pub async fn with_directory_cache(mut self, root: PathBuf) -> crate::Result<Self> {
         let capacity = (self.local_disk.capacity() / 8).clamp(1, 8 << 30);
@@ -289,11 +295,26 @@ impl Host {
         // Reopening cleans private temporaries. An earlier activation's fill
         // may outlive its reader, so exclude fills until construction finishes.
         let opening = self.cache_fills.open(root.clone()).await;
+        // A live owner or another opener may already have installed this cache.
+        // Reuse its membership and reservations instead of charging each Cell
+        // for the same physical files. Weak registration retains no idle cache.
+        if let Some(cache) = self
+            .cache_fills
+            .cached(&root, &self.filesystem, &self.local_disk)
+        {
+            self.directory_cache = Some(cache);
+            drop(opening);
+            return Ok(self);
+        }
+        let fills = Arc::clone(&self.cache_fills);
         let (cache, opening) = self
             .run(move || {
                 let cache = Arc::new(DirectoryCache::with_budget(
                     filesystem, root, capacity, budget,
                 ));
+                // Register inside the dispatched job: cancellation must not
+                // let another opener reconstruct an in-flight cache index.
+                fills.remember(&cache);
                 (cache, opening)
             })
             .await?;
@@ -503,6 +524,8 @@ impl Host {
     pub fn with_recovery_slots(mut self, slots: Arc<tokio::sync::Semaphore>) -> Self {
         self.recovery_capacity = slots.available_permits();
         self.recovery_slots = slots;
+        self.memory_pair_gate =
+            admission::shared_pair_gate(&self.dirty_slots, &self.recovery_slots);
         self
     }
 
@@ -515,6 +538,8 @@ impl Host {
     pub fn with_dirty_slots(mut self, slots: Arc<tokio::sync::Semaphore>) -> Self {
         self.dirty_capacity = slots.available_permits();
         self.dirty_slots = slots;
+        self.memory_pair_gate =
+            admission::shared_pair_gate(&self.dirty_slots, &self.recovery_slots);
         self
     }
 
@@ -539,59 +564,15 @@ impl Host {
     }
 
     #[cfg(feature = "replica")]
-    fn admit_permit(
+    fn reserve_resource(
         &self,
         kind: HostResourceKind,
         units: u32,
-        semaphore: tokio::sync::OwnedSemaphorePermit,
-    ) -> crate::Result<HostPermit> {
-        let resource = self
-            .resource_admission
+    ) -> crate::Result<Option<Arc<dyn HostResourcePermit>>> {
+        self.resource_admission
             .as_ref()
-            .map(|admission| admission.reserve(kind, units))
-            .transpose()?;
-        Ok(HostPermit {
-            _resource: resource,
-            semaphore,
-        })
-    }
-
-    #[cfg(feature = "replica")]
-    pub(crate) async fn for_dirty(&self) -> crate::Result<Self> {
-        let mut host = self.clone();
-        if host.dirty.is_none() {
-            let permit = self
-                .dirty_slots
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
-            host.dirty = Some(Arc::new(self.admit_permit(
-                HostResourceKind::Dirty,
-                1,
-                permit,
-            )?));
-        }
-        Ok(host)
-    }
-
-    #[cfg(feature = "replica")]
-    pub(crate) async fn for_recovery(&self) -> crate::Result<Self> {
-        let mut host = self.for_dirty().await?;
-        if host.recovery.is_none() {
-            let permit = self
-                .recovery_slots
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
-            host.recovery = Some(Arc::new(self.admit_permit(
-                HostResourceKind::Recovery,
-                1,
-                permit,
-            )?));
-        }
-        Ok(host)
+            .map(|admission| admission.reserve(kind, units).map(Arc::from))
+            .transpose()
     }
 
     #[cfg(feature = "replica")]
@@ -628,11 +609,11 @@ impl Host {
         self.scratch_monitor
             .ensure_available(reserved_bytes)
             .map_err(crate::LtxError::Io)?;
-        host.scratch = Some(Arc::new(self.admit_permit(
-            HostResourceKind::Scratch,
-            units,
-            permit,
-        )?));
+        let resource = self.reserve_resource(HostResourceKind::Scratch, units)?;
+        host.scratch = Some(Arc::new(HostPermit {
+            _resource: resource,
+            semaphore: permit,
+        }));
         Ok(host)
     }
 
@@ -662,7 +643,11 @@ impl Host {
             .acquire_owned()
             .await
             .map_err(|e| crate::LtxError::Other(Box::new(e)))?;
-        self.admit_permit(HostResourceKind::Io, 1, permit)
+        let resource = self.reserve_resource(HostResourceKind::Io, 1)?;
+        Ok(HostPermit {
+            _resource: resource,
+            semaphore: permit,
+        })
     }
 
     #[cfg(feature = "replica")]
@@ -710,7 +695,7 @@ impl Host {
         let Some(fill) = self.cache_fills.claim(cache.key_path(&key)) else {
             return Ok(());
         };
-        let permit = self.admit_permit(HostResourceKind::BlockingJob, 1, permit)?;
+        let resource = self.reserve_resource(HostResourceKind::BlockingJob, 1)?;
         let cache = Arc::clone(cache);
         // Verified buffers are bounded by admitted jobs and the node-size cap.
         // Derived fills own no capture/recovery cohort; only their job and disk
@@ -719,6 +704,7 @@ impl Host {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                 cache.put(&key, &bytes, max_bytes)
             }));
+            drop(resource);
             drop(permit);
             // Shutdown observes completion only after the job's buffers and
             // admission are released, so returning cannot hide running fills.
@@ -758,7 +744,7 @@ impl Host {
         permit: tokio::sync::OwnedSemaphorePermit,
         operation: impl FnOnce() -> T + Send + 'static,
     ) -> crate::Result<T> {
-        let permit = self.admit_permit(HostResourceKind::BlockingJob, 1, permit)?;
+        let resource = self.reserve_resource(HostResourceKind::BlockingJob, 1)?;
         let (send, receive) = tokio::sync::oneshot::channel();
         let recovery = self.recovery.clone();
         let dirty = self.dirty.clone();
@@ -774,6 +760,7 @@ impl Host {
             drop(recovery);
             drop(dirty);
             drop(scratch);
+            drop(resource);
             drop(permit);
             let _ = send.send(result);
         }))?;
@@ -798,6 +785,18 @@ impl Default for Host {
         static SCRATCH: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
             std::sync::OnceLock::new();
         static LOCAL_DISK: std::sync::OnceLock<DiskBudget> = std::sync::OnceLock::new();
+        #[cfg(feature = "replica")]
+        let recovery_slots = RECOVERY
+            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
+            .clone();
+        #[cfg(feature = "replica")]
+        let dirty_slots = DIRTY
+            .get_or_init(|| {
+                Arc::new(tokio::sync::Semaphore::new(
+                    std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
+                ))
+            })
+            .clone();
         Self {
             filesystem: Arc::new(DirectFileSystem),
             clock: Arc::new(SystemClock),
@@ -826,19 +825,13 @@ impl Default for Host {
             #[cfg(feature = "replica")]
             job_capacity: std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
             #[cfg(feature = "replica")]
-            recovery_slots: RECOVERY
-                .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
-                .clone(),
+            memory_pair_gate: admission::shared_pair_gate(&dirty_slots, &recovery_slots),
+            #[cfg(feature = "replica")]
+            recovery_slots,
             #[cfg(feature = "replica")]
             recovery_capacity: 2,
             #[cfg(feature = "replica")]
-            dirty_slots: DIRTY
-                .get_or_init(|| {
-                    Arc::new(tokio::sync::Semaphore::new(
-                        std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
-                    ))
-                })
-                .clone(),
+            dirty_slots,
             #[cfg(feature = "replica")]
             dirty_capacity: std::thread::available_parallelism().map_or(1, |n| n.get().min(16)),
             #[cfg(feature = "replica")]

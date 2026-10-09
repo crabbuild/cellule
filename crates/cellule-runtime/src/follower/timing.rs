@@ -7,8 +7,6 @@ use crate::fleet::telemetry::{CellTelemetryHandle, FollowerAppendTiming};
 pub(super) struct AppendObservation {
     sink: CellTelemetryHandle,
     started: Option<Instant>,
-    leader: crate::SessionId,
-    epoch: u64,
     pub timing: FollowerAppendTiming,
 }
 
@@ -24,9 +22,9 @@ impl AppendObservation {
         Self {
             sink,
             started,
-            leader,
-            epoch,
             timing: FollowerAppendTiming {
+                leader: Some(leader),
+                epoch,
                 frames,
                 encoded_bytes,
                 ..FollowerAppendTiming::default()
@@ -47,7 +45,7 @@ impl AppendObservation {
     }
 
     pub fn worker_started(&mut self) {
-        self.timing.blocking_queue = Self::elapsed(self.started);
+        self.timing.worker_queue = Self::elapsed(self.started);
     }
 
     pub fn sync_data(&mut self, file: &std::fs::File) -> crate::Result<()> {
@@ -69,7 +67,7 @@ impl AppendObservation {
     pub fn finish(mut self, succeeded: bool) {
         self.timing.total = Self::elapsed(self.started);
         self.timing.succeeded = succeeded;
-        self.sink
-            .follower_append(self.leader, self.epoch, self.timing);
+        self.timing.worker = self.timing.total.saturating_sub(self.timing.worker_queue);
+        self.sink.follower_append(self.timing);
     }
 }

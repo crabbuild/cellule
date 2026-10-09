@@ -23,7 +23,7 @@ use cellule_runtime::identity::{
 use cellule_runtime::identity::{IncarnationId, NodeId};
 use cellule_runtime::node::durability::{NodeDurability, NodeLogAuthority};
 use cellule_runtime::node::lease::NodeLeaseGuard;
-use cellule_runtime::node::log::{DurabilityGate, NodeLogRotationBarrier};
+use cellule_runtime::node::log::DurabilityGate;
 use cellule_runtime::node::log_shipper::NodeLogShipper;
 use cellule_runtime::node::log_transport::{LocalFollowerTransport, NodeLogTransport};
 use cellule_runtime::peer::{
@@ -70,7 +70,7 @@ impl NodeLogAuthority for MigrationNodeAuthority {
 
     fn close<'a>(
         &'a self,
-        _barrier: &'a NodeLogRotationBarrier,
+        _retirement: &'a cellule_runtime::node::log::NodeLogRetirementObservation,
     ) -> futures_util::future::BoxFuture<'a, cellule_runtime::Result<()>> {
         Box::pin(async { Ok(()) })
     }

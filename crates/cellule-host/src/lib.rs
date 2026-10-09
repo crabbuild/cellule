@@ -20,11 +20,18 @@
 
 pub use builder::CellNodeBuilder;
 pub use durability::{
-    FacilityResult, NodeDurabilityProvider, NodeDurabilityRotation, NodeDurabilitySupervisorConfig,
+    FacilityResult, FleetNodeDurabilityProvider, FleetNodeLogRecruitment,
+    FollowerEnrollmentCompletion, FollowerEnrollmentInventoryCursor,
+    FollowerEnrollmentInventoryPage, FollowerEnrollmentMember, FollowerEnrollmentProgress,
+    FollowerEvacuation, NodeDurabilityProvider, NodeDurabilityRotation,
+    NodeDurabilitySupervisorConfig, NodeDurabilitySupervisorObservation,
+    NodeDurabilitySupervisorState, NodeLogRotationCompletion, NodeLogRotationEntry,
+    NodeLogRotationInventory, NodeLogRotationObservation, NodeLogRotationPhase,
+    NodeLogRotationRequest,
 };
 pub use facility::CellNodeFacility;
 pub use node::CellNode;
-pub use status::{NodeState, NodeStatus, ScaleDownStatus};
+pub use status::{NodeDrainObservation, NodeDrainPhase, NodeState, NodeStatus, ScaleDownStatus};
 use std::{
     any::Any,
     collections::HashSet,
@@ -41,12 +48,13 @@ pub use tasks::CellNodeTaskGroup;
 mod builder;
 mod durability;
 mod facility;
+pub mod fleet;
 mod node;
 pub mod read_replicas;
 mod status;
 mod tasks;
 
-use cellule_app::{ApplicationHandle, CellApplication, CompiledApplication};
+use cellule_app::{ApplicationBinding, ApplicationHandle, CellApplication, CompiledApplication};
 use cellule_runtime::Error;
 use cellule_runtime::cell::actor::{CellRuntime, CellRuntimeStats};
 use cellule_runtime::cell::worker::SqlWorkerPool;
@@ -67,5 +75,8 @@ const MAX_NODE_TASKS: usize = 256;
 
 /// Stable host-owned component name for the follower store.
 pub const FOLLOWER_STORE_COMPONENT: &str = "follower-store";
+/// Stable host-owned component name for the Blob artifact store.
+pub const BLOB_ARTIFACT_STORE_COMPONENT: &str = "blob-artifact-store";
 /// Stable host-owned component name for the node-log enrollment provider.
 pub const NODE_DURABILITY_PROVIDER_COMPONENT: &str = "node-durability-provider";
+pub(crate) const NODE_DURABILITY_SUPERVISOR_COMPONENT: &str = "node-durability-supervisor";

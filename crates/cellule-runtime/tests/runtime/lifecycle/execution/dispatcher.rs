@@ -334,3 +334,110 @@ async fn command_arriving_during_quiet_compaction_waits_for_publisher() {
         9
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quiet_compaction_waiters_leave_independent_cells_available() {
+    let recovery = Arc::new(tokio::sync::Semaphore::new(2));
+    let session = SessionId::from_bytes([59; 16]);
+    let runtime = CellRuntime::new_with_replica_host(
+        SqlWorkerPool::new(2, 4).unwrap(),
+        16 * 1024 * 1024,
+        session,
+        ReplicaHost::default()
+            .with_dirty_slots(Arc::new(tokio::sync::Semaphore::new(8)))
+            .with_io_slots(Arc::new(tokio::sync::Semaphore::new(32)))
+            .with_job_slots(Arc::new(tokio::sync::Semaphore::new(8)))
+            .with_recovery_slots(recovery.clone()),
+    )
+    .unwrap();
+    let fixtures: Vec<_> = (0..4_u8).map(|index| fixture_for(&[59, index])).collect();
+    let mut handles = Vec::new();
+    for fixture in &fixtures {
+        handles.push(bootstrap_on(&runtime, fixture, session).await);
+    }
+    let occupied = recovery.clone().acquire_many_owned(2).await.unwrap();
+    for handle in &handles {
+        for sequence in 1_u8..=8 {
+            handle
+                .execute(
+                    mutation_identity_window(sequence, 10, 10_000),
+                    Digest::from_bytes([sequence; 32]),
+                    20,
+                    16,
+                    16,
+                    |transaction| {
+                        transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                        Ok(HandlerOutcome::Success(Vec::new()))
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    }
+    // Compaction becomes eligible after 250 ms. Keep only recovery occupied;
+    // idle native workers and foreground publication still have their slots.
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    let available = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        futures_util::future::join_all(handles.iter().map(|handle| async {
+            let value = handle
+                .query(20, 16, |connection| {
+                    let value: u8 =
+                        connection.query_row("SELECT value FROM counter", [], |row| row.get(0))?;
+                    Ok(vec![value])
+                })
+                .await?;
+            let outcome = handle
+                .execute(
+                    mutation_identity_window(9, 10, 10_000),
+                    Digest::from_bytes([9; 32]),
+                    20,
+                    16,
+                    16,
+                    |transaction| {
+                        transaction.execute("UPDATE counter SET value = value + 1", [])?;
+                        Ok(HandlerOutcome::Success(Vec::new()))
+                    },
+                )
+                .await?;
+            Ok::<_, cellule_runtime::Error>((value, outcome))
+        })),
+    )
+    .await;
+    drop(occupied);
+    runtime.shutdown().await.unwrap();
+    assert_eq!(runtime.stats().active_cells(), 0);
+    // Release held resources and join the actor before checking the regression.
+    let results = available.expect("unadmitted compactions blocked foreground Cell work");
+    for result in results {
+        let (value, outcome) = result.unwrap();
+        assert_eq!(value, vec![8]);
+        assert_eq!(outcome.commit_sequence(), 9);
+    }
+    for fixture in &fixtures {
+        let control = CellAuthority::new(fixture.layout.clone())
+            .load(fixture.target.cell_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(control.value().state, ControlState::Idle);
+        let root = control.value().ltx_root().unwrap();
+        assert_eq!(root.commit_sequence, 9);
+        let restored = fixture._directory.path().join("after.sqlite");
+        fixture
+            .replica
+            .open_root(&root)
+            .await
+            .unwrap()
+            .restore(&restored)
+            .await
+            .unwrap();
+        let connection = cellule_ltx::rusqlite::Connection::open(restored).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM counter", [], |row| row.get::<_, u8>(0))
+                .unwrap(),
+            9
+        );
+    }
+}

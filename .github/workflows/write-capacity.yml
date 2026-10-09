@@ -13,6 +13,29 @@ on:
       - "crates/cellule-ltx/**"
       - "crates/cellule-store/**"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Qualification or paired Axum HTTP measurements
+        type: choice
+        default: qualification
+        options: [qualification, axum-reads, axum-writes]
+      baseline_ref:
+        description: Baseline with the multicell Axum SQL example and telemetry
+        type: string
+        default: 4c627d3fdc95fbb86558088927aec72f51d0046c
+      read_seconds:
+        description: Seconds per steady-state read phase (30 to 120)
+        type: number
+        default: 60
+      write_seconds:
+        description: Seconds per steady-state write phase (60 to 180)
+        type: number
+        default: 120
+      write_concurrency:
+        description: Write clients; 64 additionally exercises per-Cell queueing
+        type: choice
+        default: "16"
+        options: ["16", "64"]
 
 permissions:
   contents: read
@@ -23,6 +46,7 @@ concurrency:
 
 jobs:
   object-proof:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'qualification'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
@@ -82,7 +106,24 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  axum-reads:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'axum-reads'
+    uses: ./.github/workflows/axum-performance.yml
+    with:
+      baseline_ref: ${{ inputs.baseline_ref }}
+      read_seconds: ${{ fromJSON(format('{0}', inputs.read_seconds || 60)) }}
+
+  axum-writes:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'axum-writes'
+    uses: ./.github/workflows/axum-performance.yml
+    with:
+      baseline_ref: ${{ inputs.baseline_ref }}
+      workload: writes
+      write_seconds: ${{ fromJSON(format('{0}', inputs.write_seconds || 120)) }}
+      write_concurrency: ${{ fromJSON(format('{0}', inputs.write_concurrency || 16)) }}
+
   follower-proof:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'qualification'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:

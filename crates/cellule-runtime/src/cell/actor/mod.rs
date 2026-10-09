@@ -14,14 +14,29 @@ use tokio::{
 };
 
 mod handle;
+mod inventory;
+pub use inventory::{
+    CellInventoryCursor, CellInventoryEntry, CellInventoryPage, OwnedCellObservation,
+};
 use state::*;
 use task::*;
 mod acquire;
+mod acquire_resume;
+mod acquisition_observer;
+mod prefix;
+mod serving;
+pub use acquisition_observer::{AcquisitionObservation, AcquisitionObserver};
+pub use serving::CellServingObservation;
 mod admission;
+mod group;
 mod lifecycle;
+mod maintenance;
+pub use maintenance::MaintenanceCellRelease;
+mod receiver;
 mod requests;
 pub(crate) mod routes;
 mod runtime;
+pub use receiver::{PreparedCellReceiver, ReceiverState};
 mod state;
 mod task;
 mod tasks;
@@ -29,11 +44,13 @@ mod tasks;
 use lifecycle::*;
 use requests::*;
 
+pub(crate) use handle::CommandWork;
 use handle::{CellAdmission, WorkAdmission};
 pub use handle::{CellHandle, DueResident};
 
 use crate::Error;
 use crate::cell::catalog::{CatalogEntry, CatalogProof, CatalogRole};
+use crate::cell::executor::{MAX_NATIVE_GROUP, NativeCommand, NativeGroupExecution};
 use crate::cell::executor::{MAX_PENDING_PUBLICATIONS, PENDING_PUBLICATION_HIGH_WATER_BYTES};
 use crate::cell::executor::{
     MigrationOutcome, MutationIdentity, PendingCommit, Resolution, StoredOutcome,
@@ -46,7 +63,9 @@ use crate::coordination::{
     AdmissionKind, CoordinationDecision, CoordinationEffect, CoordinationInput, CoordinationState,
     RejectReason, Residency,
 };
+use crate::fleet::admission::NodeAdmission;
 use crate::fleet::eviction::{EvictionObservation, EvictionState, select_victims};
+use crate::fleet::operations::DrainBlocker;
 use crate::fleet::pressure::{
     MovementBudget, MovementPermit, PressureClassifier, PressureSample, PressureState,
 };
@@ -122,6 +141,21 @@ pub struct NodeJobReservation {
     // Return accounting before waking the next waiter on the admission gate.
     _reservation: ResourceReservation,
     _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+/// Actor-owned committed publication debt, sampled without provider I/O.
+///
+/// These observations grant no durability proof. Age covers queued and running
+/// command publications, excluding migration and failed recovery obligations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellPublicationProgress {
+    /// Physical capture publications awaiting their terminal result. A capture
+    /// may contain several logically committed commands.
+    pub pending_publications: usize,
+    /// Retained capture bytes of those command publications.
+    pub retained_capture_bytes: u64,
+    /// Age of the oldest queued or running command publication, if any.
+    pub oldest_unpublished: Option<std::time::Duration>,
 }
 
 /// Point-in-time node admission usage for one embedded Cell runtime.
@@ -366,28 +400,34 @@ impl CellRuntime {
         &self.inner.telemetry
     }
 
-    /// Resolves from actor admission only when a node-session lease fences this runtime.
-    ///
-    /// An object-only runtime has no session guard: its routing adapter must
-    /// read fresh authority instead of treating the actor map as ownership.
-    pub(crate) async fn leased_resident_handle(
-        &self,
-        target: &CellTarget,
-        role: CatalogRole,
-    ) -> crate::Result<Option<CellHandle>> {
-        if matches!(self.inner.node_lease.as_ref(), RuntimeNodeLease::ObjectOnly) {
-            return Ok(None);
-        }
-        let handle = self.resident_handle(target, role).await?;
-        self.ensure_running()?;
-        Ok(handle)
-    }
-
     /// Resolves a verified resident owner without reading catalog or authority objects.
     pub async fn resident_handle(
         &self,
         target: &CellTarget,
         role: CatalogRole,
+    ) -> crate::Result<Option<CellHandle>> {
+        self.lookup_handle(target, role, true).await
+    }
+
+    /// Resolves a verified active local owner without reading Cell metadata.
+    ///
+    /// Unlike [`Self::resident_handle`], this includes sparse and hydrating
+    /// owners. A miss does not establish remote ownership or authorize an
+    /// acquisition. Fenced, draining and transferring owners remain excluded;
+    /// the returned handle rechecks admission when work is dispatched.
+    pub async fn active_handle(
+        &self,
+        target: &CellTarget,
+        role: CatalogRole,
+    ) -> crate::Result<Option<CellHandle>> {
+        self.lookup_handle(target, role, false).await
+    }
+
+    async fn lookup_handle(
+        &self,
+        target: &CellTarget,
+        role: CatalogRole,
+        require_resident: bool,
     ) -> crate::Result<Option<CellHandle>> {
         self.ensure_running()?;
         let (reply, response) = oneshot::channel();
@@ -395,7 +435,7 @@ impl CellRuntime {
             .sender
             .send(Message::Lookup {
                 cell: target.cell_id(),
-                require_resident: true,
+                require_resident,
                 reply,
             })
             .await
@@ -403,21 +443,27 @@ impl CellRuntime {
         let local = match response.await {
             Ok(local) => local,
             Err(_) => {
-                self.inner
-                    .telemetry
-                    .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Refused);
+                if require_resident {
+                    self.inner
+                        .telemetry
+                        .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Refused);
+                }
                 return Err(Error::RuntimeClosed);
             }
         };
         let Some(local) = local else {
-            self.inner
-                .telemetry
-                .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Miss);
+            if require_resident {
+                self.inner
+                    .telemetry
+                    .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Miss);
+            }
             return Ok(None);
         };
-        self.inner
-            .telemetry
-            .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Hit);
+        if require_resident {
+            self.inner
+                .telemetry
+                .resident_route(crate::fleet::telemetry::ResidentRouteOutcome::Hit);
+        }
         let entry = CatalogEntry::new(target, role, local.code, local.schema)?;
         Ok(Some(CellHandle {
             cell: target.cell_id(),

@@ -7,9 +7,11 @@ use crate::cell::catalog::CatalogRole;
 use crate::cell::schema_cache::{SchemaCache, SchemaObservation};
 use crate::identity::{CellId, Digest};
 use crate::identity::{IncarnationId, RequestId};
-use crate::primitives::maintenance::PersistedWorkInventory;
 use crate::primitives::maintenance::TransferWorkInventory;
 use crate::{Error, Result};
+
+mod group;
+pub(crate) use group::{MAX_NATIVE_GROUP, NativeCommand, NativeGroupExecution};
 
 const MAX_RESULT_BYTES: usize = crate::codec::MAX_WIRE_BYTES;
 const MAX_REQUEST_LIFETIME_MS: i64 = 24 * 60 * 60 * 1000;
@@ -97,6 +99,15 @@ pub enum Resolution {
 }
 
 impl StoredOutcome {
+    fn compact_result(mut self) -> Self {
+        let result = match &mut self {
+            Self::Success { result, .. } | Self::Rejected { result, .. } => result,
+        };
+        // Handler Vec capacity is not a wire limit. Retained outcomes and
+        // their clones must fit the byte charge for their encoded length.
+        *result = std::mem::take(result).into_boxed_slice().into_vec();
+        self
+    }
     /// Returns the commit sequence the outcome was stored at.
     #[must_use]
     pub fn commit_sequence(&self) -> u64 {
@@ -237,6 +248,16 @@ impl PendingCommit {
     #[must_use]
     pub(crate) fn retained_bytes(&self) -> u64 {
         retained_bytes(&self.cuts)
+    }
+
+    pub(crate) fn retained_memory_bytes(&self) -> u64 {
+        self.cuts.retained_memory_bytes().saturating_add(
+            self.outcome
+                .result()
+                .len()
+                .saturating_add(std::mem::size_of::<Self>())
+                .saturating_mul(3) as u64,
+        )
     }
 }
 
@@ -474,87 +495,22 @@ impl CellExecutor {
         let incarnation = self.incarnation;
         let schema = self.schema;
         let schema_cache = &self.schema_cache;
+        let command = NativeCommand {
+            identity,
+            operation_digest,
+            now_ms,
+            max_result_bytes,
+            handler,
+        };
         let transaction = self.db.transaction_with(|transaction| {
-            let (commit_sequence, prior_logical_time_ms) =
-                runtime_metadata(transaction, cell, incarnation, schema)?;
-
-            let existing = transaction
-                .prepare_cached("SELECT operation_digest, outcome, result, commit_sequence FROM sys_requests WHERE request_id = ?1")?
-                .query_row(
-                    [identity.request_id.as_bytes().as_slice()],
-                    |row| {
-                        Ok((
-                            row.get::<_, Vec<u8>>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, Vec<u8>>(2)?,
-                            row.get::<_, i64>(3)?,
-                        ))
-                    },
-                )
-                .optional()?;
-            if let Some((digest, outcome, result, sequence)) = existing {
-                if digest.as_slice() != operation_digest.as_bytes() {
-                    return Err(Error::RequestConflict);
-                }
-                let outcome = stored_outcome(outcome, result, sequence)?;
-                if outcome.result().len() > max_result_bytes {
-                    return Err(Error::Command("stored result exceeds command limit"));
-                }
-                return Ok(TransactionResult::Recorded(outcome));
-            }
-
-            let sequence = commit_sequence
-                .checked_add(1)
-                .filter(|value| *value > 0)
-                .ok_or(Error::Command("commit sequence overflow"))?;
-            let logical_time_ms = now_ms.max(prior_logical_time_ms);
-            transaction.execute_batch("SAVEPOINT application")?;
-            let decision = handler(transaction)?;
-            let (outcome, result) = match decision {
-                HandlerOutcome::Success(result) => {
-                    transaction.execute_batch("RELEASE application")?;
-                    (1, result)
-                }
-                HandlerOutcome::Rejected(result) => {
-                    transaction.execute_batch(
-                        "ROLLBACK TO application; RELEASE application",
-                    )?;
-                    (2, result)
-                }
-            };
-            if result.len() > max_result_bytes {
-                return Err(Error::Command("handler result exceeds command limit"));
-            }
-            let retain_until_ms = identity
-                .expires_at_ms
-                .checked_add(REQUEST_RETENTION_MS)
-                .ok_or(Error::Command("request retention overflow"))?;
-            transaction.prepare_cached("INSERT INTO sys_requests(request_id, operation_digest, outcome, result, commit_sequence, expires_at_ms, retain_until_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?.execute(
-                (
-                    identity.request_id.as_bytes().as_slice(),
-                    operation_digest.as_bytes().as_slice(),
-                    outcome,
-                    result.as_slice(),
-                    sequence,
-                    identity.expires_at_ms,
-                    retain_until_ms,
-                ),
-            )?;
-            if transaction.prepare_cached("UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1")?.execute(
-                (sequence, logical_time_ms),
-            )? != 1
-            {
-                return Err(Error::Command("runtime metadata row missing"));
-            }
-            let observation = schema_cache.observe(transaction)?;
-            crate::primitives::capacity::validate_installed(transaction, observation.capabilities.capacity_tables())?;
-            let next_due_ms = crate::fleet::scheduler::scheduler_next_due_with_schema(transaction, logical_time_ms, observation.capabilities)?;
-            Ok(TransactionResult::Committed {
-                outcome: stored_outcome(outcome, result, sequence)?,
-                logical_time_ms,
-                next_due_ms,
-                observation,
-            })
+            apply_mutation(
+                transaction,
+                cell,
+                incarnation,
+                schema,
+                schema_cache,
+                command,
+            )
         });
 
         self.finish_transaction(transaction)
@@ -717,16 +673,16 @@ impl CellExecutor {
         self.db.hydration().map_err(Into::into)
     }
 
-    /// Reads the durable work classes that can block safe owner release.
-    pub(crate) fn persisted_work_inventory(
+    pub(crate) fn transfer_work_inventory(
         &mut self,
         role: CatalogRole,
-    ) -> Result<PersistedWorkInventory> {
+        now_ms: i64,
+    ) -> Result<TransferWorkInventory> {
         if self.fenced {
             return Err(Error::Fenced);
         }
         let result = self.db.query_with(|connection| {
-            crate::primitives::maintenance::inspect_persisted_work(connection, role)
+            crate::primitives::maintenance::inspect_transfer_work(connection, role, now_ms)
         });
         if let Some(error) = self.db.take_io_error() {
             self.fenced = true;
@@ -746,16 +702,41 @@ impl CellExecutor {
         }
     }
 
-    pub(crate) fn transfer_work_inventory(
+    /// Captures bounded worker diagnostics without scanning application rows.
+    pub(crate) fn fleet_inventory(
         &mut self,
         role: CatalogRole,
         now_ms: i64,
-    ) -> Result<TransferWorkInventory> {
+    ) -> Result<crate::cell::worker::WorkerCellInventory> {
         if self.fenced {
             return Err(Error::Fenced);
         }
         let result = self.db.query_with(|connection| {
-            crate::primitives::maintenance::inspect_transfer_work(connection, role, now_ms)
+            let persisted_work =
+                crate::primitives::maintenance::inspect_persisted_work(connection, role)?;
+            let transfer_work =
+                crate::primitives::maintenance::inspect_transfer_work(connection, role, now_ms)?;
+            let maintenance_work =
+                crate::primitives::maintenance_readiness::inspect(connection, role, now_ms)?;
+            let pages: u64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+            let page_size: u64 = connection.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+            let commit_sequence: u64 = connection.query_row(
+                "SELECT commit_sequence FROM sys_meta WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )?;
+            let database_bytes = pages
+                .checked_mul(page_size)
+                .filter(|bytes| *bytes > 0)
+                .ok_or(Error::Capacity("invalid measured Cell database size"))?;
+            Ok(crate::cell::worker::WorkerCellInventory {
+                persisted_work,
+                transfer_work,
+                maintenance_work,
+                database_bytes,
+                commit_sequence,
+                observed_at_ms: now_ms,
+            })
         });
         if let Some(error) = self.db.take_io_error() {
             self.fenced = true;
@@ -997,6 +978,9 @@ impl CellExecutor {
             Ok(value) => value,
             Err(TransactionError::Operation(error)) => return Err(error),
             Err(TransactionError::Admission(error)) => return Err(admission_error(error)),
+            Err(TransactionError::RolledBack { resource, .. }) => {
+                return Err(admission_error(resource));
+            }
             Err(error) => {
                 self.fenced = true;
                 return Err(transaction_error(error));
@@ -1284,7 +1268,11 @@ impl CellExecutor {
         if self.fenced {
             crate::cell::worker::WorkerState::Fenced
         } else if self.has_pending() {
-            crate::cell::worker::WorkerState::Pending
+            if self.pending_migration.is_none() && self.logical_head_is_durable() {
+                crate::cell::worker::WorkerState::DurablePending
+            } else {
+                crate::cell::worker::WorkerState::Pending
+            }
         } else {
             crate::cell::worker::WorkerState::Ready
         }
@@ -1305,23 +1293,31 @@ impl CellExecutor {
         self.pending.back().is_none_or(|pending| pending.durable)
     }
 
-    fn finish_transaction(
+    fn check_transaction<T>(
         &mut self,
-        transaction: std::result::Result<TransactionResult, TransactionError<Error>>,
-    ) -> Result<CommandExecution> {
+        transaction: std::result::Result<T, TransactionError<Error>>,
+    ) -> Result<T> {
         if let Some(error) = self.db.take_io_error() {
             self.fenced = true;
             return Err(ltx_error(error));
         }
-        let transaction = match transaction {
-            Ok(value) => value,
-            Err(TransactionError::Operation(error)) => return Err(error),
-            Err(TransactionError::Admission(error)) => return Err(admission_error(error)),
+        match transaction {
+            Ok(value) => Ok(value),
+            Err(TransactionError::Operation(error)) => Err(error),
+            Err(TransactionError::Admission(error)) => Err(admission_error(error)),
+            Err(TransactionError::RolledBack { resource, .. }) => Err(admission_error(resource)),
             Err(error) => {
                 self.fenced = true;
-                return Err(transaction_error(error));
+                Err(transaction_error(error))
             }
-        };
+        }
+    }
+
+    fn finish_transaction(
+        &mut self,
+        transaction: std::result::Result<TransactionResult, TransactionError<Error>>,
+    ) -> Result<CommandExecution> {
+        let transaction = self.check_transaction(transaction)?;
         match transaction {
             TransactionResult::Recorded(outcome) => Ok(CommandExecution::Recorded(outcome)),
             TransactionResult::Committed {
@@ -1341,22 +1337,140 @@ impl CellExecutor {
                     }
                 };
                 let pending = PendingCommit {
-                    outcome,
+                    outcome: outcome.compact_result(),
                     logical_time_ms,
                     next_due_ms,
                     cuts,
                     prepared: None,
                     durable: false,
                 };
-                self.pending_bytes = self
-                    .pending_bytes
-                    .checked_add(pending.retained_bytes())
-                    .ok_or(Error::Capacity("pending publication bytes"))?;
+                self.pending_bytes = match self.pending_bytes.checked_add(pending.retained_bytes())
+                {
+                    Some(bytes) => bytes,
+                    None => {
+                        // SQL already committed. Never classify this untracked
+                        // cut as a safe refusal based on an older durable head.
+                        self.fenced = true;
+                        return Err(Error::Capacity("pending publication bytes"));
+                    }
+                };
                 self.pending.push_back(pending);
                 Ok(CommandExecution::Pending)
             }
         }
     }
+}
+
+fn apply_mutation<F>(
+    transaction: &cellule_ltx::rusqlite::Transaction<'_>,
+    cell: CellId,
+    incarnation: IncarnationId,
+    schema: u32,
+    schema_cache: &SchemaCache,
+    command: NativeCommand<F>,
+) -> Result<TransactionResult>
+where
+    F: FnOnce(&cellule_ltx::rusqlite::Transaction<'_>) -> Result<HandlerOutcome>,
+{
+    let NativeCommand {
+        identity,
+        operation_digest,
+        now_ms,
+        max_result_bytes,
+        handler,
+    } = command;
+    if max_result_bytes > MAX_RESULT_BYTES {
+        return Err(Error::Command("result exceeds wire limit"));
+    }
+    identity.validate(now_ms)?;
+    let (commit_sequence, prior_logical_time_ms) =
+        runtime_metadata(transaction, cell, incarnation, schema)?;
+
+    let existing = transaction
+        .prepare_cached("SELECT operation_digest, outcome, result, commit_sequence FROM sys_requests WHERE request_id = ?1")?
+        .query_row(
+            [identity.request_id.as_bytes().as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((digest, outcome, result, sequence)) = existing {
+        if digest.as_slice() != operation_digest.as_bytes() {
+            return Err(Error::RequestConflict);
+        }
+        let outcome = stored_outcome(outcome, result, sequence)?;
+        if outcome.result().len() > max_result_bytes {
+            return Err(Error::Command("stored result exceeds command limit"));
+        }
+        return Ok(TransactionResult::Recorded(outcome));
+    }
+
+    let sequence = commit_sequence
+        .checked_add(1)
+        .filter(|value| *value > 0)
+        .ok_or(Error::Command("commit sequence overflow"))?;
+    let logical_time_ms = now_ms.max(prior_logical_time_ms);
+    transaction.execute_batch("SAVEPOINT application")?;
+    let decision = handler(transaction)?;
+    let (outcome, result) = match decision {
+        HandlerOutcome::Success(result) => {
+            transaction.execute_batch("RELEASE application")?;
+            (1, result)
+        }
+        HandlerOutcome::Rejected(result) => {
+            transaction.execute_batch("ROLLBACK TO application; RELEASE application")?;
+            (2, result)
+        }
+    };
+    if result.len() > max_result_bytes {
+        return Err(Error::Command("handler result exceeds command limit"));
+    }
+    let retain_until_ms = identity
+        .expires_at_ms
+        .checked_add(REQUEST_RETENTION_MS)
+        .ok_or(Error::Command("request retention overflow"))?;
+    transaction.prepare_cached("INSERT INTO sys_requests(request_id, operation_digest, outcome, result, commit_sequence, expires_at_ms, retain_until_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?.execute(
+        (
+            identity.request_id.as_bytes().as_slice(),
+            operation_digest.as_bytes().as_slice(),
+            outcome,
+            result.as_slice(),
+            sequence,
+            identity.expires_at_ms,
+            retain_until_ms,
+        ),
+    )?;
+    if transaction
+        .prepare_cached(
+            "UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1",
+        )?
+        .execute((sequence, logical_time_ms))?
+        != 1
+    {
+        return Err(Error::Command("runtime metadata row missing"));
+    }
+    let observation = schema_cache.observe(transaction)?;
+    crate::primitives::capacity::validate_installed(
+        transaction,
+        observation.capabilities.capacity_tables(),
+    )?;
+    let next_due_ms = crate::fleet::scheduler::scheduler_next_due_with_schema(
+        transaction,
+        logical_time_ms,
+        observation.capabilities,
+    )?;
+    Ok(TransactionResult::Committed {
+        outcome: stored_outcome(outcome, result, sequence)?,
+        logical_time_ms,
+        next_due_ms,
+        observation,
+    })
 }
 
 fn runtime_metadata(
@@ -1391,6 +1505,7 @@ fn runtime_metadata(
 fn transaction_error(error: TransactionError<Error>) -> Error {
     match error {
         TransactionError::Admission(error) => admission_error(error),
+        TransactionError::RolledBack { resource, .. } => admission_error(resource),
         TransactionError::Operation(error) => error,
         TransactionError::Sqlite(error) => error.into(),
         TransactionError::Capture(error) => error.into(),

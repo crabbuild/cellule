@@ -1,0 +1,10 @@
+{
+  "title": "Reference",
+  "pages": [
+    "[Reference overview](/docs/crates/ltx/docs)",
+    "capture",
+    "publication",
+    "recovery",
+    "safety"
+  ]
+}

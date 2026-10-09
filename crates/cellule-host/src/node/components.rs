@@ -103,6 +103,18 @@ impl CellNode {
     where
         P: NodeDurabilityProvider,
     {
+        if self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .is_some()
+            && std::any::TypeId::of::<P>()
+                != std::any::TypeId::of::<crate::durability::enrollment::FleetFollowerEnrollment>()
+        {
+            return Err(Error::Control(
+                "configured fleet durability requires managed follower enrollment",
+            ));
+        }
         let task_group = self
             .task_group
             .lock()
@@ -111,16 +123,95 @@ impl CellNode {
             .ok_or(Error::Control(
                 "CellNode durability provider requires an installed task group",
             ))?;
-        self.install_owned_component(NODE_DURABILITY_PROVIDER_COMPONENT, Arc::clone(&provider))?;
-        let runtime = self.runtime.clone();
-        let cancellation = task_group.cancellation.clone();
-        let result = task_group.spawn_boxed(async move {
-            run_node_durability_supervisor(provider, runtime, configuration, cancellation).await
-        });
+        task_group.ensure_accepting_tasks()?;
+        let supervisor = Arc::new(DurabilitySupervisor::new(
+            provider.clone(),
+            self.runtime.clone(),
+            configuration,
+            self.session,
+            task_group.cancellation.clone(),
+        )?);
+        let drained = Arc::clone(&supervisor);
+        let drained_provider = Arc::clone(&provider);
+        self.install_facilities([
+            CellNodeFacility::owned(NODE_DURABILITY_PROVIDER_COMPONENT, provider, move || {
+                Arc::clone(&drained_provider).drain()
+            })?,
+            CellNodeFacility::owned(
+                NODE_DURABILITY_SUPERVISOR_COMPONENT,
+                Arc::clone(&supervisor),
+                move || {
+                    let drained = Arc::clone(&drained);
+                    async move { drained.drain().await }
+                },
+            )?,
+        ])?;
+        // The task group owns supervision and health; the facility retains the
+        // actual join. Retain this watcher across deadlines too, so its forced
+        // cancellation cannot replace the facility's original result.
+        let result = task_group.spawn_retained(async move { supervisor.join().await });
         if result.is_err() {
+            self.remove_facility(NODE_DURABILITY_SUPERVISOR_COMPONENT)?;
             self.remove_facility(NODE_DURABILITY_PROVIDER_COMPONENT)?;
         }
         result
+    }
+
+    /// Requests confirmed retirement of one exact epoch through the existing
+    /// supervisor, bypassing normal frame thresholds. The embedding application
+    /// authorizes this call and journals acceptance/results before finalization.
+    /// Duplicate epoch requests share retained progress; dropping a handle does
+    /// not cancel work. An automatic rotation already in flight is refused.
+    pub fn request_node_log_rotation(
+        &self,
+        log_epoch: u64,
+    ) -> cellule_runtime::Result<NodeLogRotationRequest> {
+        let supervisor = self
+            .owned_component::<DurabilitySupervisor>(NODE_DURABILITY_SUPERVISOR_COMPONENT)
+            .ok_or(Error::Control(
+                "CellNode durability supervisor is not installed",
+            ))?;
+        if !matches!(
+            self.state(),
+            NodeState::Ready | NodeState::ScalingDown | NodeState::Maintenance
+        ) {
+            return Err(Error::CellDraining);
+        }
+        supervisor
+            .requests
+            .request(&self.runtime, log_epoch, &supervisor.cancellation)
+    }
+
+    /// Looks up one retained epoch request, including interrupted work during
+    /// drain. Missing local progress never proves role absence or completion.
+    pub fn node_log_rotation_request(
+        &self,
+        log_epoch: u64,
+    ) -> cellule_runtime::Result<Option<NodeLogRotationRequest>> {
+        match self.owned_component::<DurabilitySupervisor>(NODE_DURABILITY_SUPERVISOR_COMPONENT) {
+            Some(supervisor) => supervisor.requests.lookup(log_epoch),
+            None => Ok(None),
+        }
+    }
+
+    /// Captures the retained supervisor without awaiting provider/native work.
+    /// Returned or cancelled work is not joined; joined failure is not role
+    /// absence. None supplies no coverage. Authentication, current authority,
+    /// producer/native inventories and durable revision checks remain required.
+    /// The installed owner charges fixed metadata; capture remains available
+    /// during drain when new runtime byte admission has already closed.
+    pub fn fleet_durability_supervisor(
+        &self,
+        now_ms: i64,
+    ) -> cellule_runtime::Result<Option<NodeDurabilitySupervisorObservation>> {
+        if now_ms < 0 {
+            return Err(Error::Node(
+                "invalid durability supervisor observation time",
+            ));
+        }
+        self.try_owned_component::<DurabilitySupervisor>(NODE_DURABILITY_SUPERVISOR_COMPONENT)?
+            .map(|supervisor| supervisor.observe(now_ms))
+            .transpose()
     }
 
     /// Owns read-snapshot refresh, eviction, and terminal close for this node.
@@ -153,12 +244,23 @@ impl CellNode {
             root,
             limits,
         );
+        if self
+            .fleet_startup
+            .lock()
+            .map_err(|_| Error::Control("CellNode fleet startup lock poisoned"))?
+            .is_some()
+        {
+            self.require_owned_components(["fleet-reader-enrollment"])?;
+            manager.require_enrollment();
+        }
         let drained = manager.clone();
         self.install_owned_component_with_drain(COMPONENT, Arc::new(manager.clone()), move || {
             let drained = drained.clone();
             async move {
-                drained.shutdown().await;
-                Ok(())
+                drained
+                    .shutdown()
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
             }
         })?;
         let supervised = manager.clone();
@@ -312,7 +414,8 @@ impl CellNode {
             limits,
             disk,
             self.runtime.telemetry_handle(),
-        )?;
+        )?
+        .with_node_admission(self.runtime.node_admission());
         self.install_owned_component(FOLLOWER_STORE_COMPONENT, Arc::new(store))
     }
 
@@ -322,11 +425,25 @@ impl CellNode {
     where
         T: Send + Sync + 'static,
     {
-        self.facilities
+        self.try_owned_component(name).ok().flatten()
+    }
+
+    /// Looks up an optional typed component, preserving lock and type failures.
+    /// Fleet observations must distinguish missing facilities from failed capture.
+    pub fn try_owned_component<T>(&self, name: &str) -> cellule_runtime::Result<Option<Arc<T>>>
+    where
+        T: Send + Sync + 'static,
+    {
+        let facilities = self
+            .facilities
             .lock()
-            .ok()?
-            .iter()
-            .find(|facility| facility.name == name)
-            .and_then(CellNodeFacility::owner)
+            .map_err(|_| Error::Control("CellNode facility lock poisoned"))?;
+        let Some(facility) = facilities.iter().find(|facility| facility.name == name) else {
+            return Ok(None);
+        };
+        facility
+            .owner()
+            .map(Some)
+            .ok_or(Error::Control("CellNode component type differs"))
     }
 }

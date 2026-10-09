@@ -74,11 +74,15 @@ pub use paged_io::with_paged_io_deadline;
 #[cfg(feature = "replica")]
 mod writable_vfs;
 #[cfg(feature = "replica")]
-pub use node_frame::{NodeFrameScope, VerifiedNodeFrame, encode_node_frame, inspect_node_frame};
+pub use node_frame::{
+    MAX_NODE_FRAME_HEADER_BYTES, NodeFrameScope, VerifiedNodeFrame, encode_node_frame,
+    encode_node_frame_range, inspect_node_frame,
+};
 #[cfg(feature = "replica")]
 pub use replica::{
     CellPagedDatabase, CellReplica, CellWritableDatabase, PreparedRoot, PublicationCost,
-    ReadOnlyRoot, RecoveryOverlay, RootObjectRef, RootRef, VerifiedRoot,
+    ReadOnlyRoot, RecoveryOverlay, RootObjectRef, RootPreparation, RootPreparationFuture,
+    RootPreparationMetadata, RootRef, VerifiedRoot,
 };
 #[cfg(feature = "replica")]
 pub use writable_vfs::Hydration;
@@ -88,7 +92,8 @@ mod format_tests;
 
 pub use capture::CheckpointMode;
 pub use db::{
-    Db, DbInterruptHandle, MANAGED_CONNECTION_PAGE_CACHE_BYTES, MANAGED_SQLITE_CONNECTIONS,
+    Db, DbInterruptHandle, MANAGED_CONNECTION_LOOKASIDE_BYTES, MANAGED_CONNECTION_PAGE_CACHE_BYTES,
+    MANAGED_SQLITE_CONNECTIONS,
 };
 pub use error::{FailureClass, LimitKind, LtxError, QueryError, Result, TransactionError};
 pub use recovery::{VerifiedPlan, compact_exact, restore_exact};

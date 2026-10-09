@@ -9,8 +9,8 @@ use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 
 use super::merge::LocatorMerge;
 use super::{
-    CellReplica, DirectoryEntry, LoadedGraph, PreparedRoot, RootRef, SEGMENT_TRANSFER_CONCURRENCY,
-    SegmentDescriptor, directory,
+    AppendBaseState, CellReplica, CompactionAppend, DirectoryEntry, LoadedGraph, PreparedRoot,
+    RootRef, SEGMENT_TRANSFER_CONCURRENCY, SegmentDescriptor, directory,
 };
 use crate::{CellObjectKind, LtxError, Result, SegmentInfo, Txid, environment::FileIo};
 
@@ -35,6 +35,7 @@ pub(super) async fn prepare(
     range: Range<usize>,
     level: u8,
     scratch_directory: &Path,
+    append: Option<CompactionAppend>,
 ) -> Result<PreparedRoot> {
     let selected = graph
         .descriptors
@@ -67,7 +68,7 @@ pub(super) async fn prepare(
                 })
             })
             .await??;
-        prepare_root(replica, base, graph, range, level, files).await
+        prepare_root(replica, base, graph, range, level, files, append).await
     }
     .await;
     // Ordinary completion includes cleanup. Cancellation leaves cleanup owned
@@ -92,17 +93,17 @@ async fn prepare_root(
     range: Range<usize>,
     level: u8,
     files: CompactionFiles,
+    append: Option<CompactionAppend>,
 ) -> Result<PreparedRoot> {
     let selected = &graph.descriptors[range.clone()];
-    // The authenticated streams have separate scratch files. Both must finish
-    // before the merge, but neither depends on the other's transfer.
-    let (spooled, body_inputs) = futures_util::future::join(
-        spool_indexes(replica, selected, &files.scratch, &files.original_indexes),
-        spool_selected_bodies(replica, selected, &files.scratch, &files.original_bodies),
+    let (spooled, body_inputs) = spool_selected(
+        replica,
+        selected,
+        &files.scratch,
+        &files.original_bodies,
+        &files.original_indexes,
     )
-    .await;
-    let spooled = spooled?;
-    let body_inputs = body_inputs?;
+    .await?;
     let artifacts = write_compacted(replica, spooled, &body_inputs, &files).await?;
 
     let first = selected.first().ok_or(LtxError::TxNotAvailable)?;
@@ -120,67 +121,156 @@ async fn prepare_root(
     let descriptor =
         SegmentDescriptor::native(info, artifacts.index.digest, artifacts.index.length)
             .with_level(level);
-    descriptor.validate_published(replica.limits)?;
-
-    // These immutable objects are unreachable until the final root is returned,
-    // so either upload may finish first without publishing a partial compaction.
-    let (body_upload, index_upload) = futures_util::future::join(
-        upload(
-            replica,
-            &files.scratch,
-            &files.compacted_ltx,
+    let packed_segment = if super::packed::HEADER_BYTES
+        .checked_add(artifacts.ltx.length)
+        .and_then(|n| n.checked_add(artifacts.index.length))
+        .is_some_and(|n| n <= super::upload::SINGLE_PUT_BYTES)
+    {
+        let scratch = Arc::clone(&files.scratch);
+        let path = files.compacted_index.clone();
+        let length = artifacts.index.length as usize;
+        let index = replica
+            .host
+            .run(move || {
+                // A dispatched read owns scratch through cancellation. Opening
+                // read-only also preserves the source-read error boundary.
+                let mut file = scratch.host.filesystem.open(&path)?;
+                file.read_exact_at(0, length)
+            })
+            .await??;
+        let source = super::upload::PinnedCapture::open(
+            &replica.host,
+            files.compacted_ltx.clone(),
             artifacts.ltx.length,
-            &descriptor.info.blake3,
-            CellObjectKind::Ltx,
-        ),
-        upload(
-            replica,
-            &files.scratch,
-            &files.compacted_index,
-            artifacts.index.length,
-            &descriptor.index_digest,
-            CellObjectKind::Index,
-        ),
-    )
-    .await;
-    body_upload?;
-    index_upload?;
+        )
+        .await?;
+        Some(
+            super::packed::freeze(
+                replica,
+                super::PreparedSegment {
+                    descriptor: descriptor.clone(),
+                    index: bytes::Bytes::from(index),
+                    body: super::AppendBody::Native(source),
+                },
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let descriptor = packed_segment
+        .as_ref()
+        .map_or(descriptor, |segment| segment.descriptor.clone());
+    descriptor.validate_published(replica.limits)?;
 
     let mut descriptors = graph.descriptors.clone();
     descriptors.splice(range.clone(), [descriptor.clone()]);
     replica.validate_chain(&descriptors, base.position)?;
-
-    let compacted_source = files.scratch.open(&files.compacted_index).await?;
-    let compacted_input = SpoolInput {
-        descriptor,
-        start: 0,
-        length: artifacts.index.length,
-    };
-    let entries =
-        MergedEntries::open(&replica.host, compacted_source, vec![compacted_input]).await?;
-    let endpoint = descriptors.last().ok_or(LtxError::LTXCorrupted)?;
-    let page_size = endpoint.info.page_size;
-    let database_pages = endpoint.info.database_pages;
-    let directory = directory::relocate_and_upload(
-        replica,
-        &graph,
-        &descriptors,
-        selected,
-        entries.stream(replica.host.clone()),
-    )
-    .await?;
-    replica
-        .finish_root(
-            Some(base),
-            descriptors,
-            base.position,
-            base.commit_sequence,
-            graph.document.schema,
-            page_size,
-            database_pages,
-            directory,
+    let dependency_uploads = async {
+        if let Some(segment) = packed_segment {
+            return replica.upload_prepared_segment(segment).await;
+        }
+        let (body, index) = futures_util::future::join(
+            upload(
+                replica,
+                &files.scratch,
+                &files.compacted_ltx,
+                artifacts.ltx.length,
+                &artifacts.ltx.digest,
+                CellObjectKind::Ltx,
+            ),
+            upload(
+                replica,
+                &files.scratch,
+                &files.compacted_index,
+                artifacts.index.length,
+                &artifacts.index.digest,
+                CellObjectKind::Index,
+            ),
         )
-        .await
+        .await;
+        body?;
+        index?;
+        Ok::<_, LtxError>(())
+    };
+    let root_preparation = async {
+        let compacted_source = files.scratch.open(&files.compacted_index).await?;
+        let compacted_input = SpoolInput {
+            descriptor,
+            start: 0,
+            length: artifacts.index.length,
+        };
+        let entries =
+            MergedEntries::open(&replica.host, compacted_source, vec![compacted_input]).await?;
+        let endpoint = descriptors.last().ok_or(LtxError::LTXCorrupted)?;
+        let page_size = endpoint.info.page_size;
+        let database_pages = endpoint.info.database_pages;
+        let retain_leaf = graph.document.directory_height == 0
+            && append.as_ref().is_none_or(|append| {
+                graph.document.directory_height == 0
+                    && append
+                        .inputs
+                        .last()
+                        .is_some_and(|input| directory::fits_leaf(input.info.database_pages))
+            });
+        let directory = directory::relocate_and_upload(
+            replica,
+            &graph,
+            &descriptors,
+            selected,
+            entries.stream(replica.host.clone()),
+            retain_leaf,
+        )
+        .await?;
+        if let Some(append) = append {
+            // This private state authenticates identical logical contents, but
+            // does not claim an uploaded intermediate root. Streamed directory
+            // nodes remain available; only final descriptor pages/root are PUT.
+            let state = AppendBaseState {
+                aggregate: graph.aggregate,
+                directory_digest: directory.root_digest(),
+                directory_height: directory.height(),
+                directory_inline: None,
+                page_size,
+                database_pages,
+                inherited_segment_pages: graph.document.segment_pages.clone(),
+                descriptors,
+                private_directory: retain_leaf.then_some(directory),
+            };
+            return replica
+                .prepare_append(
+                    Some(base),
+                    Some(state),
+                    append.inputs,
+                    append.position,
+                    append.commit_sequence,
+                    append.schema,
+                    None,
+                )
+                .await;
+        }
+        replica
+            .finish_root(
+                Some(base),
+                &graph.document.segment_pages,
+                descriptors,
+                base.position,
+                base.commit_sequence,
+                graph.document.schema,
+                page_size,
+                database_pages,
+                directory,
+            )
+            .await
+    };
+    // The directory consumes the verified local index, not the uploaded body.
+    // Immutable dependencies and metadata may therefore upload together. Wait
+    // for both branches, including dispatched scratch jobs on either failure,
+    // before returning a proposal or releasing scratch admission.
+    let (dependencies, prepared) =
+        futures_util::future::join(dependency_uploads, root_preparation).await;
+    dependencies?;
+    prepared
 }
 
 struct CompactedArtifacts {

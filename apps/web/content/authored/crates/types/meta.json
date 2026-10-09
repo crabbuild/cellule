@@ -1,0 +1,11 @@
+{
+  "title": "cellule-types",
+  "pages": [
+    "overview",
+    "identity",
+    "scope",
+    "compatibility",
+    "docs",
+    "[Crate reference](/docs/crates/types)"
+  ]
+}

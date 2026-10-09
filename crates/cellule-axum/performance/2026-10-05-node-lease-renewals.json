@@ -1,0 +1,619 @@
+{
+  "schema_version": 1,
+  "scope": "diagnostic failed density runs; no capacity or HTTP speedup qualification",
+  "target_established": false,
+  "workload": {
+    "cells": 2000,
+    "offered_write_tps": 1000,
+    "offered_read_tps": 10,
+    "clients": 64,
+    "queue_capacity": 256,
+    "sql_workers": 16,
+    "tokio_workers": 8,
+    "warmup_seconds": 30,
+    "measurement_seconds": 180,
+    "startup_timeout_seconds": 600,
+    "owner_soft_nofile": 32768,
+    "owner_disk_bytes": 1073741824,
+    "owner_native_admission_bytes": 536870912,
+    "owner_retained_bytes": 16777216
+  },
+  "environment": {
+    "vm_cpu": 8,
+    "vm_memory_gib": 16,
+    "owner_container_cpu_limit": 8,
+    "owner_container_memory_gib": 12,
+    "provider_cpu_limit": 4,
+    "provider_memory_gib": 2,
+    "provider_image": "sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858",
+    "provider_soft_nofile": [
+      1024,
+      32768,
+      32768
+    ],
+    "provider_hard_nofile": 524288,
+    "shared_with_driver_followers_provider_and_unrelated_services": true,
+    "fresh_prefix_per_run": true,
+    "same_provider_data_volume_across_runs": true
+  },
+  "runs": [
+    {
+      "id": "actual-growth-2000-c1k-r1",
+      "status": "failed",
+      "source_commit": "5d00d10",
+      "server_sha256": "d82d5803224154c2fe35d63fe263f4518377d4ddd9d0b62608ba3d7f0bd5eb8a",
+      "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+      "raw_run_external": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/docker-cleanup-20261005/asset-evidence/actual-growth-2000-c1k-r1-run",
+      "cold_audit_completed": false,
+      "target_established": false,
+      "window_seconds": 180,
+      "metrics": {
+        "writes": {
+          "attempts": 151291,
+          "errors": 151291,
+          "generated_offers": 180000,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 0,
+          "planned_offers": 180000,
+          "producer_unissued": 0,
+          "queue_dropped": 28709,
+          "request_histogram_overflow": 0,
+          "request_latency_ms_all_attempts": {
+            "max": 235.692713,
+            "p50": 0.2,
+            "p95": 1.3,
+            "p99": 18.7
+          },
+          "scheduled_histogram_overflow": 96,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 28672.212815000003,
+            "p50": 1.9,
+            "p95": 5.3,
+            "p99": 59.2
+          },
+          "successes_after_deadline": 0,
+          "successes_in_window": 0,
+          "successes_including_drain": 0,
+          "successful_requests_per_second": 0.0,
+          "target_requests_per_second": 1000,
+          "warmup_attempts": 5427,
+          "warmup_errors": 222,
+          "warmup_queue_dropped": 24573
+        },
+        "reads": {
+          "attempts": 1511,
+          "errors": 1511,
+          "generated_offers": 1800,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 0,
+          "planned_offers": 1800,
+          "producer_unissued": 0,
+          "queue_dropped": 289,
+          "request_histogram_overflow": 0,
+          "request_latency_ms_all_attempts": {
+            "max": 84.626783,
+            "p50": 0.2,
+            "p95": 1.6,
+            "p99": 17.5
+          },
+          "scheduled_histogram_overflow": 0,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 188.23806100000002,
+            "p50": 1.9,
+            "p95": 5.7,
+            "p99": 40.9
+          },
+          "successes_after_deadline": 0,
+          "successes_in_window": 0,
+          "successes_including_drain": 0,
+          "successful_requests_per_second": 0.0,
+          "target_requests_per_second": 10,
+          "warmup_attempts": 58,
+          "warmup_errors": 2,
+          "warmup_queue_dropped": 242
+        }
+      },
+      "validated_live_responses_including_setup_warmup_drain": {
+        "writes": 7205,
+        "reads": 56
+      },
+      "successful_http_latency_ms": {
+        "writes": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        },
+        "reads": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        }
+      },
+      "owner_operations": {
+        "observation": "before drain only",
+        "puts_started": 143416,
+        "gets_started": 19451,
+        "get_transients": 6692,
+        "put_transients": 1294,
+        "node_log_append": {
+          "bytes": 15605610,
+          "failures": 1,
+          "successes": 2175
+        },
+        "submission_sources": {
+          "fleet": 7269,
+          "rejected": 41,
+          "unavailable": 0,
+          "unsupported": 0
+        },
+        "response_sources": {
+          "fleet": 7110,
+          "object": 95,
+          "recorded": 0
+        },
+        "publication_failures": 1659
+      },
+      "failure": "provider EMFILE at soft nofile 1024; node lease fenced; measured successes zero"
+    },
+    {
+      "id": "actual-growth-2000-c1k-r2",
+      "status": "failed",
+      "source_commit": "5d00d10",
+      "server_sha256": "d82d5803224154c2fe35d63fe263f4518377d4ddd9d0b62608ba3d7f0bd5eb8a",
+      "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+      "raw_run_external": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/actual-growth-2000-c1k-r2-run",
+      "cold_audit_completed": false,
+      "target_established": false,
+      "window_seconds": null,
+      "metrics": null,
+      "owner_operations": {
+        "observation": "after drain",
+        "puts_started": 81616,
+        "gets_started": 8022,
+        "get_transients": 0,
+        "put_transients": 0,
+        "node_log_append": {
+          "bytes": 206090,
+          "failures": 0,
+          "successes": 88
+        },
+        "submission_sources": {
+          "fleet": 88,
+          "rejected": 0,
+          "unavailable": 0,
+          "unsupported": 0
+        },
+        "response_sources": {
+          "fleet": 77,
+          "object": 11,
+          "recorded": 0
+        },
+        "publication_failures": 0
+      },
+      "validated_seed_writes": 88,
+      "seed_last_completion_seconds": 12.750389294,
+      "failure": "503 outcome_unknown during the next seed; measured window never started",
+      "activation_ms": 155525,
+      "sampled_sqlite_main_paths_max": 2000,
+      "sampled_owner_rss_max_bytes": 571293696,
+      "sampled_owner_fd_max": 16067
+    },
+    {
+      "id": "actual-growth-2000-c1k-r3",
+      "status": "failed",
+      "source_commit": "19752ad",
+      "server_sha256": "3469b201470bda8eec31d17006a846cc0a2a2d2ef4769e0044ee0ec7f628c95e",
+      "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+      "raw_run_external": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/actual-growth-2000-c1k-r3-run",
+      "cold_audit_completed": false,
+      "target_established": false,
+      "window_seconds": 180,
+      "metrics": {
+        "writes": {
+          "attempts": 30382,
+          "errors": 19777,
+          "generated_offers": 180000,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 2122803,
+          "planned_offers": 180000,
+          "producer_unissued": 0,
+          "queue_dropped": 149618,
+          "request_histogram_overflow": 284,
+          "request_latency_ms_all_attempts": {
+            "max": 42605.146321,
+            "p50": 6.8,
+            "p95": 623.8,
+            "p99": 9486.1
+          },
+          "scheduled_histogram_overflow": 884,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 47672.663385,
+            "p50": 50.0,
+            "p95": 7621.3,
+            "p99": null
+          },
+          "successes_after_deadline": 0,
+          "successes_in_window": 10605,
+          "successes_including_drain": 10605,
+          "successful_requests_per_second": 58.916666666666664,
+          "target_requests_per_second": 1000,
+          "warmup_attempts": 5884,
+          "warmup_errors": 0,
+          "warmup_queue_dropped": 24116
+        },
+        "reads": {
+          "attempts": 267,
+          "errors": 195,
+          "generated_offers": 1800,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 14111,
+          "planned_offers": 1800,
+          "producer_unissued": 0,
+          "queue_dropped": 1533,
+          "request_histogram_overflow": 1,
+          "request_latency_ms_all_attempts": {
+            "max": 15396.497397,
+            "p50": 2.2,
+            "p95": 61.8,
+            "p99": 3425.6
+          },
+          "scheduled_histogram_overflow": 3,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 23858.08338,
+            "p50": 29.3,
+            "p95": 4285.1,
+            "p99": null
+          },
+          "successes_after_deadline": 0,
+          "successes_in_window": 72,
+          "successes_including_drain": 72,
+          "successful_requests_per_second": 0.4,
+          "target_requests_per_second": 10,
+          "warmup_attempts": 51,
+          "warmup_errors": 0,
+          "warmup_queue_dropped": 249
+        }
+      },
+      "validated_live_responses_including_setup_warmup_drain": {
+        "writes": 18489,
+        "reads": 123
+      },
+      "successful_http_latency_ms": {
+        "writes": {
+          "count": 10605,
+          "p50": 208.73264999999998,
+          "p95": 3271.6527389999997,
+          "p99": 14917.181982,
+          "max": 26414.993242,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        },
+        "reads": {
+          "count": 72,
+          "p50": 4.723897,
+          "p95": 856.881943,
+          "p99": 15396.497397,
+          "max": 15396.497397,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        }
+      },
+      "owner_operations": {
+        "observation": "before drain only",
+        "puts_started": 151819,
+        "gets_started": 26006,
+        "get_transients": 848,
+        "put_transients": 98,
+        "node_log_append": {
+          "bytes": 50169850,
+          "failures": 1,
+          "successes": 4147
+        },
+        "submission_sources": {
+          "fleet": 18500,
+          "rejected": 1,
+          "unavailable": 0,
+          "unsupported": 0
+        },
+        "response_sources": {
+          "fleet": 17049,
+          "object": 1441,
+          "recorded": 0
+        },
+        "publication_failures": 20
+      },
+      "failure": "provider OOM-killed with exit 137 at 2026-10-05T07:21:40.80989463Z; errors and drops retained",
+      "validated_seed_writes": 2000,
+      "activation_ms": 145785,
+      "setup_seconds": 74.90742901499999,
+      "sampled_sqlite_main_paths_max": 2000,
+      "sampled_owner_rss_max_bytes": 717201408,
+      "sampled_owner_fd_max": 16147
+    },
+    {
+      "id": "actual-growth-2000-c1k-r4",
+      "status": "failed cold startup",
+      "source_commit": "19752ad",
+      "server_sha256": "3469b201470bda8eec31d17006a846cc0a2a2d2ef4769e0044ee0ec7f628c95e",
+      "driver_sha256": "bd8224dcb04a83080cf3016e66d3d44ee15fabcde280e87ca6466dae12d0dfcc",
+      "raw_run_external": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/actual-growth-2000-c1k-r4-run",
+      "fresh_provider_volume": "cellule-node-scaling-rustfs-20261005-lease-r4",
+      "provider_image_cpu_memory_nofile_unchanged": true,
+      "window_seconds": 180,
+      "metrics": {
+        "writes": {
+          "attempts": 21440,
+          "errors": 0,
+          "generated_offers": 179994,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 4306033,
+          "planned_offers": 180000,
+          "producer_unissued": 6,
+          "queue_dropped": 158554,
+          "request_histogram_overflow": 186,
+          "request_latency_ms_all_attempts": {
+            "max": 20991.537409,
+            "p50": 117.2,
+            "p95": 2036.0,
+            "p99": 9322.8
+          },
+          "scheduled_histogram_overflow": 398,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 25859.445185999997,
+            "p50": 2025.1,
+            "p95": 7262.0,
+            "p99": null
+          },
+          "successes_after_deadline": 316,
+          "successes_in_window": 21124,
+          "successes_including_drain": 21440,
+          "successful_requests_per_second": 117.35555555555555,
+          "target_requests_per_second": 1000,
+          "warmup_attempts": 4713,
+          "warmup_errors": 0,
+          "warmup_queue_dropped": 25287
+        },
+        "reads": {
+          "attempts": 166,
+          "errors": 0,
+          "generated_offers": 1800,
+          "histogram_resolution_us": 100,
+          "payload_bytes_including_drain": 32622,
+          "planned_offers": 1800,
+          "producer_unissued": 0,
+          "queue_dropped": 1634,
+          "request_histogram_overflow": 3,
+          "request_latency_ms_all_attempts": {
+            "max": 15184.871162,
+            "p50": 2.2,
+            "p95": 5412.5,
+            "p99": null
+          },
+          "scheduled_histogram_overflow": 4,
+          "scheduled_latency_ms_all_attempts": {
+            "max": 16732.797627,
+            "p50": 1815.1,
+            "p95": 7924.6,
+            "p99": null
+          },
+          "successes_after_deadline": 3,
+          "successes_in_window": 163,
+          "successes_including_drain": 166,
+          "successful_requests_per_second": 0.9055555555555556,
+          "target_requests_per_second": 10,
+          "warmup_attempts": 56,
+          "warmup_errors": 0,
+          "warmup_queue_dropped": 244
+        }
+      },
+      "validated_seed_writes": 2000,
+      "activation_ms": 128038,
+      "setup_seconds": 56.40933651499998,
+      "initial_cells_released_idle": 2000,
+      "cold_audit_completed": false,
+      "target_established": false,
+      "failure": "cold startup returns Capacity(\"node pressure\"); pressure component not yet instrumented",
+      "initial_sqlite_main_paths_max": 2000,
+      "initial_owner_sampled_rss_max_bytes": 722006016,
+      "initial_owner_sampled_fd_max": 16142,
+      "cold_owner_sampled_rss_max_bytes": 926687232,
+      "cold_owner_sampled_sqlite_paths_max": 827,
+      "owner_operations": {
+        "submission_sources": {
+          "fleet": 28153,
+          "rejected": 0,
+          "unavailable": 0,
+          "unsupported": 0
+        },
+        "node_log_append": {
+          "bytes": 88694856,
+          "failures": 0,
+          "successes": 5615
+        },
+        "response_sources": {
+          "fleet": 26135,
+          "object": 2018,
+          "recorded": 0
+        },
+        "publication_failures": 0,
+        "writes": {
+          "actor_queue": {
+            "count": 28153,
+            "mean_ms": 265.05043519724364,
+            "overflow": 1064,
+            "p50_ms": 0.1,
+            "p95_ms": 15.9,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "authority": {
+            "count": 26652,
+            "mean_ms": 32.14962075397719,
+            "overflow": 0,
+            "p50_ms": 22.8,
+            "p95_ms": 84.9,
+            "p99_ms": 181.6,
+            "resolution_us": 100
+          },
+          "compaction": {
+            "count": 2629,
+            "mean_ms": 11625.610390293648,
+            "overflow": 2629,
+            "p50_ms": null,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "directory": {
+            "count": 29281,
+            "mean_ms": 0.20568396817048598,
+            "overflow": 0,
+            "p50_ms": 0.1,
+            "p95_ms": 0.1,
+            "p99_ms": 5.9,
+            "resolution_us": 100
+          },
+          "dirty_admission": {
+            "count": 31281,
+            "mean_ms": 3123.8523782253446,
+            "overflow": 9383,
+            "p50_ms": 38.8,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "preparation": {
+            "count": 26652,
+            "mean_ms": 3712.774802930287,
+            "overflow": 9388,
+            "p50_ms": 127.6,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "publication": {
+            "count": 26652,
+            "mean_ms": 4550.258987475837,
+            "overflow": 9435,
+            "p50_ms": 220.0,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "publication_failures": 0,
+          "recovery_admission": {
+            "count": 3250,
+            "mean_ms": 30.191340561230767,
+            "overflow": 0,
+            "p50_ms": 16.5,
+            "p95_ms": 101.7,
+            "p99_ms": 213.1,
+            "resolution_us": 100
+          },
+          "root_admission": {
+            "count": 28652,
+            "mean_ms": 3408.6109781837567,
+            "overflow": 9380,
+            "p50_ms": 58.6,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_open": {
+            "count": 29281,
+            "mean_ms": 7.001014296403811,
+            "overflow": 0,
+            "p50_ms": 4.2,
+            "p95_ms": 21.2,
+            "p99_ms": 45.4,
+            "resolution_us": 100
+          },
+          "root_preparation": {
+            "count": 28652,
+            "mean_ms": 3454.480917261797,
+            "overflow": 9388,
+            "p50_ms": 105.2,
+            "p95_ms": null,
+            "p99_ms": null,
+            "resolution_us": 100
+          },
+          "root_preparation_work": {
+            "count": 28652,
+            "mean_ms": 45.85944668515287,
+            "overflow": 0,
+            "p50_ms": 34.1,
+            "p95_ms": 122.8,
+            "p99_ms": 228.0,
+            "resolution_us": 100
+          },
+          "uploaded_bytes": 188348135,
+          "uploaded_objects": 141336,
+          "worker": {
+            "count": 28153,
+            "mean_ms": 31.465970977231553,
+            "overflow": 0,
+            "p50_ms": 15.4,
+            "p95_ms": 110.6,
+            "p99_ms": 250.5,
+            "resolution_us": 100
+          }
+        }
+      },
+      "validated_live_responses_including_setup_warmup_drain": {
+        "writes": 28153,
+        "reads": 222
+      },
+      "successful_http_latency_ms": {
+        "writes": {
+          "count": 21124,
+          "p50": 113.162932,
+          "p95": 1660.673793,
+          "p99": 8712.997977,
+          "max": 18462.661145,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        },
+        "reads": {
+          "count": 163,
+          "p50": 2.113579,
+          "p95": 4779.270865,
+          "p99": 12495.628132,
+          "max": 15184.871162,
+          "method": "exact journal values, nearest-rank; successful completions in window only"
+        }
+      },
+      "cold_root_open_observations": 978,
+      "completed_cold_restore_count": null
+    }
+  ],
+  "causal_regression": {
+    "old_idle_cell_revision": [
+      2,
+      3
+    ],
+    "old_root_unchanged": true,
+    "new_leased_idle_cell_control_unchanged": true,
+    "cells_tested": 4,
+    "ordinary_write_commit_sequence": 1,
+    "fenced_query_outputs_refused": true,
+    "fenced_command_callback_calls": 0,
+    "shutdown_active_cells": 0,
+    "unleased_renewal_preserved": true,
+    "long_preparation_checkpoint_preserved": true
+  },
+  "validation": {
+    "runtime_unit_passed": 619,
+    "runtime_unit_existing_ignored": 3,
+    "runtime_integration_passed": 234,
+    "runtime_integration_existing_ignored": 4,
+    "strict_runtime_axum_clippy": true,
+    "default_sql_driver_release_build": true,
+    "canonical_source_files": 1154,
+    "isolated_source_mismatches": 0,
+    "source_archive_external": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence/node-lease-renewal-source"
+  },
+  "next_probe": "Instrument actual pressure ledger during cold recovery under the unchanged budgets. Investigate quiet compaction tasks claiming the Cell before waiting for shared admission; preserve the response and recovery gates."
+}

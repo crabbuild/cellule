@@ -100,12 +100,9 @@ async fn cached_tail_rechecks_mutated_frame_bytes() {
             .next_sequence,
         Some(2)
     );
-    let chunks = lane_directory(root.path(), Lane { leader, epoch: 2 }).join("chunks");
-    let chunk = std::fs::read_dir(chunks)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("log"))
-        .unwrap();
+    // The last appended frame remains in the live chunk. Directory order may
+    // select an earlier closed chunk after rotation instead of requested frame 2.
+    let chunk = lane_directory(root.path(), Lane { leader, epoch: 2 }).join("chunks/open.log");
     let mut file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -170,12 +167,9 @@ async fn cached_tail_fails_when_its_chunk_is_deleted() {
             .next_sequence,
         Some(2)
     );
-    let chunks = lane_directory(root.path(), Lane { leader, epoch: 2 }).join("chunks");
-    let chunk = std::fs::read_dir(chunks)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("log"))
-        .unwrap();
+    // The last appended frame remains in the live chunk. Directory order may
+    // select an earlier closed chunk after rotation instead of requested frame 2.
+    let chunk = lane_directory(root.path(), Lane { leader, epoch: 2 }).join("chunks/open.log");
     std::fs::remove_file(chunk).unwrap();
     assert!(store.read_tail_page(leader, 2, 2).await.is_err());
     assert_eq!(store.scan_count(), 1);

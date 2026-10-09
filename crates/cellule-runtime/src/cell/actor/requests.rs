@@ -146,6 +146,10 @@ pub(super) async fn execute_command(
     effect_id: u64,
 ) -> TaskResult {
     let execution_started = std::time::Instant::now();
+    if command.group.is_some() {
+        return super::group::execute(pool, durability, command, interrupt, generation, effect_id)
+            .await;
+    }
     let queue_wait = command.queued_at.elapsed();
     tracing::debug!(
         target: "cellule_runtime::action",
@@ -246,16 +250,7 @@ pub(super) async fn execute_command(
     let (result, must_fence) = match execution {
         Ok(WorkerExecution::Recorded(outcome)) => (Ok(CommandTaskResult::Recorded(outcome)), false),
         Ok(WorkerExecution::Pending(pending)) => {
-            let retained_bytes = usize::try_from(pending.retained_bytes())
-                .map_err(|_| Error::Capacity("pending publication bytes"));
-            let result = retained_bytes.and_then(|retained_bytes| {
-                pool.resource_ledger()
-                    .try_reserve(ResourceCost::zero().with_retained_bytes(retained_bytes))
-                    .map_err(|error| match error {
-                        Error::Capacity(_) => Error::Capacity("pending publication bytes"),
-                        error => error,
-                    })
-            });
+            let result = reserve_pending_publication(&pool, &pending);
             let result = match result {
                 Ok(retained_reservation) => durability
                     .submit(pending.outcome().commit_sequence(), pending.cuts())
@@ -272,7 +267,10 @@ pub(super) async fn execute_command(
         Err(error) => (
             Err(error),
             !deadline.cancelled()
-                && !matches!(pool.state(command.cell).await, Ok(WorkerState::Ready)),
+                && !pool
+                    .state(command.cell)
+                    .await
+                    .is_ok_and(WorkerState::is_reusable),
         ),
     };
     let fenced = must_fence && result.is_err();
@@ -293,6 +291,23 @@ pub(super) async fn execute_command(
         result,
         fenced,
     }
+}
+
+pub(super) fn reserve_pending_publication(
+    pool: &SqlWorkerPool,
+    pending: &PendingCommit,
+) -> crate::Result<ResourceReservation> {
+    // The host already owns the LTX file's disk reservation. Retain RAM for
+    // shared indexes and live outcome/descriptor copies, not the on-disk body.
+    // Physical backlog counters and their per-Cell limits remain unchanged.
+    let bytes = usize::try_from(pending.retained_memory_bytes())
+        .map_err(|_| Error::Capacity("pending publication bytes"))?;
+    pool.resource_ledger()
+        .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))
+        .map_err(|error| match error {
+            Error::Capacity(_) => Error::Capacity("pending publication bytes"),
+            error => error,
+        })
 }
 
 pub(super) async fn prove_command(
@@ -377,14 +392,48 @@ pub(super) fn receive_publication_proof(
 pub(super) fn start_publication(
     cell: CellId,
     active: &mut ActiveCell,
-    pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
-    use crate::fleet::telemetry::PublicationTiming;
-
     let Some(mut publisher) = active.publisher.take() else {
         return;
     };
+    if active.publications.is_empty() {
+        active.publisher = Some(publisher);
+        return;
+    }
+    let generation = active.generation;
+    let effect_id = active.begin_task(CoordinationEffect::Publication);
+    let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
+    tasks.spawn(async move {
+        // Keep coverage in the bounded Cell queue while waiting. The publisher
+        // token prevents another root or compaction from overtaking admission.
+        let result = publisher.admit_publication().await.map(|replica| {
+            Box::new(PublicationAdmission {
+                replica,
+                fleet_deadline,
+            })
+        });
+        TaskResult::PublicationAdmitted {
+            cell,
+            generation,
+            effect_id,
+            publisher: Box::new(publisher),
+            result,
+        }
+    });
+}
+
+pub(super) fn start_admitted_publication(
+    cell: CellId,
+    active: &mut ActiveCell,
+    pool: &SqlWorkerPool,
+    tasks: &mut JoinSet<TaskResult>,
+    mut publisher: Box<CellPublisher>,
+    admission: Box<PublicationAdmission>,
+    effect_id: u64,
+) {
+    use crate::fleet::telemetry::PublicationTiming;
+
     // Coalescing publishes one root for every queued commit. It is only sound
     // once each covered commit reached its follower proof, because that proof is
     // what allowed the commits to queue behind an unpublished one.
@@ -399,7 +448,8 @@ pub(super) fn start_publication(
         match active.publications.pop_front() {
             Some(queued) => vec![queued],
             None => {
-                active.publisher = Some(publisher);
+                active.finish_task(effect_id, CoordinationEffect::Publication);
+                active.publisher = Some(*publisher);
                 return;
             }
         }
@@ -407,14 +457,25 @@ pub(super) fn start_publication(
     let Some(merged) =
         crate::cell::executor::merge_captures(coverage.iter().map(|queued| queued.pending.cuts()))
     else {
-        active.publisher = Some(publisher);
+        active.finish_task(effect_id, CoordinationEffect::Publication);
+        active.publisher = Some(*publisher);
         return;
     };
     let Some(newest) = coverage.last() else {
-        active.publisher = Some(publisher);
+        active.finish_task(effect_id, CoordinationEffect::Publication);
+        active.publisher = Some(*publisher);
         return;
     };
     let covered = coverage.len();
+    // One physical native-group capture can represent several logical commands.
+    // The serialized publisher advances the exact contiguous Cell sequence.
+    let covered_commits = coverage.last().map_or(0, |queued| {
+        queued
+            .pending
+            .outcome()
+            .commit_sequence()
+            .saturating_sub(active.published_sequence)
+    });
     let retained_bytes: u64 = coverage
         .iter()
         .map(|queued| queued.pending.retained_bytes())
@@ -449,9 +510,9 @@ pub(super) fn start_publication(
         "Cell LTX publication started"
     );
     let generation = active.generation;
-    let effect_id = active.begin_task(CoordinationEffect::Publication);
     // Moving the publisher out of ActiveCell is the serialization token for
     // root preparation and CAS; no second object publisher can overtake it.
+    active.publishing_since = coverage.first().map(|queued| queued.submitted_at);
     let pool = pool.clone();
     let published_next_due_ms = newest.pending.next_due_ms();
     let published_commit_sequence = commit_sequence;
@@ -468,16 +529,22 @@ pub(super) fn start_publication(
         pendings.push(queued.pending);
     }
     tasks.spawn(async move {
+        let mut admitted = Some(admission.replica);
         let _retained_reservations = reservations;
         let mut publication_proofs = Some(proofs);
-        let fleet_deadline = std::time::Instant::now() + FLEET_PUBLICATION_GRACE;
+        // Admission delay cannot restart or extend the existing retry grace.
+        let fleet_deadline = admission.fleet_deadline;
         let mut retry_delay = std::time::Duration::from_millis(100);
         let mut preparation = std::time::Duration::ZERO;
         let mut authority = std::time::Duration::ZERO;
         let result = async {
             let preparation_started = std::time::Instant::now();
             let prepared = loop {
-                let attempt = if covered == 1 {
+                let attempt = if let Some(replica) = admitted.take() {
+                    publisher
+                        .prepare_admitted_batch(replica, &merged, published_commit_sequence)
+                        .await
+                } else if covered == 1 {
                     publisher.prepare(&pendings[0]).await
                 } else {
                     publisher
@@ -545,11 +612,7 @@ pub(super) fn start_publication(
                 }
             };
             authority = authority_started.elapsed();
-            let mut logged = false;
-            for durability in durabilities.iter().flatten() {
-                logged = true;
-                durability.prove_object().await?;
-            }
+            let logged = PendingDurability::prove_objects(&durabilities).await?;
             if !logged {
                 publisher.record_object_proof(newest_submitted_at.elapsed());
             }
@@ -580,6 +643,7 @@ pub(super) fn start_publication(
             total: newest_submitted_at.elapsed(),
             succeeded: result.is_ok(),
             commit_sequence,
+            covered_commits,
         });
         tracing::debug!(
             target: "cellule_runtime::action",
@@ -599,11 +663,24 @@ pub(super) fn start_publication(
             tracing::warn!(cell = ?cell, commit_sequence, error = ?error, "Cell publication fenced its owner");
         }
         // Every covered commit waits on this root, so each proof is answered.
+        // Keep the original failure available to every waiter; replacing it
+        // with Fenced would hide the storage or local confirmation failure.
+        let result = result.map_err(Arc::new);
         if let Some(proofs) = publication_proofs {
             for proof in proofs {
-                let _ = proof.send(if fenced { Err(Error::Fenced) } else { Ok(()) });
+                let proof_result = result.as_ref().copied().map_err(|source| {
+                    match source.as_ref() {
+                        Error::Fenced => Error::Fenced,
+                        _ => Error::Shared(Arc::clone(source)),
+                    }
+                });
+                let _ = proof.send(proof_result);
             }
         }
+        let result = result.map_err(|source| match Arc::try_unwrap(source) {
+            Ok(error) => error,
+            Err(source) => Error::Shared(source),
+        });
         if fenced {
             let _ = pool.fence(cell).await;
         }
@@ -611,7 +688,7 @@ pub(super) fn start_publication(
             cell,
             generation,
             effect_id,
-            publisher: Box::new(publisher),
+            publisher,
             retained_bytes,
             node_log_bytes,
             covered: covered as u64,
@@ -653,6 +730,8 @@ pub(super) async fn execute_query(
     if let Some(timing) = &query.timing {
         timing.started();
     }
+    let queue_wait = query.queued_at.elapsed();
+    let execution_started = std::time::Instant::now();
     let deadline = SqlDeadline::new(std::time::Instant::now() + SQL_WALL_DEADLINE);
     let result = match query.handler.take() {
         Some(handler) => {
@@ -669,6 +748,9 @@ pub(super) async fn execute_query(
                 Err(_) => {
                     let fenced = !deadline.cancel_queued();
                     tracing::warn!(cell = ?query.cell, sql_started = fenced, "Cell SQL query deadline expired");
+                    query
+                        .telemetry
+                        .query_execution(queue_wait, execution_started.elapsed(), false);
                     if fenced {
                         interrupt.interrupt();
                         fence_admission(&query.admission);
@@ -691,9 +773,15 @@ pub(super) async fn execute_query(
         }
         None => Err(Error::Fenced),
     };
+    query
+        .telemetry
+        .query_execution(queue_wait, execution_started.elapsed(), result.is_ok());
     let fenced = result.is_err()
         && !deadline.cancelled()
-        && !matches!(pool.state(query.cell).await, Ok(WorkerState::Ready));
+        && !pool
+            .state(query.cell)
+            .await
+            .is_ok_and(WorkerState::is_reusable);
     if fenced {
         let _ = pool.fence(query.cell).await;
     }
@@ -777,7 +865,11 @@ pub(super) async fn execute_resolve(
         result
     };
     let fenced = timed_out && !deadline.cancelled()
-        || result.is_err() && !matches!(pool.state(resolve.cell).await, Ok(WorkerState::Ready));
+        || result.is_err()
+            && !pool
+                .state(resolve.cell)
+                .await
+                .is_ok_and(WorkerState::is_reusable);
     if fenced {
         let _ = pool.fence(resolve.cell).await;
     }

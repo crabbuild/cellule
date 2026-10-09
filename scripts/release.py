@@ -26,6 +26,7 @@ CRATES = (
     "cellule-app",
     "cellule-host",
     "cellule-peer-http",
+    "cellule-axum",
 )
 REGISTRY_API = "https://crates.io/api/v1/crates"
 USER_AGENT = "cellule-release/1.0 (https://github.com/crabbuild/cellule)"

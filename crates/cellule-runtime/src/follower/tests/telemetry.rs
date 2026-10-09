@@ -9,7 +9,9 @@ struct Recorder {
 }
 
 impl CellTelemetry for Recorder {
-    fn follower_append(&self, leader: SessionId, epoch: u64, timing: FollowerAppendTiming) {
+    fn follower_append(&self, timing: FollowerAppendTiming) {
+        let leader = timing.leader.unwrap();
+        let epoch = timing.epoch;
         assert_eq!(leader, SessionId::from_bytes([1; 16]));
         assert_eq!(epoch, 2);
         assert!(
@@ -145,7 +147,7 @@ async fn append_evidence_counts_sync_recount_duplicates_and_failures() {
         assert_eq!(observations[0].encoded_bytes, encoded.len() as u64);
         assert!(observations[0].succeeded);
         assert_eq!(observations[0].data_sync_calls, 1);
-        assert_eq!(observations[0].directory_sync_calls, 5);
+        assert_eq!(observations[0].directory_sync_calls, 6); // Enrollment plus cold recovery.
         assert_eq!(observations[1].data_sync_calls, 0);
         assert_eq!(observations[1].directory_sync_calls, 0);
         assert!(observations[1].succeeded);

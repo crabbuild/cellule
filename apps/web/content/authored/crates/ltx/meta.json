@@ -1,0 +1,16 @@
+{
+  "title": "cellule-ltx",
+  "pages": [
+    "overview",
+    "capture",
+    "publication",
+    "recovery",
+    "limits",
+    "docs",
+    "[Crate reference](/docs/crates/ltx)",
+    "upstream",
+    "examples",
+    "fuzz",
+    "tests"
+  ]
+}

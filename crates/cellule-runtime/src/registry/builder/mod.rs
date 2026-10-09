@@ -22,7 +22,9 @@ pub struct RegistryBuilder {
     pub(super) build: BuildDescriptor,
     pub(super) modules: Vec<&'static ModuleDescriptor>,
     pub(super) commands: BTreeMap<BindingKey, CommandHandler>,
+    pub(super) lease_commands: BTreeSet<BindingKey>,
     pub(super) queries: BTreeMap<BindingKey, QueryHandler>,
+    pub(super) lease_queries: BTreeSet<BindingKey>,
     pub(super) workflow_definitions: HashMap<(String, [u8; 32]), Vec<NamespaceId>>,
     pub(super) activities: BTreeMap<ActivityKey, ActivityFunction>,
     pub(super) activity_claims: BTreeSet<ActivityKey>,
@@ -47,7 +49,9 @@ impl RegistryBuilder {
             build,
             modules: Vec::new(),
             commands: BTreeMap::new(),
+            lease_commands: BTreeSet::new(),
             queries: BTreeMap::new(),
+            lease_queries: BTreeSet::new(),
             workflow_definitions: HashMap::new(),
             activities: BTreeMap::new(),
             activity_claims: BTreeSet::new(),
@@ -80,18 +84,39 @@ impl RegistryBuilder {
     /// Binds one descriptor command key to its monomorphized typed function.
     pub fn bind_command<C: Command>(&mut self) -> std::result::Result<(), RegistryError> {
         let key = BindingKey::new(C::MODULE, C::ID, C::CODEC_VERSION)?;
-        if self.commands.insert(key, typed_command::<C>).is_some() {
-            return Err(Error::Registry("duplicate command binding"));
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.commands.entry(key) {
+            entry.insert(typed_command::<C>);
+            Ok(())
+        } else {
+            Err(Error::Registry("duplicate command binding"))
         }
+    }
+
+    // Only native primitives can register this capability. Each such handler
+    // validates an existing exact lease; application commands cannot declare
+    // themselves completions or supply a management/wire admission flag.
+    pub(crate) fn bind_lease_command<C: Command>(&mut self) -> Result<()> {
+        self.bind_command::<C>()?;
+        self.lease_commands
+            .insert(BindingKey::new(C::MODULE, C::ID, C::CODEC_VERSION)?);
         Ok(())
     }
 
     /// Binds one descriptor query key to its monomorphized typed function.
     pub fn bind_query<Q: Query>(&mut self) -> std::result::Result<(), RegistryError> {
         let key = BindingKey::new(Q::MODULE, Q::ID, Q::CODEC_VERSION)?;
-        if self.queries.insert(key, typed_query::<Q>).is_some() {
-            return Err(Error::Registry("duplicate query binding"));
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.queries.entry(key) {
+            entry.insert(typed_query::<Q>);
+            Ok(())
+        } else {
+            Err(Error::Registry("duplicate query binding"))
         }
+    }
+
+    pub(crate) fn bind_lease_query<Q: Query>(&mut self) -> Result<()> {
+        self.bind_query::<Q>()?;
+        self.lease_queries
+            .insert(BindingKey::new(Q::MODULE, Q::ID, Q::CODEC_VERSION)?);
         Ok(())
     }
 
@@ -496,8 +521,10 @@ impl RegistryBuilder {
             module_retained_codes,
             module_names,
             commands: self.commands,
+            lease_commands: self.lease_commands,
             command_descriptors,
             queries: self.queries,
+            lease_queries: self.lease_queries,
             query_descriptors,
             namespace_modules: namespace_owners,
             activities: self.activities,
@@ -545,8 +572,10 @@ pub struct Registry {
     pub(super) module_migrations: BTreeMap<&'static str, &'static [MigrationDescriptor]>,
     pub(super) module_retained_codes: BTreeMap<&'static str, &'static [RetainedCodeDescriptor]>,
     pub(super) commands: BTreeMap<BindingKey, CommandHandler>,
+    pub(super) lease_commands: BTreeSet<BindingKey>,
     pub(super) command_descriptors: BTreeMap<BindingKey, OperationDescriptor>,
     pub(super) queries: BTreeMap<BindingKey, QueryHandler>,
+    pub(super) lease_queries: BTreeSet<BindingKey>,
     pub(super) query_descriptors: BTreeMap<BindingKey, OperationDescriptor>,
     pub(super) namespace_modules: HashMap<NamespaceId, (&'static str, NamespaceDescriptor)>,
     pub(super) activities: BTreeMap<ActivityKey, ActivityFunction>,
@@ -562,6 +591,27 @@ pub struct Registry {
 mod run;
 
 impl Registry {
+    pub(crate) fn command_is_lease_completion(
+        &self,
+        module: &str,
+        id: u32,
+        codec: u32,
+    ) -> Result<bool> {
+        Ok(self
+            .lease_commands
+            .contains(&BindingKey::new(module, id, codec)?))
+    }
+
+    pub(crate) fn query_is_lease_validation(
+        &self,
+        module: &str,
+        id: u32,
+        codec: u32,
+    ) -> Result<bool> {
+        Ok(self
+            .lease_queries
+            .contains(&BindingKey::new(module, id, codec)?))
+    }
     /// Returns the canonical release descriptor bytes.
     #[must_use]
     pub fn release_bytes(&self) -> &[u8] {
@@ -941,7 +991,32 @@ impl Registry {
         invocation: CommandInvocation<'_>,
         issued_at_ms: i64,
     ) -> Result<HandlerOutcome> {
-        if invocation.sequence == 0 || invocation.now_ms < 0 {
+        self.execute_command_context(transaction, invocation, issued_at_ms, None)
+    }
+
+    pub(crate) fn execute_command_with_mutation(
+        &self,
+        transaction: &Transaction<'_>,
+        invocation: CommandInvocation<'_>,
+        identity: MutationIdentity,
+        operation_digest: Digest,
+    ) -> Result<HandlerOutcome> {
+        self.execute_command_context(
+            transaction,
+            invocation,
+            identity.issued_at_ms,
+            Some((identity, operation_digest)),
+        )
+    }
+
+    fn execute_command_context(
+        &self,
+        transaction: &Transaction<'_>,
+        invocation: CommandInvocation<'_>,
+        issued_at_ms: i64,
+        mutation: Option<(MutationIdentity, Digest)>,
+    ) -> Result<HandlerOutcome> {
+        if invocation.sequence == 0 || invocation.now_ms < 0 || invocation.owner_fence.epoch == 0 {
             return Err(Error::Command("invalid registered command context"));
         }
         let key = BindingKey::new(
@@ -969,6 +1044,7 @@ impl Registry {
         let mut context = CommandContext {
             transaction,
             target: invocation.target.clone(),
+            owner_fence: invocation.owner_fence,
             effect_targets: self
                 .namespace_modules
                 .get(&invocation.target.namespace())
@@ -977,6 +1053,7 @@ impl Registry {
             sequence: invocation.sequence,
             now_ms: invocation.now_ms,
             issued_at_ms,
+            mutation,
             input_limit: operation.input_limit,
             output_limit: operation.output_limit,
             effects: None,

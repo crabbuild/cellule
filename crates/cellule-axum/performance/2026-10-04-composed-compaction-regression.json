@@ -1,0 +1,163 @@
+{
+  "baseline_revision": "4c1c9826322b154a4dd2af6f86b89cd586e871a7",
+  "implementation_revision": "d5aebe3f568dbdc13346c57be7d6083fd1fec650",
+  "profile": "Real CellPublisher pressure preparation at command 32, after publishing commands 1..31; one InMemory provider with request counters, fixed default limits. Counters stop before inventory/reference preparation/authority CAS.",
+  "baseline_fixture": "The same strengthened runtime regression with only the expected PUT/HEAD pair changed from (8,2) to (10,4); four production implementation files restored from baseline revision. Both schema variants complete.",
+  "results": [
+    {
+      "schema": 1,
+      "restored_ordered_rows": 32,
+      "baseline": {
+        "puts": 10,
+        "metadata_heads": 4
+      },
+      "candidate": {
+        "puts": 8,
+        "metadata_heads": 2
+      },
+      "exact_reference_root_equal": true,
+      "original_authority_predecessor_retained": true,
+      "origin_inventory_and_restore_before_reference_uploads": true,
+      "authority_unchanged_during_preparation": true,
+      "final_fenced_publication_succeeds": true
+    },
+    {
+      "schema": 2,
+      "restored_ordered_rows": 32,
+      "baseline": {
+        "puts": 10,
+        "metadata_heads": 4
+      },
+      "candidate": {
+        "puts": 8,
+        "metadata_heads": 2
+      },
+      "exact_reference_root_equal": true,
+      "original_authority_predecessor_retained": true,
+      "origin_inventory_and_restore_before_reference_uploads": true,
+      "authority_unchanged_during_preparation": true,
+      "final_fenced_publication_succeeds": true
+    }
+  ],
+  "source_sha256": {
+    "crates/cellule-ltx/src/replica/mod.rs": {
+      "baseline": "ccbf072b39aa90520b970126e10be378f5f244ece2e71968821ec0b05d91d2ce",
+      "candidate": "d985c7d4d0b7ce03a6db33668bb90b233f4b67e31f1943482384624ea561f159"
+    },
+    "crates/cellule-ltx/src/replica/prepare.rs": {
+      "baseline": "594131ab59fb9961258ab66296b43513ed5aea90413b3ee58c17a7d83bc4f074",
+      "candidate": "c3fc2b87a1cbdc67a253b88e782ba82d7957c0ebe2fc4be06bae026f676db539"
+    },
+    "crates/cellule-ltx/src/replica/compaction/mod.rs": {
+      "baseline": "617ce79855ab3418761892c9f8249b1eaba8ecf05e10c80bb0d61d072364bc11",
+      "candidate": "4f8b712422a4131b79cbce831a3d51cbaf142116c7148c78bbac0b6b9296a4e2"
+    },
+    "crates/cellule-runtime/src/publication/mod.rs": {
+      "baseline": "5fa1035716904b5b67c835c2175e952d0c2d46a0c855746519302c844c70ff21",
+      "candidate": "13a418e2fd03aaa7a9b6127e74c0b1ed0d4a8cfe0ec5c3177c5517cb1165bac0"
+    }
+  },
+  "test_source_sha256": {
+    "crates/cellule-runtime/src/publication/tests.rs": "831bfa3798fc83b7142958fb3243c6d989c958376230a5ced7b8f1b303541386",
+    "crates/cellule-ltx/tests/cell/roots/compaction.rs": "ff9f586a0342599aa1c78f8759668825d7812212e81fba5e9420e6948a2c6673",
+    "crates/cellule-ltx/tests/host/hooks/compaction.rs": "9da00a4556ddb707bde625db82ef1c1c654f8650fc4e3a03f2560ab90a50b3fc"
+  },
+  "local_log_sha256": {
+    "composed-baseline32.log": "bbeb828223a9b016b47ddf29c38005ea9b3e46e698426bc878ad559b89376f1b",
+    "composed-final-runtime-guard.log": "fc51ece782564886414dc86e73f4f1fbeb6bf8ca900ad648eb695eed29ce7cb9",
+    "composed-directory-guards.log": "0591db431d563e6c3ffd0ca5e8d87e9cc8402c01540e879fcf996a07d87d585c",
+    "composed-compaction-faults.log": "4d2305707142fabed27d20e77e619d974944530eb0d012877f72250b25a321d7",
+    "composed-final-clippy.log": "16bc068a3b99aae5a4d1f407c6335fd910bb8127e2421bb445fc0eacdff18863",
+    "composed-local-ltx.log": "532682527a2efeca0f695e022af052b21a93c22af43406fbb9b1a88e908186b8",
+    "composed-api-docs.log": "dafe5c84c6b9e92826ad3a3022af69f8652fdb0480fa215ca809723ad70a0e67"
+  },
+  "additional_guards": [
+    "Missing cached origin descriptor metadata: zero PUTs.",
+    "Selected body corruption outside page frames: zero PUTs and clean scratch.",
+    "No eligible promotion or strict segment ceiling: None and zero PUTs.",
+    "Stale sequence, invalid schema/ceiling, foreign Cell: fail closed.",
+    "Partial append over a multi-level directory: retained relocated nodes, cold restore before reference uploads, exact reference RootRef.",
+    "Compacted LTX/index upload read failure: no proposal escapes despite independent metadata uploads.",
+    "Cancellation at six dispatched file operations: jobs/dirty/recovery/scratch remain admitted through cleanup; all permits and files released afterward."
+  ],
+  "limitations": [
+    "Operation-count regression, not timed HTTP throughput or latency evidence.",
+    "Counts cover immutable preparation, excluding authority CAS.",
+    "One scheduled promotion plus captures must fit the existing strict segment ceiling; the established cascade remains fallback.",
+    "Do not extrapolate two saved descriptor/root PUTs to every representation or append. Relocated directory nodes can remain final dependencies.",
+    "Composed RootPreparationWork includes compaction plus append; RootAdmission includes recovery admission. Overlapping phase populations differ from standalone append."
+  ],
+  "reproduce_candidate": "cargo test -p cellule-runtime --features test-support --lib pressure_append_avoids_intermediate_root_metadata --locked",
+  "lineage_integration": {
+    "baseline_revision": "fa548bb2cc1993bbf77dc7f4fbef499a0de3f5a4",
+    "implementation_revision": "2ffe5bd2c9d1088827f14e049e4857948986fadf",
+    "profile": "Same 32-command fixture with required native root-lineage retention; both schemas verify confirmation and exact original predecessor before authority CAS. Baseline expectation is (11,4), candidate (9,2).",
+    "results": [
+      {
+        "schema": 1,
+        "baseline": {
+          "puts_including_lineage": 11,
+          "metadata_heads": 4
+        },
+        "candidate": {
+          "puts_including_lineage": 9,
+          "metadata_heads": 2
+        },
+        "lineage_confirmed_before_cas": true,
+        "lineage_predecessors_are_original_authority_root_only": true,
+        "restored_ordered_rows": 32
+      },
+      {
+        "schema": 2,
+        "baseline": {
+          "puts_including_lineage": 11,
+          "metadata_heads": 4
+        },
+        "candidate": {
+          "puts_including_lineage": 9,
+          "metadata_heads": 2
+        },
+        "lineage_confirmed_before_cas": true,
+        "lineage_predecessors_are_original_authority_root_only": true,
+        "restored_ordered_rows": 32
+      }
+    ],
+    "source_sha256": {
+      "crates/cellule-ltx/src/replica/mod.rs": {
+        "baseline": "be50c7b1e624d6af64306f7241cedec28d2cf3534ea77e9d9f4ee3e4d4cab112",
+        "candidate": "946f54a362809f0412428ad47e163b8908b810ebcc822ce3dd7a805600698f4c"
+      },
+      "crates/cellule-ltx/src/replica/prepare.rs": {
+        "baseline": "8656b03e7f45395f38f69744d0bb30575f34031c0979312b6baf9b0f502780a8",
+        "candidate": "bb894a029fbbbc1041854e19c1a5520feb4751001a8ebc601468df5a55a7b98a"
+      },
+      "crates/cellule-ltx/src/replica/compaction/mod.rs": {
+        "baseline": "617ce79855ab3418761892c9f8249b1eaba8ecf05e10c80bb0d61d072364bc11",
+        "candidate": "4f8b712422a4131b79cbce831a3d51cbaf142116c7148c78bbac0b6b9296a4e2"
+      },
+      "crates/cellule-runtime/src/publication/mod.rs": {
+        "baseline": "eb634aa1011d2e89ea699ee5279c038fe389d7b25597eef29a18987c2753ba46",
+        "candidate": "5f98270c861faebcbf6aae4db6ba9e800adb01c58df72cb46c5d70a827ded332"
+      }
+    },
+    "local_log_sha256": {
+      "composed-fa-runtime-ltx-tests.log": "4ade55b30b4507e050addb76eacc3d4c7e58319e79a8f3a881bb590d06510e41",
+      "composed-fa-baseline.log": "19bb1423035ba0fee70d63d27a6e0db3bb190605fc9d8e5b621cf1d9d300a5f3",
+      "composed-fa-clippy.log": "273ce1258f466e1455632286aef430bbd079324422657b0693d43302a0edf482",
+      "composed-fa-api-docs.log": "a1861ca9171c5cd61de98b9b89e265e3d7a478b8e8755a06b5579fa1b9216c45"
+    },
+    "verification": {
+      "runtime_ltx_passed": 1271,
+      "runtime_ltx_failed": 0,
+      "documented_ignored": 16,
+      "composed_metadata_observes_only_final_derivation": true,
+      "metadata_failure_retains_original_source_and_no_proposal": true,
+      "same_canonical_runtime_metadata_and_retry_owner": true
+    }
+  },
+  "steady_write_evidence": {
+    "original": "2026-10-04-rustfs-composed-original-writes.json",
+    "with_required_lineage": "2026-10-04-rustfs-composed-lineage-writes.json",
+    "finding": "Integrated comparison does not establish throughput gain; paired median TPS decreases at all Cell counts, with improved 16-Cell p99."
+  }
+}

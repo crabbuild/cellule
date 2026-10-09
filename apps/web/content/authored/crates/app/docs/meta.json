@@ -1,0 +1,9 @@
+{
+  "title": "Reference",
+  "pages": [
+    "[Reference overview](/docs/crates/app/docs)",
+    "topology",
+    "invocation",
+    "examples"
+  ]
+}

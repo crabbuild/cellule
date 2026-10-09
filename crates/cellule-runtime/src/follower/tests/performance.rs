@@ -8,7 +8,8 @@ use std::time::Instant;
 struct Recorder(Mutex<Vec<(SessionId, FollowerAppendTiming)>>);
 
 impl CellTelemetry for Recorder {
-    fn follower_append(&self, leader: SessionId, _: u64, timing: FollowerAppendTiming) {
+    fn follower_append(&self, timing: FollowerAppendTiming) {
+        let leader = timing.leader.unwrap();
         self.0.lock().unwrap().push((leader, timing));
     }
 }
@@ -138,7 +139,7 @@ async fn warm_append_diagnostic() {
                 "{leader:?}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 timing.frames,
                 timing.encoded_bytes,
-                timing.blocking_queue.as_micros(),
+                timing.worker_queue.as_micros(),
                 timing.accounting_wait.as_micros(),
                 timing.accounting_hold.as_micros(),
                 timing.lane_wait.as_micros(),

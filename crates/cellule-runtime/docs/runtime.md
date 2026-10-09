@@ -37,9 +37,56 @@ The Cell runtime serializes accepted commands, binds each SQLite commit to an
 immutable LTX root, and publishes roots through one authoritative control CAS.
 One published root may cover several queued commits: a commit that reached its
 follower proof can queue behind an unpublished root, and the next publication
-coalesces every queued commit into one root, so the control CAS and the shared
+selects coverage after shared dirty-memory admission, coalescing every queued
+commit into one root. Commits arriving during the admission wait remain in the
+existing retained-byte budget. The control CAS and the shared
 directory, segment-page, and root uploads are paid once per range instead of
-once per commit.
+once per commit. The publisher token still serializes preparation and CAS;
+waiting does not restart retry grace. Admission is released before provider
+backoff, authority CAS or paired compaction recovery. Publication queue timing
+includes the admission wait; LTX root timing measures preparation after admission.
+
+The actor groups up to sixteen already-queued, consecutive
+native mutations into one SQLite transaction and WAL capture. The ceiling only
+bounds commands already waiting behind the head, so it adds no wait of its own:
+a shallow queue groups few, and a deep queue amortizes one published root over
+more acknowledged commands. Each member
+uses its own savepoint and request-ledger identity; successful and rejected
+outcomes retain separate logical commit sequences. One fenced object-root
+publication or follower-durable range covers the complete group before any new
+outcome is returned.
+No batching timer delays an otherwise ready command. A query, resolve, effect,
+or migration ends the group at its FIFO position. A group can extend an existing
+head only after that head has its durability proof. Installing node durability
+during execution can submit the complete logical range to the new binding.
+
+The node shipper verifies each complete LTX body before entering its shared
+sequence lane. That lane assigns consecutive envelope sequences and enqueues
+them atomically; failed validation consumes no ticket. Signing follows sequence
+assignment, and followers still verify the complete signed frames before fsync.
+
+Each member retains its ordinary request and byte admission, and the group
+uses the existing database, capture, and retained-publication ceilings. A
+command error rolls back that member's savepoint. A whole transaction abort,
+capture failure, or lost publication proof never releases a new success;
+ambiguous outcomes retain each request identity and the shared original cause.
+Caller cancellation does not remove accepted members or their drain obligations.
+
+While follower-proven work awaits object publication, new mutations are refused
+before SQL when retained RAM or local disk reaches three quarters of its node
+budget. The remaining headroom belongs to accepted work and publication.
+Queries remain eligible, and a refused mutation has no new ledger outcome.
+Local LTX bodies remain charged to the disk budget; publication's RAM reservation
+covers shared encoder indexes, descriptor/path copies, and retained outcomes.
+The physical pending-byte high water and node-log coverage counters still count
+complete LTX files.
+
+Deferred runtime capture starts smaller, 64-frame passive checkpoint cohorts
+once half of the shared local disk budget is reserved. The normal capture
+barrier still verifies the committed WAL boundary and retains every checkpoint
+cut. SQLite releases obsolete WAL file slack only when it safely resets the
+generation. This keeps many small Cells from filling the node before any single
+Cell reaches the ordinary 1,000-frame checkpoint threshold.
 
 One Cell actor serializes admission and publication. A bounded SQLite worker
 runs the application callback; the actor owns the result gate and lifecycle.
@@ -76,6 +123,7 @@ proof. Either proof may release a command result.
 | Release | A result is released only by a proof covering its own commit: the exact published root, or a follower fsync for the same cut. |
 | Occupancy | The actor stays occupied until that proof lands, so no read observes a commit before its proof. |
 | Pipelining | With a node log the proof is the follower fsync, so SQL and capture for later commands run ahead of object publication, bounded by `MAX_PENDING_PUBLICATIONS` and the pending-bytes high water. |
+| Native grouping | At most sixteen queued mutations share one transaction and capture; all new results wait for an object or follower proof covering the complete logical range. |
 | Coalescing | When several commits are queued, one root covers all of them: the merged captures append oldest first, and the range confirmation releases exactly the covered outcomes. |
 
 If the owner dies first, takeover seals the failed node log and pins and
@@ -111,9 +159,34 @@ flowchart LR
 
 - **`CellHandle`.** A cloneable mailbox sender. It never exposes a SQLite connection.
 - **Routing.** Stable Cell-ID routing keeps one `Db` on one operating-system thread until close.
+
 - **Bootstrap.** Bootstrap passes the runtime-configured replica host to both that worker-owned `Db` and the publisher, so local filesystem and resource admission apply to the same captured cuts.
 - **`CellNode`.** Binds the compiled application's per-namespace database and capture ceilings to its runtime before serving.
 - **Limit checks.** Every bootstrap, idle acquisition, and takeover checks the supplied `CellReplica` limits before changing ownership or opening a root. Restored paths also check the recovery-store limits. Standalone `CellRuntime` users supply their own LTX policy.
+
+| Resident routing mode | Metadata work per invocation | Ownership gate |
+| --- | --- | --- |
+| Live node-session lease | No catalog or control read | Node lease and exact actor admission token |
+| Object-only, without a node-session lease | One fresh control read; reuse immutable catalog identity | Fresh owner/code observation and actor admission after I/O |
+
+The unleased control observation is never cached. Catalog reuse cannot authorize
+an old owner after takeover, hide an origin error, or revive a drained actor.
+
+Local lookup does not require a dense database:
+
+| Runtime lookup | Eligible local owner | Metadata reads |
+| --- | --- | --- |
+| `active_handle(target, role)` | Sparse, hydrating or resident | None |
+| `resident_handle(target, role)` | Fully resident only | None |
+| `local_handle(catalog, control)` | Active owner matching the supplied observation | Caller supplies the catalog and control |
+
+The first two methods use the same actor ownership gate. They exclude fenced,
+draining and transferring owners. A returned handle is not a promise that later
+work will be admitted: dispatch rechecks its admission and node lease. A miss
+does not prove the Cell is idle or authorize acquisition; use fresh authority
+and the normal fenced acquisition path. Embedders should use `active_handle`
+when validating a cached local route so background hydration does not turn a
+warm owner into a cold-admission request.
 
 The node bounds:
 
@@ -122,6 +195,12 @@ The node bounds:
 - 10,000 active Cells per node before resource-derived reductions
 - Per-Cell request and byte admission
 - Node-wide memory, disk, and activity admission
+
+A finished SQL or durability-proof task releases its per-Cell request slot
+before delivering the terminal reply, so a caller can admit its next invocation
+at the same concurrency bound. Completion data retains its byte reservations
+until dropped. An early deadline reply does not release a running worker's
+request slot or byte reservations; actual worker exit remains the boundary.
 
 Worker-job admission uses one slot per SQL worker:
 
@@ -150,6 +229,13 @@ renewal, busy work, inventory refresh, earlier queued work, or no observed
 blocker. That snapshot does not attribute the entire FIFO wait to one cause.
 Absent phases remain absent on early failure; complete subphases partition
 the existing actor wait.
+
+A follower-proven logical head may still have object publication pending. A
+later refusal before SQL or a rolled-back application error leaves that proven
+head reusable; publication lag alone does not make the failed command uncertain
+or fence its owner. An unproved commit, capture failure or ambiguous SQLite
+failure still requires fencing and reconciliation. Shutdown still drains the
+pending object publications before releasing ownership.
 
 Cancellation of a caller doesn't cancel accepted work. The actor still records and publishes the result, so a retry can resolve it.
 
@@ -226,6 +312,12 @@ The worker transaction applies this procedure:
 
 - **Savepoint errors.** Handler errors roll back the application savepoint. Runtime ledger updates still commit when the error is a durable business rejection.
 - **Telemetry.** Every registered call reports its owning module, kind, outcome, and duration to the installed `CellTelemetry` sink from the thread that executed the handler, so the server can chart one primitive module without knowing its operations.
+
+`CellTelemetry::query_execution` separates an owner query's actor queue wait
+from its SQL worker round trip. The latter includes worker admission,
+read-only setup, and handler execution. Compare it with the registered
+primitive's duration to distinguish SQL work from dispatch and waiting.
+Pre-dispatch refusals are excluded; SQL deadline failures are included.
 
 **Automatic rollback**
 
@@ -333,11 +425,13 @@ The actor never reruns a handler after SQLite may have started it. `Resolve` rea
 
 - Fresh `Db` captures privately retain the page index already authenticated by their encoder. Root preparation reuses it instead of decoding the same local LTX file again, while multipart upload still verifies every source byte against the captured digest.
 - Caller-constructed local segments do not carry this private provenance and retain the full inspection path.
-- Index retention is capped at 1 MiB per pending `CaptureBatch`; larger capture cohorts fall back to decoding. Descriptor construction, directory updates, and index upload share the retained bytes rather than copying them at each stage. The executor retains only one unpublished batch.
+- Index retention is capped at 1 MiB per pending `CaptureBatch`; larger capture cohorts fall back to decoding. Descriptor construction, directory updates, and index upload share the retained bytes rather than copying them at each stage. Multiple follower-proven batches remain bounded by the existing pending-count, physical-byte, RAM, and disk budgets.
 
 **Bounded upload concurrency**
 
 - Root preparation also overlaps independent content-addressed uploads. The LTX body and index, changed and initial directory nodes, and root metadata use bounded concurrency under the runtime's shared I/O permits.
+- When foreground compaction clears the segment-debt bound, its successor append retains the original authority predecessor. One fenced CAS selects the final root after all dependencies upload; the unchanged intermediate root stays private. Compaction cascades and quiet-period publication keep their existing bounds.
+- Quiet compaction waits fairly for the existing dirty-memory and recovery admission before taking the publisher token. Pending and dispatched quiet cohorts are bounded by the node's recovery capacity. Waiting leaves the Cell available; new work, fencing, drain, and shutdown cancel only admission. The actor rechecks the generation, lease, queue, and compaction eligibility when permits arrive. An admitted compaction still excludes conflicting Cell work until its exact-root publication or cleanup completes.
 - Initial directory construction retains at most eight encoded nodes awaiting upload.
 - The proposal remains private until every dependency upload completes, so authority cannot observe a partial root.
 
@@ -376,7 +470,7 @@ its scoped authorizer, whose policy changes can still force reprepare.
 
 One managed database retains four SQLite connections with 64 KiB page-cache
 targets, charged as 256 KiB per active Cell. Active-Cell admission reserves
-128 KiB native memory and 11 descriptors before opening the database,
+160 KiB native memory (including four lookaside arenas) and 11 descriptors before opening the database,
 including the additional reader allowance. These reservations are bounds to qualify against actual RSS and
 descriptors, rather than measured costs.
 
@@ -484,6 +578,15 @@ activation, never correctness.
 <a id="ownership-renewal"></a>
 ## Renew and self-fence ownership
 
+`CommandContext::owner_fence()` exposes the incarnation and epoch stamped on the
+admission that accepted the execution. Local typed commands and authenticated
+inbox delivery use the same stamp; no authority fetch is added to their command
+path. Operation tokens can bind this fence and reject delayed preparation from
+a predecessor. Admission replacement within the same ownership epoch retains
+the stamp. Recorded outcomes and follower-restored SQL bytes remain unchanged;
+recovery does not rerun application handlers with a guessed current fence.
+
+
 - **Scanner.** Each owner normally becomes due every three seconds. One node-level scanner finds due owners every 100 ms, orders them by their original deadline, and starts at most 32 renewals concurrently. A completed renewal immediately frees a slot for the next due owner; each scan discards stale candidates. This removes the former 320-starts/s tick ceiling without reducing the one-control-update-per-active-Cell cost. A mutation publication also advances owner progress.
 - **Renewal budget.** The runtime gives a control-record renewal up to thirty seconds under object-store pressure.
 - **Session guard.** A separate node-session guard closes admission at its signed expiry, even while renewal I/O is pending.
@@ -556,6 +659,13 @@ The node scheduler:
 - Catalog proofs retain their original tenant/application in memory; catalog serialization and root formats do not change.
 
 **Release order.** A clean per-Cell drain closes SQLite before releasing control to `Idle`. Releasing control first would allow a successor to open while the previous writer still owns local mutable state.
+
+`release_idle_cell_at` returns the canonical final `PublishedPosition` for its
+exact source identity. `Error::CellReleaseRefused` preserves the original error
+and proves that this request stopped before canonical deactivation began.
+Errors from canonical close, publication or a lost response remain uncertain.
+Local pressure eviction may release the same Cell independently; neither its
+Idle root nor a missing actor supplies the fleet action's historical proof.
 
 Node shutdown follows this order:
 

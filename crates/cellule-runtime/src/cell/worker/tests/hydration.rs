@@ -26,6 +26,7 @@ async fn cancelled_hydration_releases_fetch_bytes_without_installing_pages() {
         1,
         cold.root,
         pool.reserve_activation().unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -112,6 +113,7 @@ async fn expired_worker_deadline_preserves_sparse_cell_for_retry() {
         1,
         fixture.root,
         pool.reserve_activation().unwrap(),
+        None,
     )
     .await
     .unwrap();

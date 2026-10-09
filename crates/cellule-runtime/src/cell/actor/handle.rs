@@ -17,6 +17,7 @@ use crate::cell::catalog::CatalogProof;
 use crate::cell::catalog::CatalogRole;
 use crate::cell::executor::StoredOutcome;
 use crate::cell::executor::{MutationIdentity, Resolution};
+use crate::coordination::AdmissionKind;
 use crate::fleet::resource::{ResourceCost, ResourceReservation};
 use crate::identity::IncarnationId;
 use crate::identity::{CellId, Digest};
@@ -40,16 +41,35 @@ pub struct CellHandle {
 }
 
 pub(super) struct CellAdmission {
+    pub(super) owner_fence: crate::control::OwnerFence,
     pub(super) requests: Arc<Semaphore>,
     pub(super) bytes: Arc<Semaphore>,
     pub(super) draining: AtomicBool,
+    pub(super) maintenance_quiescing: AtomicBool,
     pub(super) fenced: AtomicBool,
 }
 
+pub(crate) struct CommandWork {
+    pub(crate) identity: MutationIdentity,
+    pub(crate) operation_digest: Digest,
+    pub(crate) now_ms: i64,
+    pub(crate) operation_bytes: usize,
+    pub(crate) max_result_bytes: usize,
+}
+
 pub(super) struct WorkAdmission {
-    pub(super) _request: OwnedSemaphorePermit,
+    pub(super) kind: AdmissionKind,
+    pub(super) _request: Option<OwnedSemaphorePermit>,
     pub(super) _cell_bytes: OwnedSemaphorePermit,
     pub(super) _node_bytes: ResourceReservation,
+}
+
+impl WorkAdmission {
+    pub(super) fn release_request_slot(&mut self) {
+        // A finished request can hand its slot to the reply's next invocation.
+        // Retained completion data still owns both byte reservations until drop.
+        drop(self._request.take());
+    }
 }
 
 /// One resident Cell whose published due time has passed.
@@ -115,6 +135,15 @@ impl CellHandle {
         self.incarnation
     }
 
+    /// Returns the fence stamped on this activation's admission capability.
+    ///
+    /// A stale handle retains its original value but cannot admit new work.
+    /// Command handlers receive this same value through `CommandContext`.
+    #[must_use]
+    pub fn owner_fence(&self) -> crate::control::OwnerFence {
+        self.admission.owner_fence
+    }
+
     /// Returns the application code digest the Cell serves.
     #[must_use]
     pub const fn code(&self) -> Digest {
@@ -145,11 +174,52 @@ impl CellHandle {
             + Send
             + 'static,
     {
-        let admission = self.reserve_work(operation_bytes, max_result_bytes)?;
+        self.execute_registered(
+            false,
+            CommandWork {
+                identity,
+                operation_digest,
+                now_ms,
+                operation_bytes,
+                max_result_bytes,
+            },
+            handler,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_registered<F>(
+        &self,
+        lease_completion: bool,
+        request: CommandWork,
+        handler: F,
+    ) -> crate::Result<StoredOutcome>
+    where
+        F: for<'connection> FnOnce(
+                &cellule_ltx::rusqlite::Transaction<'connection>,
+            )
+                -> crate::Result<crate::cell::executor::HandlerOutcome>
+            + Send
+            + 'static,
+    {
+        let CommandWork {
+            identity,
+            operation_digest,
+            now_ms,
+            operation_bytes,
+            max_result_bytes,
+        } = request;
+        let kind = if lease_completion {
+            AdmissionKind::LeaseCommand
+        } else {
+            AdmissionKind::Command
+        };
+        let admission = self.reserve_work_kind(kind, operation_bytes, max_result_bytes)?;
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
+                group: None,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_execution",
@@ -204,6 +274,7 @@ impl CellHandle {
         self.inner
             .sender
             .send(Message::Execute(Box::new(QueuedCommand {
+                group: None,
                 trace: tracing::debug_span!(
                     target: "cellule_runtime::action",
                     "cell_effect_execution",
@@ -243,7 +314,26 @@ impl CellHandle {
     where
         F: FnOnce(&cellule_ltx::rusqlite::Connection) -> crate::Result<Vec<u8>> + Send + 'static,
     {
-        let admission = self.reserve_work(operation_bytes, max_result_bytes)?;
+        self.query_registered(false, operation_bytes, max_result_bytes, handler)
+            .await
+    }
+
+    pub(crate) async fn query_registered<F>(
+        &self,
+        lease_validation: bool,
+        operation_bytes: usize,
+        max_result_bytes: usize,
+        handler: F,
+    ) -> crate::Result<Vec<u8>>
+    where
+        F: FnOnce(&cellule_ltx::rusqlite::Connection) -> crate::Result<Vec<u8>> + Send + 'static,
+    {
+        let kind = if lease_validation {
+            AdmissionKind::LeaseQuery
+        } else {
+            AdmissionKind::Query
+        };
+        let admission = self.reserve_work_kind(kind, operation_bytes, max_result_bytes)?;
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
@@ -252,6 +342,8 @@ impl CellHandle {
                     &self.inner.telemetry,
                     &self.inner.resources,
                 )?,
+                telemetry: self.inner.telemetry.clone(),
+                queued_at: std::time::Instant::now(),
                 cell: self.cell,
                 admission: self.admission.clone(),
                 max_result_bytes,
@@ -294,7 +386,7 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Ok(Resolution::Unknown);
         }
-        let admission = match self.reserve_work(48, max_result_bytes) {
+        let admission = match self.reserve_work_kind(AdmissionKind::Resolve, 48, max_result_bytes) {
             Ok(admission) => admission,
             Err(Error::Fenced) => return Ok(Resolution::Unknown),
             Err(error) => return Err(error),
@@ -335,7 +427,7 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Ok(Resolution::Unknown);
         }
-        let admission = match self.reserve_work(72, max_result_bytes) {
+        let admission = match self.reserve_work_kind(AdmissionKind::Resolve, 72, max_result_bytes) {
             Ok(admission) => admission,
             Err(Error::Fenced) => return Ok(Resolution::Unknown),
             Err(error) => return Err(error),
@@ -379,7 +471,7 @@ impl CellHandle {
         }
         self.admission.requests.close();
         self.admission.bytes.close();
-        let successor_admission = new_cell_admission();
+        let successor_admission = new_cell_admission(self.owner_fence());
         let (reply, response) = oneshot::channel();
         self.inner
             .sender
@@ -439,6 +531,15 @@ impl CellHandle {
         operation_bytes: usize,
         max_result_bytes: usize,
     ) -> crate::Result<WorkAdmission> {
+        self.reserve_work_kind(AdmissionKind::Command, operation_bytes, max_result_bytes)
+    }
+
+    fn reserve_work_kind(
+        &self,
+        kind: AdmissionKind,
+        operation_bytes: usize,
+        max_result_bytes: usize,
+    ) -> crate::Result<WorkAdmission> {
         if self.inner.shutting_down.load(Ordering::Acquire) {
             return Err(Error::RuntimeClosed);
         }
@@ -453,11 +554,38 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Err(Error::Fenced);
         }
-        if self.admission.draining.load(Ordering::Acquire) {
+        if self.admission.draining.load(Ordering::Acquire)
+            || (self.admission.maintenance_quiescing.load(Ordering::Acquire)
+                && !kind.allowed_while_quiescing())
+        {
             return Err(Error::CellDraining);
         }
+        // Leave progress headroom for captures from work already accepted.
+        // Refuse before dispatch: a post-commit capacity failure must never be
+        // the ordinary way a slow object publisher sheds incoming writes.
+        if kind == AdmissionKind::Command
+            && self
+                .inner
+                .unpublished_node_log_bytes
+                .load(Ordering::Acquire)
+                != 0
+        {
+            let snapshot = self.inner.resources.snapshot()?;
+            let retained = snapshot.used.retained_bytes();
+            let limit = snapshot.limit.retained_bytes();
+            let disk = self.inner.replica_host.local_disk_budget();
+            if retained >= limit.saturating_sub(limit / 4)
+                || disk.used() >= disk.capacity().saturating_sub(disk.capacity() / 4)
+            {
+                return Err(Error::Capacity("publication backlog"));
+            }
+        }
         let admission = WorkAdmission {
-            _request: try_one(self.admission.requests.clone(), "Cell mailbox requests")?,
+            kind,
+            _request: Some(try_one(
+                self.admission.requests.clone(),
+                "Cell mailbox requests",
+            )?),
             _cell_bytes: try_many(
                 self.admission.bytes.clone(),
                 reservation_bytes,
@@ -475,7 +603,10 @@ impl CellHandle {
         if self.admission.fenced.load(Ordering::Acquire) {
             return Err(Error::Fenced);
         }
-        if self.admission.draining.load(Ordering::Acquire) {
+        if self.admission.draining.load(Ordering::Acquire)
+            || (self.admission.maintenance_quiescing.load(Ordering::Acquire)
+                && !kind.allowed_while_quiescing())
+        {
             return Err(Error::CellDraining);
         }
         self.inner.node_lease.check()?;

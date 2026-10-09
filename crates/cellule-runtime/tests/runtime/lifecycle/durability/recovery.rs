@@ -221,6 +221,42 @@ async fn lost_ack_suffix_recovers_an_ambiguous_command_without_reexecution() {
         .recover_and_seal(&directory, fenced, inventory, 10_002)
         .await
         .unwrap();
+    // Retire the failed owner's actual suffix only after its overlay is pinned.
+    // The unchanged runtime readback below must still recover the lost outcome.
+    let retirement_transport = Arc::new(
+        cellule_runtime::node::log_transport::LocalRecoveredFollowerTransport::new(
+            cellule_runtime::node::log_transport::LocalFollowerTransport::new(
+                member,
+                follower_store.clone(),
+            ),
+            directory.clone(),
+            successor,
+            || Ok(10_003),
+        )
+        .unwrap(),
+    );
+    let retirement = cellule_runtime::node::log_recovery::retirement::retire_recovered_members(
+        retirement_transport,
+        &completed.sealed,
+    )
+    .await
+    .unwrap()
+    .confirmed()
+    .unwrap();
+    assert_eq!(retirement.members()[0].result().unwrap().durable_through, 2);
+    // Commit the tombstone transition but lose its reply. Fresh canonical
+    // inspection must adopt it without requiring a second native retirement.
+    store.lose_next_update_response();
+    let retired = directory
+        .retire_recovered_log(&retirement, successor, 10_003)
+        .await
+        .unwrap();
+    assert_eq!(
+        retired.log().phase(),
+        cellule_runtime::node::log_state::NodeLogPhase::Retired
+    );
+    assert!(!directory.log_epoch_referenced(leader, 1).await.unwrap());
+    assert_eq!(follower_store.retained_bytes(), 8);
     let attached = completed.controls.into_iter().next().unwrap();
     let successor_runtime = CellRuntime::new(
         SqlWorkerPool::new(1, 1).unwrap(),

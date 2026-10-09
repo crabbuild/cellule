@@ -131,7 +131,8 @@ single hot Cell faces a different proof and execution limit.
 
 The current worker pool supports a fixed number of threads and up to 10,000
 active Cells, but those bounds do not establish measured capacity. Its default
-active-Cell admission charges 128 KiB native memory and eleven descriptors per
+active-Cell admission charges 160 KiB native memory, including four 8 KiB
+lookaside arenas, and eleven descriptors per
 Cell. Managed SQLite page-cache targets are charged separately at 256 KiB per
 Cell across four connections. Two thousand Cells therefore reserve 22,000 descriptors; qualify actual
 SQLite, cache, actor, retained-cut, and process RSS costs rather than treating

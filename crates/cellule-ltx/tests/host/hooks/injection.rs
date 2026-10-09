@@ -47,6 +47,11 @@ async fn rustfs_directory_cache_fill_releases_origin_admission_before_local_sync
 
 async fn verify_cache_fill_admission(store: impl Fn() -> Store, prefix: &str, job_count: usize) {
     let (directory, faults, host, mut writer) = fixture();
+    // More than 2 KiB of directory entries exercises persistent external-node
+    // cache filling; an inline leaf intentionally has no cache write.
+    writer
+        .transaction(|tx| tx.execute_batch("INSERT INTO t VALUES(randomblob(100000))"))
+        .unwrap();
     let replica = |cell| {
         CellReplica::new(
             CellStorageLayout::new(store(), ObjectPath::from(prefix), [231; 16]),
@@ -141,7 +146,7 @@ async fn verify_cache_fill_admission(store: impl Fn() -> Store, prefix: &str, jo
     let count: u64 = db
         .query_row("SELECT count(*) FROM t", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 //! Scheduled arrivals retain overload and verify every resulting Cell ledger.
 
+use super::root_capture::{DRAIN_GRACE_US, capture};
 use super::*;
 use crate::fleet::{balancer_round_trip, start_balancer};
 use crate::process_performance::Controller;
@@ -13,8 +14,9 @@ use std::{
 };
 use tokio::task::JoinSet;
 
+mod tests;
+
 const WINDOW_SECONDS: usize = 10;
-const CAPACITY_DRAIN_GRACE_US: u64 = 2_000_000;
 
 pub(super) mod pacing;
 mod primary;
@@ -170,6 +172,8 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
         BufWriter::new(File::create(sync.join(format!("{evidence_prefix}-owners.tsv"))).unwrap());
     writeln!(owners, "stage\tentity\tcell\towner\tepoch\tincarnation").unwrap();
     let mut expected = Vec::new();
+    let mut latest_sequences = Vec::new();
+    let mut identities = Vec::new();
     let mut window_id = 0;
     let mut capacity_windows = capacity.then(|| {
         let mut output = BufWriter::new(File::create(sync.join("capacity-windows.tsv")).unwrap());
@@ -221,6 +225,8 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             payload_bytes: write_workload::write_payload_bytes(),
         });
         expected.resize(write_workload::cell_count(nodes), 0_u64);
+        latest_sequences.resize(expected.len(), 0_u64);
+        let mut original_controls = Vec::with_capacity(expected.len());
         for (entity, count) in expected.iter().enumerate() {
             let target = entity_target(&application, entity);
             let control = authority.load(target.cell_id()).await.unwrap().unwrap();
@@ -228,6 +234,13 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             let node = write_workload::owner(entity);
             assert_eq!(owner.session, node_session(node));
             assert_eq!(owner.endpoint, format!("https://{}", addresses[node]));
+            original_controls.push(control.value().clone());
+            let identity = (control.value().epoch, control.value().incarnation);
+            if entity == identities.len() {
+                identities.push(identity);
+            } else {
+                assert_eq!(identities[entity], identity);
+            }
             writeln!(
                 owners,
                 "{nodes}\t{entity}\t{:?}\t{node}\t{}\t{:?}",
@@ -271,7 +284,14 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
                     rate_per_node,
                     concurrency,
                 };
-                let fully_served = run_window(sync, &window, client.clone(), &mut expected).await;
+                let fully_served = run_window(
+                    sync,
+                    &window,
+                    client.clone(),
+                    &mut expected,
+                    &mut latest_sequences,
+                )
+                .await;
                 if let Some(output) = capacity_windows.as_mut() {
                     writeln!(
                         output,
@@ -292,29 +312,60 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
                 assert!(overloaded, "{shape}: rate ramp did not reach overload");
             }
         }
+        let barrier_started = Instant::now();
+        let started_boot_ms = boot_ms();
+        let start_clock_us = barrier_started.elapsed().as_micros() as u64;
+        let captured = capture(&authority, &original_controls, &latest_sequences)
+            .await
+            .unwrap();
+        let end_clock_started = Instant::now();
+        let ended_boot_ms = boot_ms();
+        let clock_read_us = start_clock_us + end_clock_started.elapsed().as_micros() as u64;
+        let elapsed_us = barrier_started.elapsed().as_micros() as u64;
+        assert!(elapsed_us >= captured.elapsed_us && elapsed_us < DRAIN_GRACE_US);
+        publish_marker(
+            &sync.join(format!("{evidence_prefix}-root-barrier-{nodes}.tsv")),
+            format!(
+                "nodes\tcells\tlimit_us\telapsed_us\treads\tstarted_boot_ms\tended_boot_ms\tclock_read_us\n{nodes}\t{}\t{DRAIN_GRACE_US}\t{}\t{}\t{started_boot_ms}\t{ended_boot_ms}\t{clock_read_us}\n",
+                captured.values.len(),
+                elapsed_us,
+                captured.reads,
+            ),
+        );
         let mut roots = BufWriter::new(
             File::create(sync.join(format!("{evidence_prefix}-roots-{nodes}.tsv"))).unwrap(),
         );
         writeln!(
             roots,
-            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest"
+            "entity\tcell\towner\tepoch\tincarnation\troot_sequence\troot_digest\troot_txid\troot_checksum\trestored_digest\tminimum_sequence"
         )
         .unwrap();
-        for entity in 0..expected.len() {
-            let target = entity_target(&application, entity);
-            let control = authority.load(target.cell_id()).await.unwrap().unwrap();
-            let owner = control.value().owner.as_ref().unwrap();
+        for (entity, control) in captured.values.iter().enumerate() {
+            let owner = control.owner.as_ref().unwrap();
             let node = write_workload::owner(entity);
             assert_eq!(owner.session, node_session(node));
-            let root = control.value().root.as_ref().unwrap();
+            let root = control.root.as_ref().unwrap();
+            // Restore this bounded capture's exact root, preserving its receipt
+            // barrier even if a later background publication advances authority.
+            let restored = super::drain::restore_root_evidence(
+                &layout,
+                &application,
+                &control.ltx_root().unwrap(),
+            )
+            .await;
+            assert_eq!(restored.count, expected[entity]);
             writeln!(
                 roots,
-                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}",
-                target.cell_id(),
-                control.value().epoch,
-                control.value().incarnation,
+                "{entity}\t{:?}\t{node}\t{}\t{:?}\t{}\t{:?}\t{}\t{}\t{:?}\t{}",
+                control.cell,
+                control.epoch,
+                control.incarnation,
                 root.commit_sequence,
-                root.digest
+                root.digest,
+                root.txid,
+                root.checksum,
+                restored.digest,
+                latest_sequences[entity],
             )
             .unwrap();
         }
@@ -348,6 +399,10 @@ async fn run_entity_process(capacity: bool, follower_enabled: bool) {
             .unwrap()
             .is_empty()
     );
+    if follower_enabled {
+        super::drain::verify_follower_roots(sync, &layout, &application, &expected, &identities)
+            .await;
+    }
 }
 
 fn destination(shape: &str, arrival: usize, cells: usize) -> (usize, bool) {
@@ -377,7 +432,9 @@ async fn run_window(
     window: &Window,
     client: Arc<DriverClient>,
     expected: &mut [u64],
+    latest_sequences: &mut [u64],
 ) -> bool {
+    assert_eq!(expected.len(), latest_sequences.len());
     let rate = window.nodes * window.rate_per_node;
     let planned = rate * WINDOW_SECONDS;
     let label = window.label();
@@ -388,61 +445,34 @@ async fn run_window(
     )
     .unwrap();
     output.flush().unwrap();
-    // Start after the pacing thread is created. Its absolute deadlines use
-    // the same clock as dispatch and terminal timings.
+    // Leave time for the dedicated pacer to start on the same absolute clock.
     let start_delay = Duration::from_millis(20);
     let started_ms = now_ms() + start_delay.as_millis() as i64;
     let started_boot_ms = boot_ms() + start_delay.as_millis() as u64;
     let started = Instant::now() + start_delay;
-    let mut jobs = JoinSet::new();
-    let mut samples = Vec::with_capacity(planned);
-    let (mut arrivals, pacer) = paced_arrivals(started, planned, rate, window.concurrency);
-    while let Some((arrival, generator_started_us)) = arrivals.recv().await {
-        let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
-        while let Some(result) = jobs.try_join_next() {
-            retain_sample(&mut output, &mut samples, result.unwrap());
-        }
-        let started_us = started.elapsed().as_micros() as u64;
-        let (entity, write) = destination(window.shape, arrival, expected.len());
-        let mut sample = Sample {
-            arrival,
-            scheduled_us,
-            started_us,
-            generator_started_us,
-            elapsed_us: 0,
-            entity,
-            write,
-            outcome: "client_full",
-            sequence: 0,
-            read_sequence: 0,
-            count: 0,
-        };
-        if started_us >= (arrival as u64 + 1) * 1_000_000 / rate as u64 {
-            sample.outcome = "scheduler_late";
-        }
-        if sample.outcome == "scheduler_late" || jobs.len() >= window.concurrency {
-            retain_sample(&mut output, &mut samples, sample);
-            continue;
-        }
-        let client = client.clone();
-        let request = (window.id << 32) | arrival;
-        let admitted = started + Duration::from_micros(sample.started_us);
-        jobs.spawn(async move { execute(client, sample, request, admitted).await });
-    }
-    pacer.await.unwrap();
+    let mut samples = collect_arrivals(
+        window,
+        planned,
+        started,
+        expected.len(),
+        |sample, request, admitted| execute(Arc::clone(&client), sample, request, admitted),
+    )
+    .await;
     tokio::time::sleep_until((started + Duration::from_secs(WINDOW_SECONDS as u64)).into()).await;
-    while let Some(result) = jobs.join_next().await {
-        retain_sample(&mut output, &mut samples, result.unwrap());
-    }
-    output.flush().unwrap();
     let elapsed_us = started.elapsed().as_micros() as u64;
     let ended_ms = now_ms();
     let ended_boot_ms = boot_ms();
+    // Keep synchronous evidence I/O outside the arrival and drain clocks. A
+    // slow bind mount must not turn a completed request into missed arrivals.
+    // The already bounded sample vector retains every outcome, including real
+    // scheduler lateness and concurrency refusals, without a catch-up burst.
+    write_samples(&mut output, &samples).unwrap();
     samples.sort_by_key(|sample| sample.arrival);
     assert_eq!(samples.len(), planned);
     for sample in &samples {
         if sample.write && sample.sequence > 0 {
             expected[sample.entity] += 1;
+            latest_sequences[sample.entity] = latest_sequences[sample.entity].max(sample.sequence);
         }
     }
     let mut checks =
@@ -461,6 +491,8 @@ async fn run_window(
             actual.output, actual.receipt.commit_sequence
         )
         .unwrap();
+        assert!(actual.receipt.commit_sequence >= latest_sequences[entity]);
+        latest_sequences[entity] = actual.receipt.commit_sequence;
         assert_eq!(
             actual.output, *expected,
             "{label}: Cell {entity} lost or duplicated a mutation"
@@ -481,32 +513,88 @@ async fn run_window(
     println!(
         "ENTITY_WINDOW label={label} planned={planned} complete={complete} elapsed_us={elapsed_us}"
     );
-    complete == planned
-        && (window.prefix != "capacity"
-            || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + CAPACITY_DRAIN_GRACE_US)
+    fully_served(&samples, elapsed_us, window.prefix == "capacity")
 }
 
-fn retain_sample(output: &mut BufWriter<File>, samples: &mut Vec<Sample>, sample: Sample) {
-    writeln!(
-        output,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        sample.arrival,
-        sample.scheduled_us,
-        sample.started_us,
-        sample.generator_started_us,
-        sample.elapsed_us,
-        sample.entity,
-        if sample.write { "write" } else { "read" },
-        sample.outcome,
-        sample.sequence,
-        sample.read_sequence,
-        sample.count
-    )
-    .unwrap();
-    // BufWriter bounds pending bytes and exports full buffers. Flushing every
-    // arrival stalls dispatch on the shared evidence mount; the window drains
-    // this final buffer before publishing completion or starting verification.
-    samples.push(sample);
+async fn collect_arrivals<F, Fut>(
+    window: &Window,
+    planned: usize,
+    started: Instant,
+    cells: usize,
+    dispatch: F,
+) -> Vec<Sample>
+where
+    F: Fn(Sample, usize, Instant) -> Fut,
+    Fut: std::future::Future<Output = Sample> + Send + 'static,
+{
+    let mut jobs = JoinSet::new();
+    let mut samples = Vec::with_capacity(planned);
+    let rate = window.nodes * window.rate_per_node;
+    let (mut arrivals, pacer) = paced_arrivals(started, planned, rate, window.concurrency);
+    while let Some((arrival, generator_started_us)) = arrivals.recv().await {
+        let scheduled_us = (arrival as u64 * 1_000_000) / rate as u64;
+        while let Some(result) = jobs.try_join_next() {
+            samples.push(result.unwrap());
+        }
+        let started_us = started.elapsed().as_micros() as u64;
+        let (entity, write) = destination(window.shape, arrival, cells);
+        let mut sample = Sample {
+            arrival,
+            scheduled_us,
+            started_us,
+            generator_started_us,
+            elapsed_us: 0,
+            entity,
+            write,
+            outcome: "client_full",
+            sequence: 0,
+            read_sequence: 0,
+            count: 0,
+        };
+        if started_us >= (arrival as u64 + 1) * 1_000_000 / rate as u64 {
+            sample.outcome = "scheduler_late";
+        }
+        if sample.outcome == "scheduler_late" || jobs.len() >= window.concurrency {
+            samples.push(sample);
+            continue;
+        }
+        let request = (window.id << 32) | arrival;
+        let admitted = started + Duration::from_micros(sample.started_us);
+        jobs.spawn(dispatch(sample, request, admitted));
+    }
+    pacer.await.unwrap();
+    while let Some(result) = jobs.join_next().await {
+        samples.push(result.unwrap());
+    }
+    samples
+}
+
+fn fully_served(samples: &[Sample], elapsed_us: u64, capacity: bool) -> bool {
+    samples
+        .iter()
+        .all(|sample| sample.outcome == "ok" || sample.outcome == "resolved")
+        && (!capacity || elapsed_us <= WINDOW_SECONDS as u64 * 1_000_000 + DRAIN_GRACE_US)
+}
+
+fn write_samples(output: &mut impl Write, samples: &[Sample]) -> std::io::Result<()> {
+    for sample in samples {
+        writeln!(
+            output,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            sample.arrival,
+            sample.scheduled_us,
+            sample.started_us,
+            sample.generator_started_us,
+            sample.elapsed_us,
+            sample.entity,
+            if sample.write { "write" } else { "read" },
+            sample.outcome,
+            sample.sequence,
+            sample.read_sequence,
+            sample.count
+        )?;
+    }
+    output.flush()
 }
 
 async fn execute(

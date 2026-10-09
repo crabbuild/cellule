@@ -1,0 +1,158 @@
+{
+  "profile": "fixed-latency native diagnostic; 7 ms GET and 40 ms PUT; not node capacity qualification",
+  "control_commit": "9f43416c4e0b3f171d70baa29122244c4aa9243b",
+  "control_log_source_commit": "afd034a7525fd9b091c8106841093c53d60c18a1",
+  "candidate_commit": "06855cbac18c594d6a4b267196aaee2a3a63c5ff",
+  "control_source_equivalence": "only tracked performance evidence differs between prior tested native source and 9f control",
+  "points_per_source": 18,
+  "repetitions": 3,
+  "exact_restore": "every original captured cut replayed; final bytes equal at every point",
+  "critical_metrics": [
+    {
+      "cuts": 1,
+      "compaction": false,
+      "control": {
+        "puts": 4,
+        "median_prepare_ms": 54.291916,
+        "final_segments": 9,
+        "uploaded_bytes": 5116
+      },
+      "candidate": {
+        "puts": 4,
+        "median_prepare_ms": 52.964041,
+        "final_segments": 9,
+        "uploaded_bytes": 5116
+      }
+    },
+    {
+      "cuts": 1,
+      "compaction": true,
+      "control": {
+        "puts": 6,
+        "median_prepare_ms": 80.65725,
+        "final_segments": 2,
+        "uploaded_bytes": 2745
+      },
+      "candidate": {
+        "puts": 6,
+        "median_prepare_ms": 82.108667,
+        "final_segments": 2,
+        "uploaded_bytes": 2745
+      }
+    },
+    {
+      "cuts": 4,
+      "compaction": false,
+      "control": {
+        "puts": 10,
+        "median_prepare_ms": 53.584959000000005,
+        "final_segments": 12,
+        "uploaded_bytes": 7242
+      },
+      "candidate": {
+        "puts": 4,
+        "median_prepare_ms": 55.135042000000006,
+        "final_segments": 9,
+        "uploaded_bytes": 5119
+      }
+    },
+    {
+      "cuts": 4,
+      "compaction": true,
+      "control": {
+        "puts": 12,
+        "median_prepare_ms": 79.98825,
+        "final_segments": 5,
+        "uploaded_bytes": 4871
+      },
+      "candidate": {
+        "puts": 6,
+        "median_prepare_ms": 81.709208,
+        "final_segments": 2,
+        "uploaded_bytes": 2748
+      }
+    },
+    {
+      "cuts": 16,
+      "compaction": false,
+      "control": {
+        "puts": 34,
+        "median_prepare_ms": 180.61112500000002,
+        "final_segments": 24,
+        "uploaded_bytes": 15738
+      },
+      "candidate": {
+        "puts": 4,
+        "median_prepare_ms": 54.500917,
+        "final_segments": 9,
+        "uploaded_bytes": 5119
+      }
+    },
+    {
+      "cuts": 16,
+      "compaction": true,
+      "control": {
+        "puts": 36,
+        "median_prepare_ms": 210.83195800000001,
+        "final_segments": 17,
+        "uploaded_bytes": 13367
+      },
+      "candidate": {
+        "puts": 6,
+        "median_prepare_ms": 84.33749999999999,
+        "final_segments": 2,
+        "uploaded_bytes": 2748
+      }
+    }
+  ],
+  "source_logs": {
+    "control": {
+      "filename": "batch-cost-final-directory-final-candidate.log",
+      "sha256": "9f4ccdb6b5cf22d1a17d73a9f746ebfb44ff416166101b0a81644f5337b2591d"
+    },
+    "candidate": {
+      "filename": "captured-coalescing-batch-cost-final.log",
+      "sha256": "0d348717981fe13d2eb24f164d29f4230961f097d609bc9b928fd3b3d03dc6fc"
+    }
+  },
+  "target_established": false,
+  "external_evidence_root": "/Volumes/Workspace/crabbuild-target/cellule-node-scaling-54f709e0/evidence",
+  "validation": {
+    "all_rust_cargo_files_match": 1232,
+    "passed": [
+      "runtime-tests",
+      "local-tests",
+      "clippy",
+      "docs",
+      "fmt",
+      "boundaries",
+      "module-layout",
+      "doc-rust-fences",
+      "doc-links",
+      "sql-docs"
+    ],
+    "prior_ltx_all_features_passed": true,
+    "evidence_sha256": {
+      "captured-coalescing-ltx-tests-final2.log": "5cf00d1d1e882cbd3e4f34ed95977d7595f4dcef2e1cc3034a9bfae381a9df76",
+      "captured-coalescing-batch-cost-final.log": "0d348717981fe13d2eb24f164d29f4230961f097d609bc9b928fd3b3d03dc6fc",
+      "captured-coalescing-validation-source.json": "26f3b8ce77a3eae2e48aea701d70a69eccb713a9606ec0c00afa1e04f0941549",
+      "captured-coalescing-control-red.log": "52b5a8e7a27bef29b79160969703818d297476d9b253e087a0e78cedfd39037a",
+      "captured-coalescing-green2.log": "448fe0d94feaab2c948343f7b656050042494ca7157d49b6e9a262fb7ef3e307",
+      "pr62-9f-workspace-failure.log": "8b95e4798c6cca2582f19e2ec6c737596f6ab07326865303ab471b4210a7fc06",
+      "captured-coalescing-runtime-tests-final3.log": "6cce34c2812471563a6e261b3de9af95bba9ca09ddf5ad3cb34a7a8b3022bf0b",
+      "captured-coalescing-local-tests-final3.log": "e8e0a927e7696f67459826d4ad44b851ea8aac884ffffac6a9d544ce8add0c14",
+      "captured-coalescing-clippy-final3.log": "30e57c002ac2dc8dc8af39f1aa62bf399688638ba65b3fc6f715fc719381bfd1",
+      "captured-coalescing-docs-final3.log": "aaa37cef86d29ddef988a9219848bbbb27346fcdb19bcfc2a6b2fa6e30185ae1",
+      "captured-coalescing-fmt-final3.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured-coalescing-boundaries-final3.log": "5bb6622d24b0e87117e5a9e352d6596500b74555f947fc827ec1f25caeabf135",
+      "captured-coalescing-module-layout-final3.log": "c73aa019cf3727a1856a8c9ca7bbfc4982b321d96890216a1ac691fa9abbb3e6",
+      "captured-coalescing-doc-rust-fences-final3.log": "08dfdc9de7c4dbeadb5b88af6a31505cfecbf0aa4474a063e74bd5d3e66fa4fe",
+      "captured-coalescing-doc-links-final3.log": "aa241cd5f19ce8fec81a6a867efcc5a46fadd1e59ef3172dbbcbb026a4af11bd",
+      "captured-coalescing-sql-docs-final3.log": "e943bd2029dec31a2b2bb2b3f5d22434767f87b8accb220959aacc77f20355e2"
+    }
+  },
+  "remaining_ci_failure": "prior head 9f workspace job 112038183819: host substituted-history source-node shutdown retained Fenced; original log retained; no fix claimed",
+  "regression": "original code publishes seventeen descriptors for base plus sixteen cuts; merged code publishes two, four PUTs, exact original-cut replay and cold restore",
+  "bounds": "256 KiB retained page images, existing host admission; original chain limits checked before merge; large decoded sets use original file-backed path",
+  "comparison": "four-cut preparation latency unchanged within diagnostic variation; sixteen-cut preparation shorter; sustained node capacity pending R10"
+}

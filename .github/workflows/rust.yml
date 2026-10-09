@@ -41,6 +41,7 @@ jobs:
         run: cargo fmt --all --check
       - name: Architecture boundaries
         run: |
+          python3 -B -m unittest discover -s scripts/tests -p 'test_*.py'
           python3 scripts/check-boundaries.py
           python3 scripts/check-module-layout.py
           python3 scripts/check-doc-rust-fences.py
@@ -49,10 +50,16 @@ jobs:
         run: python3 scripts/release.py check
       - name: Check
         run: cargo check --workspace --all-targets --all-features --locked
+      - name: Verify application builder embedding example
+        run: |
+          cargo fmt --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --check
+          cargo clippy --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --all-targets --locked -- -D warnings
       - name: Documentation links
         run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
       - name: Test
         run: cargo test --workspace --all-features --locked
+      - name: Compile website Rust examples
+        run: python3 scripts/check-web-rust-examples.py
       - name: Run SQL example
         run: cargo run -p cellule-app --example sql --locked
       - name: Run Blob example
@@ -66,7 +73,7 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
         run: |
           aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket cellule-ci
-      - name: Run balanced three-process storefront smoke
+      - name: Run balanced three-process storefront smoke and replica retry
         env:
           AWS_ACCESS_KEY_ID: cellule-ci
           AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
@@ -76,11 +83,44 @@ jobs:
           CELLULE_TEST_PREFIX: reference-smoke
           CELLULE_PERF_ITERATIONS: "1"
         run: |
-          smoke_test=process_performance::reference_balanced_three_process_fleet_end_to_end_performance
-          cargo test -p cellule-app --test integration "$smoke_test" \
-            --locked -- --ignored --exact --list | grep -Fx "$smoke_test: test"
-          cargo test -p cellule-app --test integration "$smoke_test" \
-            --locked -- --ignored --exact --nocapture
+          for smoke_test in \
+            process_performance::reference_balanced_three_process_fleet_end_to_end_performance \
+            process_performance::reference_replica_retry_three_process_fleet; do
+            cargo test -p cellule-app --test integration "$smoke_test" \
+              --locked -- --ignored --exact --list | grep -Fx "$smoke_test: test"
+            cargo test -p cellule-app --test integration "$smoke_test" \
+              --locked -- --ignored --exact --nocapture
+          done
+      - name: Test fleet journal and public controller models
+        # Each case runs concurrent native runtimes and SQL workers. Isolate
+        # unrelated fixtures on the hosted runner; retain each case's deadlines,
+        # worker concurrency, protocol races and required evidence.
+        # Preserve earlier assertion details even if a later native case aborts.
+        run: cargo test -p cellule-host --example fleet_operations --all-features --locked -- --test-threads=1 --nocapture
+      - name: Verify Axum HTTP publication, retries and cold recovery against RustFS
+        env:
+          AWS_ACCESS_KEY_ID: cellule-ci
+          AWS_SECRET_ACCESS_KEY: cellule-integration-fixture
+          AWS_DEFAULT_REGION: us-east-1
+          CELLULE_TEST_ENDPOINT: http://127.0.0.1:9000
+          CELLULE_TEST_BUCKET: cellule-ci
+          CELLULE_TEST_PREFIX: axum-http-smoke
+        run: |
+          cargo build -p cellule-axum --examples --locked
+          python3 scripts/bench-axum-rustfs.py \
+            --binary target/debug/examples/sql \
+            --output "$RUNNER_TEMP/cellule-axum-http" \
+            --repeats 1 --cells 1 4 --workers 4 --concurrency 1 4 \
+            --warmup 4 --writes 8 --reads 16 \
+            --read-driver target/debug/examples/http_load \
+            --read-warmup-seconds 1 --read-seconds 2
+      - name: Retain Axum HTTP verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cellule-axum-http
+          path: ${{ runner.temp }}/cellule-axum-http
+          if-no-files-found: ignore
       - name: Test local LTX without replica
         run: cargo test -p cellule-ltx --no-default-features --locked
       - name: Test replica feature
@@ -102,4 +142,6 @@ jobs:
         with:
           toolchain: 1.97.0
       - name: Check Rust 1.97 minimum
-        run: cargo check --workspace --all-targets --all-features --locked
+        run: |
+          cargo check --workspace --all-targets --all-features --locked
+          cargo check --manifest-path crates/cellule-axum/examples/application-builder-service/Cargo.toml --all-targets --locked
