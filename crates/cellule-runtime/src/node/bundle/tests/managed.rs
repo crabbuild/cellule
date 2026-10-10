@@ -168,29 +168,30 @@ async fn producer_failure_fences_new_work_and_join_preserves_its_cause() {
 #[tokio::test(flavor = "multi_thread")]
 async fn managed_producer_selects_actor_prefixes_and_joins_checkpoints_complete_close_and_cold_results()
  {
-    managed_actor_case(10, 32 << 20, false, false).await;
+    managed_actor_case(10, 32 << 20, false, false, None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn managed_actor_retires_215_grouped_commands_per_cell_before_joined_root_materialization() {
-    managed_actor_case(215, 64 << 20, true, false).await;
+    managed_actor_case(215, 64 << 20, true, false, None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn managed_actor_retires_65_sequential_captures_before_joined_root_materialization() {
-    managed_actor_case(65, 64 << 20, false, false).await;
+    managed_actor_case(65, 64 << 20, false, false, None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn managed_actor_continues_selected_receipts_across_an_active_root_checkpoint() {
-    managed_actor_case(215, 64 << 20, true, true).await;
+    managed_actor_case(215, 64 << 20, true, true, None).await;
 }
 
-async fn managed_actor_case(
+pub(super) async fn managed_actor_case(
     per_cell: u16,
     retained_bytes: usize,
     grouped: bool,
     checkpoint_continuation: bool,
+    checkpoint_gate: Option<Arc<super::checkpoint_credit::CheckpointGate>>,
 ) {
     let mut f = Fixture::new().await;
     super::coverage::enroll(&mut f).await;
@@ -220,8 +221,17 @@ async fn managed_actor_case(
     runtime
         .install_node_durability(ApplicationId::from_bytes([9; 16]), durability.clone())
         .unwrap();
+    let publication_authority: Arc<dyn NodeBundlePublicationAuthority> =
+        if let Some(gate) = &checkpoint_gate {
+            Arc::new(super::checkpoint_credit::HeldCheckpoints {
+                original: authority.clone(),
+                gate: gate.clone(),
+            })
+        } else {
+            authority.clone()
+        };
     durability
-        .start_bundle_publication(authority.clone())
+        .start_bundle_publication(publication_authority)
         .unwrap();
     let responses = Arc::new(Responses::default());
     runtime.install_telemetry(responses.clone()).unwrap();
@@ -420,6 +430,7 @@ async fn managed_actor_case(
             .count(),
         usize::from(per_cell) * 2
     );
+    let mut held_checkpoint_bytes = None;
     if checkpoint_continuation {
         // These captures are selected against the old base while the actor's
         // first materializer owns the publisher and waits for preparation.
@@ -444,24 +455,80 @@ async fn managed_actor_case(
         }
         drop(preparation.take());
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            for (target, cell_authority, _, _) in &cells {
-                loop {
+            loop {
+                let mut ready = 0;
+                for (target, cell_authority, _, _) in &cells {
                     let control = cell_authority
                         .load(target.cell_id())
                         .await
                         .unwrap()
                         .unwrap();
                     if control.value().ltx_root().unwrap().commit_sequence >= u64::from(per_cell)
-                        && pool.pending(target.cell_id()).await.unwrap().is_none()
+                        && (checkpoint_gate.is_some()
+                            || pool.pending(target.cell_id()).await.unwrap().is_none())
                     {
-                        break;
+                        ready += 1;
                     }
-                    tokio::task::yield_now().await;
                 }
+                if ready == cells.len() || checkpoint_gate.is_some() && ready > 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
             }
         })
         .await
         .unwrap();
+        if let Some(gate) = &checkpoint_gate {
+            // One original root has joined its uploads/CAS, while its callback
+            // cannot complete yet. Returned working credit must allow every
+            // other admitted materializer to finish without that callback.
+            tokio::time::timeout(std::time::Duration::from_secs(5), gate.entered.notified())
+                .await
+                .unwrap();
+            let memory = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let used = pool
+                        .resource_ledger()
+                        .snapshot()
+                        .unwrap()
+                        .used
+                        .retained_bytes();
+                    let mut completed = 0;
+                    for (target, cell_authority, _, _) in &cells {
+                        let control = cell_authority
+                            .load(target.cell_id())
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        completed += usize::from(
+                            control.value().ltx_root().unwrap().commit_sequence
+                                >= u64::from(per_cell),
+                        );
+                    }
+                    if completed == cells.len()
+                        && used <= super::checkpoint_credit::HELD_METADATA_CEILING
+                    {
+                        break used;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+            held_checkpoint_bytes = Some(memory.unwrap_or_else(|_| {
+                pool.resource_ledger()
+                    .snapshot()
+                    .unwrap()
+                    .used
+                    .retained_bytes()
+            }));
+            println!(
+                "held original checkpoint retained bytes: {}",
+                held_checkpoint_bytes.unwrap()
+            );
+            // Even a failing credit verdict resumes and joins the original
+            // callbacks, subsequent receipts, shutdown and cold verification.
+            gate.resume();
+        }
         // The old receipts are now retired. New proofs use the checkpointed
         // base and must preserve their exact retained suffix rather than fence.
         for byte in per_cell * 2 + 5..=per_cell * 2 + 6 {
@@ -575,6 +642,12 @@ async fn managed_actor_case(
             .retained_bytes(),
         0
     );
+    if let Some(bytes) = held_checkpoint_bytes {
+        assert!(
+            bytes <= super::checkpoint_credit::HELD_METADATA_CEILING,
+            "completed root buffers remain charged while checkpoint is held: {bytes} bytes"
+        );
+    }
 }
 
 pub(super) async fn renew_actor_lease(authority: &Authority, lease: &NodeLeaseGuard) {

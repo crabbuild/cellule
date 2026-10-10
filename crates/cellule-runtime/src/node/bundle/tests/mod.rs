@@ -16,6 +16,7 @@ use std::sync::Arc;
 const NOW: i64 = 1_000_000;
 const EPOCH: u64 = 2;
 mod actor;
+mod checkpoint_credit;
 mod composed;
 mod coverage;
 mod faults;

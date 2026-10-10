@@ -227,12 +227,17 @@ pub(super) fn dispatch(
                         Err(error) => return Err(error),
                     }
                 };
+                // Root I/O/CAS has joined and its overlay/preparation buffers
+                // have exited. Keep only pre-admitted prefix metadata across
+                // the queued checkpoint; completed working credit must not
+                // block replication or materialization for independent Cells.
+                let retained = reservation.split_retained(crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes())?;
+                drop(reservation);
                 // Checkpoint the authenticated locator prefix before admitting
                 // more selection; both root and index now cover this exact cut.
                 debt.durability.checkpoint_materialized(publisher.authority(), root).await?;
                 // Transfer pre-admitted metadata to the worker. No admission
                 // can fail after the canonical root and checkpoint are joined.
-                let retained = reservation.split_retained(crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes())?;
                 pool.bind_bundle_materialized(cell, root, retained).await
             }.await;
             publisher.record_publication_timing(crate::fleet::telemetry::PublicationTiming {

@@ -337,7 +337,15 @@ independently addressed locator histories:
 
 Those are protocol bounds, not host admission. The materializer scheduler must
 charge retained history, native verification, scratch and outcomes to the node
-ledgers. At the revised 2K-write target over 2,000 uniform Cells, each Cell
+ledgers. Working credit covers the original root I/O and CAS future. Once that
+future returns, its overlay and preparation buffers have exited: release that
+credit before waiting in the shared checkpoint queue. Retain the separately
+pre-admitted prefix metadata through the original checkpoint and worker binding;
+the Cell still waits for that callback before advancing its materialization.
+Cancellation or failure releases the remaining guards. The eight-materializer
+limit and node memory budget stay unchanged.
+
+At the revised 2K-write target over 2,000 uniform Cells, each Cell
 receives about one command/s: 215 commands span about 215 seconds. The current
 45-second root-age trigger therefore requests a checkpoint at roughly 45
 commands even before byte pressure. The conditional four-PUT model then costs
