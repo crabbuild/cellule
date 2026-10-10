@@ -243,6 +243,67 @@ pub(super) struct TransportAppendTiming {
     pub connection_attempts: u64,
 }
 
+#[test]
+fn concurrent_transport_observations_keep_aggregate_and_phases_in_one_drain() {
+    let recorder = Arc::new(DurabilityRecorder::default());
+    let start = std::sync::Barrier::new(5);
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut reconcile = |snapshot: DurabilityRecorder| {
+        let aggregate = snapshot.follower_network();
+        let phases = snapshot
+            .follower_transport()
+            .into_iter()
+            .map(|(at, ack, bytes, timing)| (at, ack, bytes, timing.total))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            aggregate, phases,
+            "one attempt must occupy the same export batch and order"
+        );
+        for (_, _, id, _) in aggregate {
+            assert!(seen.insert(id), "attempt exported twice");
+        }
+    };
+    std::thread::scope(|scope| {
+        for writer in 0..4 {
+            let recorder = &recorder;
+            let start = &start;
+            let done = &done;
+            scope.spawn(move || {
+                start.wait();
+                for index in 0..1024 {
+                    let id = writer * 1024 + index;
+                    recorder.record_follower_network(
+                        true,
+                        id,
+                        TransportAppendTiming {
+                            total: Duration::from_micros(id + 1),
+                            ..Default::default()
+                        },
+                    );
+                }
+                done.fetch_add(1, std::sync::atomic::Ordering::Release);
+            });
+        }
+        start.wait();
+        while done.load(std::sync::atomic::Ordering::Acquire) != 4 {
+            reconcile(recorder.drain());
+            std::thread::yield_now();
+        }
+    });
+    reconcile(recorder.drain());
+    assert_eq!(
+        seen.len(),
+        4096,
+        "every observation must survive the joined export"
+    );
+    for (name, recorded, dropped, buffered) in recorder.trace_counts() {
+        if matches!(name, "follower_network" | "follower_transport") {
+            assert_eq!((recorded, dropped, buffered), (4096, 0, 0));
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct DurabilityRecorder {
     proofs: Trace<(DurabilitySource, Duration)>,
@@ -255,7 +316,9 @@ pub(super) struct DurabilityRecorder {
     captures: Trace<(i64, CaptureTiming, bool)>,
     publication_costs: Trace<(i64, u64, u64)>,
     follower_appends: Trace<(i64, bool, u64)>,
-    follower_network: Trace<(i64, bool, u64, Duration)>,
+    // Aggregate network rows are projected from this same observation. Two
+    // independent pushes/drains can reorder concurrent attempts or split one
+    // attempt between exporter batches, invalidating exact phase evidence.
     follower_transport: Trace<(i64, bool, u64, TransportAppendTiming)>,
     follower_store: Trace<(i64, SessionId, u64, FollowerAppendTiming)>,
     node_log_batches: Trace<(i64, NodeLogBatchTiming)>,
@@ -277,7 +340,6 @@ impl DurabilityRecorder {
             captures: self.captures.take(),
             publication_costs: self.publication_costs.take(),
             follower_appends: self.follower_appends.take(),
-            follower_network: self.follower_network.take(),
             follower_transport: self.follower_transport.take(),
             follower_store: self.follower_store.take(),
             node_log_batches: self.node_log_batches.take(),
@@ -288,6 +350,8 @@ impl DurabilityRecorder {
     }
 
     pub(super) fn trace_counts(&self) -> Vec<(&'static str, u64, u64, usize)> {
+        let (network_recorded, network_dropped, network_buffered) =
+            self.follower_transport.counts();
         vec![
             {
                 let (recorded, dropped, buffered) = self.proofs.counts();
@@ -329,14 +393,18 @@ impl DurabilityRecorder {
                 let (recorded, dropped, buffered) = self.follower_appends.counts();
                 ("follower_appends", recorded, dropped, buffered)
             },
-            {
-                let (recorded, dropped, buffered) = self.follower_network.counts();
-                ("follower_network", recorded, dropped, buffered)
-            },
-            {
-                let (recorded, dropped, buffered) = self.follower_transport.counts();
-                ("follower_transport", recorded, dropped, buffered)
-            },
+            (
+                "follower_network",
+                network_recorded,
+                network_dropped,
+                network_buffered,
+            ),
+            (
+                "follower_transport",
+                network_recorded,
+                network_dropped,
+                network_buffered,
+            ),
             {
                 let (recorded, dropped, buffered) = self.follower_store.counts();
                 ("follower_store", recorded, dropped, buffered)
@@ -411,14 +479,21 @@ impl DurabilityRecorder {
         timing: TransportAppendTiming,
     ) {
         let at_ms = now_ms();
-        self.follower_network
-            .push((at_ms, acknowledged, bytes, timing.total));
         self.follower_transport
             .push((at_ms, acknowledged, bytes, timing));
     }
 
     pub(super) fn follower_network(&self) -> Vec<(i64, bool, u64, Duration)> {
-        self.follower_network.snapshot()
+        self.follower_transport
+            .inner
+            .lock()
+            .unwrap()
+            .samples
+            .iter()
+            .map(|(at_ms, acknowledged, bytes, timing)| {
+                (*at_ms, *acknowledged, *bytes, timing.total)
+            })
+            .collect()
     }
 
     pub(super) fn follower_transport(&self) -> Vec<(i64, bool, u64, TransportAppendTiming)> {
