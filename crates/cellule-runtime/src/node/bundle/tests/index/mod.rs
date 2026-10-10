@@ -43,6 +43,7 @@ mod bootstrap;
 mod checkpoint;
 mod cohort;
 mod compatibility;
+mod composed;
 mod copy_on_write;
 mod density;
 mod encoding;

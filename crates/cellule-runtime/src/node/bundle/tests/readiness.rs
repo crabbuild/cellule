@@ -44,6 +44,7 @@ impl NodeBundlePublicationAuthority for DelayedSelection {
     fn select<'a>(
         &'a self,
         captures: &'a [AssignedCapture],
+        checkpoints: &'a [BundleCheckpoint],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
@@ -56,7 +57,7 @@ impl NodeBundlePublicationAuthority for DelayedSelection {
                     changed.await;
                 }
             }
-            self.authority.select(captures, lease).await
+            self.authority.select(captures, checkpoints, lease).await
         })
     }
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {

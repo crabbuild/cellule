@@ -40,63 +40,11 @@ impl NodeDirectory {
             .advertisement
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
-        let mut pins = std::collections::HashSet::new();
-        let mut cells = std::collections::BTreeSet::new();
-        for (_, proof) in checkpoints {
-            if proof.pin.session != observed.advertisement.session
-                || proof.pin.epoch != head.epoch
-                || !pins.insert(proof.pin.digest)
-            {
-                return Err(Error::Fenced);
-            }
-            cells.insert((
-                *proof.binding.application.as_bytes(),
-                *proof.binding.control.cell.as_bytes(),
-            ));
-        }
+        let cells = checkpoint_cells(observed, checkpoints)?;
         let mut catalog =
             store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
                 .await?;
-        let mut changed = false;
-        for (authority, proof) in checkpoints {
-            let pin = proof.binding();
-            let binding = catalog.binding_mut(pin.digest)?;
-            if authority.layout().application_id() != binding.application.as_bytes()
-                || authority.layout().node_path(pin.session.as_bytes())
-                    != self.layout.node_path(pin.session.as_bytes())
-                || authority.layout().immutable_cache_identity()
-                    != self.layout.immutable_cache_identity()
-            {
-                return Err(Error::Fenced);
-            }
-            let current = authority
-                .load(binding.control.cell)
-                .await?
-                .ok_or(Error::Fenced)?;
-            let control = current.value();
-            if control.bundle_binding != Some(pin)
-                || control.epoch != binding.control.epoch
-                || control.incarnation != binding.control.incarnation
-                || control.code != binding.control.code
-                || control.schema != binding.control.schema
-            {
-                return Err(Error::PendingPublication);
-            }
-            let root = control.ltx_root().ok_or(Error::PendingPublication)?;
-            let prefix = materialized_prefix(binding, proof, &root)?;
-            if prefix == 0 && Some(root) == binding.control.ltx_root() {
-                // Repeating an exact installed checkpoint is a no-op even if
-                // newer captures remain selected beyond this materialized base.
-                continue;
-            }
-            binding.control = control.clone();
-            verify_base(&self.layout, binding, limits).await?;
-            binding.locators.drain(..prefix);
-            if binding.locators.is_empty() {
-                binding.first_commit = binding.selected_commit;
-            }
-            changed = true;
-        }
+        let changed = apply_checkpoints(&self.layout, &mut catalog, checkpoints, limits).await?;
         if !changed {
             return Ok(observed.clone());
         }
@@ -256,4 +204,77 @@ fn materialized_prefix(
         ));
     }
     Ok(locators.len())
+}
+
+/// Shares exact checkpoint validation with native append preparation.
+pub(super) fn checkpoint_cells(
+    observed: &VersionedNodeAdvertisement,
+    checkpoints: &[(&CellAuthority, &BundleCoverageProof)],
+) -> Result<std::collections::BTreeSet<index::CellKey>> {
+    if checkpoints.len() > MAX_FRAMES {
+        return Err(Error::Capacity("bundle checkpoint count"));
+    }
+    let mut pins = std::collections::HashSet::new();
+    let mut cells = std::collections::BTreeSet::new();
+    for (_, proof) in checkpoints {
+        if proof.pin.session != observed.advertisement.session
+            || proof.pin.epoch != observed.advertisement.bundle.ok_or(Error::Fenced)?.epoch
+            || !pins.insert(proof.pin.digest)
+        {
+            return Err(Error::Fenced);
+        }
+        cells.insert((
+            *proof.binding.application.as_bytes(),
+            *proof.binding.control.cell.as_bytes(),
+        ));
+    }
+    Ok(cells)
+}
+
+pub(super) async fn apply_checkpoints(
+    layout: &cellule_ltx::CellStorageLayout,
+    catalog: &mut Catalog,
+    checkpoints: &[(&CellAuthority, &BundleCoverageProof)],
+    limits: cellule_ltx::Limits,
+) -> Result<bool> {
+    let mut changed = false;
+    for (authority, proof) in checkpoints {
+        let pin = proof.binding();
+        let binding = catalog.binding_mut(pin.digest)?;
+        if authority.layout().application_id() != binding.application.as_bytes()
+            || authority.layout().node_path(pin.session.as_bytes())
+                != layout.node_path(pin.session.as_bytes())
+            || authority.layout().immutable_cache_identity() != layout.immutable_cache_identity()
+        {
+            return Err(Error::Fenced);
+        }
+        let current = authority
+            .load(binding.control.cell)
+            .await?
+            .ok_or(Error::Fenced)?;
+        let control = current.value();
+        if control.bundle_binding != Some(pin)
+            || control.epoch != binding.control.epoch
+            || control.incarnation != binding.control.incarnation
+            || control.code != binding.control.code
+            || control.schema != binding.control.schema
+        {
+            return Err(Error::PendingPublication);
+        }
+        let root = control.ltx_root().ok_or(Error::PendingPublication)?;
+        let prefix = materialized_prefix(binding, proof, &root)?;
+        if prefix == 0 && Some(root) == binding.control.ltx_root() {
+            // Repeating an exact installed checkpoint is a no-op even if
+            // newer captures remain selected beyond this materialized base.
+            continue;
+        }
+        binding.control = control.clone();
+        verify_base(layout, binding, limits).await?;
+        binding.locators.drain(..prefix);
+        if binding.locators.is_empty() {
+            binding.first_commit = binding.selected_commit;
+        }
+        changed = true;
+    }
+    Ok(changed)
 }

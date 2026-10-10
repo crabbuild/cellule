@@ -91,6 +91,7 @@ impl NodeBundlePublicationAuthority for FailedSelection {
     fn select<'a>(
         &'a self,
         _: &'a [AssignedCapture],
+        _: &'a [BundleCheckpoint],
         _: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async { Err(Error::Node("injected bundle selection failure")) })

@@ -14,6 +14,7 @@
 //! use cellule_runtime::node::{NodeDirectory, VersionedNodeAdvertisement};
 //! use cellule_runtime::node::bundle::BundleCoverageProof;
 //! use cellule_runtime::node::lease::NodeLeaseGuard;
+//! use cellule_runtime::control::authority::CellAuthority;
 //! use cellule_runtime::node::log::AssignedCommitRange;
 //!
 //! async fn select_complete_captures(
@@ -22,10 +23,13 @@
 //!     lease: &NodeLeaseGuard,
 //!     frames: &[cellule_ltx::VerifiedNodeFrame],
 //!     assignments: &[AssignedCommitRange],
+//!     checkpoints: &[(&CellAuthority, &BundleCoverageProof)],
 //!     now_ms: i64,
 //! ) -> cellule_runtime::Result<(VersionedNodeAdvertisement, Vec<BundleCoverageProof>)> {
 //!     let proposal = directory
-//!         .prepare_node_bundle(observed, frames, assignments, now_ms).await?;
+//!         .prepare_node_bundle_with_checkpoints(
+//!             observed, frames, assignments, checkpoints, cellule_ltx::Limits::default(), now_ms,
+//!         ).await?;
 //!     directory.select_node_bundle(
 //!         observed, &proposal, lease, cellule_ltx::Limits::default(), now_ms,
 //!     ).await

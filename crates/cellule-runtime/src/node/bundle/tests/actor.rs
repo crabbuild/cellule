@@ -109,6 +109,7 @@ impl NodeBundlePublicationAuthority for Authority {
     fn select<'a>(
         &'a self,
         captures: &'a [crate::node::log_shipper::AssignedCapture],
+        checkpoints: &'a [BundleCheckpoint],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
@@ -118,9 +119,17 @@ impl NodeBundlePublicationAuthority for Authority {
                 .flat_map(|c| c.frames().iter().cloned())
                 .collect::<Vec<_>>();
             let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
+            let ready = ready_checkpoints(checkpoints).await?;
             let prepared = self
                 .directory
-                .prepare_node_bundle(&node, &frames, &assignments, NOW)
+                .prepare_node_bundle_with_checkpoints(
+                    &node,
+                    &frames,
+                    &assignments,
+                    &ready,
+                    Limits::default(),
+                    NOW,
+                )
                 .await?;
             let (next, proofs) = self
                 .directory
@@ -134,23 +143,7 @@ impl NodeBundlePublicationAuthority for Authority {
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut node = self.observed.lock().await;
-            let mut ready = Vec::new();
-            for checkpoint in checkpoints {
-                let current = checkpoint
-                    .authority()
-                    .load(CellId::from_bytes(checkpoint.root().cell))
-                    .await?
-                    .ok_or(Error::Fenced)?;
-                let root = current.value().ltx_root().ok_or(Error::Fenced)?;
-                if current.value().bundle_binding == Some(checkpoint.proof().binding())
-                    && root.cell == checkpoint.root().cell
-                    && root.incarnation == checkpoint.root().incarnation
-                    && root.commit_sequence > checkpoint.root().commit_sequence
-                {
-                    continue;
-                }
-                ready.push((checkpoint.authority(), checkpoint.proof()));
-            }
+            let ready = ready_checkpoints(checkpoints).await?;
             if !ready.is_empty() {
                 *node = self
                     .directory
@@ -656,4 +649,27 @@ async fn actor_case(prior_fleet: bool, cancel_caller: bool, early_selection: boo
             .retained_bytes(),
         0
     );
+}
+
+async fn ready_checkpoints(
+    checkpoints: &[BundleCheckpoint],
+) -> Result<Vec<(&CellAuthority, &BundleCoverageProof)>> {
+    let mut ready = Vec::new();
+    for checkpoint in checkpoints {
+        let current = checkpoint
+            .authority()
+            .load(CellId::from_bytes(checkpoint.root().cell))
+            .await?
+            .ok_or(Error::Fenced)?;
+        let root = current.value().ltx_root().ok_or(Error::Fenced)?;
+        if current.value().bundle_binding == Some(checkpoint.proof().binding())
+            && root.cell == checkpoint.root().cell
+            && root.incarnation == checkpoint.root().incarnation
+            && root.commit_sequence > checkpoint.root().commit_sequence
+        {
+            continue;
+        }
+        ready.push((checkpoint.authority(), checkpoint.proof()));
+    }
+    Ok(ready)
 }

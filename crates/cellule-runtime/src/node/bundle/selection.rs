@@ -102,24 +102,52 @@ impl NodeDirectory {
         assignments: &[crate::node::log::AssignedCommitRange],
         now_ms: i64,
     ) -> Result<PreparedNodeBundle> {
+        self.prepare_node_bundle_with_checkpoints(
+            observed,
+            frames,
+            assignments,
+            &[],
+            cellule_ltx::Limits::default(),
+            now_ms,
+        )
+        .await
+    }
+
+    /// Combines exact materialized checkpoint prefixes and new native captures
+    /// in one fresh catalog read and upload. Selection still verifies canonical
+    /// origin dependencies and advances the original fenced node CAS.
+    /// Frames plus checkpoint notifications retain the existing 64-row bound.
+    pub async fn prepare_node_bundle_with_checkpoints(
+        &self,
+        observed: &VersionedNodeAdvertisement,
+        frames: &[cellule_ltx::VerifiedNodeFrame],
+        assignments: &[crate::node::log::AssignedCommitRange],
+        checkpoints: &[(
+            &crate::control::authority::CellAuthority,
+            &BundleCoverageProof,
+        )],
+        limits: cellule_ltx::Limits,
+        now_ms: i64,
+    ) -> Result<PreparedNodeBundle> {
         self.validate(&observed.advertisement, now_ms)?;
         let head = observed
             .advertisement
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
-        if frames.is_empty() || frames.len() > MAX_FRAMES {
+        if frames.is_empty() || frames.len() + checkpoints.len() > MAX_FRAMES {
             return Err(Error::Capacity("bundle frame count"));
         }
-        let cells = frames
-            .iter()
-            .map(|frame| {
-                let scope = frame.scope();
-                (scope.application, scope.cell)
-            })
-            .collect();
+        let mut cells = closure::checkpoint_cells(observed, checkpoints)?;
+        cells.extend(frames.iter().map(|frame| {
+            let scope = frame.scope();
+            (scope.application, scope.cell)
+        }));
         let mut catalog =
             store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
                 .await?;
+        // Release only the proven materialized prefix before extending any
+        // binding. Its later selected suffix and complete issued range survive.
+        closure::apply_checkpoints(&self.layout, &mut catalog, checkpoints, limits).await?;
         let mut consumed = 0_usize;
         for assignment in assignments {
             let count = usize::try_from(

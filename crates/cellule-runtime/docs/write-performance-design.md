@@ -1,5 +1,12 @@
 # Node write and read performance design
 
+The current candidate composes ready materialized checkpoints and new native
+captures into one fresh catalog load, upload and fenced selection CAS. Exact
+prefix proofs, original callbacks, the 64-row limit and the 20-MiB publication
+working reservation remain in force. Idle and receipt-pressure paths still join
+standalone checkpoints. Measurement and qualification determine whether this
+candidate is retained; the diagnostic history below remains separate evidence.
+
 The latest [shared-overlay diagnostic](../../../docs/pr67-shared-overlay-measurement.md)
 rejects and reverts recovered-overlay integration through the shared producer.
 Fresh Fleet throughput falls 537.38→501.40/s and successful scheduled p99 rises
