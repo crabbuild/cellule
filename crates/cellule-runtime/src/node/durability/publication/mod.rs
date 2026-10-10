@@ -37,8 +37,11 @@ impl BundleCheckpoint {
     }
 }
 
-/// Serialized node origin operations for the runtime-owned publication task.
-/// Implement with the same original state/heartbeat mutex as binding and close.
+/// Ordered node origin operations for the runtime-owned publication task.
+/// Serialize catalog mutations with binding and close. Immutable preparation
+/// may release the heartbeat/state lock while retaining catalog ordering; the
+/// final node-record CAS must preserve intervening renewal/coverage updates and
+/// recheck the original lease and canonical predecessor after I/O.
 pub trait NodeBundlePublicationAuthority: NodeBundleAuthority {
     /// Selects the complete ordered cohort with its native coverage in one CAS.
     /// Includes ready exact materialized checkpoints in that same catalog/CAS.

@@ -1,4 +1,4 @@
-//! One serialized directory view for heartbeats and durability CAS callbacks.
+//! Ordered catalog mutations with a separate node-record/heartbeat lock.
 use super::*;
 use cellule_runtime::node::durability::NodeLogAuthority;
 use cellule_runtime::node::durability::{
@@ -14,6 +14,10 @@ use tokio::sync::{Mutex, watch};
 pub(super) struct Authority {
     pub directory: NodeDirectory,
     pub lease: NodeLeaseGuard,
+    // Catalog changes always acquire this before state. Heartbeats and native
+    // coverage preserve the catalog head and need only state, so a slow bundle
+    // preparation/PUT cannot prevent them from renewing the original lease.
+    catalog: Mutex<()>,
     state: Mutex<State>,
     tls: Arc<LoadedPeerTls>,
     code: Digest,
@@ -66,6 +70,7 @@ impl Enrollment {
         let authority = Arc::new(Authority {
             directory,
             lease,
+            catalog: Mutex::new(()),
             state: Mutex::new(State {
                 observed,
                 closed: None,
@@ -104,6 +109,7 @@ impl Enrollment {
         let _ = self.stop.send(true);
         let joined = self.heartbeat.await.map_err(Error::FollowerWorkerJoin);
         let withdrawn = async {
+            let _catalog = self.authority.catalog.lock().await;
             let state = self.authority.state.lock().await;
             self.authority
                 .directory
@@ -167,6 +173,7 @@ impl Authority {
 
     pub async fn recruit(&self) -> Result<Vec<NodeAdvertisement>> {
         self.lease.check()?;
+        let _catalog = self.catalog.lock().await;
         let mut state = self.live_state().await?;
         state.observed = self
             .directory
@@ -195,6 +202,52 @@ impl Authority {
             );
         }
         Ok(peers)
+    }
+
+    async fn select_frames(
+        &self,
+        frames: &[cellule_ltx::VerifiedNodeFrame],
+        assignments: &[cellule_runtime::node::log::AssignedCommitRange],
+        checkpoints: &[BundleCheckpoint],
+        prefixes: &[&cellule_runtime::node::bundle::BundleCoverageProof],
+        lease: &NodeLeaseGuard,
+    ) -> Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>> {
+        let _catalog = self.catalog.lock().await;
+        let current = {
+            let state = self.live_state().await?;
+            self.current(&state, 1).await?
+        };
+        let ready = ready_checkpoints(checkpoints).await?;
+        let prepared = self
+            .directory
+            .prepare_node_bundle_with_checkpoints(
+                &current,
+                frames,
+                assignments,
+                &ready,
+                cellule_ltx::Limits::default(),
+                clock()?,
+            )
+            .await?;
+        // Preparation owns immutable bytes and the catalog predecessor, not
+        // the heartbeat state. Recheck the original live lease after upload and
+        // preserve intervening renewals/coverage in the final serialized CAS.
+        let mut state = self.live_state().await?;
+        let current = self.current(&state, 1).await?;
+        let (next, proofs) = self
+            .directory
+            .select_node_bundle_extending(
+                &current,
+                &prepared,
+                lease,
+                prefixes,
+                cellule_ltx::Limits::default(),
+                clock()?,
+            )
+            .await?;
+        state.observed = next;
+        self.lease.check()?;
+        Ok(proofs)
     }
 
     async fn current(&self, state: &State, epoch: u64) -> Result<VersionedNodeAdvertisement> {
@@ -231,6 +284,7 @@ impl NodeBundleAuthority for Authority {
         observed: &'a cellule_runtime::control::authority::VersionedControl,
     ) -> BoxFuture<'a, Result<cellule_runtime::control::authority::VersionedControl>> {
         Box::pin(async move {
+            let _catalog = self.catalog.lock().await;
             let mut state = self.live_state().await?;
             let current = self.current(&state, 1).await?;
             let (next, pinned) = self
@@ -252,6 +306,7 @@ impl NodeBundleAuthority for Authority {
         Box::pin(async move {
             // Runtime joins the complete issued producer prefix before entering
             // this mutex, including captures whose Fleet ACK preceded selection.
+            let _catalog = self.catalog.lock().await;
             let mut state = self.live_state().await?;
             let mut current = self.current(&state, issued.log_epoch()).await?;
             let proof = self
@@ -291,44 +346,19 @@ impl NodeBundlePublicationAuthority for Authority {
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>>> {
         Box::pin(async move {
-            let mut state = self.live_state().await?;
-            let current = self.current(&state, 1).await?;
             let frames = captures
                 .iter()
                 .flat_map(|c| c.frames().iter().cloned())
                 .collect::<Vec<_>>();
             let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
-            let ready = ready_checkpoints(checkpoints).await?;
-            let prepared = self
-                .directory
-                .prepare_node_bundle_with_checkpoints(
-                    &current,
-                    &frames,
-                    &assignments,
-                    &ready,
-                    cellule_ltx::Limits::default(),
-                    clock()?,
-                )
-                .await?;
-            let (next, proofs) = self
-                .directory
-                .select_node_bundle_extending(
-                    &current,
-                    &prepared,
-                    lease,
-                    prefixes,
-                    cellule_ltx::Limits::default(),
-                    clock()?,
-                )
-                .await?;
-            state.observed = next;
-            self.lease.check()?;
-            Ok(proofs)
+            self.select_frames(&frames, &assignments, checkpoints, prefixes, lease)
+                .await
         })
     }
 
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
+            let _catalog = self.catalog.lock().await;
             let mut state = self.live_state().await?;
             let current = self.current(&state, 1).await?;
             let ready = ready_checkpoints(checkpoints).await?;
@@ -403,6 +433,7 @@ impl NodeLogAuthority for Authority {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             retirement.confirmed()?;
+            let _catalog = self.catalog.lock().await;
             let mut state = self.state.lock().await;
             if let Some(closed) = &state.closed {
                 return if closed == retirement.barrier() {
@@ -458,97 +489,6 @@ async fn ready_checkpoints(
 }
 
 #[cfg(test)]
-mod renewal_tests {
-    use super::*;
-
-    async fn authority() -> Arc<Authority> {
-        let root = PathBuf::from(std::env::var_os("CELLULE_TEST_FLEET_TLS").unwrap());
-        let tls = Arc::new(
-            LoadedPeerTls::load(
-                &root.join("node-0.crt"),
-                &root.join("node-0.key"),
-                &root.join("ca.crt"),
-                "localhost",
-            )
-            .unwrap(),
-        );
-        let code = Digest::from_bytes([7; 32]);
-        let directory = NodeDirectory::new(
-            cellule_ltx::CellStorageLayout::new(
-                cellule_store::Store::new(Arc::new(object_store::memory::InMemory::new())),
-                object_store::path::Path::from("renewal-test"),
-                [9; 16],
-            ),
-            tls.fleet(),
-            code,
-            code,
-        );
-        let enrollment = Enrollment::start(
-            directory,
-            tls,
-            0,
-            SessionId::from_bytes([11; 16]),
-            "https://localhost:8081".into(),
-            code,
-            None,
-        )
-        .await
-        .unwrap();
-        enrollment.stop.send(true).unwrap();
-        enrollment.heartbeat.await.unwrap().unwrap();
-        // A shorter local deadline is conservative relative to the signed
-        // advertisement. It reproduces a nearly exhausted renewal window.
-        let mut authority = Arc::try_unwrap(enrollment.authority).ok().unwrap();
-        let now = clock().unwrap();
-        authority.lease = NodeLeaseGuard::new(now, now + 1_000).unwrap();
-        Arc::new(authority)
-    }
-
-    #[tokio::test]
-    #[ignore = "requires generated CELLULE_TEST_FLEET_TLS fixture"]
-    async fn queued_authority_work_renews_before_the_original_local_deadline() {
-        let authority = authority().await;
-        let held = authority.state.lock().await;
-        let mut tasks = Vec::new();
-        for _ in 0..20 {
-            let authority = Arc::clone(&authority);
-            tasks.push(Box::pin(async move {
-                let _state = authority.live_state().await?;
-                tokio::time::sleep(Duration::from_millis(75)).await;
-                authority.lease.check()
-            }));
-        }
-        for task in &mut tasks {
-            assert!(futures_util::poll!(task.as_mut()).is_pending());
-        }
-        drop(held);
-        for result in futures_util::future::join_all(tasks).await {
-            result.unwrap();
-        }
-        let state = authority.state.lock().await;
-        assert_eq!(state.observed.advertisement().progress(), 2);
-        assert!(authority.lease.remaining() > Duration::from_secs(20));
-        authority.lease.fence();
-    }
-
-    #[tokio::test]
-    #[ignore = "requires generated CELLULE_TEST_FLEET_TLS fixture"]
-    async fn heartbeat_fenced_while_queued_does_not_publish_a_new_advertisement() {
-        let authority = authority().await;
-        let state = authority.state.lock().await;
-        let session = state.observed.advertisement().session();
-        let heartbeat = authority.refresh();
-        tokio::pin!(heartbeat);
-        assert!(futures_util::poll!(heartbeat.as_mut()).is_pending());
-        authority.lease.fence();
-        drop(state);
-        assert!(matches!(heartbeat.await, Err(Error::Fenced)));
-        let observed = authority
-            .directory
-            .load_if_live(session, clock().unwrap())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(observed.advertisement().progress(), 1);
-    }
-}
+mod publication_tests;
+#[cfg(test)]
+mod renewal_tests;

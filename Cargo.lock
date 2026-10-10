@@ -245,6 +245,7 @@ dependencies = [
 name = "cellule-axum"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "blake3",
  "bytes",

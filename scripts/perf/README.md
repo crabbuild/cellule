@@ -62,7 +62,7 @@ separate profile: do not compare it as an algorithm change against historical
 shared-VM runs. Guest CPU placement does not isolate host services or qualify
 physical-device durability; report those limits separately.
 
-The example authority's queued-renewal regressions use a fresh generated TLS
+The example authority's renewal and publication regressions use a generated TLS
 identity and an in-memory directory. From an isolated verification checkout,
 run them explicitly with the TLS directory produced by
 `scripts/generate-capacity-tls.py`:
@@ -70,11 +70,15 @@ run them explicitly with the TLS directory produced by
 ```sh
 CELLULE_TEST_FLEET_TLS=/absolute/path/to/generated/tls \
   cargo test -p cellule-axum --example sql --all-features --locked \
-  renewal_tests -- --ignored
+  fleet::authority:: -- --ignored
 ```
 
-These tests check renewal behind queued work and rejection of a heartbeat
-fenced while waiting. They do not replace fleet drain and cold-recovery checks.
+These tests check renewal behind queued work, renewal during a paused bundle
+PUT, ordered Cell binding, cancellation, and rejection of fenced heartbeats or
+stale publication proposals. They do not replace fleet drain and cold-recovery
+checks. The SQL example orders catalog changes separately from heartbeat state;
+bundle preparation and upload release the state lock, and final selection
+rechecks the original lease and canonical record before its CAS.
 
 The default 64-MiB retained-work and 1-GiB managed-disk limits are passed only
 to Cellule. Case metadata records these profile values for both systems, but
