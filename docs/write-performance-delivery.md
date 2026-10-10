@@ -1,5 +1,11 @@
 # Write performance implementation and verification
 
+The latest [single-pass encoder diagnostic](single-pass-bundle-encoding.md)
+reduces mean release-profile encoding time by 17.7%. Two reverse-order mixed-load
+pairs give conflicting application results; neither reaches the target. All
+420,651 ACK records pass independent journal reconciliation and warm/cold reads
+and original retries. The component change establishes no capacity qualification.
+
 The October 10 checkpoint-verification diagnostic compares production sources
 matching `25a76c0` with bounded concurrent root verification. At 2,000 offered
 writes/s across 2,000 Cells, Cellule completes 408.10/s before and 573.72/s after;
