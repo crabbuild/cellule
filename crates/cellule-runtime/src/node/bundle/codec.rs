@@ -16,9 +16,20 @@ fn position_read(d: &mut BoundedDecoder<'_>) -> Result<cellule_ltx::Position> {
     })
 }
 
-fn metadata(catalog: &Catalog, frames: usize) -> Result<BoundedEncoder> {
+pub(super) struct LeafEncoding {
+    pub(super) body: Vec<u8>,
+    pub(super) extents: Vec<([u8; 32], std::ops::Range<usize>)>,
+}
+
+struct Metadata {
+    encoder: BoundedEncoder,
+    extents: Vec<([u8; 32], std::ops::Range<usize>)>,
+}
+
+fn metadata(catalog: &Catalog, frames: usize) -> Result<Metadata> {
     catalog.validate()?;
     let mut e = BoundedEncoder::new(MAX_BUNDLE_BYTES as u32)?;
+    let mut extents = Vec::new();
     e.write_bytes(MAGIC)?;
     e.write_bytes(catalog.session.as_bytes())?;
     e.write_u64(catalog.epoch)?;
@@ -51,18 +62,22 @@ fn metadata(catalog: &Catalog, frames: usize) -> Result<BoundedEncoder> {
         e.write_u64(binding.selected_commit)?;
         position_write(&mut e, binding.selected_position)?;
         e.write_count(binding.locators.len())?;
+        let pin = binding
+            .control
+            .bundle_binding
+            .ok_or(Error::Node("bundle catalog lacks Cell pin"))?
+            .digest;
         for locator in &binding.locators {
-            e.write_bool(locator.object.is_some())?;
-            if let Some(digest) = locator.object {
-                e.write_bytes(digest.as_bytes())?;
-            }
-            e.write_u64(locator.offset)?;
-            e.write_u64(locator.bytes)?;
-            e.write_bytes(locator.frame_digest.as_bytes())?;
+            let start = e.encoded_len();
+            index::write_extent(&mut e, locator)?;
+            extents.push((*pin.as_bytes(), start..e.encoded_len()));
         }
     }
     e.write_count(frames)?;
-    Ok(e)
+    Ok(Metadata {
+        encoder: e,
+        extents,
+    })
 }
 
 #[cfg(test)]
@@ -73,7 +88,7 @@ pub(super) fn encode(
     if frames.len() > MAX_FRAMES {
         return Err(Error::Capacity("bundle frame count"));
     }
-    let mut offset = metadata(catalog, frames.len())?.finish().len() as u64;
+    let mut offset = metadata(catalog, frames.len())?.encoder.finish().len() as u64;
     for frame in frames {
         offset = offset
             .checked_add(4)
@@ -96,15 +111,24 @@ pub(super) fn encode(
             .checked_add(frame.encoded().len() as u64)
             .ok_or(Error::Capacity("bundle bytes"))?;
     }
-    let mut e = metadata(catalog, frames.len())?;
+    let mut e = metadata(catalog, frames.len())?.encoder;
     for frame in frames {
         e.write_bytes(frame.encoded())?;
     }
     Ok(Bytes::from(e.finish()))
 }
 
+#[cfg(test)]
 pub(super) fn encode_leaf(catalog: &Catalog) -> Result<Bytes> {
-    Ok(Bytes::from(metadata(catalog, 0)?.finish()))
+    Ok(Bytes::from(encode_leaf_plan(catalog)?.body))
+}
+
+pub(super) fn encode_leaf_plan(catalog: &Catalog) -> Result<LeafEncoding> {
+    let metadata = metadata(catalog, 0)?;
+    Ok(LeafEncoding {
+        body: metadata.encoder.finish(),
+        extents: metadata.extents,
+    })
 }
 
 pub(super) fn decode(body: &Bytes) -> Result<Catalog> {

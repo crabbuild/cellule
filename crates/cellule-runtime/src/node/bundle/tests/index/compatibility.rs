@@ -24,7 +24,7 @@ async fn inline_indexed_suffix_migrates_to_detached_history_with_the_same_pin() 
     catalog.predecessor = Some(original.digest());
     let (body, digest) = catalog_index::encode_inline(&mut catalog, &[]).unwrap();
     assert_eq!(&body[..8], b"\0\0\0\x04CNB2");
-    let legacy = PreparedNodeBundle {
+    let legacy = PreparedNodeBundle(Arc::new(StagedNodeBundle {
         original: Some(original),
         head: NodeBundleHead {
             epoch: EPOCH,
@@ -34,7 +34,7 @@ async fn inline_indexed_suffix_migrates_to_detached_history_with_the_same_pin() 
         body,
         catalog,
         assignments: Vec::new(),
-    };
+    }));
     f.layout
         .store()
         .put_exact(
@@ -86,7 +86,7 @@ async fn legacy_selected_catalog_is_read_and_migrated_without_changing_the_cell_
     catalog.index = None;
     catalog.predecessor = Some(original.digest());
     let body = codec::encode(&mut catalog, &[]).unwrap();
-    let legacy = PreparedNodeBundle {
+    let legacy = PreparedNodeBundle(Arc::new(StagedNodeBundle {
         original: Some(original),
         head: NodeBundleHead {
             epoch: EPOCH,
@@ -96,7 +96,7 @@ async fn legacy_selected_catalog_is_read_and_migrated_without_changing_the_cell_
         body,
         catalog,
         assignments: Vec::new(),
-    };
+    }));
     f.layout
         .store()
         .put_exact(

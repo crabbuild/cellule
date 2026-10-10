@@ -6,9 +6,12 @@ use cellule_runtime::control::authority::{CellAuthority, VersionedControl};
 use cellule_runtime::control::{Control, ControlState, Owner, RootRef};
 use cellule_runtime::identity::{CellId, IncarnationId};
 use cellule_runtime::node::log::DurabilityGate;
-use cellule_runtime::node::log_shipper::{AssignedCapture, NodeLogShipper, NodeLogSubmission};
+use cellule_runtime::node::log_shipper::{
+    AssignedCapture, NodeLogShipper, NodeLogSubmission, NodePublicationFeed,
+};
 use cellule_runtime::node::log_transport::{
-    AppendRequest, NodeLogTransport, RetireRequest, SealRequest, TailRequest,
+    AppendRequest, LocalFollowerTransport, NodeLogTransport, RetireRequest, SealRequest,
+    TailRequest,
 };
 use cellule_store::Store;
 use futures_util::stream::BoxStream;
@@ -97,6 +100,7 @@ struct Fixture {
     layout: CellStorageLayout,
     scratch: tempfile::TempDir,
     captures: Vec<AssignedCapture>,
+    feed: NodePublicationFeed,
     shipper: NodeLogShipper,
     cell: CellAuthority,
     control: VersionedControl,
@@ -104,6 +108,10 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_followers(false).await
+    }
+
+    async fn with_followers(real: bool) -> Self {
         let tls_root = PathBuf::from(std::env::var_os("CELLULE_TEST_FLEET_TLS").unwrap());
         let tls = |index| {
             Arc::new(
@@ -173,8 +181,20 @@ impl Fixture {
             .unwrap();
         let cuts = db.capture().unwrap();
         let gate = DurabilityGate::new(session, node(0), 1, [node(1), node(2)]).unwrap();
-        let shipper =
-            NodeLogShipper::new(gate, Arc::new(UnavailableFollowers), Limits::default()).unwrap();
+        let transport: Arc<dyn NodeLogTransport> = if real {
+            Arc::new(TestFollowers([1, 2].map(|index| {
+                let store = cellule_runtime::follower::FollowerStore::open(
+                    scratch.path().join(format!("follower-{index}")),
+                    Limits::default(),
+                    cellule_ltx::DiskBudget::new(32 << 20),
+                )
+                .unwrap();
+                LocalFollowerTransport::new(node(index), store)
+            })))
+        } else {
+            Arc::new(UnavailableFollowers)
+        };
+        let shipper = NodeLogShipper::new(gate, transport, Limits::default()).unwrap();
         let mut feed = shipper.take_publication_feed().unwrap();
         shipper
             .submit(
@@ -197,6 +217,7 @@ impl Fixture {
             layout,
             scratch,
             captures: vec![capture],
+            feed,
             shipper,
             cell,
             control,
@@ -254,6 +275,130 @@ impl Fixture {
         let observed = authority.load(cell).await.unwrap().unwrap();
         (db, authority, observed)
     }
+}
+
+#[tokio::test]
+#[ignore = "requires generated CELLULE_TEST_FLEET_TLS fixture"]
+async fn two_cohort_round_keeps_renewal_live_and_selects_only_in_order() {
+    let mut f = Fixture::with_followers(true).await;
+    let session = SessionId::from_bytes([11; 16]);
+    let (mut db, second, unbound) = Fixture::unbound(&f.layout, &f.scratch, session, 5).await;
+    let pinned = f.authority.bind(&second, &unbound).await.unwrap();
+    db.transaction(|tx| tx.execute_batch("INSERT INTO values_ VALUES (2)"))
+        .unwrap();
+    let cuts = db.capture().unwrap();
+    f.shipper
+        .submit(
+            NodeLogSubmission::new(
+                ApplicationId::from_bytes([9; 16]),
+                pinned.value().cell,
+                pinned.value().incarnation,
+                pinned.value().epoch,
+                2,
+                &cuts,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let second_capture = [f.feed.recv().await.unwrap()];
+    let (_, third, unbound_third) = Fixture::unbound(&f.layout, &f.scratch, session, 6).await;
+    let round = f.authority.begin_round().await.unwrap();
+    let original_expiry = f
+        .authority
+        .state
+        .lock()
+        .await
+        .observed
+        .advertisement()
+        .expires_at_ms();
+    let first = round.stage(None, &f.captures, &[], None).await.unwrap();
+    f.store.armed.store(true, Ordering::Release);
+    let mut first_upload = Box::pin(round.upload(Arc::clone(&first)));
+    assert!(futures_util::poll!(first_upload.as_mut()).is_pending());
+    assert!(futures_util::poll!(Box::pin(f.store.entered.notified())).is_ready());
+    // The example uses wall time for signed advertisements. Actual elapsed
+    // time is required here; paused Tokio time cannot expire that snapshot.
+    for seconds in [11, 11, 9] {
+        tokio::time::sleep(Duration::from_secs(seconds)).await;
+        f.authority.refresh().await.unwrap();
+    }
+    assert!(clock().unwrap() > original_expiry);
+    f.authority.lease.check().unwrap();
+    let successor = round
+        .stage(Some(&first), &second_capture, &[], None)
+        .await
+        .unwrap();
+    let successor = round.upload(successor).await.unwrap();
+    assert!(
+        round
+            .select(&successor, &[], &f.authority.lease)
+            .await
+            .is_err(),
+        "a completed successor PUT cannot select ahead of the predecessor"
+    );
+    assert_eq!(
+        f.authority
+            .state
+            .lock()
+            .await
+            .observed
+            .advertisement()
+            .log()
+            .unwrap()
+            .tiered_through(),
+        0
+    );
+    let bind = f.authority.bind(&third, &unbound_third);
+    tokio::pin!(bind);
+    assert!(futures_util::poll!(bind.as_mut()).is_pending());
+    f.store.resume.notify_one();
+    let uploaded = first_upload.await.unwrap();
+    let first_proofs = round
+        .select(&uploaded, &[], &f.authority.lease)
+        .await
+        .unwrap();
+    assert_eq!(first_proofs[0].commit_sequence(), 2);
+    // First selection can win while the managed successor is still assembling.
+    // Re-observing that exact selected predecessor must yield the same proposal.
+    let after_selection = round
+        .stage(Some(&first), &second_capture, &[], None)
+        .await
+        .unwrap();
+    assert_eq!(after_selection.head(), successor.head());
+    drop(after_selection);
+    let second_proofs = round
+        .select(&successor, &[], &f.authority.lease)
+        .await
+        .unwrap();
+    assert_eq!(second_proofs[0].commit_sequence(), 2);
+    assert_eq!(
+        f.authority
+            .state
+            .lock()
+            .await
+            .observed
+            .advertisement()
+            .log()
+            .unwrap()
+            .tiered_through(),
+        2
+    );
+    drop(round);
+    bind.await.unwrap();
+    for (cell, control) in [(&f.cell, &f.control), (&second, &pinned)] {
+        assert_eq!(
+            f.authority
+                .directory
+                .load_bundle_coverage(cell, control, Limits::default())
+                .await
+                .unwrap()
+                .commit_sequence(),
+            2
+        );
+    }
+    f.authority.lease.fence();
+    f.shipper.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -448,7 +593,45 @@ async fn cancelled_preparation_releases_ordering_without_crediting_the_capture()
     f.shipper.shutdown().await.unwrap();
 }
 
-// This fixture certifies only bucket publication, never follower durability.
+// The two-cohort fixture retains actual file-backed follower acknowledgements.
+struct TestFollowers([LocalFollowerTransport; 2]);
+impl TestFollowers {
+    fn member(&self, member: NodeId) -> &LocalFollowerTransport {
+        &self.0[usize::from(member == node(2))]
+    }
+}
+impl NodeLogTransport for TestFollowers {
+    fn append<'a>(
+        &'a self,
+        member: NodeId,
+        request: AppendRequest,
+    ) -> BoxFuture<'a, Result<cellule_runtime::follower::FollowerReceipt>> {
+        self.member(member).append(member, request)
+    }
+    fn seal<'a>(
+        &'a self,
+        member: NodeId,
+        request: SealRequest,
+    ) -> BoxFuture<'a, Result<cellule_runtime::follower::FollowerReceipt>> {
+        self.member(member).seal(member, request)
+    }
+    fn retire<'a>(
+        &'a self,
+        member: NodeId,
+        request: RetireRequest,
+    ) -> BoxFuture<'a, Result<cellule_runtime::follower::FollowerReceipt>> {
+        self.member(member).retire(member, request)
+    }
+    fn tail<'a>(
+        &'a self,
+        member: NodeId,
+        request: TailRequest,
+    ) -> BoxFuture<'a, Result<Vec<Bytes>>> {
+        self.member(member).tail(member, request)
+    }
+}
+
+// These single-cohort fixtures certify only bucket publication, never follower durability.
 struct UnavailableFollowers;
 impl NodeLogTransport for UnavailableFollowers {
     fn append<'a>(

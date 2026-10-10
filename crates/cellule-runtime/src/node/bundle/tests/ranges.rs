@@ -302,12 +302,17 @@ async fn locator_pressure_refuses_selection_without_dropping_the_last_proof() {
             .prepare_node_bundle(&f.node, &frames, &[assigned], now)
             .await
             .unwrap();
-        f.node = f
+        let (selected, proofs) = f
             .directory
             .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), now)
             .await
-            .unwrap()
-            .0;
+            .unwrap();
+        assert!(
+            proofs[0].retained_metadata_bytes().unwrap()
+                <= f.directory.bundle_receipt_memory_bound(1).unwrap(),
+            "pipeline receipt admission must cover the maximum native history"
+        );
+        f.node = selected;
         selected_frames += frames.len();
         last_commit = commit;
     }

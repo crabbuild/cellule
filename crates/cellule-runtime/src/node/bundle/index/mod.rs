@@ -16,6 +16,9 @@ pub use preparation::BundlePreparation;
 pub(crate) use preparation::PREPARATION_BYTES;
 #[cfg(test)]
 mod tests;
+pub(super) use codec::write_extent;
+#[cfg(test)]
+pub(super) use dense::encode_original;
 pub(super) use history::validate_deferred;
 #[cfg(test)]
 pub(super) use io::load;

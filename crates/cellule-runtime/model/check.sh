@@ -117,6 +117,9 @@ case "$mode" in
     run_model BundleCoverageGap.cfg ContiguousSelection BundleCoverage
     run_model BundleCoverageRead.cfg ReadProven BundleCoverage
     run_model BundleCoverageGC.cfg ColdRecoverable BundleCoverage
+    # A deliberate non-invariant proves the two-preparation schedule is reached;
+    # the positive safety run above must cover that schedule rather than exclude it.
+    run_model BundleCoveragePipelineReachability.cfg NeverPrepareAhead BundleCoverage
     ;;
   binding-drain)
     java -cp "$jar" tlc2.TLC -workers 1 -nowarning -noGenerateSpecTE \

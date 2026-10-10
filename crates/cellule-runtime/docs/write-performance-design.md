@@ -291,6 +291,35 @@ The [encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
 preserves exact bytes in the external old-encoder oracle, but establishes no
 repeatable application improvement and fails performance qualification.
 
+Changed CNB3 shards now retain a one-use canonical encoding plan. The encoder
+records each detached history field, assigns native and history offsets, then
+fills those same-width fields without serializing all sibling controls again.
+Complete local self-verification, fresh origin verification and the canonical
+selection CAS still run. The real 64-Cell/2,000-binding regression compares
+every output byte and catalog with the retained pre-change encoder over six
+successive captures, then cold-restores every participating Cell. This changes
+preparation CPU work; publication remains serial and still retains native-byte
+credit until selection. No capacity qualification follows from the codec test.
+
+The protocol API now separates `StagedNodeBundle` from `PreparedNodeBundle`.
+`stage_node_bundle_after` encodes without PUT and can borrow one exact staged
+predecessor. `upload_node_bundle` shares those immutable bytes while returning
+only the uploaded representation accepted by selection. Index loading uses a
+metadata-only predecessor view; it cannot create the fresh origin capability
+consumed by verification. The bounded model includes two preparations before
+upload. The [typed staging regressions](../../../docs/typed-bundle-staging.md)
+cover overlapping preparation/PUT, ordered CAS, fencing and exact cold restore.
+The [managed pipeline](../../../docs/managed-bundle-pipeline.md) now owns a
+`NodeBundlePublicationRound` across at most two cohorts. A capture arriving
+during the first publication can stage and upload a successor after nonblocking
+admission of its working buffers and both receipt bounds. Tight credit falls
+back to the existing serial receipt wait after releasing catalog ordering.
+Checkpoint-containing first cohorts use serial publication; lookahead cohorts
+contain native work only. Selections remain ordered, heartbeat state stays
+available during immutable work, and all accepted I/O joins after failure,
+fencing or shutdown-caller cancellation. No new application TPS or capacity
+qualification follows from these managed lifecycle checks.
+
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
 The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)

@@ -4,9 +4,10 @@ use super::receipt_pressure::submission;
 use super::*;
 use crate::cell::worker::SqlWorkerPool;
 use crate::node::durability::{
-    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority, NodeDurability,
+    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+    NodeBundlePublicationRound, NodeDurability,
 };
-use crate::node::log_shipper::{AssignedCapture, NodeLogShipper};
+use crate::node::log_shipper::NodeLogShipper;
 use futures_util::{future::BoxFuture, poll};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -37,27 +38,17 @@ impl NodeBundleAuthority for HeldSelection {
     }
 }
 impl NodeBundlePublicationAuthority for HeldSelection {
-    fn select<'a>(
+    fn receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        self.original.receipt_memory_bound(captures)
+    }
+    fn begin_round<'a>(
         &'a self,
-        captures: &'a [AssignedCapture],
-        checkpoints: &'a [BundleCheckpoint],
-        prefixes: &'a [&'a BundleCoverageProof],
-        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
-        lease: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+    ) -> BoxFuture<'a, Result<Box<dyn NodeBundlePublicationRound + 'a>>> {
         Box::pin(async move {
-            let result = self
-                .original
-                .select(captures, checkpoints, prefixes, preparation, lease)
-                .await?;
-            self.combined.fetch_add(checkpoints.len(), Ordering::SeqCst);
-            self.largest_combined
-                .fetch_max(checkpoints.len(), Ordering::SeqCst);
-            if self.calls.fetch_add(1, Ordering::SeqCst) == self.hold_after {
-                self.entered.notify_one();
-                self.resume.notified().await;
-            }
-            Ok(result)
+            Ok(super::publication_hooks::HookedRound::wrap(
+                self.original.begin_round().await?,
+                self,
+            ))
         })
     }
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
@@ -359,4 +350,23 @@ async fn producer_reserves_the_ready_checkpoint_cohort_before_filling_native_cap
         0
     );
     pool.shutdown().await.unwrap();
+}
+
+impl super::publication_hooks::Hook for HeldSelection {
+    fn after_select<'a>(
+        &'a self,
+        checkpoints: usize,
+        proofs: Vec<BundleCoverageProof>,
+    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+        Box::pin(async move {
+            self.combined.fetch_add(checkpoints, Ordering::SeqCst);
+            self.largest_combined
+                .fetch_max(checkpoints, Ordering::SeqCst);
+            if self.calls.fetch_add(1, Ordering::SeqCst) == self.hold_after {
+                self.entered.notify_one();
+                self.resume.notified().await;
+            }
+            Ok(proofs)
+        })
+    }
 }

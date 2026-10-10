@@ -86,6 +86,13 @@ row-scoped rebase can reuse uploaded hot-Cell bytes after the old CAS loses to
 that closure, while a closed participating binding remains rejected. Frozen
 endpoints are per Cell, not the node's later global sequence.
 
+Preparation may also encode one exact successor while its predecessor remains
+prepared or uploaded. It pins the predecessor's proposed head and original
+version. Selection still requires the current contiguous predecessor and
+complete verified dependencies. The reachability configuration deliberately
+violates `NeverPrepareAhead`, proving that both preparations before either
+upload or selection are covered by the positive exploration.
+
 The positive model checks contiguous selection, complete verified inputs,
 proven read visibility and retention of a shared object until both Cells have
 authenticated checkpoints. A hot Cell cannot release its dormant sibling's

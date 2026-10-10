@@ -1,5 +1,31 @@
 # Write performance implementation and verification
 
+The [managed bundle pipeline](managed-bundle-pipeline.md) connects the typed
+staging phases to the serving producer. One pre-admitted successor can upload
+while its predecessor publishes; selection and receipt confirmation remain
+ordered. Tight admission and checkpoint cohorts use the existing serial path.
+Accepted I/O joins after failure, fencing and shutdown-caller cancellation.
+Its [fresh mixed-load diagnostic](managed-bundle-pipeline-measurement.md)
+completes 873.35–1,038.80 writes/s and 8,877.55–10,897.50 reads/s versus
+614.35–720.60 and 6,301.73–6,475.47 for the serial baseline. Both short pairs
+complete more candidate requests, but write p99 varies, queued offers are dropped
+and root debt grows faster. All 414,878 ACKs pass independent journal
+reconciliation, warm/cold reads and exact retries. These short pairs do not
+establish sustainable capacity; the performance goal remains unmet.
+
+The external [two-cohort preparation prototype](bundle-preparation-pipeline-prototype.md)
+can prepare a successor before predecessor upload/selection, while rejecting
+out-of-order coverage, missing dependencies, catalog changes and late fenced
+uploads. Its Rust and bounded-model checks pass. Managed memory, receipt-credit
+and joined lifecycle integration remain required; serving behavior and the last
+measured application rates are unchanged.
+
+The earlier [single-pass encoder diagnostic](single-pass-bundle-encoding.md)
+reduces mean release-profile encoding time by 17.7%. Two reverse-order mixed-load
+pairs give conflicting application results; neither reaches the target. All
+420,651 ACK records pass independent journal reconciliation and warm/cold reads
+and original retries. The component change establishes no capacity qualification.
+
 The October 10 checkpoint-verification diagnostic compares production sources
 matching `25a76c0` with bounded concurrent root verification. At 2,000 offered
 writes/s across 2,000 Cells, Cellule completes 408.10/s before and 573.72/s after;

@@ -99,38 +99,84 @@ pub(super) fn decode(
     Ok(locators)
 }
 
+/// One-use encoded shard. Native assignment changes only its history extents;
+/// their original field ranges are recorded by the canonical leaf encoder.
+pub(super) struct LeafPlan {
+    body: Vec<u8>,
+    extents: Vec<([u8; 32], std::ops::Range<usize>)>,
+}
+
+impl LeafPlan {
+    pub(super) fn new(catalog: &Catalog, histories: &BTreeMap<[u8; 32], History>) -> Result<Self> {
+        let mut compact = catalog.clone();
+        compact.index = None;
+        for binding in &mut compact.bindings {
+            if let Some(history) = histories.get(&pin(binding)?) {
+                binding.locators = vec![history.extent.clone()];
+            } else if !binding.locators.is_empty() {
+                return Err(Error::Node("bundle leaf lacks detached history"));
+            }
+        }
+        let inline = super::super::codec::encode_leaf_plan(&compact)?;
+        let mut e = BoundedEncoder::new(MAX_BUNDLE_BYTES as u32)?;
+        e.write_bytes(LEAF_MAGIC)?;
+        let inline_offset = e.encoded_len() + 4;
+        e.write_bytes(&inline.body)?;
+        e.write_count(
+            compact
+                .bindings
+                .iter()
+                .filter(|binding| !binding.locators.is_empty())
+                .count(),
+        )?;
+        for binding in &compact.bindings {
+            if let Some(history) = histories.get(&pin(binding)?) {
+                e.write_bytes(&pin(binding)?)?;
+                e.write_count(history.count)?;
+                e.write_u64(history.native_bytes)?;
+            }
+        }
+        Ok(Self {
+            body: e.finish(),
+            extents: inline
+                .extents
+                .into_iter()
+                .map(|(pin, range)| (pin, range.start + inline_offset..range.end + inline_offset))
+                .collect(),
+        })
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.body.len()
+    }
+
+    pub(super) fn finish(mut self, histories: &BTreeMap<[u8; 32], History>) -> Result<Bytes> {
+        for (pin, range) in self.extents {
+            let history = histories
+                .get(&pin)
+                .ok_or(Error::Node("bundle leaf lacks detached history"))?;
+            let mut e = BoundedEncoder::new(MAX_BUNDLE_BYTES as u32)?;
+            super::codec::write_extent(&mut e, &history.extent)?;
+            let extent = e.finish();
+            let target = self
+                .body
+                .get_mut(range)
+                .filter(|target| target.len() == extent.len())
+                .ok_or(Error::Node(
+                    "bundle history extent width changed during encoding",
+                ))?;
+            target.copy_from_slice(&extent);
+        }
+        Ok(Bytes::from(self.body))
+    }
+}
+
+#[cfg(test)]
 pub(super) fn encode_leaf(
     catalog: &Catalog,
     histories: &BTreeMap<[u8; 32], History>,
 ) -> Result<Bytes> {
-    let mut compact = catalog.clone();
-    compact.index = None;
-    for binding in &mut compact.bindings {
-        if let Some(history) = histories.get(&pin(binding)?) {
-            binding.locators = vec![history.extent.clone()];
-        } else if !binding.locators.is_empty() {
-            return Err(Error::Node("bundle leaf lacks detached history"));
-        }
-    }
-    let inline = super::super::codec::encode_leaf(&compact)?;
-    let mut e = BoundedEncoder::new(MAX_BUNDLE_BYTES as u32)?;
-    e.write_bytes(LEAF_MAGIC)?;
-    e.write_bytes(&inline)?;
-    e.write_count(
-        compact
-            .bindings
-            .iter()
-            .filter(|binding| !binding.locators.is_empty())
-            .count(),
-    )?;
-    for binding in &compact.bindings {
-        if let Some(history) = histories.get(&pin(binding)?) {
-            e.write_bytes(&pin(binding)?)?;
-            e.write_count(history.count)?;
-            e.write_u64(history.native_bytes)?;
-        }
-    }
-    Ok(Bytes::from(e.finish()))
+    LeafPlan::new(catalog, histories)?.finish(histories)
 }
 
 pub(super) fn decode_leaf(body: &Bytes) -> Result<(Catalog, BTreeMap<[u8; 32], History>)> {

@@ -7,9 +7,20 @@ impl NodeDirectory {
     pub(super) async fn upload_catalog(
         &self,
         original: Option<NodeBundleHead>,
-        mut catalog: Catalog,
+        catalog: Catalog,
         frames: &[cellule_ltx::VerifiedNodeFrame],
     ) -> Result<PreparedNodeBundle> {
+        let staged = self.stage_catalog(original, catalog, frames, Vec::new())?;
+        self.upload_node_bundle(staged).await
+    }
+
+    pub(super) fn stage_catalog(
+        &self,
+        original: Option<NodeBundleHead>,
+        mut catalog: Catalog,
+        frames: &[cellule_ltx::VerifiedNodeFrame],
+        assignments: Vec<crate::node::log::AssignedCommitRange>,
+    ) -> Result<std::sync::Arc<StagedNodeBundle>> {
         if self.layout.store().staging_write_prefix().is_some() {
             return Err(Error::Node(
                 "bundle selection requires canonical origin storage",
@@ -22,24 +33,40 @@ impl NodeDirectory {
             digest,
             selected_through: catalog.selected_through,
         };
-        self.layout
-            .store()
-            .put_exact(
-                &self.layout.node_coverage_bundle_path(
-                    catalog.session.as_bytes(),
-                    catalog.epoch,
-                    head.digest.as_bytes(),
-                ),
-                body.clone(),
-            )
-            .await?;
-        Ok(PreparedNodeBundle {
+        Ok(std::sync::Arc::new(StagedNodeBundle {
             original,
             catalog,
             body,
             head,
-            assignments: Vec::new(),
-        })
+            assignments,
+        }))
+    }
+
+    /// Uploads already-encoded immutable bytes, without selecting authority or
+    /// granting durability. Shared staged metadata remains usable by one exact
+    /// successor while this PUT is pending. Accepted uploads must be joined by
+    /// the caller; cancelling this future is not a publication or drain proof.
+    pub async fn upload_node_bundle(
+        &self,
+        staged: std::sync::Arc<StagedNodeBundle>,
+    ) -> Result<PreparedNodeBundle> {
+        if self.layout.store().staging_write_prefix().is_some() {
+            return Err(Error::Node(
+                "bundle selection requires canonical origin storage",
+            ));
+        }
+        self.layout
+            .store()
+            .put_exact(
+                &self.layout.node_coverage_bundle_path(
+                    staged.catalog.session.as_bytes(),
+                    staged.catalog.epoch,
+                    staged.head.digest.as_bytes(),
+                ),
+                staged.body.clone(),
+            )
+            .await?;
+        Ok(PreparedNodeBundle(staged))
     }
 
     pub(super) async fn select_catalog(

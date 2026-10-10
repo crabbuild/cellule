@@ -3,9 +3,10 @@ use super::*;
 use crate::cell::worker::SqlWorkerPool;
 use crate::fleet::resource::{ResourceCost, ResourceLedger, ResourceReservation};
 use crate::node::durability::{
-    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority, NodeDurability,
+    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+    NodeBundlePublicationRound, NodeDurability,
 };
-use crate::node::log_shipper::{AssignedCapture, NodeLogShipper, NodeLogSubmission};
+use crate::node::log_shipper::{NodeLogShipper, NodeLogSubmission};
 use futures_util::future::BoxFuture;
 use std::sync::{
     Mutex,
@@ -40,32 +41,17 @@ impl NodeBundleAuthority for HeldReceiptCredit {
     }
 }
 impl NodeBundlePublicationAuthority for HeldReceiptCredit {
-    fn select<'a>(
+    fn receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        self.original.receipt_memory_bound(captures)
+    }
+    fn begin_round<'a>(
         &'a self,
-        captures: &'a [AssignedCapture],
-        checkpoints: &'a [BundleCheckpoint],
-        prefixes: &'a [&'a BundleCoverageProof],
-        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
-        lease: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+    ) -> BoxFuture<'a, Result<Box<dyn NodeBundlePublicationRound + 'a>>> {
         Box::pin(async move {
-            let proofs = self
-                .original
-                .select(captures, checkpoints, prefixes, preparation, lease)
-                .await?;
-            if self.selects.fetch_add(1, Ordering::SeqCst) == 1 {
-                let budget = self.ledger.snapshot()?;
-                let remaining = budget.limit.retained_bytes() - budget.used.retained_bytes();
-                // Reproduce an older root admission retaining the remaining
-                // credit until its canonical checkpoint callback joins.
-                *self.held.lock().unwrap() = Some(
-                    self.ledger
-                        .try_reserve(ResourceCost::zero().with_retained_bytes(remaining))?,
-                );
-                self.selected.notify_one();
-                self.resume.notified().await;
-            }
-            Ok(proofs)
+            Ok(super::publication_hooks::HookedRound::wrap(
+                self.original.begin_round().await?,
+                self,
+            ))
         })
     }
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
@@ -264,4 +250,26 @@ async fn producer_waits_for_receipt_credit_and_services_the_checkpoint_that_rele
         0
     );
     pool.shutdown().await.unwrap();
+}
+
+impl super::publication_hooks::Hook for HeldReceiptCredit {
+    fn after_select<'a>(
+        &'a self,
+        _: usize,
+        proofs: Vec<BundleCoverageProof>,
+    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+        Box::pin(async move {
+            if self.selects.fetch_add(1, Ordering::SeqCst) == 1 {
+                let budget = self.ledger.snapshot()?;
+                let remaining = budget.limit.retained_bytes() - budget.used.retained_bytes();
+                *self.held.lock().unwrap() = Some(
+                    self.ledger
+                        .try_reserve(ResourceCost::zero().with_retained_bytes(remaining))?,
+                );
+                self.selected.notify_one();
+                self.resume.notified().await;
+            }
+            Ok(proofs)
+        })
+    }
 }

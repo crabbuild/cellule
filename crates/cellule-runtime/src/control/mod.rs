@@ -17,7 +17,7 @@ use crate::identity::IncarnationId;
 use crate::identity::{CellId, Digest, SessionId};
 use crate::{Error, Result};
 
-const MAX_CONTROL_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_CONTROL_BYTES: usize = 8 * 1024;
 
 /// Exact immutable recovery root published by the current Cell control record.
 #[derive(Clone, Debug, PartialEq, Eq)]

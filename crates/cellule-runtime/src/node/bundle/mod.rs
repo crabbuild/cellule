@@ -148,13 +148,55 @@ struct Catalog {
     index: Option<index::LoadedIndex>,
 }
 
-/// Uploaded exact proposal. It cannot release an ACK or prune a capture.
-pub struct PreparedNodeBundle {
+/// Encoded immutable proposal, before any object-store publication.
+///
+/// This metadata can prepare one exact contiguous successor. It cannot be
+/// passed to selection, release a response or prune an original capture.
+/// Callers retain admission for the complete encoded/catalog lifetime; sharing
+/// this value through `Arc` does not copy its body or grant origin availability.
+///
+/// A staged value cannot be selected before upload:
+///
+/// ```compile_fail,E0308
+/// use cellule_runtime::node::{NodeDirectory, VersionedNodeAdvertisement};
+/// use cellule_runtime::node::bundle::StagedNodeBundle;
+/// use cellule_runtime::node::lease::NodeLeaseGuard;
+/// async fn cannot_select_staged(
+///     directory: &NodeDirectory,
+///     observed: &VersionedNodeAdvertisement,
+///     staged: &StagedNodeBundle,
+///     lease: &NodeLeaseGuard,
+/// ) {
+///     directory.select_node_bundle(
+///         observed, staged, lease, cellule_ltx::Limits::default(), 0,
+///     ).await;
+/// }
+/// ```
+pub struct StagedNodeBundle {
     original: Option<NodeBundleHead>,
     catalog: Catalog,
     body: Bytes,
     head: NodeBundleHead,
     assignments: Vec<crate::node::log::AssignedCommitRange>,
+}
+
+/// Uploaded exact proposal. Selection still performs a complete fresh origin
+/// read and authority CAS before creating coverage. Upload supplies no ACK.
+pub struct PreparedNodeBundle(std::sync::Arc<StagedNodeBundle>);
+
+impl std::ops::Deref for PreparedNodeBundle {
+    type Target = StagedNodeBundle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl StagedNodeBundle {
+    /// Exact proposed head. Observing this metadata grants no coverage.
+    pub const fn head(&self) -> NodeBundleHead {
+        self.head
+    }
 }
 
 /// Selected, dependency-verified coverage of one exact Cell writer.

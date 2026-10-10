@@ -1,13 +1,8 @@
-//! One immutable upload holds changed shards, native frames and small histories.
+// Reference CNB3 encoder from aaed329, retained only for byte compatibility.
+// Keep its two-pass shard construction independent of the production plan.
 use super::*;
 
-mod native;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-pub(in crate::node::bundle) use tests::encode_original;
-
-pub(super) fn encode(
+pub(in crate::node::bundle) fn encode_original(
     catalog: &mut Catalog,
     frames: &[cellule_ltx::VerifiedNodeFrame],
 ) -> Result<(Bytes, Digest)> {
@@ -90,15 +85,13 @@ pub(super) fn encode(
         new.insert(pin);
     }
     let mut offset = HEADER_BYTES as u64;
-    let mut plans = Vec::new();
     for id in &changed {
         let rows = groups.get(id).cloned().unwrap_or_default();
         if rows.is_empty() {
             shards[usize::from(*id)] = None;
             continue;
         }
-        let plan = history::LeafPlan::new(&leaf(catalog, rows), &histories)?;
-        let bytes = plan.len() as u64;
+        let bytes = encode_leaf_original(&leaf(catalog, rows), &histories)?.len() as u64;
         shards[usize::from(*id)] = Some(Shard {
             extent: Locator {
                 object: None,
@@ -111,7 +104,6 @@ pub(super) fn encode(
         offset = offset
             .checked_add(bytes)
             .ok_or(Error::Capacity("bundle shard bytes"))?;
-        plans.push((*id, plan));
     }
     let native = native::assign(catalog, frames, &changed, &mut offset)?;
     let mut history_bodies = Vec::new();
@@ -147,13 +139,13 @@ pub(super) fn encode(
     if offset > MAX_BUNDLE_BYTES {
         return Err(Error::Capacity("bundle bytes"));
     }
-    // Final history locations occupy the same recorded fields as the planning
-    // extents. Reuse the validated shard bytes rather than reserializing every
-    // sibling control record; final self-verification still decodes all rows.
+    // Detached leaf encoding replaces every nonempty locator array with its
+    // authenticated history extent. Native offset updates cannot change those
+    // compact rows, so retain the original groups instead of cloning them again.
     let mut bodies = Vec::new();
-    for (id, plan) in plans {
-        if let Some(reference) = &mut shards[usize::from(id)] {
-            let body = plan.finish(&histories)?;
+    for id in &changed {
+        if let Some(reference) = &mut shards[usize::from(*id)] {
+            let body = encode_leaf_original(&leaf(catalog, groups[id].clone()), &histories)?;
             if body.len() as u64 != reference.extent.bytes {
                 return Err(Error::Node("bundle shard size changed during encoding"));
             }
@@ -188,79 +180,38 @@ pub(super) fn encode(
     verify_local(&body, &root)?;
     Ok((body, digest))
 }
+use crate::codec::BoundedEncoder;
 
-fn verify_local(body: &Bytes, expected: &Root) -> Result<()> {
-    let root = codec::decode(&body[..HEADER_BYTES])?;
-    if &root != expected || body.len() as u64 != root.object_bytes {
-        return Err(Error::Node("bundle index self-verification differs"));
-    }
-    let mut offset = HEADER_BYTES as u64;
-    let mut local_histories = BTreeMap::new();
-    for (id, shard) in root.shards.iter().enumerate() {
-        let Some(shard) = shard else {
-            continue;
-        };
-        if shard.extent.object.is_some() {
-            continue;
+fn encode_leaf_original(
+    catalog: &Catalog,
+    histories: &BTreeMap<[u8; 32], history::History>,
+) -> Result<Bytes> {
+    let mut compact = catalog.clone();
+    compact.index = None;
+    for binding in &mut compact.bindings {
+        if let Some(history) = histories.get(&history::pin(binding)?) {
+            binding.locators = vec![history.extent.clone()];
+        } else if !binding.locators.is_empty() {
+            return Err(Error::Node("bundle leaf lacks detached history"));
         }
-        if shard.extent.offset != offset {
-            return Err(Error::Node("bundle local shard extents are not canonical"));
-        }
-        let (leaf, histories) =
-            decode_leaf_with_histories(extent_bytes(body, &shard.extent)?, shard, id as u8, &root)?;
-        for binding in leaf.bindings {
-            let pin = history::pin(&binding)?;
-            if let Some(history) = histories
-                .get(&pin)
-                .filter(|history| history.extent.object.is_none())
-                && local_histories
-                    .insert(pin, (binding, history.clone()))
-                    .is_some()
-            {
-                return Err(Error::Node("bundle local history is not unique"));
-            }
-        }
-        offset += shard.extent.bytes;
     }
-    for frame in &root.frames {
-        if frame.offset != offset {
-            return Err(Error::Node("bundle local native extents differ"));
+    let inline = crate::node::bundle::codec::encode_leaf(&compact)?;
+    let mut e = BoundedEncoder::new(crate::node::bundle::MAX_BUNDLE_BYTES as u32)?;
+    e.write_bytes(b"CBL3")?;
+    e.write_bytes(&inline)?;
+    e.write_count(
+        compact
+            .bindings
+            .iter()
+            .filter(|binding| !binding.locators.is_empty())
+            .count(),
+    )?;
+    for binding in &compact.bindings {
+        if let Some(history) = histories.get(&history::pin(binding)?) {
+            e.write_bytes(&history::pin(binding)?)?;
+            e.write_count(history.count)?;
+            e.write_u64(history.native_bytes)?;
         }
-        extent_bytes(body, frame)?;
-        offset += frame.bytes;
     }
-    let mut native_locators = Vec::new();
-    for (binding, history) in local_histories.values() {
-        if history.extent.offset != offset {
-            return Err(Error::Node("bundle local histories are not canonical"));
-        }
-        let locators = history::decode(
-            &extent_bytes(body, &history.extent)?,
-            root.session,
-            root.epoch,
-            binding,
-            history,
-        )?;
-        native_locators.extend(
-            locators
-                .into_iter()
-                .filter(|locator| locator.object.is_none()),
-        );
-        offset += history.extent.bytes;
-    }
-    if offset != root.object_bytes
-        || native_locators.len() != root.frames.len()
-        || root.frames.iter().any(|frame| {
-            native_locators
-                .iter()
-                .filter(|locator| *locator == frame)
-                .count()
-                != 1
-        })
-    {
-        return Err(Error::Node(
-            "bundle local history/native extent coverage differs",
-        ));
-    }
-    Ok(())
+    Ok(Bytes::from(e.finish()))
 }

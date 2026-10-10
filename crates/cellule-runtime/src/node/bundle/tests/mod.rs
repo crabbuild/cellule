@@ -23,6 +23,8 @@ mod faults;
 mod index;
 mod lifecycle;
 mod managed;
+mod pipeline;
+mod publication_hooks;
 mod ranges;
 mod readiness;
 mod receipt_pressure;

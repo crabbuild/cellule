@@ -8,9 +8,10 @@ use crate::cell::worker::SqlWorkerPool;
 use crate::fleet::telemetry::{CellTelemetry, CommandResponseSource};
 use crate::identity::{CellTarget, NamespaceId, RequestId, TenantId};
 use crate::node::durability::{
-    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority, NodeDurability,
+    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+    NodeBundlePublicationRound, NodeDurability,
 };
-use crate::node::log_shipper::{AssignedCapture, NodeLogShipper};
+use crate::node::log_shipper::NodeLogShipper;
 use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -41,15 +42,15 @@ impl NodeBundleAuthority for DelayedSelection {
 }
 
 impl NodeBundlePublicationAuthority for DelayedSelection {
-    fn select<'a>(
+    fn receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        self.authority.receipt_memory_bound(captures)
+    }
+    fn begin_round<'a>(
         &'a self,
-        captures: &'a [AssignedCapture],
-        checkpoints: &'a [BundleCheckpoint],
-        prefixes: &'a [&'a BundleCoverageProof],
-        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
-        lease: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+    ) -> BoxFuture<'a, Result<Box<dyn NodeBundlePublicationRound + 'a>>> {
         Box::pin(async move {
+            // Keep the original delay before catalog ordering so prior-root
+            // publication and lease renewal can complete while this cut waits.
             while self.held.load(Ordering::Acquire) {
                 let changed = self.changed.notified();
                 tokio::pin!(changed);
@@ -59,9 +60,7 @@ impl NodeBundlePublicationAuthority for DelayedSelection {
                     changed.await;
                 }
             }
-            self.authority
-                .select(captures, checkpoints, prefixes, preparation, lease)
-                .await
+            self.authority.begin_round().await
         })
     }
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {

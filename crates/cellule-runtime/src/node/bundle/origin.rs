@@ -1,6 +1,55 @@
 //! One fresh, bounded object read shared by an individual selection operation.
 use super::*;
 
+/// Encoded predecessor view for index metadata construction only. It has no
+/// conversion into the fresh-origin capability consumed by selection.
+pub(super) struct ProposalMetadata<'a> {
+    staged: &'a StagedNodeBundle,
+}
+
+impl<'a> ProposalMetadata<'a> {
+    pub(super) fn new(staged: &'a StagedNodeBundle) -> Result<Self> {
+        if index::body_digest(&staged.body)? != staged.head.digest {
+            return Err(Error::Node("bundle proposal metadata digest differs"));
+        }
+        Ok(Self { staged })
+    }
+
+    fn range(
+        &self,
+        session: SessionId,
+        epoch: u64,
+        object: Digest,
+        range: &std::ops::Range<u64>,
+    ) -> Result<Option<Bytes>> {
+        if session != self.staged.catalog.session
+            || epoch != self.staged.head.epoch
+            || object != self.staged.head.digest
+        {
+            return Ok(None);
+        }
+        slice(&self.staged.body, range).map(Some)
+    }
+}
+
+pub(super) async fn read_metadata_range(
+    layout: &cellule_ltx::CellStorageLayout,
+    session: SessionId,
+    epoch: u64,
+    object: Digest,
+    range: std::ops::Range<u64>,
+    metadata: Option<&ProposalMetadata<'_>>,
+) -> Result<Bytes> {
+    if let Some(body) = metadata
+        .map(|metadata| metadata.range(session, epoch, object, &range))
+        .transpose()?
+        .flatten()
+    {
+        return Ok(body);
+    }
+    read_range(layout, session, epoch, object, range, None).await
+}
+
 pub(super) struct OriginBundle {
     session: SessionId,
     head: NodeBundleHead,
@@ -79,13 +128,7 @@ impl OriginBundle {
         if session != self.session || epoch != self.head.epoch || object != self.head.digest {
             return Ok(None);
         }
-        if range.start > range.end || range.end > self.body.len() as u64 {
-            return Err(Error::Node("bundle extent is truncated"));
-        }
-        let start =
-            usize::try_from(range.start).map_err(|_| Error::Node("bundle extent overflow"))?;
-        let end = usize::try_from(range.end).map_err(|_| Error::Node("bundle extent overflow"))?;
-        Ok(Some(self.body.slice(start..end)))
+        slice(&self.body, range).map(Some)
     }
 }
 
@@ -111,4 +154,13 @@ pub(super) async fn read_range(
             range,
         )
         .await?)
+}
+
+fn slice(body: &Bytes, range: &std::ops::Range<u64>) -> Result<Bytes> {
+    if range.start > range.end || range.end > body.len() as u64 {
+        return Err(Error::Node("bundle extent is truncated"));
+    }
+    let start = usize::try_from(range.start).map_err(|_| Error::Node("bundle extent overflow"))?;
+    let end = usize::try_from(range.end).map_err(|_| Error::Node("bundle extent overflow"))?;
+    Ok(body.slice(start..end))
 }

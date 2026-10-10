@@ -7,8 +7,8 @@ use crate::cell::worker::SqlWorkerPool;
 use crate::fleet::telemetry::{CellTelemetry, CommandResponseSource};
 use crate::identity::{CellTarget, NamespaceId, RequestId, TenantId};
 use crate::node::durability::{
-    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority, NodeDurability,
-    NodeLogAuthority,
+    BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+    NodeBundlePublicationRound, NodeDurability, NodeLogAuthority,
 };
 use crate::node::log_shipper::NodeLogShipper;
 use crate::node::log_transport::{
@@ -106,47 +106,20 @@ impl NodeLogAuthority for Authority {
 }
 
 impl NodeBundlePublicationAuthority for Authority {
-    fn select<'a>(
+    fn receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        self.directory.bundle_receipt_memory_bound(captures)
+    }
+    fn begin_round<'a>(
         &'a self,
-        captures: &'a [crate::node::log_shipper::AssignedCapture],
-        checkpoints: &'a [BundleCheckpoint],
-        prefixes: &'a [&'a BundleCoverageProof],
-        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
-        lease: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+    ) -> BoxFuture<'a, Result<Box<dyn NodeBundlePublicationRound + 'a>>> {
         Box::pin(async move {
-            let mut node = self.observed.lock().await;
-            let frames = captures
-                .iter()
-                .flat_map(|c| c.frames().iter().cloned())
-                .collect::<Vec<_>>();
-            let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
-            let ready = ready_checkpoints(checkpoints).await?;
-            let prepared = self
-                .directory
-                .prepare_node_bundle_with_checkpoints(
-                    &node,
-                    &frames,
-                    &assignments,
-                    &ready,
-                    preparation,
-                    Limits::default(),
-                    NOW,
-                )
-                .await?;
-            let (next, proofs) = self
-                .directory
-                .select_node_bundle_extending(
-                    &node,
-                    &prepared,
-                    lease,
-                    prefixes,
-                    Limits::default(),
-                    NOW,
-                )
-                .await?;
-            *node = next;
-            Ok(proofs)
+            let observed = self.observed.lock().await;
+            let original = observed.clone();
+            Ok(Box::new(Round {
+                directory: &self.directory,
+                original,
+                observed: tokio::sync::Mutex::new(observed),
+            }) as Box<dyn NodeBundlePublicationRound>)
         })
     }
 
@@ -161,6 +134,71 @@ impl NodeBundlePublicationAuthority for Authority {
                     .await?;
             }
             Ok(())
+        })
+    }
+}
+
+struct Round<'a> {
+    directory: &'a NodeDirectory,
+    original: VersionedNodeAdvertisement,
+    observed: tokio::sync::Mutex<tokio::sync::MutexGuard<'a, VersionedNodeAdvertisement>>,
+}
+impl NodeBundlePublicationRound for Round<'_> {
+    fn stage<'a>(
+        &'a self,
+        previous: Option<&'a StagedNodeBundle>,
+        captures: &'a [crate::node::log_shipper::AssignedCapture],
+        checkpoints: &'a [BundleCheckpoint],
+        preparation: Option<&'a mut BundlePreparation>,
+    ) -> BoxFuture<'a, Result<Arc<StagedNodeBundle>>> {
+        Box::pin(async move {
+            let frames = captures
+                .iter()
+                .flat_map(|c| c.frames().iter().cloned())
+                .collect::<Vec<_>>();
+            let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
+            let ready = ready_checkpoints(checkpoints).await?;
+            self.directory
+                .stage_node_bundle_after(
+                    &self.original,
+                    previous,
+                    &frames,
+                    &assignments,
+                    &ready,
+                    preparation,
+                    Limits::default(),
+                    NOW,
+                )
+                .await
+        })
+    }
+    fn upload<'a>(
+        &'a self,
+        staged: Arc<StagedNodeBundle>,
+    ) -> BoxFuture<'a, Result<PreparedNodeBundle>> {
+        Box::pin(self.directory.upload_node_bundle(staged))
+    }
+    fn select<'a>(
+        &'a self,
+        prepared: &'a PreparedNodeBundle,
+        prefixes: &'a [&'a BundleCoverageProof],
+        lease: &'a NodeLeaseGuard,
+    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+        Box::pin(async move {
+            let mut observed = self.observed.lock().await;
+            let (next, proofs) = self
+                .directory
+                .select_node_bundle_extending(
+                    &observed,
+                    prepared,
+                    lease,
+                    prefixes,
+                    Limits::default(),
+                    NOW,
+                )
+                .await?;
+            **observed = next;
+            Ok(proofs)
         })
     }
 }

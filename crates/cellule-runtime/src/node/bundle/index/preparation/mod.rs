@@ -104,7 +104,7 @@ impl BundlePreparation {
     pub(in crate::node::bundle) fn remember(
         &mut self,
         layout: &cellule_ltx::CellStorageLayout,
-        prepared: &PreparedNodeBundle,
+        prepared: &StagedNodeBundle,
     ) -> Result<()> {
         self.bind(layout, prepared.catalog.session, prepared.catalog.epoch);
         let root = codec::decode(&prepared.body[..HEADER_BYTES])?;
