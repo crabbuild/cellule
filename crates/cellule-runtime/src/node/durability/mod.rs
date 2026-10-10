@@ -335,9 +335,15 @@ impl NodeDurability {
         // original feed. Rejected startup leaves the ordinary lane untouched.
         let runtime = tokio::runtime::Handle::try_current().map_err(Error::RuntimeStart)?;
         let working = publication::Publisher::reserve_working(self)?;
+        let preparation = crate::node::bundle::BundlePreparation::reserve(
+            self.selection_resources
+                .get()
+                .ok_or(Error::PendingPublication)?,
+        )?;
         let original: Arc<dyn NodeBundleAuthority> = authority.clone();
         let feed = self.enable_bundle_publication(original)?;
-        let publisher = publication::Publisher::start(self, authority, feed, working, runtime);
+        let publisher =
+            publication::Publisher::start(self, authority, feed, working, preparation, runtime);
         self.publisher
             .set(publisher)
             .map_err(|_| Error::Node("bundle producer already installed"))

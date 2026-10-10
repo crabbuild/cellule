@@ -42,12 +42,13 @@ impl NodeBundlePublicationAuthority for HeldSelection {
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
         prefixes: &'a [&'a BundleCoverageProof],
+        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
             let result = self
                 .original
-                .select(captures, checkpoints, prefixes, lease)
+                .select(captures, checkpoints, prefixes, preparation, lease)
                 .await?;
             self.combined.fetch_add(checkpoints.len(), Ordering::SeqCst);
             self.largest_combined

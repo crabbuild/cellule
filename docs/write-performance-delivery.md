@@ -400,6 +400,62 @@ Git. Production shard windows retain zero gap credit. The next investigation
 must address serialized publication and metadata amplification, rather than
 infer capacity from fewer storage requests alone.
 
+The next architecture step separates the SQL example's catalog ordering from
+its heartbeat state lock. Immutable bundle preparation and upload now release
+the state lock; binding, checkpoint and close retain catalog ordering. Final
+selection reacquires state and rechecks the original lease and canonical
+predecessor before granting coverage. The original implementation fails a
+paused-PUT renewal regression; the candidate passes it, ordered sibling
+binding, cancellation, changed-catalog rejection and late-upload fencing.
+Dependency verification and the final CAS still hold the state lock. This is
+a tested liveness boundary, not a preparation pipeline or a throughput claim.
+
+CI also exposed two observation races. The delayed-selection test read its
+telemetry counter before the post-response callback; it now joins that callback
+and requires the delayed command itself to have a Fleet response. The follower
+fixture recorded aggregate and phase rows in separate buffers. Downloaded CI
+evidence contains the same 7,215 observations in both files, but two concurrent
+attempts are reversed in one. A concurrent drain regression reproduces the
+failure. Both exports now derive from one retained transport observation;
+ordering, loss accounting and the exact qualification checks remain enforced.
+
+All 13 isolated contributor routes pass for this checkpoint: 2,075 workspace
+tests pass and 43 environment-dependent tests remain ignored. All 18 SQL
+example tests pass with the generated TLS fixture, including six normally
+ignored authority tests; CI now generates that fixture and executes them.
+The 55 evidence-verifier tests also pass. No new load measurement is claimed.
+Publication preparation, metadata amplification, fresh read barriers and
+multiple streams remain separate work under the unchanged capacity contract.
+
+
+The [production-format shard-cache comparison](pr69-shard-cache-measurement.md)
+adds a runtime-owned 2-MiB cache of authenticated immutable catalog shards for
+proposal preparation. Fresh headers, dependency verification, fenced selection
+and cold recovery keep their canonical paths. The original 32-MiB admission
+case still passes; the total publisher startup reservation is 22 MiB. All 13
+isolated contributor routes and the six TLS authority tests pass.
+
+In one matched 60-second pair, successful mixed writes improved
+667.90→771.42/s and reads 6,694.00→7,744.17/s, with zero returned errors. Owner
+range reads fell 99,624→70,497. Write p99 remained 575.3 ms, dropped offers
+remained substantial, and candidate root-materialization debt grew
+97,937,214→133,378,917 bytes. All 96,122 candidate acknowledgements passed raw,
+warm and cold state/retry audits. This preserves a measured improvement without
+claiming the 2,000-write/20,000-read capacity goal or sustained parity.
+
+CI at the prior PR revision exposed a stack overflow in the combined
+follower/reader maintenance executable. Its setup and reader composition now
+construct large futures behind synchronous boxed boundaries. The previous
+construction still overflows with the same fixture; both corrected maintenance
+cases pass at the normal stack limit. The finite fixture also holds coverage
+publication until maintenance observes its required foreign retained tail,
+then releases the hold before drain/rotation. Failed exits release it as well;
+authority is checked after the wait and protocol assertions remain unchanged.
+All 382 host example tests pass at the normal stack limit, including recovery,
+maintenance and shutdown. These executable checks remain required beyond the
+13 contributor routes. The host-only correction is separate from the measured
+SQL cache candidate.
+
 
 The fresh [integrated root-cut comparison](pr67-root-cut-measurement.md) includes
 main PR #64 and separates selected capture cleanup from original root tasks.

@@ -45,12 +45,13 @@ impl NodeBundlePublicationAuthority for HeldReceiptCredit {
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
         prefixes: &'a [&'a BundleCoverageProof],
+        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
             let proofs = self
                 .original
-                .select(captures, checkpoints, prefixes, lease)
+                .select(captures, checkpoints, prefixes, preparation, lease)
                 .await?;
             if self.selects.fetch_add(1, Ordering::SeqCst) == 1 {
                 let budget = self.ledger.snapshot()?;
@@ -189,6 +190,7 @@ async fn producer_waits_for_receipt_credit_and_services_the_checkpoint_that_rele
         second.assignment.ticket().last_sequence()
     );
     let expected = 20 * 1024 * 1024
+        + crate::node::bundle::PREPARATION_BYTES
         + first_selected.proof.retained_metadata_bytes().unwrap()
         + receipt.proof.retained_metadata_bytes().unwrap();
     assert_eq!(

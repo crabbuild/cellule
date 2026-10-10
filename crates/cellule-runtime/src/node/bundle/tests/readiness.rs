@@ -12,7 +12,7 @@ use crate::node::durability::{
 };
 use crate::node::log_shipper::{AssignedCapture, NodeLogShipper};
 use futures_util::future::BoxFuture;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(super) struct DelayedSelection {
@@ -46,6 +46,7 @@ impl NodeBundlePublicationAuthority for DelayedSelection {
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
         prefixes: &'a [&'a BundleCoverageProof],
+        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
@@ -59,7 +60,7 @@ impl NodeBundlePublicationAuthority for DelayedSelection {
                 }
             }
             self.authority
-                .select(captures, checkpoints, prefixes, lease)
+                .select(captures, checkpoints, prefixes, preparation, lease)
                 .await
         })
     }
@@ -69,12 +70,32 @@ impl NodeBundlePublicationAuthority for DelayedSelection {
 }
 
 #[derive(Default)]
-struct FleetResponses(AtomicUsize);
+struct FleetResponses {
+    sources: std::sync::Mutex<Vec<CommandResponseSource>>,
+    changed: tokio::sync::Notify,
+}
 impl CellTelemetry for FleetResponses {
     fn command_response(&self, source: CommandResponseSource, _: Duration, _: Duration) {
-        if source == CommandResponseSource::Fleet {
-            self.0.fetch_add(1, Ordering::Relaxed);
-        }
+        self.sources.lock().unwrap().push(source);
+        self.changed.notify_one();
+    }
+}
+impl FleetResponses {
+    async fn wait_for(&self, count: usize) -> Vec<CommandResponseSource> {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let changed = self.changed.notified();
+                {
+                    let sources = self.sources.lock().unwrap();
+                    if sources.len() >= count {
+                        return sources.clone();
+                    }
+                }
+                changed.await;
+            }
+        })
+        .await
+        .unwrap()
     }
 }
 
@@ -192,6 +213,10 @@ async fn delayed_selection_keeps_fleet_acks_visible_and_allows_prior_root_before
         .unwrap()
         .unwrap();
         results.push((identity, result));
+        // The response channel wakes its caller before the telemetry callback.
+        // Join that observation instead of racing a counter immediately after
+        // receiving the response. Check the delayed command itself below.
+        responses.wait_for(results.len()).await;
         if byte == 1 {
             // The first exact cut is retired; its admitted root debt remains.
             tokio::time::timeout(Duration::from_secs(3), async {
@@ -207,8 +232,9 @@ async fn delayed_selection_keeps_fleet_acks_visible_and_allows_prior_root_before
     tokio::time::timeout(Duration::from_secs(3), delayed.entered.notified())
         .await
         .unwrap();
-    assert!(
-        responses.0.load(Ordering::Relaxed) > 0,
+    assert_eq!(
+        responses.wait_for(2).await[1],
+        CommandResponseSource::Fleet,
         "delayed cut must have a real Fleet ACK"
     );
     // Exercise the production ten-second wait failure without extending its

@@ -16,19 +16,65 @@ use cellule_runtime::{
     },
 };
 use futures_util::future::BoxFuture;
+use std::sync::atomic::AtomicBool;
+
+struct CoverageGate {
+    held: AtomicBool,
+    changed: tokio::sync::Notify,
+}
+
+// Hold coverage publication until maintenance observes a real retained tail.
+// Otherwise a fast root checkpoint can prune the fixture before its first check.
+// Drop opens the gate on every failed setup or scenario exit so shutdown joins.
+pub(super) struct CoverageHold(Arc<CoverageGate>);
+impl CoverageHold {
+    pub(super) fn release(&self) {
+        self.0.held.store(false, Ordering::Release);
+        self.0.changed.notify_waiters();
+    }
+}
+impl Drop for CoverageHold {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+impl CoverageGate {
+    async fn wait(&self) {
+        while self.held.load(Ordering::Acquire) {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.held.load(Ordering::Acquire) {
+                changed.await;
+            }
+        }
+    }
+}
 
 pub(super) struct LiveFollowers {
     directory: NodeDirectory,
     locals: Vec<(NodeId, LocalFollowerTransport)>,
     pub appends: AtomicUsize,
+    coverage_gate: Arc<CoverageGate>,
 }
 impl LiveFollowers {
-    pub fn new(directory: NodeDirectory, locals: Vec<(NodeId, LocalFollowerTransport)>) -> Self {
-        Self {
-            directory,
-            locals,
-            appends: AtomicUsize::new(0),
-        }
+    pub fn new(
+        directory: NodeDirectory,
+        locals: Vec<(NodeId, LocalFollowerTransport)>,
+    ) -> (Self, CoverageHold) {
+        let coverage_gate = Arc::new(CoverageGate {
+            held: AtomicBool::new(true),
+            changed: tokio::sync::Notify::new(),
+        });
+        (
+            Self {
+                directory,
+                locals,
+                appends: AtomicUsize::new(0),
+                coverage_gate: coverage_gate.clone(),
+            },
+            CoverageHold(coverage_gate),
+        )
     }
     fn local(&self, member: NodeId) -> cellule_runtime::Result<&LocalFollowerTransport> {
         self.locals
@@ -109,12 +155,14 @@ struct History {
 pub(super) struct Authority {
     directory: NodeDirectory,
     history: tokio::sync::Mutex<History>,
+    coverage_gate: Arc<CoverageGate>,
 }
 impl Authority {
-    pub fn new(directory: NodeDirectory) -> Self {
+    fn new(directory: NodeDirectory, coverage_gate: Arc<CoverageGate>) -> Self {
         Self {
             directory,
             history: tokio::sync::Mutex::new(History::default()),
+            coverage_gate,
         }
     }
     async fn current(
@@ -156,6 +204,11 @@ impl NodeLogAuthority for Authority {
         through: u64,
     ) -> BoxFuture<'a, cellule_runtime::Result<()>> {
         Box::pin(async move {
+            // Bootstrap may publish its empty prefix. Later coverage waits
+            // outside the authority lock, then rechecks the current generation.
+            if through != 0 {
+                self.coverage_gate.wait().await;
+            }
             let history = self.history.lock().await;
             let observed = self.current(epoch, &history).await?;
             self.directory
@@ -205,7 +258,10 @@ impl Provider {
         lease: NodeLeaseGuard,
     ) -> Self {
         Self {
-            authority: Arc::new(Authority::new(directory.clone())),
+            authority: Arc::new(Authority::new(
+                directory.clone(),
+                transport.coverage_gate.clone(),
+            )),
             directory,
             transport,
             lease,

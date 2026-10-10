@@ -142,6 +142,47 @@ physical-media durability. Preserve the stronger historical comparison gates in
 the [workspace proposal](../../../docs/write-performance-proposal.md); this node
 capacity contract does not turn a failed earlier profile into a passing one.
 
+## Shared durability beneath independent executors
+
+The design boundary is a response's exact durable dependency. Execution,
+recoverability and authoritative bucket publication may complete at different
+times. A successful response requires both coverage of its observed Cell state
+and current serving authority. An uploaded object, a cached sequence number,
+or a completed SQL transaction supplies neither contract by itself.
+
+The October 10 architecture direction maps to the implementation as follows:
+
+| Contract | Current path | Remaining work |
+| --- | --- | --- |
+| Independent serialized Cell execution | Bounded dedicated SQLite workers own multiple Cells; proof waits run outside the SQL worker | Qualify long-query isolation and hot-Cell fairness under mixed load |
+| Exact response dependency | Transactional outcome/operation digest and commit sequence; complete captures map to assigned node-log ranges | Keep Cell commits, LTX positions and shared-log offsets distinct in APIs and telemetry |
+| Shared follower durability | One ordered node-log epoch with fixed required membership, batched frames and write-all proofs | Qualify sustained load; multiple streams require explicit generation, recovery and resource accounting |
+| Authoritative bucket publication | Immutable bundle followed by the node-record CAS; upload alone grants no coverage | Reduce serialized preparation and metadata rewritten per cohort without increasing unbounded debt |
+| Output visibility | The executor rejects an unproved logical head; actor admission and output check the original live node lease | A fresh follower barrier after a read is a separate, unimplemented protocol; do not equate it with this leased read mode |
+| Recovery before takeover | Freeze the old log, seal followers, require a complete range witness, publish/pin recovery state, then finish the old epoch | Extend device-backed and partition/crash qualification without accepting incomplete witnesses |
+| Bounded obligations | Original reservations retain accepted work through cancellation, publication, materialization and drain | Prove stable debt at target load; larger queues alone do not raise sustainable capacity |
+| Timers and effects | Transactional runtime state, outbox identities and `next_due_ms` publication already exist | Trace and fault-test wake discoverability separately before claiming the proposed timer-installation contract |
+
+Start from these paths rather than adding a second durability subsystem. The
+runtime's current shared publication lane already implements the immutable
+object plus authoritative checkpoint pattern. Its catalog also retains
+per-Cell reconstruction dependencies and closure obligations; removing those
+costs requires replacement recovery evidence, not just a smaller checkpoint.
+
+The SQL example separates catalog mutation ordering from the authoritative
+node-record update. A publication may prepare immutable
+bytes while heartbeat renewal proceeds. Binding, checkpoint, close and native
+selection must still agree on one predecessor catalog. After preparation,
+selection must recheck the original lease and current canonical record; a
+heartbeat may be preserved, but a changed catalog cannot be silently replaced.
+An expired or fenced lease remains terminal even if its pending PUT succeeds.
+
+Bounded preparation pipelines come after this separation. Every in-flight
+proposal needs original byte admission, exact predecessor identity, ordered
+credit, cancellation/drain ownership and a tested failure path. Multiple
+streams and membership changes are later protocol changes, not tuning knobs
+for the current benchmark. The capacity and fault gates above remain unchanged.
+
 ## Canonical write path
 
 The current native candidate removes publication-slot waits from global
@@ -181,6 +222,7 @@ command, worker and read/retry gate. `NodeDurability::start_bundle_publication`
 now retains one producer under the installed runtime ledger. It selects complete
 cohorts of at most 64 captures, 64 frames and 4 MiB, with a 1-ms assembly window
 and a 20-MiB working reservation, including one bounded fresh origin read.
+A separate 2-MiB reservation retains immutable catalog shards for preparation.
 Startup admission precedes installation of the
 irreversible feed. Selection and exact root checkpoints use the same original
 binding/heartbeat authority; 512 checkpoint requests are bounded and their
@@ -204,6 +246,18 @@ above 2 MiB retain serial verification. Selection retains no reconstruction
 bodies beyond the operation. Working admission remains 20 MiB; workload
 retention and protocol bounds remain unchanged. This is a structural charge,
 not allocator-profile qualification.
+
+The managed producer lends `BundlePreparation` to its authority's `select`
+callback. Pass it to `prepare_node_bundle_with_checkpoints`; manual callers
+may pass `None`. It keeps at most 256 exact encoded shard entries within its
+2-MiB reservation, including index overhead. Every preparation reads the header
+fresh and matches the shard's object, range and digest under the same store,
+path, session and log epoch before decoding cached bytes. Histories and native
+bodies are never retained in this cache. Proposal upload can fill it but grants
+no response proof; selection, closure and cold recovery keep their canonical
+checks. Both startup reservations precede feed installation and release when
+the producer exits, including cancellation and failure. The total startup
+reservation is 22 MiB within the existing node budget.
 
 Catalog loading coalesces contiguous same-object shard extents after the
 complete selected-shard byte preflight. Requested detached histories use a

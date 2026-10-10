@@ -27,6 +27,7 @@ struct Inputs {
     records: Arc<HashMap<CellId, Record>>,
     acknowledged: Acknowledged,
     readers: Option<readers::Readers>,
+    coverage_hold: provider::CoverageHold,
 }
 
 pub(super) enum Roles {
@@ -46,8 +47,9 @@ pub(super) async fn run(
     roles: Roles,
 ) -> JournalResult<ScenarioSummary> {
     // These role-enabled futures contain native peer activation and complete
-    // fleet capture. Keep each composition boundary off the caller stack.
-    let inputs = Box::pin(setup::initialize(root, &journal, nodes, boots, roles)).await?;
+    // fleet capture. Their synchronous boxed constructors keep construction
+    // temporaries out of the parent poll frame as well as its retained state.
+    let inputs = setup::initialize(root, &journal, nodes, boots, roles).await?;
     let version = journal.load_snapshot(scope()).await?.registry();
     let page = journal.enrollments_page(version, None, 128).await?;
     let original = page
@@ -205,6 +207,7 @@ pub(super) async fn run(
     }
     // This canonical actor barrier covers every acknowledged frame before the
     // existing supervisor fences each old member and closes the original epoch.
+    inputs.coverage_hold.release();
     inputs.acknowledged.source.drain().await?;
     let request = nodes[0].request_node_log_rotation(1)?;
     let completion = tokio::time::timeout_at(deadline(), async {
@@ -289,13 +292,13 @@ pub(super) async fn run(
                 blockers.push(blocker);
             }
         }
-        Box::pin(readers.prepare_replacement(&journal, boots)).await?;
+        readers.prepare_replacement(&journal, boots).await?;
         let blocked = Box::pin(driver.reconcile_once(clock, deadline())).await?;
         checked_report(&blocked)?;
         readers
             .require_blocked(&blocked, &journal, &nodes[1])
             .await?;
-        Some(Box::pin(readers.complete_replacement(&journal, boots)).await?)
+        Some(readers.complete_replacement(&journal, boots).await?)
     } else {
         None
     };

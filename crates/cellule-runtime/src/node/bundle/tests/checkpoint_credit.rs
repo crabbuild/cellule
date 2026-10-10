@@ -8,9 +8,9 @@ use crate::node::log_shipper::AssignedCapture;
 use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-// The unchanged producer owns 20 MiB. Two Cells' original selected proofs and
-// bounded prefix witnesses fit within the remaining 1 MiB in this fixture.
-pub(super) const HELD_METADATA_CEILING: usize = 21 << 20;
+// Original root/proof obligations still have the same 21 MiB ceiling. The
+// independently admitted preparation cache stays owned by the live publisher.
+pub(super) const HELD_METADATA_CEILING: usize = (21 << 20) + PREPARATION_BYTES;
 
 #[derive(Default)]
 pub(super) struct CheckpointGate {
@@ -70,12 +70,13 @@ impl NodeBundlePublicationAuthority for HeldCheckpoints {
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
         prefixes: &'a [&'a BundleCoverageProof],
+        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
             self.gate.wait(checkpoints).await;
             self.original
-                .select(captures, checkpoints, prefixes, lease)
+                .select(captures, checkpoints, prefixes, preparation, lease)
                 .await
         })
     }

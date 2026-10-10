@@ -37,8 +37,11 @@ impl BundleCheckpoint {
     }
 }
 
-/// Serialized node origin operations for the runtime-owned publication task.
-/// Implement with the same original state/heartbeat mutex as binding and close.
+/// Ordered node origin operations for the runtime-owned publication task.
+/// Serialize catalog mutations with binding and close. Immutable preparation
+/// may release the heartbeat/state lock while retaining catalog ordering; the
+/// final node-record CAS must preserve intervening renewal/coverage updates and
+/// recheck the original lease and canonical predecessor after I/O.
 pub trait NodeBundlePublicationAuthority: NodeBundleAuthority {
     /// Selects the complete ordered cohort with its native coverage in one CAS.
     /// Includes ready exact materialized checkpoints in that same catalog/CAS.
@@ -46,12 +49,15 @@ pub trait NodeBundlePublicationAuthority: NodeBundleAuthority {
     /// historical reads only after exact lease, origin and prefix matching;
     /// absent or mismatched prefixes require complete fresh verification.
     /// Return original live proofs only after dependency verification and CAS;
-    /// success also joins every supplied checkpoint obligation.
+    /// success also joins every supplied checkpoint obligation. Preparation is
+    /// optional for manual callers; the managed producer supplies admitted
+    /// immutable shard scratch whose lifetime it retains through shutdown.
     fn select<'a>(
         &'a self,
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
         prefixes: &'a [&'a BundleCoverageProof],
+        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>>;
     /// Checkpoints exact materialized roots together. An obsolete notification
@@ -105,6 +111,7 @@ impl Publisher {
         authority: Arc<dyn NodeBundlePublicationAuthority>,
         feed: NodePublicationFeed,
         working: crate::fleet::resource::ResourceReservation,
+        preparation: crate::node::bundle::BundlePreparation,
         runtime: tokio::runtime::Handle,
     ) -> Self {
         // Preparation is admitted before SQL can consume the remainder of the
@@ -117,12 +124,20 @@ impl Publisher {
         let weak = Arc::downgrade(durability);
         let worker = runtime.spawn(async move {
             let _working = working;
-            let result = run(weak, authority, feed, receiver, &progress, &running_lease)
-                .await
-                .map_err(|error| match error {
-                    Error::Shared(source) => source,
-                    error => Arc::new(error),
-                });
+            let result = run(
+                weak,
+                authority,
+                feed,
+                receiver,
+                &progress,
+                preparation,
+                &running_lease,
+            )
+            .await
+            .map_err(|error| match error {
+                Error::Shared(source) => source,
+                error => Arc::new(error),
+            });
             progress.send_modify(|state| state.terminal = Some(result.clone()));
             if result.is_err() {
                 running_lease.fence();
@@ -227,6 +242,7 @@ async fn run(
     mut feed: NodePublicationFeed,
     mut checkpoints: mpsc::Receiver<CheckpointRequest>,
     progress: &watch::Sender<Progress>,
+    mut preparation: crate::node::bundle::BundlePreparation,
     lease: &NodeLeaseGuard,
 ) -> Result<()> {
     let mut prefixes = prefixes::Prefixes::new()?;
@@ -320,7 +336,7 @@ async fn run(
             .map(|selected| &selected.proof)
             .collect::<Vec<_>>();
         let result = tokio::select! {
-            proofs = authority.select(&captures, ready_checkpoints.values(), &borrowed, lease) => proofs,
+            proofs = authority.select(&captures, ready_checkpoints.values(), &borrowed, Some(&mut preparation), lease) => proofs,
             () = lease.wait_fenced() => Err(Error::Fenced),
         }
         .map_err(Arc::new);

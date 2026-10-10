@@ -166,7 +166,7 @@ pub(super) async fn load_catalog_cells(
     head: NodeBundleHead,
     cells: &std::collections::BTreeSet<index::CellKey>,
 ) -> Result<Catalog> {
-    index::load_cells(layout, session, head, cells, None).await
+    index::load_cells(layout, session, head, cells, None, None).await
 }
 
 pub(super) async fn load_legacy_catalog(

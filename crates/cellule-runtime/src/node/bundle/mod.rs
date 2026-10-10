@@ -28,7 +28,7 @@
 //! ) -> cellule_runtime::Result<(VersionedNodeAdvertisement, Vec<BundleCoverageProof>)> {
 //!     let proposal = directory
 //!         .prepare_node_bundle_with_checkpoints(
-//!             observed, frames, assignments, checkpoints, cellule_ltx::Limits::default(), now_ms,
+//!             observed, frames, assignments, checkpoints, None, cellule_ltx::Limits::default(), now_ms,
 //!         ).await?;
 //!     directory.select_node_bundle(
 //!         observed, &proposal, lease, cellule_ltx::Limits::default(), now_ms,
@@ -47,6 +47,9 @@ mod codec;
 mod continuation;
 mod extension;
 mod index;
+pub use index::BundlePreparation;
+#[cfg(test)]
+pub(crate) use index::PREPARATION_BYTES;
 mod origin;
 mod proof;
 pub(crate) mod recovery;
