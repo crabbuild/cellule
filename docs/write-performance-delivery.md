@@ -1,12 +1,16 @@
 # Write performance implementation and verification
 
-The latest [root-cut delivery](pr67-root-cut-measurement.md) separates selected
-capture cleanup from original root tasks and preserves later suffixes. Its
-isolated checks passed, but fresh qualification remains incomplete: one attempt
-fails initialization and another loses evidence and object-store files during
-concurrent cleanup. Rescued window counters are reported with those limits;
-no acceptable performance improvement or architectural parity is established.
-PR #67 remains a draft.
+The fresh [integrated root-cut comparison](pr67-root-cut-measurement.md) includes
+main PR #64 and separates selected capture cleanup from original root tasks.
+At 2,000 offered Fleet writes/s across 2,000 Cells, successful throughput falls
+566.45→276.62/s and successful scheduled p99 rises 373.10→1,010.32 ms. Celld
+completes 1,985.03/s at 151.61 ms. The candidate passes all 42,210 warm ACK/retry
+checks but fails the unchanged 120-second drain deadline; cold recovery is not
+reached. Its retained memory falls while unpublished debt grows. All 16 isolated
+code verification routes pass, but every performance profile fails. This short
+combined-change pair cannot attribute the regression to root cleanup alone.
+Fresh raw evidence and failed earlier attempts remain outside Git. PR #67 is
+not ready to merge; acceptable improvement and architectural parity are unmet.
 
 The latest [publication-credit report](pr67-publication-pressure-measurement.md)
 fixes working memory held after completed root I/O, without raising any bounds.
