@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
 
 use bytes::Bytes;
 
@@ -12,6 +13,8 @@ use crate::fleet::telemetry::CellTelemetryHandle;
 use crate::identity::SessionId;
 use crate::{Error, Result};
 
+mod grant;
+pub use grant::{AppendGrantIssuer, AppendGrantPeer, GrantedFollowerAppend};
 mod accounting;
 mod directory;
 mod inventory;
@@ -85,7 +88,16 @@ enum RetirementWatermark {
     Recovered { active: bool },
 }
 
-type LaneState = Arc<Mutex<Option<LaneMemory>>>;
+struct LaneSlot {
+    memory: Mutex<Option<LaneMemory>>,
+    grant: Arc<tokio::sync::Mutex<grant::GrantState>>,
+}
+impl LaneSlot {
+    fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Option<LaneMemory>>> {
+        self.memory.lock()
+    }
+}
+type LaneState = Arc<LaneSlot>;
 type LaneMap = Arc<Mutex<HashMap<Lane, LaneState>>>;
 
 /// Durable contiguous range retained by one follower lane.
@@ -161,6 +173,8 @@ pub struct FollowerStore {
     admission: crate::fleet::admission::NodeAdmission,
     inventory_scope: [u8; 16],
     telemetry: CellTelemetryHandle,
+    grant_receiver: Option<SessionId>,
+    grant_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl FollowerStore {
@@ -206,6 +220,8 @@ impl FollowerStore {
             admission: crate::fleet::admission::NodeAdmission::default(),
             inventory_scope: rand::random(),
             telemetry,
+            grant_receiver: None,
+            grant_slots: Arc::new(tokio::sync::Semaphore::new(grant::MAX_APPEND_GRANTS)),
         })
     }
 
@@ -262,6 +278,18 @@ impl FollowerStore {
         frames: Vec<Bytes>,
         covered_through: u64,
     ) -> Result<FollowerReceipt> {
+        self.append_inner(leader, epoch, frames, covered_through, None)
+            .await
+    }
+
+    async fn append_inner(
+        &self,
+        leader: SessionId,
+        epoch: u64,
+        frames: Vec<Bytes>,
+        covered_through: u64,
+        grant: Option<grant::GrantAppend>,
+    ) -> Result<FollowerReceipt> {
         let encoded_bytes = frames
             .iter()
             .try_fold(0_u64, |total, frame| total.checked_add(frame.len() as u64));
@@ -282,7 +310,19 @@ impl FollowerStore {
         if !lane_directory(&self.root, lane).exists() {
             self.admission.check_new_role()?;
         }
-        let lock = self.lane_lock(lane)?;
+        let lock = if grant.is_some() {
+            // An invalid/replayed token cannot allocate a new lane. Only fresh
+            // grant issuance installs its locally charged registry entry.
+            self.lanes
+                .lock()
+                .map_err(|_| Error::Node("follower store lock poisoned"))?
+                .get(&lane)
+                .cloned()
+                .ok_or(Error::Fenced)?
+        } else {
+            self.lane_lock(lane)?
+        };
+        let grant_state = lock.grant.clone().lock_owned().await;
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
@@ -304,7 +344,18 @@ impl FollowerStore {
         );
         tokio::task::spawn_blocking(move || {
             observation.worker_started();
+            // The original dispatched job retains this lifecycle guard through
+            // fsync, accounting settlement and fresh grant release checks.
+            let grant_state = grant_state;
             let result = (|| {
+                let authorization = grant
+                    .as_ref()
+                    .map(|request| grant_state.authorize(request, epoch))
+                    .transpose()?;
+                let covered_through = authorization.as_ref().map_or(
+                    covered_through,
+                    crate::node::append_grant::NodeAppendGrant::covered_through,
+                );
                 let _maintenance = maintenance
                     .read()
                     .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
@@ -339,10 +390,18 @@ impl FollowerStore {
                         &mut state,
                         &scan_counter,
                         &mut observation,
+                        authorization.as_ref(),
                     )
                 })();
                 observation.timing.append = AppendObservation::elapsed(started);
-                let result = accounting.finish(result, &mut observation);
+                let result = accounting
+                    .finish(result, &mut observation)
+                    .and_then(|receipt| {
+                        if let Some(request) = &grant {
+                            grant_state.authorize(request, epoch)?;
+                        }
+                        Ok(receipt)
+                    });
                 if result.is_err() {
                     if let Some(memory) = state.as_mut() {
                         memory.invalidate();
@@ -375,6 +434,7 @@ impl FollowerStore {
     pub async fn seal(&self, leader: SessionId, epoch: u64) -> Result<FollowerReceipt> {
         let lane = Lane { leader, epoch };
         let lock = self.lane_lock(lane)?;
+        let grant_state = lock.grant.clone().lock_owned().await;
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
@@ -382,6 +442,7 @@ impl FollowerStore {
         let index_used = Arc::clone(&self.index_used);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
+            let mut grant_state = grant_state;
             let _maintenance = maintenance
                 .read()
                 .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
@@ -414,6 +475,9 @@ impl FollowerStore {
                 &scan_counter,
             );
             let result = accounting.finish(result, &mut observation);
+            if directory.join("sealed").exists() || directory.join("retired").exists() {
+                grant_state.close();
+            }
             if result.is_err()
                 && let Some(memory) = state.as_mut()
             {
@@ -469,6 +533,7 @@ impl FollowerStore {
         watermark: RetirementWatermark,
     ) -> Result<FollowerReceipt> {
         let lock = self.lane_lock(lane)?;
+        let grant_state = lock.grant.clone().lock_owned().await;
         let root = self.root.clone();
         let limits = self.limits;
         let retained = Arc::clone(&self.retained);
@@ -476,6 +541,7 @@ impl FollowerStore {
         let namespace = Arc::clone(&self.namespace);
         let scan_counter = clone_scan_counter(&self.scan_counter);
         tokio::task::spawn_blocking(move || {
+            let mut grant_state = grant_state;
             let _maintenance = maintenance
                 .read()
                 .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
@@ -499,6 +565,10 @@ impl FollowerStore {
             accounting.invalidate();
             let result = retire_sync(&root, lane, watermark, limits, &namespace, &scan_counter);
             let result = accounting.finish(result, &mut observation);
+            let directory = lane_directory(&root, lane);
+            if directory.join("sealed").exists() || directory.join("retired").exists() {
+                grant_state.close();
+            }
             if result.is_ok() {
                 *state = None;
             } else if let Some(memory) = state.as_mut() {
@@ -663,11 +733,13 @@ impl FollowerStore {
             epoch: candidate.epoch,
         };
         let lock = self.lane_lock(lane)?;
+        let grant_state = lock.grant.clone().lock_owned().await;
         let cleanup_lock = Arc::clone(&lock);
         let root = self.root.clone();
         let retained = Arc::clone(&self.retained);
         let maintenance = Arc::clone(&self.maintenance);
         let removed = tokio::task::spawn_blocking(move || {
+            let mut grant_state = grant_state;
             let _maintenance = maintenance
                 .write()
                 .map_err(|_| Error::Node("follower maintenance lock poisoned"))?;
@@ -686,6 +758,7 @@ impl FollowerStore {
             let result = remove_retired_sync(&root, lane, candidate, retired_before_ms);
             if matches!(result, Ok(true)) {
                 accounting.emptied();
+                grant_state.close();
             }
             let removed = accounting.finish(result, &mut observation)?;
             if removed {
@@ -711,14 +784,19 @@ impl FollowerStore {
         Ok(removed)
     }
 
-    fn lane_lock(&self, lane: Lane) -> Result<Arc<Mutex<Option<LaneMemory>>>> {
+    fn lane_lock(&self, lane: Lane) -> Result<LaneState> {
         let mut lanes = self
             .lanes
             .lock()
             .map_err(|_| Error::Node("follower store lock poisoned"))?;
         Ok(lanes
             .entry(lane)
-            .or_insert_with(|| Arc::new(Mutex::new(None)))
+            .or_insert_with(|| {
+                Arc::new(LaneSlot {
+                    memory: Mutex::new(None),
+                    grant: Arc::new(tokio::sync::Mutex::new(grant::GrantState::default())),
+                })
+            })
             .clone())
     }
 }

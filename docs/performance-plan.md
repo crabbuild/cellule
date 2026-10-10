@@ -84,8 +84,10 @@ The database budget already pays for more connections than the runtime opens:
 `MANAGED_SQLITE_CONNECTIONS = 3` is charged per Cell in the resource ledger
 (`crates/cellule-ltx/src/db/mod.rs:16`,
 `crates/cellule-runtime/src/cell/worker/mod.rs:95`) while `Db` holds a single
-writer connection, set to `synchronous=FULL`, `wal_autocheckpoint=0`, and a
-64 KiB page cache (`crates/cellule-ltx/src/db/mod.rs:367`).
+writer connection, opened with `synchronous=FULL`, `wal_autocheckpoint=0`, and a
+64 KiB page cache. Runtime bootstrap and verified restored activation explicitly
+select `NORMAL` before accepting mutations; standalone opens retain `FULL`.
+The response still waits for an exact external durability proof.
 
 A demand fault parks that thread. `Io::page` takes a `std::sync::Mutex` gate and
 then waits on a `sync_channel` with `recv_timeout`

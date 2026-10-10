@@ -2,6 +2,116 @@
 
 use super::*;
 
+pub(super) fn handle_selection_ready(
+    context: TaskContext<'_>,
+    cell: CellId,
+    generation: u64,
+    result: crate::Result<()>,
+) {
+    let TaskContext {
+        pool,
+        cells,
+        transitioning,
+        tasks,
+        node_lease,
+        ..
+    } = context;
+    let Some(active) = cells.get_mut(&cell) else {
+        return;
+    };
+    if active.generation != generation || active.selection_waiter.take().is_none() {
+        return;
+    }
+    let result = result.and_then(|()| node_lease.check());
+    if let Err(error) = result {
+        tracing::warn!(cell = ?cell, error = ?error, "original selection observation failed");
+        fence_active(active);
+    } else if !active.coordination.is_fenced() {
+        start_publication(cell, active, pool, tasks);
+    }
+    continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+}
+
+pub(super) fn handle_bundle_selected(
+    context: TaskContext<'_>,
+    cell: CellId,
+    generation: u64,
+    effect_id: u64,
+    covered: u64,
+    retained_bytes: u64,
+    result: crate::Result<Box<SelectedPublication>>,
+) {
+    let TaskContext {
+        pool,
+        cells,
+        transitioning,
+        tasks,
+        node_lease,
+        ..
+    } = context;
+    let Some(active) = cells.get_mut(&cell) else {
+        return;
+    };
+    if active.generation != generation
+        || !active
+            .coordination
+            .effect_matches(effect_id, CoordinationEffect::Publication)
+    {
+        return;
+    }
+    active.finish_task(effect_id, CoordinationEffect::Publication);
+    active.selecting = false;
+    active.publishing_since = None;
+    active.publication_bytes = active.publication_bytes.saturating_sub(retained_bytes);
+    let result = result.and_then(|selected| {
+        node_lease.check()?;
+        if active.coordination.is_fenced() {
+            return Err(Error::Fenced);
+        }
+        Ok(selected)
+    });
+    match result {
+        Ok(selected) => {
+            let mut debt = selected.debt;
+            let keep = if let Some(previous) = active.root_debt.take() {
+                debt.submitted_at = previous.submitted_at;
+                debt.node_log_bytes = debt.node_log_bytes.saturating_add(previous.node_log_bytes);
+                debt.covered_node_logs = debt
+                    .covered_node_logs
+                    .saturating_add(previous.covered_node_logs);
+                0
+            } else {
+                1
+            };
+            active.root_debt = Some(debt);
+            // Keep one of the original publication obligations until root/index
+            // checkpoint completes; selection never makes the Cell releasable.
+            for _ in 0..selected.covered.saturating_sub(keep) {
+                active
+                    .coordination
+                    .step(CoordinationInput::FinishPublication {
+                        fenced: false,
+                        succeeded: true,
+                    });
+            }
+            start_publication(cell, active, pool, tasks);
+        }
+        Err(error) => {
+            tracing::warn!(cell = ?cell, error = ?error, "selected capture cleanup failed");
+            for _ in 0..covered {
+                active
+                    .coordination
+                    .step(CoordinationInput::FinishPublication {
+                        fenced: true,
+                        succeeded: false,
+                    });
+            }
+            fence_active(active);
+        }
+    }
+    continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
+}
+
 /// Applies a publication proof result and answers its waiter.
 pub(super) fn handle_proven(
     context: TaskContext<'_>,
@@ -165,6 +275,9 @@ pub(super) fn handle_published(
     active.finish_task(effect_id, CoordinationEffect::Publication);
     active.last_work_at = std::time::Instant::now();
     let object_published = result.is_ok();
+    // The completed task owns only its original cut. A concurrently selected
+    // suffix has a separate obligation and remains due after this completion.
+    active.materializing = None;
     active.publishing_since = None;
     if object_published {
         // Control now names this commit, so the local mirror can answer a due
@@ -204,7 +317,7 @@ pub(super) fn handle_published(
         if result.is_ok() {
             let _ = publications.send(active.catalog.entry().clone());
         }
-        start_publication(cell, active, tasks);
+        start_publication(cell, active, pool, tasks);
     }
     continue_cell(cell, pool, cells, transitioning, tasks, node_lease);
 }

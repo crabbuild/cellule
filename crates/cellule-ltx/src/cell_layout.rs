@@ -27,6 +27,8 @@ pub enum CellObjectKind {
     Bundle,
     /// Bounded segment and authenticated fixed-width index in one object.
     Packed,
+    /// Application-scoped, bounded captures shared by multiple Cell roots.
+    SharedPacked,
 }
 
 impl CellObjectKind {
@@ -38,6 +40,7 @@ impl CellObjectKind {
             Self::Root => "root",
             Self::Bundle => "bundle",
             Self::Packed => "pack",
+            Self::SharedPacked => "spack",
         }
     }
 }
@@ -63,6 +66,17 @@ impl CellStorageLayout {
     #[must_use]
     pub const fn application_id(&self) -> &[u8; 16] {
         &self.application
+    }
+
+    /// Binds application-scoped paths to another validated application under
+    /// the same canonical fleet prefix and transport. Node paths are shared.
+    #[must_use]
+    pub fn for_application(&self, application: [u8; 16]) -> Self {
+        Self {
+            store: self.store.clone(),
+            root: self.root.clone(),
+            application,
+        }
     }
 
     /// Returns the process-local identity used to isolate immutable read caches.
@@ -177,6 +191,9 @@ impl CellStorageLayout {
         digest: &[u8; 32],
         kind: CellObjectKind,
     ) -> Path {
+        if kind == CellObjectKind::SharedPacked {
+            return self.application_path(&format!("shared/objects/{}.spack", encode_hex(digest)));
+        }
         self.application_path(&format!(
             "cells/{}/inc/{}/objects/{}.{}",
             encode_hex(cell),
@@ -308,6 +325,22 @@ impl CellStorageLayout {
         ))
     }
 
+    /// Exact immutable node-wide coverage catalog and native range object.
+    #[must_use]
+    pub fn node_coverage_bundle_path(
+        &self,
+        session: &[u8; 16],
+        epoch: u64,
+        digest: &[u8; 32],
+    ) -> Path {
+        Path::from(format!(
+            "{}/cells/v1/node-logs/{}/{epoch}/coverage/v1/{}.cnb",
+            self.root,
+            encode_hex(session),
+            encode_hex(digest)
+        ))
+    }
+
     fn application_path(&self, suffix: &str) -> Path {
         Path::from(format!(
             "{}/cells/v1/apps/{}/{}",
@@ -358,6 +391,12 @@ mod tests {
         assert_eq!(
             layout.node_directory_path().as_ref(),
             "tenant-root/cells/v1/nodes"
+        );
+        assert_eq!(
+            layout
+                .node_coverage_bundle_path(&[0xdd; 16], 7, &[0xef; 32])
+                .as_ref(),
+            "tenant-root/cells/v1/node-logs/dddddddddddddddddddddddddddddddd/7/coverage/v1/efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef.cnb"
         );
         assert_eq!(
             layout

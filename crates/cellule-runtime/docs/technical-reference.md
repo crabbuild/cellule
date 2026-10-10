@@ -21,6 +21,7 @@ flowchart LR
 | Framework topic | Reference |
 | --- | --- |
 | Runtime overview and ownership | [Understand the embedded Cell runtime](overview.md) |
+| Node capacity, shared publication and performance exit gates | [Write and read performance design](write-performance-design.md) |
 | Actor, SQL worker, deadlines, and drain | [Execution and receipts](runtime.md) |
 | IDs, control, immutable roots, pages, backups, and retention | [Authority, storage, and recovery](storage.md) |
 | SQL, KV, Blob, Queue, Cron, Workflow, and Effects | [Cell primitives](primitives.md) |

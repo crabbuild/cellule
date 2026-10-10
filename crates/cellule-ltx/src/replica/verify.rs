@@ -50,6 +50,15 @@ impl CellReplica {
     ) -> Result<Vec<RootObjectRef>> {
         // Inventory must prove origin presence even for metadata uploaded here.
         let graph = self.load_graph_with_cache(root, false).await?;
+        self.inventory_graph(root, max_objects, graph).await
+    }
+
+    pub(super) async fn inventory_graph(
+        &self,
+        root: &RootRef,
+        max_objects: Option<usize>,
+        graph: LoadedGraph,
+    ) -> Result<Vec<RootObjectRef>> {
         let extents = object_extents(&graph.descriptors)?;
         let verification = directory::Verification {
             layout: &self.layout,
@@ -88,12 +97,15 @@ impl CellReplica {
                 }),
         );
         for descriptor in &graph.descriptors {
-            if descriptor.object_kind() == CellObjectKind::Packed {
+            if matches!(
+                descriptor.object_kind(),
+                CellObjectKind::Packed | CellObjectKind::SharedPacked
+            ) {
                 let path = self.layout.incarnation_object_path(
                     &self.cell,
                     &self.incarnation,
                     &descriptor.object_digest(),
-                    CellObjectKind::Packed,
+                    descriptor.object_kind(),
                 );
                 let _permit = self.host.io_permit().await?;
                 let result = self
@@ -107,10 +119,14 @@ impl CellReplica {
                     result.as_ref().map_or(0, |(bytes, _)| bytes.len()),
                 );
                 let (bytes, _) = result?;
-                packed::verify(&bytes, descriptor)?;
+                if descriptor.object_kind() == CellObjectKind::SharedPacked {
+                    shared::verify(&bytes, descriptor, &self.cell, &self.incarnation)?;
+                } else {
+                    packed::verify(&bytes, descriptor)?;
+                }
                 objects.insert(RootObjectRef {
                     digest: descriptor.object_digest(),
-                    kind: CellObjectKind::Packed,
+                    kind: descriptor.object_kind(),
                 });
                 continue;
             }
@@ -223,6 +239,16 @@ impl CellReplica {
     }
 
     async fn load_graph_inner(&self, root: &RootRef, use_cache: bool) -> Result<LoadedGraph> {
+        let (document, cached_root) = self.read_root_document(root, use_cache).await?;
+        self.load_graph_document(root, use_cache, document, cached_root)
+            .await
+    }
+
+    pub(super) async fn read_root_document(
+        &self,
+        root: &RootRef,
+        use_cache: bool,
+    ) -> Result<(RootDocument, Option<usize>)> {
         self.check_scope(root)?;
         let (bytes, cached_root) = self
             .read_object(&root.digest, CellObjectKind::Root, ROOT_BYTES, use_cache)
@@ -244,6 +270,16 @@ impl CellReplica {
         {
             return Err(LtxError::LTXCorrupted);
         }
+        Ok((document, cached_root.then_some(bytes.len())))
+    }
+
+    pub(super) async fn load_graph_document(
+        &self,
+        root: &RootRef,
+        use_cache: bool,
+        document: RootDocument,
+        cached_root: Option<usize>,
+    ) -> Result<LoadedGraph> {
         let pages = stream::iter(
             document
                 .segment_pages
@@ -267,8 +303,8 @@ impl CellReplica {
         .try_collect::<Vec<_>>()
         .await?;
         let mut cached_metadata = Vec::new();
-        if cached_root {
-            cached_metadata.push((root.digest, bytes.len()));
+        if let Some(bytes) = cached_root {
+            cached_metadata.push((root.digest, bytes));
         }
         let mut descriptors = Vec::new();
         for (page, cached) in pages {
@@ -465,6 +501,14 @@ impl VerifiedRoot {
                 directory_height: document.directory_height,
                 directory_inline: document.directory_inline.clone(),
                 extents: Arc::new(extents),
+                shared_segments: Arc::new(
+                    descriptors
+                        .into_iter()
+                        .filter(|descriptor| {
+                            descriptor.object_kind() == CellObjectKind::SharedPacked
+                        })
+                        .collect(),
+                ),
                 page_size: document.page_size,
                 database_pages: document.database_pages,
                 position: root.position,

@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::{Mutex, OnceCell, Semaphore};
 
 use crate::identity::NodeId;
 use crate::identity::SessionId;
@@ -17,6 +17,35 @@ use crate::{Error, Result};
 
 mod object_coverage;
 use object_coverage::ObjectCoverage;
+mod publication;
+pub use publication::{BundleCheckpoint, NodeBundlePublicationAuthority};
+mod receipts;
+
+const MAX_BUNDLE_CLOSE_CALLBACKS: usize = 8;
+
+/// Original node authority used to enroll and close the Cells of an installed
+/// shared publication feed. Implementations serialize these mutations and shared
+/// selection with their original heartbeat/enrollment state. The host owns and
+/// joins the feed; the runtime still verifies Cell departure against origin.
+/// Runtime close callbacks enter in cohorts of at most eight, after their
+/// complete issued producer prefix joins, to bound the authority's renewal queue.
+pub trait NodeBundleAuthority: Send + Sync {
+    /// Pins the Serving Cell before its SQL admission opens.
+    fn bind<'a>(
+        &'a self,
+        authority: &'a crate::control::authority::CellAuthority,
+        observed: &'a crate::control::authority::VersionedControl,
+    ) -> BoxFuture<'a, Result<crate::control::authority::VersionedControl>>;
+
+    /// Joins complete issued coverage, materialization/checkpoint and catalog
+    /// closure after SQL/capture tasks close, including earlier Fleet ACKs.
+    fn close<'a>(
+        &'a self,
+        authority: &'a crate::control::authority::CellAuthority,
+        observed: &'a crate::control::authority::VersionedControl,
+        issued: crate::node::log::CellIssuedRange,
+    ) -> BoxFuture<'a, Result<()>>;
+}
 
 /// Authoritative node-session mutations required by follower durability.
 ///
@@ -43,7 +72,10 @@ pub trait NodeLogAuthority: Send + Sync {
     /// Activates one log epoch for this session.
     fn activate<'a>(&'a self, log_epoch: u64) -> BoxFuture<'a, Result<()>>;
 
-    /// Advances the tiered coverage watermark for one log epoch.
+    /// Advances the tiered coverage watermark for one log epoch. A queued root
+    /// completion may be older than shared bundle selection; acknowledge an
+    /// already persisted prefix under the same original epoch/heartbeat mutex
+    /// without lowering the frontier or reopening a closed epoch.
     fn advance_coverage<'a>(
         &'a self,
         log_epoch: u64,
@@ -167,12 +199,32 @@ pub struct NodeDurability {
     retirement: std::sync::Mutex<Option<Arc<NodeLogRetirementObservation>>>,
     retirement_proof: OnceCell<Arc<NodeLogRetirementProof>>,
     closed: std::sync::atomic::AtomicBool,
+    selection_resources: std::sync::OnceLock<crate::fleet::resource::ResourceLedger>,
+    bundle_authority: std::sync::OnceLock<Arc<dyn NodeBundleAuthority>>,
+    bundle_closures: Semaphore,
+    publisher: std::sync::OnceLock<publication::Publisher>,
 }
 
 impl NodeDurability {
+    pub(crate) fn check_lease(&self) -> Result<()> {
+        self.node_lease.check()
+    }
+
+    pub(crate) async fn wait_fenced(&self) {
+        self.node_lease.wait_fenced().await;
+    }
+
     /// Observes the epoch's durability frontiers; this does not issue a proof.
     pub fn progress(&self) -> Result<crate::node::log::NodeLogProgress> {
         self.gate.progress()
+    }
+
+    /// Installs this epoch's sole ordered publication consumer before issuance.
+    /// The original host must join selection/fallback for every accepted capture
+    /// before retiring this epoch. Receiving captures grants no durability proof.
+    pub fn take_publication_feed(&self) -> Result<crate::node::log_shipper::NodePublicationFeed> {
+        self.node_lease.check()?;
+        self.shipper.take_publication_feed()
     }
 
     /// Creates one node-log durability epoch over its gate, shipper, authority,
@@ -197,6 +249,10 @@ impl NodeDurability {
             retirement: std::sync::Mutex::new(None),
             retirement_proof: OnceCell::new(),
             closed: std::sync::atomic::AtomicBool::new(false),
+            selection_resources: std::sync::OnceLock::new(),
+            bundle_authority: std::sync::OnceLock::new(),
+            bundle_closures: Semaphore::new(MAX_BUNDLE_CLOSE_CALLBACKS),
+            publisher: std::sync::OnceLock::new(),
         }
     }
 
@@ -208,13 +264,214 @@ impl NodeDurability {
 
     /// Assigns and asynchronously ships one captured commit to every member.
     pub async fn submit(&self, submission: NodeLogSubmission) -> Result<CommitTicket> {
+        self.submit_assigned(submission)
+            .await
+            .map(|(ticket, _)| ticket)
+    }
+
+    /// Uses the same bounded native lane and retains the complete assigned range
+    /// witness required by shared bundle selection.
+    pub async fn submit_assigned(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<(CommitTicket, crate::node::log::AssignedCommitRange)> {
+        self.submit_capture(submission)
+            .await
+            .map(|capture| (capture.assignment.ticket(), capture.assignment))
+    }
+
+    pub(crate) async fn submit_capture(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<crate::node::log_shipper::SubmittedCapture> {
         self.node_lease.check()?;
         let ticket = tokio::select! {
-            result = self.shipper.submit(submission) => result?,
+            result = self.shipper.submit_capture(submission) => result?,
             () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
         };
         self.node_lease.check()?;
         Ok(ticket)
+    }
+
+    pub(crate) fn attach_selection_resources(
+        &self,
+        resources: crate::fleet::resource::ResourceLedger,
+    ) -> Result<()> {
+        let original = self.selection_resources.get_or_init(|| resources.clone());
+        if !original.same_ledger(&resources) {
+            return Err(Error::Node("bundle selection resource ledger changed"));
+        }
+        Ok(())
+    }
+
+    /// Installs this epoch's shared feed and original binding/closure authority
+    /// before native issuance or actor activation. The host must keep accepting
+    /// and joining complete captures until runtime drain finishes.
+    pub fn enable_bundle_publication(
+        &self,
+        authority: Arc<dyn NodeBundleAuthority>,
+    ) -> Result<crate::node::log_shipper::NodePublicationFeed> {
+        self.node_lease.check()?;
+        let feed = self.shipper.take_publication_feed()?;
+        self.bundle_authority
+            .set(authority)
+            .map_err(|_| Error::Node("bundle authority already installed"))?;
+        Ok(feed)
+    }
+
+    /// Starts and retains the sole bounded node bundle producer. Install this
+    /// after the runtime resource ledger and before any Cell/native issuance.
+    /// Selection and checkpoints use the same original binding authority.
+    pub fn start_bundle_publication(
+        self: &Arc<Self>,
+        authority: Arc<dyn NodeBundlePublicationAuthority>,
+    ) -> Result<()> {
+        if self.selection_resources.get().is_none() {
+            return Err(Error::Node(
+                "bundle publication has no installed runtime resource ledger",
+            ));
+        }
+        // Fallible construction precedes installation of the irreversible
+        // original feed. Rejected startup leaves the ordinary lane untouched.
+        let runtime = tokio::runtime::Handle::try_current().map_err(Error::RuntimeStart)?;
+        let working = publication::Publisher::reserve_working(self)?;
+        let original: Arc<dyn NodeBundleAuthority> = authority.clone();
+        let feed = self.enable_bundle_publication(original)?;
+        let publisher = publication::Publisher::start(self, authority, feed, working, runtime);
+        self.publisher
+            .set(publisher)
+            .map_err(|_| Error::Node("bundle producer already installed"))
+    }
+
+    pub(crate) fn capture_prefix(
+        &self,
+        selected: Arc<crate::node::log_shipper::SelectedBundle>,
+        assignment: &crate::node::log::AssignedCommitRange,
+    ) -> Result<Arc<crate::node::log_shipper::SelectedBundle>> {
+        selected.proof.check_live_assignment(assignment)?;
+        let (_, commit, position) = assignment.endpoint();
+        if selected.proof.commit_sequence() == commit && selected.proof.position() == position {
+            return Ok(selected);
+        }
+        let resources = self
+            .selection_resources
+            .get()
+            .ok_or(Error::PendingPublication)?;
+        // Reserve before cloning locator metadata; the original cohort remains
+        // separately charged until its other original consumers release it.
+        let memory = resources.try_reserve(
+            crate::fleet::resource::ResourceCost::zero()
+                .with_retained_bytes(selected.proof.retained_metadata_bytes()?),
+        )?;
+        let proof = selected.proof.original_capture_prefix(assignment)?;
+        Ok(Arc::new(crate::node::log_shipper::SelectedBundle {
+            proof,
+            _memory: memory,
+        }))
+    }
+
+    pub(crate) async fn checkpoint_materialized(
+        &self,
+        authority: crate::control::authority::CellAuthority,
+        root: cellule_ltx::RootRef,
+        selected: Arc<crate::node::log_shipper::SelectedBundle>,
+    ) -> Result<()> {
+        if let Some(publisher) = self.publisher.get() {
+            publisher
+                .checkpoint(BundleCheckpoint {
+                    authority,
+                    root,
+                    selected,
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn managed_bundle_publication(&self) -> bool {
+        self.publisher.get().is_some()
+    }
+
+    pub(crate) async fn bind_bundle_cell(
+        &self,
+        authority: &crate::control::authority::CellAuthority,
+        observed: &crate::control::authority::VersionedControl,
+    ) -> Result<crate::control::authority::VersionedControl> {
+        let Some(bundle) = self.bundle_authority.get() else {
+            return Ok(observed.clone());
+        };
+        self.node_lease.check()?;
+        let bound = bundle.bind(authority, observed).await?;
+        self.node_lease.check()?;
+        observed
+            .value()
+            .validate_transition(bound.value(), crate::control::Transition::BindBundle)?;
+        let pin = bound
+            .value()
+            .bundle_binding
+            .ok_or(Error::Node("bundle enrollment lacks original Cell pin"))?;
+        let (session, _, epoch) = self.identity()?;
+        if pin.session != session || pin.epoch != epoch {
+            return Err(Error::Fenced);
+        }
+        Ok(bound)
+    }
+
+    pub(crate) async fn close_bundle_cell(
+        &self,
+        authority: &crate::control::authority::CellAuthority,
+        observed: &crate::control::authority::VersionedControl,
+    ) -> Result<()> {
+        if observed.value().bundle_binding.is_none() {
+            return Ok(());
+        }
+        let bundle = self
+            .bundle_authority
+            .get()
+            .ok_or(Error::Node("bound Cell lost original bundle authority"))?;
+        self.node_lease.check()?;
+        let scope = crate::node::log::CellLogScope {
+            application: crate::identity::ApplicationId::from_bytes(
+                *authority.layout().application_id(),
+            ),
+            cell: observed.value().cell,
+            incarnation: observed.value().incarnation,
+            cell_epoch: observed.value().epoch,
+        };
+        let issued = self.close_cell_issuance(
+            scope,
+            observed
+                .value()
+                .ltx_root()
+                .ok_or(Error::PendingPublication)?,
+        )?;
+        // Never hold the provider's heartbeat/CAS mutex while waiting for the
+        // ordered producer: selecting the complete prior Fleet suffix needs it.
+        if let Some(publisher) = self.publisher.get() {
+            publisher.wait_through(issued.last_node_sequence()).await?;
+        }
+        // Thousands of actors may close together. Bound callbacks queued on
+        // the provider's shared FIFO authority mutex so lease refresh does not
+        // wait behind the whole Cell population. Prefix joining precedes this
+        // admission: callbacks/checkpoints needed to drain it retain progress.
+        // Cancellation returns the permit, never reopens frozen issuance.
+        let _callback = tokio::select! {
+            result = self.bundle_closures.acquire() => result.map_err(|_| Error::RuntimeClosed)?,
+            () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
+        };
+        self.node_lease.check()?;
+        bundle.close(authority, observed, issued).await?;
+        self.node_lease.check()
+    }
+
+    /// Freezes exact Cell issuance after the original SQL and capture tasks join.
+    pub fn close_cell_issuance(
+        &self,
+        scope: crate::node::log::CellLogScope,
+        base: cellule_ltx::RootRef,
+    ) -> Result<crate::node::log::CellIssuedRange> {
+        self.node_lease.check()?;
+        self.gate.close_cell_issuance(scope, base)
     }
 
     /// Returns fleet proof only after follower fsync and authoritative activation.
@@ -284,11 +541,13 @@ impl NodeDurability {
     /// Records an already-published object root and persists its contiguous watermark.
     ///
     /// Callers must complete the exact Cell root CAS before invoking this method.
-    /// Concurrent completions share coverage updates; local proofs become visible
-    /// only after the batch's authority CAS succeeds under the original node lease.
+    /// Concurrent completions share coverage updates. A new contiguous frontier
+    /// becomes visible only after its authority CAS succeeds under the original
+    /// node lease. Sparse roots grant their own exact object proofs without a
+    /// node mutation; they cannot advance reclamation or close an unpublished gap.
     pub async fn prove_object(&self, ticket: CommitTicket) -> Result<DurabilityProof> {
         self.confirm_objects(&[ticket]).await?;
-        let proof = self.gate.prove(ticket).await?;
+        let proof = self.gate.confirmed_object_proof(ticket)?;
         self.node_lease.check()?;
         if proof.source() != DurabilitySource::Object {
             return Err(Error::Node("object proof lost its durability race"));
@@ -313,6 +572,34 @@ impl NodeDurability {
             return Err(Error::Node("object coverage batch remains unconfirmed"));
         }
         Ok(())
+    }
+
+    /// Confirms exact original captures after verified shared bundle selection.
+    ///
+    /// This performs no storage I/O or authority CAS. Selection already persisted
+    /// the bundle and native-log frontier together. Cold reconstruction proofs,
+    /// foreign gates and replacement lease guards cannot authorize local ACKs.
+    /// The caller must still join actor/read/retry visibility before responding.
+    pub fn confirm_bundle(
+        &self,
+        proofs: &[crate::node::bundle::BundleCoverageProof],
+    ) -> Result<u64> {
+        crate::node::bundle::confirm_selected_coverage(&self.gate, &self.node_lease, proofs)
+    }
+
+    /// Confirms a complete admitted feed cohort and returns its exact selected
+    /// metadata to the original commands. The installed runtime's ledger pays
+    /// for each Cell proof once until all command/materialization consumers join.
+    /// Missing, duplicate, cold or foreign assignments cannot wake siblings.
+    /// Captures still require their separate ordinary root cleanup and drain.
+    pub fn confirm_selected_captures(
+        &self,
+        captures: &[crate::node::log_shipper::AssignedCapture],
+        proofs: Vec<crate::node::bundle::BundleCoverageProof>,
+    ) -> Result<crate::node::log_shipper::SelectedBundlePublication> {
+        let cohort = receipts::SelectedCaptures::new(self, captures, proofs)?;
+        let memory = cohort.resources(self)?.try_reserve(cohort.cost())?;
+        cohort.confirm(self, memory)
     }
 
     /// Returns this binding's exact enrolled log epoch.
@@ -385,7 +672,13 @@ impl NodeDurability {
             }
             return Ok(proof);
         }
-        self.shipper.shutdown().await?;
+        let shipping = self.shipper.shutdown().await;
+        if let Some(publisher) = self.publisher.get() {
+            // Join both tasks even when fencing stopped the shipper. Preserve
+            // the producer's original cause rather than its secondary fence.
+            publisher.join().await?;
+        }
+        shipping?;
         self.object_coverage
             .flush(&self.gate, self.authority.as_ref(), &self.node_lease, &[])
             .await?;

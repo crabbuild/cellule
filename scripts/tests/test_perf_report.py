@@ -11,6 +11,82 @@ SPEC.loader.exec_module(REPORT)
 
 
 class DeliveryGateTests(unittest.TestCase):
+    def test_inactive_fleet_cannot_qualify_with_zero_publication_debt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            names = ['metrics-window-start.json', 'metrics-window-minute-1.json',
+                     'metrics-window-minute-2.json', 'metrics-window-end.json']
+            for index, name in enumerate(names):
+                sample = [{'metrics': {'schema_version': 2, 'sample_session': 'owner',
+                    'sample_elapsed_ns': index * 60 * 10**9,
+                    'runtime': {'unpublished_node_log_bytes': 0},
+                    'publication_progress': {'oldest_unpublished_ms': None,
+                        'pending_publications': 0, 'retained_capture_bytes': 0},
+                    'node_log_progress': {'fleet_active': False, 'fenced': False,
+                        'rotating': False, 'tiered_through': 0,
+                        'issued_through': 0, 'follower_proven_through': 0}}}]
+                (directory / name).write_text(json.dumps(sample))
+            self.assertTrue(REPORT.stability_report(directory)['pass'])
+            self.assertFalse(REPORT.fleet_mode_report(directory)['pass'])
+
+    def test_active_fleet_requires_healthy_frontiers_throughout_the_window(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            healthy = {'fleet_active': True, 'fenced': False, 'rotating': False,
+                       'log_epoch': 1, 'issued_through': 2, 'tiered_through': 0}
+            paths = [directory / f'metrics-window-{label}.json'
+                     for label in ('start', 'minute-1', 'end')]
+            for index, path in enumerate(paths):
+                path.write_text(json.dumps([{'metrics': {'node_log_progress':
+                    dict(healthy, follower_proven_through=index)}}]))
+            self.assertTrue(REPORT.fleet_mode_report(directory)['pass'])
+            paths[-1].write_text(json.dumps([{'metrics': {'node_log_progress':
+                dict(healthy, follower_proven_through=0)}}]))
+            self.assertFalse(REPORT.fleet_mode_report(directory)['pass'])
+            paths[-1].write_text(json.dumps([{'metrics': {'node_log_progress':
+                dict(healthy, follower_proven_through=2)}}]))
+            for bad in (dict(healthy, fenced=True), dict(healthy, rotating=True),
+                        dict(healthy, error='lease expired')):
+                paths[1].write_text(json.dumps([{'metrics': {'node_log_progress': bad}}]))
+                self.assertFalse(REPORT.fleet_mode_report(directory)['pass'])
+
+    def test_read_only_fleet_keeps_the_same_verified_frontier_without_new_appends(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            healthy = {'fleet_active': True, 'fenced': False, 'rotating': False,
+                       'log_epoch': 1, 'issued_through': 1000, 'tiered_through': 1000,
+                       'follower_proven_through': 1000}
+            paths = [directory / f'metrics-window-{label}.json'
+                     for label in ('start', 'minute-1', 'end')]
+            for path in paths:
+                path.write_text(json.dumps([{'metrics': {'node_log_progress': healthy}}]))
+            self.assertFalse(REPORT.fleet_mode_report(directory)['pass'])
+            idle = REPORT.fleet_mode_report(directory, writes_offered=False)
+            self.assertTrue(idle['pass'])
+            self.assertFalse(idle['follower_proof_required'])
+            self.assertFalse(idle['follower_proof_advanced'])
+            # An idle read window still cannot qualify after loss of Fleet,
+            # a reset/rotation or an impossible proof. No write gate changes.
+            for bad in (dict(healthy, fleet_active=False), dict(healthy, fenced=True),
+                        dict(healthy, rotating=True), dict(healthy, log_epoch=2),
+                        dict(healthy, follower_proven_through=999),
+                        dict(healthy, follower_proven_through=1001),
+                        dict(healthy, tiered_through=1001),
+                        dict(healthy, follower_proven_through=True),
+                        dict(healthy, error='lease lost')):
+                paths[1].write_text(json.dumps([{'metrics': {'node_log_progress': bad}}]))
+                self.assertFalse(REPORT.fleet_mode_report(directory, writes_offered=False)['pass'])
+
+    def test_missing_fleet_frontiers_cannot_qualify(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.assertFalse(REPORT.fleet_mode_report(directory)['available'])
+            for label in ('start', 'end'):
+                (directory / f'metrics-window-{label}.json').write_text('[{"metrics": {}}]')
+            result = REPORT.fleet_mode_report(directory)
+            self.assertFalse(result['available'])
+            self.assertFalse(result['pass'])
+
     def test_provider_oom_after_measurement_is_retained_as_a_cold_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -162,6 +238,8 @@ class DeliveryGateTests(unittest.TestCase):
                                  "sample_elapsed_ns": count * 1000,
                                  "storage_families": {"immutable": {"put": operation}},
                                  "storage_operations": {"put": operation},
+                                 "shared_publication": {"cohorts": count, "singletons": count * 2,
+                                     "queue": {"mean_ms": 10 / count, "p99_ms": 20 / count}},
                                  "histograms": {"worker": {"resolution_us": 100,
                                      "total_ns": count * 200000, "buckets": [0, 0, count]}},
                                  "writes": {"selected_roots": count,
@@ -177,6 +255,7 @@ class DeliveryGateTests(unittest.TestCase):
             self.assertEqual(endpoint["histograms"]["worker"]["resolution_us"], 100)
             self.assertEqual(endpoint["histograms"]["worker"]["buckets"], [0, 0, 4])
             self.assertEqual(endpoint["publication"]["materialized_commits"], 8)
+            self.assertEqual(endpoint["shared_publication"], {"cohorts": 4, "singletons": 8})
             bad = sample(5)
             bad[0]["metrics"]["storage_operations"]["put"] = dict(
                 bad[0]["metrics"]["storage_operations"]["put"], bytes_written=999)

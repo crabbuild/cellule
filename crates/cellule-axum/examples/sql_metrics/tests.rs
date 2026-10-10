@@ -33,6 +33,15 @@ fn response_and_proof_timings_keep_ack_latency_separate_from_materialization() {
         cellule_runtime::node::log::DurabilitySource::Object,
         Duration::from_millis(50),
     );
+    metrics.durability_proof(
+        cellule_runtime::node::log::DurabilitySource::Bundle,
+        Duration::from_millis(3),
+    );
+    metrics.command_response(
+        CommandResponseSource::Bundle,
+        Duration::from_millis(4),
+        Duration::from_millis(1),
+    );
     let sample = metrics.window_snapshot();
     assert_eq!(
         sample["histograms"]["response_fleet"]["nonzero_buckets"],
@@ -48,6 +57,15 @@ fn response_and_proof_timings_keep_ack_latency_separate_from_materialization() {
     );
     assert_eq!(sample["response_sources"]["fleet"], 1);
     assert_eq!(sample["response_sources"]["object"], 0);
+    assert_eq!(sample["response_sources"]["bundle"], 1);
+    assert_eq!(
+        sample["histograms"]["response_bundle"]["nonzero_buckets"],
+        serde_json::json!([[40, 1]])
+    );
+    assert_eq!(
+        sample["histograms"]["proof_bundle"]["nonzero_buckets"],
+        serde_json::json!([[30, 1]])
+    );
 }
 
 #[tokio::test]

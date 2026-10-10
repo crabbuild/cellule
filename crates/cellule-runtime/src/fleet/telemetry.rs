@@ -14,6 +14,8 @@ pub enum CommandResponseSource {
     Fleet,
     /// Object publication proved the new commit.
     Object,
+    /// Original shared bundle selection proved the complete captured commit.
+    Bundle,
 }
 
 /// One canonical Cell-control CAS attempt, excluding validation and encoding.
@@ -28,36 +30,6 @@ pub struct ControlTransitionTiming {
     pub elapsed: Duration,
     /// Provider result; absent if the caller cancelled before receiving it.
     pub succeeded: Option<bool>,
-}
-
-/// One node-log submission before its encoded frames enter the shipping queue.
-///
-/// Completed phases are disjoint and use a monotonic clock. A missing phase
-/// never masquerades as a zero wait. Cancellation ends this observation; a
-/// previously dispatched blocking load or encoder can still be reconciling.
-#[derive(Clone, Copy, Debug)]
-pub struct NodeLogSubmissionTiming {
-    /// Exact Cell commit, used only for trace correlation.
-    pub commit_sequence: u64,
-    /// First committed node sequence; absent if no ticket was committed.
-    pub first_sequence: Option<u64>,
-    /// Declared encoded bytes, including canonical node-frame headers.
-    pub encoded_bytes: u64,
-    /// Wait for the existing node-wide byte reservation.
-    pub byte_admission: Option<Duration>,
-    /// Wait for the existing bounded submission queue slot.
-    pub queue_admission: Option<Duration>,
-    /// Blocking capture loading, including blocking-pool scheduling.
-    pub capture_load: Option<Duration>,
-    /// Wait for the node-wide ticket assignment lock.
-    pub ticket_order: Option<Duration>,
-    /// Canonical encoding while holding that lock, including blocking dispatch.
-    pub encoding: Option<Duration>,
-    /// Submission entry to terminal result or caller cancellation.
-    pub total: Duration,
-    /// Frames enqueued; false for an error, absent for caller cancellation.
-    /// This does not describe a follower receipt or a durable proof.
-    pub enqueued: Option<bool>,
 }
 
 /// One admitted owner query through its runtime reply attempt.
@@ -194,6 +166,24 @@ pub struct PublicationTiming {
     pub covered_commits: u64,
 }
 
+/// One bounded shared upload; participating Cells still select roots separately.
+#[derive(Clone, Copy, Debug)]
+pub struct SharedPublicationTiming {
+    /// Participating Cell publication inputs.
+    pub cells: u64,
+    /// Scoped native LTX/index rows.
+    pub rows: u64,
+    /// Exact shared object bytes, including framing.
+    pub bytes: u64,
+    /// Oldest input's queue age when the cohort freezes.
+    pub queue: Duration,
+    /// File construction, upload and joined scratch cleanup duration.
+    pub upload: Duration,
+    /// Whether every scoped uploaded input was produced.
+    pub succeeded: bool,
+}
+
+/// Native follower timing for one dispatched append batch.
 /// One follower append attempt, measured on the blocking worker.
 ///
 /// `accounting_hold` sums short reservation updates; filesystem I/O and lane
@@ -270,6 +260,60 @@ pub struct NodeLogBatchTiming {
     pub members: u64,
     /// Whether every selected member supplied a valid durable receipt.
     pub succeeded: bool,
+}
+
+/// One native capture's submission before follower durability can be observed.
+///
+/// The durations partition the same submission lifetime, including cancelled
+/// futures. They exclude SQL execution, subsequent shipping and object selection.
+/// Cell identity and sequences are for local trace correlation, never labels.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NodeLogSubmissionTiming {
+    /// Original inclusive logical command range represented by this capture.
+    pub first_commit_sequence: u64,
+    /// Original inclusive logical command range endpoint.
+    pub commit_sequence: u64,
+    /// Number of native frames in the submitted capture.
+    pub frames: u64,
+    /// Expected canonical framed bytes admitted by the native lane.
+    pub bytes: u64,
+    /// Initial scope, length and capacity validation.
+    pub validation: Duration,
+    /// Waiting for the original outstanding native-byte reservation.
+    pub native_bytes: Duration,
+    /// Acquiring the shipping sender and reserving its bounded queue slot.
+    pub shipping_slot: Duration,
+    /// Blocking-worker dispatch, local file reads and native frame validation.
+    pub local_load: Duration,
+    /// Waiting for the original ordered issuance mutex.
+    pub ordered_lane: Duration,
+    /// Waiting for the bounded publication feed while owning the issuance mutex.
+    pub publication_slot: Duration,
+    /// Ticket validation, final encoding, assignment and enqueueing both consumers.
+    pub assignment: Duration,
+    /// Entire submission lifetime, partitioned by the phases above.
+    pub total: Duration,
+    /// Whether one complete original capture was assigned and enqueued.
+    pub succeeded: bool,
+    /// Whether the submission future was dropped before returning a result.
+    pub cancelled: bool,
+    /// First committed node sequence; absent if no ticket was committed.
+    pub first_sequence: Option<u64>,
+    /// Declared encoded bytes, including canonical node-frame headers.
+    pub encoded_bytes: u64,
+    /// Wait for the existing node-wide byte reservation.
+    pub byte_admission: Option<Duration>,
+    /// Wait for the existing bounded submission queue slot.
+    pub queue_admission: Option<Duration>,
+    /// Blocking capture loading, including blocking-pool scheduling.
+    pub capture_load: Option<Duration>,
+    /// Wait for the node-wide ticket assignment lock.
+    pub ticket_order: Option<Duration>,
+    /// Canonical encoding, assignment and enqueueing after the ordered lock.
+    pub encoding: Option<Duration>,
+    /// Frames enqueued; false for an error, absent for caller cancellation.
+    /// This does not describe a follower receipt or a durable proof.
+    pub enqueued: Option<bool>,
 }
 
 /// Outcome of an actor-owned resident route lookup.
@@ -448,8 +492,22 @@ pub trait CellTelemetry: Send + Sync {
     /// record the objects they did upload.
     fn publication_cost(&self, _objects: u64, _bytes: u64) {}
 
+    /// Records shared cohort work without Cell identity labels.
+    fn shared_publication(&self, _timing: SharedPublicationTiming) {}
+
+    /// Records a lone cohort delegated to canonical native-pack preparation.
+    /// No shared object or upload is counted; queue age includes the cohort wait.
+    fn shared_publication_singleton(&self, _queue: Duration) {}
+
+    /// Records ordinary-path fallback: `true` means retained/descriptor pressure,
+    /// `false` means the capture cannot fit the small-object representation.
+    fn shared_publication_fallback(&self, _pressure: bool) {}
+
     /// Records bytes sent to follower append lanes and whether every lane acknowledged them.
     fn node_log_append(&self, _acknowledged: bool, _bytes: u64) {}
+
+    /// Records the original capture submission, including refused or cancelled work.
+    fn node_log_submission(&self, _cell: CellId, _timing: NodeLogSubmissionTiming) {}
 
     /// Records one follower worker attempt after its storage locks are released.
     /// Leader and epoch are trace correlation keys, never metric labels.
@@ -457,9 +515,6 @@ pub trait CellTelemetry: Send + Sync {
 
     /// Records collection, fill, and receipt wait separately from replica bytes.
     fn node_log_batch(&self, _timing: NodeLogBatchTiming) {}
-
-    /// Records pre-enqueue waits for one node-log submission attempt.
-    fn node_log_submission(&self, _cell: CellId, _timing: NodeLogSubmissionTiming) {}
 
     /// Records a bounded-cardinality resident route result.
     fn resident_route(&self, _outcome: ResidentRouteOutcome) {}
@@ -641,6 +696,24 @@ impl CellTelemetryHandle {
     pub(crate) fn publication_cost(&self, objects: u64, bytes: u64) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.publication_cost(objects, bytes);
+        }
+    }
+
+    pub(crate) fn shared_publication(&self, timing: SharedPublicationTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.shared_publication(timing);
+        }
+    }
+
+    pub(crate) fn shared_publication_fallback(&self, pressure: bool) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.shared_publication_fallback(pressure);
+        }
+    }
+
+    pub(crate) fn shared_publication_singleton(&self, queue: Duration) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.shared_publication_singleton(queue);
         }
     }
 

@@ -1,7 +1,7 @@
 //! Finite, nonblocking runtime and provider measurements for this application.
 use cellule_runtime::fleet::telemetry::{
-    CellTelemetry, CommandResponseSource, DurabilitySubmissionOutcome, PrimitiveOperationKind,
-    PrimitiveOperationOutcome, PublicationTiming,
+    CellTelemetry, CommandResponseSource, DurabilitySubmissionOutcome, NodeLogSubmissionTiming,
+    PrimitiveOperationKind, PrimitiveOperationOutcome, PublicationTiming, SharedPublicationTiming,
 };
 use cellule_store::{StorageObservation, StorageObserver, StorageOperation, StorageOutcome};
 use std::{
@@ -11,6 +11,7 @@ use std::{
 
 mod capture;
 mod storage;
+mod submission;
 use capture::CaptureMetrics;
 
 #[cfg(test)]
@@ -29,21 +30,37 @@ pub(super) struct QueryMetrics {
     storage: storage::Accounting,
     peer: [Histogram; PeerPhase::COUNT],
     host_capacity: serde_json::Value,
-    response_sources: [AtomicU64; 3],
-    response_elapsed: [Histogram; 3],
+    response_sources: [AtomicU64; 4],
+    response_elapsed: [Histogram; 4],
     response_confirmation: Histogram,
-    proof_wait: [Histogram; 2],
+    proof_wait: [Histogram; 3],
     submission_sources: [AtomicU64; 4],
     log_append_successes: AtomicU64,
     log_append_failures: AtomicU64,
     log_append_bytes: AtomicU64,
+    submission: submission::SubmissionMetrics,
     selected_roots: AtomicU64,
     materialized_commits: AtomicU64,
+    shared: SharedMetrics,
     follower_frames: AtomicU64,
     follower_sync_calls: AtomicU64,
     follower_failures: AtomicU64,
     sample_origin: std::sync::OnceLock<std::time::Instant>,
     sample_session: std::sync::OnceLock<uuid::Uuid>,
+}
+
+#[derive(Default)]
+struct SharedMetrics {
+    cohorts: AtomicU64,
+    singletons: AtomicU64,
+    failures: AtomicU64,
+    cells: AtomicU64,
+    rows: AtomicU64,
+    bytes: AtomicU64,
+    pressure: AtomicU64,
+    large: AtomicU64,
+    queue: Histogram,
+    upload: Histogram,
 }
 
 // Application-owned instrumentation: fixed histograms, 100-us upper
@@ -238,6 +255,7 @@ impl CellTelemetry for QueryMetrics {
             CommandResponseSource::Recorded => 0,
             CommandResponseSource::Fleet => 1,
             CommandResponseSource::Object => 2,
+            CommandResponseSource::Bundle => 3,
         };
         self.response_sources[index].fetch_add(1, Ordering::Relaxed);
         self.response_elapsed[index].observe(elapsed);
@@ -251,6 +269,7 @@ impl CellTelemetry for QueryMetrics {
         let index = match source {
             cellule_runtime::node::log::DurabilitySource::Fleet => 0,
             cellule_runtime::node::log::DurabilitySource::Object => 1,
+            cellule_runtime::node::log::DurabilitySource::Bundle => 2,
         };
         self.proof_wait[index].observe(waited);
     }
@@ -270,6 +289,9 @@ impl CellTelemetry for QueryMetrics {
             self.log_append_failures.fetch_add(1, Ordering::Relaxed);
         }
         self.log_append_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+    fn node_log_submission(&self, _cell: cellule_runtime::CellId, timing: NodeLogSubmissionTiming) {
+        self.submission.observe(timing);
     }
     fn command_execution(&self, queue: Duration, worker: Duration, _succeeded: bool) {
         self.writes.queue.observe(queue);
@@ -291,6 +313,29 @@ impl CellTelemetry for QueryMetrics {
     fn publication_cost(&self, objects: u64, bytes: u64) {
         self.writes.objects.fetch_add(objects, Ordering::Relaxed);
         self.writes.bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+    fn shared_publication(&self, timing: SharedPublicationTiming) {
+        self.shared.cohorts.fetch_add(1, Ordering::Relaxed);
+        self.shared
+            .failures
+            .fetch_add(u64::from(!timing.succeeded), Ordering::Relaxed);
+        self.shared.cells.fetch_add(timing.cells, Ordering::Relaxed);
+        self.shared.rows.fetch_add(timing.rows, Ordering::Relaxed);
+        self.shared.bytes.fetch_add(timing.bytes, Ordering::Relaxed);
+        self.shared.queue.observe(timing.queue);
+        self.shared.upload.observe(timing.upload);
+    }
+    fn shared_publication_fallback(&self, pressure: bool) {
+        if pressure {
+            &self.shared.pressure
+        } else {
+            &self.shared.large
+        }
+        .fetch_add(1, Ordering::Relaxed);
+    }
+    fn shared_publication_singleton(&self, queue: Duration) {
+        self.shared.singletons.fetch_add(1, Ordering::Relaxed);
+        self.shared.queue.observe(queue);
     }
     fn ltx_phase(&self, phase: cellule_ltx::LtxPhase, elapsed: Duration, _succeeded: bool) {
         use cellule_ltx::LtxPhase;
@@ -360,6 +405,8 @@ impl QueryMetrics {
             ("publication", &self.writes.publication),
             ("compaction", &self.writes.compaction),
             ("dirty_admission", &self.writes.dirty_admission),
+            ("shared_queue", &self.shared.queue),
+            ("shared_upload", &self.shared.upload),
         ] {
             histograms.insert(label.into(), histogram.raw());
         }
@@ -370,13 +417,16 @@ impl QueryMetrics {
             ("response_recorded", &self.response_elapsed[0]),
             ("response_fleet", &self.response_elapsed[1]),
             ("response_object", &self.response_elapsed[2]),
+            ("response_bundle", &self.response_elapsed[3]),
             ("response_confirmation", &self.response_confirmation),
             ("proof_fleet", &self.proof_wait[0]),
             ("proof_object", &self.proof_wait[1]),
+            ("proof_bundle", &self.proof_wait[2]),
         ] {
             histograms.insert(name.into(), histogram.raw());
         }
         histograms.extend(self.capture.window_snapshot());
+        histograms.extend(self.submission.window_snapshot());
         value["histograms"] = histograms.into();
         value
     }
@@ -454,7 +504,8 @@ impl QueryMetrics {
             "response_sources": {
                 "recorded": self.response_sources[0].load(Ordering::Relaxed),
                 "fleet": self.response_sources[1].load(Ordering::Relaxed),
-                "object": self.response_sources[2].load(Ordering::Relaxed)
+                "object": self.response_sources[2].load(Ordering::Relaxed),
+                "bundle": self.response_sources[3].load(Ordering::Relaxed)
             },
             "submission_sources": {
                 "fleet": self.submission_sources[0].load(Ordering::Relaxed),
@@ -467,10 +518,23 @@ impl QueryMetrics {
                 "failures": self.log_append_failures.load(Ordering::Relaxed),
                 "bytes": self.log_append_bytes.load(Ordering::Relaxed)
             },
+            "node_log_submission": self.submission.snapshot(),
             "follower_append": {
                 "input_frames": self.follower_frames.load(Ordering::Relaxed),
                 "data_sync_calls": self.follower_sync_calls.load(Ordering::Relaxed),
                 "failures": self.follower_failures.load(Ordering::Relaxed)
+            },
+            "shared_publication": {
+                "cohorts": self.shared.cohorts.load(Ordering::Relaxed),
+                "singletons": self.shared.singletons.load(Ordering::Relaxed),
+                "failures": self.shared.failures.load(Ordering::Relaxed),
+                "cells": self.shared.cells.load(Ordering::Relaxed),
+                "rows": self.shared.rows.load(Ordering::Relaxed),
+                "bytes": self.shared.bytes.load(Ordering::Relaxed),
+                "pressure_fallbacks": self.shared.pressure.load(Ordering::Relaxed),
+                "large_fallbacks": self.shared.large.load(Ordering::Relaxed),
+                "queue": self.shared.queue.snapshot(),
+                "upload": self.shared.upload.snapshot()
             },
             "storage_operations": storage,
             "storage_families": storage_families,

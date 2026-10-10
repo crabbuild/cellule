@@ -6,6 +6,10 @@ on:
       - "crates/cellule-runtime/model/**"
       - "crates/cellule-runtime/src/coordination/mod.rs"
       - "crates/cellule-runtime/src/coordination/**"
+      - "crates/cellule-runtime/src/control/**"
+      - "crates/cellule-runtime/src/follower/**"
+      - "crates/cellule-runtime/src/node/**"
+      - "crates/cellule-runtime/src/publication/**"
       - ".github/workflows/coordination-model.yml"
   schedule:
     - cron: "17 3 * * 1"
@@ -32,6 +36,9 @@ jobs:
           chmod +x crates/cellule-runtime/model/check.sh
           crates/cellule-runtime/model/check.sh fast
           crates/cellule-runtime/model/check.sh negative
+          crates/cellule-runtime/model/check.sh write-proofs
+          crates/cellule-runtime/model/check.sh bundle-coverage
+          crates/cellule-runtime/model/check.sh binding-drain
 
   broad:
     if: github.event_name != 'pull_request'

@@ -38,6 +38,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
+tracing-subscriber = "0.3"
 
 [[example]]
 name = "typed-api-service"

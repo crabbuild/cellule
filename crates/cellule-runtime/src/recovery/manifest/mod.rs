@@ -13,9 +13,11 @@ use crate::node::log::RecoveredCellTail;
 use crate::{Error, Result};
 
 const MAX_MANIFEST_BYTES: u64 = 2 << 20;
+const MAX_MANIFEST_CELLS: usize = 4_096;
 const MULTIPART_BYTES: usize = 8 << 20;
 
 mod inventory;
+mod reconcile;
 pub use inventory::RecoveryManifestInventory;
 
 /// One control-ready pointer returned after bundle and manifest publication.
@@ -190,6 +192,14 @@ pub struct RecoveryManifestStore {
 }
 
 impl RecoveryManifestStore {
+    pub(crate) fn for_application(&self, application: ApplicationId) -> Self {
+        let mut store = self.clone();
+        store.layout = store.layout.for_application(*application.as_bytes());
+        store
+    }
+    pub(crate) fn layout(&self) -> &CellStorageLayout {
+        &self.layout
+    }
     /// Creates a manifest store over one layout, with recovery disk bounded by
     /// the plan byte limit.
     #[must_use]
@@ -265,6 +275,7 @@ impl RecoveryManifestStore {
         if leader_session.as_bytes().iter().all(|byte| *byte == 0)
             || log_epoch == 0
             || tails.is_empty()
+            || tails.len() > MAX_MANIFEST_CELLS
         {
             return Err(Error::Node("invalid recovery manifest scope"));
         }
@@ -278,7 +289,9 @@ impl RecoveryManifestStore {
             let runtime_predecessor = RootRef::from_ltx(cell, incarnation, predecessor)?;
             let final_position = tail.overlay.final_position();
             let final_commit_sequence = tail.overlay.final_commit_sequence();
-            let bundle = tail.overlay.into_bundle()?;
+            // Keep scratch admission through upload and optional cache work.
+            // Borrowing also permits file-backed admitted recovery overlays.
+            let bundle = tail.overlay.bundle();
             summary.bundle_bytes = summary
                 .bundle_bytes
                 .checked_add(bundle.len())
@@ -289,7 +302,7 @@ impl RecoveryManifestStore {
                 log_epoch,
                 &bundle_digest,
             );
-            publish_bundle_immutable(&self.layout, &path, &bundle, &mut summary).await?;
+            publish_bundle_immutable(&self.layout, &path, bundle, &mut summary).await?;
             if self.artifact_store.is_some() {
                 let key = RecoveryArtifactKey::new(
                     leader_session,
@@ -305,7 +318,7 @@ impl RecoveryManifestStore {
                     final_commit_sequence,
                     Digest::from_bytes(bundle_digest),
                 );
-                artifacts.push((key, bundle));
+                artifacts.push((key, tail.overlay));
             }
             rows.push(ManifestCell {
                 application: tail.application,
@@ -358,11 +371,17 @@ impl RecoveryManifestStore {
         );
         publish_immutable(&self.layout, &path, &body, MAX_MANIFEST_BYTES, &mut summary).await?;
         if let Some(store) = &self.artifact_store {
-            for (key, bundle) in artifacts {
+            for (key, overlay) in artifacts {
                 let store = Arc::clone(store);
                 // Both immutable objects are the correctness boundary; a local
                 // cache admission failure must not block control progress.
-                let _ = tokio::task::spawn_blocking(move || store.retain(key, bundle)).await;
+                let (bundle, owner) = overlay.into_bundle_with_owner();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let result = store.retain(key, bundle);
+                    drop(owner);
+                    result
+                })
+                .await;
             }
         }
         Ok(PinnedRecoveryCells {
@@ -470,16 +489,17 @@ impl RecoveryManifestStore {
             .await?;
         let limits = self.limits;
         let decoded = tokio::task::spawn_blocking(move || {
-            cellule_ltx::bundle::Bundle::decode_temp_file_with_digest(
+            let bundle = cellule_ltx::bundle::Bundle::decode_temp_file_with_digest(
                 temporary,
                 row.bundle_digest,
                 limits,
-            )
+            )?;
+            Ok::<_, cellule_ltx::LtxError>((bundle, disk_reservation))
         })
         .await
         .map_err(cellule_ltx::LtxError::from)?;
-        let bundle = match decoded {
-            Ok(bundle) => bundle,
+        let (bundle, disk_reservation) = match decoded {
+            Ok(result) => result,
             Err(cellule_ltx::LtxError::ChecksumMismatch) => {
                 return Err(Error::Node("recovery bundle digest differs"));
             }
@@ -636,7 +656,7 @@ impl TryFrom<RawManifest> for RecoveryManifest {
     type Error = Error;
 
     fn try_from(raw: RawManifest) -> Result<Self> {
-        if raw.version != 1 || raw.cells.is_empty() || raw.cells.len() > 1_024 {
+        if raw.version != 1 || raw.cells.is_empty() || raw.cells.len() > MAX_MANIFEST_CELLS {
             return Err(Error::Node("invalid recovery manifest shape"));
         }
         let leader_session = SessionId::from_bytes(unhex(&raw.leader_session)?);

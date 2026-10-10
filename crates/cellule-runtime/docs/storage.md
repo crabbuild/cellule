@@ -1,5 +1,9 @@
 # Authority, storage, and recovery
 
+The experimental [bundle coverage APIs](../../../docs/bundle-coverage-implementation.md)
+separate selected native ranges from materialized roots. Bundle command ACKs
+remain disabled pending actor, recovery, resource and collection integration.
+
 One mutable authority record and one immutable object graph: identity, control,
 roots, pages, restore, compaction, backup, and retention.
 

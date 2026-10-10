@@ -131,6 +131,27 @@ pub(super) fn handle_task(
         } => publication::handle_publication_admitted(
             context, cell, generation, effect_id, publisher, result,
         ),
+        TaskResult::BundleSelectionReady {
+            cell,
+            generation,
+            result,
+        } => publication::handle_selection_ready(context, cell, generation, result),
+        TaskResult::BundleSelected {
+            cell,
+            generation,
+            effect_id,
+            covered,
+            retained_bytes,
+            result,
+        } => publication::handle_bundle_selected(
+            context,
+            cell,
+            generation,
+            effect_id,
+            covered,
+            retained_bytes,
+            result,
+        ),
         TaskResult::Published {
             cell,
             generation,

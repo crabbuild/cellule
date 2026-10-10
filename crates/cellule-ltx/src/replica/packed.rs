@@ -19,7 +19,12 @@ pub(super) async fn freeze(
         .checked_add(segment.descriptor.info.size_bytes)
         .and_then(|n| n.checked_add(segment.index.len() as u64))
         .ok_or(LtxError::LTXCorrupted)?;
-    if length > SINGLE_PUT_BYTES || matches!(segment.body, AppendBody::Bundle) {
+    if length > SINGLE_PUT_BYTES
+        || matches!(
+            segment.body,
+            AppendBody::Bundle | AppendBody::SharedUploaded
+        )
+    {
         return Ok(segment);
     }
     let body = match &segment.body {
@@ -29,7 +34,9 @@ pub(super) async fn freeze(
             replica.host.run(move || source.read_small(size)).await??
         }
         AppendBody::Frozen(bytes) => bytes.clone(),
-        AppendBody::Bundle | AppendBody::Packed(_) => return Err(LtxError::LTXCorrupted),
+        AppendBody::Bundle | AppendBody::Packed(_) | AppendBody::SharedUploaded => {
+            return Err(LtxError::LTXCorrupted);
+        }
     };
     if body.len() as u64 != segment.descriptor.info.size_bytes
         || *blake3::hash(&body).as_bytes() != segment.descriptor.info.blake3
@@ -40,11 +47,7 @@ pub(super) async fn freeze(
     // Freeze before provider I/O; retained memory is bounded by the existing
     // single-PUT limit and survives cancellation with its preparation owner.
     let mut bytes = BytesMut::with_capacity(length as usize);
-    bytes.extend_from_slice(MAGIC);
-    bytes.extend_from_slice(&(body.len() as u64).to_be_bytes());
-    bytes.extend_from_slice(&(segment.index.len() as u64).to_be_bytes());
-    bytes.extend_from_slice(&[0; 8]);
-    bytes.extend_from_slice(&segment.descriptor.info.blake3);
+    bytes.extend_from_slice(&header(&segment.descriptor));
     bytes.extend_from_slice(&body);
     bytes.extend_from_slice(&segment.index);
     let bytes = bytes.freeze();
@@ -59,7 +62,9 @@ pub(super) async fn freeze(
     let source: Arc<dyn MultipartUploadSource> = match segment.body {
         AppendBody::Native(source) => source,
         AppendBody::Frozen(bytes) => Arc::new(super::upload::FrozenCapture(bytes)),
-        AppendBody::Bundle | AppendBody::Packed(_) => return Err(LtxError::LTXCorrupted),
+        AppendBody::Bundle | AppendBody::Packed(_) | AppendBody::SharedUploaded => {
+            return Err(LtxError::LTXCorrupted);
+        }
     };
     // Retain the pinned source and shared index, rather than all frozen bodies
     // across a preparation cohort. Upload buffers only while holding host I/O.
@@ -103,6 +108,15 @@ pub(super) fn verify(bytes: &Bytes, descriptor: &SegmentDescriptor) -> Result<()
         entry?;
     }
     Ok(())
+}
+
+pub(super) fn header(descriptor: &SegmentDescriptor) -> [u8; 64] {
+    let mut header = [0; 64];
+    header[..8].copy_from_slice(MAGIC);
+    header[8..16].copy_from_slice(&descriptor.info.size_bytes.to_be_bytes());
+    header[16..24].copy_from_slice(&descriptor.index_length.to_be_bytes());
+    header[32..64].copy_from_slice(&descriptor.info.blake3);
+    header
 }
 
 struct PackedCapture {

@@ -31,15 +31,15 @@ impl Cache {
         if let Some(existing) = self.objects.get(&key) {
             return Arc::clone(existing);
         }
-        while self.bytes.saturating_add(bytes.len()) > CACHE_BYTES {
+        while self.bytes.saturating_add(bytes.len().max(1024)) > CACHE_BYTES {
             let Some(old) = self.order.pop_front() else {
                 break;
             };
             if let Some(removed) = self.objects.remove(&old) {
-                self.bytes -= removed.len();
+                self.bytes -= removed.len().max(1024);
             }
         }
-        self.bytes += bytes.len();
+        self.bytes += bytes.len().max(1024);
         self.order.push_back(key.clone());
         self.objects.insert(key, Arc::clone(&bytes));
         bytes
@@ -99,6 +99,40 @@ pub(super) fn insert(
         .lock()
         .map_err(|_| LtxError::InvalidState("immutable object cache poisoned"))?
         .insert(key(layout, cell, incarnation, digest, kind), bytes))
+}
+
+pub(super) fn shared_header(
+    layout: &CellStorageLayout,
+    object: [u8; 32],
+    offset: u64,
+    expected: &[u8],
+    verified: bool,
+) -> Result<bool> {
+    // Reuse the metadata band and its cap. The minimum entry charge bounds
+    // small-header key/table overhead as well as retained payload bytes.
+    let key = Key {
+        store: layout.immutable_cache_identity(),
+        path: format!(
+            "{}@{offset}",
+            layout.incarnation_object_path(
+                &[0; 32],
+                &[0; 16],
+                &object,
+                CellObjectKind::SharedPacked
+            )
+        ),
+        digest: *blake3::hash(expected).as_bytes(),
+    };
+    let mut cache = band(CellObjectKind::Directory)?
+        .lock()
+        .map_err(|_| LtxError::InvalidState("immutable object cache poisoned"))?;
+    if verified {
+        cache.insert(key, expected.into());
+        return Ok(true);
+    }
+    Ok(cache
+        .get(&key)
+        .is_some_and(|bytes| bytes.as_ref() == expected))
 }
 
 #[cfg(test)]

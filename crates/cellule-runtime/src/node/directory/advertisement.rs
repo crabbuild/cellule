@@ -457,6 +457,7 @@ impl NodeDirectory {
                         now_ms,
                         None,
                         advertisement.log.clone(),
+                        advertisement.bundle,
                     )?;
                     let encoded = tombstone.encode()?;
                     match self
@@ -496,6 +497,12 @@ impl NodeDirectory {
                 "node log must be sealed before session withdrawal",
             ));
         }
+        crate::node::bundle::store::ensure_session_drained(
+            &self.layout,
+            observed.advertisement.session,
+            observed.advertisement.bundle,
+        )
+        .await?;
         let path = self
             .layout
             .node_path(observed.advertisement.session.as_bytes());
@@ -506,6 +513,7 @@ impl NodeDirectory {
             now_ms,
             None,
             None,
+            observed.advertisement.bundle,
         )?;
         let result = match self
             .layout
@@ -529,6 +537,12 @@ impl NodeDirectory {
                             "node log must be sealed before session withdrawal",
                         ))
                     } else {
+                        crate::node::bundle::store::ensure_session_drained(
+                            &self.layout,
+                            current.session,
+                            current.bundle,
+                        )
+                        .await?;
                         Ok(())
                     }
                 }
@@ -668,6 +682,7 @@ impl NodeDirectory {
                 .checked_add(1)
                 .ok_or(Error::Node("node session generation overflow"))?;
             candidate.log.clone_from(&base.advertisement.log);
+            candidate.bundle = base.advertisement.bundle;
             self.validate(&candidate, now_ms)?;
             validate_successor(&base.advertisement, &candidate)?;
             // The validated candidate remains immutable through its CAS body.

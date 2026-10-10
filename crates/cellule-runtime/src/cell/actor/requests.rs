@@ -146,6 +146,9 @@ pub(super) async fn execute_command(
     effect_id: u64,
 ) -> TaskResult {
     let execution_started = std::time::Instant::now();
+    if command.refused_mutation.is_some() || command.publication_probe {
+        return super::replay::execute(pool, command, interrupt, generation, effect_id).await;
+    }
     if command.group.is_some() {
         return super::group::execute(pool, durability, command, interrupt, generation, effect_id)
             .await;
@@ -248,9 +251,20 @@ pub(super) async fn execute_command(
         succeeded = execution.is_ok(),
     );
     let (result, must_fence) = match execution {
-        Ok(WorkerExecution::Recorded(outcome)) => (Ok(CommandTaskResult::Recorded(outcome)), false),
+        Ok(WorkerExecution::Recorded(outcome)) => (
+            command
+                ._work
+                .finish_sql(outcome.result().len(), 0)
+                .map(|_| CommandTaskResult::Recorded(outcome)),
+            false,
+        ),
         Ok(WorkerExecution::Pending(pending)) => {
-            let result = reserve_pending_publication(&pool, &pending);
+            let result = reserve_pending_publication(
+                &pool,
+                &pending,
+                &mut command._work,
+                pending.outcome().result().len(),
+            );
             let result = match result {
                 Ok(retained_reservation) => durability
                     .submit(pending.outcome().commit_sequence(), pending.cuts())
@@ -296,12 +310,19 @@ pub(super) async fn execute_command(
 pub(super) fn reserve_pending_publication(
     pool: &SqlWorkerPool,
     pending: &PendingCommit,
+    work: &mut WorkAdmission,
+    result_bytes: usize,
 ) -> crate::Result<ResourceReservation> {
     // The host already owns the LTX file's disk reservation. Retain RAM for
     // shared indexes and live outcome/descriptor copies, not the on-disk body.
     // Physical backlog counters and their per-Cell limits remain unchanged.
     let bytes = usize::try_from(pending.retained_memory_bytes())
         .map_err(|_| Error::Capacity("pending publication bytes"))?;
+    if let Some(reservation) = work.finish_sql(result_bytes, bytes)? {
+        return Ok(reservation);
+    }
+    // Larger cuts still need their full charged admission. Returning unused
+    // result capacity first makes it available without changing the node limit.
     pool.resource_ledger()
         .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))
         .map_err(|error| match error {
@@ -366,6 +387,12 @@ pub(super) async fn prove_command(
     };
     let fenced = result.is_err();
     if fenced {
+        tracing::warn!(
+            cell = ?command.cell,
+            commit_sequence,
+            error = ?result.as_ref().err(),
+            "Cell durable confirmation fenced its owner"
+        );
         let _ = pool.fence(command.cell).await;
     }
     let result = if fenced {
@@ -392,12 +419,25 @@ pub(super) fn receive_publication_proof(
 pub(super) fn start_publication(
     cell: CellId,
     active: &mut ActiveCell,
+    pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
+    if active.publications.is_empty() || active.selecting {
+        return;
+    }
+    if active.publications.iter().all(|queued| {
+        queued
+            .durability
+            .as_ref()
+            .is_some_and(PendingDurability::has_managed_bundle_capture)
+    }) {
+        super::materialization::start_selection(cell, active, pool, tasks);
+        return;
+    }
     let Some(mut publisher) = active.publisher.take() else {
         return;
     };
-    if active.publications.is_empty() {
+    if active.root_debt.is_some() {
         active.publisher = Some(publisher);
         return;
     }
@@ -530,7 +570,7 @@ pub(super) fn start_admitted_publication(
     }
     tasks.spawn(async move {
         let mut admitted = Some(admission.replica);
-        let _retained_reservations = reservations;
+        let mut retained_reservations = reservations;
         let mut publication_proofs = Some(proofs);
         // Admission delay cannot restart or extend the existing retry grace.
         let fleet_deadline = admission.fleet_deadline;
@@ -539,6 +579,69 @@ pub(super) fn start_admitted_publication(
         let mut authority = std::time::Duration::ZERO;
         let result = async {
             let preparation_started = std::time::Instant::now();
+            if let Some(captures) = super::bundle::selected_prefix(
+                &publisher,
+                &durabilities,
+                published_commit_sequence,
+                merged.position,
+            )
+            .await?
+            {
+                let selected = Arc::clone(
+                    captures
+                        .last()
+                        .ok_or(Error::Control("bundle publication lacks capture"))?
+                        .selected(),
+                );
+                // No upload can still be reading these files: this task owns
+                // the sole publisher token and has not begun root preparation.
+                // Drop the old admission before fresh origin reconstruction.
+                drop(admitted.take());
+                let released = pool.release_bundle_captures(cell, captures).await?;
+                if released != expected {
+                    return Err(Error::Control("bundle result differs from queued commit"));
+                }
+                drop(merged);
+                for (mut pending, reservation) in
+                    pendings.drain(..).zip(retained_reservations.iter_mut())
+                {
+                    pending.release_selected_metadata();
+                    let bytes = usize::try_from(pending.retained_memory_bytes())
+                        .map_err(|_| Error::Capacity("bundle outcome memory"))?;
+                    drop(pending);
+                    reservation.shrink_retained(bytes)?;
+                }
+                preparation = preparation_started.elapsed();
+                let authority_started = std::time::Instant::now();
+                let checkpoint_retained = pool.resource_ledger().try_reserve(
+                    ResourceCost::zero().with_retained_bytes(crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes())
+                )?;
+                let root = loop {
+                    match publisher
+                        .materialize_bundle_with_due(&selected.proof, published_next_due_ms)
+                        .await
+                    {
+                        Ok(root) => break root,
+                        Err(error) if is_storage_publication_error(&error) => {
+                            if std::time::Instant::now() >= fleet_deadline {
+                                return Err(error);
+                            }
+                            tokio::time::sleep(retry_delay).await;
+                            retry_delay = retry_delay
+                                .saturating_mul(2)
+                                .min(std::time::Duration::from_secs(2));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                };
+                PendingDurability::prove_objects(&durabilities).await?;
+                if let Some(pending) = durabilities.last().and_then(Option::as_ref) {
+                    pending.checkpoint_materialized(publisher.authority(), root).await?;
+                }
+                pool.bind_bundle_materialized(cell, root, selected, checkpoint_retained).await?;
+                authority = authority_started.elapsed();
+                return Ok(());
+            }
             let prepared = loop {
                 let attempt = if let Some(replica) = admitted.take() {
                     publisher
@@ -613,6 +716,9 @@ pub(super) fn start_admitted_publication(
             };
             authority = authority_started.elapsed();
             let logged = PendingDurability::prove_objects(&durabilities).await?;
+            if let Some(pending) = durabilities.last().and_then(Option::as_ref) {
+                pending.checkpoint_materialized(publisher.authority(), root).await?;
+            }
             if !logged {
                 publisher.record_object_proof(newest_submitted_at.elapsed());
             }
@@ -702,6 +808,9 @@ pub(super) fn start_admitted_publication(
 }
 
 pub(super) fn is_storage_publication_error(error: &Error) -> bool {
+    if let Error::Shared(source) = error {
+        return is_storage_publication_error(source);
+    }
     matches!(
         error,
         Error::Storage(_) | Error::Ltx(cellule_ltx::LtxError::Storage(_))

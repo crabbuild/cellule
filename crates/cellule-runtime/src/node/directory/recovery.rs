@@ -150,6 +150,7 @@ impl NodeDirectory {
                     now_ms,
                     None,
                     advertisement.log.clone(),
+                    advertisement.bundle,
                 )?
                 .claim(claimant, now_ms)?
             }
@@ -519,6 +520,15 @@ impl NodeDirectory {
         else {
             return Err(Error::Fenced);
         };
+        // A recovery manifest is not terminal bundle closure. Keep the whole
+        // failed boot fenced until every original binding is materialized and
+        // checkpointed; lower-level callers cannot bypass the coordinator.
+        crate::node::bundle::store::ensure_session_drained(
+            &self.layout,
+            current.session,
+            current.bundle,
+        )
+        .await?;
         if let Some(log) = &current.log
             && matches!(log.phase(), NodeLogPhase::Sealed | NodeLogPhase::Retired)
             && log.recovery_manifest() == recovery_manifest

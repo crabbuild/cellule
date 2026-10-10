@@ -11,6 +11,68 @@ comparison. This document defines the next deliverables and acceptance gates;
 it supersedes the implementation recommendations in the historical
 [publication metadata cutover draft](publication-metadata-cutover.md).
 
+## Core write-path reference
+
+Use celld's actual LTX replication path as the implementation reference, rather
+than equating use of SQLite/LTX with architectural parity. The pinned reference
+is `f2bf648663a610eefde71f3547ad61e9b896b1f0`. Its Git tree identifies
+`ltx_repl.rs` blob `d3083dcfe17a33fba987f25e1c358a9903ea3e20` and
+`node_log.rs` blob `504dd023655b52da5ea81943f5834fdeaab56118`.
+
+The [ship loop](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/ltx_repl.rs#L4530)
+captures each dirty Cell's complete new L0 range, records submitted positions,
+and applies follower completions in original round order. Its
+[bundle loop](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/ltx_repl.rs#L4411)
+independently uploads new entries and advances bucket-covered positions.
+The [bundle credit check](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L6652)
+freshly reads canonical node-log authority after the unconditional immutable
+PUT; the PUT alone cannot authorize a zombie's response. Compaction is separate
+from ordinary Fleet acknowledgement. This ordering is the target:
+
+```mermaid
+flowchart LR
+    SQL[SQLite mutation and durable retry outcome] --> Ticket[Committed position and durability ticket]
+    Ticket --> Capture[Node-wide dirty capture of complete new L0 ranges]
+    Capture --> Ship[Ordered follower lanes]
+    Ship --> Sync[Every selected follower fsyncs its contiguous range]
+    Sync --> Fleet[Apply original ordered Fleet credits]
+    Capture --> Bundle[Upload one immutable bundle of new entries]
+    Bundle --> Fence[Fresh canonical epoch and ownership verification]
+    Fence --> Bucket[Exact bucket coverage credits]
+    Fleet --> ACK[Response after the first valid proof]
+    Bucket --> ACK
+    Bucket --> Compact[Independent bounded root materialization and compaction]
+    Compact --> Reclaim[Complete covered-range drain and safe collection]
+```
+
+The [reference transport defaults](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L5815)
+matter: absent overrides, `CELLD_LOG_PIPELINE` is four, `CELLD_LOG_WINDOW` is
+zero, and ordered one-shot HTTP is used. Persistent streaming requires
+`CELLD_LOG_TRANSPORT=stream`. The recorded harness sets none of these options;
+its celld measurements therefore do not establish performance of streaming.
+Normal SQL Cells also do not receive the ship loop's Queue-specific grouping
+delay. Cellule currently has eight rounds and a general four-millisecond
+assembly interval. These settings and the actual capture topology must be
+reported and aligned explicitly in a core comparison. A stream API added
+without its production transport and receiver is not a delivered optimization.
+
+| Remaining deliverable | Required behavior and verification |
+| --- | --- |
+| Separate selection cleanup from materialization ownership | Later verified captures retire while an original root callback is held; preserve the materialized prefix, later suffix, each original publication obligation, cancelled-job lifetime and exact cold outcomes. |
+| Replace repeated catalog/history publication work | One bounded append of new entries and a fresh fenced selection per cohort; no full catalog rewrite or predecessor-data scan per ordinary batch. Preserve authenticated lookup, origin-loss detection, canonical recovery inventory and all existing reader/collector contracts. |
+| Align dirty capture and ordered replication | Node-wide notification/capture, complete per-Cell ranges, immutable epoch/member lanes, matched declared round/byte limits and strictly ordered credit. Lost responses, partial ranges and epoch changes cannot credit a later unresolved tail. |
+| Make bucket progress and compaction independent | Fleet proof never waits for ordinary root materialization; separately bounded bucket/compaction debt makes progress under load. Drain the whole issued suffix, including prior Fleet ACKs, before transfer or collection. |
+| Qualify the common core and embedding separately | A Rust driver must exercise each real production LTX capture, follower fsync and response-proof path with identical inputs and explicit settings. No mocked I/O or direct SQLite/log-store-only timing substitutes for the core. Retain separate deployed-application HTTP/SQL qualification and all acceptance gates below. |
+
+Cellule's tenant/Cell identities, signed peer contracts, persisted formats and
+authority-pinned recovery remain compatibility contracts. Borrow celld's
+algorithms within these layers; porting its daemon wholesale or bypassing those
+contracts is not architectural parity. The ordinary path, retry/read visibility,
+failed-owner recovery and cross-Cell collection must change together when the
+coverage representation changes. Architectural parity remains unimplemented
+until these deliverables are verified; the existing TPS results remain
+end-to-end application observations and do not isolate core or language cost.
+
 ## Decision and success criteria
 
 Prioritize reducing publication work per command, then amortizing peer proof

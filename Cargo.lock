@@ -265,6 +265,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+ "tracing-subscriber",
  "utoipa",
  "utoipa-axum",
  "uuid",

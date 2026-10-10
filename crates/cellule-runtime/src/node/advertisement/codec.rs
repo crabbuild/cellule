@@ -42,7 +42,7 @@ impl From<&NodeTombstone> for RawNodeTombstoneEnvelope {
     fn from(value: &NodeTombstone) -> Self {
         Self {
             tombstone: RawNodeTombstone {
-                version: 1,
+                version: if value.bundle.is_some() { 2 } else { 1 },
                 session: encode_hex(value.session.as_bytes()),
                 node: encode_hex(value.node.as_bytes()),
                 expires_at_ms: value.expires_at_ms.to_string(),
@@ -53,6 +53,7 @@ impl From<&NodeTombstone> for RawNodeTombstoneEnvelope {
                 claim_generation: value.claim_generation.to_string(),
                 claim_expires_at_ms: value.claim_expires_at_ms.map(|value| value.to_string()),
                 log: value.log.as_ref().map(encode_log),
+                bundle: value.bundle.map(RawNodeBundleHead::from),
             },
         }
     }
@@ -70,6 +71,8 @@ pub(in crate::node) struct RawNodeTombstone {
     pub(in crate::node) claim_generation: String,
     pub(in crate::node) claim_expires_at_ms: Option<String>,
     pub(in crate::node) log: Option<RawNodeLog>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::node) bundle: Option<RawNodeBundleHead>,
 }
 
 impl From<&NodeAdvertisement> for RawUnsignedIdentity {
@@ -104,6 +107,8 @@ pub(in crate::node) struct RawAdvertisement {
     pub(in crate::node) identity: RawIdentity,
     pub(in crate::node) lease: RawLease,
     pub(in crate::node) log: Option<RawNodeLog>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::node) bundle: Option<RawNodeBundleHead>,
     pub(in crate::node) capacity: RawCapacity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::node) placement: Option<RawPlacementCapacity>,
@@ -126,7 +131,7 @@ pub(in crate::node) struct RawIdentity {
 impl From<&NodeAdvertisement> for RawAdvertisement {
     fn from(value: &NodeAdvertisement) -> Self {
         Self {
-            version: 1,
+            version: if value.bundle.is_some() { 2 } else { 1 },
             identity: RawIdentity {
                 unsigned: RawUnsignedIdentity::from(value),
                 signature: encode_hex(&value.signature),
@@ -138,6 +143,7 @@ impl From<&NodeAdvertisement> for RawAdvertisement {
                 expires_at_ms: value.expires_at_ms.to_string(),
             },
             log: value.log.as_ref().map(encode_log),
+            bundle: value.bundle.map(RawNodeBundleHead::from),
             capacity: RawCapacity::from(value.capacity),
             placement: value.placement.map(|placement| RawPlacementCapacity {
                 memory_capacity_bytes: placement.memory_capacity_bytes.to_string(),
@@ -257,17 +263,50 @@ pub(in crate::node) struct RawNodeRecoveryClaim {
     pub(in crate::node) expires_at_ms: String,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::node) struct RawNodeBundleHead {
+    epoch: String,
+    digest: String,
+    selected_through: String,
+}
+impl From<crate::node::bundle::NodeBundleHead> for RawNodeBundleHead {
+    fn from(head: crate::node::bundle::NodeBundleHead) -> Self {
+        Self {
+            epoch: head.epoch.to_string(),
+            digest: encode_hex(head.digest.as_bytes()),
+            selected_through: head.selected_through.to_string(),
+        }
+    }
+}
+impl TryFrom<RawNodeBundleHead> for crate::node::bundle::NodeBundleHead {
+    type Error = Error;
+    fn try_from(raw: RawNodeBundleHead) -> Result<Self> {
+        let head = Self {
+            epoch: canonical_u64(&raw.epoch)?,
+            digest: Digest::from_bytes(decode_hex(&raw.digest)?),
+            selected_through: canonical_u64(&raw.selected_through)?,
+        };
+        head.validate()?;
+        Ok(head)
+    }
+}
+
 impl TryFrom<RawAdvertisement> for NodeAdvertisement {
     type Error = Error;
 
     fn try_from(value: RawAdvertisement) -> Result<Self> {
-        if value.version != 1 {
+        if value.version != if value.bundle.is_some() { 2 } else { 1 } {
             return Err(Error::Node("unsupported advertisement version"));
         }
         let raw = value.identity.unsigned;
         let session = SessionId::from_bytes(decode_hex(&raw.session)?);
         let node = NodeId::from_bytes(decode_hex(&raw.node)?);
         Ok(Self {
+            bundle: value
+                .bundle
+                .map(crate::node::bundle::NodeBundleHead::try_from)
+                .transpose()?,
             node,
             session,
             endpoint: raw.endpoint,

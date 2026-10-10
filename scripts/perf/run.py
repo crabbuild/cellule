@@ -105,11 +105,14 @@ expected = int(sys.argv[2])
 if root['version'] != expected or root['cell'] != cell or root['incarnation'] != control['incarnation']:
     raise SystemExit('persisted root codec or scope differs from source and control')
 packed = [segment for segment in root['segments'] if segment.get('packed')]
-if expected == 2:
+if expected in (2, 3):
     if not packed:
         raise SystemExit('small-root fixture did not persist a packed dependency')
-    body = get('/comparison/' + objects + packed[0]['object_digest'] + '.pack')
-    if body[:8] != b'CRBPACK1' or len(body) > 256 * 1024:
+    segment = packed[0]
+    shared = segment.get('shared', False)
+    prefix = sys.argv[1] + '/cells/v1/apps/' + '03' * 16 + '/shared/objects/' if shared else objects
+    body = get('/comparison/' + prefix + segment['object_digest'] + ('.spack' if shared else '.pack'))
+    if body[:8] != (b'CRBSH001' if shared else b'CRBPACK1') or len(body) > 256 * 1024:
         raise SystemExit('packed dependency has an invalid header or bound')
 print(json.dumps({'root_path': root_path, 'root_sha256': hashlib.sha256(raw).hexdigest(), 'version': root['version'], 'packed_segments': len(packed), 'inline_directory': root.get('directory_inline') is not None, 'pass': True}))
 '''
@@ -178,7 +181,7 @@ def start_node(system, durability, index, prefix, name):
     port = 8080 + index * 10
     args = ['run', '-d', '--name', name, '--network', 'host', '--cpus', '8', '--memory', '16g', '--memory-swap', '16g', '--ulimit', 'nofile=65536:65536', '--tmpfs', '/scratch:rw,size=4g', *CREDS]
     if system == 'cellule':
-        args += ['-e', f'PARITY_RETAINED_BYTES={ARGS.retained_bytes}', '-e', f'PARITY_DISK_BYTES={ARGS.disk_bytes}', '-v', f'{BASE}:/work:ro', '-e', 'TMPDIR=/scratch', '-e', 'CELLULE_AXUM_CELLS=1000', '-e', 'CELLULE_AXUM_WORKERS=8', '-e', f'CELLULE_AXUM_BIND=127.0.0.1:{port}', '-e', 'CELLULE_TEST_ENDPOINT=http://127.0.0.1:9000', '-e', 'CELLULE_TEST_BUCKET=comparison', '-e', f'CELLULE_TEST_PREFIX={prefix}']
+        args += ['-e', f'PARITY_RETAINED_BYTES={ARGS.retained_bytes}', '-e', f'PARITY_DISK_BYTES={ARGS.disk_bytes}', '-v', f'{BASE}:/work:ro', '-e', 'TMPDIR=/scratch', '-e', f'CELLULE_AXUM_CELLS={ARGS.cells}', '-e', 'CELLULE_AXUM_WORKERS=8', '-e', f'CELLULE_AXUM_BIND=127.0.0.1:{port}', '-e', 'CELLULE_TEST_ENDPOINT=http://127.0.0.1:9000', '-e', 'CELLULE_TEST_BUCKET=comparison', '-e', f'CELLULE_TEST_PREFIX={prefix}']
         if durability == 'fleet' or index == 0:
             args += ['-e', 'CELLULE_AXUM_FLEET_DIR=/scratch/fleet']
         if durability == 'bucket' and index == 0:
@@ -222,13 +225,16 @@ def driver(directory, label, config):
     if copy.returncode:
         raise RuntimeError(f'no capacity evidence: {copy.stderr}; {p.stdout} {p.stderr}')
     docker('exec', CONTROL, 'rm', '-rf', '/tmp/comparison-evidence')
-    result = json.loads((dest / 'summary.json').read_text())
+    summary_path = dest / 'summary.json'
+    if not summary_path.is_file():
+        raise RuntimeError(f'{label} capacity driver exited {p.returncode} without a summary: {p.stdout} {p.stderr}')
+    result = json.loads(summary_path.read_text())
     result['driver_exit_code'] = p.returncode
     put(dest / 'summary.json', result)
     return result
 
 def config(directory, label, write_rate, read_rate, offset=0, seed=True, seconds=30):
-    return {'address': '127.0.0.1:8080', 'cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'write_rate': write_rate, 'read_rate': read_rate, 'warmup_seconds': ARGS.warmup if seed else 1, 'seconds': ARGS.seconds if seed else seconds, 'evidence_directory': '/tmp/comparison-evidence', 'seed_file': f'/work/{directory.relative_to(BASE)}/seeds.json' if seed else None, 'write_offset': offset, 'metrics_urls': [], 'metrics_tls_directory': None}
+    return {'address': '127.0.0.1:8080', 'cells': ARGS.cells, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'write_rate': write_rate, 'read_rate': read_rate, 'warmup_seconds': ARGS.warmup if seed else 1, 'seconds': ARGS.seconds if seed else seconds, 'evidence_directory': '/tmp/comparison-evidence', 'seed_file': f'/work/{directory.relative_to(BASE)}/seeds.json' if seed else None, 'write_offset': offset, 'metrics_urls': [], 'metrics_tls_directory': None}
 
 def contract(directory):
     now = int(time.time() * 1000)
@@ -274,7 +280,7 @@ def run_case(system, durability):
     directory.mkdir(exist_ok=False)
     (directory / 'runner.py').write_bytes(RUNNER_BYTES)
     prefix = label + '-' + uuid.uuid4().hex[:12]
-    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': 1000, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'provider_lifecycle_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
+    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': ARGS.cells, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'provider_lifecycle_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
     names = []
     stop = threading.Event()
     sampling = None
@@ -298,7 +304,15 @@ def run_case(system, durability):
         ready = docker('exec', CONTROL, 'python3', '/work/wait-store-ready.py', timeout=70)
         put(directory / 'store-readiness.json', json.loads(ready.stdout))
         if system == 'celld':
-            p = docker('run', '--rm', '--network', 'host', '--cpus', '2', '--memory', '2g', '--memory-swap', '2g', '--ulimit', 'nofile=65536:65536', '-v', f"{BASE}/{'celld-app'}:/app:ro", *CREDS, CELLD, 'deploy', '/app', '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1')
+            # Keep the build fixture immutable while recording the exact
+            # population deployed for this fresh case.
+            application = directory / 'celld-app'
+            shutil.copytree(BASE / 'celld-app', application)
+            deployment = application / 'wrangler.json'
+            settings = json.loads(deployment.read_text())
+            settings['vars']['CELLS'] = str(ARGS.cells)
+            put(deployment, settings)
+            p = docker('run', '--rm', '--network', 'host', '--cpus', '2', '--memory', '2g', '--memory-swap', '2g', '--ulimit', 'nofile=65536:65536', '-v', f'{application}:/app:ro', *CREDS, CELLD, 'deploy', '/app', '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1')
             (directory / 'deploy.log').write_text(p.stdout + p.stderr)
         elif durability == 'fleet':
             for i in [1, 2]:
@@ -336,8 +350,8 @@ def run_case(system, durability):
         if system == 'celld':
             states = {str(i): http('GET', '/state', port=8081 + i * 10) for i in range(3 if durability == 'fleet' else 1)}
             put(directory / 'placement-before.json', states)
-            if states['0']['body']['owned_cells'] != 1000 or any((states[str(i)]['body']['owned_cells'] for i in range(1, 3 if durability == 'fleet' else 1))):
-                raise RuntimeError('celld placement is not one owner of 1000 Cells')
+            if states['0']['body']['owned_cells'] != ARGS.cells or any((states[str(i)]['body']['owned_cells'] for i in range(1, 3 if durability == 'fleet' else 1))):
+                raise RuntimeError(f'celld placement is not one owner of {ARGS.cells} Cells')
         snapshot(directory, 'before', names)
         for n, rate in enumerate(ARGS.write_rates or [30, 2000 if durability == 'bucket' else 15000]):
             point = config(directory, f'write-{rate}', rate, ARGS.read_rate, offset=n * 100000000)
@@ -483,6 +497,8 @@ if __name__ == '__main__':
     parser.add_argument('--write-rates', type=int, nargs='+')
     parser.add_argument('--read-rate', type=int, default=0)
     parser.add_argument('--hot-read-cells', type=int)
+    parser.add_argument('--cells', type=int, default=1000,
+                        help='uniformly active Cell population for both applications')
     parser.add_argument('--telemetry', choices=['window', 'off'], default='window',
                         help='off is an exporter-overhead diagnostic and cannot qualify')
     parser.add_argument('--concurrency', type=int, default=128)
@@ -499,6 +515,8 @@ if __name__ == '__main__':
         parser.error('artifacts must stay outside the repository')
     if not 1 <= ARGS.repetitions <= 10 or not 1 <= ARGS.seconds <= 3600 or (not 1 <= ARGS.warmup <= 60):
         parser.error('invalid bounded duration/repetition')
+    if not 1 <= ARGS.cells <= 2000:
+        parser.error('Cell population must be between 1 and 2000')
     if ARGS.overload_capacity is not None and ARGS.overload_capacity <= 0:
         parser.error('overload capacity must be positive')
     DOCKER = ['docker', '--context', CTX]

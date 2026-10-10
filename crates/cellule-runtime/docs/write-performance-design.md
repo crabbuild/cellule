@@ -1,744 +1,438 @@
-# Cellule write performance design and delivery plan
+# Node write and read performance design
 
-Improve durable write latency and sustainable throughput by shortening follower
-accounting critical sections, reusing authenticated transport, overlapping
-ordered batches, and reducing the cost of object publication. Measure aggregate
-fleet throughput and one hot Cell separately. Preserve the existing durability,
-authority, recovery, and resource contracts throughout.
+The latest [composed-publication measurement](../../../docs/pr67-composed-publication-measurement.md)
+joins ready exact materialized checkpoints and new complete native captures in
+one fresh bounded catalog load, upload and fenced CAS. Reserving all ready
+checkpoint rows before native assembly fixes a demonstrated cohort split. Fresh
+Fleet TPS rises 407.03→468.80/s; successful scheduled p99 stays about 389 ms. All
+53,527 candidate ACKs pass warm/cold mutation and original retry audits, and all
+2,000 Cells drain idle. Node-authority PUTs/success fall 21.38%, but total observed
+store bytes/success rise 8.68% and publication debt still grows. Errors/drops,
+latency, sustained capacity, streaming transport and complete qualification remain
+open. This short observation establishes no repeatable performance parity; PR
+#67 stays a draft and all acceptance gates remain unchanged.
 
-| Field | Value |
+The following measurements remain historical observations.
+
+The latest [shared-overlay diagnostic](../../../docs/pr67-shared-overlay-measurement.md)
+rejects and reverts recovered-overlay integration through the shared producer.
+Fresh Fleet throughput falls 537.38→501.40/s and successful scheduled p99 rises
+371.96→383.70 ms; fresh celld completes 1,999.78/s with 14.52-ms p99. Only 58 of
+1,450 admitted Cells share an object; 1,005 preparations fall back under memory
+pressure. Total observed store bytes/success rise 74,318→78,018, with node authority
+accounting for about four-fifths. Both Cellule warm ACK audits fail, cold audit is
+not reached, and debt grows. Prioritize composing ready checkpoints with native
+selection under one bounded canonical catalog verification/CAS, better admission
+and cohort density using original credits, and warm read/retry availability.
+Production is restored; all profiles remain unqualified and acceptance gates
+below are unchanged. Shared root packing alone does not deliver parity.
+
+The latest [checkpoint-cohort diagnostic](../../../docs/pr67-checkpoint-cohort-measurement.md)
+rejects and reverts bounded parallel checkpoint verification. The controlled
+fixture overlaps eight fresh roots rather than one, but application TPS falls
+583.20→537.28/s and successful scheduled p99 barely changes, 368.89→367.03 ms.
+Fresh celld completes 1,999.90/s with 14.48-ms p99. The prototype passes all
+62,011 warm/cold ACK checks; the retained baseline has 18 post-SQL publication
+capacity fences, 1,652 warm HTTP 503s and an owner cleanup timeout. Shared root
+packing counters are zero in both arms: bundle materialization bypasses the
+existing shared producer. Prioritize that integration, publication bytes per
+write and the remaining capacity-fencing failure. All profiles remain unqualified;
+the acceptance gates below are unchanged.
+
+The preceding [sparse-shard diagnostic](../../../docs/pr67-shard-window-measurement.md)
+rejects and reverts wide metadata reads. Its component fixture improves 49→2
+reads, but fresh application TPS falls 510.13→300.63/s and successful scheduled
+p99 rises 1,314.72→2,554.88 ms. Node-authority range bytes rise 61.17% despite
+fewer requests. Fresh celld completes 1,999.82/s with 14.06-ms p99 and zero
+errors/drops. The prototype passes all 44,314 warm/cold ACK checks; the retained
+baseline fails 110 warm checks with HTTP 503s. Prioritize total publication
+bytes/work and warm availability under backlog. No arm is qualified; the
+acceptance gates below remain unchanged.
+
+The preceding [publication-admission measurement](../../../docs/pr67-publication-admission-measurement.md)
+identifies a post-SQL RAM reservation race and transfers unused original command
+credit to publication. All 47,471 candidate ACKs pass warm/cold mutation and
+original retry audits; fleet drain takes 47.68 seconds. Write performance
+regresses in this short pair: 481.80→451.70 successful writes/s and
+285.52→1,285.01-ms successful scheduled p99; fresh celld completes 1,996.33/s.
+Publication debt and extensive root/history I/O remain. These are diagnostics,
+not performance parity or qualification. The acceptance gates below are unchanged.
+
+The [native-pipeline comparison](../../../docs/pr67-native-pipeline-measurement.md)
+completes 468.38 Fleet writes/s for unchanged production, 404.68/s for the first
+pipeline candidate, 553.53/s for the corrected candidate and 1,993.08/s for celld.
+The correction preserves a four-millisecond assembly window and credits ready
+follower rounds during the next assembly. Compared with the baseline reference,
+its observed TPS is 18.18% higher and successful scheduled p99 falls
+574.13→321.43 ms; one short later run establishes no repeatable causal gain.
+Ordered-lock wait falls 120.61→0.00045 ms. All Cellule warm ACK audits fail with
+HTTP 503s; none reaches cold audit. The corrected owner exceeds the original
+120-second process drain limit. Celld passes all 181,598 warm/cold mutations and
+original retries but drops 403 offers. These diagnostics establish no qualified
+capacity. Publication cost, complete draining and availability remain unresolved.
+
+The [preceding fresh write comparison](../../../docs/pr67-base-pipeline-measurement.md)
+completes 579.10 Fleet writes/s for unchanged production code, 570.25/s for a
+continuous-base-slot trial and 1,999.83/s for celld. The trial has no acceptable
+TPS/latency gain and is reverted. Both Cellule cases fail warm ACK availability
+checks with HTTP 503s and never reach cold audit; celld passes all 182,001 warm
+and cold mutations and original retries. These short shared-VM runs establish
+no qualified capacity. The acceptance contract below is unchanged.
+
+The [preceding paired 2,000-Cell measurements](../../../docs/pr67-metadata-window-measurement.md)
+complete 502.28 Fleet writes/s versus 455.73 before and 1,999.83 for fresh
+celld. Metadata windows reduce observed GET/range work, but successful scheduled
+write p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only
+throughput falls 17,905.02→17,347.03/s; celld completes 19,983.30/s. The candidate
+passes all 48,888 ACK warm/cold reads and original retries and drains in 66.52
+seconds. The baseline write case fails two warm retries and never reaches the
+cold audit. Both Cellule read arms drop offers and the read guardrail fails.
+One short pair establishes no acceptable, repeatable or attributable gain.
+Publication cost and debt remain; all profiles are unqualified and PR #67 stays
+a draft. The [preceding encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
+and its passing and failed evidence remain separate observations.
+
+The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
+identified publication capacity held under the global issuance lock. Earlier
+phase counts straddled window boundaries and could not support an exact
+successful-submission partition. The new byte-bounded feed removes that
+slot wait from global ordering, as measured above. Repeated
+historical/base verification and sparse root checkpoints keep the publication
+consumer expensive. Matching celld requires reducing that work and separating
+native progress from bounded recoverable publication debt; larger queues alone
+do not increase sustainable throughput.
+
+The separate [fresh timing-only diagnosis](../../../docs/pr67-publication-path-diagnosis.md)
+reproduces 468.42 writes/s versus 1,999.77 for celld. Serial selection averages
+106.68 ms for 59.30 captures; checkpoint callbacks occupy another 14.83% of the
+interval, explaining an approximate 473-capture/s service rate. Its submission
+phases reconcile exactly: ordered wait averages 108.52 ms, 98.26% of submission
+time. All 51,923 Cellule ACKs pass warm/cold reads and original retries, but
+write errors/drops persist. This diagnostic adds timing only and establishes
+no new production optimization or qualification.
+
+Status: implementation in progress. The application path is not qualified at
+the targets below. Component I/O reductions are not application TPS.
+
+Cellule is the management process for a node's Cells. A Cell retains one fenced
+writer; node-wide admission, native workers, publication, recovery and collection
+must share bounded resources rather than create an independent service per Cell.
+The embedding application continues to own ingress and authorization.
+
+## Capacity contract
+
+| Dimension | Required node result |
 | --- | --- |
-| Status | In progress; D0 timing, D1 warm accounting, R0 read/export attribution, initial R1 schema/statement reuse, R2 owner-read connection, and R3 native dispatch implemented; baseline and optimization qualification remain outstanding |
-| Prepared | 2026-10-05 |
-| Cellule source examined | `e07670e2348231ed401cc7280a47e3ab97596ffe` |
-| celld comparison source | `f2bf648663a610eefde71f3547ad61e9b896b1f0` |
-| Qualification environment | Docker simulation, selected by the user on 2026-10-05; record actual host and VM contention |
-| Audience | Runtime, LTX, embedding application, and qualification maintainers |
-| Primary deliverable | Qualified owner read/write, follower, publication, and management improvements with reproducible evidence |
-| Node capacity goal | 2,000 owned Cells and simultaneous 10,000 durable new writes/s plus 50,000 reads/s on one 8-vCPU / 16-GiB node |
-| Comparative goal | At least 25% more sustainable acknowledged write TPS than celld on explicitly named, matched fleet workloads |
-| Scope of this document | Design, work packages, measurement definitions, release gates, and linked implementation evidence; no qualified improvement is claimed |
+| Serving node | 8 vCPUs, 16 GiB memory; report storage, filesystem, network and SQLite policy |
+| Population | 2,000 uniformly active Cells, sub-100-byte values |
+| Writes | 2,000 successful commands/s |
+| Reads | 20,000 successful queries/s |
+| Tail latency | Fleet writes p99 at most 50 ms; Bucket writes p99 at most 200 ms; report read p50/p95/p99 |
+| Delivery | Zero errors, dropped offers or unissued requests; at least 99% completed within the window |
+| Evidence | Three paired repetitions of at least five minutes, matched celld revision and workload |
+| Durability | All acknowledged mutations and retry outcomes survive warm audit, joined drain and cold restore |
+| Stability | Bounded memory, native-job occupancy and debt; debt has no sustained positive slope |
 
-The numerical thresholds below are **proposed engineering acceptance targets**,
-not measured performance or promised gains. Freeze a qualification manifest
-before testing. A change to workload, hardware, SLO, or acceptance threshold
-requires a new manifest and baseline; it must not turn a failed run into a pass.
+Qualify read-only, write-only and simultaneous 2K-write/20K-read load separately.
+Count the client, provider and followers separately from the serving node.
+Docker can simulate the deployment, but sharing one 8-CPU VM between all roles
+does not qualify an 8-CPU serving node. Report KV overwrite and SQL commands with
+the durable request/result ledger separately. tmpfs results do not qualify
+physical-media durability. Preserve the stronger historical comparison gates in
+the [workspace proposal](../../../docs/write-performance-proposal.md); this node
+capacity contract does not turn a failed earlier profile into a passing one.
 
-## Immediate write priority
+## Canonical write path
 
-Write throughput and latency parity with celld is the immediate milestone.
-Additional read-only tuning is deferred unless it blocks write qualification.
-The simultaneous node goal and the later comparative gain gates remain intact.
-This branch is based on `e07670e2348231ed401cc7280a47e3ab97596ffe`; integrate
-subsequent `main` changes before treating it as a release candidate.
-
-Use the user-reported **1,000-Cell, under-100-byte KV, tmpfs** workload as a
-provisional reference: about **15,000 fleet writes/s** with three nodes and
-**2,000 bucket writes/s**. Freeze matched manifests before claiming parity.
-The original celld commit, concurrency, per-owner/aggregate scope, read/write
-overlap and latency distribution remain unknown. Preserve persistent storage,
-the 64-Cell application comparison and the 2,000-Cell mixed-load profiles as
-separate results. Tmpfs does not qualify machine-restart durability.
-
-The runnable [write profiles](../../cellule-app/qualification/write.py) use
-96-byte values, eight SQL workers and 8-vCPU/16-GiB caps per owner, with 4-GiB
-bounded tmpfs. The actual 8-vCPU/16-GiB VM is shared among three owners, a driver
-and the object service; container caps do not establish dedicated hardware.
-Keep the 50-ms scheduled p99, 5-ms generator p99, 1,024-request bound, complete
-mutation audit, exact roots, selected-member proofs and final log/debt drain.
-Report fresh client connections separately from pooled follower connections.
-The bucket case and matched celld runner remain outstanding.
-
-### Next write-path decision
-
-The corrected `small-kv-attribution-v2` diagnostic passed the full audit of
-4,600 commands and closed every log/session, but failed the first measured
-30/s point: **6,300.832-ms scheduled p99** and **39.975-ms generator p99**.
-The ramp stopped before 60/s. No rate, stable baseline, gain or parity is
-qualified. The [concise implementation record](../../cellule-app/performance/2026-10-05-write-optimization.md#small-kv-fleet-write-diagnostic)
-retains representative results and external artifact identities.
-
-The idle 60-second control completed 18,872 Cell renewal CAS operations against
-18,918 aggregate PUT completions without new application SQL. The measured
-window completed about 405 PUTs/s, with renewal p99 of 4.11–4.62 seconds.
-Pre-enqueue submission p99 was 29–40 ms; ticket-order p99 was at most one
-microsecond. Owner CPU averaged about 0.20 cores each. Marginal phase quantiles
-cannot be added or used to prove individual-request causality. Shared-host and
-generator contention still require controlled A/A repeats.
-
-Earlier runs failed final drain after RustFS descriptor exhaustion. The new
-finite profile retains the backend's two-CPU/two-GiB cap and persistent volume,
-provisions 65,536 soft/hard file limits, checks actual process/cgroup evidence,
-and rejects OOM or descriptor exhaustion. Correcting the simulated provider
-is not a framework gain. See the [failure summary](../../cellule-app/performance/2026-10-05-write-optimization.md#backend-descriptor-exhaustion-reproduced).
-
-| Deliverable | Measurement and decision gate | Preserved contract |
-| --- | --- | --- |
-| Authority maintenance | Count/timestamp canonical renewal, publication and node/coverage CAS separately; reconcile with provider totals and the idle population. Evaluate the node-bound candidate first, with passing controlled repeats before a gain claim. | No cached record becomes authority; fencing and takeover rules remain intact. |
-| Submission before enqueue | Distinguish byte/queue admission, capture loading, ticket order and encoding; retain failed/cancelled phases. Optimize a demonstrated wait before widening shipping. | No sequence gaps or early ticket commitment; global byte/queue limits stay intact. |
-| Receiver authorization and D2 | Attribute fresh enrollment, signed verification, append authorization and store work; qualify production mTLS with one fresh observation. | Recheck expiry after I/O and at admission; no enrollment cache. |
-| D3 ordered overlap | Test ordered windows 1, 2, 4 and 8 at fixed common rates and increasing load; record fill, proof latency and debt. | Ordered transports opt in; all selected members prove the contiguous prefix within the same memory budget. |
-| D4 publication | Count commits/root, dependencies/root, bytes and operations per new command; select a demonstrated redundant operation or bounded upload overlap. | Exact roots, immutable identity, per-Cell CAS order and complete recovery remain intact. |
-
-**Next candidate, not implemented:** for publishers bound to the exact node
-session lease, replace progress-only Cell renewal PUTs with fresh ownership/root
-reads at the existing three-second cadence. The node watchdog supplies liveness;
-takeover requires a fenced session or graceful release. Keep CAS renewal for
-unbound publishers. Adopt a fresh ETag only after unchanged protected fields or
-a pure renewal are verified. Root, owner or epoch divergence must fence.
-Preserve self-fence deadlines, source errors, retries and lease checks before
-and after I/O.
-
-Functional gates cover expired/fenced sessions, takeover/root divergence,
-missing/corrupt control, lost/late reads, retry deadlines, cancellation, unbound
-CAS renewal and publish-after-refresh ordering. The idle request-count target
-is zero progress-only renewal PUTs for node-bound publishers, with fresh-check
-coverage for every Cell. Keep all requests through final drain in evidence.
-Require the original full audit and latency/generator gates before advancing
-the TPS ramp; a failing point is not a sustainable `R0` for D2/D3 gain gates.
-
-The [celld architecture review](celld-architecture-performance.md) describes
-source differences and the read/SQL packages. Its reported rates remain
-reference observations until matched semantics and manifests are established.
-
-## Node capacity target
-
-The user added the 8-vCPU / 16-GiB node target on 2026-10-05. Qualify it
-separately from the 64-Cell celld comparison. Interpret the write and read
-targets as simultaneous sustained rates on the same owner node, with uniform
-traffic across all 2,000 owned, resident Cells. Use 1 KiB logical write values
-and point reads returning the value and digest. Keep the existing atomic
-outcome, audit, durability, scheduled-latency, debt, and recovery gates. Report
-hot, idle, cold-activation, and larger-value cases separately.
-
-| Case | Required measurement and gate |
-| --- | --- |
-| Population | 64, 256, 1,000, then 2,000 resident owned Cells; verify distinct identities and exact active count |
-| Writes only | 10,000 uniquely acknowledged new writes/s at scheduled p99 <= 50 ms |
-| Reads only | 50,000 successful point reads/s at scheduled p99 <= 50 ms; record consistency mode and returned bytes |
-| Simultaneous load | 10,000 writes/s plus 50,000 reads/s for 30 minutes, meeting each rate and SLO independently |
-| Owner budget | One process/container capped at 8 vCPUs and 16 GiB, including actors, SQL, cache, publication, management, and any follower work performed there |
-| External services | Separate load generator, object service, and two durable followers; record their budgets and their effect on capacity |
-| Management | Report idle CPU, per-Cell memory and descriptors, actor queueing, shard imbalance, lease-renewal latency, and shutdown drain at each population |
-| Correctness | Reconcile every scheduled arrival, command audit, point-read digest, and durable receipt; exact final root coverage and owner-loss recovery |
-
-At 60,000 actions/s, an eight-core node using 80% of its CPU has an arithmetic
-budget of about 107 microseconds of CPU per action. This is a planning bound,
-not a measurement. A single serialized actor lane has about 16.7 microseconds
-of wall time per action at that rate. Measure both before choosing changes.
-Uniform traffic averages five writes and 25 reads per Cell per second; a
-single hot Cell faces a different proof and execution limit.
-
-The current worker pool supports a fixed number of threads and up to 10,000
-active Cells, but those bounds do not establish measured capacity. Its default
-active-Cell admission charges 160 KiB native memory, including four 8 KiB
-lookaside arenas, and eleven descriptors per
-Cell. Managed SQLite page-cache targets are charged separately at 256 KiB per
-Cell across four connections. Two thousand Cells therefore reserve 22,000 descriptors; qualify actual
-SQLite, cache, actor, retained-cut, and process RSS costs rather than treating
-an admission charge as an RSS estimate. Set and verify the embedding process's
-OS file limit above that reservation plus process/transport headroom; the
-population diagnostic fixes both `nofile` limits at 65,536. Its first attempt
-failed while adding Cell 124 under Docker's 1,024-file soft limit. The rerun
-verified the earlier three-connection version at 2,000 sparse Cells, roughly
-512 MiB process RSS and 797 MiB cgroup memory, with 16,000 named SQLite
-descriptors. The four-connection R2 probe verified 2,000 sparse Cells at roughly
-671 MiB process RSS and 972 MiB cgroup memory, with 20,000 named SQLite
-descriptors and complete drain. It also required increasing the native
-reservation from 64 to 128 KiB to cover measured population slopes; the
-page-cache target remains 256 KiB. These probes verify sparse residency,
-not loaded capacity; see the [implementation record](../../cellule-app/performance/2026-10-05-write-optimization.md#resident-population-probe).
-Immutable read replicas currently
-reserve 12 MiB per view: 2,000 separate views alone exceed 16 GiB. The primary
-target uses owner reads, with read-replica capacity reported separately.
-
-Extend D0 with this population and simultaneous-load profile. Use its evidence
-to prioritize D1–D4 and management scheduling. Introduce a shared read-cache or
-actor/scheduler change only after identifying its measured contribution;
-retain exact-root views, deadlines, resource charging, and one fenced writer.
-Docker results remain simulation results, with actual VM capacity and shared
-host contention bound in the manifest. The node target is not achieved by
-raising admission limits or by passing the smaller comparative profile.
-
-## Existing evidence and implementation
-
-| Finding | Evidence | What it establishes |
-| --- | --- | --- |
-| Hot object-only owner published 62.28–65.10 roots/s; SQL worker round-trip p95 was 2.03–2.28 ms | [September capacity report](../../cellule-app/performance/2026-09-29-write-capacity.md#final-hot-cell-attribution) | Serialized publication limited this particular CI profile; it is not a production ceiling |
-| Clean follower rerun had append p95 of 17.38–141.02 ms and inconsistent fully served rates | [Clean rerun](../../cellule-app/performance/2026-09-29-write-capacity.md#clean-follower-proof-rerun-and-variability) | The existing shared-runner evidence cannot establish a stable follower capacity or a repeatable improvement |
-| The original append held the shared reservation mutex through disk sync and a recursive directory recount; D1 uses short updates and tracked warm-path byte changes | [Follower store](../src/follower/mod.rs), [lane accounting](../src/follower/accounting/mod.rs) | Structural serialization and warm recounts are removed; a qualified throughput gain remains unproven |
-| Shipper batches at most 64 frames, waits up to 1 ms, then awaits the batch before processing the next | [Node log shipper](../src/node/log_shipper/mod.rs) | Batching already exists; the examined shipper has one active batch at a time |
-| One fresh enrollment observation can verify and authorize an append | [Enrollment verifier](../src/node/directory/mod.rs) | The runtime optimization already exists; adoption belongs to the embedding receiver |
-| Process fixture now retains one serialized TCP socket per member; receiver still separately loads sender enrollment for verification and append authorization | [Process follower fixture](../../cellule-app/tests/process_follower.rs) | Initial D2 fixture candidate removes repeated connection setup; production mTLS and single-observation authorization remain outstanding |
-| A Cell requires a durable logical head before executing its next command | [Executor](../src/cell/executor/mod.rs), [execution guide](runtime.md) | Same-Cell execution remains coupled to proof latency |
-| Queued follower-backed commits already coalesce into one object root | [Publication scheduling](../src/cell/actor/requests.rs) | Adding basic coalescing is not a new optimization |
-| Incremental preparation model costs six writes and two HEADs, with no body GETs | [Preparation measurements](../../cellule-ltx/perf/README.md) | Immutable writes remain a candidate cost; these operation counts are not cloud latency measurements |
-| Warm pruning now skips scans when verified cached records are not covered; advancing coverage still prunes the open chunk | [Pruning implementation](../src/follower/records/append.rs) | Zero-coverage scans are removed; covered-file reuse and advancing-coverage costs remain open |
-| celld uses SQLite WAL `NORMAL`, coalesced captures, four shipping rounds by default, and paced node bundles | [Pinned architecture review](celld-architecture-performance.md#what-celld-does) | These are concrete architectural differences; tmpfs rates do not qualify persistent-storage durability or a Cellule gain |
-| Cellule owner reads cross actor and SQL-worker admission; commands perform runtime/KV SQL and scheduler discovery | [Read and SQL delivery decisions](celld-architecture-performance.md#recommended-delivery-order) | R0–R2 add attribution, safe statement/schema reuse, and measured read dispatch work without weakening receipts |
-| Fixed runtime/KV/deadline SQL now uses bounded statement reuse, and the executor shares schema-cookie capabilities across scheduler/capacity checks | [R1 implementation](../../cellule-app/performance/2026-10-05-write-optimization.md#r1-schema-and-fixed-statement-reuse) | Removes repeated unchanged-schema discovery; generic SQL authorizer invalidation remains; CPU and sustained-rate gains are unqualified |
-| Owner reads now use a separate protected connection and end a fresh transaction before return | [R2 implementation](../../cellule-app/performance/2026-10-05-write-optimization.md#r2-owner-read-connection) | Mixed owner reads preserve fixed writer statements; dispatch costs and sustained-rate gains remain to qualify |
-| Admitted owner queries now report actor, worker admission/dequeue, execution and reply phases; read evidence export uses a bounded owner-process writer | [R0 implementation](../../cellule-app/performance/2026-10-05-write-optimization.md#r0-owner-read-attribution-and-owned-export) | Phases preserve missing deadline boundaries and one terminal reply; full export queues fail the gate; telemetry overhead and controlled read capacity remain to qualify |
-| SQL slot tracing links queries to finite job kinds and request/acquire/start/release boundaries | [Slot implementation and Docker result](../../cellule-app/performance/2026-10-05-write-optimization.md#sql-slot-attribution) | Audited 2.7 million arrivals with zero trace loss; sparse read gates passed at 5,000/s and 10,000/s and failed at 25,000/s. Actor waiting dominated selected total tails; queries held recorded blocking slots. No controlled optimization gain or full target result |
-| Actor subphases distinguish ingress, Cell FIFO selection and spawned task start; native dispatch now queues before execution admission | [Actor probe result](../../cellule-app/performance/2026-10-05-write-optimization.md#actor-phase-docker-result), [R3 dispatch result](../../cellule-app/performance/2026-10-05-write-optimization.md#r3-docker-dispatch-result) | R3 fixes the deterministic submitter-dependent handoff regression with native caps and control progress retained; 1,267 workspace tests passed. Its Docker ramp audited 1.2 million arrivals, passed measured 5,000/s and failed 10,000/s on 261 client-full arrivals. Actor/renewal and reply waiting remain; no controlled gain or full target result |
-
-The follower guide describes an eight-batch ordered stream window. That is a
-design bound, not evidence that the examined `run_shipper` implements eight
-concurrent batches. Update documentation to distinguish implemented behavior
-from the proposed pipeline when delivering the shipping change.
-
-## Contracts and ownership
-
-| Contract | Required behavior |
-| --- | --- |
-| Acknowledgement | Release success only through the existing canonical gate, after exact-root publication or a recoverable follower proof |
-| Follower membership | Preserve write-all to the selected members; do not replace it with fastest-member acknowledgement |
-| Sequence | Preserve contiguous node-log coverage, Cell commit order, and exact duplicate validation |
-| Authority | Recheck request scope, enrollment lifetime, owner generation, log epoch, and safe coverage using the existing authority rules |
-| Recovery | Restore the authority-pinned root and required tail byte-identically, or fail closed |
-| Outcomes | Commit mutation and durable request outcome atomically; retries cannot execute a second mutation |
-| Storage | Keep required data and directory sync barriers, checksums, seal markers, retirement fences, and grace boundaries |
-| Resources | Bound queued and active frames, bytes, tasks, connections, descriptors, and publication debt; reconcile every terminal path |
-| Shutdown | Stop admission, reconcile dispatched work, drain accepted work, and release resources without acknowledging an unproven suffix |
-| Compatibility | Preserve persisted IDs, object paths, LTX and peer formats unless a separate format design and compatibility qualification precede the change |
-
-The runtime owns accounting, sequencing, proof gates, publication scheduling,
-and telemetry contracts. LTX owns capture, root construction, and exact restore.
-The embedding application owns peer listeners, mTLS identities, authorization
-wiring, connection management, and provider construction. The application
-qualification directory may contain test adapters; product HTTP code must not
-move into `cellule-app` or the pure coordination kernel.
-
-Keep SQLite `synchronous=FULL` for this delivery. Runtime capture already uses
-deferred capture; removing an immediate LTX sync is not an available shortcut.
-Changing SQLite durability or replacing the follower log with RocksDB is outside
-the initial scope. SQLite documents that WAL-mode `NORMAL` can lose committed
-transactions after power loss; any future externally durable local mode needs
-a separate restart and recovery design. [SQLite synchronous documentation](https://www.sqlite.org/pragma.html#pragma_synchronous)
-
-## Performance definitions
-
-Use one committed qualification command as one transaction. A command may
-contain multiple SQL statements or business mutations; report those operations
-separately. A duplicate replay is not a new transaction. A frame, a commit, an
-object root, and an HTTP request are distinct counting units.
-
-| Metric | Definition |
-| --- | --- |
-| Acknowledged write TPS | Unique new write commands whose durable success is observed during the measurement interval, divided by interval seconds |
-| Arrival completion rate | Scheduled writes that eventually complete successfully, divided by the arrival interval; report alongside acknowledgement TPS so drain completions cannot inflate steady capacity |
-| Logical throughput | Logical payload bytes of uniquely acknowledged writes divided by seconds and `2^20`, in MiB/s |
-| Replication amplification | Encoded follower bytes summed across selected replicas, divided by uniquely committed logical payload bytes |
-| Publication amplification | Provider requests and uploaded bytes divided by new committed commands; include background drain, retries, and compaction |
-| Scheduled latency | Client terminal time minus intended arrival time, including scheduler delay, routing, queueing, and proof |
-| Service latency | Client terminal time minus actual dispatch time; reported separately from scheduled latency |
-| Durable response source | Fleet, Object, or Recorded; report each distribution and fleet-to-object fallback counts |
-| Publication debt | Unpublished commits, retained bytes, oldest unpublished commit age, and final drain duration |
-| Sustainable rate | Highest tested open-loop arrival rate meeting every success, SLO, resource, and publication-debt gate |
-
-Count every scheduled arrival. Rejects, deadline expiry, unavailable results,
-unknown outcomes, and driver misses remain in the evidence. Resolve unknown
-outcomes for correctness, but do not convert their original attempts into
-successful latency samples. Report successful quantiles with failure counts;
-never let a successful-only histogram make an overloaded point pass.
-
-An illustrative shipping bound is `commits_per_batch / batch_cycle_seconds`
-when only one batch is active. Thirty-two commits in a 10 ms cycle give an
-arithmetic bound of 3,200 commits/s before execution, bytes, and publication
-limits. It is not a forecast. A Cell waiting 10 ms for each proof remains near
-100 commands/s before its execution cost, even when other Cells fill batches.
-
-## Target architecture
+The current native candidate removes publication-slot waits from global
+issuance. Capture bodies, control allocations and member frame-vector copies
+consume the original native byte window before a ticket commits; publication
+and accepted member I/O keep that credit through their original lifetimes.
+Eight original rounds can overlap in per-member FIFO lanes, with ordered credit
+application and bounded grouping into canonical follower append/fsync. Every
+lane joins before epoch shutdown, including after cancellation of a join waiter.
+Selection reuses its encoder-checked binding metadata only after this operation's
+complete fresh origin read matches the proposal bytes. It avoids a second catalog
+decode and hydrates no duplicate selected histories; referenced base and native
+history bodies still pass fresh canonical verification before CAS. This changes
+native execution and selection CPU work; the bundle publisher still runs expensive
+selection cohorts serially. Publication staging, reduced repeated verification
+and complete application performance qualification remain required. Component
+passes establish no new TPS claim.
 
 ```mermaid
 flowchart LR
-    Arrival[Scheduled command] --> Actor[Cell admission and ordered execution]
-    Actor --> SQL[SQLite commit and deferred LTX capture]
-    SQL --> Batch[Bounded node batch collector]
-    Batch --> Lane[Ordered member transport queues]
-    Lane --> Auth[Fresh request authorization]
-    Auth --> Disk[Per-lane append and batch data sync]
-    Disk --> Prefix[Validated contiguous durable prefix]
-    Prefix --> Gate[Canonical response gate]
-    SQL --> Roots[Coalesced immutable root preparation]
-    Roots --> CAS[Fenced authority CAS]
-    CAS --> Gate
-    CAS --> Coverage[Advance safe object coverage]
-    Coverage --> Disk
+    A[Bounded admission before SQL] --> B[Mutation and retry result commit together]
+    B --> C[Exact complete capture assignment]
+    C --> D[Ordered shared native log]
+    D --> E[Authenticated follower durable proof]
+    E --> F[Fleet ACK]
+    C --> G[One admitted cross-Cell bundle]
+    G --> H[Original bindings and exact range verification]
+    H --> I[Canonical node selector CAS]
+    I --> J[Bucket ACK and proven visibility]
+    I --> K[Bounded joined root materializer]
+    K --> L[Exact root cohort checkpoint]
 ```
 
-Work packages D0–D4 retain the current same-Cell execution gate. They overlap
-work from independent Cells and owners. D5 evaluates execution ahead of proof
-as a separate protocol change; the diagram does not authorize that change.
+Uploaded bytes are not authority. An explicitly installed original publication
+feed can now deliver admitted exact bundle receipts through the actor's existing
+command, worker and read/retry gate. `NodeDurability::start_bundle_publication`
+now retains one producer under the installed runtime ledger. It selects complete
+cohorts of at most 64 captures, 64 frames and 4 MiB, with a 1-ms assembly window
+and a 20-MiB working reservation, including one bounded fresh origin read.
+Startup admission precedes installation of the
+irreversible feed. Selection and exact root checkpoints use the same original
+binding/heartbeat authority; 512 checkpoint requests are bounded and their
+callbacks join before Cell closure. Fair turns alternate queued native work and
+checkpoint cohorts. The Fleet SQL example installs this producer; the current
+Bucket-only performance adapter bypasses it.
 
-## Delivery packages
+Each selection reads its complete new cohort object once from origin, compares
+every byte with the proposal, then verifies header, shards, histories and native
+frames from that operation's read. It retains no cross-operation availability
+cache. Historical objects and every Cell base dependency still require origin
+verification. After the fresh body matches, selection shares the proposal
+allocation and uses its released buffer allowance for 2 MiB of historical scratch
+and at most 2 MiB of compact facts/planning metadata. Eight bounded reads overlap;
+every frame and original Cell chain remains canonically checked. Fresh small
+packed leaf bases now overlap in a separate phase: eight one-use canonical
+origin plans charge at most 512 KiB each, reusing the same 4-MiB allowance after
+the complete cohort body matches. All base jobs join or drop before historical
+scratch/facts admission. Larger base graphs and individual historical extents
+above 2 MiB retain serial verification. Selection retains no reconstruction
+bodies beyond the operation. Working admission remains 20 MiB; workload
+retention and protocol bounds remain unchanged. This is a structural charge,
+not allocator-profile qualification.
 
-| Package | Accountable role | Dependencies | Reviewable deliverable |
-| --- | --- | --- | --- |
-| D0 Measurement and baseline | Qualification maintainer with runtime maintainer | None | Phase evidence, controlled A/A baseline, frozen manifest, validated accounting of arrivals and receipts |
-| D1 Follower accounting | Runtime and LTX resource maintainers | D0 | Incremental ledger, short shared critical sections, fault tests, local and fleet comparison |
-| D2 Transport adoption | Embedding application maintainer | D0 | Persistent mTLS qualification adapter using one fresh enrollment proof per append |
-| D3 Ordered shipping pipeline | Runtime maintainer and embedding transport maintainer | D1, D2 | Bounded ordered pipeline, serial transport fallback, prefix validation and cancellation tests |
-| D4 Publication cost | Runtime and LTX maintainers | D0; remeasure after D3 | One measured reduction in publication cost, exact-root and long-run evidence |
-| D5 Hot Cell decision | Runtime maintainer | D0–D4 evidence | Either a qualified protocol change or a written decision to defer it with measured limits |
-| D6 celld comparison and release | Qualification maintainer | All shipped packages | Matched comparison, fault evidence, sustained-load report, release decision |
+Catalog loading coalesces contiguous same-object shard extents after the
+complete selected-shard byte preflight. Requested detached histories use a
+separate phase after the shard jobs join and the combined metadata preflight
+passes. History windows may bridge gaps of at most 32 KiB, charging every gap
+once against the unused original 4-MiB selected-metadata allowance. Shard
+windows spend no gap credit. Exhausted credit preserves separate valid reads.
+Each phase joins at most eight windows before canonical decoding of every
+original authenticated extent. Padding confers no authority; unrelated
+histories remain references. Planning retains at most 256 shard and 4,096
+history indices as compact `u16` values, plus eight window descriptors within
+the existing structural working charge. No availability cache, producer
+reservation increase or protocol change is introduced. Coalescing can trade
+more transferred bytes for fewer requests; measure both costs.
 
-The architecture review adds R0 read attribution under D0, R1 SQL/scheduler
-work after a controlled baseline, R2 measured owner-read dispatch changes, and
-M1 management scheduling. These are separate reviewable changes alongside
-D1–D4. Externally durable owner WAL `NORMAL`, execution ahead of proof, node
-bundles, and node-scoped authority require the review's separate protocol or
-format decisions; the current `FULL` default and same-Cell proof gate remain.
+The real 64-Cell, 2,000-binding preparation regression needs 123 metadata
+reads on the unchanged loader and three after coalescing. Three repetitions
+reproduce each result; every participating Cell cold-restores its exact seed
+and outcomes. Separate-object fixtures continue to enforce eight reads with
+no ninth read, cancellation without publication and missing-origin rejection.
+These are component results, not new application TPS or qualification. The
+preceding [catalog overlap diagnostic](../../../docs/pr67-catalog-overlap-measurement.md)
+records a higher write rate and lower read rate; performance qualification fails.
 
-Each package must report both functional completion and performance
-qualification. A correct refactor that misses its performance target is not a
-qualified speed improvement. Relative gains are not additive; D6 measures the
-final combination. Do not invent calendar commitments before baseline evidence
-and staffing are available.
+Dense encoding now maps the original at-most-64 frame digests to unique
+catalog locations in one locator scan, then assigns extents in issued order.
+Strictly ordered pins support history lookup without full binding scans;
+detached leaf encoding reuses the original shard groups. Fixed planning uses
+about 4 KiB of stack without new retained admission, format or proof changes.
+The [encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
+preserves exact bytes in the external old-encoder oracle, but establishes no
+repeatable application improvement and fails performance qualification.
 
-### D0 Measurement and baseline
+The first end-to-end Fleet diagnostic of this connection failed throughput,
+availability and drain. It is experimental, not performance qualification.
+The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)
+at `e40ecd6` passes warm/cold ACK read/retry and joined drain, but completes
+100.20 Fleet writes/s versus 106.05 before the fix. There is no measured speedup.
+The earlier [cohort-origin comparison](../../../docs/pr67-cohort-origin-measurement.md)
+at `9d4e632` reduces 187 reads of one fresh 64-Cell bundle to one. In one paired
+window it completes 95.35 Fleet writes/s versus 88.28, with successful scheduled
+p99 of 4,414.52 ms. ACK audits and drain pass, but total GET/range work remains
+near 20.4 requests per completed write, root density is 1.08, and steady Bundle
+ACKs remain zero. The positive paired rate difference does not establish a
+repeatable gain; every point fails qualification. Its separately admitted
+origin buffer raises the producer reservation from 16 to 20 MiB under the same
+64-MiB diagnostic workload ledger.
+Managed selection now retires exact captures and coalesces one root obligation
+per Cell. The worker keeps its latest authenticated selection and SQLite retry
+results; sequence assignment includes the selected endpoint. Root jobs admit
+memory before origin reads, order by oldest debt, permit at most eight jobs, and
+join on shutdown. Logical 215-command density requests a checkpoint; physical
+locator/byte pressure gates new commands. Root age of 45 seconds, drain,
+migration and fallback also request materialization. Due hints expose the exact
+selected head while a root lags.
 
-Extend the existing [telemetry boundary](../src/fleet/telemetry.rs) and
-[qualification verifier](../../cellule-app/qualification/entities.py), rather
-than introducing an unrelated benchmark path. Existing observations already
-cover actor queueing, SQL worker round trip, proof source, publication timing,
-publication cost, and aggregate node-log append bytes.
+Selection readiness is observed once per Cell without owning its publisher.
+The observer shares the original receipt and admitted metadata; it grants no
+ACK, narrowed proof or new authority. Only a ready oldest prefix enters exact
+cleanup. Its unselected suffix remains in the bounded original queue, allowing
+older root debt to prepare. The existing ten-second cleanup timeout begins
+after selection readiness, rather than timing an origin wait after Fleet ACKs.
+Fencing/removal cancels only observation; original native publication and
+checkpoint/drain obligations remain joined. Its real-actor delayed-selection
+regression passes read/retry visibility, older-root progress and joined cold
+restore. The [paired measurement](../../../docs/pr67-selection-readiness-measurement.md)
+at `6c909a6` completes 184.77 Fleet writes/s versus 195.13 before, with failed
+application availability. Bucket completes 248.68 writes/s versus 247.55 with
+passing ACK audits; its fixture bypasses the managed producer. No throughput
+gain or performance qualification is established.
 
-Add the missing phase observations at their actual owners:
+A follow-up preserves exact selected suffixes across a confirmed checkpoint,
+including receipts selected against intermediate bases while older roots were
+preparing. Process-local hash-chain witnesses retain no frame bodies and expire
+when their original prefix exceeds the 256-locator proof bound. Their memory
+transfers from admission acquired before root I/O and releases with the worker.
+Regression cases exercise live writes, read/retry visibility, joined cold
+restore and successive intermediate bases. This supplies no new durability or
+origin-availability proof. The
+[checkpoint-continuity measurement](../../../docs/pr67-checkpoint-continuity-measurement.md)
+at `4a8f55c` completes 185.83 Fleet writes/s versus 164.73 but still returns
+304,151 measured errors and fails warm ACK availability. Bucket completes
+215.08 writes/s versus 227.15 with passing audits and higher p99. All contributor
+checks pass, but the original application load failure persists. No acceptable
+improvement or parity is established. A subsequent
+[release-build repeat](../../../docs/pr67-release-repeat-measurement.md) of the
+same binary completes 107.95 Fleet and 268.12 Bucket writes/s. Fleet still fails
+warm ACK availability; Bucket audits pass but delivery targets fail. Diagnostic
+logs identify shared-selection deadlines that fence Cells and publication
+backlog refusals. This supplies no demonstrated throughput improvement.
 
-| Owner | Proposed observations |
+The earlier [asynchronous-root comparison](../../../docs/pr67-async-root-measurement.md)
+at `6d62d41` completes 183.65 Fleet writes/s versus 115.27, with successful
+scheduled p99 of 1,782.74 ms. It returns 297,811 measured errors and fails its
+warm ACK audit. No cold or successful drain evidence follows. Root density is
+10.25 and PUT cost 0.48 per completed write; retained memory ends at 58.77 MiB
+of 64 MiB and oldest debt reaches 49,054 ms. This is an availability regression,
+not qualified improvement. The 215-command actor regression is grouped; only
+65 sequential commands per Cell are covered by the passing held-root test.
+Materializer progress under pressure, exact active-write checkpoint continuation,
+application receipt visibility, complete failed-owner orchestration, large-capture
+fallback, retryable producer failures and collection remain open.
+Do not advance the follower reclamation frontier before
+failed-owner recovery understands the selected bundle prefix.
+
+## Locator density and checkpoint cost
+
+Under the measured small-tail four-PUT materialization path, 64 commands per
+shared selection and 64 roots per checkpoint give the conditional cost
+`2/64 + (4 + 2/64)/K`. At most 0.05 publication PUTs/command therefore requires
+at least **215 commands per Cell checkpoint**, before compaction, retries and
+collection. Larger tails can leave the four-PUT path and must be measured.
+
+The prior 32 inline frame locators cannot represent this density under uniform
+traffic. Increasing only that array also increases every sibling's shard read.
+The implemented development representation separates small binding rows from authenticated,
+independently addressed locator histories:
+
+- Keep the 256-shard fixed authenticated header and original binding pins.
+- Keep unchanged binding shards and histories by exact object/range/digest.
+- Store a Cell history in a bounded extent in the same selection object; adding
+  a history adds bytes, not a separate PUT. Never rewrite old native bodies.
+- Load histories only for the requested Cell/cohort, retaining sibling history
+  references without decoding their contents. Preflight aggregate selected
+  shard and history metadata against the existing 4 MiB protocol-input bound.
+- Bound each history to 256 exact frame references and 32 KiB encoded metadata;
+  preserve the 4 MiB verified native-suffix byte bound and 64 frames/selection.
+- New selectors use a distinct format version. Existing complete catalogs and
+  inline indexed shards remain readable; upgrade every recovery consumer before
+  selecting the new format. Use a fresh development prefix during rollout.
+
+Those are protocol bounds, not host admission. The materializer scheduler must
+charge retained history, native verification, scratch and outcomes to the node
+ledgers. Working credit covers the original root I/O and CAS future. Once that
+future returns, its overlay and preparation buffers have exited: release that
+credit before waiting in the shared checkpoint queue. Retain the separately
+pre-admitted prefix metadata through the original checkpoint and worker binding;
+the Cell still waits for that callback before advancing its materialization.
+Selected-capture cleanup has its own FIFO task and immutable binding check;
+it does not take the root publisher. An in-flight root owns its original cut
+and publication obligation, while later selected debt keeps a separate one.
+The native root bind checks the original proof and preserves a verified later
+suffix. Proofs that change base wait for the original bind's prefix witness;
+old-base proofs can retire during root preparation and checkpoint callbacks.
+Serving/due observations include both in-flight and later selected debt, and
+shutdown joins both obligations before release. This separation adds no ACK
+source and does not increase locator, retained-memory or materializer bounds.
+Cancellation or failure releases the remaining guards. The eight-materializer
+limit and node memory budget stay unchanged.
+
+At the revised 2K-write target over 2,000 uniform Cells, each Cell
+receives about one command/s: 215 commands span about 215 seconds. The current
+45-second root-age trigger therefore requests a checkpoint at roughly 45
+commands even before byte pressure. The conditional four-PUT model then costs
+about 0.121 PUTs/command, above 0.05. Meeting that separate cost target requires
+a measured change to checkpoint scheduling or publication representation;
+increasing locator capacity alone cannot meet it. Measure actual retained native
+bytes and oldest debt before changing the age policy, and reject a policy that
+cannot stay bounded on the 16-GiB node. Earlier benchmark profiles retain their
+original thresholds and evidence.
+
+## Remaining implementation and exit gates
+
+| Work | Required verification |
 | --- | --- |
-| Load generator | Intended arrival, dispatch, terminal result, unique command ID, payload bytes, response source |
-| SQL worker and capture | Transaction execution, capture duration, WAL sync count and duration where the VFS can observe them, captured pages and bytes |
-| Shipper | Collection delay, queue wait, frames and commits per batch, active batches and bytes per member |
-| Application transport | Member resolution, connection establishment, fresh enrollment read, verification, ordered admission, wire round trip |
-| Follower store | Shared accounting lock wait and hold time, lane lock wait, append, data sync, directory sync, scans, pruned bytes, reserved scratch |
-| Publisher | Commits per root, preparation phase timings, upload dependency waves, CAS, retries, compaction, debt age and bytes |
-
-Use monotonic clocks for durations within a process. Do not subtract timestamps
-from different hosts to infer phase latency. Correlate batch IDs, command IDs,
-and sequences in local traces, never as unbounded metric labels. Export bounded
-histograms and counters without blocking actors. Lost evidence events make the
-qualification invalid; no-op telemetry remains available for normal embedding.
-Do not sum phase p95 values to produce an end-to-end p95.
-
-**Completion gates:** five controlled same-binary A/A pairs; sustainable TPS
-coefficient of variation at most 5% per primary scenario; scheduled p99 spread
-at most 15% of its median at a fixed common rate; instrumented/no-op median TPS
-overhead at most 3%. All scheduled arrivals, terminal outcomes, receipts, and
-root coverage must reconcile. If A/A fails, repair the environment or driver
-and repeat before optimizing. Keep existing qualification gates unchanged.
-
-### D1 Follower accounting
-
-**Implementation status:** the prototype removes filesystem work and
-lane waits from the shared accounting lock. It reserves per-lane growth,
-settles only that lane's contribution, and retains failed-settlement charges
-until reconciliation. Appends, seals, retirements, cold tail reads, and
-grace-aged collection use the same ledger. Quarantine is charged during startup
-before concurrent workers exist. Parent-directory creation is serialized
-through its durability barrier; warm appends bypass that creation lock.
-
-Successful warm appends, pruning, and seal markers settle tracked filesystem
-byte changes without a directory recount. Verified cached coverage skips prune
-scans when no retained record is covered; duplicate receipts still verify their
-exact stored record. An open-file length mismatch fails before appending. Cold
-recovery, retirement, and error paths recount the affected lane; retirement
-still scans for full coverage. Whole-store counts occur at startup. Direct
-retirement/recovery deltas and the complete fault matrix remain open. Local
-diagnostics and fault tests do not complete the performance or fleet gates below.
-
-Replace the store-wide append-and-recount critical section with an incremental
-ledger. Apply the design to append, seal, retire, pruning, quarantine, and
-grace-aged removal together; changing only append leaves inconsistent writers
-to the same accounting state.
-
-1. Acquire the lane mutation lock. Never hold the accounting mutex while waiting
-   for a lane lock or while doing filesystem I/O.
-2. Under a short accounting lock, reserve the operation's maximum positive disk
-   growth. Include record headers, markers, and temporary files needed by
-   partial-chunk pruning. Reject insufficient capacity before dispatching writes.
-3. Perform verified append, rotation, required syncs, and safe deletion under
-   the lane lock. Return actual byte changes and remaining scratch obligations
-   from the filesystem helpers. Do not traverse other lanes.
-4. Under a short accounting lock, atomically transfer the operation reservation
-   into settled retained bytes and release unused capacity. Removing one
-   operation's reserve must not release another operation's admission.
-5. If partial I/O makes a delta uncertain, retain its conservative charge and
-   reconcile the affected lane before admitting further mutations to it. If a
-   full recount is required, use an exclusive maintenance barrier that first
-   quiesces mutations. Never resize from a stale global snapshot while other
-   lanes are writing.
-
-Let `E` be settled retained bytes and `P` the sum of outstanding operation
-reservations. Charge `E + P` before I/O; an operation's reservation covers both
-its partially materialized bytes and its remaining authorized growth. On
-settlement, update its lane contribution and remove only that reservation in
-one ledger operation. The charge must conservatively cover physical retained
-and temporary bytes at every intermediate state. Rebuild accounting from disk
-on startup. Runtime cancellation cannot drop a dispatched worker's reservation.
-
-Preserve the existing shared `DiskBudget` admission hooks; their failures must
-leave an accounted obligation or a reconciled terminal state. The ledger is
-derived runtime state, not a new persisted authority or recovery format.
-
-**Functional gates:** no whole-store recount on a successful warmed append;
-exact settled accounting after append, duplicate, prune, seal, retire, removal,
-and restart; conservative accounting after every injected partial failure;
-bounded scratch; a deliberately blocked lane does not hold the accounting lock
-against an unrelated lane. Extend the existing [budget tests](../src/follower/tests/budget.rs)
-and [append tests](../src/follower/tests/append.rs).
-
-**Performance target:** at least 20% more sustainable append throughput in the
-eight-leader, two-follower local-disk microbenchmark, with no more than 5% p99
-regression in the single-leader case. Test 1, 8, and 32 leaders and 1, 16, and 64
-frames per batch. Report actual commits per batch and bytes. If sync bandwidth
-dominates and the target is missed, record that result rather than claiming
-that lock removal improved fleet capacity.
-
-Measure covered-prefix pruning independently. After D0 establishes its cost,
-the cached verified lane index may avoid a prune scan when no retained record
-falls at or below the supplied safe coverage watermark. Any such change must
-retain cold-start scans, exact frame validation, required deletion barriers,
-and invalidation after partial failures. It belongs to D1 and requires its own
-before/after evidence; a cached index must not become recovery authority.
-
-### D2 Transport adoption
-
-Create or update an application-owned qualification adapter that implements
-`NodeLogTransport` over persistent mTLS connections. Reuse a client connection
-within its validated peer identity, session, and endpoint scope. Close or
-replace it when that scope changes. Bound connection creation and multiplexed
-requests; preserve signed messages, size limits, and deadlines.
-
-For each append, obtain one fresh mTLS-bound enrollment observation, verify the
-signed request with it, and consume that same observation with
-`EnrolledPeerVerifier::authorize_log_append`. Recheck time after enrollment
-I/O and at authorized admission. Connection authentication does not become an
-append authority cache. Sender resolution on the owner and unrelated provider
-operations remain separately counted.
-
-Keep the existing signed TCP process fixture as explicitly labelled test
-evidence until it has a real mTLS path. Do not manufacture an mTLS enrollment
-proof for that fixture. Use the representative adapter for production latency
-claims. Reuse applicable TLS machinery in the optional adapter without moving
-listener or product policy into the runtime. Read that crate's instructions
-before changing it.
-
-**Functional gates:** exactly one fresh leader enrollment read for each admitted
-append at the receiver; reject wrong certificate, signature, fleet, release,
-expired enrollment, wrong epoch, invalid coverage, and excessive frame size.
-Exercise expiry and withdrawal while a connection remains established. Retain
-all existing authority checks and error sources.
-
-**Performance target:** at most one connection establishment per 100 successful
-append requests after warmup with stable identities, and at least 20% lower
-append p95 at the fixed common rate `0.5 × R0`. Here `R0` is D0's sustainable
-baseline rate for that scenario. Compare the old and new adapters with the
-same authentication guarantees; a plain TCP to mTLS comparison cannot attribute
-the gain to connection reuse.
-
-### D3 Ordered shipping pipeline
-
-Maintain one batch collector for the owner's shared node log and one bounded
-dispatch lane per selected follower. Submit requests in node-sequence order,
-continue collecting while receipts are outstanding, and validate receipts
-before advancing the existing durability gate.
-
-A concurrent call to the current generic `append` method is not sufficient:
-HTTP delivery and asynchronous future polling can reorder requests, and the
-follower correctly rejects sequence gaps. Introduce an explicit transport
-ordering capability with a serial default. An ordered implementation must
-assign admission in submission order before asynchronous completion can
-reorder it, and process requests in that order at the follower. Existing
-transport implementations retain a window of one. Propose the minimal additive
-trait API with its contract tests in the implementation PR; do not rely on
-undocumented HTTP/2 ordering.
-
-Start with a compile-time window of four batches per member and test windows
-1, 2, 4, and 8 in qualification builds. Select one measured default; do not add
-a general production tuning surface. Retain existing frame, batch, queue, and
-capture-byte bounds. The eight-batch documented ceiling is not permission to
-multiply memory limits. Acquire permits before queueing, retain frame ownership
-until all selected obligations settle, and account transport copies where
-actual allocations occur.
-
-For each member, validate a monotonic receipt covering the submitted range and
-the uncovered prefix. Advance the proof only through the prefix supported by
-every selected member. Never acknowledge around a gap or reinterpret a lost
-receipt as success. On a failed lane, stop new fleet submissions, reconcile
-already dispatched requests, and retain the current object-proof fallback.
-On shutdown, drain accepted batches or leave their unresolved outcomes explicit.
-Do not release bytes merely because the caller dropped its future.
-
-Keep current per-batch group sync. Combining several received requests into one
-sync is a later optimization requiring distinct receipt and deadline tests;
-it is not necessary to overlap collection, network, authorization, and receipts.
-
-**Functional gates:** no sequence gaps under deliberately reordered completion;
-no early proof with one slow or failed member; exact replay after a lost receipt;
-bounded active batches and bytes under a stalled member; cancellation, sealing,
-rotation, and shutdown preserve accounting and proof. Extend [shipper tests](../src/node/log_shipper/tests.rs)
-and [transport integration tests](../tests/fleet/node_log_transport.rs).
-
-**Performance target:** at least 25% more sustainable fleet TPS on uniform
-many-Cell writes than the D1+D2 serial baseline; scheduled p99 no more than 5%
-worse at the common rate; no single-hot-Cell regression over 5%. Report the
-selected window, average batch fill, follower syncs per new commit, and debt.
-The local-follower transport remains a correctness control, not network evidence.
-
-### D4 Publication cost
-
-Measure the final D3 pipeline before selecting an object optimization. Existing
-root coalescing and cached predecessor metadata remain the canonical path.
-Instrument commits per root, each immutable upload dependency, upload retries,
-HEAD validation, authority CAS, and compaction.
-
-Use these measurements to select one change: overlap independent immutable
-uploads within existing admission limits, eliminate a demonstrated redundant
-upload without changing identity semantics, or remove unnecessary publication
-dispatch overhead. Do not parallelize dependent predecessor roots or authority
-CAS for one Cell. Do not add batching delay to low-load writes without a
-separate latency result. Object packing or descriptor changes require a format
-design first and are not part of this package.
-
-**Functional gates:** byte-identical endpoint reconstruction, complete dependency
-verification, outcome coverage for every coalesced commit, fenced CAS races,
-bounded upload cancellation, and compaction with concurrent writes. Extend the
-[preparation cost test](../../cellule-ltx/tests/cell/roots/prepare_cost.rs) and
-the root/recovery suites.
-
-**Performance target:** at least 20% lower root preparation p95 at the fixed
-common object-proof rate, with no more than 5% end-to-end p99 regression.
-Report requests and bytes per committed command through final drain; do not
-claim a request-count reduction from moving requests outside the load window.
-The 30-minute sustained run must satisfy the publication-debt gates below.
-
-### D5 Hot Cell decision
-
-First publish the measured hot-Cell bound after D1–D4: execution and capture
-time, proof wait, confirmation, and actor occupancy. Application commands may
-batch mutations when they form one legitimate atomic operation. Independent
-entities may use existing application partitioning; changing stable shard or
-descriptor contracts needs the application's migration design. Report business
-operations/s separately from transaction TPS.
-
-If proof waiting still dominates and the hot workload misses its target,
-deliver a separate decision record for bounded execution ahead of proof. It
-must define an executed head, contiguous proven head, and published head,
-without a second writer or a second acknowledgement gate. For every command,
-retain the exact outcome and required capture until proof. Reads, state
-streams, response bodies, and effects observing an unproven command must wait
-for its dependencies; no externally visible consequence may escape early.
-
-The record must cover suffix recovery, unknown outcomes, duplicate retries,
-fencing during speculative work, migration, admission limits, and shutdown.
-Do not simply clear `busy` or remove `logical_head_is_durable`. Prototype only
-after the model and failure matrix demonstrate the protocol. Preserve local
-SQLite durability for this experiment.
-
-**Decision deliverable:** measured justification and either a complete protocol
-plus qualified implementation, or an explicit deferral with the current hot
-capacity and remaining limitation. Deferral does not qualify a hot-Cell gain.
-If implemented, the target is at least 25% more sustainable hot-Cell TPS than
-D4 at the same scheduled p99 budget, with all response and recovery contracts
-passing. Aggregate gains cannot satisfy this target.
-
-## Reproducible benchmark protocol
-
-The current [capacity workflow](../../../.github/workflows/write-capacity.yml)
-and [Compose fixture](../../cellule-app/qualification/compose.yaml) remain
-regression evidence. Add a controlled qualification lane instead of weakening
-their existing all-arrivals and readback requirements. The durations, workloads,
-and artifacts in this section are planned extensions, not existing runner flags.
-
-### Environment and semantic equivalence
-
-The user selected a Docker simulation on 2026-10-05. The primary qualification
-uses three Linux containers with four-vCPU and 8-GiB limits, separate private
-disk volumes, a separate load-generator container, and an object-service
-container outside the owner budget. Freeze actual VM capacity, physical host
-load, oversubscription, filesystem, and volume mapping in each manifest.
-Docker volumes share the host storage failure domain; process/container-loss
-results do not establish independent-NVMe or power-loss durability. Scope
-performance comparisons to this simulation. Keep the numerical acceptance,
-arrival reconciliation, recovery, and long-run gates unchanged. Each fleet node
-can
-own Cells and act as a selected follower. Use the same measured network and
-provider conditions for both systems. Record actual selected members and
-co-resident responsibilities; the existing three-owner plus dedicated-follower
-fixture cannot silently stand in for a different celld topology.
-
-Pin commits, release binaries, compiler and dependency versions, container
-digests, CPU affinity and quotas, RAM, filesystem and mount options, disk model,
-power-loss protection, kernel, TLS setup, object provider, and latency model.
-Use private disks and fresh namespaces for every repeat. Keep warmup and cache
-policy identical. Include the current one-vCPU/1-GiB profile as a separate
-regression scenario. A result from that profile cannot qualify the primary
-container limits or stand in for dedicated physical-node capacity.
-
-The matched application performs one entity upsert and an atomic request
-outcome/audit write per unique command. Use equivalent SQL schema, indexes,
-deduplication behavior, payload, response, and readback in both applications.
-Seed incompressible payload generation and a fixed 100,000-key working set per
-Cell. Preserve a complete qualification audit of command IDs and payload
-digests; checking only the final overwritten entity value cannot verify every
-acknowledged command. Include identical audit overhead in both systems.
-
-Use two selected durable followers, write-all proof, and independently durable
-disks for the primary fleet comparison. Verify configuration and response gate
-from traces rather than assuming a daemon default. Compare celld's default
-HTTP transport and explicitly enabled `CELLD_LOG_TRANSPORT=stream` separately;
-the comparative release goal uses the faster qualified configuration for each
-scenario. Pin each configuration in the manifest. [celld transport selection](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L5829)
-
-If equivalent durability, topology, or command semantics cannot be established,
-publish separate measurements and mark the comparison unmatched. Source comments
-mentioning lab write rates and stateless request benchmarks cannot supply the
-celld baseline for this decision.
-
-### Workload matrix
-
-| Scenario | Load | Payload and distribution | Required evidence |
-| --- | --- | --- | --- |
-| Follower accounting | 1, 8, and 32 leader lanes | 1, 16, and 64 frames/batch; realistic captured frames | Lock, scan, sync, scratch, and accounting observations |
-| Fleet aggregate | 100% writes over 64 Cells | Uniform; 1, 4, and 16 KiB logical values | New TPS, MiB/s, amplification, proof source, per-owner load |
-| Fleet skew | 100% writes over 64 Cells | 80% to one hot Cell; remaining 20% uniform | Hot owner saturation and fleet capacity |
-| Single hot Cell | 100% writes to one Cell | 1, 4, and 16 KiB values | Same-Cell limit, proof wait, actor queue |
-| Mixed application | 80% queries and 20% writes | Same key distribution and payloads | Query and write SLOs separately; overall actions/s is not write TPS |
-| Object-only | Followers disabled in both systems | Uniform and hot; same provider | Root preparation, CAS, requests/commit, exact coverage |
-| Long run | Highest qualified fleet and object rates | Fixed working set, updates/deletes, ordinary checkpoint and compaction | 30-minute debt, resource, and latency trends |
-| Recovery | Owner loss with acknowledged unpublished tail | Same load plus complete client witness | Exact outcomes, takeover time, root coverage, recovery debt |
-
-The primary comparative claim covers 1 KiB fleet aggregate and fleet skew.
-Hot, 4/16 KiB, mixed, and object results must be reported, but a win in one
-scenario does not establish a win in all of them. Bulk commands are a separate
-scenario with both transaction TPS and business operations/s.
-
-### Schedule and acceptance
-
-Warm for 60 seconds. Run an open-loop rate ramp using 60-second arrival windows
-and account for every intended arrival. After bracketing the first failed rate,
-refine until the last fully served rate and first failed rate differ by at most
-10%. Record completed-in-window TPS and later drain completions separately.
-Do not let post-window completions rescue the latency or sustainability result.
-
-Use five paired baseline/candidate repeats on the same nodes, alternating order.
-Reinitialize state and audit load-generator capacity before each repeat. Keep
-every failed and invalid run; predeclare infrastructure invalidation reasons
-and replacement policy. Scheduler misses caused by an underpowered generator
-invalidate the capacity experiment and still remain visible in its artifacts.
-Prove that attribution with generator CPU, queue, connection, and concurrency
-evidence. Driver backpressure caused by a saturated server remains a valid
-failed rate, not an infrastructure exclusion. Do not discard slow valid runs
-as outliers.
-
-| Proposed gate | Requirement |
-| --- | --- |
-| Fleet scheduled latency | p99 at most 50 ms for new writes in the primary scenarios |
-| Object-only scheduled latency | p99 at most 200 ms |
-| Mixed queries | Scheduled query p99 at most 50 ms; writes retain their mode's budget |
-| Success and arrival coverage | Every scheduled action dispatches and completes with the expected result; zero driver misses, rejects, deadlines, unknown outcomes, or audit mismatches at a qualified rate |
-| Fleet use | At least 99% of new write successes use Fleet proof in a healthy primary fleet run; record all fallback, excluding Recorded replays from the denominator |
-| Publication debt | Sample each second; per-Cell outstanding commits and bytes stay below 50% of their configured high-water limits; oldest unpublished commit stays below 5 seconds |
-| Steady drain | In the last 20 minutes, acknowledged and object-covered command rates differ by at most 1%; last-five-minute median debt is no greater than first-five-minute median debt plus one observed normal publication batch |
-| Final coverage | Every acknowledged receipt has exact root coverage after drain; drain completes within 30 seconds after arrivals stop |
-| Resources | No limit overshoot, OOM, task/connection leak, or unbounded memory/disk growth; report CPU throttling, descriptor counts, and pressure shedding |
-| Repeatability | Each primary rate passes all five repeats, not only their pooled histogram |
-| Comparative win | Median of five paired sustainable-TPS ratios is at least 1.25, every paired ratio exceeds 1.0, and Cellule meets the same SLO and debt gates as the faster qualified celld configuration |
-
-Long runs must exercise actual checkpoint and compaction activity. If the
-chosen rate does not reach those boundaries within 30 minutes, extend the run
-or add a separately labelled prefilled scenario; absence of maintenance work
-is not evidence of sustainable capacity. A rate that fails the debt gate may
-be reported as short-burst throughput, never as sustainable TPS.
-
-## Failure qualification
-
-Reuse current fault suites and add deterministic barriers around admission,
-append, sync, receipt emission, object upload, and authority CAS. The witness
-runs outside the owner and records successful command IDs, digests, and proof
-receipts before triggering failure. A process kill is not a power-loss test.
-
-| Injection | Required observation |
-| --- | --- |
-| Partial record write, failed data sync, failed directory sync, or failed rotation | No proof for unverified bytes; conservative accounting; exact retained prefix after restart |
-| Lost receipt after durable follower write | Unknown original attempt remains visible; replay verifies identical bytes and never duplicates the mutation |
-| One member slow, unavailable, or returning an invalid receipt | No fleet proof from the other member alone; bounded queues; existing object path may win |
-| Out-of-order completion or reconnect after queued batches | No sequence-gap acknowledgement, no prefix skipped, bounded replay |
-| Seal/retire racing append and grace-aged deletion | Existing fences and authoritative safe coverage control mutation and removal |
-| Cancellation and shutdown at each boundary | Dispatched workers retain resources until settlement; accepted work drains or remains explicitly unresolved |
-| Owner process and local disk loss after Fleet acknowledgement but before object publication | Surviving selected follower tail reconstructs every witnessed acknowledged outcome |
-| Owner loss plus loss of one selected follower | Recover from the surviving required data within the existing failure model; do not promise recovery after every durable copy is destroyed |
-| Enrollment withdrawal, expiry, wrong identity, or authority generation change | Reject new unauthorized work; persistent connections and buffered batches do not bypass the existing protocol |
-| Cold VM reset or storage power-loss fault model | Validate sync-dependent durability separately from process-kill correctness; attach the tested storage assumptions |
-
-For D5, additionally enumerate every executed/proven/published head ordering
-and prove that reads, streams, effects, migrations, deduplication, and restart
-cannot expose an unproven suffix. Failure qualification is a prerequisite for
-performance qualification, not an optional slower benchmark profile.
-
-## Evidence and verification
-
-D0 extends the verifier to emit the following versioned evidence bundle.
-These are deliverable requirements, not files generated by this design request.
-
-| Artifact | Contents |
-| --- | --- |
-| `manifest.json` | Scenario, thresholds, source and binary hashes, complete system settings, hardware and provider identities, seeds, rate schedule, selected followers |
-| `requests.ndjson` | Every intended arrival, dispatch, terminal outcome, command ID, digest, logical bytes, source, and observed receipt |
-| `phases.ndjson` | Correlated sampled phase spans with sampling coverage; complete counts and bounded histograms for every required phase |
-| `resources.tsv` | One-second CPU, memory, disk, descriptors, active connections/tasks, pending bytes, pressure, and publication debt samples |
-| `provider.tsv` | Operation counts, bytes, retries, and critical-path attribution through final drain |
-| `witness.ndjson` | Independently observed acknowledged writes and fault triggers |
-| `verification.json` | Arrival reconciliation, readback/audit and root coverage, resource bounds, SLOs, debt, fault results, and explicit pass/fail reasons |
-| `comparison.json` | Per-repeat sustainable rates, first failed rates, paired ratios, raw quantiles, proof-source fractions, and claim scope |
-| `report.md` | Findings, failed targets, limitations, source links, and package/release decision |
-
-Retain raw logs and evidence digests for valid, failed, and infrastructure-invalid
-runs. Publish the baseline bundle before changing production behavior. Missing
-correctness or resource evidence cannot be replaced by a throughput summary.
-
-For implementation packages, run focused crate and fault tests first, then the
-root contributor checks in CI or an isolated verification snapshot. Required
-routes include format, workspace check/test/Clippy, local LTX without defaults,
-API docs, boundaries, module layout, documentation gates, and SQL/peer contract
-validation. Execute process, cloud, and power-loss qualification only in their
-documented controlled environments. On mounted Workspace workstations, keep
-build targets under `$HOME/Workspace/crabbuild-target` with a unique checkout
-directory. Never relax an existing qualification profile to accommodate a new
-pipeline or noisier timings.
-
-## Release decision and remaining limits
-
-Deliver small PRs in dependency order with one clear hypothesis, focused failure
-evidence, and baseline/candidate results. D1 and D2 may be implemented separately
-once D0 passes; D3 depends on their measured behavior and ordered transport
-contract. Rebaseline after each shipped change. Reverting a package requires
-normal drain and restart; do not switch shipping implementations underneath an
-active lane with unresolved batches. No persisted-format migration is planned
-for D0–D4.
-
-Release the qualified combination only when correctness, resource, long-run,
-and comparison gates pass. Claim a celld advantage only for the named matched
-workloads that satisfy the comparative gate. Publish all other outcomes,
-including a hot-Cell limitation or an unqualified transport configuration.
-If the comparative goal is missed, the deliverable is still a measured design
-and implementation report, but the performance objective remains unmet.
-
-Completion checklist:
-
-- [ ] D0 phase evidence and stable controlled baseline published.
-- [ ] D1 accounting and failure tests pass; measured objective evaluated.
-- [ ] D2 representative mTLS transport and fresh one-read authorization qualified.
-- [ ] D3 ordered pipeline, default selection, and all terminal paths qualified.
-- [ ] D4 publication change passes exact-root and sustained-debt checks.
-- [ ] D5 hot-Cell implementation or explicit measured deferral recorded.
-- [ ] D6 matched celld results, witness recovery, raw evidence, and release decision published.
-
-Current work and verification evidence are recorded in the
-[October implementation record](../../cellule-app/performance/2026-10-05-write-optimization.md).
-
-This design is complete when its work packages are reviewable and its criteria
-are verifiable. The optimization program is complete only after the checklist
-has real implementation and qualification evidence.
+| Dense histories | 215 exact commands without checkpoint; corrupt/missing/cross-scope history rejection; bounded selected metadata; byte-identical cold restore; measured larger-tail cost |
+| Actor ACK/read/retry integration | Response and visible retry/query state use the same original proof; captured ranges release only after exact matching; unproven suffix remains hidden |
+| Canonical coverage frontier | Bundle selector and contiguous native coverage selected atomically; no second authority CAS; ambiguous replies, heartbeat, lease loss and cancellation tested |
+| Admitted materializer | One bounded node scheduler, fair cohorts, debt limit and joined native/storage jobs on cancellation and shutdown |
+| Failed-owner recovery | Seal complete issued suffix including prior Fleet ACKs; selected prefix plus follower tail restore exactly before closing all bindings or admitting replacement writers |
+| Safe collection | Complete cross-Cell root/catalog/proof/reference inventory, admitted scans, quiesced writes and grace-qualified deletion |
+| Read efficiency | Bounded workers and views, proven snapshots, minimal per-query authority I/O; overload retains renewal/publication headroom |
+| Paired qualification | Node capacity contract and unchanged durability/read/drain gates pass; otherwise report measured gaps with source and binary identities |
+
+Implementation and prior measured results are tracked in the
+[bundle delivery record](../../../docs/bundle-coverage-implementation.md) and
+[WAL comparison](../../../docs/pr67-normal-wal-reevaluation.md). Keep bulk logs,
+raw request ledgers and source manifests outside the repository.
+
+The recovery coordinator now discovers selected-only Cells and joins exact
+origin prefixes with the complete sealed follower witness in one admitted
+file-backed reconstruction path. It rejects conflicting overlap and incomplete
+Cell inventory. Bound overlays retain the original pin, and the canonical node
+seal refuses unfinished materialization/checkpoint closure. `recover_and_seal`
+now materializes original bound roots through ordinary lineage and exact Cell
+CAS, then stages bounded catalog cohorts and selects their complete terminal
+inventory with one recovery-claim node CAS. Quiet Cells participate. Exact
+manifest reuse supports partial-root retries, and closed original roots support
+resumption after transfer or interrupted log seal. Quiet provisional reservations
+now close under the same fenced claim after checking current Cell authority and
+verifying the original base. An unpinned reservation needs no Cell CAS; a late pin CAS
+cannot reopen the closed catalog. Pre-activation native frames remain an explicit
+unresolved obligation and cannot be discarded. Admitted host scheduling and full
+qualification remain required before enabling actor ACKs. The verified native
+selector now advances enrolled coverage and selects its bundle in one node CAS.
+Exact local confirmation performs no second CAS and reports a distinct Bundle
+proof. Original gate and lease identity remain required; cold proofs grant
+reconstruction only. An installed feed's original admitted receipt now grants
+actor command/read/retry visibility. Before root preparation starts, the same
+serialized publisher can consume a complete selected oldest capture prefix:
+the worker compares every cut's metadata and body digest with its original
+assignment, verifies every live receipt, and only then removes the local files.
+Outcomes, proof metadata and publication coordination remain retained until
+normal root lineage, exact Cell CAS and joined drain complete. A later unproven
+suffix remains hidden. Origin materialization preserves the captured due time
+and retries storage errors within the existing publication grace. The bounded
+selection opportunity is 100 ms for installed feeds; absent or later coverage
+uses the original root path. A later cohort's proof can now be narrowed only by
+the original complete-capture assignment, including its exact descriptors and
+body digests. Materialized roots join the managed checkpoint callback before
+releasing their publisher; Cell close waits for the complete original issued
+prefix, including prior Fleet ACKs. After prefix joining, an eight-callback
+admission bounds the provider authority mutex queue ahead of lease renewal.
+Fencing wakes outside waiters; cancellation returns callback admission without
+reopening frozen issuance. The producer's task and failure cause also
+join at epoch shutdown. This provides fair selection/checkpoint turns, not a
+fair node materializer scheduler or the 215-command checkpoint density target.
+
+Shared selection can persist a higher native coverage frontier while an older
+root completion waits for the original authority mutex. In the same validated
+open epoch, `advance_log_coverage` acknowledges that already selected prefix
+without another CAS. It preserves the higher frontier; each local root still
+confirms only its own original tickets. Expired or closed epochs still fail.
+
+The live root fallback now avoids a node authority mutation when an exact Cell
+root covers only a sparse range beyond an unpublished native gap. That root
+grants its own object proof under the original lease; it does not advance follower
+reclamation or permit rotation. Closing the gap still persists the complete new
+contiguous frontier before confirming it locally. Failed or cancelled advancing
+CAS work remains staged for retry and joined drain. This removes redundant
+coordination work from the existing application path; Bucket producer connection,
+dense materialization and the node capacity qualification remain open.

@@ -18,6 +18,7 @@ pub(super) struct RuntimeInner {
     pub(super) node_durability: NodeDurabilitySlot,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) unpublished_node_log_bytes: Arc<AtomicU64>,
+    pub(super) shared_publication: Arc<crate::publication::SharedPublication>,
 }
 
 pub(super) enum RuntimeNodeLease {
@@ -99,7 +100,7 @@ pub(super) enum Message {
         require_resident: bool,
         reply: oneshot::Sender<Option<LocalCell>>,
     },
-    /// Lists resident Cells whose published due time has passed.
+    /// Lists resident Cells whose selected durable due time has passed.
     ///
     /// The scheduler uses this to tick a Cell it already owns without reading
     /// its catalog entry or control record first.
@@ -161,6 +162,11 @@ pub(super) enum Message {
 
 pub(super) struct QueuedCommand {
     pub(super) group: Option<CommandGroup>,
+    // Pressure may admit only an original durable outcome lookup. An absent
+    // identity returns this refusal without invoking the mutation handler.
+    pub(super) refused_mutation: Option<Error>,
+    pub(super) publication_probe: bool,
+    pub(super) publication_probed: bool,
     pub(super) trace: tracing::Span,
     pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     pub(super) queued_at: std::time::Instant,
@@ -283,6 +289,12 @@ pub(super) struct ActiveCell {
     pub(super) publisher: Option<CellPublisher>,
     pub(super) durability_submitter: CellDurabilitySubmitter,
     pub(super) publications: VecDeque<QueuedPublication>,
+    // One observer per resident Cell, retaining only its original receipt.
+    // Dropping/fencing the Cell cancels observation, never native publication.
+    pub(super) selection_waiter: Option<tokio_util::sync::DropGuard>,
+    pub(super) root_debt: Option<RootDebt>,
+    pub(super) materializing: Option<MaterializingRoot>,
+    pub(super) selecting: bool,
     pub(super) publishing_since: Option<std::time::Instant>,
     pub(super) publication_bytes: u64,
     pub(super) unpublished_node_logs: usize,
@@ -383,7 +395,37 @@ pub(super) struct QueuedPublication {
     pub(super) proof: oneshot::Sender<crate::Result<()>>,
 }
 
+#[derive(Clone)]
+pub(super) struct RootDebt {
+    pub(super) selected: Arc<crate::node::log_shipper::SelectedBundle>,
+    pub(super) durability: PendingDurability,
+    pub(super) submitted_at: std::time::Instant,
+    pub(super) next_due_ms: Option<i64>,
+    pub(super) node_log_bytes: u64,
+    pub(super) covered_node_logs: u64,
+}
+
+pub(super) struct SelectedPublication {
+    pub(super) covered: u64,
+    pub(super) debt: RootDebt,
+}
+
+pub(super) struct MaterializingRoot {
+    pub(super) debt: RootDebt,
+    // Completion of the original native bind, not cancellation of root work.
+    pub(super) joined: tokio_util::sync::CancellationToken,
+}
+
 impl ActiveCell {
+    pub(super) fn selected_due_head(&self) -> (u64, Option<i64>) {
+        self.root_debt
+            .as_ref()
+            .or_else(|| self.materializing.as_ref().map(|root| &root.debt))
+            .map_or((self.published_sequence, self.next_due_ms), |debt| {
+                (debt.selected.proof.commit_sequence(), debt.next_due_ms)
+            })
+    }
+
     pub(super) fn draining(&self) -> bool {
         self.drain.is_some()
             || self.transfer.is_some()
@@ -435,7 +477,7 @@ pub(super) struct LocalCell {
     pub(super) schema: u32,
 }
 
-/// One resident Cell whose published due time has passed.
+/// One resident Cell whose selected durable due time has passed.
 pub(super) struct DueResidentCell {
     pub(super) cell: CellId,
     pub(super) catalog: CatalogProof,
@@ -443,14 +485,14 @@ pub(super) struct DueResidentCell {
     pub(super) code: Digest,
     pub(super) schema: u32,
     pub(super) admission: Arc<CellAdmission>,
-    /// Commit sequence the last authoritative publication named.
+    /// Commit sequence the last verified bundle or root named.
     pub(super) expected_commit_sequence: u64,
     pub(super) next_due_ms: i64,
 }
 
 /// Preparation admission carries the retry boundary from original dispatch.
 pub(super) struct PublicationAdmission {
-    pub(super) replica: cellule_ltx::CellReplica,
+    pub(super) replica: crate::publication::PublicationPermit,
     pub(super) fleet_deadline: std::time::Instant,
 }
 
@@ -516,6 +558,19 @@ pub(super) enum TaskResult {
         effect_id: u64,
         publisher: Box<CellPublisher>,
         result: crate::Result<Box<PublicationAdmission>>,
+    },
+    BundleSelectionReady {
+        cell: CellId,
+        generation: u64,
+        result: crate::Result<()>,
+    },
+    BundleSelected {
+        cell: CellId,
+        generation: u64,
+        effect_id: u64,
+        covered: u64,
+        retained_bytes: u64,
+        result: crate::Result<Box<SelectedPublication>>,
     },
     Published {
         cell: CellId,
@@ -593,6 +648,7 @@ pub(super) enum TaskResult {
 
 pub(super) enum CommandTaskResult {
     Recorded(StoredOutcome),
+    AwaitPublication,
     GroupRecorded,
     Pending {
         pending: Box<PendingCommit>,

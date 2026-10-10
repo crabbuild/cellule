@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Control, ControlState, Owner, RecoveryOverlayRef, RootRef};
+use super::{BundleBindingRef, Control, ControlState, Owner, RecoveryOverlayRef, RootRef};
 use crate::identity::{CellId, Digest, IncarnationId, SessionId, decode_hex, encode_hex};
 use crate::{Error, Result};
 
@@ -19,9 +19,19 @@ pub(super) struct RawControl {
     owner: Option<RawOwner>,
     root: Option<RawRoot>,
     recovery: Option<RawRecoveryOverlay>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bundle_binding: Option<RawBundleBinding>,
     code: String,
     schema: u32,
     next_due_ms: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBundleBinding {
+    session: String,
+    epoch: String,
+    digest: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -81,7 +91,11 @@ pub(super) struct RawRecoveryOverlay {
 impl From<&Control> for RawControl {
     fn from(control: &Control) -> Self {
         Self {
-            version: 1,
+            version: if control.bundle_binding.is_some() {
+                2
+            } else {
+                1
+            },
             cell: encode_hex(control.cell.as_bytes()),
             incarnation: encode_hex(control.incarnation.as_bytes()),
             epoch: control.epoch.to_string(),
@@ -113,6 +127,11 @@ impl From<&Control> for RawControl {
                     final_commit_sequence: recovery.final_commit_sequence.to_string(),
                 }),
             code: encode_hex(control.code.as_bytes()),
+            bundle_binding: control.bundle_binding.map(|binding| RawBundleBinding {
+                session: encode_hex(binding.session.as_bytes()),
+                epoch: binding.epoch.to_string(),
+                digest: encode_hex(binding.digest.as_bytes()),
+            }),
             schema: control.schema,
             next_due_ms: control.next_due_ms.map(|value| value.to_string()),
         }
@@ -123,10 +142,20 @@ impl TryFrom<RawControl> for Control {
     type Error = Error;
 
     fn try_from(raw: RawControl) -> Result<Self> {
-        if raw.version != 1 {
+        if raw.version != if raw.bundle_binding.is_some() { 2 } else { 1 } {
             return Err(Error::Control("unsupported version"));
         }
         Ok(Self {
+            bundle_binding: raw
+                .bundle_binding
+                .map(|binding| {
+                    Ok::<_, Error>(BundleBindingRef {
+                        session: SessionId::from_bytes(decode_hex(&binding.session)?),
+                        epoch: decimal_u64(&binding.epoch)?,
+                        digest: Digest::from_bytes(decode_hex(&binding.digest)?),
+                    })
+                })
+                .transpose()?,
             cell: CellId::from_bytes(decode_hex(&raw.cell)?),
             incarnation: IncarnationId::from_bytes(decode_hex(&raw.incarnation)?),
             epoch: decimal_u64(&raw.epoch)?,

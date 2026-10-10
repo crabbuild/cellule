@@ -10,7 +10,9 @@ use crate::node::log_shipper::NodeLogSubmission;
 use crate::retry::{Backoff, retry_hint, retryable_storage_error};
 use crate::{Error, Result};
 
-mod lineage;
+pub(crate) mod lineage;
+mod shared;
+pub(crate) use shared::{PublicationPermit, SharedPublication};
 
 const COMPACTION_CHECK_INTERVAL: u8 = 8;
 const COMPACTION_DEBT_SEGMENTS: usize = 32;
@@ -27,6 +29,7 @@ pub(crate) struct CellDurabilitySubmitter {
     cell: crate::CellId,
     incarnation: crate::identity::IncarnationId,
     epoch: u64,
+    binding: Option<crate::control::BundleBindingRef>,
     node_lease: Option<crate::NodeLeaseGuard>,
     node_durability: Option<NodeDurabilitySlot>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
@@ -49,6 +52,7 @@ pub struct CellPublisher {
     node_durability: Option<NodeDurabilitySlot>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     lineage_confirmed: Option<cellule_ltx::RootPreparation>,
+    shared_publication: Option<std::sync::Arc<SharedPublication>>,
 }
 
 enum AppendBase {
@@ -88,11 +92,59 @@ impl CellPublisher {
             node_durability: None,
             telemetry: crate::fleet::telemetry::CellTelemetryHandle::default(),
             lineage_confirmed: None,
+            shared_publication: None,
         }
     }
 
     pub(crate) fn with_node_lease(mut self, node_lease: crate::NodeLeaseGuard) -> Self {
         self.node_lease = Some(node_lease);
+        self
+    }
+
+    /// Materializes a selected exact bundle prefix through the ordinary root,
+    /// lineage and fenced Cell CAS path. The proof retains bounded locators;
+    /// materialization owns fresh I/O rather than retained capture bodies.
+    pub async fn materialize_bundle(
+        &mut self,
+        proof: &crate::node::bundle::BundleCoverageProof,
+    ) -> Result<cellule_ltx::RootRef> {
+        self.materialize_bundle_with_due(proof, self.observed.value().next_due_ms)
+            .await
+    }
+
+    pub(crate) async fn materialize_bundle_with_due(
+        &mut self,
+        proof: &crate::node::bundle::BundleCoverageProof,
+        next_due_ms: Option<i64>,
+    ) -> Result<cellule_ltx::RootRef> {
+        self.check_node_lease()?;
+        if self.observed.value().bundle_binding != Some(proof.binding()) {
+            return Err(Error::Fenced);
+        }
+        let base = self.observed.value().ltx_root().ok_or(Error::Fenced)?;
+        if base.commit_sequence == proof.commit_sequence() && base.position == proof.position() {
+            return Ok(base);
+        }
+        let overlay = proof
+            .recovery_overlay_from(self.authority.layout(), self.replica.limits(), base)
+            .await?;
+        self.check_node_lease()?;
+        let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
+        let prepared = replica
+            .prepare_recovered_overlay(&overlay, self.observed.value().schema)
+            .await
+            .map_err(lineage::error)?;
+        self.lineage_confirmed = *confirmation
+            .lock()
+            .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+        self.publish_prepared(&prepared, next_due_ms).await
+    }
+
+    pub(crate) fn with_shared_publication(
+        mut self,
+        coordinator: std::sync::Arc<SharedPublication>,
+    ) -> Self {
+        self.shared_publication = Some(coordinator);
         self
     }
 
@@ -118,12 +170,30 @@ impl CellPublisher {
             .await
     }
 
+    pub(crate) async fn enroll_bundle(&mut self) -> Result<()> {
+        let Some(slot) = self.node_durability.as_ref() else {
+            return Ok(());
+        };
+        let durability = slot
+            .read()
+            .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))?
+            .as_ref()
+            .map(|(_, durability)| std::sync::Arc::clone(durability));
+        if let Some(durability) = durability {
+            self.observed = durability
+                .bind_bundle_cell(&self.authority, &self.observed)
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn durability_submitter(&self) -> CellDurabilitySubmitter {
         let control = self.observed.value();
         CellDurabilitySubmitter {
             cell: control.cell,
             incarnation: control.incarnation,
             epoch: control.epoch,
+            binding: control.bundle_binding,
             node_lease: self.node_lease.clone(),
             node_durability: self.node_durability.clone(),
             telemetry: self.telemetry.clone(),
@@ -144,6 +214,10 @@ impl CellPublisher {
     #[must_use]
     pub fn control(&self) -> &VersionedControl {
         &self.observed
+    }
+
+    pub(crate) fn authority(&self) -> &CellAuthority {
+        &self.authority
     }
 
     pub(crate) fn resource_limits(&self) -> cellule_ltx::Limits {
@@ -332,14 +406,32 @@ impl CellPublisher {
         }
     }
 
-    pub(crate) async fn admit_publication(&mut self) -> Result<cellule_ltx::CellReplica> {
+    pub(crate) async fn admit_publication(&mut self) -> Result<PublicationPermit> {
         self.check_node_lease()?;
         let replica = self.replica.clone();
-        let admission = replica.admit_root_preparation();
+        let shared = self.shared_publication.clone();
+        let admission = async {
+            match shared {
+                Some(shared) => {
+                    let slot = shared.admit().await?;
+                    // Choose the actor's complete retained range only after
+                    // foreground root capacity becomes available. Release the
+                    // probe before cohort work so no dirty slot waits for its
+                    // uploader or paired compaction admission.
+                    drop(replica.admit_root_preparation().await?);
+                    Ok(PublicationPermit::Shared(slot))
+                }
+                None => replica
+                    .admit_root_preparation()
+                    .await
+                    .map(|replica| PublicationPermit::Direct(Box::new(replica)))
+                    .map_err(Into::into),
+            }
+        };
         tokio::pin!(admission);
         loop {
             tokio::select! {
-                result = &mut admission => return result.map_err(Into::into),
+                result = &mut admission => return result,
                 _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
                     self.renew().await?;
                 }
@@ -349,20 +441,113 @@ impl CellPublisher {
 
     pub(crate) async fn prepare_admitted_batch(
         &mut self,
-        replica: cellule_ltx::CellReplica,
+        permit: PublicationPermit,
         cuts: &cellule_ltx::CaptureBatch,
         commit_sequence: u64,
     ) -> Result<cellule_ltx::PreparedRoot> {
-        let result = self
-            .prepare_append(
-                cuts,
-                commit_sequence,
-                self.observed.value().schema,
-                Some(replica),
-            )
-            .await;
+        let result = match permit {
+            PublicationPermit::Shared(slot) => {
+                self.prepare_shared_batch(slot, cuts, commit_sequence).await
+            }
+            PublicationPermit::Direct(replica) => {
+                self.prepare_append(
+                    cuts,
+                    commit_sequence,
+                    self.observed.value().schema,
+                    Some(*replica),
+                )
+                .await
+            }
+        };
         self.record_publication_cost();
         result
+    }
+
+    async fn prepare_shared_batch(
+        &mut self,
+        slot: tokio::sync::OwnedSemaphorePermit,
+        cuts: &cellule_ltx::CaptureBatch,
+        commit_sequence: u64,
+    ) -> Result<cellule_ltx::PreparedRoot> {
+        // Compaction keeps its canonical paired recovery/dirty admission. Do
+        // not retain a cohort slot while negotiating those scarce permits.
+        if self
+            .compaction_pressure(cuts.segments.len())
+            .await?
+            .is_some()
+        {
+            drop(slot);
+            return self
+                .prepare_append(cuts, commit_sequence, self.observed.value().schema, None)
+                .await;
+        }
+        let coordinator = self
+            .shared_publication
+            .clone()
+            .ok_or(Error::Control("shared publication is unavailable"))?;
+        let replica = self.replica.clone();
+        let submission = coordinator.submit(&replica, cuts, self.scratch_directory.clone(), slot);
+        tokio::pin!(submission);
+        let shared = loop {
+            tokio::select! {
+                result = &mut submission => break result,
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => self.renew().await?,
+            }
+        };
+        self.check_node_lease()?;
+        let shared = match shared {
+            Ok(shared) => shared,
+            // A corrupt sibling or one failed shared upload cannot invalidate
+            // this Cell's independent captures. The canonical factory rechecks
+            // its own inputs and preserves its own original source on failure.
+            Err(Error::Shared(source)) if matches!(source.as_ref(), Error::Ltx(_)) => None,
+            Err(error) => return Err(error),
+        };
+        let Some(shared) = shared else {
+            return self
+                .prepare_append(cuts, commit_sequence, self.observed.value().schema, None)
+                .await;
+        };
+        self.check_node_lease()?;
+        // Upload neither selects a Cell root nor extends its writer lifetime.
+        // The final exact Cell CAS revalidates its fence after this cohort wait.
+        let base = self.observed.value().ltx_root();
+        let schema = self.observed.value().schema;
+        let mut backoff = Backoff::default();
+        loop {
+            let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
+            let attempt =
+                replica.prepare_shared(base.as_ref(), &shared.append, commit_sequence, schema);
+            tokio::pin!(attempt);
+            let result = loop {
+                tokio::select! {
+                    result = &mut attempt => break result,
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => self.renew().await?,
+                }
+            };
+            match result {
+                Ok(prepared) => {
+                    self.lineage_confirmed = *confirmation
+                        .lock()
+                        .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+                    self.note_append(&prepared);
+                    return Ok(prepared);
+                }
+                Err(source) => {
+                    if source.is_cell_graph_limit() {
+                        return self
+                            .prepare_append(cuts, commit_sequence, schema, None)
+                            .await;
+                    }
+                    let error = lineage::error(source);
+                    if retryable_publication_error(&error) {
+                        backoff.wait(runtime_retry_hint(&error)).await;
+                    } else {
+                        return Err(error);
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) async fn prepare(
@@ -661,44 +846,51 @@ impl CellPublisher {
         }
     }
 
-    async fn force_full_compaction(
-        &mut self,
-        base: &cellule_ltx::RootRef,
-    ) -> Result<Option<cellule_ltx::RootRef>> {
-        let segment_count = self
-            .segment_count
-            .ok_or(Error::Control("Cell segment count is unavailable"))?;
-        if segment_count <= 1 {
-            return Ok(None);
-        }
-        tracing::debug!(segments = segment_count, "Cell LTX full compaction forced");
-        let mut backoff = Backoff::default();
-        let prepared = loop {
-            let replica = self.replica.clone();
-            let scratch_directory = self.scratch_directory.clone();
-            let attempt = replica.prepare_compaction(base, 0..segment_count, 9, &scratch_directory);
-            tokio::pin!(attempt);
-            let result = loop {
-                tokio::select! {
-                    result = &mut attempt => break result,
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
-                        self.renew().await?;
+    fn force_full_compaction<'a>(
+        &'a mut self,
+        base: &'a cellule_ltx::RootRef,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<cellule_ltx::RootRef>>> {
+        // Keep full compaction out of each enclosing publication poll frame.
+        // On the minimum Rust version the nested inline chain overflowed a
+        // default Tokio worker stack. The sole publisher still owns and joins
+        // this future through the same native/storage admissions.
+        Box::pin(async move {
+            let segment_count = self
+                .segment_count
+                .ok_or(Error::Control("Cell segment count is unavailable"))?;
+            if segment_count <= 1 {
+                return Ok(None);
+            }
+            tracing::debug!(segments = segment_count, "Cell LTX full compaction forced");
+            let mut backoff = Backoff::default();
+            let prepared = loop {
+                let replica = self.replica.clone();
+                let scratch_directory = self.scratch_directory.clone();
+                let attempt =
+                    replica.prepare_compaction(base, 0..segment_count, 9, &scratch_directory);
+                tokio::pin!(attempt);
+                let result = loop {
+                    tokio::select! {
+                        result = &mut attempt => break result,
+                        _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.renew_at)) => {
+                            self.renew().await?;
+                        }
                     }
+                };
+                self.record_publication_cost();
+                match result {
+                    Ok(prepared) => break prepared,
+                    Err(error) if retryable_ltx_error(&error) => {
+                        backoff.wait(ltx_retry_hint(&error)).await;
+                    }
+                    Err(error) => return Err(error.into()),
                 }
             };
-            self.record_publication_cost();
-            match result {
-                Ok(prepared) => break prepared,
-                Err(error) if retryable_ltx_error(&error) => {
-                    backoff.wait(ltx_retry_hint(&error)).await;
-                }
-                Err(error) => return Err(error.into()),
-            }
-        };
-        let next_due_ms = self.observed.value().next_due_ms;
-        let root = self.publish_prepared(&prepared, next_due_ms).await?;
-        self.segment_count = Some(prepared.verified().segment_count());
-        Ok(Some(root))
+            let next_due_ms = self.observed.value().next_due_ms;
+            let root = self.publish_prepared(&prepared, next_due_ms).await?;
+            self.segment_count = Some(prepared.verified().segment_count());
+            Ok(Some(root))
+        })
     }
 
     async fn prepare_cuts(
@@ -893,6 +1085,20 @@ impl CellPublisher {
     /// Releases ownership after the SQL worker has closed the drained Cell.
     pub(crate) async fn release(&mut self) -> Result<()> {
         self.check_node_lease()?;
+        if self.observed.value().bundle_binding.is_some() {
+            let durability = self
+                .node_durability
+                .as_ref()
+                .ok_or(Error::Node("bound Cell lacks original node durability"))?
+                .read()
+                .map_err(|_| Error::Control("Cell runtime node durability lock poisoned"))?
+                .as_ref()
+                .map(|(_, durability)| std::sync::Arc::clone(durability))
+                .ok_or(Error::Node("bound Cell lacks original node durability"))?;
+            durability
+                .close_bundle_cell(&self.authority, &self.observed)
+                .await?;
+        }
         let mut backoff = Backoff::default();
         loop {
             self.check_node_lease()?;
@@ -988,17 +1194,133 @@ impl CellPublisher {
     }
 }
 
+struct PendingBundleCapture {
+    submitted: crate::node::log_shipper::SubmittedCapture,
+    binding: Option<crate::control::BundleBindingRef>,
+}
+
 #[derive(Clone)]
 pub(crate) struct PendingDurability {
     durability: std::sync::Arc<NodeDurability>,
     ticket: CommitTicket,
+    capture: Option<std::sync::Arc<PendingBundleCapture>>,
     submitted_at: std::time::Instant,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
+/// Original whole-capture receipt. Only the submitting durability handle creates it.
+pub(crate) struct VerifiedBundleCapture {
+    assignment: crate::node::log::AssignedCommitRange,
+    selected: std::sync::Arc<crate::node::log_shipper::SelectedBundle>,
+}
+
+impl VerifiedBundleCapture {
+    pub(crate) fn selected(&self) -> &std::sync::Arc<crate::node::log_shipper::SelectedBundle> {
+        &self.selected
+    }
+
+    pub(crate) fn verify_pending(
+        &self,
+        cell: crate::identity::CellId,
+        incarnation: crate::identity::IncarnationId,
+        pending: &crate::cell::executor::PendingCommit,
+    ) -> Result<()> {
+        self.selected
+            .proof
+            .check_live_assignment(&self.assignment)?;
+        if !self.assignment.matches_capture(
+            cell,
+            incarnation,
+            pending.outcome().commit_sequence(),
+            pending.cuts(),
+        ) {
+            return Err(Error::Control("bundle does not match worker capture"));
+        }
+        Ok(())
+    }
+}
+
 impl PendingDurability {
+    pub(crate) fn has_managed_bundle_capture(&self) -> bool {
+        self.has_bundle_capture() && self.durability.managed_bundle_publication()
+    }
+
+    /// Readiness grants no ACK or authority; retirement verifies exact coverage.
+    pub(crate) fn selection_ready(&self) -> bool {
+        self.capture
+            .as_ref()
+            .and_then(|capture| capture.submitted.selection.as_ref())
+            .is_some_and(|selection| selection.is_ready())
+    }
+
+    pub(crate) async fn selected_capture_prefix(&self) -> Result<Option<VerifiedBundleCapture>> {
+        let Some(mut capture) = self.selected_capture().await? else {
+            return Ok(None);
+        };
+        capture.selected = self
+            .durability
+            .capture_prefix(capture.selected, &capture.assignment)?;
+        Ok(Some(capture))
+    }
+
+    pub(crate) async fn checkpoint_materialized(
+        &self,
+        authority: &CellAuthority,
+        root: cellule_ltx::RootRef,
+    ) -> Result<()> {
+        if !self.durability.managed_bundle_publication() {
+            return Ok(());
+        }
+        let capture = self
+            .selected_capture_prefix()
+            .await?
+            .ok_or(Error::Node("materialized bundle lost original capture"))?;
+        self.durability
+            .checkpoint_materialized(authority.clone(), root, capture.selected)
+            .await
+    }
+
+    pub(crate) fn has_bundle_capture(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    pub(crate) async fn selected_capture(&self) -> Result<Option<VerifiedBundleCapture>> {
+        let Some(capture) = &self.capture else {
+            return Ok(None);
+        };
+        let selection = capture.submitted.selection.as_ref().ok_or(Error::Node(
+            "bundle response lacks original selection receipt",
+        ))?;
+        let selected = tokio::select! {
+            selected = selection.selected() => selected?,
+            () = self.durability.wait_fenced() => return Err(Error::Fenced),
+        };
+        if capture.submitted.assignment.ticket() != self.ticket
+            || !selected
+                .proof
+                .contains_assignment(&capture.submitted.assignment)
+            || capture.binding != Some(selected.proof.binding())
+        {
+            return Err(Error::Node(
+                "bundle response differs from original Cell binding",
+            ));
+        }
+        self.durability.check_lease()?;
+        Ok(Some(VerifiedBundleCapture {
+            assignment: capture.submitted.assignment,
+            selected,
+        }))
+    }
+
     pub(crate) async fn prove(&self) -> Result<crate::node::log::DurabilitySource> {
         let proof = self.durability.prove(self.ticket).await?;
+        if proof.source() == crate::node::log::DurabilitySource::Bundle {
+            self.selected_capture()
+                .await?
+                .ok_or(Error::Node("bundle response lacks original capture"))?;
+            self.telemetry
+                .durability_proof(proof.source(), self.submitted_at.elapsed());
+        }
         if proof.source() == crate::node::log::DurabilitySource::Fleet {
             self.telemetry
                 .durability_proof(proof.source(), self.submitted_at.elapsed());
@@ -1095,10 +1417,16 @@ impl CellDurabilitySubmitter {
             commit_sequence,
             cuts,
         )?;
-        let ticket = match durability.submit(submission).await {
-            Ok(ticket) => ticket,
+        let capture = match durability.submit_capture(submission).await {
+            Ok(capture) => capture,
             Err(error) => {
                 self.check_node_lease()?;
+                // A bound ordered lane cannot silently omit a logical capture
+                // and later select beyond it. Preserve the submission error;
+                // the actor fences this uncertain already-committed outcome.
+                if durability.managed_bundle_publication() {
+                    return Err(error);
+                }
                 // The commit still succeeds through object coverage, so this
                 // event and its counter are the only way to observe that an
                 // enrolled lane refused the captured commit.
@@ -1114,9 +1442,20 @@ impl CellDurabilitySubmitter {
         };
         self.telemetry
             .durability_submission(DurabilitySubmissionOutcome::Fleet);
+        let ticket = capture.assignment.ticket();
+        // Retain the exact assignment only for an installed publication feed.
+        // Shared ownership avoids copying it for each command-proof waiter;
+        // the ordinary follower path needs only its existing commit ticket.
+        let capture = capture.selection.is_some().then(|| {
+            std::sync::Arc::new(PendingBundleCapture {
+                submitted: capture,
+                binding: self.binding,
+            })
+        });
         Ok(Some(PendingDurability {
             durability: std::sync::Arc::clone(&durability),
             ticket,
+            capture,
             submitted_at: std::time::Instant::now(),
             telemetry: self.telemetry.clone(),
         }))

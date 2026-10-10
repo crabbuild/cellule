@@ -56,3 +56,67 @@ their state counts. Negative configurations must identify the configured
 invariant by name. A passing model run is protocol-assurance evidence only;
 release and Celld comparison claims still require the qualification receipts
 described in `../docs/delivery.md`.
+
+## Shared write proofs
+
+`check.sh write-proofs` checks `WriteProofs.tla` and three deliberately broken
+configurations. The positive model checks immutable-upload versus authoritative
+selection, Cell-binding closure/transfer, receiver seal/retirement, original boot
+rejection and monotonic grant expiry. Negative runs must report
+`BucketCellFence`, `FrozenTail`, and `GrantLifetime` respectively. Lost seal is
+stuttering and supplies no receipt. A grant clock unit represents the bounded
+local authorization horizon; physical timestamps and signing are abstracted.
+
+This model constrains the implemented [append grant](../docs/append-grants.md)
+lifecycle and the proposed [bundle authority](../../../docs/bundle-coverage-proof.md).
+It does not establish a production bundle proof, complete dependency verification,
+byte-identical recovery, liveness or performance qualification.
+
+## Bundle selection and delayed materialization
+
+`check.sh bundle-coverage` explores an initial shared bundle and a following hot
+Cell range across two bindings. Upload, selection and proof reconciliation are separate actions, so
+a lost selection reply can be reconciled only from the selected immutable
+identity. A Cell closure freezes its selected endpoint in the same authority
+transition; transfer requires reconstruction through that endpoint. Node
+fencing blocks further selection.
+
+Closing the dormant binding does not freeze unrelated Cell progress. A fresh
+row-scoped rebase can reuse uploaded hot-Cell bytes after the old CAS loses to
+that closure, while a closed participating binding remains rejected. Frozen
+endpoints are per Cell, not the node's later global sequence.
+
+The positive model checks contiguous selection, complete verified inputs,
+proven read visibility and retention of a shared object until both Cells have
+authenticated checkpoints. A hot Cell cannot release its dormant sibling's
+range. Five broken configurations must expose `CellFence`,
+`CompleteSelection`, `ContiguousSelection`, `ReadProven` and `ColdRecoverable`.
+
+`complete` abstracts successful verification of exact bytes, durable retry
+outcomes and all dependencies. `root` abstracts an authenticated independent
+checkpoint selected in the authority catalog, including release of its old range
+references. An ordinary root that still refers to shared bundle data cannot
+perform that action. The model does not implement or prove those checks, SQLite replay,
+cryptography, provider persistence, bounded history or Rust adapter ordering.
+No production response is enabled by a passing result.
+
+## Accepted Fleet suffix during binding closure
+
+`check.sh binding-drain` composes follower ACKs with later object selection for
+one binding and two ordered commands. A selected-only closure could omit a
+command already acknowledged by the native follower path. `BeginClose` first
+stops issuance and freezes the complete previously assigned range. Closing may
+select verified rows only through that endpoint, under a fresh CAS, before
+terminal closure and reconstruction permit transfer. Old uploaded proposals
+must rebase their authority version and unchanged predecessor; they cannot add
+new commands after the boundary. Retirement preserves every ACK's durable copy.
+
+The positive configuration checks accepted-prefix coverage, frozen issuance,
+recoverable ACKs and a terminal endpoint reconstructed before transfer. Under
+weakly fair successful preparation/upload/selection, `ClosingDrains` checks
+eventual terminal closure. Three unsafe configurations must expose
+`TransferredRecoverable`, `IssuedPrefixFrozen` and `AckRecoverable` respectively.
+The model assumes exact complete captures and authenticated independent
+checkpoints. It does not prove that Rust joins every accepted SQL/capture job,
+that native receivers enforce the barrier, or that providers always complete.
+It does not enable a production bundle response.

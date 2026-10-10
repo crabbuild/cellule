@@ -34,6 +34,7 @@ pub(super) struct SegmentDescriptor {
     length: u64,
     level: u8,
     packed: bool,
+    shared: bool,
 }
 
 impl SegmentDescriptor {
@@ -49,6 +50,7 @@ impl SegmentDescriptor {
             length,
             level: 0,
             packed: false,
+            shared: false,
         }
     }
 
@@ -69,6 +71,7 @@ impl SegmentDescriptor {
             length,
             level: 0,
             packed: false,
+            shared: false,
         }
     }
 
@@ -88,14 +91,28 @@ impl SegmentDescriptor {
             length,
             level: 0,
             packed: true,
+            shared: false,
         }
+    }
+
+    pub(super) fn shared(
+        info: SegmentInfo,
+        index_digest: [u8; 32],
+        index_length: u64,
+        object_digest: [u8; 32],
+        offset: u64,
+    ) -> Self {
+        let mut descriptor = Self::bundled(info, index_digest, index_length, object_digest, offset);
+        descriptor.packed = true;
+        descriptor.shared = true;
+        descriptor
     }
 
     pub(super) fn index_extent(&self) -> ([u8; 32], crate::CellObjectKind, u64) {
         if self.packed {
             (
                 self.object_digest,
-                crate::CellObjectKind::Packed,
+                self.object_kind(),
                 self.offset + self.length,
             )
         } else {
@@ -126,7 +143,9 @@ impl SegmentDescriptor {
     }
 
     pub(super) fn object_kind(&self) -> crate::CellObjectKind {
-        if self.packed {
+        if self.shared {
+            crate::CellObjectKind::SharedPacked
+        } else if self.packed {
             crate::CellObjectKind::Packed
         } else if self.object_digest == self.info.blake3 {
             crate::CellObjectKind::Ltx
@@ -157,9 +176,10 @@ impl SegmentDescriptor {
             || self.index_length > u64::from(info.database_pages) * 60
             || self.length != info.size_bytes
             || self.offset.checked_add(self.length).is_none()
+            || (self.shared && (!self.packed || self.offset < super::shared::FIRST_BODY_OFFSET))
             || (self.object_kind() == crate::CellObjectKind::Ltx && self.offset != 0)
             || (self.packed
-                && (self.offset != super::packed::HEADER_BYTES
+                && ((!self.shared && self.offset != super::packed::HEADER_BYTES)
                     || self
                         .offset
                         .checked_add(self.length)
@@ -222,6 +242,7 @@ struct SegmentWire {
     page_size: u32,
     post_checksum: String,
     pre_checksum: String,
+    shared: bool,
     size_bytes: String,
 }
 
@@ -285,7 +306,7 @@ pub(super) fn encode_root(root: &RootDocument) -> Result<Vec<u8>> {
             .collect(),
         segments: root.segments.iter().map(segment_wire).collect(),
         txid: root.txid.to_string(),
-        version: 2,
+        version: 3,
     })?;
     if bytes.len() as u64 > ROOT_BYTES {
         return Err(LtxError::Limit(crate::LimitKind::CellRootBytes));
@@ -308,7 +329,7 @@ pub(super) fn decode_root(bytes: &[u8]) -> Result<RootDocument> {
         return Err(LtxError::Limit(crate::LimitKind::CellRootBytes));
     }
     let wire: RootWire = serde_json::from_slice(bytes)?;
-    if wire.version != 2 {
+    if wire.version != 3 {
         return Err(LtxError::LTXCorrupted);
     }
     let root = RootDocument {
@@ -379,6 +400,7 @@ fn segment_wire(segment: &SegmentDescriptor) -> SegmentWire {
         min_txid: segment.info.min_txid.to_string(),
         object_digest: encode_hex(&segment.object_digest),
         packed: segment.packed,
+        shared: segment.shared,
         offset: segment.offset.to_string(),
         page_size: segment.info.page_size,
         post_checksum: checksum(segment.info.post_checksum),
@@ -406,6 +428,7 @@ fn segment_descriptor(segment: SegmentWire) -> Result<SegmentDescriptor> {
         length: decimal(&segment.length)?,
         level: segment.level,
         packed: segment.packed,
+        shared: segment.shared,
     })
 }
 

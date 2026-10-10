@@ -2,7 +2,7 @@
 use std::{collections::VecDeque, io::Read as _, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use futures_util::future::join_all;
+use futures_util::{FutureExt, stream::StreamExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 
 use crate::identity::{ApplicationId, CellId};
@@ -11,13 +11,20 @@ use crate::node::log::{CommitTicket, DurabilityGate};
 use crate::node::log_transport::{AppendRequest, NodeLogTransport};
 use crate::{Error, Result};
 
+mod publication;
+mod replication;
+mod submission;
+pub use publication::{AssignedCapture, NodePublicationFeed, SelectedBundlePublication};
+pub(crate) use publication::{SelectedBundle, SubmittedCapture};
+
 const MAX_BATCH_FRAMES: usize = 64;
 const MAX_QUEUED_SUBMISSIONS: usize = 512;
 const NODE_FRAME_HEADER_BYTES: u64 = 240;
-const BATCH_INTERVAL: Duration = Duration::from_millis(1);
-
-mod submission_timing;
-use submission_timing::{SubmissionStage, SubmissionTrace};
+// An ordered pipeline no longer accumulates submissions while waiting for a
+// preceding RPC. Give small captures a bounded group-commit window instead of
+// sending every newly available round as another tiny follower request.
+const BATCH_INTERVAL: Duration = Duration::from_millis(4);
+type WorkerResult = std::result::Result<(), Arc<Error>>;
 
 /// One captured Cell commit awaiting ordered node-log assignment.
 pub struct NodeLogSubmission {
@@ -81,6 +88,10 @@ impl NodeLogSubmission {
             || first_commit_sequence > commit_sequence
             || commit_sequence > i64::MAX as u64
             || cuts.segments.is_empty()
+            || cuts
+                .segments
+                .last()
+                .is_none_or(|segment| segment.info().position() != cuts.position)
             || encoded_bytes.is_none()
         {
             return Err(Error::Node("invalid node-log submission"));
@@ -146,7 +157,7 @@ struct LoadedNodeLogSubmission {
 }
 
 impl LoadedNodeLogSubmission {
-    fn encode(self, ticket: CommitTicket) -> Result<Vec<Bytes>> {
+    fn encode(self, ticket: CommitTicket) -> Result<Vec<cellule_ltx::VerifiedNodeFrame>> {
         self.frames
             .into_iter()
             .enumerate()
@@ -157,10 +168,7 @@ impl LoadedNodeLogSubmission {
                     .first_sequence()
                     .checked_add(offset)
                     .ok_or(Error::Node("node-log sequence overflow"))?;
-                frame
-                    .with_node_sequence(node_sequence)
-                    .map(|frame| frame.encoded().clone())
-                    .map_err(Error::from)
+                frame.with_node_sequence(node_sequence).map_err(Error::from)
             })
             .collect()
     }
@@ -191,12 +199,16 @@ fn read_segment(path: &std::path::Path, expected_bytes: u64, limit: u64) -> Resu
 /// after every selected member returns an fsynced contiguous watermark.
 pub struct NodeLogShipper {
     sender: std::sync::Mutex<Option<mpsc::Sender<QueuedSubmission>>>,
-    worker: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    worker: std::sync::Mutex<Option<tokio::task::JoinHandle<WorkerResult>>>,
     bytes: Arc<Semaphore>,
     order: tokio::sync::Mutex<()>,
     max_outstanding_bytes: u64,
+    member_count: usize,
     gate: DurabilityGate,
     limits: cellule_ltx::Limits,
+    publication: publication::PublicationState,
+    stopping: tokio::sync::watch::Sender<bool>,
+    terminal: tokio::sync::watch::Receiver<Option<WorkerResult>>,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
@@ -239,28 +251,59 @@ impl NodeLogShipper {
         let (sender, receiver) = mpsc::channel(MAX_QUEUED_SUBMISSIONS);
         let bytes = Arc::new(Semaphore::new(permits));
         let worker_gate = gate.clone();
-        let worker = runtime.spawn(run_shipper(
-            receiver,
-            worker_gate,
-            Arc::clone(&bytes),
-            transport,
-            leader,
-            log_epoch,
-            members,
-            batch_bytes,
-            telemetry.clone(),
-            interval,
-        ));
+        let (stopping, _) = tokio::sync::watch::channel(false);
+        let member_count = members.len();
+        let (completed, terminal) = tokio::sync::watch::channel(None);
+        let worker_bytes = Arc::clone(&bytes);
+        let worker_telemetry = telemetry.clone();
+        let worker_stopping = stopping.clone();
+        let worker = runtime.spawn(async move {
+            let result = run_shipper(
+                receiver,
+                worker_gate,
+                worker_bytes,
+                transport,
+                leader,
+                log_epoch,
+                members,
+                batch_bytes,
+                worker_telemetry,
+                interval,
+                worker_stopping,
+            )
+            .await
+            .map_err(Arc::new);
+            completed.send_replace(Some(result.clone()));
+            result
+        });
         Ok(Self {
             sender: std::sync::Mutex::new(Some(sender)),
             worker: std::sync::Mutex::new(Some(worker)),
             bytes,
             order: tokio::sync::Mutex::new(()),
             max_outstanding_bytes: batch_bytes,
+            member_count,
             gate,
             limits,
+            publication: publication::PublicationState::default(),
+            stopping,
+            terminal,
             telemetry,
         })
+    }
+
+    /// Installs the sole ordered publication consumer before any native issuance.
+    /// The host must own and join this consumer with the original epoch. Taking
+    /// the feed does not select objects, authorize responses or activate Fleet.
+    pub fn take_publication_feed(&self) -> Result<NodePublicationFeed> {
+        let _ordered = self
+            .order
+            .try_lock()
+            .map_err(|_| Error::PendingPublication)?;
+        if self.gate.issued_through() != 0 || *self.stopping.borrow() {
+            return Err(Error::PendingPublication);
+        }
+        self.publication.take_feed(self.stopping.subscribe())
     }
 
     pub(crate) fn validate_limits(limits: cellule_ltx::Limits) -> Result<(u64, usize)> {
@@ -282,18 +325,46 @@ impl NodeLogShipper {
     /// Queue, byte admission, disk reads, and canonical encoding happen before
     /// the ticket reservation commits, so failures cannot create a sequence gap.
     pub async fn submit(&self, submission: NodeLogSubmission) -> Result<CommitTicket> {
-        let mut trace = SubmissionTrace::new(&self.telemetry, &submission);
-        let result = self.submit_traced(submission, &mut trace).await;
-        trace.finish(&result);
+        self.submit_assigned(submission)
+            .await
+            .map(|(ticket, _)| ticket)
+    }
+
+    /// Assigns the same canonical submission and returns its complete native
+    /// range witness for node-wide object publication. There is one shipping lane.
+    pub async fn submit_assigned(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<(CommitTicket, crate::node::log::AssignedCommitRange)> {
+        self.submit_capture(submission)
+            .await
+            .map(|capture| (capture.assignment.ticket(), capture.assignment))
+    }
+
+    pub(crate) async fn submit_capture(
+        &self,
+        submission: NodeLogSubmission,
+    ) -> Result<SubmittedCapture> {
+        let mut observation = submission::Observation::new(
+            self.telemetry.clone(),
+            submission.cell,
+            submission.first_commit_sequence,
+            submission.commit_sequence,
+            submission.encoded_bytes,
+        );
+        let result = self.assign_capture(submission, &mut observation).await;
+        observation.finish(result.is_ok());
         result
     }
 
-    async fn submit_traced(
+    async fn assign_capture(
         &self,
         submission: NodeLogSubmission,
-        trace: &mut SubmissionTrace<'_>,
-    ) -> Result<CommitTicket> {
+        observation: &mut submission::Observation,
+    ) -> Result<SubmittedCapture> {
+        use submission::Stage;
         let frame_count = submission.frame_count()?;
+        observation.frames(frame_count);
         if submission
             .segments
             .iter()
@@ -303,68 +374,98 @@ impl NodeLogShipper {
         {
             return Err(Error::Capacity("node-log submission"));
         }
-        let permit_count = u32::try_from(submission.encoded_bytes)
+        let retained_bytes =
+            publication::retained_bytes(submission.encoded_bytes, frame_count, self.member_count)?;
+        if retained_bytes > self.max_outstanding_bytes {
+            return Err(Error::Capacity("node-log retained capture bytes"));
+        }
+        let permit_count = u32::try_from(retained_bytes)
             .ok()
             .filter(|bytes| *bytes != 0)
             .ok_or(Error::Capacity("node-log outstanding bytes"))?;
-        trace.begin(SubmissionStage::Bytes);
+        observation.enter(Stage::NativeBytes);
         let reservation = Arc::clone(&self.bytes)
             .acquire_many_owned(permit_count)
             .await
             .map_err(|_| Error::RuntimeClosed)?;
-        trace.complete();
+        observation.enter(Stage::ShippingSlot);
         let sender = self
             .sender
             .lock()
             .map_err(|_| Error::Node("node-log shipper lock poisoned"))?
             .clone()
             .ok_or(Error::RuntimeClosed)?;
-        trace.begin(SubmissionStage::Queue);
         let slot = sender
             .reserve_owned()
             .await
             .map_err(|_| Error::RuntimeClosed)?;
-        trace.complete();
+        observation.enter(Stage::LocalLoad);
         let limits = self.limits;
-        trace.begin(SubmissionStage::Load);
         let (leader, log_epoch, _) = self.gate.shipping_scope()?;
         let loaded =
             tokio::task::spawn_blocking(move || submission.load(leader, log_epoch, limits))
                 .await
                 .map_err(Error::FollowerWorkerJoin)??;
-        trace.complete();
-        trace.begin(SubmissionStage::Order);
         // Expensive LTX validation is parallel and bounded by outstanding-byte
         // admission. This lane only patches exclusively owned envelopes and
         // atomically commits their consecutive ticket before enqueueing.
+        observation.enter(Stage::OrderedLane);
         let _ordered = self.order.lock().await;
-        trace.complete();
+        // Native credit owns both consumers' complete capture until they join.
+        // Checking the publication consumer is synchronous: storage capacity
+        // never waits under this global ordered lane.
+        observation.enter(Stage::PublicationSlot);
+        let publication = self.publication.sender()?;
+        if *self.stopping.borrow() {
+            return Err(Error::RuntimeClosed);
+        }
+        observation.enter(Stage::Assignment);
         let ticket = self.gate.preview(frame_count)?;
-        trace.begin(SubmissionStage::Encode);
         let encoded = loaded.encode(ticket)?;
-        trace.complete();
-        self.gate.commit(ticket)?;
+        let assignment = self
+            .gate
+            .commit_frames(ticket, &encoded)?
+            .ok_or(Error::Node("assigned capture is empty"))?;
+        observation.assigned(ticket.first_sequence());
         let reservation = Arc::new(OutstandingBytes {
             _permit: reservation,
         });
+        let selection = if let Some(publication) = publication {
+            let (capture, selection) =
+                AssignedCapture::new(assignment, encoded.clone(), Arc::clone(&reservation));
+            if publication.send(capture).is_err() {
+                // A lost consumer cannot permit later Fleet acknowledgements
+                // beyond this unpublished assignment. Fence before shipping.
+                stop_shipper(&self.gate, &self.bytes, &self.stopping);
+                return Err(Error::RuntimeClosed);
+            }
+            Some(selection)
+        } else {
+            None
+        };
         let enqueued_at = self.telemetry.is_enabled().then(std::time::Instant::now);
         let frames = encoded
             .into_iter()
             .enumerate()
-            .map(|(offset, encoded)| QueuedFrame {
+            .map(|(offset, frame)| QueuedFrame {
                 sequence: ticket.first_sequence().saturating_add(offset as u64),
-                encoded,
+                encoded: frame.encoded().clone(),
                 _reservation: Arc::clone(&reservation),
                 enqueued_at,
                 completed_capture: offset as u64 + 1 == frame_count,
             })
             .collect();
         slot.send(QueuedSubmission { frames });
-        Ok(ticket)
+        Ok(SubmittedCapture {
+            assignment,
+            selection,
+        })
     }
 
     /// Closes admission and drains every accepted frame to the current epoch.
     pub async fn shutdown(&self) -> Result<()> {
+        self.stopping.send_replace(true);
+        let publication_closed = self.publication.close();
         self.bytes.close();
         self.sender
             .lock()
@@ -375,16 +476,29 @@ impl NodeLogShipper {
             .lock()
             .map_err(|_| Error::Node("node-log shipper lock poisoned"))?
             .take();
-        if let Some(worker) = worker {
-            worker.await.map_err(Error::FollowerWorkerJoin)?;
-        }
+        let joined = match worker {
+            Some(worker) => worker
+                .await
+                .map_err(Error::FollowerWorkerJoin)?
+                .map_err(Error::Shared),
+            None => {
+                let mut terminal = self.terminal.clone();
+                loop {
+                    if let Some(result) = terminal.borrow_and_update().clone() {
+                        break result.map_err(Error::Shared);
+                    }
+                    terminal.changed().await.map_err(|_| Error::RuntimeClosed)?;
+                }
+            }
+        };
         self.gate.stop_shipping();
-        Ok(())
+        publication_closed.and(joined)
     }
 }
 
 impl Drop for NodeLogShipper {
     fn drop(&mut self) {
+        self.stopping.send_replace(true);
         self.gate.stop_shipping();
         self.bytes.close();
     }
@@ -411,7 +525,7 @@ struct QueuedFrame {
     reason = "the worker keeps the exact log epoch, ensemble and bounded admission explicit"
 )]
 async fn run_shipper(
-    mut receiver: mpsc::Receiver<QueuedSubmission>,
+    receiver: mpsc::Receiver<QueuedSubmission>,
     gate: DurabilityGate,
     bytes: Arc<Semaphore>,
     transport: Arc<dyn NodeLogTransport>,
@@ -421,24 +535,89 @@ async fn run_shipper(
     max_batch_bytes: u64,
     telemetry: crate::fleet::telemetry::CellTelemetryHandle,
     interval: Duration,
+    stopping: tokio::sync::watch::Sender<bool>,
+) -> Result<()> {
+    let lanes =
+        replication::MemberLanes::start(transport, leader, log_epoch, members, max_batch_bytes);
+    run_rounds(
+        receiver,
+        &gate,
+        &bytes,
+        &lanes,
+        max_batch_bytes,
+        &telemetry,
+        interval,
+        &stopping,
+    )
+    .await;
+    // Closing the round waiter never cancels a member's accepted native I/O.
+    // Join every original lane before shutdown can release the epoch.
+    let result = lanes.join().await;
+    if result.is_err() {
+        stop_shipper(&gate, &bytes, &stopping);
+    }
+    result
+}
+
+async fn run_rounds(
+    mut receiver: mpsc::Receiver<QueuedSubmission>,
+    gate: &DurabilityGate,
+    bytes: &Semaphore,
+    lanes: &replication::MemberLanes,
+    max_batch_bytes: u64,
+    telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
+    interval: Duration,
+    stopping: &tokio::sync::watch::Sender<bool>,
 ) {
     let mut pending = VecDeque::<QueuedFrame>::new();
     let mut closed = false;
+    let mut rounds = futures_util::stream::FuturesOrdered::new();
     loop {
-        if pending.is_empty() {
-            if closed {
-                bytes.close();
+        // Member tasks can have completed while this dispatcher was receiving
+        // captures. Credit ready original rounds before assembling more work.
+        while !rounds.is_empty() {
+            let Some(Some(round)) = rounds.next().now_or_never() else {
+                break;
+            };
+            if !complete_round(gate, telemetry, round) {
+                stop_shipper(gate, bytes, stopping);
+                receiver.close();
                 return;
             }
-            match receiver.recv().await {
-                Some(submission) => pending.extend(submission.frames),
-                None => {
-                    bytes.close();
-                    return;
+        }
+        if closed && pending.is_empty() && rounds.is_empty() {
+            bytes.close();
+            stopping.send_replace(true);
+            return;
+        }
+        if rounds.len() == replication::PIPELINE || (closed && pending.is_empty()) {
+            if let Some(round) = rounds.next().await
+                && !complete_round(gate, telemetry, round)
+            {
+                stop_shipper(gate, bytes, stopping);
+                receiver.close();
+                return;
+            }
+            continue;
+        }
+        if pending.is_empty() {
+            tokio::select! {
+                round = rounds.next(), if !rounds.is_empty() => {
+                    if let Some(round) = round
+                        && !complete_round(gate, telemetry, round)
+                    {
+                        stop_shipper(gate, bytes, stopping);
+                        receiver.close();
+                        return;
+                    }
+                    continue;
+                }
+                submission = receiver.recv() => match submission {
+                    Some(submission) => pending.extend(submission.frames),
+                    None => { closed = true; continue; }
                 }
             }
         }
-
         let collection_started = telemetry.is_enabled().then(std::time::Instant::now);
         let queue_wait = collection_started
             .zip(pending.front().and_then(|frame| frame.enqueued_at))
@@ -452,18 +631,18 @@ async fn run_shipper(
                     break;
                 };
                 let Some(next_bytes) = batch_bytes.checked_add(next.encoded.len() as u64) else {
-                    stop_shipper(&gate, &bytes);
+                    stop_shipper(gate, bytes, stopping);
                     return;
                 };
                 if !batch.is_empty() && next_bytes > max_batch_bytes {
                     break;
                 }
                 if next_bytes > max_batch_bytes {
-                    stop_shipper(&gate, &bytes);
+                    stop_shipper(gate, bytes, stopping);
                     return;
                 }
                 let Some(next) = pending.pop_front() else {
-                    stop_shipper(&gate, &bytes);
+                    stop_shipper(gate, bytes, stopping);
                     return;
                 };
                 batch_bytes = next_bytes;
@@ -476,125 +655,92 @@ async fn run_shipper(
             {
                 break;
             }
-            match tokio::time::timeout_at(deadline, receiver.recv()).await {
-                Ok(Some(submission)) => pending.extend(submission.frames),
-                Ok(None) => {
-                    closed = true;
-                    break;
+            tokio::select! {
+                round = rounds.next(), if !rounds.is_empty() => {
+                    if let Some(round) = round
+                        && !complete_round(gate, telemetry, round)
+                    {
+                        stop_shipper(gate, bytes, stopping);
+                        receiver.close();
+                        return;
+                    }
                 }
-                Err(_) => break,
+                submission = tokio::time::timeout_at(deadline, receiver.recv()) => match submission {
+                    Ok(Some(submission)) => pending.extend(submission.frames),
+                    Ok(None) => {
+                        closed = true;
+                        break;
+                    }
+                    Err(_) => break,
+                }
             }
         }
-
-        let append_bytes = batch
-            .iter()
-            .try_fold(0_u64, |total, frame| {
-                total.checked_add(frame.encoded.len() as u64)
-            })
-            .and_then(|bytes| bytes.checked_mul(members.len() as u64))
-            .unwrap_or(u64::MAX);
-        let collection = collection_started.map_or(Duration::ZERO, |started| started.elapsed());
-        let frames = batch.len() as u64;
-        let first_sequence = batch.first().map_or(0, |frame| frame.sequence);
-        let last_sequence = batch.last().map_or(0, |frame| frame.sequence);
-        let completed_captures =
-            batch.iter().filter(|frame| frame.completed_capture).count() as u64;
-        let append_started = telemetry.is_enabled().then(std::time::Instant::now);
-        let result = append_batch(
-            &gate,
-            Arc::clone(&transport),
-            leader,
+        // Enqueue synchronously, in original sequence order, before returning a
+        // future. Poll order can never reorder a member's accepted append lane.
+        let (leader_session, log_epoch, members) = lanes.scope();
+        let mut timing = crate::fleet::telemetry::NodeLogBatchTiming {
+            leader_session,
             log_epoch,
-            &members,
-            batch,
-        )
-        .await;
-        telemetry.node_log_batch(crate::fleet::telemetry::NodeLogBatchTiming {
-            leader_session: leader,
-            log_epoch,
-            first_sequence,
-            last_sequence,
+            first_sequence: batch.first().map_or(0, |frame| frame.sequence),
+            last_sequence: batch.last().map_or(0, |frame| frame.sequence),
             queue_wait,
-            collection,
-            append: append_started.map_or(Duration::ZERO, |started| started.elapsed()),
-            frames,
-            completed_captures,
+            collection: collection_started.map_or(Duration::ZERO, |started| started.elapsed()),
+            append: Duration::ZERO,
+            frames: batch.len() as u64,
+            completed_captures: batch.iter().filter(|frame| frame.completed_capture).count() as u64,
             encoded_bytes: batch_bytes,
-            members: members.len() as u64,
-            succeeded: result.is_ok(),
-        });
-        telemetry.node_log_append(result.is_ok(), append_bytes);
-        if result.is_err() {
-            stop_shipper(&gate, &bytes);
-            receiver.close();
-            return;
+            members: members as u64,
+            succeeded: false,
+        };
+        let append_started = telemetry.is_enabled().then(std::time::Instant::now);
+        match lanes.enqueue(batch, gate.tiered_through()) {
+            Ok(round) => rounds.push_back(
+                round
+                    .map(move |result| {
+                        timing.append =
+                            append_started.map_or(Duration::ZERO, |started| started.elapsed());
+                        (result, timing)
+                    })
+                    .boxed(),
+            ),
+            Err(_) => {
+                telemetry.node_log_batch(timing);
+                stop_shipper(gate, bytes, stopping);
+                receiver.close();
+                return;
+            }
         }
     }
 }
 
-fn stop_shipper(gate: &DurabilityGate, bytes: &Semaphore) {
+fn complete_round(
+    gate: &DurabilityGate,
+    telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
+    ((bytes, result), mut timing): (
+        replication::RoundResult,
+        crate::fleet::telemetry::NodeLogBatchTiming,
+    ),
+) -> bool {
+    let result = result.and_then(|acknowledgements| {
+        for (member, through) in acknowledgements {
+            gate.acknowledge(member, through)?;
+        }
+        Ok(())
+    });
+    telemetry.node_log_append(result.is_ok(), bytes);
+    timing.succeeded = result.is_ok();
+    telemetry.node_log_batch(timing);
+    result.is_ok()
+}
+
+fn stop_shipper(
+    gate: &DurabilityGate,
+    bytes: &Semaphore,
+    stopping: &tokio::sync::watch::Sender<bool>,
+) {
+    stopping.send_replace(true);
     gate.stop_shipping();
     bytes.close();
-}
-
-async fn append_batch(
-    gate: &DurabilityGate,
-    transport: Arc<dyn NodeLogTransport>,
-    leader: crate::SessionId,
-    log_epoch: u64,
-    members: &[NodeId],
-    batch: Vec<QueuedFrame>,
-) -> Result<()> {
-    let first = batch
-        .first()
-        .ok_or(Error::Node("node-log append batch is empty"))?
-        .sequence;
-    let last = batch
-        .last()
-        .ok_or(Error::Node("node-log append batch is empty"))?
-        .sequence;
-    if !batch
-        .windows(2)
-        .all(|pair| pair[0].sequence.checked_add(1) == Some(pair[1].sequence))
-    {
-        return Err(Error::Node("node-log append batch is not contiguous"));
-    }
-    let frames = batch
-        .iter()
-        .map(|frame| frame.encoded.clone())
-        .collect::<Vec<_>>();
-    let covered_through = gate.tiered_through();
-    let replies = join_all(members.iter().map(|member| {
-        let transport = Arc::clone(&transport);
-        let request = AppendRequest {
-            leader_session: leader,
-            log_epoch,
-            frames: frames.clone(),
-            covered_through,
-        };
-        let member = *member;
-        async move { (member, transport.append(member, request).await) }
-    }))
-    .await;
-    let mut acknowledgements = Vec::with_capacity(replies.len());
-    for (member, reply) in replies {
-        let receipt = reply?;
-        // A queued batch can include an already object-covered prefix. Only
-        // its uncovered suffix must remain on the follower for a fleet proof.
-        let required_first = first.max(covered_through.saturating_add(1));
-        if receipt.durable_through < last
-            || receipt.base_sequence == 0
-            || receipt.base_sequence > receipt.durable_through.saturating_add(1)
-            || (last > covered_through && receipt.base_sequence > required_first)
-        {
-            return Err(Error::Node("node-log append receipt differs"));
-        }
-        acknowledgements.push((member, receipt.durable_through));
-    }
-    for (member, durable_through) in acknowledgements {
-        gate.acknowledge(member, durable_through)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -9,13 +9,67 @@ use super::{
 use crate::{LtxError, Result, SegmentInfo, codec, ltx};
 use bytes::Bytes;
 
+/// Coalesces an independent recovered tail without freezing its entire input.
+/// Every source row and index was admitted and the full chain validated first.
+/// One source read plus the existing 256 KiB changed-page state crosses a native
+/// job at a time. A large row or changed image keeps the original bundle path.
+pub(super) async fn recovered_bundle(
+    replica: &CellReplica,
+    bundle: &crate::bundle::Bundle,
+    inputs: &[super::AppendInput],
+) -> Result<Option<PreparedSegment>> {
+    if inputs.len() < 2
+        || inputs.iter().any(|input| {
+            input.info.size_bytes > SINGLE_PUT_BYTES || input.index.len() as u64 > SINGLE_PUT_BYTES
+        })
+    {
+        return Ok(None);
+    }
+    let (repository, epoch) = crate::bundle::cell_identity(&replica.cell, &replica.incarnation);
+    let rows: Vec<_> = bundle
+        .rows()
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.repository == repository && row.epoch == epoch)
+        .collect();
+    if rows.len() != inputs.len() {
+        return Err(LtxError::LTXCorrupted);
+    }
+    let mut state = MergeState::default();
+    let mut original_bytes = 0_u64;
+    for ((row_index, row), input) in rows.into_iter().zip(inputs) {
+        if row.info != input.info
+            || !matches!(input.location, super::BodyLocation::Bundle { digest, offset } if digest == bundle.digest() && offset == row.offset)
+        {
+            return Err(LtxError::LTXCorrupted);
+        }
+        original_bytes = original_bytes
+            .checked_add(input.info.size_bytes)
+            .and_then(|bytes| bytes.checked_add(input.index.len() as u64))
+            .ok_or(LtxError::LTXCorrupted)?;
+        let read = bundle.segment_reader(row_index)?;
+        let info = input.info.clone();
+        let index = input.index.clone();
+        let Some(merged) = replica
+            .host
+            .run(move || state.apply(read()?, &info, &index))
+            .await
+            .map_err(pinned_storage_error)??
+        else {
+            return Ok(None);
+        };
+        state = merged;
+    }
+    finish(replica, state, original_bytes).await
+}
+
 pub(super) async fn run(
     replica: &CellReplica,
     segments: Vec<PreparedSegment>,
 ) -> Result<Vec<PreparedSegment>> {
     if segments.len() < 2
         || segments.iter().any(|segment| {
-            !matches!(segment.body, AppendBody::Native(_))
+            !matches!(segment.body, AppendBody::Native(_) | AppendBody::Frozen(_))
                 || segment.descriptor.info.size_bytes > SINGLE_PUT_BYTES
                 || segment.index.len() as u64 > SINGLE_PUT_BYTES
         })
@@ -29,18 +83,23 @@ pub(super) async fn run(
             .ok_or(LtxError::LTXCorrupted)
     })?;
     for segment in &segments {
-        let AppendBody::Native(source) = &segment.body else {
-            return Err(LtxError::LTXCorrupted);
-        };
         let info = segment.descriptor.info.clone();
-        let source = source.clone();
+        let body = segment.body.clone();
         let index = segment.index.clone();
         // One admitted job owns the pinned read and verification. Synchronous
         // access avoids nesting file jobs in the same bounded pool, and the
-        // dispatched closure retains the source and admission on cancellation.
+        // dispatched closure retains the pinned or frozen source and admission
+        // on cancellation. Both representations pass the same byte/index checks.
         let merged = replica
             .host
-            .run(move || state.apply(source.read_small(info.size_bytes)?, &info, &index))
+            .run(move || {
+                let bytes = match body {
+                    AppendBody::Native(source) => source.read_small(info.size_bytes)?,
+                    AppendBody::Frozen(bytes) => bytes,
+                    _ => return Err(LtxError::LTXCorrupted),
+                };
+                state.apply(bytes, &info, &index)
+            })
             .await
             .map_err(pinned_storage_error)??;
         let Some(merged) = merged else {
@@ -48,23 +107,33 @@ pub(super) async fn run(
         };
         state = merged;
     }
+    match finish(replica, state, original_bytes).await? {
+        Some(merged) => Ok(vec![merged]),
+        None => Ok(segments),
+    }
+}
+
+async fn finish(
+    replica: &CellReplica,
+    state: MergeState,
+    original_bytes: u64,
+) -> Result<Option<PreparedSegment>> {
     let limits = replica.limits;
-    let merged = replica
+    let Some(merged) = replica
         .host
         .run(move || state.finish(limits.max_file_bytes.min(SINGLE_PUT_BYTES)))
-        .await??;
-    let Some(merged) = merged else {
-        return Ok(segments);
+        .await??
+    else {
+        return Ok(None);
     };
     if merged.descriptor.info.size_bytes + merged.index.len() as u64 > original_bytes {
-        return Ok(segments);
+        return Ok(None);
     }
     match replica.admit_segment_representation(&merged.descriptor.info, merged.index.len()) {
-        Ok(()) => {}
-        Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes)) => return Ok(segments),
-        Err(error) => return Err(error),
+        Ok(()) => Ok(Some(merged)),
+        Err(LtxError::Limit(crate::LimitKind::CapturedCellLtxBytes)) => Ok(None),
+        Err(error) => Err(error),
     }
-    Ok(vec![merged])
 }
 
 #[derive(Default)]

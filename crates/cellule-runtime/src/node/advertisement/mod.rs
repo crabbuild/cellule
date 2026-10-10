@@ -27,6 +27,7 @@ pub struct NodeAdvertisement {
     pub(super) failure_domain: NodeFailureDomain,
     pub(super) capacity: NodeCapacity,
     pub(super) log: Option<NodeLogStatus>,
+    pub(super) bundle: Option<crate::node::bundle::NodeBundleHead>,
     pub(super) signature: [u8; 64],
     pub(super) placement_version: u32,
     pub(super) placement_signature: [u8; 64],
@@ -75,6 +76,7 @@ impl NodeAdvertisement {
             failure_domain,
             capacity,
             log: None,
+            bundle: None,
             signature: [0; 64],
             placement_version: 0,
             placement_signature: [0; 64],
@@ -285,6 +287,11 @@ impl NodeAdvertisement {
         self.log.as_ref()
     }
 
+    /// Immutable node bundle pointer; a sampled head is not a durability proof.
+    pub const fn bundle_head(&self) -> Option<crate::node::bundle::NodeBundleHead> {
+        self.bundle
+    }
+
     pub(super) fn encode(&self) -> Result<Vec<u8>> {
         self.validate_shape()?;
         self.verify_signature()?;
@@ -327,6 +334,16 @@ impl NodeAdvertisement {
     }
 
     pub(super) fn validate_shape(&self) -> Result<()> {
+        if let Some(bundle) = self.bundle {
+            bundle.validate()?;
+            if self
+                .log
+                .as_ref()
+                .is_some_and(|log| log.epoch() != bundle.epoch())
+            {
+                return Err(Error::Node("node bundle and native log epochs differ"));
+            }
+        }
         if self.node.as_bytes().iter().all(|byte| *byte == 0)
             || self.session.as_bytes().iter().all(|byte| *byte == 0)
             || self.fleet.as_bytes().iter().all(|byte| *byte == 0)
@@ -448,6 +465,8 @@ impl NodeAdvertisement {
         let mut unsigned = RawAdvertisement::from(self);
         unsigned.placement_signature = None;
         unsigned.log = None;
+        unsigned.bundle = None;
+        unsigned.version = 1;
         // The directory assigns the monotonic heartbeat generation during a
         // CAS refresh; the signed lease timestamps/progress remain immutable
         // evidence while this server-owned counter is intentionally excluded.
@@ -476,6 +495,7 @@ pub struct FencedNodeSession {
     pub(super) claim_generation: u64,
     pub(super) claim_expires_at_ms: i64,
     pub(super) log: Option<NodeLogStatus>,
+    pub(super) bundle: Option<crate::node::bundle::NodeBundleHead>,
 }
 
 impl FencedNodeSession {
@@ -513,6 +533,13 @@ impl FencedNodeSession {
     #[must_use]
     pub const fn log(&self) -> Option<&NodeLogStatus> {
         self.log.as_ref()
+    }
+
+    /// Exact selected bundle head retained by the failed-session fencing CAS.
+    /// This observation grants no recovery completion or collection authority.
+    #[must_use]
+    pub const fn bundle_head(&self) -> Option<crate::node::bundle::NodeBundleHead> {
+        self.bundle
     }
 
     /// Converts a fence into takeover authority when no fleet proof needs recovery.
@@ -630,6 +657,7 @@ pub(super) fn validate_successor(
     }
     if !same_boot_identity(current, next)
         || current.log != next.log
+        || current.bundle != next.bundle
         || current.generation.checked_add(1) != Some(next.generation)
         || next.progress < current.progress
         || next.issued_at_ms <= current.issued_at_ms

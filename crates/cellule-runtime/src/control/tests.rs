@@ -134,6 +134,40 @@ fn initial() -> Control {
 }
 
 #[test]
+fn bound_control_retains_only_its_original_recovery_lane() {
+    let mut control = initial();
+    control.state = ControlState::Serving;
+    control.root = Some(root(7));
+    control.bundle_binding = Some(BundleBindingRef {
+        session: owner(3).session,
+        epoch: 4,
+        digest: Digest::from_bytes([8; 32]),
+    });
+    let attached = control.attach_recovery(recovery(root(7))).unwrap();
+    assert_eq!(
+        Control::decode(&attached.encode().unwrap()).unwrap(),
+        attached
+    );
+    for (session, epoch) in [(SessionId::from_bytes([5; 16]), 4), (owner(3).session, 5)] {
+        let mut foreign = recovery(root(7));
+        foreign.leader_session = session;
+        foreign.log_epoch = epoch;
+        assert!(control.attach_recovery(foreign).is_err());
+    }
+    let mut ordinary = attached.clone();
+    ordinary.revision += 1;
+    ordinary.progress += 1;
+    ordinary.recovery = None;
+    ordinary.root = Some(root(9));
+    assert!(
+        attached
+            .validate_transition(&ordinary, Transition::Publish)
+            .is_err(),
+        "ordinary publication cannot bypass pinned recovery"
+    );
+}
+
+#[test]
 fn canonical_control_roundtrips_and_rejects_alternate_encodings() {
     let mut control = initial();
     control.root = Some(root(7));

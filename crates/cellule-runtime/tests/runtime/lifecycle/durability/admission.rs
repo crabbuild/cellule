@@ -370,10 +370,12 @@ async fn durable_group_releases_all_request_slots_before_its_first_reply() {
         let admitted = futures_util::poll!(&mut query);
         followups.push((query, admitted));
     }
-    // All completion data remains charged while its terminal request slots
-    // become available; releasing slots must not discharge retained bytes.
-    assert!(runtime.stats().retained_bytes() >= 4 * 2_048);
+    // SQL has exited and returned each unused result allowance. Every group's
+    // input (1,024 bytes) and actual reply (one byte) must remain charged while
+    // terminal request slots become available; releasing slots cannot drop them.
+    let retained = runtime.stats().retained_bytes();
     resume.send(()).unwrap();
+    assert!(retained >= 4 * (1_024 + 1), "retained: {retained}");
     let mut observed = Vec::new();
     for (query, admitted) in followups {
         observed.push(match admitted {
@@ -419,6 +421,7 @@ async fn node_byte_reservation_rejects_overcommit_and_releases_capacity() {
     assert_eq!(
         full.file_descriptor_capacity(),
         ACTIVE_CELL_FILE_DESCRIPTORS
+            + cellule_runtime::fleet::resource::PUBLICATION_FILE_DESCRIPTORS
     );
     assert_eq!(full.retained_bytes(), 1_024);
     assert_eq!(full.retained_capacity_bytes(), 1_024);
@@ -436,6 +439,7 @@ async fn node_byte_reservation_rejects_overcommit_and_releases_capacity() {
     assert_eq!(
         empty.file_descriptor_capacity(),
         ACTIVE_CELL_FILE_DESCRIPTORS
+            + cellule_runtime::fleet::resource::PUBLICATION_FILE_DESCRIPTORS
     );
     assert_eq!(empty.retained_bytes(), 0);
     assert_eq!(empty.local_disk_reserved_bytes(), 0);

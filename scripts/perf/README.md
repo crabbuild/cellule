@@ -1,9 +1,39 @@
 # Docker write verification
 
-This harness runs the same SQL application on Cellule and pinned celld v0.6.1.
-It uses 1,000 Cells, 96-byte values, INSERT plus SELECT in one transaction,
-and a two-hour durable request/result ledger. It is **SQL application parity**;
-it does not reproduce a bounded KV upsert benchmark.
+This harness compares HTTP/SQL applications on Cellule and pinned celld v0.6.1.
+It defaults to 1,000 Cells, 96-byte values, INSERT plus SELECT in one transaction,
+and a two-hour durable request/result ledger. It matches the application workload
+and audits successful responses, durable retries and restored rows. It does not
+reproduce a bounded KV upsert benchmark.
+
+| Layer | Cellule | celld |
+| --- | --- | --- |
+| Client and auditor | Rust HTTP load generator and auditor | Identical Rust client and auditor binaries |
+| Application | Rust/Axum orders service, adapted from `crates/cellule-axum/examples/sql.rs` | JavaScript Worker and Durable Object in `scripts/perf/celld/index.js` |
+| Application storage interface | Cellule SQL commands and owner-ordered queries | Durable Object `storage.sql` and `storage.transactionSync` |
+| Framework implementation | Rust | Rust daemon embedding V8 |
+
+Celld's [documented application API](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/docs/README.md)
+is JavaScript. This fixture deploys that application; it does not call celld's
+Rust library directly. The Rust client does not make the server application Rust.
+The implementations also differ in routing, request-ledger schema and internal
+admission policy. These are **matched HTTP/SQL application comparisons**, not
+measurements of isolated Rust framework overhead or identical SQL statements.
+Attribute bottlenecks using measured phases and controlled changes, rather than
+inferring them from a TPS ratio. A direct Rust storage/replication microbenchmark
+would need its own matched inputs and durability boundary; it would measure that
+subsystem and would not replace end-to-end qualification.
+
+The pinned celld reference uses ordered one-shot HTTP by default. This runner
+does not set `CELLD_LOG_TRANSPORT`, `CELLD_LOG_WINDOW` or `CELLD_LOG_PIPELINE`:
+its [source defaults](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L5815)
+are one-shot HTTP, window zero and four rounds. Stream code in the repository
+does not establish that a measured case enabled it. Cellule currently uses
+eight rounds and a general four-millisecond assembly interval; celld's normal
+SQL Cells do not take its Queue-specific grouping delay. The
+[core-path contract](../../docs/write-performance-proposal.md#core-write-path-reference)
+records the remaining algorithm and configuration differences. No recorded
+case establishes core write-path parity.
 
 Use a dedicated Linux Docker context. The current shared-VM profile gives
 nodes an 8-CPU/16-GiB ceiling, tmpfs state of 4 GiB, a 2-CPU/2-GiB RustFS
@@ -11,6 +41,13 @@ provider, and a 4-CPU/4-GiB client. These ceilings exceed the shared VM's total
 CPU; report contention. tmpfs does not qualify physical-device durability.
 HTTP endpoints, certificates, credentials, and placement are fixture policy.
 The credentials in these scripts are synthetic and used only by this fixture.
+
+The default 64-MiB retained-work and 1-GiB managed-disk limits are passed only
+to Cellule. Case metadata records these profile values for both systems, but
+the runner does not configure equivalent celld internal budgets. Matching
+workload and container ceilings does not establish matching effective memory
+admission or disk policies. Report this asymmetry when comparing results;
+neither overloaded completions nor celld OOM establish sustainable capacity.
 
 ## Build and run
 
@@ -72,6 +109,11 @@ Its loopback ports must be free of other workloads.
 
 For a read-only point, supply `--write-rates 0 --read-rate N`. For a mixed
 point, use the same offered write rate on both systems and add `--read-rate N`.
+Use `--cells 2000` for the node capacity contract; the population sets both the
+Cellule application and client, writes celld's per-case deployment configuration,
+and verifies celld's complete owner placement. The original build fixture stays
+immutable; each celld case retains its deployed application and configuration.
+The simultaneous target is `--cells 2000 --write-rates 2000 --read-rate 20000`.
 Add `--hot-read-cells 10` for the 1% hot-read case. Record qualification of
 read-only and mixed profiles separately; an aggregate read/write rate is not a
 read-capacity result.
@@ -103,7 +145,10 @@ indices and fixed bound, preserving 100-us resolution and overflow. The client
 primes exporters and sampling connections before warmup. Use `--telemetry off`
 only to measure exporter overhead; that diagnostic cannot qualify. Compare
 response, confirmation, fleet-proof, capture/checkpoint, and publication timings
-separately instead of attributing publication time to the command ACK.
+separately instead of attributing publication time to the command ACK. Shared
+publication exports window cohort/cell/row/byte and fallback counters plus
+`shared_queue` and `shared_upload` histograms. Cohort fill alone does not prove
+a lower authority cost or a sustainable capacity increase.
 
 The producer emits every offer scheduled inside the window even if its final
 wakeup is late. It preserves the original due time: lateness remains in the
@@ -140,6 +185,10 @@ Cellule stability reports fit the debt and oldest-publication age over the last
 three one-minute segments. A positive slope fails; missing, late, reset, or
 fenced observations cannot pass. Native log frontiers remain observations and
 grant no durability or collection authority.
+Fleet write windows also require follower-proof advancement. Read-only windows
+may retain the same frontier, but still require active Fleet, one unchanged log
+epoch, monotonic valid counters and no fencing/rotation throughout the window.
+Their seed ACKs remain subject to the complete warm/cold audit.
 
 For a machine-readable comparison, write an external JSON file with `baseline`,
 `candidate` and `celld` lists of case directories, then run:

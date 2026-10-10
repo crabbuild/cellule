@@ -366,6 +366,9 @@ impl BackupPinStore {
     }
 
     async fn verify_root(&self, control: &Control) -> Result<()> {
+        if control.bundle_binding.is_some() {
+            return Err(Error::Backup("bundle-bound Cell must drain before backup"));
+        }
         if let Some(root) = control.ltx_root() {
             cellule_ltx::CellReplica::new(
                 self.layout.clone(),

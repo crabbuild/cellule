@@ -12,6 +12,7 @@ fn follower_signature_rejects_modified_payload_wrong_key_and_wrong_direction() {
         leader: vec![1; 16],
         epoch: 1,
         operation: 1,
+        grant: vec![7; 32],
         frames: vec![vec![3; 128]],
         deadline_ms: 2000,
         ..Default::default()
@@ -49,6 +50,7 @@ fn stale_or_oversized_append_and_frames_on_retirement_are_refused() {
         leader: vec![1; 16],
         epoch: 1,
         operation: 1,
+        grant: vec![7; 32],
         frames: vec![vec![3; 128]],
         deadline_ms: 2000,
         ..Default::default()
@@ -70,6 +72,7 @@ fn stale_or_oversized_append_and_frames_on_retirement_are_refused() {
     request.operation = 3;
     assert!(wire::validate(&request, 1000).is_err());
     request.frames.clear();
+    request.grant.clear();
     assert!(wire::validate(&request, 1000).is_ok());
 }
 
@@ -81,6 +84,7 @@ fn directory_verification_clock_rollback_preserves_horizon_without_extending_exp
         leader: vec![1; 16],
         epoch: 1,
         operation: 1,
+        grant: vec![7; 32],
         frames: vec![vec![3; 128]],
         deadline_ms: 11_000,
         ..Default::default()
@@ -99,4 +103,26 @@ fn directory_verification_clock_rollback_preserves_horizon_without_extending_exp
     // A forward clock step still expires the signed deadline immediately.
     let now = wire::request_time(1000, 11_000, Duration::from_millis(25)).unwrap();
     assert!(wire::validate(&request, now).is_err());
+}
+
+#[test]
+fn grant_issuance_and_append_tokens_have_separate_signed_shapes() {
+    let mut request = wire::Request {
+        sender: vec![1; 16],
+        leader: vec![1; 16],
+        member: vec![2; 16],
+        epoch: 1,
+        operation: 5,
+        first_sequence: 1,
+        deadline_ms: 2000,
+        ..Default::default()
+    };
+    assert!(wire::validate(&request, 1000).is_ok());
+    request.grant = vec![7; 32];
+    assert!(wire::validate(&request, 1000).is_err());
+    request.operation = 1;
+    request.frames = vec![vec![3; 128]];
+    assert!(wire::validate(&request, 1000).is_ok());
+    request.grant.pop();
+    assert!(wire::validate(&request, 1000).is_err());
 }

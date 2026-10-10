@@ -42,6 +42,7 @@ pub(super) async fn run(
     pressure_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pressure_tick.tick().await;
     loop {
+        super::materialization::dispatch(&pool, &mut cells, &mut tasks);
         if !shutdown.draining {
             maintenance::drive(
                 &pool,
@@ -379,12 +380,22 @@ pub(super) fn handle_message(
                 oldest_unpublished: cells
                     .values()
                     .flat_map(|active| {
-                        active.publishing_since.into_iter().chain(
-                            active
-                                .publications
-                                .front()
-                                .map(|queued| queued.submitted_at),
-                        )
+                        active
+                            .publishing_since
+                            .into_iter()
+                            .chain(active.root_debt.as_ref().map(|debt| debt.submitted_at))
+                            .chain(
+                                active
+                                    .materializing
+                                    .as_ref()
+                                    .map(|root| root.debt.submitted_at),
+                            )
+                            .chain(
+                                active
+                                    .publications
+                                    .front()
+                                    .map(|queued| queued.submitted_at),
+                            )
                     })
                     .min()
                     .map(|oldest| now.saturating_duration_since(oldest)),
@@ -648,14 +659,18 @@ pub(super) fn handle_message(
                 .filter(|active| {
                     active.transfer.is_none()
                         && active.drain.is_none()
-                        && active.next_due_ms.is_some_and(|due| due <= now_ms)
+                        && active
+                            .selected_due_head()
+                            .1
+                            .is_some_and(|due| due <= now_ms)
                         && matches!(
                             active.coordination.lookup(),
                             CoordinationDecision::LocalHandle
                         )
                 })
                 .filter_map(|active| {
-                    let next_due_ms = active.next_due_ms?;
+                    let (expected_commit_sequence, next_due_ms) = active.selected_due_head();
+                    let next_due_ms = next_due_ms?;
                     Some(DueResidentCell {
                         cell: active.catalog.entry().cell(),
                         catalog: active.catalog.clone(),
@@ -663,7 +678,7 @@ pub(super) fn handle_message(
                         code: active.code,
                         schema: active.schema,
                         admission: Arc::clone(&active.admission),
-                        expected_commit_sequence: active.published_sequence,
+                        expected_commit_sequence,
                         next_due_ms,
                     })
                 })

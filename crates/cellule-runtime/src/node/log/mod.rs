@@ -1,12 +1,13 @@
 //! Node log: durability gate, rotation barrier, and recovery overlays.
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
 
 use crate::identity::NodeId;
-use crate::identity::SessionId;
+use crate::identity::{ApplicationId, CellId, IncarnationId, SessionId};
 use crate::node::log_transport::NodeLogTransport;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 use crate::{Error, Result};
@@ -21,6 +22,154 @@ pub use retirement::{
 pub use recovery::*;
 
 pub(crate) const MAX_TICKET_FRAMES: u64 = 1_024;
+static NEXT_GATE_INSTANCE: AtomicU64 = AtomicU64::new(1);
+
+/// Exact Cell writer identity carried by the ordered native frame lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CellLogScope {
+    /// Application that owns the Cell.
+    pub application: ApplicationId,
+    /// Cell whose issuance will be closed.
+    pub cell: CellId,
+    /// Original incarnation.
+    pub incarnation: IncarnationId,
+    /// Original writer epoch.
+    pub cell_epoch: u64,
+}
+
+/// Frozen complete issued endpoint, including frames acknowledged by followers
+/// above the selected object prefix. Only the ordered gate can construct it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellIssuedRange {
+    leader_session: SessionId,
+    log_epoch: u64,
+    scope: CellLogScope,
+    last_node_sequence: u64,
+    commit_sequence: u64,
+    first_commit_sequence: u64,
+    position: cellule_ltx::Position,
+}
+
+/// Exact complete capture assigned by the ordered native lane. A frame prefix
+/// cannot substitute for this capability even when it carries the final logical
+/// command number. Its digest binds every assigned native frame in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AssignedCommitRange {
+    gate_instance: u64,
+    ticket: CommitTicket,
+    scope: CellLogScope,
+    first_commit: u64,
+    commit: u64,
+    position: cellule_ltx::Position,
+    digest: [u8; 32],
+    capture_digest: [u8; 32],
+}
+impl AssignedCommitRange {
+    pub(crate) const fn endpoint(&self) -> (u64, u64, cellule_ltx::Position) {
+        (self.first_commit, self.commit, self.position)
+    }
+
+    pub(crate) const fn scope(&self) -> CellLogScope {
+        self.scope
+    }
+
+    /// Exact original native ticket.
+    pub const fn ticket(&self) -> CommitTicket {
+        self.ticket
+    }
+
+    pub(crate) fn matches_capture(
+        &self,
+        cell: CellId,
+        incarnation: IncarnationId,
+        commit: u64,
+        cuts: &cellule_ltx::CaptureBatch,
+    ) -> bool {
+        self.scope.cell == cell
+            && self.scope.incarnation == incarnation
+            && self.commit == commit
+            && self.position == cuts.position
+            && cuts.segments.len() as u64
+                == self.ticket.last_sequence - self.ticket.first_sequence + 1
+            && self.capture_digest
+                == capture_digest(cuts.segments.iter().map(cellule_ltx::LocalSegment::info))
+    }
+    pub(crate) fn verify(&self, frames: &[cellule_ltx::VerifiedNodeFrame]) -> Result<()> {
+        if frames.is_empty()
+            || frames.len() as u64 != self.ticket.last_sequence - self.ticket.first_sequence + 1
+        {
+            return Err(Error::Node("bundle omits part of an assigned capture"));
+        }
+        let mut hash = blake3::Hasher::new();
+        for (offset, frame) in frames.iter().enumerate() {
+            let scope = frame.scope();
+            if scope.leader_session != *self.ticket.leader_session.as_bytes()
+                || scope.log_epoch != self.ticket.log_epoch
+                || scope.node_sequence != self.ticket.first_sequence + offset as u64
+                || scope.application != *self.scope.application.as_bytes()
+                || scope.cell != *self.scope.cell.as_bytes()
+                || scope.incarnation != *self.scope.incarnation.as_bytes()
+                || scope.cell_epoch != self.scope.cell_epoch
+                || frame.first_commit_sequence() != self.first_commit
+                || scope.commit_sequence != self.commit
+            {
+                return Err(Error::Node("bundle assigned capture scope differs"));
+            }
+            hash.update(&frame.digest());
+        }
+        if *hash.finalize().as_bytes() != self.digest
+            || frames
+                .last()
+                .is_none_or(|frame| frame.segment().position() != self.position)
+        {
+            return Err(Error::Node("bundle assigned capture digest differs"));
+        }
+        Ok(())
+    }
+}
+
+fn capture_digest<'a>(segments: impl Iterator<Item = &'a cellule_ltx::SegmentInfo>) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"cellule-assigned-capture-v1");
+    for segment in segments {
+        hash.update(&segment.min_txid.to_le_bytes());
+        hash.update(&segment.max_txid.to_le_bytes());
+        hash.update(&segment.page_size.to_le_bytes());
+        hash.update(&segment.database_pages.to_le_bytes());
+        hash.update(&segment.pre_checksum.to_le_bytes());
+        hash.update(&segment.post_checksum.to_le_bytes());
+        hash.update(&segment.size_bytes.to_le_bytes());
+        hash.update(&segment.blake3);
+    }
+    *hash.finalize().as_bytes()
+}
+
+impl CellIssuedRange {
+    /// Original lane session.
+    pub const fn leader_session(&self) -> SessionId {
+        self.leader_session
+    }
+    /// Original lane epoch.
+    pub const fn log_epoch(&self) -> u64 {
+        self.log_epoch
+    }
+    /// Exact original writer.
+    pub const fn scope(&self) -> CellLogScope {
+        self.scope
+    }
+    /// Complete assigned native endpoint, rather than sampled follower coverage.
+    pub const fn last_node_sequence(&self) -> u64 {
+        self.last_node_sequence
+    }
+    /// Complete logical command endpoint.
+    pub const fn commit_sequence(&self) -> u64 {
+        self.commit_sequence
+    }
+    /// Exact SQLite position of the complete issued range.
+    pub const fn position(&self) -> cellule_ltx::Position {
+        self.position
+    }
+}
 
 /// One actor-issued consecutive frame range awaiting a durability proof.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,8 +211,10 @@ impl CommitTicket {
 pub enum DurabilitySource {
     /// The commit was covered by the enrolled node-log lane.
     Fleet,
-    /// The commit was covered by object storage.
+    /// The commit was covered by an exact materialized Cell root in object storage.
     Object,
+    /// A verified node bundle is selected in origin; the Cell root may lag.
+    Bundle,
 }
 
 /// Non-forgeable proof issued by the gate after one complete path wins.
@@ -165,6 +316,7 @@ pub struct NodeLogProgress {
 }
 
 struct GateState {
+    instance: u64,
     leader_session: SessionId,
     leader_node: NodeId,
     log_epoch: u64,
@@ -173,11 +325,17 @@ struct GateState {
     // Keep only completed sequences above the contiguous prefix. The prefix
     // proves older tickets without one allocation per historical frame.
     object_covered: BTreeSet<u64>,
+    // Merge adjacent exact confirmations. A dense selected prefix occupies
+    // one entry without retaining one source tag per historical native frame.
+    bundle_covered: BTreeMap<u64, u64>,
     tiered_through: u64,
     next_sequence: u64,
     fleet_active: bool,
     rotating: bool,
     fenced: bool,
+    cell_issued: HashMap<CellLogScope, CellIssuedRange>,
+    closed_cells: HashSet<CellLogScope>,
+    untracked_issuance: bool,
 }
 
 impl DurabilityGate {
@@ -222,19 +380,41 @@ impl DurabilityGate {
             return Err(Error::Node("invalid node-log ensemble"));
         }
         let follower_through = members.iter().map(|member| (*member, 0)).collect();
+        // Not a persisted identity: exact assignments cannot be confirmed by a
+        // second in-process gate even when boot, epoch and ticket numbers match.
+        let mut instance = NEXT_GATE_INSTANCE.load(Ordering::Relaxed);
+        loop {
+            let next = instance
+                .checked_add(1)
+                .ok_or(Error::Node("durability gate instance overflow"))?;
+            match NEXT_GATE_INSTANCE.compare_exchange_weak(
+                instance,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(current) => instance = current,
+            }
+        }
         Ok(Self {
             inner: Arc::new(Mutex::new(GateState {
+                instance,
                 leader_session,
                 leader_node,
                 log_epoch,
                 members,
                 follower_through,
                 object_covered: BTreeSet::new(),
+                bundle_covered: BTreeMap::new(),
                 tiered_through: 0,
                 next_sequence: 1,
                 fleet_active: false,
                 rotating: false,
                 fenced: false,
+                cell_issued: HashMap::new(),
+                closed_cells: HashSet::new(),
+                untracked_issuance: false,
             })),
             changed: Arc::new(Notify::new()),
         })
@@ -259,6 +439,10 @@ impl DurabilityGate {
         state.next_sequence = last_sequence
             .checked_add(1)
             .ok_or(Error::Node("node sequence overflow"))?;
+        // This legacy API has no Cell identity. Its ranges cannot establish a
+        // complete per-Cell closure endpoint; the canonical shipper uses the
+        // verified commit_frames path instead.
+        state.untracked_issuance = true;
         Ok(CommitTicket {
             leader_session: state.leader_session,
             log_epoch: state.log_epoch,
@@ -290,7 +474,11 @@ impl DurabilityGate {
         })
     }
 
-    pub(crate) fn commit(&self, ticket: CommitTicket) -> Result<()> {
+    pub(crate) fn commit_frames(
+        &self,
+        ticket: CommitTicket,
+        frames: &[cellule_ltx::VerifiedNodeFrame],
+    ) -> Result<Option<AssignedCommitRange>> {
         let mut state = self.lock()?;
         if state.fenced {
             return Err(Error::Fenced);
@@ -307,11 +495,154 @@ impl DurabilityGate {
         {
             return Err(Error::Node("node-log ticket reservation changed"));
         }
+        // One submission is one complete Cell capture. Stage its endpoint on
+        // the stack, then install it only after every frame passed validation.
+        let mut issued: Option<CellIssuedRange> = None;
+        let mut assignment = None;
+        if !frames.is_empty()
+            && frames.len() as u64 != ticket.last_sequence - ticket.first_sequence + 1
+        {
+            return Err(Error::Node("node-log assigned frame range differs"));
+        }
+        for (index, frame) in frames.iter().enumerate() {
+            let scope = frame.scope();
+            let cell_scope = CellLogScope {
+                application: ApplicationId::from_bytes(scope.application),
+                cell: CellId::from_bytes(scope.cell),
+                incarnation: IncarnationId::from_bytes(scope.incarnation),
+                cell_epoch: scope.cell_epoch,
+            };
+            match &mut assignment {
+                None => {
+                    assignment = Some(AssignedCommitRange {
+                        gate_instance: state.instance,
+                        ticket,
+                        scope: cell_scope,
+                        first_commit: frame.first_commit_sequence(),
+                        commit: scope.commit_sequence,
+                        position: frame.segment().position(),
+                        digest: [0; 32],
+                        capture_digest: [0; 32],
+                    })
+                }
+                Some(assignment) => {
+                    if assignment.scope != cell_scope
+                        || assignment.first_commit != frame.first_commit_sequence()
+                        || assignment.commit != scope.commit_sequence
+                    {
+                        return Err(Error::Node(
+                            "assigned capture changes Cell or command range",
+                        ));
+                    }
+                    assignment.position = frame.segment().position();
+                }
+            }
+            if state.closed_cells.contains(&cell_scope) {
+                return Err(Error::Fenced);
+            }
+            if scope.leader_session != *state.leader_session.as_bytes()
+                || scope.log_epoch != state.log_epoch
+                || scope.node_sequence != ticket.first_sequence + index as u64
+            {
+                return Err(Error::Node("node-log assigned frame scope differs"));
+            }
+            if let Some(previous) = issued.as_ref() {
+                let continuing_group = scope.commit_sequence == previous.commit_sequence;
+                if (continuing_group
+                    && frame.first_commit_sequence() != previous.first_commit_sequence)
+                    || (!continuing_group
+                        && frame.first_commit_sequence()
+                            != previous
+                                .commit_sequence
+                                .checked_add(1)
+                                .ok_or(Error::Node("Cell commit overflow"))?)
+                    || frame.segment().min_txid
+                        != previous
+                            .position
+                            .txid
+                            .checked_add(1)
+                            .ok_or(Error::Node("Cell TXID overflow"))?
+                    || frame.segment().pre_checksum != previous.position.checksum
+                {
+                    return Err(Error::Node("node-log Cell issuance has a gap"));
+                }
+            } else if state.cell_issued.get(&cell_scope).is_some_and(|previous| {
+                // Separate captures may have intervening object-only commands.
+                // Require forward issuance here; only the bundle verifier can
+                // establish exact continuity from its authority-pinned base.
+                scope.commit_sequence <= previous.commit_sequence
+                    || frame.first_commit_sequence() <= previous.commit_sequence
+                    || frame.segment().max_txid <= previous.position.txid
+            }) {
+                return Err(Error::Node("node-log Cell issuance did not advance"));
+            }
+            if !state.cell_issued.contains_key(&cell_scope) && state.cell_issued.len() >= 4_096 {
+                return Err(Error::Capacity("node-log Cell issuance bindings"));
+            }
+            issued = Some(CellIssuedRange {
+                leader_session: state.leader_session,
+                log_epoch: state.log_epoch,
+                scope: cell_scope,
+                last_node_sequence: scope.node_sequence,
+                commit_sequence: scope.commit_sequence,
+                first_commit_sequence: frame.first_commit_sequence(),
+                position: frame.segment().position(),
+            });
+        }
         state.next_sequence = ticket
             .last_sequence
             .checked_add(1)
             .ok_or(Error::Node("node sequence overflow"))?;
-        Ok(())
+        if let Some(issued) = issued {
+            state.cell_issued.insert(issued.scope, issued);
+        }
+        if let Some(assignment) = &mut assignment {
+            let mut hash = blake3::Hasher::new();
+            for frame in frames {
+                hash.update(&frame.digest());
+            }
+            assignment.digest = *hash.finalize().as_bytes();
+            assignment.capture_digest = capture_digest(frames.iter().map(|frame| frame.segment()));
+        }
+        Ok(assignment)
+    }
+
+    /// Closes this writer's sequence assignment in the same lock as native
+    /// ticket commit. Call after joining its accepted SQL/capture/submission
+    /// jobs. Late assignment fails without consuming a global sequence.
+    pub fn close_cell_issuance(
+        &self,
+        scope: CellLogScope,
+        base: cellule_ltx::RootRef,
+    ) -> Result<CellIssuedRange> {
+        let mut state = self.lock()?;
+        if state.fenced || state.untracked_issuance {
+            return Err(Error::Fenced);
+        }
+        if scope.cell_epoch == 0
+            || scope.cell.as_bytes().iter().all(|byte| *byte == 0)
+            || base.cell != *scope.cell.as_bytes()
+            || base.incarnation != *scope.incarnation.as_bytes()
+        {
+            return Err(Error::Node("invalid Cell issuance closure"));
+        }
+        if !state.closed_cells.contains(&scope) && state.closed_cells.len() >= 4_096 {
+            return Err(Error::Capacity("node-log closed Cell bindings"));
+        }
+        state.closed_cells.insert(scope);
+        Ok(state
+            .cell_issued
+            .get(&scope)
+            .copied()
+            .unwrap_or(CellIssuedRange {
+                leader_session: state.leader_session,
+                log_epoch: state.log_epoch,
+                scope,
+                last_node_sequence: 0,
+                first_commit_sequence: base.commit_sequence,
+                commit_sequence: base.commit_sequence,
+                position: base.position,
+            }))
     }
 
     /// Returns this gate's immutable enrolled epoch, including after rotation.
@@ -454,23 +785,54 @@ impl DurabilityGate {
         if state.fenced {
             return Err(Error::Fenced);
         }
-        for ticket in tickets {
-            for sequence in ticket.first_sequence..=ticket.last_sequence {
-                if sequence > state.tiered_through {
-                    state.object_covered.insert(sequence);
-                }
-            }
-        }
-        while let Some(next) = state.tiered_through.checked_add(1) {
-            if !state.object_covered.remove(&next) {
-                break;
-            }
-            state.tiered_through = next;
-        }
+        mark_object_coverage(&mut state, tickets.iter().copied());
         let tiered_through = state.tiered_through;
         drop(state);
         self.changed.notify_waiters();
         Ok(tiered_through)
+    }
+
+    pub(crate) fn confirm_bundle_ranges(&self, assignments: &[AssignedCommitRange]) -> Result<u64> {
+        let mut state = self.lock()?;
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        for assignment in assignments {
+            validate_ticket(&state, assignment.ticket)?;
+            if assignment.gate_instance != state.instance {
+                return Err(Error::Node(
+                    "selected capture belongs to another durability gate",
+                ));
+            }
+        }
+        for assignment in assignments {
+            mark_bundle_coverage(&mut state, assignment.ticket);
+        }
+        mark_object_coverage(
+            &mut state,
+            assignments.iter().map(|assignment| assignment.ticket),
+        );
+        let through = state.tiered_through;
+        drop(state);
+        self.changed.notify_waiters();
+        Ok(through)
+    }
+
+    pub(crate) fn confirmed_object_proof(&self, ticket: CommitTicket) -> Result<DurabilityProof> {
+        let state = self.lock()?;
+        validate_ticket(&state, ticket)?;
+        if state.fenced {
+            return Err(Error::Fenced);
+        }
+        if !object_covers(&state, ticket) {
+            return Err(Error::Node("object ticket remains unconfirmed"));
+        }
+        // This caller completed an exact Cell root CAS. A bundle that won the
+        // earlier generic race must not turn materialization into an error.
+        Ok(DurabilityProof {
+            ticket,
+            source: DurabilitySource::Object,
+        })
     }
 
     pub(crate) fn preview_objects(&self, tickets: &[CommitTicket]) -> Result<u64> {
@@ -496,7 +858,7 @@ impl DurabilityGate {
         Ok(tiered_through)
     }
 
-    /// Returns the highest sequence the follower lane has made durable.
+    /// Returns the contiguous authoritative object prefix, including selected bundles.
     #[must_use]
     pub fn tiered_through(&self) -> u64 {
         self.lock().map_or(0, |state| state.tiered_through)
@@ -564,7 +926,16 @@ impl DurabilityGate {
         if object_covers(&state, ticket) {
             return Ok(Some(DurabilityProof {
                 ticket,
-                source: DurabilitySource::Object,
+                source: if state
+                    .bundle_covered
+                    .range(..=ticket.first_sequence)
+                    .next_back()
+                    .is_some_and(|(_, through)| *through >= ticket.last_sequence)
+                {
+                    DurabilitySource::Bundle
+                } else {
+                    DurabilitySource::Object
+                },
             }));
         }
         if state.fleet_active
@@ -642,6 +1013,42 @@ pub async fn close_node_log(
     let barrier = gate.begin_rotation()?;
     retire_node_log(transport, &barrier).await?;
     directory.close_log(observed, &barrier, now_ms).await
+}
+
+fn mark_bundle_coverage(state: &mut GateState, ticket: CommitTicket) {
+    let mut first = ticket.first_sequence;
+    let mut last = ticket.last_sequence;
+    if let Some((&before, &through)) = state.bundle_covered.range(..=first).next_back()
+        && through >= first.saturating_sub(1)
+    {
+        first = before;
+        last = last.max(through);
+        state.bundle_covered.remove(&before);
+    }
+    while let Some((&after, &through)) = state.bundle_covered.range(first..).next() {
+        if after > last.saturating_add(1) {
+            break;
+        }
+        last = last.max(through);
+        state.bundle_covered.remove(&after);
+    }
+    state.bundle_covered.insert(first, last);
+}
+
+fn mark_object_coverage(state: &mut GateState, tickets: impl Iterator<Item = CommitTicket>) {
+    for ticket in tickets {
+        for sequence in ticket.first_sequence..=ticket.last_sequence {
+            if sequence > state.tiered_through {
+                state.object_covered.insert(sequence);
+            }
+        }
+    }
+    while let Some(next) = state.tiered_through.checked_add(1) {
+        if !state.object_covered.remove(&next) {
+            break;
+        }
+        state.tiered_through = next;
+    }
 }
 
 fn object_covers(state: &GateState, ticket: CommitTicket) -> bool {

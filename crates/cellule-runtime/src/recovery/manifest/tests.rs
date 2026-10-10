@@ -26,6 +26,141 @@ async fn recovery_fixture() -> RecoveryFixture {
     recovery_fixture_with_store(None).await
 }
 
+struct PausedArtifactStore {
+    started: tokio::sync::Notify,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl RecoveryArtifactStore for PausedArtifactStore {
+    fn retain(&self, _key: RecoveryArtifactKey, bundle: cellule_ltx::bundle::Bundle) -> Result<()> {
+        // Ownership stays unique so the ordinary file cache can take it without
+        // copying or dropping source admission before its own work has joined.
+        let path = bundle.detach_file()?;
+        self.started.notify_one();
+        self.release
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+    fn load(&self, _key: &RecoveryArtifactKey) -> Result<Option<RecoveryArtifact>> {
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn cancelled_pin_retains_original_scratch_admission_through_cache_job() {
+    let fixture = recovery_fixture().await;
+    let disk = cellule_ltx::DiskBudget::new(32 << 20);
+    let loader = fixture.manifests.clone().with_recovery_disk(disk.clone());
+    let pin = fixture.pinned;
+    let overlay = loader
+        .load_overlay(pin.cell, pin.incarnation, &pin.recovery)
+        .await
+        .unwrap();
+    let bytes = overlay.bundle().len();
+    assert_eq!(disk.used(), bytes);
+    let (release, receiver) = std::sync::mpsc::channel();
+    let cache = Arc::new(PausedArtifactStore {
+        started: tokio::sync::Notify::new(),
+        release: Mutex::new(receiver),
+    });
+    let manifests = fixture.manifests.with_recovery_artifacts(cache.clone());
+    let leader = pin.recovery.leader_session;
+    let epoch = pin.recovery.log_epoch;
+    let task = tokio::spawn(async move {
+        manifests
+            .pin(
+                leader,
+                epoch,
+                vec![crate::node::log::RecoveredCellTail {
+                    application: *pin.application.as_bytes(),
+                    cell_epoch: pin.cell_epoch,
+                    first_node_sequence: pin.recovery.first_node_sequence,
+                    last_node_sequence: pin.recovery.last_node_sequence,
+                    overlay,
+                }],
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(10), cache.started.notified())
+        .await
+        .unwrap();
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    assert_eq!(
+        disk.used(),
+        bytes,
+        "cancelled waiter cannot release accepted cache work"
+    );
+    release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while disk.used() != 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn manifest_codec_covers_2000_cells_with_the_existing_byte_bound() {
+    let fixture = recovery_fixture().await;
+    let recovery = fixture.pinned.recovery;
+    let path = fixture.layout.node_log_recovery_path(
+        recovery.leader_session.as_bytes(),
+        recovery.log_epoch,
+        recovery.manifest_digest.as_bytes(),
+    );
+    let (body, _) = fixture
+        .layout
+        .store()
+        .get_with_etag_bounded(&path, MAX_MANIFEST_BYTES)
+        .await
+        .unwrap();
+    let original = RecoveryManifest::decode(&body).unwrap();
+    let row = &original.cells[0];
+    let cells = (1_u64..=2_000)
+        .map(|i| {
+            let mut cell = [0_u8; 32];
+            cell[24..].copy_from_slice(&i.to_be_bytes());
+            let mut predecessor = row.predecessor;
+            predecessor.cell = cell;
+            ManifestCell {
+                application: row.application,
+                cell,
+                incarnation: row.incarnation,
+                cell_epoch: row.cell_epoch,
+                first_node_sequence: i,
+                last_node_sequence: i,
+                predecessor,
+                final_position: row.final_position,
+                final_commit_sequence: row.final_commit_sequence,
+                bundle_digest: row.bundle_digest,
+            }
+        })
+        .collect();
+    let manifest = RecoveryManifest {
+        leader_session: original.leader_session,
+        log_epoch: original.log_epoch,
+        cells,
+    };
+    let body = manifest.encode().unwrap();
+    assert!((body.len() as u64) < MAX_MANIFEST_BYTES);
+    assert_eq!(RecoveryManifest::decode(&body).unwrap().cells.len(), 2_000);
+    let mut raw = RawManifest::from(&manifest);
+    let duplicate = serde_json::to_vec(&raw.cells[0]).unwrap();
+    raw.cells.resize_with(MAX_MANIFEST_CELLS + 1, || {
+        serde_json::from_slice(&duplicate).unwrap()
+    });
+    assert!(matches!(
+        RecoveryManifest::try_from(raw),
+        Err(Error::Node("invalid recovery manifest shape"))
+    ));
+}
+
 struct MemoryArtifactStore {
     limits: cellule_ltx::Limits,
     reject_retain: bool,

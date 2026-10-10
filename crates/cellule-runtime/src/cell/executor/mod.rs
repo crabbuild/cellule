@@ -10,6 +10,7 @@ use crate::identity::{IncarnationId, RequestId};
 use crate::primitives::maintenance::TransferWorkInventory;
 use crate::{Error, Result};
 
+mod bundle;
 mod group;
 pub(crate) use group::{MAX_NATIVE_GROUP, NativeCommand, NativeGroupExecution};
 
@@ -215,6 +216,10 @@ pub struct MigrationOutcome {
 }
 
 impl PendingCommit {
+    pub(crate) fn release_selected_metadata(&mut self) {
+        self.cuts.segments = Vec::new();
+    }
+
     /// Returns the durable outcome awaiting publication.
     #[must_use]
     pub fn outcome(&self) -> &StoredOutcome {
@@ -282,8 +287,9 @@ pub enum CommandExecution {
 ///
 /// The actor may continue after the preceding commit has a durability proof.
 /// Dropping a caller does not remove queued cuts or their result. Only
-/// `confirm_published` releases retained files after an authoritative root
-/// matches the oldest local commit.
+/// an exact original bundle receipt or `confirm_published` can release retained
+/// files. Outcomes remain pending until the authoritative root matches the
+/// covered local commits.
 pub struct CellExecutor {
     db: Db,
     cell: CellId,
@@ -293,6 +299,11 @@ pub struct CellExecutor {
     pending: VecDeque<PendingCommit>,
     pending_bytes: u64,
     published_sequence: u64,
+    bundle_materialization: Option<std::sync::Arc<crate::node::log_shipper::SelectedBundle>>,
+    bundle_checkpoint: Option<(
+        crate::node::bundle::MaterializedBundlePrefix,
+        crate::fleet::resource::ResourceReservation,
+    )>,
     pending_migration: Option<PendingMigration>,
     fenced: bool,
 }
@@ -346,6 +357,8 @@ impl CellExecutor {
             pending: VecDeque::new(),
             pending_bytes: 0,
             published_sequence: 0,
+            bundle_materialization: None,
+            bundle_checkpoint: None,
             pending_migration: None,
             fenced: false,
         }
@@ -358,6 +371,12 @@ impl CellExecutor {
         schema: u32,
         initialize: impl FnOnce(&cellule_ltx::rusqlite::Transaction<'_>) -> Result<()>,
     ) -> Result<(Self, CaptureBatch, Option<i64>)> {
+        // Bootstrap and every later response wait for an external proof. Local
+        // WAL sync would duplicate that boundary; failed sessions are discarded.
+        if let Err(error) = db.use_external_durability() {
+            let _ = db.close();
+            return Err(error.into());
+        }
         let schema_cache = SchemaCache::default();
         let initialized = db.transaction_with(|transaction| {
             crate::cell::schema::install_runtime_schema_in(transaction, cell, incarnation, schema)?;
@@ -466,6 +485,12 @@ impl CellExecutor {
             );
             let _ = db.close();
             return Err(error);
+        }
+        // Validate the exact authoritative image before enabling the replicated
+        // writer. This includes sparse, cold-restored and verified warm resumes.
+        if let Err(error) = db.use_external_durability() {
+            let _ = db.close();
+            return Err(error.into());
         }
         let mut executor = Self::new(db, cell, incarnation, schema);
         executor.published_sequence = root.commit_sequence;
@@ -870,7 +895,12 @@ impl CellExecutor {
 
     /// Marks one actor-ordered logical commit safe to observe before object publication.
     pub(crate) fn confirm_durable(&mut self, commit_sequence: u64) -> Result<()> {
-        if commit_sequence <= self.published_sequence {
+        if commit_sequence <= self.published_sequence
+            || self
+                .bundle_materialization
+                .as_ref()
+                .is_some_and(|selected| commit_sequence <= selected.proof.commit_sequence())
+        {
             return Ok(());
         }
         let index = self
@@ -1170,6 +1200,16 @@ impl CellExecutor {
             outcomes.push(pending.outcome);
         }
         self.published_sequence = root.commit_sequence;
+        if self
+            .bundle_materialization
+            .as_ref()
+            .is_some_and(|selected| {
+                selected.proof.commit_sequence() == root.commit_sequence
+                    && selected.proof.position() == root.position
+            })
+        {
+            self.bundle_materialization = None;
+        }
         Ok(outcomes)
     }
 
@@ -1279,7 +1319,9 @@ impl CellExecutor {
     }
 
     fn has_pending(&self) -> bool {
-        !self.pending.is_empty() || self.pending_migration.is_some()
+        !self.pending.is_empty()
+            || self.pending_migration.is_some()
+            || self.bundle_materialization.is_some()
     }
 
     fn accepts_publication(&self) -> bool {

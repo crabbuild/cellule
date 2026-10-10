@@ -99,8 +99,10 @@ fn crash_writer() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
+    // With one test thread, libtest leaves its test name on this stdout line.
+    // Start the child protocol on a fresh line so the parent can recognize it.
     println!(
-        "LTX-CUT {} {} {} {} {} {} {} {}",
+        "\nLTX-CUT {} {} {} {} {} {} {} {}",
         info.min_txid,
         info.max_txid,
         info.page_size,

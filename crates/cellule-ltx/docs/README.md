@@ -473,7 +473,8 @@ write.
 - **First capture.** The first capture creates a WAL frame only when needed, then
   binds the inherited checksum state to that WAL's complete committed prefix.
 - **Later captures.** Later captures retain the usual salt and committed-boundary
-  checks; SQLite `synchronous=FULL` and resume verification are unchanged.
+  checks. Standalone writers retain SQLite `synchronous=FULL`; runtime activations
+  explicitly select `Db::use_external_durability`. Resume verification is unchanged.
 
 <a id="durability-boundaries"></a>
 ## Local durability boundaries
@@ -481,6 +482,7 @@ write.
 | Operation | Local barrier | What it proves | May release a Cell response? |
 | --- | --- | --- | --- |
 | SQLite commit | SQLite WAL sync under `synchronous=FULL` | The local commit reached SQLite's WAL boundary | No |
+| SQLite commit after `use_external_durability()` | SQLite WAL `NORMAL`; most commits omit the WAL sync | The commit is locally readable, but can be lost after OS crash or power loss | No |
 | `capture()` | LTX file sync, rename, parent sync, then first-cut directory-chain sync | The returned standalone LTX cuts have durable bytes and names | No |
 | `capture_deferred()` | No LTX file or name barrier; a sparse writer updates its mutable checksum sidecar without syncing it | The cut is readable for publication, but its LTX durability is pending | No |
 | `durability_barrier()` | Pending LTX files, their parent directories, and the first-cut directory chain | Those deferred local cuts are durable | No |
@@ -491,6 +493,14 @@ The mutable checksum sidecar is local capture state, not a root selector. A
 missing or invalid sidecar discards warm reuse; the runtime restores its
 authority-pinned root. Process-kill tests do not prove physical power-loss
 durability for SQLite, the LTX file, or the filesystem's sync implementation.
+
+`use_external_durability()` is an explicit session contract for callers that
+release responses and reads only after an exact external proof. It configures
+the application writer and capture's maintenance writer before mutations;
+the read-mark connection never writes. It refuses pending captures and fences
+partial configuration failures. SQLite still synchronizes checkpoint backfill
+under `NORMAL`. The runtime selects this mode during bootstrap and after exact
+restored-image validation; direct `Db` and `CellReplica` opens default to `FULL`.
 
 <a id="preparing-a-cell-root"></a>
 ## Preparing a Cell root

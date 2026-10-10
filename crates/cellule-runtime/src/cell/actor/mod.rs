@@ -28,11 +28,14 @@ mod serving;
 pub use acquisition_observer::{AcquisitionObservation, AcquisitionObserver};
 pub use serving::CellServingObservation;
 mod admission;
+mod bundle;
 mod group;
 mod lifecycle;
 mod maintenance;
+mod materialization;
 pub use maintenance::MaintenanceCellRelease;
 mod receiver;
+mod replay;
 mod requests;
 pub(crate) mod routes;
 mod runtime;
@@ -149,8 +152,8 @@ pub struct NodeJobReservation {
 /// command publications, excluding migration and failed recovery obligations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellPublicationProgress {
-    /// Physical capture publications awaiting their terminal result. A capture
-    /// may contain several logically committed commands.
+    /// Physical captures and coalesced selected-root obligations awaiting their
+    /// terminal result. Either may contain several logical commands.
     pub pending_publications: usize,
     /// Retained capture bytes of those command publications.
     pub retained_capture_bytes: u64,
@@ -215,13 +218,14 @@ impl CellRuntimeStats {
         self.resident_capacity_bytes
     }
 
-    /// Returns file descriptors reserved by active Cells in the shared ledger.
+    /// Returns reserved Cell, reader and node publication descriptors.
     #[must_use]
     pub const fn file_descriptors(self) -> usize {
         self.file_descriptors
     }
 
-    /// Returns the active-Cell file-descriptor ceiling in the shared ledger.
+    /// Returns the combined ordinary-handle and dedicated publication ceilings.
+    /// Publication headroom cannot admit more Cell or reader handles.
     #[must_use]
     pub const fn file_descriptor_capacity(self) -> usize {
         self.file_descriptor_capacity

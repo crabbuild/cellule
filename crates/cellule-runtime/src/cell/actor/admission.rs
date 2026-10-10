@@ -56,6 +56,7 @@ pub(super) fn finish_migration(active: &mut ActiveCell, fenced: bool) -> Coordin
 
 pub(super) fn fence_active(active: &mut ActiveCell) {
     active.cancel_compaction_admission();
+    drop(active.selection_waiter.take());
     active.coordination.step(CoordinationInput::Fence);
     fence_admission(&active.admission);
     if let Some(transfer) = active.transfer.take() {
@@ -64,6 +65,17 @@ pub(super) fn fence_active(active: &mut ActiveCell) {
             .refuse(DrainBlocker::IncompleteObservation, Error::Fenced);
     }
     active.inventory_refreshing = false;
+    // An accepted materializer owns its obligation until joined completion.
+    // Otherwise retain the original owner/pin via unpublished_node_logs while
+    // the fenced worker is discarded; no successful release is fabricated.
+    if active.root_debt.take().is_some() {
+        active
+            .coordination
+            .step(CoordinationInput::FinishPublication {
+                fenced: true,
+                succeeded: false,
+            });
+    }
     while let Some(publication) = active.publications.pop_front() {
         active
             .coordination
@@ -133,6 +145,9 @@ pub(super) fn send_command_reply(
                 Some((DurabilitySource::Object, elapsed)) => {
                     (CommandResponseSource::Object, elapsed)
                 }
+                Some((DurabilitySource::Bundle, elapsed)) => {
+                    (CommandResponseSource::Bundle, elapsed)
+                }
                 None => (CommandResponseSource::Recorded, std::time::Duration::ZERO),
             };
             // Final admission may refuse a proven command. Observe at the one
@@ -166,6 +181,7 @@ pub(super) fn send_command_task_reply(
             return;
         }
         Ok(CommandTaskResult::Recorded(outcome)) => Ok(outcome),
+        Ok(CommandTaskResult::AwaitPublication) => Err(Error::Fenced),
         Ok(CommandTaskResult::Pending { .. }) => Err(command.operation.unknown(Error::Fenced)),
         Err(error) => Err(error),
     };

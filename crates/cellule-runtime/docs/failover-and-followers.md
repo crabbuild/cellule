@@ -282,14 +282,41 @@ set, activation bit, contiguous object watermark, and renewable recovery claim.
 
 **Shipper.** `NodeLogShipper`:
 
-- Reserves encoded bytes before assigning a sequence.
+- Reserves capture bytes and bounded queue bookkeeping before assigning a sequence.
 - Multiplexes accepted cuts in submission order.
-- Batches for at most one millisecond or 64 frames.
-- Sends each batch to every member concurrently.
-- Advances the gate only after all receipts cover the batch.
+- Batches for at most four milliseconds or 64 frames. The short window preserves
+  group commit when the ordered pipeline can dispatch before a preceding RPC
+  completes; full or byte-limited batches dispatch immediately.
+- Enqueues each batch synchronously into every member's ordered FIFO, with at
+  most eight original rounds in flight. Member I/O progresses independently.
+- Groups already queued adjacent requests into one canonical follower append,
+  preserving the 64-frame and native-byte limits and safe coverage watermark.
+- Applies credits in original round order, only after all receipts cover that
+  round. A grouped higher watermark cannot skip an unresolved earlier round.
 - Stops fleet issuance for that epoch on any encoding, transport, or receipt
   failure, while its tickets remain eligible for object proof and covered
   rotation.
+
+`NodeDurability::take_publication_feed` installs one ordered consumer before
+the original epoch issues any frames. Each `AssignedCapture` retains its exact
+complete assignment and verified frames under the shipper's existing byte
+admission. Publication has no separate submission-slot wait under the global
+ordering lock. Its FIFO and member I/O retain the original native credit;
+exhausted byte credit blocks before issuance. Capture control allocations and
+member frame-vector copies consume that same original window. A capture larger than
+64 frames remains one complete witness even when follower transport splits it.
+Shutdown closes admission, wakes blocked producers and joins every accepted
+member append. Cancelling a shutdown waiter does not permit a later join to
+return before the original worker and member tasks finish. The feed can drain
+accepted captures; the host must join selection or verified fallback for all
+of them before retiring the epoch.
+
+This feed grants no publication authority or response proof. The Fleet SQL
+example installs the managed producer before activation. Actor bundle responses
+require its original dependency-verified selection receipt and exact capture
+match; absent or late coverage uses the canonical root path. The Bucket-only
+performance fixture bypasses this producer. Native pipeline tests alone do not
+establish application throughput, sustained publication capacity or qualification.
 
 **Ensemble directory.** It filters live peers by protocol, pressure, and the
 exact shared-disk capacity advertised by their follower stores:
@@ -385,10 +412,13 @@ race through stale local state.
 
 Completed roots from independent Cells queue their exact node-log tickets while
 an object-coverage CAS is in flight. The next publisher confirms the queued
-group with one serialized authority update, without a batching timer. Staging
-does not release a local proof or bridge an unpublished sequence gap. Failed or
-cancelled updates retain the original tickets for retry, including shutdown;
-local confirmation follows a successful CAS and a fresh node-lease check.
+group with one serialized authority update when its contiguous watermark
+advances, without a batching timer. A sparse group whose watermark is unchanged
+needs no node authority I/O: its already-selected exact Cell roots grant their
+own object proofs after a fresh original node-lease check. They cannot bridge an
+unpublished gap or permit log retirement. Staging alone grants no proof. Failed
+or cancelled advancing updates retain the original tickets for retry, including
+shutdown; local frontier confirmation follows a successful CAS and lease check.
 One coalesced Cell root stages its entire covered ticket set before that flush.
 Tickets are grouped by the original durability binding; equal epoch numbers
 alone cannot combine different bindings. Per-command proof telemetry remains
@@ -1593,6 +1623,41 @@ If `log.active` is true and no complete witness is available:
 
 ### Build recovery manifests
 
+For the experimental bundle lane, recovery also inventories every authenticated
+binding shard from the head retained by the fencing CAS. Follower scopes alone
+omit Cells whose whole unmaterialized suffix is already selected in origin.
+The coordinator verifies those selected prefixes, then feeds them and the
+complete sealed follower witness through one file-backed builder. Overlapping
+native sequences must have identical digests; missing Cells, command/physical
+gaps and conflicting bytes reject before attachment. Scratch growth is admitted
+before writing, and cache jobs retain that admission after caller cancellation.
+
+A bound Cell can pin only recovery from its original session and log epoch,
+after canonical node fencing. Its binding remains pinned. The canonical node
+seal refuses until every binding has a terminal materialized checkpoint;
+uploading or attaching a manifest grants no transfer authority. The public
+`recover_and_seal` path materializes every original bound root through ordinary
+lineage and Cell CAS, including quiet bindings. It stages bounded catalog cohorts
+and selects their complete terminal inventory with one recovery-claim node CAS
+before log seal. Claims are rechecked after I/O; exact lost replies reconcile.
+Partial-root retries reuse the original digest-verified manifest and match every
+remaining tail's scope, predecessor, complete physical/logical range and bundle
+digest. A materialized root ahead of the old catalog is only a verified base;
+the full witness and terminal endpoint must still agree.
+
+Closed original roots also supply verified recovery bases after transfer, so
+interruption between terminal catalog CAS and log seal does not reload a
+successor as the failed writer. Quiet provisional reservations are classified
+against fresh Cell authority and their exact verified original base. Pinned
+reservations require the original Cell in recovery; unpinned reservations close
+without changing that Cell. An already-authorized late pin CAS cannot reopen
+the closed node catalog. A pre-activation native frame rejects before attachment
+or terminal selection and retains the unresolved obligation. Discovery counts
+those authority reads even when no affected Cell catalog pages are needed.
+Admitted host scheduling remains unfinished; ordinary bundle ACKs remain disabled. The
+manifest reader admits up to 4,096 scopes under the existing 2 MiB byte ceiling;
+the 2,000-scope codec test is format evidence, not node performance qualification.
+
 The recoverer filters entries at or below the session's object-covered
 watermark, then groups the remaining verified frames by application, Cell,
 incarnation, and Cell epoch:
@@ -1890,8 +1955,8 @@ charged to the local disk ledger and physical backlog high water.
 
 At 1,000 aggregate transactions/s, the design must group fsync work:
 
-- The leader batches frames across Cells for up to the smaller of one
-  millisecond, 64 frames, or 64 MiB.
+- The leader batches frames across Cells for up to the smaller of four
+  milliseconds, 64 frames, or the native-byte limit.
 - Each follower appends that batch and performs one `sync_data`.
 - The exact interval is a measured runtime constant, not a per-deployment tuning
   surface until qualification proves one is needed.
@@ -2274,3 +2339,11 @@ Crab must prove its own version because its control model differs:
 | [`src/follower`](../src/follower) | Follower store, lane records, and quarantine |
 | [`src/recovery`](../src/recovery) | Recovery claims, manifests, and overlays |
 | [`src/publication`](../src/publication) | Ordered root publication and object coverage |
+
+## Bounded append authorization
+
+The runtime also supports receiver-signed [append grants](append-grants.md).
+Fresh issuance binds the original ensemble, both boots and TLS identities;
+ordinary appends retain signed-message, local fence, expiry, native integrity
+and fsync checks. Seal, retirement and collection serialize with issuance.
+A grant is neither a reused enrollment observation nor object durability proof.

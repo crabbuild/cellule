@@ -65,7 +65,14 @@ sequence lane. That lane assigns consecutive envelope sequences and enqueues
 them atomically; failed validation consumes no ticket. Signing follows sequence
 assignment, and followers still verify the complete signed frames before fsync.
 
-Each member retains its ordinary request and byte admission, and the group
+Each member retains its ordinary request and byte admission through SQL.
+Once the original worker returns, unused result allowance can transfer to the
+exact publication cut, while the input and actual reply remain charged until
+the command completes. Remaining unused node memory is released. A larger cut
+still needs full fresh admission under the unchanged node limit; this handoff
+does not grant durability or omit publication debt. Cancelled or timed-out
+waiters retain the full allowance until their dispatched worker exits.
+The group
 uses the existing database, capture, and retained-publication ceilings. A
 command error rolls back that member's savepoint. A whole transaction abort,
 capture failure, or lost publication proof never releases a new success;
@@ -75,7 +82,15 @@ Caller cancellation does not remove accepted members or their drain obligations.
 While follower-proven work awaits object publication, new mutations are refused
 before SQL when retained RAM or local disk reaches three quarters of its node
 budget. The remaining headroom belongs to accepted work and publication.
-Queries remain eligible, and a refused mutation has no new ledger outcome.
+Queries remain eligible. Under node publication pressure or a full Cell
+publication queue, a command can still replay its original durable request
+outcome through the same bounded FIFO and read-only resolution path. Node
+pressure keeps an absent or unproven outcome refused without invoking its handler.
+At a full Cell queue, an absent request keeps its already accepted FIFO position
+and handler until publication frees capacity; it is probed only once while blocked.
+Digest conflicts, result limits and identity expiry remain enforced. These
+lookups retain mailbox, worker and node byte admission. A refused mutation has
+no new ledger outcome. Read-only outcome probes cannot join a mutating native group.
 Local LTX bodies remain charged to the disk budget; publication's RAM reservation
 covers shared encoder indexes, descriptor/path copies, and retained outcomes.
 The physical pending-byte high water and node-log coverage counters still count
@@ -319,6 +334,18 @@ read-only setup, and handler execution. Compare it with the registered
 primitive's duration to distinguish SQL work from dispatch and waiting.
 Pre-dispatch refusals are excluded; SQL deadline failures are included.
 
+`CellTelemetry::node_log_submission` partitions one capture's lifetime after SQL
+and before its follower-log assignment: validation, native-byte admission,
+shipping slot, local load/validation, ordered lane, publication slot and final
+assignment. The same observation carries the original logical range and reports
+completion, failure or cancellation. A slow publication feed can block issuance
+while the ordered mutex is held; this wait is outside worker and proof timers.
+The callback grants no assignment or durability. Sinks must remain nonblocking
+and use finite phase labels, never Cell identities or sequences as labels.
+The SQL example exports matching successful-assignment histograms and separate
+failure/cancellation counts. Compare phases from that same cohort; response and
+background-root histograms describe different lifetimes.
+
 **Automatic rollback**
 
 - SQLite may automatically roll back the whole command on capacity or interruption errors. The managed LTX writer recognizes completed rollback using autocommit and its WAL commit observer, preserves the original error, and keeps the Cell servable.
@@ -377,6 +404,13 @@ A Cell can install `primitives::capacity::SCHEMA` and use `CommandContext::reser
 
 <a id="publication"></a>
 ## Publish before replying
+
+Runtime bootstrap and verified restored activations select SQLite WAL
+`synchronous=NORMAL` through `Db::use_external_durability`. Local commit success
+does not release a response or query: the exact object-root or recoverable
+follower proof remains the durability boundary. Unverified local WAL and
+capture residue cannot authorize recovery or warm reuse. Standalone LTX opens
+and direct `CellExecutor::new` callers retain their supplied database mode.
 
 `PendingCommit` owns the request identity, predecessor control, encoded reply, commit sequence, and captured cuts. The actor doesn't accept the next mutation until this commit reaches a terminal publication result.
 

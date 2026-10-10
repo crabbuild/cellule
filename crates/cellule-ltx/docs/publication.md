@@ -22,6 +22,7 @@ sequenceDiagram
 | `admit_root_preparation` | Waits for the existing dirty reservation before capture selection; the scoped clone starts no work and grants no authority. |
 | `CellReplica::prepare` | Verifies cuts and writes immutable root dependencies. |
 | `prepare_bundle` | Selects this Cell's exact rows from a shared bundle. |
+| `prepare_recovered_overlay` | Verifies the exact predecessor and final position; small independent tails use the canonical coalescer and native pack. |
 | `prepare_compaction` | Rewrites representation without changing logical state. |
 | `prepare_after_compaction` | Appends to a private compaction while retaining its original authority predecessor. |
 | `try_admit_scheduled_compaction` | Returns a scoped clone with existing dirty/recovery admission, or defers without waiting behind a queued cohort. |
@@ -75,6 +76,17 @@ index and root formats. Larger working sets, oversized output and representation
 outside the existing capture bound retain the file-backed upload path. All
 dependencies still finish before a proposal returns; original follower receipts
 and the authority CAS continue to govern acknowledgement.
+
+Independent recovery uses the same path when all selected rows, their indexes
+and pack headers together fit the existing 256 KiB single-PUT budget. Every
+original row is verified before coalescing. If the aggregate exceeds that
+budget, earlier frozen bodies are released. The fully validated original chain
+then streams through the same coalescer, with one pinned source read per admitted
+native job and the existing 256 KiB changed-page state. Long histories that
+repeatedly change a small image can still produce one canonical pack. A large
+individual row, changed image or output retains the ordinary bundle path.
+`prepare_bundle` preserves shared bundle references.
+No root format, authority rule or host resource ceiling changes.
 
 A representation-only compaction can remain private while its successor append
 uploads. `prepare_after_compaction` verifies that the compaction preserves the
@@ -134,3 +146,26 @@ Directory digests obey that bound while descriptor work keeps the existing fixed
 root/segment ceilings. The caller owns memory admission, bounded Store stream
 chunks and the enclosing deadline. This graph proof grants no selected authority,
 retention pin or current serving.
+
+`small_root_origin_verification` begins the same origin walk with a fresh exact
+root read. Packed leaf graphs with at most 32 inline descriptors return a
+one-use `RootOriginVerification`. Its 512-KiB working charge includes metadata,
+one bounded body and verification scratch. The host owns admission and scheduling;
+the root/decode phase also requires admission before starting. `verify` consumes
+the operation, freshly checks every dependency through the canonical verifier
+and returns the complete inventory. No body or availability cache survives it.
+Other graph shapes return `None` and require the original complete traversal.
+
+```rust
+use cellule_ltx::{CellReplica, RootObjectRef, RootRef};
+
+async fn origin_inventory(
+    replica: &CellReplica,
+    root: &RootRef,
+) -> cellule_ltx::Result<Vec<RootObjectRef>> {
+    match replica.small_root_origin_verification(root, 65_536).await? {
+        Some(operation) => operation.verify().await,
+        None => replica.reachable_objects_bounded(root, 65_536).await,
+    }
+}
+```

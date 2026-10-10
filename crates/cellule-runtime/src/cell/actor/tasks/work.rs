@@ -47,6 +47,12 @@ pub(super) fn handle_executed(
         return;
     }
     match result {
+        Ok(CommandTaskResult::AwaitPublication) => {
+            finish_work(active, false);
+            command.publication_probe = false;
+            command.publication_probed = true;
+            active.queue.push_front(QueuedWork::Command(command));
+        }
         Ok(CommandTaskResult::GroupRecorded) => {
             finish_work(active, false);
             release_command_request_slots(&mut command);
@@ -102,7 +108,7 @@ pub(super) fn handle_executed(
                 active.unpublished_node_logs += 1;
                 unpublished_node_log_bytes.fetch_add(retained_bytes, Ordering::AcqRel);
             }
-            start_publication(cell, active, tasks);
+            start_publication(cell, active, pool, tasks);
             let pool = pool.clone();
             let generation = active.generation;
             let effect_id = active.begin_task(CoordinationEffect::Proof);

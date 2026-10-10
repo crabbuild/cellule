@@ -11,6 +11,8 @@ use crate::node::log_transport::{
     AppendRequest, NodeLogTransport, RetireRequest, SealRequest, TailRequest,
 };
 
+mod closure;
+
 #[derive(Default)]
 struct AuthorityState {
     activations: Vec<u64>,
@@ -340,6 +342,43 @@ async fn object_proof_advances_authoritative_contiguous_coverage() {
 }
 
 #[tokio::test]
+async fn selected_bundle_retires_already_covered_staged_root_work_before_lease_loss_drain() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(ImmediateTransport);
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let authority = Arc::new(RecordingAuthority::default());
+    let lease = lease();
+    let durability = NodeDurability::new(
+        gate.clone(),
+        shipper,
+        authority.clone(),
+        transport,
+        lease.clone(),
+    );
+    let (_directory, cuts) = capture();
+    let (ticket, assignment) = durability.submit_assigned(submission(&cuts)).await.unwrap();
+    assert!(durability.object_coverage.stage(&gate, &[ticket]).unwrap());
+    gate.confirm_bundle_ranges(&[assignment]).unwrap();
+    lease.fence();
+    durability
+        .object_coverage
+        .flush(&gate, authority.as_ref(), &lease, &[])
+        .await
+        .unwrap();
+    assert!(authority.0.lock().unwrap().coverage.is_empty());
+    durability
+        .object_coverage
+        .flush(&gate, authority.as_ref(), &lease, &[])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn concurrent_object_proofs_persist_the_complete_contiguous_prefix() {
     for reverse in [false, true] {
         let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
@@ -484,7 +523,48 @@ async fn batching_out_of_order_roots_preserves_unpublished_gaps() {
     ));
     durability.prove_object(gap).await.unwrap();
     assert_eq!(gate.tiered_through(), 6);
-    assert_eq!(authority.0.lock().unwrap().coverage.last(), Some(&(2, 6)));
+    // A completed root beyond the unpublished gap grants its own object proof,
+    // but cannot change the node's reclamation watermark. Persist only advances.
+    assert_eq!(authority.0.lock().unwrap().coverage, vec![(2, 2), (2, 6)]);
+}
+
+#[tokio::test]
+async fn sparse_root_proofs_do_not_wait_for_node_authority_or_close_the_gap() {
+    let gate = DurabilityGate::new(session(1), node(1), 2, [node(2)]).unwrap();
+    let transport: Arc<dyn NodeLogTransport> = Arc::new(ImmediateTransport);
+    let shipper = NodeLogShipper::new(
+        gate.clone(),
+        transport.clone(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let authority = Arc::new(RecordingAuthority(Mutex::new(AuthorityState {
+        reject_coverage: true,
+        ..AuthorityState::default()
+    })));
+    let durability =
+        NodeDurability::new(gate.clone(), shipper, authority.clone(), transport, lease());
+    let tickets = (0..64).map(|_| gate.issue(1).unwrap()).collect::<Vec<_>>();
+    for ticket in tickets.iter().skip(1).rev() {
+        let proof = durability.prove_object(*ticket).await.unwrap();
+        assert_eq!(proof.ticket(), *ticket);
+        assert_eq!(proof.source(), DurabilitySource::Object);
+    }
+    assert!(authority.0.lock().unwrap().coverage.is_empty());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(matches!(
+        gate.begin_rotation(),
+        Err(Error::PendingPublication)
+    ));
+    // Closing the hole still needs the original authority CAS. Its failure
+    // cannot authorize prefix reclamation, the gap's proof, or shutdown.
+    assert!(durability.prove_object(tickets[0]).await.is_err());
+    assert_eq!(gate.tiered_through(), 0);
+    assert!(!gate.objects_are_covered(&tickets[..1]).unwrap());
+    authority.0.lock().unwrap().reject_coverage = false;
+    durability.prove_object(tickets[0]).await.unwrap();
+    assert_eq!(authority.0.lock().unwrap().coverage, vec![(2, 64)]);
+    assert_eq!(gate.begin_rotation().unwrap().covered_through(), 64);
 }
 
 #[tokio::test]

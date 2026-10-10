@@ -175,6 +175,9 @@ impl SqlWorkerPool {
                 .with_file_descriptors(
                     max_active_cells.saturating_mul(ACTIVE_CELL_FILE_DESCRIPTORS),
                 )
+                .with_publication_file_descriptors(
+                    crate::fleet::resource::PUBLICATION_FILE_DESCRIPTORS,
+                )
                 .with_worker_jobs(worker_count)
                 .with_primitive_jobs(worker_count)
                 .with_hydration_jobs(HYDRATION_JOB_CAPACITY)
@@ -812,6 +815,46 @@ impl SqlWorkerPool {
         receive(response).await
     }
 
+    pub(crate) async fn release_bundle_captures(
+        &self,
+        cell: CellId,
+        captures: Vec<crate::publication::VerifiedBundleCapture>,
+    ) -> Result<Vec<StoredOutcome>> {
+        let (reply, response) = oneshot::channel();
+        self.send(
+            cell,
+            WorkerCommand::ReleaseBundleCaptures {
+                cell,
+                captures,
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
+    pub(crate) async fn bind_bundle_materialized(
+        &self,
+        cell: CellId,
+        root: cellule_ltx::RootRef,
+        original: Arc<crate::node::log_shipper::SelectedBundle>,
+        retained: ResourceReservation,
+    ) -> Result<()> {
+        let (reply, response) = oneshot::channel();
+        self.send(
+            cell,
+            WorkerCommand::BindBundleMaterialized {
+                cell,
+                root,
+                original,
+                retained,
+                reply,
+            },
+        )
+        .await?;
+        receive(response).await
+    }
+
     pub(crate) async fn confirm_migration_published(
         &self,
         cell: CellId,
@@ -1300,6 +1343,18 @@ enum WorkerCommand {
     ConfirmDurable {
         cell: CellId,
         commit_sequence: u64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    ReleaseBundleCaptures {
+        cell: CellId,
+        captures: Vec<crate::publication::VerifiedBundleCapture>,
+        reply: oneshot::Sender<Result<Vec<StoredOutcome>>>,
+    },
+    BindBundleMaterialized {
+        cell: CellId,
+        root: cellule_ltx::RootRef,
+        original: Arc<crate::node::log_shipper::SelectedBundle>,
+        retained: ResourceReservation,
         reply: oneshot::Sender<Result<()>>,
     },
     ConfirmBootstrapPublished {

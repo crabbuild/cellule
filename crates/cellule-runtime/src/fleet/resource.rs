@@ -11,9 +11,11 @@ pub(crate) const ACTIVE_CELL_NATIVE_BYTES: usize = 128 * 1024
     + (cellule_ltx::MANAGED_SQLITE_CONNECTIONS * cellule_ltx::MANAGED_CONNECTION_LOOKASIDE_BYTES)
         as usize;
 /// Persistent database, WAL, SHM and capture descriptors reserved per active Cell.
-// Retain the original writer/capture allowance and charge the owner reader's
-// main, WAL and SHM descriptors before the database is opened.
+// Retain writer/capture handles and the owner reader main, WAL and SHM.
 pub const ACTIVE_CELL_FILE_DESCRIPTORS: usize = 11;
+/// Reserved descriptors for one bounded node publication lane.
+pub const PUBLICATION_FILE_DESCRIPTORS: usize =
+    cellule_ltx::SHARED_PUBLICATION_ROWS * (cellule_ltx::SHARED_PUBLICATION_ROWS + 2);
 // Conservatively cover the entire 8 MiB shared page cache plus 4 MiB for
 // SQLite, fetch/decode buffers and view metadata. Do not assume another view
 // or writer pays for the cache; measured sharing may reduce this charge later.
@@ -27,6 +29,7 @@ pub struct ResourceCost {
     active_cells: usize,
     resident_bytes: usize,
     file_descriptors: usize,
+    publication_file_descriptors: usize,
     retained_bytes: usize,
     disk_bytes: u64,
     worker_jobs: usize,
@@ -58,6 +61,7 @@ impl ResourceCost {
             active_cells: 0,
             resident_bytes: 0,
             file_descriptors: 0,
+            publication_file_descriptors: 0,
             retained_bytes: 0,
             disk_bytes: 0,
             worker_jobs: 0,
@@ -83,10 +87,11 @@ impl ResourceCost {
         self.resident_bytes
     }
 
-    /// Returns the open file descriptors.
+    /// Returns ordinary handles plus the separately bounded publication pins.
     #[must_use]
     pub const fn file_descriptors(self) -> usize {
         self.file_descriptors
+            .saturating_add(self.publication_file_descriptors)
     }
 
     /// Returns the bytes retained beyond the active set.
@@ -163,10 +168,15 @@ impl ResourceCost {
         self
     }
 
-    /// Sets the open file descriptors.
+    /// Sets ordinary Cell/reader handles; node publication has its own bound.
     #[must_use]
     pub const fn with_file_descriptors(mut self, descriptors: usize) -> Self {
         self.file_descriptors = descriptors;
+        self
+    }
+
+    pub(crate) const fn with_publication_file_descriptors(mut self, descriptors: usize) -> Self {
+        self.publication_file_descriptors = descriptors;
         self
     }
 
@@ -245,6 +255,9 @@ impl ResourceCost {
             active_cells: self.active_cells.checked_add(other.active_cells)?,
             resident_bytes: self.resident_bytes.checked_add(other.resident_bytes)?,
             file_descriptors: self.file_descriptors.checked_add(other.file_descriptors)?,
+            publication_file_descriptors: self
+                .publication_file_descriptors
+                .checked_add(other.publication_file_descriptors)?,
             retained_bytes: self.retained_bytes.checked_add(other.retained_bytes)?,
             disk_bytes: self.disk_bytes.checked_add(other.disk_bytes)?,
             worker_jobs: self.worker_jobs.checked_add(other.worker_jobs)?,
@@ -263,6 +276,9 @@ impl ResourceCost {
             active_cells: self.active_cells.checked_sub(other.active_cells)?,
             resident_bytes: self.resident_bytes.checked_sub(other.resident_bytes)?,
             file_descriptors: self.file_descriptors.checked_sub(other.file_descriptors)?,
+            publication_file_descriptors: self
+                .publication_file_descriptors
+                .checked_sub(other.publication_file_descriptors)?,
             retained_bytes: self.retained_bytes.checked_sub(other.retained_bytes)?,
             disk_bytes: self.disk_bytes.checked_sub(other.disk_bytes)?,
             worker_jobs: self.worker_jobs.checked_sub(other.worker_jobs)?,
@@ -280,6 +296,7 @@ impl ResourceCost {
         self.active_cells <= limit.active_cells
             && self.resident_bytes <= limit.resident_bytes
             && self.file_descriptors <= limit.file_descriptors
+            && self.publication_file_descriptors <= limit.publication_file_descriptors
             && self.retained_bytes <= limit.retained_bytes
             && self.disk_bytes <= limit.disk_bytes
             && self.worker_jobs <= limit.worker_jobs
@@ -315,6 +332,10 @@ pub(crate) struct LedgerState {
 }
 
 impl ResourceLedger {
+    pub(crate) fn same_ledger(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+
     pub(crate) fn new(limit: ResourceCost) -> Self {
         Self {
             state: Arc::new(LedgerState {
@@ -471,6 +492,41 @@ pub(crate) struct ResourceReservation {
     cost: ResourceCost,
 }
 
+impl ResourceReservation {
+    pub(crate) const fn retained_bytes(&self) -> usize {
+        self.cost.retained_bytes
+    }
+
+    /// Transfers already admitted memory to an independently owned lifetime.
+    /// Total ledger usage is unchanged; this cannot admit after publication.
+    pub(crate) fn split_retained(&mut self, bytes: usize) -> Result<Self> {
+        let remaining = self
+            .cost
+            .retained_bytes
+            .checked_sub(bytes)
+            .ok_or(Error::Capacity("retained transfer exceeds admission"))?;
+        self.cost.retained_bytes = remaining;
+        Ok(Self {
+            ledger: self.ledger.clone(),
+            cost: ResourceCost::zero().with_retained_bytes(bytes),
+        })
+    }
+
+    /// Returns memory after its original work exits or owned indexes are dropped.
+    pub(crate) fn shrink_retained(&mut self, bytes: usize) -> Result<()> {
+        let released = self
+            .cost
+            .retained_bytes
+            .checked_sub(bytes)
+            .ok_or(Error::Capacity("capture cleanup cannot grow admission"))?;
+        self.cost.retained_bytes = bytes;
+        self.ledger
+            .release(ResourceCost::zero().with_retained_bytes(released));
+        self.ledger.state.released.notify_waiters();
+        Ok(())
+    }
+}
+
 impl Drop for ResourceReservation {
     fn drop(&mut self) {
         self.ledger.release(self.cost);
@@ -591,6 +647,41 @@ impl cellule_ltx::HostResourceAdmission for LedgerHostResourceAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_transfer_preserves_usage_until_each_owner_releases() {
+        let cost = ResourceCost::active_cell().with_retained_bytes(128);
+        let ledger = ResourceLedger::new(cost);
+        let mut source = ledger.try_reserve(cost).unwrap();
+        let mut checkpoint = source.split_retained(96).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used, cost);
+        assert!(source.split_retained(33).is_err());
+        checkpoint.shrink_retained(16).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 48);
+        drop(source);
+        assert_eq!(
+            ledger.snapshot().unwrap().used,
+            ResourceCost::zero().with_retained_bytes(16)
+        );
+        drop(checkpoint);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
+
+    #[test]
+    fn capture_cleanup_returns_only_released_memory_and_preserves_outcome_admission() {
+        let cost = ResourceCost::active_cell().with_retained_bytes(128);
+        let ledger = ResourceLedger::new(cost);
+        let mut held = ledger.try_reserve(cost).unwrap();
+        held.shrink_retained(32).unwrap();
+        assert_eq!(
+            ledger.snapshot().unwrap().used,
+            ResourceCost::active_cell().with_retained_bytes(32)
+        );
+        assert!(held.shrink_retained(64).is_err());
+        assert_eq!(ledger.snapshot().unwrap().used.retained_bytes(), 32);
+        drop(held);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
     use cellule_ltx::HostResourceAdmission;
 
     #[tokio::test]
@@ -686,6 +777,49 @@ mod tests {
         let cost = ResourceCost::active_cell();
         assert_eq!(cost.file_descriptors(), ACTIVE_CELL_FILE_DESCRIPTORS);
         assert_eq!(cost.with_file_descriptors(0).file_descriptors(), 0);
+    }
+
+    #[test]
+    fn publication_descriptor_headroom_cannot_admit_cell_or_reader_handles() {
+        let ledger = ResourceLedger::new(
+            ResourceCost::active_cell()
+                .with_publication_file_descriptors(3)
+                .with_retained_bytes(16),
+        );
+        let active = ledger.try_reserve(ResourceCost::active_cell()).unwrap();
+        assert!(
+            ledger
+                .try_reserve(ResourceCost::zero().with_file_descriptors(1))
+                .is_err()
+        );
+        let pins = ledger
+            .try_reserve(
+                ResourceCost::zero()
+                    .with_publication_file_descriptors(3)
+                    .with_retained_bytes(16),
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.snapshot().unwrap().used.file_descriptors(),
+            ACTIVE_CELL_FILE_DESCRIPTORS + 3
+        );
+        assert!(
+            ledger
+                .try_reserve(ResourceCost::zero().with_publication_file_descriptors(1))
+                .is_err()
+        );
+        assert!(
+            ledger
+                .try_reserve(ResourceCost::zero().with_retained_bytes(1))
+                .is_err()
+        );
+        drop(pins);
+        let pins = ledger
+            .try_reserve(ResourceCost::zero().with_publication_file_descriptors(3))
+            .unwrap();
+        drop(active);
+        drop(pins);
+        assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
     }
 
     #[test]

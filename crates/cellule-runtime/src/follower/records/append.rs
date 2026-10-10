@@ -19,6 +19,7 @@ pub(in crate::follower) fn append_sync(
     state: &mut Option<LaneMemory>,
     scan_counter: &ScanCounter,
     observation: &mut AppendObservation,
+    grant: Option<&crate::node::append_grant::NodeAppendGrant>,
 ) -> Result<FollowerReceipt> {
     validate_lane(lane)?;
     let directory = lane_directory(root, lane);
@@ -122,6 +123,13 @@ pub(in crate::follower) fn append_sync(
             return Err(Error::Node("follower frame changed lane scope"));
         }
         let sequence = scope.node_sequence;
+        if grant.is_some_and(|grant| {
+            sequence < grant.first_sequence() || sequence > grant.last_sequence()
+        }) {
+            return Err(Error::PeerAuthorization(
+                "follower frame exceeds append grant",
+            ));
+        }
         let digest = frame.digest();
         if let Some(existing) = state.records.get(&sequence) {
             if existing.digest != digest {

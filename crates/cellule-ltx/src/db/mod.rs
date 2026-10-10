@@ -72,6 +72,38 @@ impl Db {
         }
     }
 
+    /// Uses SQLite WAL `NORMAL` on both connections when external proofs own durability.
+    ///
+    /// Call before accepting mutations in a fresh or exactly restored session.
+    /// A successful local commit can be lost after an OS crash or power loss;
+    /// the caller must await an exact object or recoverable follower proof before
+    /// acknowledging or exposing it, and must never recover from unverified local
+    /// residue. Standalone opens retain `FULL` unless this is explicitly selected.
+    /// LTX capture and durability barriers retain their existing contracts.
+    /// A partial configuration failure fences the session.
+    pub fn use_external_durability(&mut self) -> Result<()> {
+        self.ensure_active()?;
+        if self.has_pending_capture() || self.retained_segments != 0 {
+            return Err(LtxError::InvalidState(
+                "external durability requires a session without pending captures",
+            ));
+        }
+        let configured = self
+            .writer
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(LtxError::from)
+            .and_then(|()| {
+                self.reader
+                    .pragma_update(None, "synchronous", "NORMAL")
+                    .map_err(LtxError::from)
+            })
+            .and_then(|()| self.capture.use_external_durability());
+        if configured.is_err() {
+            self.fenced = true;
+        }
+        configured
+    }
+
     #[cfg(feature = "replica")]
     pub(crate) fn open_cell_paged(
         database: crate::CellWritableDatabase,

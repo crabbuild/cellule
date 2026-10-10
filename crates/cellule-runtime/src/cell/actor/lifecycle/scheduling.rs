@@ -6,11 +6,28 @@ pub(in crate::cell::actor) fn schedule(
     active: &mut ActiveCell,
     lease_live: bool,
 ) -> CoordinationDecision {
-    let publication_blocked = active.queue.front().is_some_and(|work| {
+    let mut publication_blocked = active.queue.front().is_some_and(|work| {
         matches!(work, QueuedWork::Command(_))
-            && (active.coordination.publication_count() >= MAX_PENDING_PUBLICATIONS
+            && (super::super::materialization::blocks_commands(active)
+                || active.coordination.publication_count() >= MAX_PENDING_PUBLICATIONS
                 || active.publication_bytes >= PENDING_PUBLICATION_HIGH_WATER_BYTES)
     });
+    if publication_blocked
+        && let Some(QueuedWork::Command(command)) = active.queue.front_mut()
+        && matches!(command.operation, QueuedOperation::Mutation { .. })
+    {
+        // Probe once for an original durable result. A missing identity retains
+        // its accepted FIFO position and handler until debt capacity returns.
+        if command.refused_mutation.is_some() {
+            publication_blocked = false;
+        } else if !command.publication_probed {
+            command.publication_probe = true;
+            publication_blocked = false;
+        }
+    } else if let Some(QueuedWork::Command(command)) = active.queue.front_mut() {
+        command.publication_probe = false;
+        command.publication_probed = false;
+    }
     active.coordination.step(CoordinationInput::Schedule {
         queue_empty: active.queue.is_empty(),
         publisher_ready: active.publisher.is_some(),
@@ -37,7 +54,10 @@ pub(in crate::cell::actor) fn start_next(
         return;
     };
     active.cancel_compaction_admission();
-    if matches!(&work, QueuedWork::Command(_) | QueuedWork::Migration(_)) {
+    if matches!(&work, QueuedWork::Command(command)
+        if command.refused_mutation.is_none() && !command.publication_probe)
+        || matches!(&work, QueuedWork::Migration(_))
+    {
         // Durable command outcomes, effects, Queue rows, and Workflow runs
         // remain release obligations until a fresh inventory proves otherwise.
         active.persisted_work = crate::primitives::maintenance::PersistedWorkInventory::unknown();
@@ -72,12 +92,17 @@ pub(in crate::cell::actor) fn start_next(
     let interrupt = active.interrupt.clone();
     match work {
         QueuedWork::Command(mut command) => {
-            if matches!(command.operation, QueuedOperation::Mutation { .. }) {
+            if command.refused_mutation.is_none()
+                && !command.publication_probe
+                && matches!(command.operation, QueuedOperation::Mutation { .. })
+            {
                 let mut members = Vec::new();
                 while members.len() + 1 < MAX_NATIVE_GROUP
                     && active.queue.front().is_some_and(|work| {
                         matches!(work, QueuedWork::Command(next)
-                            if matches!(next.operation, QueuedOperation::Mutation { .. }))
+                            if next.refused_mutation.is_none()
+                                && !next.publication_probe
+                                && matches!(next.operation, QueuedOperation::Mutation { .. }))
                     })
                 {
                     let Some(QueuedWork::Command(next)) = active.queue.pop_front() else {

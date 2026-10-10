@@ -6,6 +6,12 @@
 
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BundleUse {
+    Shared,
+    IndependentRecovery,
+}
+
 impl CellReplica {
     /// Appends captured cuts to a private representation-only compaction.
     ///
@@ -126,7 +132,7 @@ impl CellReplica {
         .await
     }
 
-    fn admit_capture_batch(&self, cuts: &CaptureBatch) -> Result<()> {
+    pub(super) fn admit_capture_batch(&self, cuts: &CaptureBatch) -> Result<()> {
         if cuts.segments.is_empty() {
             return Err(LtxError::InvalidState("empty Cell append"));
         }
@@ -147,7 +153,7 @@ impl CellReplica {
         Ok(())
     }
 
-    async fn prepare_captured_inputs(
+    pub(super) async fn prepare_captured_inputs(
         &self,
         segments: &[crate::LocalSegment],
     ) -> Result<Vec<AppendInput>> {
@@ -214,7 +220,7 @@ impl CellReplica {
         let mut replica = self.clone();
         replica.host = self.host.for_dirty().await?;
         replica
-            .prepare_bundle_admitted(base, bundle, commit_sequence, schema)
+            .prepare_bundle_admitted(base, bundle, commit_sequence, schema, BundleUse::Shared)
             .await
     }
 
@@ -223,6 +229,8 @@ impl CellReplica {
     /// Recovery policy and ownership remain caller-owned. This method accepts
     /// only this replica's Cell/incarnation rows, requires the declared final
     /// position to match the bundle, and reuses normal root preparation.
+    /// Independent small tails use canonical native coalescing and packing;
+    /// larger tails keep the bundle representation under the existing bounds.
     pub async fn prepare_recovered_overlay(
         &self,
         overlay: &RecoveryOverlay,
@@ -245,12 +253,15 @@ impl CellReplica {
         if final_position != overlay.final_position {
             return Err(LtxError::ChecksumMismatch);
         }
-        let prepared = self
-            .prepare_bundle(
+        let mut replica = self.clone();
+        replica.host = self.host.for_dirty().await?;
+        let prepared = replica
+            .prepare_bundle_admitted(
                 Some(&overlay.predecessor),
                 &overlay.bundle,
                 overlay.final_commit_sequence,
                 schema,
+                BundleUse::IndependentRecovery,
             )
             .await?;
         if prepared.root().position != overlay.final_position {
@@ -265,6 +276,7 @@ impl CellReplica {
         bundle: &crate::bundle::Bundle,
         commit_sequence: u64,
         schema: u32,
+        usage: BundleUse,
     ) -> Result<PreparedRoot> {
         self.validate_metadata(commit_sequence, schema)?;
         if bundle.len() > self.limits.max_plan_bytes {
@@ -278,8 +290,10 @@ impl CellReplica {
 
         let (repository, epoch) = crate::bundle::cell_identity(&self.cell, &self.incarnation);
         let bundle_digest = bundle.digest();
-        let mut inputs = Vec::new();
+        let mut inputs: Vec<AppendInput> = Vec::new();
         let mut selected_bytes = 0_u64;
+        let mut independent = usage == BundleUse::IndependentRecovery;
+        let mut independent_bytes = 0_u64;
         let mut prospective = base_graph
             .as_ref()
             .map(|graph| graph.descriptors.clone())
@@ -313,6 +327,25 @@ impl CellReplica {
             }
             self.admit_segment_representation(&row.info, pages.len() * crate::paged::ENTRY_BYTES)?;
             let index_bytes = Bytes::from(crate::paged::encode_index_from_pages(&pages)?);
+            // Retain at most one canonical small-pack budget of verified native
+            // inputs. If a later row exceeds it, release every earlier frozen
+            // body and keep the shared bundle representation for the whole tail.
+            if independent {
+                match independent_bytes
+                    .checked_add(packed::HEADER_BYTES)
+                    .and_then(|size| size.checked_add(row.info.size_bytes))
+                    .and_then(|size| size.checked_add(index_bytes.len() as u64))
+                    .filter(|size| *size <= upload::SINGLE_PUT_BYTES)
+                {
+                    Some(size) => independent_bytes = size,
+                    None => {
+                        independent = false;
+                        for input in &mut inputs {
+                            input.body = AppendBody::Bundle;
+                        }
+                    }
+                }
+            }
             inputs.push(AppendInput {
                 info: row.info.clone(),
                 location: BodyLocation::Bundle {
@@ -320,7 +353,11 @@ impl CellReplica {
                     offset: row.offset,
                 },
                 index: index_bytes,
-                body: AppendBody::Bundle,
+                body: if independent {
+                    AppendBody::Frozen(bytes)
+                } else {
+                    AppendBody::Bundle
+                },
             });
         }
         let target = inputs
@@ -328,6 +365,33 @@ impl CellReplica {
             .map(|input| input.info.position())
             .ok_or(LtxError::TxNotAvailable)?;
         self.validate_chain(&prospective, target)?;
+        if usage == BundleUse::IndependentRecovery && !independent {
+            // A long history can repeatedly update the same small page image.
+            // Its summed input exceeds a pack while its merged output fits.
+            // Stream original rows through the existing admitted coalescer;
+            // retain the bundle unchanged when the changed-image bound fails.
+            if let Some(merged) = coalesce::recovered_bundle(self, bundle, &inputs).await? {
+                inputs = vec![AppendInput {
+                    info: merged.descriptor.info,
+                    location: BodyLocation::Native,
+                    index: merged.index,
+                    body: merged.body,
+                }];
+                independent = true;
+            }
+        }
+        if independent {
+            // Independent recovery already verified every original cut. The
+            // canonical coalescer and native pack factory can now reduce their
+            // representation without retaining shared-bundle dependencies.
+            for input in &mut inputs {
+                input.location = BodyLocation::Native;
+            }
+        }
+        let retained_bundle = inputs
+            .iter()
+            .any(|input| matches!(input.body, AppendBody::Bundle))
+            .then_some(bundle);
         self.prepare_append(
             base,
             base_graph.map(AppendBaseState::from),
@@ -335,7 +399,7 @@ impl CellReplica {
             target,
             commit_sequence,
             schema,
-            Some(bundle),
+            retained_bundle,
         )
         .await
     }
@@ -585,6 +649,13 @@ impl CellReplica {
                         digest,
                         offset,
                     ),
+                    BodyLocation::Shared { digest, offset } => SegmentDescriptor::shared(
+                        input.info,
+                        *blake3::hash(&input.index).as_bytes(),
+                        input.index.len() as u64,
+                        digest,
+                        offset,
+                    ),
                 };
                 Ok(PreparedSegment {
                     descriptor,
@@ -602,7 +673,11 @@ impl CellReplica {
         // Admit every original cut before reducing its representation. A merge
         // cannot rescue a gap, invalid endpoint, or over-budget original chain.
         self.validate_chain(&descriptors, target)?;
-        if bundle.is_none() {
+        if bundle.is_none()
+            && prepared
+                .iter()
+                .all(|segment| !matches!(segment.body, AppendBody::SharedUploaded))
+        {
             prepared = coalesce::run(self, prepared).await?;
             prepared = stream::iter(
                 prepared
@@ -872,14 +947,14 @@ impl CellReplica {
         })
     }
 
-    fn validate_metadata(&self, commit_sequence: u64, schema: u32) -> Result<()> {
+    pub(super) fn validate_metadata(&self, commit_sequence: u64, schema: u32) -> Result<()> {
         if schema == 0 || commit_sequence > i64::MAX as u64 {
             return Err(LtxError::InvalidState("invalid Cell root metadata"));
         }
         Ok(())
     }
 
-    fn validate_append_sequence(
+    pub(super) fn validate_append_sequence(
         &self,
         base: &Option<LoadedGraph>,
         commit_sequence: u64,

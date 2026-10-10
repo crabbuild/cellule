@@ -28,3 +28,9 @@ still current; stale work cannot overwrite newer pages.
 
 A bucket listing is never a recovery selector. Runtime authority supplies the
 root, and reconstruction either matches it byte-for-byte or fails.
+
+`RecoveryOverlay::into_bundle_with_owner` transfers an immutable bundle together
+with its original disk admission and artifact pin. Retain the returned
+`BundleResourceOwner` until dispatched upload or cache work joins, including
+after caller cancellation. This preserves unique file ownership for a cache
+handoff. The ordinary `into_bundle` remains limited to unleased overlays.

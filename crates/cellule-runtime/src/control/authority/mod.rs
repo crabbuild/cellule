@@ -178,6 +178,29 @@ impl CellAuthority {
         transition: Transition,
     ) -> Result<VersionedControl> {
         observed.value.validate_transition(&next, transition)?;
+        if transition == Transition::BindBundle {
+            crate::node::bundle::store::ensure_enrollment(&self.layout, &next).await?;
+        }
+        if matches!(
+            transition,
+            Transition::AttachRecovery | Transition::PublishRecovery
+        ) && observed.value.bundle_binding.is_some()
+        {
+            crate::node::bundle::recovery::ensure_attachment(
+                &self.layout,
+                &observed.value,
+                next.recovery
+                    .as_ref()
+                    .or(observed.value.recovery.as_ref())
+                    .ok_or(Error::Fenced)?,
+            )
+            .await?;
+        }
+        if observed.value.bundle_binding.is_some()
+            && observed.value.bundle_binding != next.bundle_binding
+        {
+            crate::node::bundle::store::ensure_departure(&self.layout, &observed.value).await?;
+        }
         if observed.value.owner.is_some() && observed.value.owner != next.owner {
             // Preserve the original full control before the sole authority CAS
             // can erase its owner. A lost history reply cannot permit departure.

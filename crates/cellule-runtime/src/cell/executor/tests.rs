@@ -60,6 +60,62 @@ fn code_only_registry() -> crate::Registry {
     registry.finish().unwrap()
 }
 
+#[tokio::test]
+async fn externally_durable_activation_uses_normal_before_sql_and_after_restore() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let cell = CellId::from_bytes([211; 32]);
+    let incarnation = IncarnationId::from_bytes([212; 16]);
+    let replica = cellule_ltx::CellReplica::new(
+        cellule_ltx::CellStorageLayout::new(
+            cellule_store::Store::new(std::sync::Arc::new(object_store::memory::InMemory::new())),
+            object_store::path::Path::from("external-durability"),
+            [213; 16],
+        ),
+        *cell.as_bytes(),
+        *incarnation.as_bytes(),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
+    let db = replica
+        .open_new(&directory.path().join("initial.sqlite"))
+        .unwrap();
+    let (mut executor, cuts, _) = CellExecutor::bootstrap(db, cell, incarnation, 1, |tx| {
+        let synchronous: i64 = tx.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+        assert_eq!(synchronous, 1);
+        tx.execute_batch("CREATE TABLE witness(value INTEGER); INSERT INTO witness VALUES(7)")?;
+        Ok(())
+    })
+    .unwrap();
+    let root = replica.prepare(None, &cuts, 0, 1).await.unwrap().root();
+    executor.confirm_bootstrap_published(&cuts).unwrap();
+    executor.close().unwrap();
+    let restored = directory.path().join("restored.sqlite");
+    let db = replica
+        .open_root(&root)
+        .await
+        .unwrap()
+        .paged()
+        .prepare_writable(&restored)
+        .await
+        .unwrap()
+        .open_writable(&restored)
+        .unwrap();
+    let mut executor = CellExecutor::from_restored(db, cell, incarnation, 1, root).unwrap();
+    executor
+        .db
+        .query_with(|connection| {
+            let synchronous: i64 =
+                connection.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+            let value: i64 =
+                connection.query_row("SELECT value FROM witness", [], |row| row.get(0))?;
+            assert_eq!(synchronous, 1);
+            assert_eq!(value, 7);
+            Ok::<_, cellule_ltx::rusqlite::Error>(())
+        })
+        .unwrap();
+    executor.close().unwrap();
+}
+
 #[test]
 fn full_pending_publication_budget_refuses_new_commands() {
     let directory = tempfile::TempDir::new().unwrap();

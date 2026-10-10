@@ -4,8 +4,8 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use prost::Message;
 use std::time::Duration;
 
-pub(super) const REQUEST_DOMAIN: &[u8] = b"cellule.axum-capacity.node-log.request.v1\0";
-pub(super) const RESPONSE_DOMAIN: &[u8] = b"cellule.axum-capacity.node-log.response.v1\0";
+pub(super) const REQUEST_DOMAIN: &[u8] = b"cellule.axum-capacity.node-log.request.v2\0";
+pub(super) const RESPONSE_DOMAIN: &[u8] = b"cellule.axum-capacity.node-log.response.v2\0";
 pub(super) const MAX_REQUEST_BYTES: usize = (65 << 20) + 65_536;
 pub(super) const MAX_RESPONSE_BYTES: usize = 2 << 20;
 pub(super) const PATH: &str = "/internal/capacity/node-log";
@@ -38,6 +38,8 @@ pub(super) struct Request {
     pub first_sequence: u64,
     #[prost(int64, tag = "9")]
     pub deadline_ms: i64,
+    #[prost(bytes = "vec", tag = "10")]
+    pub grant: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -56,6 +58,8 @@ pub(super) struct Reply {
     pub frames: Vec<Vec<u8>>,
     #[prost(uint64, optional, tag = "7")]
     pub next_sequence: Option<u64>,
+    #[prost(bytes = "vec", tag = "8")]
+    pub grant: Vec<u8>,
 }
 
 pub(super) fn sign(body: Vec<u8>, key: &SigningKey, domain: &[u8]) -> Vec<u8> {
@@ -83,9 +87,12 @@ pub(super) fn validate(request: &Request, now: i64) -> Result<()> {
         || request.member.len() != 16
         || request.leader.len() != 16
         || request.epoch == 0
-        || !(1..=4).contains(&request.operation)
+        || !(1..=5).contains(&request.operation)
         || (request.operation == 1 && (request.frames.is_empty() || request.frames.len() > 64))
         || (request.operation != 1 && !request.frames.is_empty())
+        || (request.operation == 1 && request.grant.len() != 32)
+        || (request.operation != 1 && !request.grant.is_empty())
+        || (request.operation == 5 && request.first_sequence == 0)
     {
         return Err(Error::PeerAuthorization("invalid capacity log request"));
     }
