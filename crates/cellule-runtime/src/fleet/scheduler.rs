@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use cellule_ltx::rusqlite::Transaction;
 
 use crate::cell::catalog::{CatalogProof, CatalogShardScan, CellCatalog};
+use crate::cell::schema_cache::SchemaCapabilities;
 use crate::control::authority::{CellAuthority, VersionedControl};
 use crate::identity::{CellTarget, SessionId};
 use crate::node::NodeAdvertisement;
@@ -544,6 +545,17 @@ pub fn scheduler_next_due_ms(
         return Err(Error::Command("negative scheduler logical time"));
     }
     let tables = installed_tables(transaction)?;
+    scheduler_next_due_with_schema(transaction, logical_time_ms, tables)
+}
+
+pub(crate) fn scheduler_next_due_with_schema(
+    transaction: &Transaction<'_>,
+    logical_time_ms: i64,
+    tables: SchemaCapabilities,
+) -> Result<Option<i64>> {
+    if logical_time_ms < 0 {
+        return Err(Error::Command("negative scheduler logical time"));
+    }
     let mut next = None;
 
     include_minimum(
@@ -586,8 +598,8 @@ pub fn scheduler_next_due_ms(
         )?;
     }
     if tables.contains(queue::QUEUE_TABLE) {
-        let exhausted_ready: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM queue_messages INDEXED BY queue_attempts WHERE state = 0 AND attempt >= ?1)",
+        let exhausted_ready: bool = transaction.prepare_cached(
+            "SELECT EXISTS(SELECT 1 FROM queue_messages INDEXED BY queue_attempts WHERE state = 0 AND attempt >= ?1)")?.query_row(
             [i64::from(MAX_ATTEMPTS)],
             |row| row.get(0),
         )?;
@@ -684,22 +696,12 @@ const PRIMITIVE_TABLES: [(&str, usize); 5] = [
 ];
 
 /// Probes the optional primitive tables the Cell schema currently installs.
-fn installed_tables(transaction: &Transaction<'_>) -> Result<HashSet<&'static str>> {
-    let mut statement =
-        transaction.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")?;
-    let mut rows = statement.query([])?;
-    let mut installed = HashSet::new();
-    while let Some(row) = rows.next()? {
-        let name: String = row.get(0)?;
-        if let Some((table, _)) = PRIMITIVE_TABLES.iter().find(|(table, _)| *table == name) {
-            installed.insert(*table);
-        }
-    }
-    Ok(installed)
+fn installed_tables(transaction: &Transaction<'_>) -> Result<SchemaCapabilities> {
+    SchemaCapabilities::discover(transaction)
 }
 
 /// Classes one Tick reserves for the installed primitives.
-fn reserved_classes(tables: &HashSet<&'static str>) -> usize {
+fn reserved_classes(tables: &SchemaCapabilities) -> usize {
     BASE_MAINTENANCE_CLASSES
         + PRIMITIVE_TABLES
             .iter()
@@ -721,7 +723,9 @@ fn include_minimum(
 }
 
 fn minimum(transaction: &Transaction<'_>, query: &'static str) -> Result<Option<i64>> {
-    Ok(transaction.query_row(query, [], |row| row.get::<_, Option<i64>>(0))?)
+    Ok(transaction
+        .prepare_cached(query)?
+        .query_row([], |row| row.get::<_, Option<i64>>(0))?)
 }
 
 fn merge_due(value: i64, logical_time_ms: i64, next: &mut Option<i64>) -> Result<()> {

@@ -103,6 +103,10 @@ pub(in crate::follower) struct LaneMemory {
 }
 
 impl LaneMemory {
+    pub(in crate::follower) fn needs_reconciliation(&self) -> bool {
+        self.needs_reconciliation
+    }
+
     pub(in crate::follower) fn is_empty(&self) -> bool {
         self.records.is_empty()
     }

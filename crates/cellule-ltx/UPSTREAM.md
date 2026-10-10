@@ -152,7 +152,7 @@ commit; it is not a runtime or compatibility contract.
 | LTX | Checksum-bearing v3 files; strict page and rolling-checksum validation. |
 | Cell objects | Immutable roots, directories, bundles, and BLAKE3 expectations. |
 | Errors | Typed retry, capacity, permanent, ambiguous, and fenced classes. |
-| Resources | Bounded file, disk, I/O, scratch, and blocking-job admission. |
+| Resources | Bounded file, disk, I/O, scratch, and blocking-job admission; semaphore and ledger charges share one lifetime and release the charge before advertising the slot. |
 
 The old standalone epoch-head, public page-map, and scheduler layouts are not
 read. The one-time Crab-to-Cellule adaptation does not set future framework
@@ -227,8 +227,12 @@ policy.
 - Cancellation does not pretend to roll back dispatched work. Admission and
   scratch stay owned until that work actually finishes.
 - Each managed SQLite connection uses a 64 KiB page-cache target and an 8 KiB
-  lookaside arena; one `Db` retains three connections. Runtime admission charges
-  all three arenas in its 88 KiB native reservation per active Cell.
+  lookaside arena. One `Db` retains four connections: writer, owner reader,
+  capture control, and capture read-lock. The owner reader uses a fresh
+  read-only transaction for each synchronous callback on the serialized SQL
+  worker. Sparse reads use the writable activation's authenticated VFS while
+  their SQL handle stays read-only. Runtime admission charges all four arenas
+  on top of its 128 KiB native allowance, for 160 KiB per active Cell.
 
 <a id="compatibility-boundary"></a>
 ## Compatibility boundary

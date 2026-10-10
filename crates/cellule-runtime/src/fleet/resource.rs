@@ -3,15 +3,17 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::{Error, Result};
 
-pub(crate) const ACTIVE_CELL_NATIVE_BYTES: usize = 64 * 1024
+// Include the owner reader's native schema/statement state and every managed
+// connection's lookaside arena. Page caches have their separate worker charge.
+// The pinned R2 population informs the 128 KiB base allowance; loaded and
+// platform-specific qualification remain gates.
+pub(crate) const ACTIVE_CELL_NATIVE_BYTES: usize = 128 * 1024
     + (cellule_ltx::MANAGED_SQLITE_CONNECTIONS * cellule_ltx::MANAGED_CONNECTION_LOOKASIDE_BYTES)
         as usize;
 /// Persistent database, WAL, SHM and capture descriptors reserved per active Cell.
-pub const ACTIVE_CELL_FILE_DESCRIPTORS: usize = 8;
-/// Dedicated node publication pins in addition to resident SQLite/capture handles.
-/// One bounded lane's worst-case input/temporary descriptors share a finite
-/// ceiling across runtimes on the same pool. Cell and reader admission cannot
-/// consume it; both classes still appear in aggregate descriptor observations.
+// Retain writer/capture handles and the owner reader main, WAL and SHM.
+pub const ACTIVE_CELL_FILE_DESCRIPTORS: usize = 11;
+/// Reserved descriptors for one bounded node publication lane.
 pub const PUBLICATION_FILE_DESCRIPTORS: usize =
     cellule_ltx::SHARED_PUBLICATION_ROWS * (cellule_ltx::SHARED_PUBLICATION_ROWS + 2);
 // Conservatively cover the entire 8 MiB shared page cache plus 4 MiB for
@@ -818,6 +820,27 @@ mod tests {
         drop(active);
         drop(pins);
         assert_eq!(ledger.snapshot().unwrap().used, ResourceCost::zero());
+    }
+
+    #[test]
+    fn active_cell_allowance_covers_pinned_owner_population_marginals() {
+        // R2 Linux population, binary 44f5e26612ac58216098ac4ead16bdc5b8611f22ec5e575736452b99c71a85f2.
+        // Nonempty size differences cancel fixed process setup. These samples
+        // guard a known footprint floor, not a ceiling for arbitrary workloads.
+        let samples = [
+            (64_u64, 46_518_272_u64, 640_u64),
+            (256, 113_496_064, 2_560),
+            (1_000, 368_730_112, 10_000),
+            (2_000, 703_295_488, 20_000),
+        ];
+        let cost = ResourceCost::active_cell();
+        let memory =
+            cost.resident_bytes() as u64 + crate::cell::worker::ACTIVE_CELL_PAGE_CACHE_BYTES;
+        for pair in samples.windows(2) {
+            let extra_cells = pair[1].0 - pair[0].0;
+            assert!(pair[1].1 - pair[0].1 <= extra_cells * memory);
+            assert!(pair[1].2 - pair[0].2 <= extra_cells * cost.file_descriptors() as u64);
+        }
     }
 
     #[test]

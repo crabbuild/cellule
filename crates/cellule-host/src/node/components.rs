@@ -409,8 +409,13 @@ impl CellNode {
         let Some((root, limits, disk)) = configuration else {
             return Ok(());
         };
-        let store = FollowerStore::open(root, limits, disk)?
-            .with_node_admission(self.runtime.node_admission());
+        let store = FollowerStore::open_with_telemetry(
+            root,
+            limits,
+            disk,
+            self.runtime.telemetry_handle(),
+        )?
+        .with_node_admission(self.runtime.node_admission());
         self.install_owned_component(FOLLOWER_STORE_COMPONENT, Arc::new(store))
     }
 

@@ -19,6 +19,8 @@ struct MemberAppend {
 }
 
 pub(super) struct MemberLanes {
+    leader: crate::SessionId,
+    epoch: u64,
     senders: Vec<(NodeId, mpsc::Sender<MemberAppend>)>,
     workers: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -45,7 +47,16 @@ impl MemberLanes {
                 receiver,
             )));
         }
-        Self { senders, workers }
+        Self {
+            leader,
+            epoch,
+            senders,
+            workers,
+        }
+    }
+
+    pub(super) fn scope(&self) -> (crate::SessionId, u64, usize) {
+        (self.leader, self.epoch, self.senders.len())
     }
 
     pub(super) fn enqueue(&self, batch: Vec<QueuedFrame>, covered: u64) -> Result<Round> {

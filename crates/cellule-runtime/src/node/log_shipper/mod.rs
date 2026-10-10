@@ -426,6 +426,7 @@ impl NodeLogShipper {
             .gate
             .commit_frames(ticket, &encoded)?
             .ok_or(Error::Node("assigned capture is empty"))?;
+        observation.assigned(ticket.first_sequence());
         let reservation = Arc::new(OutstandingBytes {
             _permit: reservation,
         });
@@ -442,6 +443,7 @@ impl NodeLogShipper {
         } else {
             None
         };
+        let enqueued_at = self.telemetry.is_enabled().then(std::time::Instant::now);
         let frames = encoded
             .into_iter()
             .enumerate()
@@ -449,6 +451,8 @@ impl NodeLogShipper {
                 sequence: ticket.first_sequence().saturating_add(offset as u64),
                 encoded: frame.encoded().clone(),
                 _reservation: Arc::clone(&reservation),
+                enqueued_at,
+                completed_capture: offset as u64 + 1 == frame_count,
             })
             .collect();
         slot.send(QueuedSubmission { frames });
@@ -512,6 +516,8 @@ struct QueuedFrame {
     sequence: u64,
     encoded: Bytes,
     _reservation: Arc<OutstandingBytes>,
+    enqueued_at: Option<std::time::Instant>,
+    completed_capture: bool,
 }
 
 #[expect(
@@ -612,6 +618,10 @@ async fn run_rounds(
                 }
             }
         }
+        let collection_started = telemetry.is_enabled().then(std::time::Instant::now);
+        let queue_wait = collection_started
+            .zip(pending.front().and_then(|frame| frame.enqueued_at))
+            .map_or(Duration::ZERO, |(now, queued)| now.duration_since(queued));
         let deadline = tokio::time::Instant::now() + interval;
         let mut batch = Vec::<QueuedFrame>::new();
         let mut batch_bytes = 0_u64;
@@ -667,9 +677,34 @@ async fn run_rounds(
         }
         // Enqueue synchronously, in original sequence order, before returning a
         // future. Poll order can never reorder a member's accepted append lane.
+        let (leader_session, log_epoch, members) = lanes.scope();
+        let mut timing = crate::fleet::telemetry::NodeLogBatchTiming {
+            leader_session,
+            log_epoch,
+            first_sequence: batch.first().map_or(0, |frame| frame.sequence),
+            last_sequence: batch.last().map_or(0, |frame| frame.sequence),
+            queue_wait,
+            collection: collection_started.map_or(Duration::ZERO, |started| started.elapsed()),
+            append: Duration::ZERO,
+            frames: batch.len() as u64,
+            completed_captures: batch.iter().filter(|frame| frame.completed_capture).count() as u64,
+            encoded_bytes: batch_bytes,
+            members: members as u64,
+            succeeded: false,
+        };
+        let append_started = telemetry.is_enabled().then(std::time::Instant::now);
         match lanes.enqueue(batch, gate.tiered_through()) {
-            Ok(round) => rounds.push_back(round),
+            Ok(round) => rounds.push_back(
+                round
+                    .map(move |result| {
+                        timing.append =
+                            append_started.map_or(Duration::ZERO, |started| started.elapsed());
+                        (result, timing)
+                    })
+                    .boxed(),
+            ),
             Err(_) => {
+                telemetry.node_log_batch(timing);
                 stop_shipper(gate, bytes, stopping);
                 receiver.close();
                 return;
@@ -681,7 +716,10 @@ async fn run_rounds(
 fn complete_round(
     gate: &DurabilityGate,
     telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
-    (bytes, result): replication::RoundResult,
+    ((bytes, result), mut timing): (
+        replication::RoundResult,
+        crate::fleet::telemetry::NodeLogBatchTiming,
+    ),
 ) -> bool {
     let result = result.and_then(|acknowledgements| {
         for (member, through) in acknowledgements {
@@ -690,6 +728,8 @@ fn complete_round(
         Ok(())
     });
     telemetry.node_log_append(result.is_ok(), bytes);
+    timing.succeeded = result.is_ok();
+    telemetry.node_log_batch(timing);
     result.is_ok()
 }
 

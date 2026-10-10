@@ -5,6 +5,7 @@ use cellule_store::{ETag, StorageError};
 
 use crate::cell::catalog::CatalogProof;
 use crate::control::{Control, Owner, Transition};
+use crate::fleet::telemetry::{CellTelemetryHandle, ControlTransitionTiming};
 use crate::identity::CellId;
 use crate::identity::IncarnationId;
 use crate::{Error, Result};
@@ -207,11 +208,51 @@ impl CellAuthority {
             self.retain_owner(&observed.value).await?;
         }
         let path = self.layout.control_path(observed.value.cell.as_bytes());
-        let token = self
+        let encoded = Bytes::from(next.encode()?);
+        let mut trace =
+            ControlTransitionTrace::new(&self.telemetry, observed.value.cell, transition);
+        let result = self
             .layout
             .store()
-            .update(&path, Bytes::from(next.encode()?), observed.token.clone())
-            .await?;
+            .update(&path, encoded, observed.token.clone())
+            .await;
+        trace.succeeded = Some(result.is_ok());
+        let token = result?;
         Ok(VersionedControl { value: next, token })
+    }
+}
+
+struct ControlTransitionTrace<'a> {
+    telemetry: &'a CellTelemetryHandle,
+    cell: CellId,
+    transition: Transition,
+    started: Option<std::time::Instant>,
+    succeeded: Option<bool>,
+}
+
+impl<'a> ControlTransitionTrace<'a> {
+    fn new(telemetry: &'a CellTelemetryHandle, cell: CellId, transition: Transition) -> Self {
+        Self {
+            telemetry,
+            cell,
+            transition,
+            started: telemetry.is_enabled().then(std::time::Instant::now),
+            succeeded: None,
+        }
+    }
+}
+
+impl Drop for ControlTransitionTrace<'_> {
+    fn drop(&mut self) {
+        if let Some(started) = self.started {
+            self.telemetry.control_transition(
+                self.cell,
+                ControlTransitionTiming {
+                    transition: self.transition,
+                    elapsed: started.elapsed(),
+                    succeeded: self.succeeded,
+                },
+            );
+        }
     }
 }

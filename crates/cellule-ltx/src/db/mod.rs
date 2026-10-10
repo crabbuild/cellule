@@ -9,11 +9,14 @@ pub(crate) mod disk;
 use crate::{CaptureBatch, Limits, LocalSegment, LtxError, Position, Result, SegmentInfo};
 use crate::{capture::CaptureEngine, host::LtxHost, ltx, types::Txid};
 
+mod interrupt;
+pub use interrupt::DbInterruptHandle;
+
 #[cfg(feature = "replica")]
 pub use crate::writable_vfs::{HydrationBatch, HydrationRead};
 
 /// Number of SQLite connections retained by one open managed database.
-pub const MANAGED_SQLITE_CONNECTIONS: u64 = 3;
+pub const MANAGED_SQLITE_CONNECTIONS: u64 = 4;
 
 /// Page-cache byte target budgeted for each retained SQLite connection.
 pub const MANAGED_CONNECTION_PAGE_CACHE_BYTES: u64 = 64 * 1024;
@@ -36,6 +39,7 @@ pub const MANAGED_CONNECTION_LOOKASIDE_BYTES: u64 =
 pub struct Db {
     capture: CaptureEngine,
     writer: Connection,
+    reader: Connection,
     observer: crate::commit::CommitObserver,
     required_cut: Option<crate::commit::WalCut>,
     limits: Limits,
@@ -61,8 +65,11 @@ impl Db {
     /// The handle becomes inert after the database closes. Calling it does not
     /// prove rollback or cancellation; the owner must still await the operation.
     #[must_use]
-    pub fn interrupt_handle(&self) -> rusqlite::InterruptHandle {
-        self.writer.get_interrupt_handle()
+    pub fn interrupt_handle(&self) -> DbInterruptHandle {
+        DbInterruptHandle {
+            writer: self.writer.get_interrupt_handle(),
+            reader: self.reader.get_interrupt_handle(),
+        }
     }
 
     /// Uses SQLite WAL `NORMAL` when external proofs own command durability.
@@ -403,10 +410,12 @@ impl Db {
             return Err(LtxError::Limit(crate::LimitKind::DatabasePageSize));
         }
         writer.pragma_update(None, "max_page_count", max_pages)?;
+        let reader = open_reader(path, vfs, max_pages)?;
         let observer = crate::commit::CommitObserver::install(&writer);
         Ok(Self {
             capture,
             writer,
+            reader,
             observer,
             required_cut: None,
             limits,
@@ -572,11 +581,13 @@ impl Db {
         Ok(value)
     }
 
-    /// Runs one synchronous callback with SQLite writes disabled.
+    /// Runs one synchronous callback in a fresh read-only transaction.
     ///
-    /// The callback must not change connection pragmas or retain borrowed SQLite
-    /// values. Establishing or removing the read-only boundary failure fences
-    /// this capture session; an application error leaves it reusable.
+    /// The callback must not change connection pragmas, issue transaction
+    /// control, or retain borrowed SQLite values. The owner serializes reads
+    /// and writes; this separate reader preserves the writer's statement cache.
+    /// Establishing or ending the snapshot failure fences this capture session;
+    /// an application error leaves it reusable after the snapshot ends.
     pub fn query_with<T, E>(
         &mut self,
         operation: impl FnOnce(&Connection) -> std::result::Result<T, E>,
@@ -585,12 +596,23 @@ impl Db {
         E: std::error::Error + 'static,
     {
         self.ensure_active().map_err(crate::QueryError::State)?;
-        if let Err(error) = self.writer.pragma_update(None, "query_only", true) {
-            self.fenced = true;
-            return Err(crate::QueryError::Sqlite(error));
-        }
-        let result = operation(&self.writer);
-        if let Err(error) = self.writer.pragma_update(None, "query_only", false) {
+        let transaction = match self.reader.transaction() {
+            Ok(transaction) => transaction,
+            Err(error) => {
+                self.fenced = true;
+                return Err(crate::QueryError::Sqlite(error));
+            }
+        };
+        let result = operation(&transaction);
+        if transaction.is_autocommit() {
+            drop(transaction);
+            if result.is_ok() {
+                self.fenced = true;
+                return Err(crate::QueryError::State(LtxError::InvalidState(
+                    "query ended its managed read transaction",
+                )));
+            }
+        } else if let Err(error) = transaction.rollback() {
             self.fenced = true;
             return Err(crate::QueryError::Sqlite(error));
         }
@@ -997,9 +1019,10 @@ impl Db {
         &self.path
     }
 
-    /// Releases the writer and checkpoint read lock without claiming publication.
+    /// Releases the owner reader, writer and checkpoint lock without claiming publication.
     pub fn close(mut self) -> Result<()> {
         self.flush_pending_durability()?;
+        drop(self.reader);
         drop(self.writer);
         self.capture.close()
     }
@@ -1127,6 +1150,22 @@ pub(crate) fn open_connection(path: &Path, vfs: Option<&str>) -> rusqlite::Resul
         None => Connection::open(path),
     }?;
     configure_managed_connection(&connection)?;
+    Ok(connection)
+}
+
+fn open_reader(path: &Path, vfs: Option<&str>, max_pages: u64) -> rusqlite::Result<Connection> {
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let connection = match vfs {
+        Some(vfs) => Connection::open_with_flags_and_vfs(path, flags, vfs),
+        None => Connection::open_with_flags(path, flags),
+    }?;
+    configure_managed_connection(&connection)?;
+    connection.busy_timeout(std::time::Duration::from_secs(1))?;
+    connection.pragma_update(None, "wal_autocheckpoint", 0)?;
+    connection.pragma_update(None, "foreign_keys", true)?;
+    connection.pragma_update(None, "max_page_count", max_pages)?;
+    connection.pragma_update(None, "query_only", true)?;
     Ok(connection)
 }
 

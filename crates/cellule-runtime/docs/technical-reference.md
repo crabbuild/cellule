@@ -32,12 +32,14 @@ flowchart LR
 
 ## Design and audit records
 
-These pages preserve the original design context and measured evidence. They
-are useful when changing an invariant, but dated plans and product-specific
-commands are not current deployment instructions.
+These pages include current proposed work and preserve the original design
+context and measured evidence. They are useful when changing an invariant, but
+dated plans and product-specific commands are not current deployment instructions.
 
 | Record | Scope |
 | --- | --- |
+| [Write performance design and delivery plan](write-performance-design.md) | Current proposed optimization packages, measurable acceptance criteria, matched celld comparison, and durability qualification. |
+| [celld architecture and Cellule performance decisions](celld-architecture-performance.md) | Pinned write/read architecture comparison, small-KV tmpfs reference, SQL/read priorities, and durability decisions. |
 | [Application framework and Commerce worked example](application-framework.md) | Original module, API, and end-to-end application design. |
 | [Canonical LTX scaling](canonical-ltx-scaling.md) | Scaling and publication design. |
 | [LTX performance audit](ltx-performance-audit.md) | Measurements, bottlenecks, and follow-up evidence. |

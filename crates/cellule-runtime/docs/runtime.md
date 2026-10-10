@@ -219,9 +219,31 @@ request slot or byte reservations; actual worker exit remains the boundary.
 
 Worker-job admission uses one slot per SQL worker:
 
-- **Waiting.** A job waiting for a busy worker holds neither another worker's slot nor a node worker-job reservation.
-- **Dispatched.** Once dispatched, the job owns its slot and reservation until execution ends, including when its caller is canceled.
-- **Exempt messages.** Lifecycle and publication-confirmation messages retain their bounded worker queue and do not need a job permit.
+- **Waiting.** Up to 256 pending SQL descriptors per shard enter the bounded worker queue. Their retained-byte charges survive caller cancellation; they hold no native-job reservation or other worker's slot.
+- **Executing.** The native worker acquires its shared slot immediately before SQL. The reservation lasts through execution, and immutable snapshots borrow the same slots with FIFO fairness.
+- **Exempt messages.** Lifecycle and publication-confirmation messages retain their bounded queue and need no job permit. The worker continues serving them while a snapshot blocks native admission, including fencing before queued SQL starts.
+
+Pending descriptor admission and execution admission are separate. A worker
+takes an already queued successor without rescheduling its async submitter.
+Shutdown closes both gates and drains accepted Cell work; source admission
+errors still reach the original result channel.
+
+Runtime components sharing a SQL worker pool also share its process telemetry
+sink. Install that sink once before work begins. Enabled telemetry records
+finite SQL job kinds and pool-local reservation IDs, linked to query timings.
+Each reservation reports request, acquisition, worker entry and release;
+snapshot work has no native-worker entry. The release callback runs after
+the job and retained-byte reservations and semaphore permit are released.
+These observations leave the one-slot admission policy unchanged. A gap
+between recorded holders includes admission bookkeeping and exempt messages,
+so it does not by itself prove worker idleness.
+
+Query actor timing distinguishes shared ingress, the Cell FIFO wait, and
+spawned-task start delay. Its enqueue-state observation is finite and captures
+renewal, busy work, inventory refresh, earlier queued work, or no observed
+blocker. That snapshot does not attribute the entire FIFO wait to one cause.
+Absent phases remain absent on early failure; complete subphases partition
+the existing actor wait.
 
 A follower-proven logical head may still have object publication pending. A
 later refusal before SQL or a rolled-back application error leaves that proven
@@ -462,7 +484,29 @@ let observed = issues
     .await?;
 ```
 
-**Read path.** Queries run on the owning SQL worker under a read-only application boundary. They don't produce LTX, modify control, or bypass namespace and schema checks.
+**Read path.** Queries run on the owning SQL worker using its separate read-only
+SQLite connection. Each callback starts a fresh transaction and ends that
+snapshot before returning. Actor order, the durable logical-head gate,
+minimum-receipt, namespace, and schema checks still apply. Reads and writes
+remain serialized on that worker; queries do not produce LTX or modify control.
+The reader retains the same authenticated sparse VFS as the writer. The managed
+database interrupt handle reaches either active SQL connection, and shutdown
+closes both before releasing the capture session.
+
+The executor reuses optional-schema capabilities while SQLite's main schema
+version is unchanged. It observes schema after the handler and credits the
+observation only after the outer transaction commits, including bootstrap,
+effects, and migrations. Reserved capacity and scheduler deadlines are still
+checked against current transactional contents. Fixed runtime/KV/deadline SQL
+uses each connection's bounded statement cache. Owner reads no longer toggle
+the writer's protection or expire its prepared statements. Generic SQL retains
+its scoped authorizer, whose policy changes can still force reprepare.
+
+One managed database retains four SQLite connections with 64 KiB page-cache
+targets, charged as 256 KiB per active Cell. Active-Cell admission reserves
+160 KiB native memory (including four lookaside arenas) and 11 descriptors before opening the database,
+including the additional reader allowance. These reservations are bounds to qualify against actual RSS and
+descriptors, rather than measured costs.
 
 **Replica reads**
 

@@ -656,6 +656,7 @@ fn truncate_checkpoint_and_auto_vacuum_preserve_every_cut() {
 
 #[cfg(feature = "replica")]
 mod continuation;
+mod reader;
 
 #[test]
 fn small_independent_cells_share_disk_by_actual_growth() {

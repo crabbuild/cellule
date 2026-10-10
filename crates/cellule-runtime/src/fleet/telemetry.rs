@@ -18,6 +18,133 @@ pub enum CommandResponseSource {
     Bundle,
 }
 
+/// One canonical Cell-control CAS attempt, excluding validation and encoding.
+///
+/// A cancelled caller can leave the provider's write outcome unknown. This
+/// observation never resolves that outcome or supplies ownership authority.
+#[derive(Clone, Copy, Debug)]
+pub struct ControlTransitionTiming {
+    /// Finite transition purpose; Cell identities belong only in traces.
+    pub transition: crate::control::Transition,
+    /// Provider call through its terminal result or caller cancellation.
+    pub elapsed: Duration,
+    /// Provider result; absent if the caller cancelled before receiving it.
+    pub succeeded: Option<bool>,
+}
+
+/// One admitted owner query through its runtime reply attempt.
+///
+/// Optional phases are absent when rejection or a deadline precedes that
+/// boundary. A deadline reply can precede worker reconciliation. Durations
+/// share one monotonic origin; complete phases partition `total`. Caller-side
+/// encoding, transport, decoding and the final node-lease check are excluded.
+#[derive(Clone, Copy, Debug)]
+pub struct QueryTiming {
+    /// Process-local SQL slot job ID for trace correlation; absent before admission.
+    pub job_id: Option<u64>,
+    /// Admitted enqueue to the actor's query task starting.
+    pub actor_queue: Option<Duration>,
+    /// Admitted enqueue to the shared actor receiving the message.
+    pub actor_ingress: Option<Duration>,
+    /// Actor receipt to FIFO work selection for this Cell.
+    pub cell_queue: Option<Duration>,
+    /// FIFO work selection to the spawned query task's first poll.
+    pub task_start: Option<Duration>,
+    /// Cell state at FIFO enqueue; a snapshot, not a duration attribution.
+    pub actor_state: Option<QueryActorState>,
+    /// Actor task start to obtaining the assigned SQL-worker permit.
+    pub worker_admission: Option<Duration>,
+    /// Worker permit acquisition to worker dequeue.
+    pub worker_queue: Option<Duration>,
+    /// Worker dequeue to terminal native callback result, including SQL/codec.
+    pub execution: Option<Duration>,
+    /// Native result completion to the runtime's reply attempt.
+    pub reply_queue: Option<Duration>,
+    /// Admitted enqueue to the runtime's reply attempt.
+    pub total: Duration,
+    /// Whether the runtime result was successful before caller lease checking.
+    pub succeeded: bool,
+    /// Whether the runtime receiver still accepted the reply.
+    pub delivered: bool,
+}
+
+/// Finite observations at a query's enqueue into the Cell FIFO.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryActorState {
+    /// No earlier queued work, active work, or renewal was observed.
+    Ready,
+    /// The Cell was renewing its owner lease.
+    Renewal,
+    /// The Cell was executing work or another busy coordination effect.
+    Busy,
+    /// A durable-work inventory refresh was in progress.
+    Inventory,
+    /// Earlier work remained queued without a busy or renewal observation.
+    Queued,
+}
+
+/// Finite classes of work borrowing one SQL execution slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SqlJobKind {
+    /// Owner query.
+    Query,
+    /// Application mutation.
+    Command,
+    /// Schema migration.
+    Migration,
+    /// Destination effect.
+    Effect,
+    /// Sparse page selection.
+    HydrationPrepare,
+    /// Verified sparse page installation.
+    HydrationInstall,
+    /// Durable work inventory.
+    Inventory,
+    /// Mutation or effect resolution.
+    Resolve,
+    /// Immutable read borrowing an idle slot; native boundaries are not observed.
+    Snapshot,
+    /// Other reserved worker control work.
+    Control,
+}
+
+/// Lifetime of one accepted SQL slot reservation.
+///
+/// IDs and monotonic timestamps are local to one worker pool and are not wire
+/// or persisted identities. `after_last_release` includes async resumption,
+/// intervening cancelled acquisitions and admission bookkeeping; it does not
+/// by itself prove that a native worker was idle. Unreserved worker control
+/// messages are excluded. Snapshot holds include work outside worker threads.
+#[derive(Clone, Copy, Debug)]
+pub struct SqlSlotTiming {
+    /// Accepted reservation ID, for local trace correlation only.
+    pub id: u64,
+    /// Most recently observed reservation released on this shard.
+    pub previous_job: Option<u64>,
+    /// Assigned shard, bounded by the pool's worker count.
+    pub shard: usize,
+    /// Finite work class.
+    pub kind: SqlJobKind,
+    /// Request to completed admission bookkeeping.
+    pub admission: Duration,
+    /// Portion of admission after the latest recorded slot release.
+    pub after_last_release: Option<Duration>,
+    /// Admission completion to native worker entry; absent for snapshots or unsent work.
+    pub handoff: Option<Duration>,
+    /// Native entry through reservation release; absent when native work never entered.
+    pub native: Option<Duration>,
+    /// Admission completion through reservation release.
+    pub held: Duration,
+    /// Admission request timestamp relative to this pool's monotonic origin.
+    pub requested_ns: u64,
+    /// Admission completion timestamp relative to this pool's monotonic origin.
+    pub acquired_ns: u64,
+    /// Native entry timestamp relative to this pool's monotonic origin.
+    pub started_ns: Option<u64>,
+    /// Release marker immediately before resource and semaphore release.
+    pub released_ns: u64,
+}
+
 /// One completed object publication, which may finish after a follower-proof
 /// response has already been released for the same commit sequence.
 #[derive(Clone, Copy, Debug)]
@@ -57,19 +184,81 @@ pub struct SharedPublicationTiming {
 }
 
 /// Native follower timing for one dispatched append batch.
+/// One follower append attempt, measured on the blocking worker.
+///
+/// `accounting_hold` sums short reservation updates; filesystem I/O and lane
+/// wait occur outside that mutex. `append` includes pruning and data sync;
+/// these nested durations must not be added together.
+/// Total begins before worker dispatch and ends after reservation settlement;
+/// transport and the async caller's resumption are excluded.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FollowerAppendTiming {
-    /// Time until the blocking worker starts; excludes its subsequent lane lock.
+    /// Time from dispatch to the blocking worker starting.
     pub worker_queue: Duration,
-    /// Worker lifetime, including lane locking, verification, writes and barriers.
+    /// Time on the blocking worker, including storage locks and settlement.
     pub worker: Duration,
-    /// Time in append-file and rotation `sync_data` calls; excludes directory sync.
+    /// Leader scope for local trace correlation, never a metric label.
+    pub leader: Option<crate::SessionId>,
+    /// Node-log epoch for local trace correlation, never a metric label.
+    pub epoch: u64,
+    /// Sum of time waiting for the shared disk reservation mutex.
+    pub accounting_wait: Duration,
+    /// Sum of time holding the shared disk reservation mutex.
+    pub accounting_hold: Duration,
+    /// Time waiting for this leader and epoch's mutation mutex.
+    pub lane_wait: Duration,
+    /// Time validating, pruning, writing, and syncing the lane.
+    pub append: Duration,
+    /// Time examining and pruning already object-covered records.
+    pub prune: Duration,
+    /// Time in data sync calls, including rotation and prune rewrites.
     pub data_sync: Duration,
-    /// Number of attempted append-file and rotation barriers, including failures.
-    pub data_sync_calls: u64,
-    /// Number of input frames, including retries and already covered frames.
+    /// Time in parent-directory sync calls during this append.
+    pub directory_sync: Duration,
+    /// Time recounting files within this lane, outside the accounting mutex.
+    pub recount: Duration,
+    /// Total elapsed time through the worker's terminal result.
+    pub total: Duration,
+    /// Frames supplied, including duplicates and object-covered frames.
     pub frames: u64,
-    /// Whether the append returned a durable receipt.
+    /// Encoded frame bytes supplied, before record headers.
+    pub encoded_bytes: u64,
+    /// Data sync attempts, including failed calls.
+    pub data_sync_calls: u64,
+    /// Directory sync attempts, including failed calls.
+    pub directory_sync_calls: u64,
+    /// Lane recount attempts, including failed calls.
+    pub recounts: u64,
+    /// Whether the append and reservation settlement both succeeded.
+    pub succeeded: bool,
+}
+
+/// One shared node-log batch through collection and selected-member proof.
+#[derive(Clone, Copy, Debug)]
+pub struct NodeLogBatchTiming {
+    /// Leader scope for local trace correlation, never a metric label.
+    pub leader_session: crate::SessionId,
+    /// Log epoch for local trace correlation, never a metric label.
+    pub log_epoch: u64,
+    /// First supplied node sequence, for trace correlation only.
+    pub first_sequence: u64,
+    /// Last supplied node sequence, for trace correlation only.
+    pub last_sequence: u64,
+    /// Time the oldest frame waited before collection began.
+    pub queue_wait: Duration,
+    /// Time collecting this batch, including the batching interval.
+    pub collection: Duration,
+    /// Time in transport and validated acknowledgement of every selected member.
+    pub append: Duration,
+    /// Number of frames shipped in this batch.
+    pub frames: u64,
+    /// Number of command captures whose final frame is in this batch.
+    pub completed_captures: u64,
+    /// Encoded bytes, counted once before replica fan-out.
+    pub encoded_bytes: u64,
+    /// Number of selected members, all required for fleet proof.
+    pub members: u64,
+    /// Whether every selected member supplied a valid durable receipt.
     pub succeeded: bool,
 }
 
@@ -108,6 +297,23 @@ pub struct NodeLogSubmissionTiming {
     pub succeeded: bool,
     /// Whether the submission future was dropped before returning a result.
     pub cancelled: bool,
+    /// First committed node sequence; absent if no ticket was committed.
+    pub first_sequence: Option<u64>,
+    /// Declared encoded bytes, including canonical node-frame headers.
+    pub encoded_bytes: u64,
+    /// Wait for the existing node-wide byte reservation.
+    pub byte_admission: Option<Duration>,
+    /// Wait for the existing bounded submission queue slot.
+    pub queue_admission: Option<Duration>,
+    /// Blocking capture loading, including blocking-pool scheduling.
+    pub capture_load: Option<Duration>,
+    /// Wait for the node-wide ticket assignment lock.
+    pub ticket_order: Option<Duration>,
+    /// Canonical encoding, assignment and enqueueing after the ordered lock.
+    pub encoding: Option<Duration>,
+    /// Frames enqueued; false for an error, absent for caller cancellation.
+    /// This does not describe a follower receipt or a durable proof.
+    pub enqueued: Option<bool>,
 }
 
 /// Outcome of an actor-owned resident route lookup.
@@ -216,6 +422,13 @@ impl From<&crate::Result<crate::cell::executor::HandlerOutcome>> for PrimitiveOp
 ///
 /// Implementations must keep labels finite and must not block the Cell actor.
 pub trait CellTelemetry: Send + Sync {
+    /// Records an accepted SQL slot after its resources and permit are released.
+    fn sql_slot_released(&self, _timing: SqlSlotTiming) {}
+
+    /// Records an admitted query's single terminal reply attempt.
+    /// Cell identity is for local trace correlation, never a metric label.
+    fn query_completed(&self, _cell: CellId, _timing: QueryTiming) {}
+
     /// Records one registered primitive call by owning module and outcome.
     fn primitive_operation(
         &self,
@@ -293,12 +506,12 @@ pub trait CellTelemetry: Send + Sync {
     /// Records bytes sent to follower append lanes and whether every lane acknowledged them.
     fn node_log_append(&self, _acknowledged: bool, _bytes: u64) {}
 
-    /// Records pre-issuance waits for one complete native capture. This grants
-    /// no ticket or durability proof. Cancellation is observed without new work.
-    fn node_log_submission(&self, _cell: CellId, _timing: NodeLogSubmissionTiming) {}
-
-    /// Reports native follower work separately from peer HTTP and authorization.
+    /// Records one follower worker attempt after its storage locks are released.
+    /// Leader and epoch are trace correlation keys, never metric labels.
     fn follower_append(&self, _timing: FollowerAppendTiming) {}
+
+    /// Records collection, fill, and receipt wait separately from replica bytes.
+    fn node_log_batch(&self, _timing: NodeLogBatchTiming) {}
 
     /// Records a bounded-cardinality resident route result.
     fn resident_route(&self, _outcome: ResidentRouteOutcome) {}
@@ -318,6 +531,9 @@ pub trait CellTelemetry: Send + Sync {
     /// recovery step, so this bounded counter is what makes the metadata
     /// plane's dominant cost visible.
     fn control_read(&self, _elapsed: Duration, _succeeded: bool) {}
+
+    /// Records the finite purpose and terminal observation of a Cell-control CAS.
+    fn control_transition(&self, _cell: CellId, _timing: ControlTransitionTiming) {}
 
     /// Records the duration of one Cell activation phase.
     fn activation_phase(&self, _phase: ActivationPhase, _elapsed: Duration) {}
@@ -353,6 +569,22 @@ pub struct CellTelemetryHandle {
 }
 
 impl CellTelemetryHandle {
+    pub(crate) fn sql_slot_released(&self, timing: SqlSlotTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.sql_slot_released(timing);
+        }
+    }
+
+    pub(crate) fn query_completed(&self, cell: CellId, timing: QueryTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.query_completed(cell, timing);
+        }
+    }
+
+    pub(crate) fn is_enabled(&self) -> bool {
+        self.inner.get().is_some()
+    }
+
     pub(crate) fn install(&self, telemetry: Arc<dyn CellTelemetry>) -> crate::Result<()> {
         self.inner
             .set(telemetry)
@@ -428,6 +660,12 @@ impl CellTelemetryHandle {
         }
     }
 
+    pub(crate) fn control_transition(&self, cell: CellId, timing: ControlTransitionTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.control_transition(cell, timing);
+        }
+    }
+
     pub(crate) fn activation_phase(&self, phase: ActivationPhase, elapsed: Duration) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.activation_phase(phase, elapsed);
@@ -482,15 +720,21 @@ impl CellTelemetryHandle {
         }
     }
 
-    pub(crate) fn node_log_submission(&self, cell: CellId, timing: NodeLogSubmissionTiming) {
-        if let Some(telemetry) = self.inner.get() {
-            telemetry.node_log_submission(cell, timing);
-        }
-    }
-
     pub(crate) fn follower_append(&self, timing: FollowerAppendTiming) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.follower_append(timing);
+        }
+    }
+
+    pub(crate) fn node_log_batch(&self, timing: NodeLogBatchTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.node_log_batch(timing);
+        }
+    }
+
+    pub(crate) fn node_log_submission(&self, cell: CellId, timing: NodeLogSubmissionTiming) {
+        if let Some(telemetry) = self.inner.get() {
+            telemetry.node_log_submission(cell, timing);
         }
     }
 

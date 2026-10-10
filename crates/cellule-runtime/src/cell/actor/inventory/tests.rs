@@ -87,7 +87,11 @@ async fn stale_actor_probe_cannot_clear_newer_mutation_markers_or_replace_newer_
         control,
         root.path().to_owned(),
     );
-    let connection = cellule_ltx::rusqlite::Connection::open_in_memory().unwrap();
+    let connection = cellule_ltx::Db::open(
+        &root.path().join("inventory.sqlite"),
+        cellule_ltx::Limits::default(),
+    )
+    .unwrap();
     let now = std::time::Instant::now();
     let active = ActiveCell {
         generation: 1,
@@ -99,7 +103,7 @@ async fn stale_actor_probe_cannot_clear_newer_mutation_markers_or_replace_newer_
         schema: 1,
         role: CatalogRole::Application,
         catalog,
-        interrupt: Arc::new(connection.get_interrupt_handle()),
+        interrupt: Arc::new(connection.interrupt_handle()),
         durability_submitter: publisher.durability_submitter(),
         publisher: Some(publisher),
         publications: VecDeque::new(),

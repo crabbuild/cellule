@@ -2,6 +2,96 @@
 
 use super::*;
 
+#[tokio::test]
+async fn authority_cas_observation_distinguishes_result_cancellation_and_validation() {
+    use crate::fleet::telemetry::{CellTelemetry, CellTelemetryHandle, ControlTransitionTiming};
+    use object_store::{
+        memory::InMemory,
+        throttle::{ThrottleConfig, ThrottledStore},
+    };
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    #[derive(Default)]
+    struct Recording(Mutex<Vec<(CellId, ControlTransitionTiming)>>);
+    impl CellTelemetry for Recording {
+        fn control_transition(&self, cell: CellId, timing: ControlTransitionTiming) {
+            self.0.lock().unwrap().push((cell, timing));
+        }
+    }
+
+    let backend = Arc::new(ThrottledStore::new(
+        InMemory::new(),
+        ThrottleConfig::default(),
+    ));
+    let layout = cellule_ltx::CellStorageLayout::new(
+        cellule_store::Store::new(backend.clone()),
+        "control-trace".into(),
+        [91; 16],
+    );
+    let initial = initial();
+    layout
+        .store()
+        .create_strict(
+            &layout.control_path(initial.cell.as_bytes()),
+            bytes::Bytes::from(initial.encode().unwrap()),
+        )
+        .await
+        .unwrap();
+    let recording = Arc::new(Recording::default());
+    let telemetry = CellTelemetryHandle::default();
+    telemetry.install(recording.clone()).unwrap();
+    let authority = authority::CellAuthority::with_telemetry(layout, telemetry);
+    let observed = authority.load(initial.cell).await.unwrap().unwrap();
+    let next = observed.value().renew().unwrap();
+    let renewed = authority
+        .transition(&observed, next.clone(), Transition::Renew)
+        .await
+        .unwrap();
+    assert!(matches!(
+        authority
+            .transition(&observed, next, Transition::Renew)
+            .await,
+        Err(Error::Storage(_))
+    ));
+    let mut invalid = renewed.value().renew().unwrap();
+    invalid.code = Digest::from_bytes([92; 32]);
+    assert!(matches!(
+        authority
+            .transition(&renewed, invalid, Transition::Renew)
+            .await,
+        Err(Error::Control(_))
+    ));
+    backend.config_mut(|config| config.wait_put_per_call = Duration::from_secs(1));
+    let mut pending = Box::pin(authority.transition(
+        &renewed,
+        renewed.value().renew().unwrap(),
+        Transition::Renew,
+    ));
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    drop(pending);
+    assert_eq!(
+        authority.load(initial.cell).await.unwrap().unwrap().value(),
+        renewed.value()
+    );
+    let traces = recording.0.lock().unwrap();
+    assert_eq!(traces.len(), 3);
+    assert!(
+        traces
+            .iter()
+            .all(|(cell, timing)| *cell == initial.cell && timing.transition == Transition::Renew)
+    );
+    assert_eq!(
+        traces
+            .iter()
+            .map(|(_, timing)| timing.succeeded)
+            .collect::<Vec<_>>(),
+        [Some(true), Some(false), None]
+    );
+}
+
 fn owner(byte: u8) -> Owner {
     Owner {
         session: SessionId::from_bytes([byte; 16]),

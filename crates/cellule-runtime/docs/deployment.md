@@ -412,7 +412,7 @@ flowchart TD
 Each open `Db` charges:
 
 - Three SQLite connection page caches at 64 KiB each
-- Three SQLite lookaside arenas at 8 KiB each, included in the 88 KiB native reservation
+- Four SQLite lookaside arenas at 8 KiB each, included in the 160 KiB native reservation
 - Eight file descriptors
 - Runtime actor and mailbox bytes
 - Sparse-page cache allowance
@@ -521,8 +521,8 @@ gauges during the workload.
     "disk_reserve_bytes": 10737418240
   },
   "reservations": {
-    "active_cell_page_cache_bytes": 196608,
-    "active_cell_native_bytes": 90112,
+    "active_cell_page_cache_bytes": 262144,
+    "active_cell_native_bytes": 163840,
     "active_cell_file_descriptors": 8,
     "dirty_job_memory_bytes": 67108864,
     "maximum_recovery_jobs": 2

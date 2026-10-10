@@ -20,6 +20,8 @@ fn enroll(root: &Path, epoch: u64) {
             leader: leader(),
             epoch,
         },
+        &Mutex::new(()),
+        None,
     )
     .unwrap();
 }
@@ -179,9 +181,9 @@ async fn cancelled_page_keeps_memory_until_its_local_scan_finishes() {
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     let holder = {
-        let retained = Arc::clone(&store.retained);
+        let maintenance = Arc::clone(&store.maintenance);
         std::thread::spawn(move || {
-            let _disk = retained.lock().unwrap();
+            let _mutation = maintenance.read().unwrap();
             ready_tx.send(()).unwrap();
             release_rx.recv().unwrap();
         })

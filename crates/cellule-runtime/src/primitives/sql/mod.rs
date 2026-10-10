@@ -143,8 +143,9 @@ fn execute_batch(
             if statement.column_count() != 0 {
                 return Err(Error::Command("mutating SQL cannot use RETURNING"));
             }
-            drop(statement);
-            let changed = connection.execute(&item.sql, params_from_iter(values))?;
+            // Execute the statement authorized above; Connection::execute
+            // would prepare and authorize the same SQL a second time.
+            let changed = statement.execute(params_from_iter(values))?;
             let rows_affected = u64::try_from(changed)
                 .map_err(|_| Error::Command("SQL affected-row count overflow"))?;
             add_size(

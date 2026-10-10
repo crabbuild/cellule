@@ -2,6 +2,124 @@
 
 use super::*;
 
+#[derive(Default)]
+struct QueryRecorder(Mutex<Vec<cellule_runtime::fleet::telemetry::QueryTiming>>);
+
+impl cellule_runtime::fleet::telemetry::CellTelemetry for QueryRecorder {
+    fn query_completed(
+        &self,
+        _cell: cellule_runtime::CellId,
+        timing: cellule_runtime::fleet::telemetry::QueryTiming,
+    ) {
+        self.0.lock().unwrap().push(timing);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn admitted_query_telemetry_has_one_reply_for_cancelled_and_failed_callers() {
+    let fixture = fixture();
+    let (runtime, handle, _) = activate_runtime(&fixture, 16 * 1024 * 1024).await;
+    let recording = Arc::new(QueryRecorder::default());
+    runtime.install_telemetry(recording.clone()).unwrap();
+    let (entered, started) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let first = handle.clone();
+    let task = tokio::spawn(async move {
+        first
+            .query(64, 64, move |_| {
+                entered.send(()).unwrap();
+                resume
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok(Vec::new())
+            })
+            .await
+    });
+    tokio::task::spawn_blocking(move || started.recv().unwrap())
+        .await
+        .unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    release.send(()).unwrap();
+    assert!(matches!(
+        handle
+            .query(64, 64, |_| Err(cellule_runtime::Error::Command(
+                "query failure"
+            )))
+            .await,
+        Err(cellule_runtime::Error::Command("query failure"))
+    ));
+    assert_eq!(handle.query(64, 64, |_| Ok(vec![1])).await.unwrap(), [1]);
+    runtime.shutdown().await.unwrap();
+    let timings = recording.0.lock().unwrap();
+    assert_eq!(timings.len(), 3);
+    assert!(timings[0].succeeded && !timings[0].delivered);
+    assert!(!timings[1].succeeded && timings[1].delivered);
+    assert!(timings[2].succeeded && timings[2].delivered);
+    for timing in timings.iter() {
+        assert_eq!(
+            timing.actor_queue.unwrap()
+                + timing.worker_admission.unwrap()
+                + timing.worker_queue.unwrap()
+                + timing.execution.unwrap()
+                + timing.reply_queue.unwrap(),
+            timing.total
+        );
+        assert_eq!(
+            timing.actor_ingress.unwrap() + timing.cell_queue.unwrap() + timing.task_start.unwrap(),
+            timing.actor_queue.unwrap()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn query_actor_timing_separates_same_cell_fifo_wait_from_task_start() {
+    let fixture = fixture();
+    let (runtime, handle, _) = activate_runtime(&fixture, 16 * 1024 * 1024).await;
+    let recording = Arc::new(QueryRecorder::default());
+    runtime.install_telemetry(recording.clone()).unwrap();
+    let (entered, started) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let first = handle.clone();
+    let blocking = tokio::spawn(async move {
+        first
+            .query(64, 64, move |_| {
+                entered.send(()).unwrap();
+                resume
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok(vec![1])
+            })
+            .await
+    });
+    tokio::task::spawn_blocking(move || started.recv().unwrap())
+        .await
+        .unwrap();
+    let queued = handle.query(64, 64, |_| Ok(vec![2]));
+    tokio::pin!(queued);
+    // Poll through enqueue to the reply wait, then use the same actor's FIFO
+    // message channel as a barrier before measuring the blocked Cell queue.
+    assert!(futures_util::poll!(&mut queued).is_pending());
+    runtime.due_resident(0, 1).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    release.send(()).unwrap();
+    assert_eq!(blocking.await.unwrap().unwrap(), [1]);
+    assert_eq!(queued.await.unwrap(), [2]);
+    runtime.shutdown().await.unwrap();
+    let timings = recording.0.lock().unwrap();
+    assert_eq!(timings.len(), 2);
+    let second = timings[1];
+    assert_eq!(
+        second.actor_state,
+        Some(cellule_runtime::fleet::telemetry::QueryActorState::Busy)
+    );
+    assert!(second.cell_queue.unwrap() >= std::time::Duration::from_millis(20));
+    assert_eq!(
+        second.actor_ingress.unwrap() + second.cell_queue.unwrap() + second.task_start.unwrap(),
+        second.actor_queue.unwrap()
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn queued_query_deadline_does_not_fence_untouched_cell() {
     queued_deadline(1, "query").await;
@@ -337,7 +455,9 @@ async fn native_handler_panic_discards_transaction_and_reopens_authoritative_roo
 #[tokio::test(flavor = "multi_thread")]
 async fn sqlite_query_is_interrupted_at_wall_deadline() {
     let fixture = fixture();
-    let handle = activate(&fixture, 16 * 1024 * 1024).await;
+    let (runtime, handle, _) = activate_runtime(&fixture, 16 * 1024 * 1024).await;
+    let recording = Arc::new(QueryRecorder::default());
+    runtime.install_telemetry(recording.clone()).unwrap();
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(7),
         handle.query(64, 64, |connection| {
@@ -356,6 +476,15 @@ async fn sqlite_query_is_interrupted_at_wall_deadline() {
         handle.query(1, 1, |_| Ok(Vec::new())).await,
         Err(cellule_runtime::Error::Fenced)
     ));
+    runtime.shutdown().await.unwrap();
+    let timings = recording.0.lock().unwrap();
+    assert_eq!(
+        timings.len(),
+        1,
+        "deadline reconciliation emitted a second reply"
+    );
+    assert!(!timings[0].succeeded && timings[0].delivered);
+    assert!(timings[0].actor_queue.is_some() && timings[0].worker_queue.is_some());
 }
 #[tokio::test]
 async fn proven_handler_rollback_keeps_the_cell_servable() {

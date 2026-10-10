@@ -141,11 +141,11 @@ pub fn kv_atomic(
     request: &KvAtomicRequest,
 ) -> Result<KvAtomicOutcome> {
     validate_atomic(now_ms, request)?;
-    let (incarnation, prior_sequence) = transaction.query_row(
-        "SELECT incarnation, commit_sequence FROM sys_meta WHERE singleton = 1",
-        [],
-        |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?)),
-    )?;
+    let (incarnation, prior_sequence) = transaction
+        .prepare_cached("SELECT incarnation, commit_sequence FROM sys_meta WHERE singleton = 1")?
+        .query_row([], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
+        })?;
     let incarnation: [u8; 16] = incarnation
         .try_into()
         .map_err(|_| Error::Command("invalid KV runtime incarnation"))?;
@@ -179,8 +179,7 @@ pub fn kv_atomic(
                 let ordinal =
                     u32::try_from(ordinal).map_err(|_| Error::Command("too many KV mutations"))?;
                 let version = kv_version(incarnation, sequence, ordinal)?;
-                transaction.execute(
-                    "INSERT INTO kv_entries(scope, key, version, value, expires_at_ms) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(scope, key) DO UPDATE SET version = excluded.version, value = excluded.value, expires_at_ms = excluded.expires_at_ms",
+                transaction.prepare_cached("INSERT INTO kv_entries(scope, key, version, value, expires_at_ms) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(scope, key) DO UPDATE SET version = excluded.version, value = excluded.value, expires_at_ms = excluded.expires_at_ms")?.execute(
                     (
                         request.scope.as_slice(),
                         key.as_slice(),
@@ -196,10 +195,9 @@ pub fn kv_atomic(
                 });
             }
             KvMutation::Delete { key } => {
-                transaction.execute(
-                    "DELETE FROM kv_entries WHERE scope = ?1 AND key = ?2",
-                    (request.scope.as_slice(), key.as_slice()),
-                )?;
+                transaction
+                    .prepare_cached("DELETE FROM kv_entries WHERE scope = ?1 AND key = ?2")?
+                    .execute((request.scope.as_slice(), key.as_slice()))?;
                 results.push(KvMutationResult {
                     key: key.clone(),
                     version: None,
@@ -222,8 +220,8 @@ pub fn kv_get(
     validate_key(key)?;
     validate_now(now_ms)?;
     let row = connection
+        .prepare_cached("SELECT key, value, version, expires_at_ms FROM kv_entries WHERE scope = ?1 AND key = ?2 AND (expires_at_ms IS NULL OR expires_at_ms > ?3)")?
         .query_row(
-            "SELECT key, value, version, expires_at_ms FROM kv_entries WHERE scope = ?1 AND key = ?2 AND (expires_at_ms IS NULL OR expires_at_ms > ?3)",
             (scope, key, now_ms),
             decode_entry,
         )
@@ -412,8 +410,8 @@ fn live_version(
     now_ms: i64,
 ) -> Result<Option<Vec<u8>>> {
     transaction
+        .prepare_cached("SELECT version FROM kv_entries WHERE scope = ?1 AND key = ?2 AND (expires_at_ms IS NULL OR expires_at_ms > ?3)")?
         .query_row(
-            "SELECT version FROM kv_entries WHERE scope = ?1 AND key = ?2 AND (expires_at_ms IS NULL OR expires_at_ms > ?3)",
             (scope, key, now_ms),
             |row| row.get(0),
         )

@@ -42,6 +42,7 @@ impl Observation {
                 first_commit_sequence,
                 commit_sequence,
                 bytes,
+                encoded_bytes: bytes,
                 cancelled: true,
                 ..NodeLogSubmissionTiming::default()
             },
@@ -50,6 +51,10 @@ impl Observation {
 
     pub(super) fn frames(&mut self, frames: u64) {
         self.timing.frames = frames;
+    }
+
+    pub(super) fn assigned(&mut self, first_sequence: u64) {
+        self.timing.first_sequence = Some(first_sequence);
     }
 
     pub(super) fn enter(&mut self, stage: Stage) {
@@ -62,6 +67,7 @@ impl Observation {
     pub(super) fn finish(&mut self, succeeded: bool) {
         self.timing.succeeded = succeeded;
         self.timing.cancelled = false;
+        self.timing.enqueued = Some(succeeded);
     }
 
     fn observe_phase(&mut self, now: Instant) {
@@ -76,6 +82,17 @@ impl Observation {
             Stage::Assignment => &mut self.timing.assignment,
         };
         *phase += duration;
+        let optional = match self.stage {
+            Stage::NativeBytes => Some(&mut self.timing.byte_admission),
+            Stage::ShippingSlot => Some(&mut self.timing.queue_admission),
+            Stage::LocalLoad => Some(&mut self.timing.capture_load),
+            Stage::OrderedLane => Some(&mut self.timing.ticket_order),
+            Stage::Assignment => Some(&mut self.timing.encoding),
+            Stage::Validation | Stage::PublicationSlot => None,
+        };
+        if let Some(optional) = optional {
+            *optional = Some(optional.unwrap_or_default() + duration);
+        }
     }
 }
 

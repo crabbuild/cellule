@@ -1341,3 +1341,115 @@ async fn host_resource_charge_releases_before_its_slot_is_reused() {
         }
     }
 }
+
+#[cfg(feature = "replica")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_slot_reuse_waits_for_the_previous_ledger_charge_to_release() {
+    struct ReleaseBoundary {
+        kind: HostResourceKind,
+        charged: AtomicBool,
+        pause: AtomicBool,
+        dropping: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    struct Charge {
+        boundary: Arc<ReleaseBoundary>,
+    }
+    struct Uncharged;
+    impl HostResourcePermit for Uncharged {}
+    impl HostResourcePermit for Charge {}
+    impl Drop for Charge {
+        fn drop(&mut self) {
+            if self.boundary.pause.swap(false, Ordering::SeqCst) {
+                self.boundary
+                    .dropping
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .send(())
+                    .unwrap();
+                self.boundary
+                    .release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+            }
+            assert!(self.boundary.charged.swap(false, Ordering::SeqCst));
+        }
+    }
+    impl HostResourceAdmission for Arc<ReleaseBoundary> {
+        fn reserve(
+            &self,
+            kind: HostResourceKind,
+            units: u32,
+        ) -> crate::Result<Box<dyn HostResourcePermit>> {
+            assert_eq!(units, 1);
+            if kind != self.kind {
+                return Ok(Box::new(Uncharged));
+            }
+            if self.charged.swap(true, Ordering::SeqCst) {
+                return Err(crate::LtxError::Limit(crate::LimitKind::HostResourceUnits));
+            }
+            Ok(Box::new(Charge {
+                boundary: self.clone(),
+            }))
+        }
+    }
+    async fn acquire(host: &Host, kind: HostResourceKind) -> crate::Result<Box<dyn Send>> {
+        match kind {
+            HostResourceKind::Io => Ok(Box::new(host.io_permit().await?)),
+            HostResourceKind::Dirty => Ok(Box::new(host.for_dirty().await?)),
+            HostResourceKind::Recovery => Ok(Box::new(host.for_recovery().await?)),
+            HostResourceKind::Scratch => Ok(Box::new(host.for_scratch(1 << 20).await?)),
+            HostResourceKind::BlockingJob => panic!("blocking job has a completion boundary"),
+        }
+    }
+    for kind in [
+        HostResourceKind::Io,
+        HostResourceKind::Dirty,
+        HostResourceKind::Recovery,
+        HostResourceKind::Scratch,
+    ] {
+        let (dropping, entered) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let boundary = Arc::new(ReleaseBoundary {
+            kind,
+            charged: AtomicBool::new(false),
+            pause: AtomicBool::new(true),
+            dropping: std::sync::Mutex::new(Some(dropping)),
+            release: std::sync::Mutex::new(blocked),
+        });
+        let mut host = Host::default()
+            .with_io_slots(Arc::new(tokio::sync::Semaphore::new(1)))
+            .with_dirty_slots(Arc::new(tokio::sync::Semaphore::new(1)))
+            .with_recovery_slots(Arc::new(tokio::sync::Semaphore::new(1)))
+            .with_scratch_slots(Arc::new(tokio::sync::Semaphore::new(1)));
+        host.install_resource_admission(Arc::new(boundary.clone()));
+        let held = acquire(&host, kind).await.unwrap();
+        let dropped = tokio::task::spawn_blocking(move || drop(held));
+        tokio::time::timeout(Duration::from_secs(2), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        let replacement = acquire(&host, kind);
+        tokio::pin!(replacement);
+        let observed = tokio::time::timeout(Duration::from_millis(100), &mut replacement).await;
+        // Always release the blocked drop before asserting, including the old
+        // failing order, so the regression cannot strand a blocking thread.
+        release.send(()).unwrap();
+        dropped.await.unwrap();
+        assert!(
+            observed.is_err(),
+            "{kind:?}: slot was advertised before its ledger charge was released"
+        );
+        let next = tokio::time::timeout(Duration::from_secs(2), &mut replacement)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(boundary.charged.load(Ordering::SeqCst));
+        drop(next);
+        assert!(!boundary.charged.load(Ordering::SeqCst));
+    }
+}

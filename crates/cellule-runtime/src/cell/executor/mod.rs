@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use cellule_ltx::{CaptureBatch, Db, TransactionError, rusqlite::OptionalExtension};
 
 use crate::cell::catalog::CatalogRole;
+use crate::cell::schema_cache::{SchemaCache, SchemaObservation};
 use crate::identity::{CellId, Digest};
 use crate::identity::{IncarnationId, RequestId};
 use crate::primitives::maintenance::TransferWorkInventory;
@@ -294,6 +295,7 @@ pub struct CellExecutor {
     cell: CellId,
     incarnation: IncarnationId,
     schema: u32,
+    schema_cache: SchemaCache,
     pending: VecDeque<PendingCommit>,
     pending_bytes: u64,
     published_sequence: u64,
@@ -339,7 +341,7 @@ pub(crate) fn merge_captures<'a>(
 }
 
 impl CellExecutor {
-    pub(crate) fn interrupt_handle(&self) -> cellule_ltx::rusqlite::InterruptHandle {
+    pub(crate) fn interrupt_handle(&self) -> cellule_ltx::DbInterruptHandle {
         self.db.interrupt_handle()
     }
 
@@ -351,6 +353,7 @@ impl CellExecutor {
             cell,
             incarnation,
             schema,
+            schema_cache: SchemaCache::default(),
             pending: VecDeque::new(),
             pending_bytes: 0,
             published_sequence: 0,
@@ -374,14 +377,24 @@ impl CellExecutor {
             let _ = db.close();
             return Err(error.into());
         }
+        let schema_cache = SchemaCache::default();
         let initialized = db.transaction_with(|transaction| {
             crate::cell::schema::install_runtime_schema_in(transaction, cell, incarnation, schema)?;
             initialize(transaction)?;
-            crate::primitives::capacity::validate(transaction)?;
-            crate::fleet::scheduler::scheduler_next_due_ms(transaction, 0)
+            let observation = schema_cache.observe(transaction)?;
+            crate::primitives::capacity::validate_installed(
+                transaction,
+                observation.capabilities.capacity_tables(),
+            )?;
+            let next_due_ms = crate::fleet::scheduler::scheduler_next_due_with_schema(
+                transaction,
+                0,
+                observation.capabilities,
+            )?;
+            Ok((next_due_ms, observation))
         });
-        let next_due_ms = match initialized {
-            Ok(next_due_ms) => next_due_ms,
+        let (next_due_ms, observation) = match initialized {
+            Ok(value) => value,
             Err(error) => {
                 let error = transaction_error_with_io(&db, error);
                 let _ = db.close();
@@ -401,7 +414,9 @@ impl CellExecutor {
                 return Err(error.into());
             }
         };
-        Ok((Self::new(db, cell, incarnation, schema), cuts, next_due_ms))
+        let mut executor = Self::new(db, cell, incarnation, schema);
+        executor.schema_cache.record_commit(observation);
+        Ok((executor, cuts, next_due_ms))
     }
 
     pub(crate) fn from_restored(
@@ -504,6 +519,7 @@ impl CellExecutor {
         let cell = self.cell;
         let incarnation = self.incarnation;
         let schema = self.schema;
+        let schema_cache = &self.schema_cache;
         let command = NativeCommand {
             identity,
             operation_digest,
@@ -512,7 +528,14 @@ impl CellExecutor {
             handler,
         };
         let transaction = self.db.transaction_with(|transaction| {
-            apply_mutation(transaction, cell, incarnation, schema, command)
+            apply_mutation(
+                transaction,
+                cell,
+                incarnation,
+                schema,
+                schema_cache,
+                command,
+            )
         });
 
         self.finish_transaction(transaction)
@@ -538,6 +561,7 @@ impl CellExecutor {
         let cell = self.cell;
         let incarnation = self.incarnation;
         let schema = self.schema;
+        let schema_cache = &self.schema_cache;
         let transaction = self.db.transaction_with(|transaction| {
             let (commit_sequence, prior_logical_time_ms) =
                 runtime_metadata(transaction, cell, incarnation, schema)?;
@@ -587,19 +611,20 @@ impl CellExecutor {
                 return Err(Error::Command("effect inbox sequence does not follow Cell state"));
             }
             let logical_time_ms = now_ms.max(prior_logical_time_ms);
-            if transaction.execute(
-                "UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1",
+            if transaction.prepare_cached("UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1")?.execute(
                 (sequence, logical_time_ms),
             )? != 1
             {
                 return Err(Error::Command("runtime metadata row missing"));
             }
-            crate::primitives::capacity::validate(transaction)?;
-            let next_due_ms = crate::fleet::scheduler::scheduler_next_due_ms(transaction, logical_time_ms)?;
+            let observation = schema_cache.observe(transaction)?;
+            crate::primitives::capacity::validate_installed(transaction, observation.capabilities.capacity_tables())?;
+            let next_due_ms = crate::fleet::scheduler::scheduler_next_due_with_schema(transaction, logical_time_ms, observation.capabilities)?;
             Ok(TransactionResult::Committed {
                 outcome,
                 logical_time_ms,
                 next_due_ms,
+                observation,
             })
         });
         self.finish_transaction(transaction)
@@ -929,6 +954,7 @@ impl CellExecutor {
         let from_schema = self.schema;
         let to_schema = plan.to_schema();
         let digest = plan.digest();
+        let schema_cache = &self.schema_cache;
         let transaction = self.db.transaction_with(|transaction| {
             let (commit_sequence, prior_logical_time_ms) =
                 runtime_metadata(transaction, cell, incarnation, from_schema)?;
@@ -969,15 +995,16 @@ impl CellExecutor {
             if metadata != (sequence, logical_time_ms) {
                 return Err(Error::Control("migration metadata did not validate"));
             }
-            crate::primitives::capacity::validate(transaction)?;
-            let next_due_ms = crate::fleet::scheduler::scheduler_next_due_ms(transaction, logical_time_ms)?;
-            Ok((sequence, next_due_ms))
+            let observation = schema_cache.observe(transaction)?;
+            crate::primitives::capacity::validate_installed(transaction, observation.capabilities.capacity_tables())?;
+            let next_due_ms = crate::fleet::scheduler::scheduler_next_due_with_schema(transaction, logical_time_ms, observation.capabilities)?;
+            Ok((sequence, next_due_ms, observation))
         });
         if let Some(error) = self.db.take_io_error() {
             self.fenced = true;
             return Err(ltx_error(error));
         }
-        let (sequence, next_due_ms) = match transaction {
+        let (sequence, next_due_ms, observation) = match transaction {
             Ok(value) => value,
             Err(TransactionError::Operation(error)) => return Err(error),
             Err(TransactionError::Admission(error)) => return Err(admission_error(error)),
@@ -989,6 +1016,7 @@ impl CellExecutor {
                 return Err(transaction_error(error));
             }
         };
+        self.schema_cache.record_commit(observation);
         // Migration output stays gated on follower or object durability. Keep
         // the local cut readable for publication without serially fsyncing it.
         let cuts = match self.db.capture_deferred() {
@@ -1338,7 +1366,9 @@ impl CellExecutor {
                 outcome,
                 logical_time_ms,
                 next_due_ms,
+                observation,
             } => {
+                self.schema_cache.record_commit(observation);
                 // The actor cannot expose this commit until the same cut is
                 // durable on followers or behind the authoritative root CAS.
                 let cuts = match self.db.capture_deferred() {
@@ -1378,6 +1408,7 @@ fn apply_mutation<F>(
     cell: CellId,
     incarnation: IncarnationId,
     schema: u32,
+    schema_cache: &SchemaCache,
     command: NativeCommand<F>,
 ) -> Result<TransactionResult>
 where
@@ -1398,8 +1429,8 @@ where
         runtime_metadata(transaction, cell, incarnation, schema)?;
 
     let existing = transaction
+        .prepare_cached("SELECT operation_digest, outcome, result, commit_sequence FROM sys_requests WHERE request_id = ?1")?
         .query_row(
-            "SELECT operation_digest, outcome, result, commit_sequence FROM sys_requests WHERE request_id = ?1",
             [identity.request_id.as_bytes().as_slice()],
             |row| {
                 Ok((
@@ -1446,8 +1477,7 @@ where
         .expires_at_ms
         .checked_add(REQUEST_RETENTION_MS)
         .ok_or(Error::Command("request retention overflow"))?;
-    transaction.execute(
-        "INSERT INTO sys_requests(request_id, operation_digest, outcome, result, commit_sequence, expires_at_ms, retain_until_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    transaction.prepare_cached("INSERT INTO sys_requests(request_id, operation_digest, outcome, result, commit_sequence, expires_at_ms, retain_until_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?.execute(
         (
             identity.request_id.as_bytes().as_slice(),
             operation_digest.as_bytes().as_slice(),
@@ -1458,19 +1488,30 @@ where
             retain_until_ms,
         ),
     )?;
-    if transaction.execute(
-        "UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1",
-        (sequence, logical_time_ms),
-    )? != 1
+    if transaction
+        .prepare_cached(
+            "UPDATE sys_meta SET commit_sequence = ?1, logical_time_ms = ?2 WHERE singleton = 1",
+        )?
+        .execute((sequence, logical_time_ms))?
+        != 1
     {
         return Err(Error::Command("runtime metadata row missing"));
     }
-    crate::primitives::capacity::validate(transaction)?;
-    let next_due_ms = crate::fleet::scheduler::scheduler_next_due_ms(transaction, logical_time_ms)?;
+    let observation = schema_cache.observe(transaction)?;
+    crate::primitives::capacity::validate_installed(
+        transaction,
+        observation.capabilities.capacity_tables(),
+    )?;
+    let next_due_ms = crate::fleet::scheduler::scheduler_next_due_with_schema(
+        transaction,
+        logical_time_ms,
+        observation.capabilities,
+    )?;
     Ok(TransactionResult::Committed {
         outcome: stored_outcome(outcome, result, sequence)?,
         logical_time_ms,
         next_due_ms,
+        observation,
     })
 }
 
@@ -1480,8 +1521,7 @@ fn runtime_metadata(
     incarnation: IncarnationId,
     schema: u32,
 ) -> Result<(i64, i64)> {
-    let meta = transaction.query_row(
-        "SELECT cell_id, incarnation, commit_sequence, logical_time_ms, schema_version FROM sys_meta WHERE singleton = 1",
+    let meta = transaction.prepare_cached("SELECT cell_id, incarnation, commit_sequence, logical_time_ms, schema_version FROM sys_meta WHERE singleton = 1")?.query_row(
         [],
         |row| {
             Ok((
@@ -1552,6 +1592,7 @@ enum TransactionResult {
         outcome: StoredOutcome,
         logical_time_ms: i64,
         next_due_ms: Option<i64>,
+        observation: SchemaObservation,
     },
 }
 

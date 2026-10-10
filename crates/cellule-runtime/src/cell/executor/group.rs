@@ -62,6 +62,7 @@ impl CellExecutor {
         let cell = self.cell;
         let incarnation = self.incarnation;
         let schema = self.schema;
+        let schema_cache = &self.schema_cache;
         let transaction = self.db.transaction_with(|transaction| {
             let mut outcomes = Vec::with_capacity(commands.len());
             let mut newest = None;
@@ -72,7 +73,14 @@ impl CellExecutor {
                 // This savepoint also covers request-ledger and runtime metadata
                 // writes. A command error cannot roll back an earlier member.
                 transaction.execute_batch("SAVEPOINT native_command")?;
-                match apply_mutation(transaction, cell, incarnation, schema, command) {
+                match apply_mutation(
+                    transaction,
+                    cell,
+                    incarnation,
+                    schema,
+                    schema_cache,
+                    command,
+                ) {
                     Ok(result) => {
                         transaction.execute_batch("RELEASE native_command")?;
                         match result {

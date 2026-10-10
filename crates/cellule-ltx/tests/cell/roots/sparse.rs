@@ -3,6 +3,47 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sparse_owner_reader_materializes_pages_but_refuses_sql_mutations() {
+    let (_directory, mut writer, _, _) =
+        hydration_writer(Store::new(Arc::new(InMemory::new()))).await;
+    let before = writer.hydration().unwrap().unwrap();
+    assert!(!before.complete());
+    writer
+        .query_with(|connection| -> cellule_ltx::rusqlite::Result<()> {
+            assert!(connection.is_readonly(cellule_ltx::rusqlite::DatabaseName::Main)?);
+            let value: Vec<u8> =
+                connection.query_row("SELECT value FROM payload", [], |row| row.get(0))?;
+            assert_eq!(value.len(), 2_000_000);
+            // Verify the independent SQLite/VFS boundary, then restore protection.
+            connection.pragma_update(None, "query_only", false)?;
+            let denied = connection
+                .execute("UPDATE payload SET value = X'01'", [])
+                .unwrap_err();
+            assert_eq!(
+                denied.sqlite_error_code(),
+                Some(cellule_ltx::rusqlite::ErrorCode::ReadOnly)
+            );
+            connection.pragma_update(None, "query_only", true)?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(writer.hydration().unwrap().unwrap().resolved > before.resolved);
+    writer
+        .transaction(|transaction| transaction.execute("UPDATE payload SET value = X'02'", []))
+        .unwrap();
+    assert_eq!(
+        writer
+            .query_with(|connection| connection
+                .query_row("SELECT value FROM payload", [], |row| row
+                    .get::<_, Vec<u8>>(0)))
+            .unwrap(),
+        vec![2]
+    );
+    writer.capture().unwrap();
+    writer.close().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn exact_cell_root_opens_sparse_writer_and_publishes_incrementally() {
     let source = tempfile::TempDir::new().unwrap();
     let source_path = source.path().join("source.sqlite");

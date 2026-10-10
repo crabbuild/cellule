@@ -50,7 +50,14 @@ pub(in crate::follower) fn read_tail_sync(
         .as_mut()
         .ok_or(Error::Node("follower lane state did not initialize"))?;
     if state.needs_reconciliation {
-        reconcile_lane_memory(&directory.join("chunks"), lane, limits, state, scan_counter)?;
+        reconcile_lane_memory(
+            &directory.join("chunks"),
+            lane,
+            limits,
+            state,
+            scan_counter,
+            None,
+        )?;
     }
     read_tail_records(
         root,
@@ -176,6 +183,7 @@ pub(in crate::follower) fn reconcile_lane_memory(
     limits: cellule_ltx::Limits,
     state: &mut LaneMemory,
     scan_counter: &ScanCounter,
+    observation: Option<&mut AppendObservation>,
 ) -> Result<()> {
     let records = scan_lane_counted(chunks, lane, limits, Some(state), scan_counter)?;
     // Only authority-proven object coverage may release an original witness.
@@ -193,7 +201,7 @@ pub(in crate::follower) fn reconcile_lane_memory(
     if state.needs_reconciliation {
         // A failed append may leave valid, unacknowledged records or a renamed
         // chunk. Persist their bytes and directory before promoting the index.
-        persist_lane_records(chunks, &records, &open_records)?;
+        persist_lane_records(chunks, &records, &open_records, observation)?;
     }
     let bytes = u64::try_from(records.len())
         .map_err(|_| Error::Capacity("follower lane index"))?
@@ -211,6 +219,7 @@ pub(in crate::follower) fn persist_lane_records(
     chunks: &Path,
     records: &BTreeMap<u64, StoredRecord>,
     open_records: &[StoredRecord],
+    mut observation: Option<&mut AppendObservation>,
 ) -> Result<()> {
     let paths = records
         .values()
@@ -218,10 +227,17 @@ pub(in crate::follower) fn persist_lane_records(
         .map(|record| &record.path)
         .collect::<BTreeSet<_>>();
     for path in paths {
-        std::fs::File::open(path)?.sync_data()?;
+        let file = std::fs::File::open(path)?;
+        match observation.as_deref_mut() {
+            Some(observation) => observation.sync_data(&file)?,
+            None => file.sync_data()?,
+        }
     }
     if chunks.exists() {
-        sync_directory(chunks)?;
+        match observation {
+            Some(observation) => observation.sync_directory(chunks)?,
+            None => sync_directory(chunks)?,
+        }
     }
     Ok(())
 }

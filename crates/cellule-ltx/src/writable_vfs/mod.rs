@@ -211,6 +211,7 @@ struct File {
     methods: *const ffi::sqlite3_io_methods,
     base: *mut ffi::sqlite3_file,
     app: *const App,
+    read_only: bool,
 }
 
 fn sqlite(rc: c_int) -> Result<()> {
@@ -410,6 +411,9 @@ unsafe extern "C" fn x_write(
     unsafe {
         let file = file.cast::<File>();
         let base = (*file).base;
+        if (*file).read_only {
+            return ffi::SQLITE_READONLY;
+        }
         if (*file).app.is_null() {
             return match (*(*base).pMethods).xWrite {
                 Some(call) => call(base, buffer, amount, offset),
@@ -469,6 +473,9 @@ unsafe extern "C" fn x_truncate(file: *mut ffi::sqlite3_file, size: i64) -> c_in
     unsafe {
         let file = file.cast::<File>();
         let base = (*file).base;
+        if (*file).read_only {
+            return ffi::SQLITE_READONLY;
+        }
         let Some(truncate) = (*(*base).pMethods).xTruncate else {
             return ffi::SQLITE_IOERR_TRUNCATE;
         };
@@ -629,12 +636,10 @@ unsafe extern "C" fn x_open(
             let Some(app) = registry.get(Path::new(path)).and_then(Weak::upgrade) else {
                 return ffi::SQLITE_CANTOPEN;
             };
-            let mode = if app.read_only {
-                ffi::SQLITE_OPEN_READONLY
-            } else {
-                ffi::SQLITE_OPEN_READWRITE
-            };
-            if flags & (ffi::SQLITE_OPEN_READONLY | ffi::SQLITE_OPEN_READWRITE) != mode {
+            let mode = flags & (ffi::SQLITE_OPEN_READONLY | ffi::SQLITE_OPEN_READWRITE);
+            if (mode != ffi::SQLITE_OPEN_READONLY && mode != ffi::SQLITE_OPEN_READWRITE)
+                || (app.read_only && mode != ffi::SQLITE_OPEN_READONLY)
+            {
                 return ffi::SQLITE_CANTOPEN;
             }
             Some(app)
@@ -650,7 +655,17 @@ unsafe extern "C" fn x_open(
             return ffi::SQLITE_NOMEM;
         }
         std::ptr::write_bytes(base_file.cast::<u8>(), 0, (*base).szOsFile as usize);
-        let rc = open(base, name, base_file, flags, out);
+        let read_only = flags & ffi::SQLITE_OPEN_READONLY != 0;
+        // A read-only SQL handle on a writable activation still materializes
+        // authenticated missing pages. Its backing file admits hydration;
+        // SQLite and this wrapper retain the requested read-only boundary.
+        let materializing_reader = read_only && app.as_ref().is_some_and(|app| !app.read_only);
+        let base_flags = if materializing_reader {
+            (flags & !ffi::SQLITE_OPEN_READONLY) | ffi::SQLITE_OPEN_READWRITE
+        } else {
+            flags
+        };
+        let rc = open(base, name, base_file, base_flags, out);
         if rc != ffi::SQLITE_OK {
             if !(*base_file).pMethods.is_null()
                 && let Some(close) = (*(*base_file).pMethods).xClose
@@ -664,6 +679,10 @@ unsafe extern "C" fn x_open(
         (*wrapper).base = base_file;
         (*wrapper).app = app.map_or(std::ptr::null(), Arc::into_raw);
         (*wrapper).methods = &METHODS;
+        (*wrapper).read_only = read_only;
+        if materializing_reader && !out.is_null() {
+            *out = (*out & !ffi::SQLITE_OPEN_READWRITE) | ffi::SQLITE_OPEN_READONLY;
+        }
         ffi::SQLITE_OK
     }
 }
