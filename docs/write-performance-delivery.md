@@ -1,5 +1,13 @@
 # Write performance implementation and verification
 
+The latest [root-cut delivery](pr67-root-cut-measurement.md) separates selected
+capture cleanup from original root tasks and preserves later suffixes. Its
+isolated checks passed, but fresh qualification remains incomplete: one attempt
+fails initialization and another loses evidence and object-store files during
+concurrent cleanup. Rescued window counters are reported with those limits;
+no acceptable performance improvement or architectural parity is established.
+PR #67 remains a draft.
+
 The latest [publication-credit report](pr67-publication-pressure-measurement.md)
 fixes working memory held after completed root I/O, without raising any bounds.
 Two fresh write pairs observe 388.70→589.85/s and 535.17→583.92/s. The repeat

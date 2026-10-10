@@ -1,5 +1,9 @@
 # PR 67: publication working credit and application comparison
 
+This report describes `6e2ba162`. The subsequent
+[root-cut delivery](pr67-root-cut-measurement.md) removes its selected-capture
+ownership dependency; that change has no completed fresh qualification.
+
 **Parity and performance acceptance remain unmet; PR #67 remains a draft.**
 The retained change fixes excess working-credit retention after root I/O. Two
 fresh diagnostics measure the candidate at 589.85 and 583.92 successful Fleet
