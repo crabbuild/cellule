@@ -138,6 +138,7 @@ async fn selection_groups_fresh_historical_extents_across_sixty_four_cells() {
         prepared.head,
         &wanted,
         None,
+        None,
     )
     .await
     .unwrap();

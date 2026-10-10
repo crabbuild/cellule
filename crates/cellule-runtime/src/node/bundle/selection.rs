@@ -130,6 +130,7 @@ impl NodeDirectory {
             frames,
             assignments,
             &[],
+            None,
             cellule_ltx::Limits::default(),
             now_ms,
         )
@@ -137,9 +138,15 @@ impl NodeDirectory {
     }
 
     /// Combines exact materialized checkpoint prefixes and new native captures
-    /// in one fresh catalog read and upload. Selection still verifies canonical
+    /// in one catalog read and upload. Optional runtime-admitted preparation
+    /// scratch reuses exact immutable shard bytes under a fresh header; it does
+    /// not establish origin availability. Selection still verifies canonical
     /// origin dependencies and advances the original fenced node CAS.
     /// Frames plus checkpoint notifications retain the existing 64-row bound.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one bounded preparation carries its original authority, work and scratch"
+    )]
     pub async fn prepare_node_bundle_with_checkpoints(
         &self,
         observed: &VersionedNodeAdvertisement,
@@ -149,6 +156,7 @@ impl NodeDirectory {
             &crate::control::authority::CellAuthority,
             &BundleCoverageProof,
         )],
+        mut preparation: Option<&mut BundlePreparation>,
         limits: cellule_ltx::Limits,
         now_ms: i64,
     ) -> Result<PreparedNodeBundle> {
@@ -165,9 +173,15 @@ impl NodeDirectory {
             let scope = frame.scope();
             (scope.application, scope.cell)
         }));
-        let mut catalog =
-            store::load_catalog_cells(&self.layout, observed.advertisement.session, head, &cells)
-                .await?;
+        let mut catalog = index::load_cells(
+            &self.layout,
+            observed.advertisement.session,
+            head,
+            &cells,
+            None,
+            preparation.as_deref_mut(),
+        )
+        .await?;
         // Release only the proven materialized prefix before extending any
         // binding. Its later selected suffix and complete issued range survive.
         closure::apply_checkpoints(&self.layout, &mut catalog, checkpoints, limits).await?;
@@ -247,6 +261,9 @@ impl NodeDirectory {
             catalog.selected_through = scope.node_sequence;
         }
         let mut prepared = self.upload_catalog(Some(head), catalog, frames).await?;
+        if let Some(preparation) = preparation {
+            preparation.remember(&self.layout, &prepared)?;
+        }
         prepared.assignments = assignments.to_vec();
         Ok(prepared)
     }

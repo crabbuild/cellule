@@ -222,6 +222,7 @@ command, worker and read/retry gate. `NodeDurability::start_bundle_publication`
 now retains one producer under the installed runtime ledger. It selects complete
 cohorts of at most 64 captures, 64 frames and 4 MiB, with a 1-ms assembly window
 and a 20-MiB working reservation, including one bounded fresh origin read.
+A separate 2-MiB reservation retains immutable catalog shards for preparation.
 Startup admission precedes installation of the
 irreversible feed. Selection and exact root checkpoints use the same original
 binding/heartbeat authority; 512 checkpoint requests are bounded and their
@@ -245,6 +246,18 @@ above 2 MiB retain serial verification. Selection retains no reconstruction
 bodies beyond the operation. Working admission remains 20 MiB; workload
 retention and protocol bounds remain unchanged. This is a structural charge,
 not allocator-profile qualification.
+
+The managed producer lends `BundlePreparation` to its authority's `select`
+callback. Pass it to `prepare_node_bundle_with_checkpoints`; manual callers
+may pass `None`. It keeps at most 256 exact encoded shard entries within its
+2-MiB reservation, including index overhead. Every preparation reads the header
+fresh and matches the shard's object, range and digest under the same store,
+path, session and log epoch before decoding cached bytes. Histories and native
+bodies are never retained in this cache. Proposal upload can fill it but grants
+no response proof; selection, closure and cold recovery keep their canonical
+checks. Both startup reservations precede feed installation and release when
+the producer exits, including cancellation and failure. The total startup
+reservation is 22 MiB within the existing node budget.
 
 Catalog loading coalesces contiguous same-object shard extents after the
 complete selected-shard byte preflight. Requested detached histories use a

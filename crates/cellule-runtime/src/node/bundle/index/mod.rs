@@ -10,6 +10,10 @@ mod codec;
 mod dense;
 mod history;
 mod io;
+mod preparation;
+pub use preparation::BundlePreparation;
+#[cfg(test)]
+pub(crate) use preparation::PREPARATION_BYTES;
 #[cfg(test)]
 mod tests;
 pub(super) use history::validate_deferred;

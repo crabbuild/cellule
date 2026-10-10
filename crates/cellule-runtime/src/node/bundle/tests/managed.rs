@@ -31,6 +31,15 @@ impl CellTelemetry for Responses {
 
 #[tokio::test]
 async fn rejected_producer_working_credit_does_not_install_an_irreversible_feed() {
+    rejected_startup(8 << 20).await;
+}
+
+#[tokio::test]
+async fn rejected_preparation_cache_credit_returns_working_credit_and_leaves_feed_available() {
+    rejected_startup(20 << 20).await;
+}
+
+async fn rejected_startup(retained: usize) {
     let mut f = Fixture::new().await;
     super::coverage::enroll(&mut f).await;
     let authority = Arc::new(Authority {
@@ -47,7 +56,7 @@ async fn rejected_producer_working_credit_does_not_install_an_irreversible_feed(
         f.lease.clone(),
     ));
     let pool = SqlWorkerPool::new(1, 1).unwrap();
-    pool.configure_retained_capacity(8 << 20).unwrap();
+    pool.configure_retained_capacity(retained).unwrap();
     durability
         .attach_selection_resources(pool.resource_ledger())
         .unwrap();
@@ -93,6 +102,7 @@ impl NodeBundlePublicationAuthority for FailedSelection {
         _: &'a [AssignedCapture],
         _: &'a [BundleCheckpoint],
         _: &'a [&'a BundleCoverageProof],
+        _: Option<&'a mut BundlePreparation>,
         _: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async { Err(Error::Node("injected bundle selection failure")) })

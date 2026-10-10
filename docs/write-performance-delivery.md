@@ -428,6 +428,30 @@ Publication preparation, metadata amplification, fresh read barriers and
 multiple streams remain separate work under the unchanged capacity contract.
 
 
+The [production-format shard-cache comparison](pr69-shard-cache-measurement.md)
+adds a runtime-owned 2-MiB cache of authenticated immutable catalog shards for
+proposal preparation. Fresh headers, dependency verification, fenced selection
+and cold recovery keep their canonical paths. The original 32-MiB admission
+case still passes; the total publisher startup reservation is 22 MiB. All 13
+isolated contributor routes and the six TLS authority tests pass.
+
+In one matched 60-second pair, successful mixed writes improved
+667.90→771.42/s and reads 6,694.00→7,744.17/s, with zero returned errors. Owner
+range reads fell 99,624→70,497. Write p99 remained 575.3 ms, dropped offers
+remained substantial, and candidate root-materialization debt grew
+97,937,214→133,378,917 bytes. All 96,122 candidate acknowledgements passed raw,
+warm and cold state/retry audits. This preserves a measured improvement without
+claiming the 2,000-write/20,000-read capacity goal or sustained parity.
+
+CI at the prior PR revision also exposed a stack overflow in the combined
+follower/reader maintenance executable. It reproduces locally at the normal
+stack limit; an enlarged-stack diagnostic completes but is not an accepted fix.
+A separate fixture observation can race with automatic coverage cleanup and
+find no retained tail. These executable checks remain required, beyond the
+13 contributor routes above. Their diagnosis is separate from the measured
+cache candidate.
+
+
 The fresh [integrated root-cut comparison](pr67-root-cut-measurement.md) includes
 main PR #64 and separates selected capture cleanup from original root tasks.
 At 2,000 offered Fleet writes/s across 2,000 Cells, successful throughput falls

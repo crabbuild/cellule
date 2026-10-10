@@ -111,6 +111,7 @@ impl NodeBundlePublicationAuthority for Authority {
         captures: &'a [crate::node::log_shipper::AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
         prefixes: &'a [&'a BundleCoverageProof],
+        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
@@ -128,6 +129,7 @@ impl NodeBundlePublicationAuthority for Authority {
                     &frames,
                     &assignments,
                     &ready,
+                    preparation,
                     Limits::default(),
                     NOW,
                 )

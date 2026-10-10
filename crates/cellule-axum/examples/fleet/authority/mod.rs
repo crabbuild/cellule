@@ -210,6 +210,7 @@ impl Authority {
         assignments: &[cellule_runtime::node::log::AssignedCommitRange],
         checkpoints: &[BundleCheckpoint],
         prefixes: &[&cellule_runtime::node::bundle::BundleCoverageProof],
+        preparation: Option<&mut cellule_runtime::node::bundle::BundlePreparation>,
         lease: &NodeLeaseGuard,
     ) -> Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>> {
         let _catalog = self.catalog.lock().await;
@@ -225,6 +226,7 @@ impl Authority {
                 frames,
                 assignments,
                 &ready,
+                preparation,
                 cellule_ltx::Limits::default(),
                 clock()?,
             )
@@ -343,6 +345,7 @@ impl NodeBundlePublicationAuthority for Authority {
         captures: &'a [cellule_runtime::node::log_shipper::AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
         prefixes: &'a [&'a cellule_runtime::node::bundle::BundleCoverageProof],
+        preparation: Option<&'a mut cellule_runtime::node::bundle::BundlePreparation>,
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>>> {
         Box::pin(async move {
@@ -351,8 +354,15 @@ impl NodeBundlePublicationAuthority for Authority {
                 .flat_map(|c| c.frames().iter().cloned())
                 .collect::<Vec<_>>();
             let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
-            self.select_frames(&frames, &assignments, checkpoints, prefixes, lease)
-                .await
+            self.select_frames(
+                &frames,
+                &assignments,
+                checkpoints,
+                prefixes,
+                preparation,
+                lease,
+            )
+            .await
         })
     }
 

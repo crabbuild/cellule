@@ -31,6 +31,7 @@ async fn ready_checkpoint_and_new_capture_share_one_catalog_upload_and_cas() {
             &frames,
             &[assigned],
             &[(&cell.authority, &original)],
+            None,
             Limits::default(),
             NOW,
         )
@@ -171,6 +172,7 @@ async fn combined_cohort_preserves_independent_cells_and_a_prior_hot_suffix() {
             &frames,
             &assignments,
             &checkpoints,
+            None,
             Limits::default(),
             NOW,
         )
@@ -268,6 +270,7 @@ async fn stale_checkpoint_and_combined_overflow_upload_nothing() {
                 &frames,
                 &[assigned],
                 &[(&cell.authority, &proofs[0])],
+                None,
                 Limits::default(),
                 NOW
             )
@@ -283,6 +286,7 @@ async fn stale_checkpoint_and_combined_overflow_upload_nothing() {
                 &frames,
                 &[assigned],
                 &checkpoints,
+                None,
                 Limits::default(),
                 NOW
             )
@@ -318,6 +322,7 @@ async fn combined_upload_cannot_select_after_origin_loss_or_original_lease_fenci
             &frames,
             &[assigned],
             &[(&cell.authority, &proof)],
+            None,
             Limits::default(),
             NOW,
         )

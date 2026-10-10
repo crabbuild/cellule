@@ -109,7 +109,7 @@ pub(in crate::node::bundle) async fn load(
     head: NodeBundleHead,
     wanted: Option<&BTreeSet<u8>>,
 ) -> Result<Catalog> {
-    load_inner(layout, session, head, wanted, None, None).await
+    load_inner(layout, session, head, wanted, None, None, None).await
 }
 
 pub(in crate::node::bundle) async fn load_cells(
@@ -118,12 +118,22 @@ pub(in crate::node::bundle) async fn load_cells(
     head: NodeBundleHead,
     cells: &BTreeSet<CellKey>,
     origin: Option<&super::super::origin::OriginBundle>,
+    preparation: Option<&mut BundlePreparation>,
 ) -> Result<Catalog> {
     let shards = cells
         .iter()
         .map(|(application, cell)| shard(application, cell))
         .collect();
-    load_inner(layout, session, head, Some(&shards), Some(cells), origin).await
+    load_inner(
+        layout,
+        session,
+        head,
+        Some(&shards),
+        Some(cells),
+        origin,
+        preparation,
+    )
+    .await
 }
 
 async fn load_inner(
@@ -133,10 +143,14 @@ async fn load_inner(
     wanted: Option<&BTreeSet<u8>>,
     cells: Option<&BTreeSet<CellKey>>,
     origin: Option<&super::super::origin::OriginBundle>,
+    mut preparation: Option<&mut BundlePreparation>,
 ) -> Result<Catalog> {
     let Some(root) = load_root(layout, session, head, origin).await? else {
         return super::super::store::load_legacy_catalog(layout, session, head).await;
     };
+    if let Some(preparation) = preparation.as_deref_mut() {
+        preparation.bind(layout, session, head.epoch);
+    }
     // An immutable shard can be individually bounded while a selected cohort
     // spans many large historical shards. Charge its aggregate encoded metadata
     // before any leaf I/O or decoding; a point lookup charges only its shard.
@@ -168,7 +182,24 @@ async fn load_inner(
     let mut shards = Vec::with_capacity(SHARDS);
     for (id, shard) in root.shards.iter().enumerate() {
         if shard.is_some() && !wanted.is_some_and(|wanted| !wanted.contains(&(id as u8))) {
-            shards.push(id as u16);
+            let reference = root.shards[id]
+                .as_ref()
+                .ok_or(Error::Node("bundle shard plan is absent"))?;
+            if let Some(body) = preparation
+                .as_deref()
+                .and_then(|cache| cache.get(id as u8, &reference.extent))
+            {
+                let (rows, leaf_histories) = decode_rows(&root, reference, id as u8, body)?;
+                insert_rows(
+                    id as u8,
+                    (rows, leaf_histories),
+                    &mut loaded,
+                    &mut bindings,
+                    &mut histories,
+                )?;
+            } else {
+                shards.push(id as u16);
+            }
         }
     }
     let shard_extent = |id: u16| {
@@ -196,14 +227,17 @@ async fn load_inner(
                     .as_ref()
                     .ok_or(Error::Node("bundle shard plan is absent"))?;
                 let body = window.slice(&bytes, &shard.extent)?;
-                let (rows, leaf_histories) = decode_rows(&root, shard, id, body)?;
-                for (pin, history) in leaf_histories {
-                    if histories.insert(pin, history).is_some() {
-                        return Err(Error::Node("bundle inventory repeats a Cell pin"));
-                    }
+                let (rows, leaf_histories) = decode_rows(&root, shard, id, body.clone())?;
+                if let Some(cache) = preparation.as_deref_mut() {
+                    cache.insert(id, &shard.extent, &body);
                 }
-                bindings.extend(rows.iter().cloned());
-                loaded.insert(id, rows);
+                insert_rows(
+                    id,
+                    (rows, leaf_histories),
+                    &mut loaded,
+                    &mut bindings,
+                    &mut histories,
+                )?;
             }
         }
     }
@@ -268,6 +302,23 @@ async fn load_inner(
     };
     catalog.validate()?;
     Ok(catalog)
+}
+
+fn insert_rows(
+    id: u8,
+    (rows, leaf_histories): DecodedRows,
+    loaded: &mut BTreeMap<u8, Vec<Binding>>,
+    bindings: &mut Vec<Binding>,
+    histories: &mut BTreeMap<[u8; 32], history::History>,
+) -> Result<()> {
+    for (pin, history) in leaf_histories {
+        if histories.insert(pin, history).is_some() {
+            return Err(Error::Node("bundle inventory repeats a Cell pin"));
+        }
+    }
+    bindings.extend(rows.iter().cloned());
+    loaded.insert(id, rows);
+    Ok(())
 }
 
 #[allow(

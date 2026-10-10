@@ -266,7 +266,7 @@ async fn paused_bundle_upload_allows_renewal_but_serializes_new_bindings() {
     f.store.armed.store(true, Ordering::Release);
     let selection = f
         .authority
-        .select(&f.captures, &[], &[], &f.authority.lease);
+        .select(&f.captures, &[], &[], None, &f.authority.lease);
     tokio::pin!(selection);
     assert!(futures_util::poll!(selection.as_mut()).is_pending());
     assert!(futures_util::poll!(Box::pin(f.store.entered.notified())).is_ready());
@@ -337,7 +337,7 @@ async fn fenced_owner_cannot_select_a_late_bundle_upload() {
     f.store.armed.store(true, Ordering::Release);
     let selection = f
         .authority
-        .select(&f.captures, &[], &[], &f.authority.lease);
+        .select(&f.captures, &[], &[], None, &f.authority.lease);
     tokio::pin!(selection);
     assert!(futures_util::poll!(selection.as_mut()).is_pending());
     assert!(futures_util::poll!(Box::pin(f.store.entered.notified())).is_ready());
@@ -366,7 +366,7 @@ async fn changed_catalog_is_not_overwritten_after_upload() {
     f.store.armed.store(true, Ordering::Release);
     let selection = f
         .authority
-        .select(&f.captures, &[], &[], &f.authority.lease);
+        .select(&f.captures, &[], &[], None, &f.authority.lease);
     tokio::pin!(selection);
     assert!(futures_util::poll!(selection.as_mut()).is_pending());
     assert!(futures_util::poll!(Box::pin(f.store.entered.notified())).is_ready());
@@ -412,7 +412,7 @@ async fn cancelled_preparation_releases_ordering_without_crediting_the_capture()
     f.store.armed.store(true, Ordering::Release);
     let mut selection = f
         .authority
-        .select(&f.captures, &[], &[], &f.authority.lease);
+        .select(&f.captures, &[], &[], None, &f.authority.lease);
     assert!(futures_util::poll!(selection.as_mut()).is_pending());
     assert!(futures_util::poll!(Box::pin(f.store.entered.notified())).is_ready());
     drop(selection);
@@ -433,7 +433,7 @@ async fn cancelled_preparation_releases_ordering_without_crediting_the_capture()
     // caller. Retry that same obligation against the new predecessor catalog.
     let proofs = f
         .authority
-        .select(&f.captures, &[], &[], &f.authority.lease)
+        .select(&f.captures, &[], &[], None, &f.authority.lease)
         .await
         .unwrap();
     assert_eq!(proofs[0].commit_sequence(), 2);
