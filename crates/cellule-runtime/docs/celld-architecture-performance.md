@@ -510,8 +510,8 @@ not a longer renewal interval or a removal of fencing checks.
 
 ## Qualification and success criteria
 
-Use the existing [all-arrival, SLO, and debt gates](write-performance-design.md#schedule-and-acceptance)
-and [fault gates](write-performance-design.md#failure-qualification)
+Use the existing [all-arrival, SLO, and debt gates](write-performance-design.md#capacity-contract)
+and [fault gates](delivery.md#multi-pod-fault)
 without relaxing them. Freeze additional small-KV scenarios before running:
 
 | Dimension | Required experiments |
