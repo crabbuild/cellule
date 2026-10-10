@@ -277,7 +277,12 @@ async fn run(
                 () = lease.wait_fenced() => return Err(Error::Fenced),
             }
         }
-        let reserved_checkpoint = usize::from(first_checkpoint.is_some());
+        // Original root tasks hold credit until their callback joins. Reserve
+        // the entire ready cohort before native assembly can occupy its rows;
+        // a continuously full native feed must not split it into tiny CASes.
+        let mut ready_checkpoints =
+            checkpoints::Cohort::gather(&mut checkpoints, first_checkpoint, MAX_FRAMES - frames)?;
+        let reserved_checkpoints = ready_checkpoints.notification_count();
         let deadline = tokio::time::Instant::now() + ASSEMBLY;
         while captures.len() < MAX_CAPTURES {
             let next = tokio::select! {
@@ -289,7 +294,7 @@ async fn run(
                 break;
             };
             let next_bytes = capture_bytes(&next)?;
-            if frames + next.frames().len() + reserved_checkpoint > MAX_FRAMES
+            if frames + next.frames().len() + reserved_checkpoints > MAX_FRAMES
                 || bytes + next_bytes > MAX_NATIVE_BYTES
             {
                 carry = Some(next);
@@ -299,8 +304,7 @@ async fn run(
             bytes += next_bytes;
             captures.push(next);
         }
-        let ready_checkpoints =
-            checkpoints::Cohort::gather(&mut checkpoints, first_checkpoint, MAX_FRAMES - frames)?;
+        ready_checkpoints.extend(&mut checkpoints, MAX_FRAMES - frames)?;
         let original = durability.upgrade().ok_or(Error::RuntimeClosed)?;
         let result = tokio::select! {
             proofs = authority.select(&captures, ready_checkpoints.values(), lease) => proofs,

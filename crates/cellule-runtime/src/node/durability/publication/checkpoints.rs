@@ -22,13 +22,26 @@ impl Cohort {
             }
             cohort.push(first)?;
         }
-        while cohort.completions.len() < maximum {
+        cohort.extend(receiver, maximum)?;
+        Ok(cohort)
+    }
+
+    pub(super) fn extend(
+        &mut self,
+        receiver: &mut mpsc::Receiver<CheckpointRequest>,
+        maximum: usize,
+    ) -> Result<()> {
+        while self.completions.len() < maximum {
             let Ok(next) = receiver.try_recv() else {
                 break;
             };
-            cohort.push(next)?;
+            self.push(next)?;
         }
-        Ok(cohort)
+        Ok(())
+    }
+
+    pub(super) fn notification_count(&self) -> usize {
+        self.completions.len()
     }
 
     fn push(&mut self, request: CheckpointRequest) -> Result<()> {
