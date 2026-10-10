@@ -2,8 +2,11 @@
 
 October 10, 2026. The runtime-owned producer can stage and upload one successor
 while its predecessor is publishing. Selection and receipt confirmation remain
-ordered. **This integration has no new application throughput measurement;
-the 2,000-Cell mixed-load goal remains unmet.**
+ordered. A [fresh application diagnostic](managed-bundle-pipeline-measurement.md)
+completes 873.35–1,038.80 writes/s and 8,877.55–10,897.50 reads/s, with
+268.3–689.1-ms write request p99 and growing root-materialization debt.
+**The 2,000-Cell mixed-load goal remains unmet; these short pairs do not qualify
+sustainable capacity.**
 
 ## Publication and admission
 
@@ -81,8 +84,9 @@ compatibility, dependency verification and two-preparation model checks. Those
 model checks do not establish host memory accounting or adapter liveness; the
 managed tests cover those lifetimes separately.
 
-The [latest application measurements](single-pass-bundle-encoding.md) remain
-at `73d8a384`. Builds, raw failed/passed logs and isolated snapshots for this
+The [latest application measurements](managed-bundle-pipeline-measurement.md)
+compare serial `d42b978` with this managed integration at `4712c4c`. Builds,
+raw failed/passed logs and isolated snapshots for this
 integration are retained outside Git under
 `cellule-ios-parity-20261010/managed-bundle-pipeline`.
 
