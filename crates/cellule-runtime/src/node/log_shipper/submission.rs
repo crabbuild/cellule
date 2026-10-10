@@ -59,7 +59,7 @@ impl Observation {
 
     pub(super) fn enter(&mut self, stage: Stage) {
         let now = Instant::now();
-        self.observe_phase(now);
+        self.observe_phase(now, true);
         self.phase_started = now;
         self.stage = stage;
     }
@@ -70,7 +70,7 @@ impl Observation {
         self.timing.enqueued = Some(succeeded);
     }
 
-    fn observe_phase(&mut self, now: Instant) {
+    fn observe_phase(&mut self, now: Instant, completed: bool) {
         let duration = now.saturating_duration_since(self.phase_started);
         let phase = match self.stage {
             Stage::Validation => &mut self.timing.validation,
@@ -90,7 +90,7 @@ impl Observation {
             Stage::Assignment => Some(&mut self.timing.encoding),
             Stage::Validation | Stage::PublicationSlot => None,
         };
-        if let Some(optional) = optional {
+        if let Some(optional) = optional.filter(|_| completed) {
             *optional = Some(optional.unwrap_or_default() + duration);
         }
     }
@@ -99,7 +99,7 @@ impl Observation {
 impl Drop for Observation {
     fn drop(&mut self) {
         let now = Instant::now();
-        self.observe_phase(now);
+        self.observe_phase(now, self.timing.succeeded);
         self.timing.total = now.saturating_duration_since(self.started);
         self.telemetry.node_log_submission(self.cell, self.timing);
     }

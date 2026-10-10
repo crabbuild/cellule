@@ -502,6 +502,7 @@ async fn actor_case(prior_fleet: bool, cancel_caller: bool, early_selection: boo
                     std::time::Instant::now() + std::time::Duration::from_secs(5),
                 ),
                 Box::new(|_| panic!("unproven suffix must not reach a query handler")),
+                None,
             )
             .await;
         assert!(matches!(unproven, Err(Error::PendingPublication)));

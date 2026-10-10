@@ -6,7 +6,7 @@ use tracing::Instrument as _;
 pub(super) async fn execute(
     pool: SqlWorkerPool,
     mut command: Box<QueuedCommand>,
-    interrupt: Arc<cellule_ltx::rusqlite::InterruptHandle>,
+    interrupt: Arc<cellule_ltx::DbInterruptHandle>,
     generation: u64,
     effect_id: u64,
 ) -> TaskResult {

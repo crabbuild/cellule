@@ -214,6 +214,7 @@ impl WorkerCommand {
             | Self::BindPrepared { reply, .. }
             | Self::BindMigrationPrepared { reply, .. }
             | Self::ConfirmDurable { reply, .. }
+            | Self::BindBundleMaterialized { reply, .. }
             | Self::ConfirmBootstrapPublished { reply, .. }
             | Self::Fence { reply, .. }
             | Self::Deactivate { reply, .. }
@@ -257,7 +258,8 @@ impl WorkerCommand {
             Self::BindPreparedAll { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
-            Self::ConfirmPublishedRange { reply, .. } => {
+            Self::ConfirmPublishedRange { reply, .. }
+            | Self::ReleaseBundleCaptures { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
             Self::Pending { reply, .. } => {

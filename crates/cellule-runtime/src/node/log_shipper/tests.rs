@@ -694,7 +694,23 @@ async fn covered_queued_prefix_keeps_the_uncovered_suffix_fleet_durable() {
     assert!(complete_round(
         &gate,
         &crate::fleet::telemetry::CellTelemetryHandle::default(),
-        round,
+        (
+            round,
+            crate::fleet::telemetry::NodeLogBatchTiming {
+                leader_session: leader,
+                log_epoch: 2,
+                first_sequence: 1,
+                last_sequence: 2,
+                queue_wait: Duration::ZERO,
+                collection: Duration::ZERO,
+                append: Duration::ZERO,
+                frames: 2,
+                completed_captures: 2,
+                encoded_bytes: 0,
+                members: 1,
+                succeeded: false,
+            }
+        ),
     ));
     lanes.join().await.unwrap();
 

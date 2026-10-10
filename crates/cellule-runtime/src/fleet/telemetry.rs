@@ -506,6 +506,9 @@ pub trait CellTelemetry: Send + Sync {
     /// Records bytes sent to follower append lanes and whether every lane acknowledged them.
     fn node_log_append(&self, _acknowledged: bool, _bytes: u64) {}
 
+    /// Records the original capture submission, including refused or cancelled work.
+    fn node_log_submission(&self, _cell: CellId, _timing: NodeLogSubmissionTiming) {}
+
     /// Records one follower worker attempt after its storage locks are released.
     /// Leader and epoch are trace correlation keys, never metric labels.
     fn follower_append(&self, _timing: FollowerAppendTiming) {}
