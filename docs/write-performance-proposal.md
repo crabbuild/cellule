@@ -11,7 +11,41 @@ comparison. This document defines the next deliverables and acceptance gates;
 it supersedes the implementation recommendations in the historical
 [publication metadata cutover draft](publication-metadata-cutover.md).
 
+## Active mixed-load objective
+
+The active user goal is one 8-vCPU/16-GiB owner managing 2,000 resident Cells
+while accepting 2,000 writes/s and 20,000 reads/s simultaneously with low latency.
+Qualify that mixed workload directly, preserving the delivery, correctness,
+stability and read-latency gates below. A resident-Cell count, write-only result,
+or overloaded completion rate cannot establish it. Report owner resources and
+any CPU, memory or storage shared with followers, the client and the provider.
+The separate historical write-only profiles below remain distinct evidence;
+they do not replace the active mixed-load measurement.
+
 ## Core write-path reference
+
+The architectural reference also includes celld v0.6.2,
+[`90b43017241f81189453d326d05948f388b34652`](https://github.com/denoland/celld/commit/90b43017241f81189453d326d05948f388b34652),
+dated October 7, 2026. Its
+[independent bundle loop](https://github.com/denoland/celld/blob/90b43017241f81189453d326d05948f388b34652/crates/celld/ltx_repl.rs#L4697),
+[ordered shipping loop](https://github.com/denoland/celld/blob/90b43017241f81189453d326d05948f388b34652/crates/celld/ltx_repl.rs#L4816),
+and [post-PUT authority check](https://github.com/denoland/celld/blob/90b43017241f81189453d326d05948f388b34652/crates/celld/node_log.rs#L6673)
+retain the separation of execution, follower durability, bucket coverage and
+per-Cell materialization described below. Existing benchmark manifests remain
+pinned to v0.6.1; they are not measurements of v0.6.2.
+
+Cellule already permits a Fleet response while bucket selection is held, as
+tested by `delayed_selection_keeps_fleet_acks_visible_and_allows_prior_root_before_joined_drain`.
+The unresolved coupling is bounded backlog: `AssignedCapture` retains native
+byte admission through publication, while `select_node_bundle` verifies prior
+roots and historical locators before advancing coverage. Publication that falls
+behind therefore exhausts capture credit and delays new execution. Parallel
+checkpoint reads reduce individual waits but do not remove this repeated work.
+The next architectural change must append new captured ranges efficiently and
+retire their original credit at exact bucket coverage, while independently
+materializing per-Cell prefixes. It must preserve origin-loss detection,
+canonical recovery inventory and complete follower retention; increasing a
+backlog limit or dropping prior-dependency checks alone does not satisfy it.
 
 Use celld's actual LTX replication path as the implementation reference, rather
 than equating use of SQLite/LTX with architectural parity. The pinned reference

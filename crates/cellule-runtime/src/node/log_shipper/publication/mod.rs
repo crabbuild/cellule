@@ -1,7 +1,7 @@
 //! Complete original captures retained by the same bounded native issuance lane.
 
 use super::*;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, Weak};
 use tokio::sync::watch;
 
 /// Selected coverage and its node-ledger reservation, shared by complete
@@ -9,6 +9,26 @@ use tokio::sync::watch;
 pub(crate) struct SelectedBundle {
     pub(crate) proof: crate::node::bundle::BundleCoverageProof,
     pub(crate) _memory: crate::fleet::resource::ResourceReservation,
+    // Weak indexes retain only this small anchor allocation after the final
+    // strong proof drops, not the much larger inline SelectedBundle allocation.
+    prefix: Arc<Weak<Self>>,
+}
+
+impl SelectedBundle {
+    pub(crate) fn new(
+        proof: crate::node::bundle::BundleCoverageProof,
+        memory: crate::fleet::resource::ResourceReservation,
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|original| Self {
+            proof,
+            _memory: memory,
+            prefix: Arc::new(original.clone()),
+        })
+    }
+
+    pub(crate) fn weak_prefix(&self) -> Weak<Weak<Self>> {
+        Arc::downgrade(&self.prefix)
+    }
 }
 
 #[derive(Clone)]

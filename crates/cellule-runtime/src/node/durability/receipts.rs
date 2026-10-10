@@ -98,12 +98,7 @@ impl<'a> SelectedCaptures<'a> {
             .proofs
             .into_iter()
             .zip(memories)
-            .map(|(proof, memory)| {
-                Arc::new(SelectedBundle {
-                    proof,
-                    _memory: memory,
-                })
-            })
+            .map(|(proof, memory)| SelectedBundle::new(proof, memory))
             .collect::<Vec<_>>();
         for capture in self.captures {
             let proof = selected

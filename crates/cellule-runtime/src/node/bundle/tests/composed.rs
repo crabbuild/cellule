@@ -41,10 +41,14 @@ impl NodeBundlePublicationAuthority for HeldSelection {
         &'a self,
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
+        prefixes: &'a [&'a BundleCoverageProof],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
-            let result = self.original.select(captures, checkpoints, lease).await?;
+            let result = self
+                .original
+                .select(captures, checkpoints, prefixes, lease)
+                .await?;
             self.combined.fetch_add(checkpoints.len(), Ordering::SeqCst);
             self.largest_combined
                 .fetch_max(checkpoints.len(), Ordering::SeqCst);

@@ -1,5 +1,6 @@
 //! Exact native assignment verification and shared authority selection.
 use super::*;
+
 use crate::node::lease::NodeLeaseGuard;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 
@@ -7,10 +8,31 @@ use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
 pub(super) struct LiveBundleCoverage {
     node: crate::identity::NodeId,
     lease: NodeLeaseGuard,
+    limits: cellule_ltx::Limits,
+    origin_identity: u64,
+    origin_path: String,
     assignments: Vec<crate::node::log::AssignedCommitRange>,
 }
 
 impl LiveBundleCoverage {
+    pub(super) fn matches_origin(
+        &self,
+        layout: &cellule_ltx::CellStorageLayout,
+        session: SessionId,
+        lease: &NodeLeaseGuard,
+        limits: cellule_ltx::Limits,
+    ) -> bool {
+        self.lease.same_lease(lease)
+            && self.lease.check().is_ok()
+            && self.limits.max_database_bytes == limits.max_database_bytes
+            && self.limits.max_capture_bytes == limits.max_capture_bytes
+            && self.limits.max_file_bytes == limits.max_file_bytes
+            && self.limits.max_plan_bytes == limits.max_plan_bytes
+            && self.limits.max_segments == limits.max_segments
+            && self.origin_identity == layout.immutable_cache_identity()
+            && self.origin_path == layout.node_path(session.as_bytes()).as_ref()
+    }
+
     pub(super) fn check_assignment(
         &self,
         assignment: &crate::node::log::AssignedCommitRange,
@@ -35,6 +57,7 @@ impl LiveBundleCoverage {
 
     pub(super) fn retained_metadata_bytes(&self) -> usize {
         self.assignments.capacity() * std::mem::size_of::<crate::node::log::AssignedCommitRange>()
+            + self.origin_path.capacity()
     }
 }
 
@@ -239,17 +262,51 @@ impl NodeDirectory {
         limits: cellule_ltx::Limits,
         now_ms: i64,
     ) -> Result<(VersionedNodeAdvertisement, Vec<BundleCoverageProof>)> {
+        self.select_node_bundle_extending(observed, prepared, lease, &[], limits, now_ms)
+            .await
+    }
+
+    /// Extends original live coverage using freshly verified new origin bytes.
+    /// Prior proofs must match the same lease, store, binding, base and exact
+    /// locator prefix. Otherwise the complete fresh verifier is used. Recovery
+    /// always verifies every required dependency, independently of this shortcut.
+    pub async fn select_node_bundle_extending(
+        &self,
+        observed: &VersionedNodeAdvertisement,
+        prepared: &PreparedNodeBundle,
+        lease: &NodeLeaseGuard,
+        prefixes: &[&BundleCoverageProof],
+        limits: cellule_ltx::Limits,
+        now_ms: i64,
+    ) -> Result<(VersionedNodeAdvertisement, Vec<BundleCoverageProof>)> {
         lease.check()?;
+        if prefixes.len() > MAX_FRAMES {
+            return Err(Error::Capacity("bundle prefix count"));
+        }
         if prepared.assignments.is_empty() {
             return Err(Error::Node("native bundle has no complete assignments"));
         }
         let origin = origin::OriginBundle::load(&self.layout, prepared).await?;
         let bindings = origin.selected_bindings(prepared)?;
+        let mut fresh = Vec::with_capacity(bindings.len());
+        for binding in &bindings {
+            if !extension::verify(
+                &self.layout,
+                prepared,
+                lease,
+                binding,
+                prefixes,
+                limits,
+                &origin,
+            )? {
+                fresh.push(binding);
+            }
+        }
         verification::verify_cohort(
             &self.layout,
             prepared.catalog.session,
             prepared.catalog.epoch,
-            &bindings,
+            &fresh,
             limits,
             &origin,
         )
@@ -297,6 +354,12 @@ impl NodeDirectory {
                 proof.live = Some(LiveBundleCoverage {
                     node: selected.advertisement.node,
                     lease: lease.clone(),
+                    limits,
+                    origin_identity: self.layout.immutable_cache_identity(),
+                    origin_path: self
+                        .layout
+                        .node_path(prepared.catalog.session.as_bytes())
+                        .to_string(),
                     assignments,
                 });
             }

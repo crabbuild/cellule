@@ -44,10 +44,14 @@ impl NodeBundlePublicationAuthority for HeldReceiptCredit {
         &'a self,
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
+        prefixes: &'a [&'a BundleCoverageProof],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
-            let proofs = self.original.select(captures, checkpoints, lease).await?;
+            let proofs = self
+                .original
+                .select(captures, checkpoints, prefixes, lease)
+                .await?;
             if self.selects.fetch_add(1, Ordering::SeqCst) == 1 {
                 let budget = self.ledger.snapshot()?;
                 let remaining = budget.limit.retained_bytes() - budget.used.retained_bytes();

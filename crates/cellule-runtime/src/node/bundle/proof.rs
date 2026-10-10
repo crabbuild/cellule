@@ -202,6 +202,15 @@ pub(super) struct BindingChain {
 }
 
 impl BindingChain {
+    pub(super) fn selected(binding: &Binding) -> Self {
+        Self {
+            position: binding.selected_position,
+            commit: binding.selected_commit,
+            sequence: binding.selected_sequence,
+            first_commit: binding.first_commit,
+        }
+    }
+
     pub(super) fn new(binding: &Binding) -> Result<Self> {
         let base = binding
             .control

@@ -42,6 +42,40 @@ CPU; report contention. tmpfs does not qualify physical-device durability.
 HTTP endpoints, certificates, credentials, and placement are fixture policy.
 The credentials in these scripts are synthetic and used only by this fixture.
 
+Both applications use RustFS with `MIMALLOC_ALLOW_THP=0`. The pinned provider
+was OOM-killed at 2 GiB in two mixed-load diagnostics; the memory probe found
+anonymous memory dominated by transparent huge pages after file-cache reclaim.
+Changing only this allocator setting passed warm/cold checks for 97,948 ACKs
+with the same limits. This establishes a usable diagnostic configuration,
+not long-run provider capacity. Keep this setting matched across comparisons;
+historical runs without it are not an equivalent provider configuration.
+
+`--resource-profile isolated-owner` requires at least 12 guest CPUs and 23 GiB
+usable guest memory. It reserves CPUs 0–7 for the 8-CPU/16-GiB owner and confines
+followers, client and RustFS to CPUs 8–11. Each follower has a 1-CPU/2-GiB limit;
+RustFS has 2 CPUs/2 GiB and the client 4 CPUs/2 GiB. Support roles share those
+four CPUs, so their contention still needs measurement. Swap is disabled for
+these containers. The harness checks Docker configuration and effective cgroup
+CPU sets, quotas and memory limits before initialization and in resource
+snapshots. It saves initial evidence in `resource-placement.json`. This is a
+separate profile: do not compare it as an algorithm change against historical
+shared-VM runs. Guest CPU placement does not isolate host services or qualify
+physical-device durability; report those limits separately.
+
+The example authority's queued-renewal regressions use a fresh generated TLS
+identity and an in-memory directory. From an isolated verification checkout,
+run them explicitly with the TLS directory produced by
+`scripts/generate-capacity-tls.py`:
+
+```sh
+CELLULE_TEST_FLEET_TLS=/absolute/path/to/generated/tls \
+  cargo test -p cellule-axum --example sql --all-features --locked \
+  renewal_tests -- --ignored
+```
+
+These tests check renewal behind queued work and rejection of a heartbeat
+fenced while waiting. They do not replace fleet drain and cold-recovery checks.
+
 The default 64-MiB retained-work and 1-GiB managed-disk limits are passed only
 to Cellule. Case metadata records these profile values for both systems, but
 the runner does not configure equivalent celld internal budgets. Matching

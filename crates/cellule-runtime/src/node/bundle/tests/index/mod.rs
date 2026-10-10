@@ -41,12 +41,14 @@ fn head_session(f: &Fixture) -> SessionId {
 mod base_cohort;
 mod bootstrap;
 mod checkpoint;
+mod checkpoint_cohort;
 mod cohort;
 mod compatibility;
 mod composed;
 mod copy_on_write;
 mod density;
 mod encoding;
+mod extension;
 mod history_cohort;
 mod inventory;
 mod metadata_cohort;

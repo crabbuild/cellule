@@ -92,6 +92,7 @@ impl NodeBundlePublicationAuthority for FailedSelection {
         &'a self,
         _: &'a [AssignedCapture],
         _: &'a [BundleCheckpoint],
+        _: &'a [&'a BundleCoverageProof],
         _: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async { Err(Error::Node("injected bundle selection failure")) })
@@ -300,6 +301,7 @@ pub(super) async fn managed_actor_case(
     let digest = Digest::from_bytes([9; 32]);
     let mut commands = tokio::task::JoinSet::new();
     let mut results = Vec::new();
+    let mut first_round_root_reads = None;
     for byte in 1_u16..=per_cell * 2 {
         if byte % 8 == 1 {
             renew_actor_lease(&authority, &f.lease).await;
@@ -337,6 +339,21 @@ pub(super) async fn managed_actor_case(
             }
         } else {
             results.push(command.await);
+            let root_reads = f
+                .count
+                .requests()
+                .iter()
+                .filter(|request| request.location.ends_with(".root"))
+                .count();
+            if byte == 2 {
+                first_round_root_reads = Some(root_reads);
+            } else if byte > 2 {
+                assert_eq!(
+                    Some(root_reads),
+                    first_round_root_reads,
+                    "the managed producer reread an unchanged base after a live prefix was installed"
+                );
+            }
         }
     }
     while let Some(result) = commands.join_next().await {

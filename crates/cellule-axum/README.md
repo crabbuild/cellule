@@ -521,6 +521,9 @@ separate processes, pinned mTLS, signed directory enrollment, and fsynced
 Cellule commit frames unchanged. See the [node capacity runner](performance/node-capacity.md)
 for setup, proof-source checks, resource evidence, and remaining qualification
 requirements. HTTP endpoints and transport wiring remain application-owned.
+The example allows 64 MiB of retained work, including the shared publisher's
+20-MiB startup reservation. This is an admission allowance, separate from
+SQLite resident memory and the process's total memory usage.
 The SQL example selects its response row inside the mutation batch and stores
 it in the durable command outcome. The reply uses that outcome's proof and
 receipt, eliminating a second actor dispatch and a follow-up query after commit.

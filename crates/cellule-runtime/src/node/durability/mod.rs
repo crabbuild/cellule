@@ -364,10 +364,7 @@ impl NodeDurability {
                 .with_retained_bytes(selected.proof.retained_metadata_bytes()?),
         )?;
         let proof = selected.proof.original_capture_prefix(assignment)?;
-        Ok(Arc::new(crate::node::log_shipper::SelectedBundle {
-            proof,
-            _memory: memory,
-        }))
+        Ok(crate::node::log_shipper::SelectedBundle::new(proof, memory))
     }
 
     pub(crate) async fn checkpoint_materialized(

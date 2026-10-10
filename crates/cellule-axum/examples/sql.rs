@@ -50,6 +50,8 @@ mod sql_metrics;
 
 const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
 const MAX_CELLS: u32 = 2_000;
+// Shared publication reserves 20 MiB before foreground work is admitted.
+const RETAINED_WORK_BYTES: usize = 64 * 1024 * 1024;
 // Manifest shard counts are powers of two; a probe activates a bounded subset.
 const DECLARED_SHARDS: u32 = 2_048;
 const SCHEMA: &str = "CREATE TABLE orders (id INTEGER PRIMARY KEY, total_cents INTEGER NOT NULL)";
@@ -404,12 +406,12 @@ async fn main() -> ExampleResult<()> {
     let runtime = if fleet_config.is_some() {
         CellRuntime::new_with_replica_host_requiring_node_lease(
             pool,
-            16 * 1024 * 1024,
+            RETAINED_WORK_BYTES,
             session,
             host,
         )?
     } else {
-        CellRuntime::new_with_replica_host(pool, 16 * 1024 * 1024, session, host)?
+        CellRuntime::new_with_replica_host(pool, RETAINED_WORK_BYTES, session, host)?
     };
     let mut fleet_owner = None;
     let result: ExampleResult<()> = async {

@@ -15,6 +15,55 @@ RUNNER_BYTES = Path(__file__).read_bytes()
 RUNNER_SHA256 = hashlib.sha256(RUNNER_BYTES).hexdigest()
 CREDS = ['-e', 'AWS_ACCESS_KEY_ID=benchmark_access', '-e', 'AWS_SECRET_ACCESS_KEY=benchmark_secret_private', '-e', 'AWS_DEFAULT_REGION=us-east-1']
 
+def isolated_owner():
+    return getattr(ARGS, 'resource_profile', 'shared-vm') == 'isolated-owner'
+
+def resource_limits(role):
+    if role not in ('owner', 'follower', 'provider', 'client'):
+        raise ValueError('unknown benchmark resource role')
+    if isolated_owner():
+        cpus, gib = {'owner': (8, 16), 'follower': (1, 2),
+                     'provider': (2, 2), 'client': (4, 2)}[role]
+        cpuset = '0-7' if role == 'owner' else '8-11'
+    else:
+        cpus, gib = {'owner': (8, 16), 'follower': (8, 16),
+                     'provider': (2, 2), 'client': (4, 4)}[role]
+        cpuset = None
+    return cpus, gib, cpuset
+
+def resource_args(role):
+    cpus, gib, cpuset = resource_limits(role)
+    args = ['--cpus', str(cpus), '--memory', f'{gib}g']
+    if isolated_owner() or role != 'client':
+        args += ['--memory-swap', f'{gib}g']
+    if cpuset:
+        args += ['--cpuset-cpus', cpuset]
+    return args
+
+def validate_resource_host(info):
+    if isolated_owner() and (info['NCPU'] < 12 or info['MemTotal'] < 23 * 1024**3):
+        raise ValueError('isolated owner requires at least 12 guest CPUs and 23 GiB usable memory')
+
+def verify_resource_role(name, role):
+    if not isolated_owner():
+        return None
+    cpus, gib, cpuset = resource_limits(role)
+    config = json.loads(docker('inspect', name).stdout)[0]['HostConfig']
+    expected = {'NanoCpus': cpus * 10**9, 'Memory': gib * 1024**3,
+                'MemorySwap': gib * 1024**3, 'CpusetCpus': cpuset}
+    if any(config.get(key) != value for key, value in expected.items()):
+        raise RuntimeError('container resource configuration differs: ' + name)
+    actual = docker('exec', name, 'sh', '-c',
+                    'cat /sys/fs/cgroup/cpuset.cpus.effective; cat /sys/fs/cgroup/cpu.max; '
+                    'cat /sys/fs/cgroup/memory.max; cat /sys/fs/cgroup/memory.swap.max').stdout.splitlines()
+    if len(actual) != 4:
+        raise RuntimeError('incomplete cgroup resource evidence: ' + name)
+    quota, period = actual[1].split()
+    if (actual[0] != cpuset or quota == 'max' or int(quota) != cpus * int(period)
+            or actual[2] != str(gib * 1024**3) or actual[3] != '0'):
+        raise RuntimeError('effective cgroup resources differ: ' + name)
+    return {'role': role, 'host_config': expected, 'effective_cgroup': actual}
+
 def parse_provider_filesystem(output):
     """The Linux volume and its inode budget are shared by retained cases."""
     lines = output.strip().splitlines()
@@ -146,6 +195,8 @@ def snapshot(directory, label, names):
     failures = []
     for name in names + [STORE, CONTROL]:
         data[name] = {'inspect': json.loads(docker('inspect', name).stdout)[0]}
+        role = 'provider' if name == STORE else 'client' if name == CONTROL else 'follower' if name.endswith(('peer-1', 'peer-2')) else 'owner'
+        data[name]['resource_placement'] = verify_resource_role(name, role)
         p = docker('exec', name, 'sh', '-c', 'cat /proc/1/limits; cat /proc/1/status; ls /proc/1/fd | wc -l; cat /sys/fs/cgroup/memory.events; cat /sys/fs/cgroup/cpu.stat', check=False)
         data[name]['process'] = p.stdout + p.stderr
         state = data[name]['inspect']['State']
@@ -179,7 +230,7 @@ def sampler(directory, stop):
 
 def start_node(system, durability, index, prefix, name):
     port = 8080 + index * 10
-    args = ['run', '-d', '--name', name, '--network', 'host', '--cpus', '8', '--memory', '16g', '--memory-swap', '16g', '--ulimit', 'nofile=65536:65536', '--tmpfs', '/scratch:rw,size=4g', *CREDS]
+    args = ['run', '-d', '--name', name, '--network', 'host', *resource_args('follower' if index else 'owner'), '--ulimit', 'nofile=65536:65536', '--tmpfs', '/scratch:rw,size=4g', *CREDS]
     if system == 'cellule':
         args += ['-e', f'PARITY_RETAINED_BYTES={ARGS.retained_bytes}', '-e', f'PARITY_DISK_BYTES={ARGS.disk_bytes}', '-v', f'{BASE}:/work:ro', '-e', 'TMPDIR=/scratch', '-e', f'CELLULE_AXUM_CELLS={ARGS.cells}', '-e', 'CELLULE_AXUM_WORKERS=8', '-e', f'CELLULE_AXUM_BIND=127.0.0.1:{port}', '-e', 'CELLULE_TEST_ENDPOINT=http://127.0.0.1:9000', '-e', 'CELLULE_TEST_BUCKET=comparison', '-e', f'CELLULE_TEST_PREFIX={prefix}']
         if durability == 'fleet' or index == 0:
@@ -192,6 +243,7 @@ def start_node(system, durability, index, prefix, name):
     else:
         args += ['-e', f'CELLD_PLACEMENT_WEIGHT={(1000000000 if index == 0 else 1)}', '-e', 'CELLD_WATCH=/scratch', '-e', f'CELLD_DURABILITY={durability}', '-e', 'CELLD_SHUTDOWN_TOTAL_MS=600000', '-e', 'CELLD_TOKIO_THREADS=8', '-e', 'CELLD_REBALANCE_INTERVAL_MS=0', '-e', f"CELLD_NODE={name.replace('-cold', '-owner')}", '-e', 'RUST_LOG=warn,celld::node_log=info', CELLD, '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1', '--listen', f'127.0.0.1:{port}', '--internal-listen', f'127.0.0.1:{port + 1}', '--advertise', f'127.0.0.1:{port + 1}']
     docker(*args)
+    verify_resource_role(name, 'follower' if index else 'owner')
     return wait_ready(name, 'Follower service:' if index else 'Orders service:') if system == 'cellule' else wait_ready(name, port=port)
 
 def stop_node(name, directory):
@@ -280,7 +332,7 @@ def run_case(system, durability):
     directory.mkdir(exist_ok=False)
     (directory / 'runner.py').write_bytes(RUNNER_BYTES)
     prefix = label + '-' + uuid.uuid4().hex[:12]
-    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': ARGS.cells, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'provider_lifecycle_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
+    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': ARGS.cells, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'isolated-owner-sql-ledger-96-v1' if isolated_owner() else 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'provider_lifecycle_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
     names = []
     stop = threading.Event()
     sampling = None
@@ -312,7 +364,7 @@ def run_case(system, durability):
             settings = json.loads(deployment.read_text())
             settings['vars']['CELLS'] = str(ARGS.cells)
             put(deployment, settings)
-            p = docker('run', '--rm', '--network', 'host', '--cpus', '2', '--memory', '2g', '--memory-swap', '2g', '--ulimit', 'nofile=65536:65536', '-v', f'{application}:/app:ro', *CREDS, CELLD, 'deploy', '/app', '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1')
+            p = docker('run', '--rm', '--network', 'host', *resource_args('provider'), '--ulimit', 'nofile=65536:65536', '-v', f'{application}:/app:ro', *CREDS, CELLD, 'deploy', '/app', '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1')
             (directory / 'deploy.log').write_text(p.stdout + p.stderr)
         elif durability == 'fleet':
             for i in [1, 2]:
@@ -327,6 +379,7 @@ def run_case(system, durability):
         owner = f'comparison-{label}-owner'
         names.insert(0, owner)
         summary['startup_seconds'] = start_node(system, durability, 0, prefix, owner)
+        put(directory / 'resource-placement.json', {name: verify_resource_role(name, 'provider' if name == STORE else 'client' if name == CONTROL else 'follower' if name.endswith(('peer-1', 'peer-2')) else 'owner') for name in names + [STORE, CONTROL]})
         sampling = threading.Thread(target=sampler, args=(directory, stop), daemon=True)
         sampling.start()
         initialize = driver(directory, 'initialize', config(directory, 'initialize', 0, 1, seed=False, seconds=1))
@@ -462,9 +515,9 @@ def start_provider(data_directory):
     docker('volume', 'create', '--label', 'cellule.perf.artifacts=' + str(BASE), volume)
     put(data_directory / 'volume.json', {'name': volume, 'storage': 'Docker Linux filesystem', 'retained': True})
     docker('run', '-d', '--name', STORE, '--label', 'cellule.perf.artifacts=' + str(BASE),
-           '--network', 'host', '--cpus', '2', '--memory', '2g', '--memory-swap', '2g',
+           '--network', 'host', *resource_args('provider'),
            '--ulimit', 'nofile=65536:65536', '-e', 'RUSTFS_ACCESS_KEY=benchmark_access',
-           '-e', 'RUSTFS_SECRET_KEY=benchmark_secret_private',
+           '-e', 'RUSTFS_SECRET_KEY=benchmark_secret_private', '-e', 'MIMALLOC_ALLOW_THP=0',
            '-v', f'{volume}:/data', MANIFEST['images']['store'], '/data')
 
 
@@ -483,12 +536,14 @@ def create_bucket():
 def provision():
     remove_owned(CONTROL)
     docker('run', '-d', '--name', CONTROL, '--label', 'cellule.perf.artifacts=' + str(BASE),
-           '--network', 'host', '--cpus', '4', '--memory', '4g', '-v', f'{BASE}:/work',
+           '--network', 'host', *resource_args('client'), '-v', f'{BASE}:/work',
            RUST, 'sleep', 'infinity')
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Paired, pinned SQL durability verification; raw evidence stays outside the repository.')
     parser.add_argument('--context', required=True)
+    parser.add_argument('--resource-profile', choices=['shared-vm', 'isolated-owner'], default='shared-vm',
+                        help='isolated-owner reserves guest CPUs 0-7 for the owner and 8-11 for support roles')
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--tag', default=uuid.uuid4().hex[:10])
     parser.add_argument('--seconds', type=int, default=300)
@@ -523,6 +578,7 @@ if __name__ == '__main__':
     info = json.loads(docker('info', '--format', '{{json .}}').stdout)
     DOCKER_HOST = {key: info[key] for key in ('OperatingSystem', 'OSType', 'Architecture',
                                             'NCPU', 'MemTotal', 'KernelVersion', 'ServerVersion')}
+    validate_resource_host(info)
     MANIFEST = json.loads((BASE / 'build.json').read_text())
     if MANIFEST.get('schema_version') != 2 or not MANIFEST.get('build_source_sha256'):
         parser.error('rebuild with source-content-isolated caches before running this harness')

@@ -63,6 +63,30 @@ Uploading an immutable object supplies no coverage proof.
 | Node withdrawal/maintenance | Refuse unresolved bindings; stale fencing preserves the catalog head; one bundle-bound boot cannot rotate its native log to another epoch |
 | Backup and collection | Backup refuses bound Cells. Coverage objects have no deletion path; this is retention, not a qualified collection implementation |
 
+Checkpoint validation overlaps at most eight fresh Cell-authority reads before
+changing its private catalog. It then verifies every changed reconstruction base
+before any upload or CAS. Small roots share the existing eight-operation, 4-MiB
+verification allowance; larger graphs use serial verification. Cancellation or
+an unavailable dependency selects no checkpoint prefix. This bounds independent
+I/O concurrency without changing the proof, fencing, or recovery requirements.
+
+The live producer can extend an already verified immutable prefix. Its bounded
+weak index borrows the actor's admitted proof only during selection; it retains
+no capture bodies and releases temporary strong references before waiting for
+new receipt credit. The index fits within the original producer metadata
+allowance. Reuse requires the same original lease, store/path, limits, binding,
+control/base and exact locator prefix. Every added locator must belong to the
+new freshly read object, and its frame must continue the exact transaction,
+command and node-sequence chain before the canonical CAS grants coverage.
+Cold proofs, expired references, intervening unseen captures and changed bases
+use complete fresh verification.
+
+This is induction over retained immutable data, not a new availability check on
+the inherited prefix. Live bundle dependencies still have no deletion path.
+Cold lookup and materialization always verify all required origin data and fail
+on a missing dependency. The ordinary catalog still reads and rewrites changed
+history metadata; eliminating that cost remains unfinished.
+
 The producer admits receipt metadata for the complete original cohort together.
 When credit is exhausted, it retains that verified cohort and services canonical
 checkpoint callbacks whose joining can release older materializer credit. It
