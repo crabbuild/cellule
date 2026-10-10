@@ -46,6 +46,16 @@ async fn dense_multi_cell_encoding_preserves_the_original_native_order_and_bytes
             .await
             .unwrap();
         assert_eq!(proposal.body.len(), original_sizes[(commit - 2) as usize]);
+        // Compare this exact capture with the pre-optimization encoder. Native
+        // roots include generated identities, so a stored digest is not a
+        // stable cross-run wire fixture. Both encoders must agree byte for byte
+        // over the same 64-Cell cohort and its unrelated catalog siblings.
+        let mut original_catalog = proposal.catalog.clone();
+        let (original_body, original_digest) =
+            catalog_index::encode_original(&mut original_catalog, &frames).unwrap();
+        assert_eq!(proposal.body, original_body);
+        assert_eq!(proposal.head.digest, original_digest);
+        assert_eq!(proposal.catalog, original_catalog);
         let mut next_offset = None;
         for frame in &frames {
             let locators: Vec<_> = proposal

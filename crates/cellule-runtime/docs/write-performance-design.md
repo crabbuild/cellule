@@ -291,6 +291,16 @@ The [encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
 preserves exact bytes in the external old-encoder oracle, but establishes no
 repeatable application improvement and fails performance qualification.
 
+Changed CNB3 shards now retain a one-use canonical encoding plan. The encoder
+records each detached history field, assigns native and history offsets, then
+fills those same-width fields without serializing all sibling controls again.
+Complete local self-verification, fresh origin verification and the canonical
+selection CAS still run. The real 64-Cell/2,000-binding regression compares
+every output byte and catalog with the retained pre-change encoder over six
+successive captures, then cold-restores every participating Cell. This changes
+preparation CPU work; publication remains serial and still retains native-byte
+credit until selection. No capacity qualification follows from the codec test.
+
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
 The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)

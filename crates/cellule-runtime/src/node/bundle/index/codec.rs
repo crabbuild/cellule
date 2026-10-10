@@ -2,7 +2,10 @@
 use super::*;
 use crate::codec::{BoundedDecoder, BoundedEncoder, read_fixed};
 
-pub(super) fn write_extent(e: &mut BoundedEncoder, extent: &Locator) -> Result<()> {
+pub(in crate::node::bundle) fn write_extent(
+    e: &mut BoundedEncoder,
+    extent: &Locator,
+) -> Result<()> {
     e.write_bool(extent.object.is_some())?;
     if let Some(object) = extent.object {
         e.write_bytes(object.as_bytes())?;

@@ -100,6 +100,10 @@ impl BoundedEncoder {
         self.bytes
     }
 
+    pub(crate) fn encoded_len(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn extend(&mut self, value: &[u8]) -> Result<(), CodecError> {
         let end = self
             .bytes

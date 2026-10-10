@@ -63,3 +63,78 @@ fn detached_history_authenticates_scope_count_bytes_and_the_complete_bounded_arr
         Err(Error::Capacity("bundle history native bytes"))
     ));
 }
+
+#[test]
+fn detached_leaf_preserves_siblings_and_rejects_a_history_extent_relayout() {
+    let session = SessionId::from_bytes([1; 16]);
+    let mut bindings = vec![history_binding([4; 32], 2), history_binding([8; 32], 2)];
+    bindings.sort_unstable_by_key(|binding| history::pin(binding).unwrap());
+    let catalog = Catalog {
+        session,
+        epoch: 2,
+        predecessor: None,
+        selected_through: 1,
+        bindings,
+        index: None,
+    };
+    let pins: Vec<_> = catalog
+        .bindings
+        .iter()
+        .map(|binding| history::pin(binding).unwrap())
+        .collect();
+    let mut histories = BTreeMap::new();
+    for (index, pin) in pins.iter().enumerate() {
+        histories.insert(
+            *pin,
+            history::History {
+                extent: Locator {
+                    object: (index == 1).then_some(Digest::from_bytes([9; 32])),
+                    offset: HEADER_BYTES as u64,
+                    bytes: 128,
+                    frame_digest: Digest::from_bytes([7; 32]),
+                },
+                count: 2,
+                native_bytes: 256,
+                loaded: None,
+            },
+        );
+    }
+    let plan = history::LeafPlan::new(&catalog, &histories).unwrap();
+    let planned_len = plan.len();
+    let selected = histories.get_mut(&pins[0]).unwrap();
+    selected.extent.offset += 123;
+    selected.extent.frame_digest = Digest::from_bytes([10; 32]);
+    let body = plan.finish(&histories).unwrap();
+    assert_eq!(body.len(), planned_len);
+    let (decoded, descriptors) = history::decode_leaf(&body).unwrap();
+    for (index, binding) in decoded.bindings.iter().enumerate() {
+        assert_eq!(binding.control, catalog.bindings[index].control);
+        assert_eq!(
+            binding.selected_position,
+            catalog.bindings[index].selected_position
+        );
+        assert_eq!(
+            binding.locators,
+            vec![histories[&pins[index]].extent.clone()]
+        );
+        assert_eq!(descriptors[&pins[index]], histories[&pins[index]]);
+    }
+    assert_eq!(body, history::encode_leaf(&catalog, &histories).unwrap());
+
+    // Adding an object identity changes the persisted extent width. A plan
+    // cannot move later controls or footer rows to accommodate that change.
+    let plan = history::LeafPlan::new(&catalog, &histories).unwrap();
+    histories.get_mut(&pins[0]).unwrap().extent.object = Some(Digest::from_bytes([11; 32]));
+    assert!(matches!(
+        plan.finish(&histories),
+        Err(Error::Node(
+            "bundle history extent width changed during encoding"
+        ))
+    ));
+    let plan = history::LeafPlan::new(&catalog, &histories).unwrap();
+    histories.remove(&pins[0]);
+    assert!(matches!(
+        plan.finish(&histories),
+        Err(Error::Node("bundle leaf lacks detached history"))
+    ));
+}
