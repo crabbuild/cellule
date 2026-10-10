@@ -1,8 +1,10 @@
 //! Ordered catalog mutations with a separate node-record/heartbeat lock.
 use super::*;
+use cellule_runtime::node::bundle::NodeBundleHead;
 use cellule_runtime::node::durability::NodeLogAuthority;
 use cellule_runtime::node::durability::{
     BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+    NodeBundlePublicationRound,
 };
 use cellule_runtime::node::log::{NodeLogRetirementObservation, NodeLogRotationBarrier};
 use cellule_runtime::node::{
@@ -204,54 +206,6 @@ impl Authority {
         Ok(peers)
     }
 
-    async fn select_frames(
-        &self,
-        frames: &[cellule_ltx::VerifiedNodeFrame],
-        assignments: &[cellule_runtime::node::log::AssignedCommitRange],
-        checkpoints: &[BundleCheckpoint],
-        prefixes: &[&cellule_runtime::node::bundle::BundleCoverageProof],
-        preparation: Option<&mut cellule_runtime::node::bundle::BundlePreparation>,
-        lease: &NodeLeaseGuard,
-    ) -> Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>> {
-        let _catalog = self.catalog.lock().await;
-        let current = {
-            let state = self.live_state().await?;
-            self.current(&state, 1).await?
-        };
-        let ready = ready_checkpoints(checkpoints).await?;
-        let prepared = self
-            .directory
-            .prepare_node_bundle_with_checkpoints(
-                &current,
-                frames,
-                assignments,
-                &ready,
-                preparation,
-                cellule_ltx::Limits::default(),
-                clock()?,
-            )
-            .await?;
-        // Preparation owns immutable bytes and the catalog predecessor, not
-        // the heartbeat state. Recheck the original live lease after upload and
-        // preserve intervening renewals/coverage in the final serialized CAS.
-        let mut state = self.live_state().await?;
-        let current = self.current(&state, 1).await?;
-        let (next, proofs) = self
-            .directory
-            .select_node_bundle_extending(
-                &current,
-                &prepared,
-                lease,
-                prefixes,
-                cellule_ltx::Limits::default(),
-                clock()?,
-            )
-            .await?;
-        state.observed = next;
-        self.lease.check()?;
-        Ok(proofs)
-    }
-
     async fn current(&self, state: &State, epoch: u64) -> Result<VersionedNodeAdvertisement> {
         self.lease.check()?;
         let original = state.observed.advertisement();
@@ -339,30 +293,121 @@ impl NodeBundleAuthority for Authority {
     }
 }
 
-impl NodeBundlePublicationAuthority for Authority {
-    fn select<'a>(
+struct PublicationRound<'a> {
+    authority: &'a Authority,
+    original: NodeBundleHead,
+    _catalog: tokio::sync::MutexGuard<'a, ()>,
+}
+impl NodeBundlePublicationRound for PublicationRound<'_> {
+    fn stage<'a>(
         &'a self,
+        previous: Option<&'a cellule_runtime::node::bundle::StagedNodeBundle>,
         captures: &'a [cellule_runtime::node::log_shipper::AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
-        prefixes: &'a [&'a cellule_runtime::node::bundle::BundleCoverageProof],
         preparation: Option<&'a mut cellule_runtime::node::bundle::BundlePreparation>,
-        lease: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>>> {
+    ) -> BoxFuture<'a, Result<Arc<cellule_runtime::node::bundle::StagedNodeBundle>>> {
         Box::pin(async move {
+            self.authority.lease.check()?;
             let frames = captures
                 .iter()
                 .flat_map(|c| c.frames().iter().cloned())
                 .collect::<Vec<_>>();
             let assignments = captures.iter().map(|c| c.assignment()).collect::<Vec<_>>();
-            self.select_frames(
-                &frames,
-                &assignments,
-                checkpoints,
-                prefixes,
-                preparation,
-                lease,
-            )
-            .await
+            let ready = ready_checkpoints(checkpoints).await?;
+            // A held PUT can outlive the advertisement captured at round
+            // entry even though heartbeat renewal keeps this writer live.
+            // Borrow the renewed local advertisement briefly, preserving the
+            // pinned catalog cut. Selection freshly reads authority before CAS.
+            let current = {
+                let state = self.authority.live_state().await?;
+                state.observed.clone()
+            };
+            let head = current.advertisement().bundle_head();
+            let predecessor = if head == Some(self.original) {
+                previous
+            } else if previous.is_some_and(|previous| head == Some(previous.head())) {
+                // First selection may finish during successor assembly. Its
+                // exact uploaded head now supplies the same immutable prefix.
+                None
+            } else {
+                return Err(Error::Fenced);
+            };
+            let staged = self
+                .authority
+                .directory
+                .stage_node_bundle_after(
+                    &current,
+                    predecessor,
+                    &frames,
+                    &assignments,
+                    &ready,
+                    preparation,
+                    cellule_ltx::Limits::default(),
+                    clock()?,
+                )
+                .await?;
+            self.authority.lease.check()?;
+            Ok(staged)
+        })
+    }
+    fn upload<'a>(
+        &'a self,
+        staged: Arc<cellule_runtime::node::bundle::StagedNodeBundle>,
+    ) -> BoxFuture<'a, Result<cellule_runtime::node::bundle::PreparedNodeBundle>> {
+        Box::pin(self.authority.directory.upload_node_bundle(staged))
+    }
+    fn select<'a>(
+        &'a self,
+        prepared: &'a cellule_runtime::node::bundle::PreparedNodeBundle,
+        prefixes: &'a [&'a cellule_runtime::node::bundle::BundleCoverageProof],
+        lease: &'a NodeLeaseGuard,
+    ) -> BoxFuture<'a, Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>>> {
+        Box::pin(async move {
+            // Catalog ordering spans the round, while heartbeat/coverage state
+            // is locked only for the fresh authority observation and final CAS.
+            let mut state = self.authority.live_state().await?;
+            let current = self.authority.current(&state, 1).await?;
+            let (next, proofs) = self
+                .authority
+                .directory
+                .select_node_bundle_extending(
+                    &current,
+                    prepared,
+                    lease,
+                    prefixes,
+                    cellule_ltx::Limits::default(),
+                    clock()?,
+                )
+                .await?;
+            state.observed = next;
+            self.authority.lease.check()?;
+            Ok(proofs)
+        })
+    }
+}
+
+impl NodeBundlePublicationAuthority for Authority {
+    fn receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        self.directory.bundle_receipt_memory_bound(captures)
+    }
+    fn begin_round<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn NodeBundlePublicationRound + 'a>>> {
+        Box::pin(async move {
+            let catalog = self.catalog.lock().await;
+            let original = {
+                let state = self.live_state().await?;
+                self.current(&state, 1)
+                    .await?
+                    .advertisement()
+                    .bundle_head()
+                    .ok_or(Error::Node("bundle lane is absent"))?
+            };
+            Ok(Box::new(PublicationRound {
+                authority: self,
+                original,
+                _catalog: catalog,
+            }) as Box<dyn NodeBundlePublicationRound>)
         })
     }
 

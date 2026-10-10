@@ -37,34 +37,10 @@ impl BundleCheckpoint {
     }
 }
 
-/// Ordered node origin operations for the runtime-owned publication task.
-/// Serialize catalog mutations with binding and close. Immutable preparation
-/// may release the heartbeat/state lock while retaining catalog ordering; the
-/// final node-record CAS must preserve intervening renewal/coverage updates and
-/// recheck the original lease and canonical predecessor after I/O.
-pub trait NodeBundlePublicationAuthority: NodeBundleAuthority {
-    /// Selects the complete ordered cohort with its native coverage in one CAS.
-    /// Includes ready exact materialized checkpoints in that same catalog/CAS.
-    /// Prefixes borrow previously verified original live proofs. They can avoid
-    /// historical reads only after exact lease, origin and prefix matching;
-    /// absent or mismatched prefixes require complete fresh verification.
-    /// Return original live proofs only after dependency verification and CAS;
-    /// success also joins every supplied checkpoint obligation. Preparation is
-    /// optional for manual callers; the managed producer supplies admitted
-    /// immutable shard scratch whose lifetime it retains through shutdown.
-    fn select<'a>(
-        &'a self,
-        captures: &'a [AssignedCapture],
-        checkpoints: &'a [BundleCheckpoint],
-        prefixes: &'a [&'a BundleCoverageProof],
-        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
-        lease: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>>;
-    /// Checkpoints exact materialized roots together. An obsolete notification
-    /// may be skipped only after observing a newer original materialized root;
-    /// the newer actor notification remains an independent joined obligation.
-    fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>>;
-}
+mod authority;
+pub use authority::{NodeBundlePublicationAuthority, NodeBundlePublicationRound};
+mod pipeline;
+use pipeline::Unconfirmed;
 
 #[derive(Clone, Default)]
 struct Progress {
@@ -258,20 +234,14 @@ async fn run(
         } else if let Some(capture) = feed.try_recv() {
             Some(capture)
         } else if let Some(first) = first_checkpoint.take() {
-            tokio::select! {
-                result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
-                () = lease.wait_fenced() => return Err(Error::Fenced),
-            }
+            checkpoint_cohort(&authority, &mut checkpoints, first).await?;
             continue;
         } else {
             tokio::select! {
                 capture = feed.recv() => capture,
                 checkpoint = checkpoints.recv(), if checkpoints_open => {
                     if let Some(first) = checkpoint {
-                        tokio::select! {
-                            result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
-                            () = lease.wait_fenced() => return Err(Error::Fenced),
-                        }
+                        checkpoint_cohort(&authority, &mut checkpoints, first).await?;
                     }
                     else { checkpoints_open = false; }
                     continue;
@@ -285,69 +255,34 @@ async fn run(
             }
             break;
         };
-        let mut captures = vec![first];
-        let mut frames = captures[0].frames().len();
-        let mut bytes = capture_bytes(&captures[0])?;
-        if frames > MAX_FRAMES || bytes > MAX_NATIVE_BYTES {
-            return Err(Error::Capacity(
-                "complete capture exceeds native bundle bounds",
-            ));
-        }
-        if frames == MAX_FRAMES
-            && let Some(first) = first_checkpoint.take()
-        {
-            tokio::select! {
-                result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
-                () = lease.wait_fenced() => return Err(Error::Fenced),
-            }
-        }
-        // Original root tasks hold credit until their callback joins. Reserve
-        // the entire ready cohort before native assembly can occupy its rows;
-        // a continuously full native feed must not split it into tiny CASes.
-        let mut ready_checkpoints =
-            checkpoints::Cohort::gather(&mut checkpoints, first_checkpoint, MAX_FRAMES - frames)?;
-        let reserved_checkpoints = ready_checkpoints.notification_count();
-        let deadline = tokio::time::Instant::now() + ASSEMBLY;
-        while captures.len() < MAX_CAPTURES {
-            let next = tokio::select! {
-                capture = feed.recv() => capture,
-                _ = tokio::time::sleep_until(deadline) => break,
-                () = lease.wait_fenced() => return Err(Error::Fenced),
-            };
-            let Some(next) = next else {
-                break;
-            };
-            let next_bytes = capture_bytes(&next)?;
-            if frames + next.frames().len() + reserved_checkpoints > MAX_FRAMES
-                || bytes + next_bytes > MAX_NATIVE_BYTES
-            {
-                carry = Some(next);
-                break;
-            }
-            frames += next.frames().len();
-            bytes += next_bytes;
-            captures.push(next);
-        }
-        ready_checkpoints.extend(&mut checkpoints, MAX_FRAMES - frames)?;
+        let first = assemble(
+            &authority,
+            &mut feed,
+            &mut carry,
+            &mut checkpoints,
+            first,
+            first_checkpoint,
+            true,
+            lease,
+        )
+        .await?;
         let original = durability.upgrade().ok_or(Error::RuntimeClosed)?;
-        let prior = prefixes.for_captures(&captures);
-        let borrowed = prior
-            .iter()
-            .map(|selected| &selected.proof)
-            .collect::<Vec<_>>();
-        let result = tokio::select! {
-            proofs = authority.select(&captures, ready_checkpoints.values(), &borrowed, Some(&mut preparation), lease) => proofs,
-            () = lease.wait_fenced() => Err(Error::Fenced),
-        }
-        .map_err(Arc::new);
-        // Drop temporary strong references before waiting for new receipt credit.
-        // The weak index never extends a completed actor/root obligation.
-        drop(borrowed);
-        drop(prior);
-        // Root tasks can release their original credit before receipt admission.
-        // Completion follows the combined canonical CAS, never enqueue/upload.
-        ready_checkpoints.complete(result.as_ref().map(|_| ()).map_err(Arc::clone));
-        let proofs = result.map_err(Error::Shared)?;
+        let Some(Unconfirmed { captures, proofs }) = pipeline::publish(
+            &original,
+            &authority,
+            first,
+            &mut feed,
+            &mut carry,
+            &mut checkpoints,
+            &mut prefixes,
+            &mut preparation,
+            progress,
+            lease,
+        )
+        .await?
+        else {
+            continue;
+        };
         let cohort = receipts::SelectedCaptures::new(&original, &captures, proofs)?;
         let memory = {
             let admission = cohort.resources(&original)?.reserve(cohort.cost());
@@ -365,10 +300,7 @@ async fn run(
                             // Root tasks retain their admission until this callback
                             // joins. Servicing it while receipt credit is exhausted
                             // releases credit without repeating the durable CAS.
-                            tokio::select! {
-                                result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
-                                () = lease.wait_fenced() => return Err(Error::Fenced),
-                            }
+                            checkpoint_cohort(&authority, &mut checkpoints, first).await?;
                         } else { checkpoints_open = false; }
                     }
                 }
@@ -383,10 +315,7 @@ async fn run(
     }
     checkpoints.close();
     while let Some(first) = checkpoints.recv().await {
-        tokio::select! {
-            result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
-            () = lease.wait_fenced() => return Err(Error::Fenced),
-        }
+        checkpoint_cohort(&authority, &mut checkpoints, first).await?;
     }
     Ok(())
 }
@@ -410,4 +339,80 @@ async fn checkpoint_cohort(
         .map_err(Arc::new);
     cohort.complete(result.clone());
     result.map_err(Error::Shared)
+}
+
+struct CaptureCohort {
+    captures: Vec<AssignedCapture>,
+    ready_checkpoints: checkpoints::Cohort,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one original feed and its bounded carry/checkpoint ownership"
+)]
+async fn assemble(
+    authority: &Arc<dyn NodeBundlePublicationAuthority>,
+    feed: &mut NodePublicationFeed,
+    carry: &mut Option<AssignedCapture>,
+    checkpoints: &mut mpsc::Receiver<CheckpointRequest>,
+    first: AssignedCapture,
+    mut first_checkpoint: Option<CheckpointRequest>,
+    include_checkpoints: bool,
+    lease: &NodeLeaseGuard,
+) -> Result<CaptureCohort> {
+    let mut captures = vec![first];
+    let mut frames = captures[0].frames().len();
+    let mut bytes = capture_bytes(&captures[0])?;
+    if frames > MAX_FRAMES || bytes > MAX_NATIVE_BYTES {
+        return Err(Error::Capacity(
+            "complete capture exceeds native bundle bounds",
+        ));
+    }
+    if frames == MAX_FRAMES
+        && let Some(first) = first_checkpoint.take()
+    {
+        checkpoint_cohort(authority, checkpoints, first).await?;
+    }
+    // Original root tasks hold credit until their callback joins. Reserve
+    // the entire ready cohort before native assembly can occupy its rows;
+    // a continuously full native feed must not split it into tiny CASes.
+    let mut ready_checkpoints = checkpoints::Cohort::gather(
+        checkpoints,
+        first_checkpoint,
+        if include_checkpoints {
+            MAX_FRAMES - frames
+        } else {
+            0
+        },
+    )?;
+    let reserved_checkpoints = ready_checkpoints.notification_count();
+    let deadline = tokio::time::Instant::now() + ASSEMBLY;
+    while captures.len() < MAX_CAPTURES {
+        let next = tokio::select! {
+        capture = feed.recv() => capture,
+        _ = tokio::time::sleep_until(deadline) => break,
+        () = lease.wait_fenced() => return Err(Error::Fenced),
+        };
+        let Some(next) = next else {
+            break;
+        };
+        let next_bytes = capture_bytes(&next)?;
+        if frames + next.frames().len() + reserved_checkpoints > MAX_FRAMES
+            || bytes + next_bytes > MAX_NATIVE_BYTES
+        {
+            *carry = Some(next);
+            break;
+        }
+        frames += next.frames().len();
+        bytes += next_bytes;
+        captures.push(next);
+    }
+    if include_checkpoints {
+        ready_checkpoints.extend(checkpoints, MAX_FRAMES - frames)?;
+    }
+
+    Ok(CaptureCohort {
+        captures,
+        ready_checkpoints,
+    })
 }

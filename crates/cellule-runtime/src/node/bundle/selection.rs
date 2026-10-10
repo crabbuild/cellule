@@ -116,6 +116,28 @@ impl BundleCoverageProof {
 }
 
 impl NodeDirectory {
+    /// Conservative retained receipt memory for one bounded live selection.
+    /// Admit before dispatching overlapping work. The producer transfers only
+    /// actual verified costs; the unused remainder returns to the same ledger.
+    /// Catalog/proposal buffers have their separate working admission.
+    pub fn bundle_receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        if captures == 0 || captures > MAX_FRAMES {
+            return Err(Error::Capacity("selected capture cohort"));
+        }
+        // Cloned locator arrays cannot exceed the validated history bound.
+        // Collected live assignments grow geometrically within the 64-frame
+        // cohort. Control-owned strings/maps retain their existing 4x charge.
+        let origin = self.layout.node_path(&[0; 16]).to_string();
+        let each = MAX_LOCATORS * std::mem::size_of::<Locator>()
+            + MAX_FRAMES * std::mem::size_of::<crate::node::log::AssignedCommitRange>()
+            + crate::control::MAX_CONTROL_BYTES * 4
+            + std::mem::size_of::<BundleCoverageProof>()
+            + 256;
+        each.checked_add(origin.capacity())
+            .and_then(|bytes| bytes.checked_mul(captures))
+            .ok_or(Error::Capacity("selected bundle metadata"))
+    }
+
     /// Verifies a contiguous complete native range and uploads one proposal for
     /// every participating Cell. Neither upload nor this value grants an ACK.
     pub async fn prepare_node_bundle(

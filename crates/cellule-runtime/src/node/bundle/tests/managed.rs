@@ -10,9 +10,10 @@ use crate::identity::{CellTarget, NamespaceId, RequestId, TenantId};
 use crate::node::durability::NodeDurability;
 use crate::node::durability::{
     BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+    NodeBundlePublicationRound,
 };
 use crate::node::log_shipper::NodeLogShipper;
-use crate::node::log_shipper::{AssignedCapture, NodeLogSubmission};
+use crate::node::log_shipper::NodeLogSubmission;
 use futures_util::future::BoxFuture;
 use std::sync::{Mutex, atomic::Ordering};
 
@@ -97,15 +98,18 @@ impl NodeBundleAuthority for FailedSelection {
     }
 }
 impl NodeBundlePublicationAuthority for FailedSelection {
-    fn select<'a>(
+    fn receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        self.0.receipt_memory_bound(captures)
+    }
+    fn begin_round<'a>(
         &'a self,
-        _: &'a [AssignedCapture],
-        _: &'a [BundleCheckpoint],
-        _: &'a [&'a BundleCoverageProof],
-        _: Option<&'a mut BundlePreparation>,
-        _: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
-        Box::pin(async { Err(Error::Node("injected bundle selection failure")) })
+    ) -> BoxFuture<'a, Result<Box<dyn NodeBundlePublicationRound + 'a>>> {
+        Box::pin(async move {
+            Ok(super::publication_hooks::HookedRound::wrap(
+                self.0.begin_round().await?,
+                self,
+            ))
+        })
     }
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
         self.0.checkpoint(checkpoints)
@@ -742,4 +746,10 @@ pub(super) async fn renew_actor_lease(authority: &Authority, lease: &NodeLeaseGu
         .renew(now, refreshed.advertisement().expires_at_ms())
         .unwrap();
     *node = refreshed;
+}
+
+impl super::publication_hooks::Hook for FailedSelection {
+    fn before_select<'a>(&'a self) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Err(Error::Node("injected bundle selection failure")) })
+    }
 }

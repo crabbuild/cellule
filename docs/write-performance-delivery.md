@@ -1,10 +1,11 @@
 # Write performance implementation and verification
 
-The [typed staging integration](typed-bundle-staging.md) now separates encoded
-and uploaded production proposals and verifies preparation overlapping a held
-PUT. Selection remains ordered and freshly verified. The managed publisher is
-still serial; admission/lifecycle integration and measured application gains
-remain required. The performance goal remains unmet.
+The [managed bundle pipeline](managed-bundle-pipeline.md) connects the typed
+staging phases to the serving producer. One pre-admitted successor can upload
+while its predecessor publishes; selection and receipt confirmation remain
+ordered. Tight admission and checkpoint cohorts use the existing serial path.
+Accepted I/O joins after failure, fencing and shutdown-caller cancellation.
+There is no new application measurement; the performance goal remains unmet.
 
 The external [two-cohort preparation prototype](bundle-preparation-pipeline-prototype.md)
 can prepare a successor before predecessor upload/selection, while rejecting

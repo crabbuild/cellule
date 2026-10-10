@@ -3,8 +3,8 @@ use super::actor::Authority;
 use super::*;
 use crate::node::durability::{
     BundleCheckpoint, NodeBundleAuthority, NodeBundlePublicationAuthority,
+    NodeBundlePublicationRound,
 };
-use crate::node::log_shipper::AssignedCapture;
 use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -65,19 +65,17 @@ impl NodeBundleAuthority for HeldCheckpoints {
 }
 
 impl NodeBundlePublicationAuthority for HeldCheckpoints {
-    fn select<'a>(
+    fn receipt_memory_bound(&self, captures: usize) -> Result<usize> {
+        self.original.receipt_memory_bound(captures)
+    }
+    fn begin_round<'a>(
         &'a self,
-        captures: &'a [AssignedCapture],
-        checkpoints: &'a [BundleCheckpoint],
-        prefixes: &'a [&'a BundleCoverageProof],
-        preparation: Option<&'a mut crate::node::bundle::BundlePreparation>,
-        lease: &'a NodeLeaseGuard,
-    ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
+    ) -> BoxFuture<'a, Result<Box<dyn NodeBundlePublicationRound + 'a>>> {
         Box::pin(async move {
-            self.gate.wait(checkpoints).await;
-            self.original
-                .select(captures, checkpoints, prefixes, preparation, lease)
-                .await
+            Ok(super::publication_hooks::HookedRound::wrap(
+                self.original.begin_round().await?,
+                self,
+            ))
         })
     }
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
@@ -98,4 +96,16 @@ async fn completed_root_working_credit_is_released_before_held_original_checkpoi
         Some(Arc::new(CheckpointGate::default())),
     )
     .await;
+}
+
+impl super::publication_hooks::Hook for HeldCheckpoints {
+    fn before_stage<'a>(
+        &'a self,
+        checkpoints: &'a [BundleCheckpoint],
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.gate.wait(checkpoints).await;
+            Ok(())
+        })
+    }
 }

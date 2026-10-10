@@ -309,9 +309,16 @@ metadata-only predecessor view; it cannot create the fresh origin capability
 consumed by verification. The bounded model includes two preparations before
 upload. The [typed staging regressions](../../../docs/typed-bundle-staging.md)
 cover overlapping preparation/PUT, ordered CAS, fencing and exact cold restore.
-The managed producer still calls the canonical serial wrapper. Pipelining that
-producer requires pre-admitted receipt/buffer credit and joined accepted I/O;
-these APIs alone do not improve application TPS or qualify capacity.
+The [managed pipeline](../../../docs/managed-bundle-pipeline.md) now owns a
+`NodeBundlePublicationRound` across at most two cohorts. A capture arriving
+during the first publication can stage and upload a successor after nonblocking
+admission of its working buffers and both receipt bounds. Tight credit falls
+back to the existing serial receipt wait after releasing catalog ordering.
+Checkpoint-containing first cohorts use serial publication; lookahead cohorts
+contain native work only. Selections remain ordered, heartbeat state stays
+available during immutable work, and all accepted I/O joins after failure,
+fencing or shutdown-caller cancellation. No new application TPS or capacity
+qualification follows from these managed lifecycle checks.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.

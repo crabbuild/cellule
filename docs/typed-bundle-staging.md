@@ -2,8 +2,10 @@
 
 October 10, 2026. Production protocol APIs now separate immutable encoding from
 upload, permitting one exact successor to prepare while its predecessor's PUT
-is pending. The managed serving publisher remains serial. **No new application
-throughput or capacity claim follows from this change.**
+is pending. At `d42b978` the managed serving publisher remained serial. The
+[managed pipeline](managed-bundle-pipeline.md) now connects those phases to the
+runtime producer. **No new application throughput or capacity claim follows
+from this change.**
 
 ## Protocol and ownership
 
@@ -54,21 +56,25 @@ all existing safety invariants and five negative checks. An expected
 does not establish adapter lifecycle, memory accounting, liveness or provider
 persistence.
 
-## Remaining serving work
+## Serving integration boundary
 
-Manual callers own admission and the joined lifetime of accepted uploads. The
-managed producer still admits 20 MiB working memory plus its 2 MiB shard cache
-and runs one complete selection at a time. Its startup contract and budgets
-are unchanged. Production overlap must admit both retained stages and selected
-receipt allocations before holding catalog ordering, preserve heartbeat renewal
-and exact checkpoint callbacks, and join all accepted I/O on failure, fence,
-cancellation and drain. Receipt pressure must not wait behind the catalog lock
-needed to release its own credit.
+Manual callers own admission and the joined lifetime of accepted uploads. At
+`d42b978` the managed producer admitted 20 MiB working memory plus its 2 MiB
+shard cache and ran one complete selection at a time. Production overlap must
+admit both retained stages and receipt allocations before dispatching overlapping
+work, preserve heartbeat renewal and exact checkpoint callbacks, and join all
+accepted I/O on failure, fence, cancellation and drain. Receipt pressure must
+release catalog ordering before waiting for credit that needs a checkpoint.
+The managed pipeline uses nonblocking admission while holding ordering and
+returns to the serial path if that extra credit is unavailable. The startup
+contract and budgets remain unchanged.
 
 The [external prototype](bundle-preparation-pipeline-prototype.md) supplied the
 protocol experiment. The [current measurements](single-pass-bundle-encoding.md)
 remain below the requested 2,000 writes/s plus 20,000 reads/s target. Production
-load measurement follows managed integration, not the new API alone.
+load measurement follows managed integration, not the new API alone. The
+[managed integration report](managed-bundle-pipeline.md) describes the subsequent
+admitted overlap, serial fallback and joined lifetime checks.
 
 ## Verification evidence
 

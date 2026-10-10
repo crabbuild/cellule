@@ -18,7 +18,9 @@ use crate::{Error, Result};
 mod object_coverage;
 use object_coverage::ObjectCoverage;
 mod publication;
-pub use publication::{BundleCheckpoint, NodeBundlePublicationAuthority};
+pub use publication::{
+    BundleCheckpoint, NodeBundlePublicationAuthority, NodeBundlePublicationRound,
+};
 mod receipts;
 
 const MAX_BUNDLE_CLOSE_CALLBACKS: usize = 8;

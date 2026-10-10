@@ -84,6 +84,16 @@ async fn dense_multi_cell_encoding_preserves_the_original_native_order_and_bytes
             .unwrap();
         f.node = selected;
         assert_eq!(proofs.len(), cells.len());
+        assert!(
+            proofs
+                .iter()
+                .map(|proof| proof.retained_metadata_bytes().unwrap())
+                .sum::<usize>()
+                <= f.directory
+                    .bundle_receipt_memory_bound(cells.len())
+                    .unwrap(),
+            "pipeline admission covers every original receipt in a full cohort"
+        );
         latest = proofs;
     }
     for proof in &latest {
