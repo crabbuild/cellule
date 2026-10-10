@@ -114,9 +114,7 @@ async fn minimum_host_permits_drain_shared_work_after_a_sibling_waiter_cancels()
             captures,
             scratch: directory.path().to_owned(),
             accepted_at: Instant::now(),
-            memory: Arc::new(SharedMemory {
-                _reservation: memory,
-            }),
+            memory,
             _slot: slot,
             reply,
         });
