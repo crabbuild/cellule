@@ -400,6 +400,33 @@ Git. Production shard windows retain zero gap credit. The next investigation
 must address serialized publication and metadata amplification, rather than
 infer capacity from fewer storage requests alone.
 
+The next architecture step separates the SQL example's catalog ordering from
+its heartbeat state lock. Immutable bundle preparation and upload now release
+the state lock; binding, checkpoint and close retain catalog ordering. Final
+selection reacquires state and rechecks the original lease and canonical
+predecessor before granting coverage. The original implementation fails a
+paused-PUT renewal regression; the candidate passes it, ordered sibling
+binding, cancellation, changed-catalog rejection and late-upload fencing.
+Dependency verification and the final CAS still hold the state lock. This is
+a tested liveness boundary, not a preparation pipeline or a throughput claim.
+
+CI also exposed two observation races. The delayed-selection test read its
+telemetry counter before the post-response callback; it now joins that callback
+and requires the delayed command itself to have a Fleet response. The follower
+fixture recorded aggregate and phase rows in separate buffers. Downloaded CI
+evidence contains the same 7,215 observations in both files, but two concurrent
+attempts are reversed in one. A concurrent drain regression reproduces the
+failure. Both exports now derive from one retained transport observation;
+ordering, loss accounting and the exact qualification checks remain enforced.
+
+All 13 isolated contributor routes pass for this checkpoint: 2,075 workspace
+tests pass and 43 environment-dependent tests remain ignored. All 18 SQL
+example tests pass with the generated TLS fixture, including six normally
+ignored authority tests; CI now generates that fixture and executes them.
+The 55 evidence-verifier tests also pass. No new load measurement is claimed.
+Publication preparation, metadata amplification, fresh read barriers and
+multiple streams remain separate work under the unchanged capacity contract.
+
 
 The fresh [integrated root-cut comparison](pr67-root-cut-measurement.md) includes
 main PR #64 and separates selected capture cleanup from original root tasks.
