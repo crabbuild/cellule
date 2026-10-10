@@ -269,12 +269,12 @@ async fn run(
                 "complete capture exceeds native bundle bounds",
             ));
         }
-        if frames == MAX_FRAMES {
-            if let Some(first) = first_checkpoint.take() {
-                tokio::select! {
-                    result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
-                    () = lease.wait_fenced() => return Err(Error::Fenced),
-                }
+        if frames == MAX_FRAMES
+            && let Some(first) = first_checkpoint.take()
+        {
+            tokio::select! {
+                result = checkpoint_cohort(&authority, &mut checkpoints, first) => result?,
+                () = lease.wait_fenced() => return Err(Error::Fenced),
             }
         }
         let reserved_checkpoint = usize::from(first_checkpoint.is_some());
