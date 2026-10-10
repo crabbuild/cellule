@@ -29,7 +29,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Production browser and SVG checks
         run: |
-          npm run start -w @cellule/web -- --hostname 127.0.0.1 --port 3000 > /tmp/cellule-web.log 2>&1 &
+          npm run start -w @cellule/docs -- --hostname 127.0.0.1 --port 3000 > /tmp/cellule-web.log 2>&1 &
           web_pid=$!
           trap 'kill "$web_pid"' EXIT
           for attempt in $(seq 1 60); do

@@ -3,13 +3,13 @@
   "private": true,
   "packageManager": "npm@11.8.0",
   "workspaces": [
-    "apps/web"
+    "apps/docs"
   ],
   "scripts": {
-    "dev:web": "npm run dev -w @cellule/web",
-    "build:web": "npm run build -w @cellule/web",
-    "typecheck:web": "npm run typecheck -w @cellule/web",
-    "check:web": "npm run check -w @cellule/web",
-    "test:web": "npm run test -w @cellule/web"
+    "dev:web": "npm run dev -w @cellule/docs",
+    "build:web": "npm run build -w @cellule/docs",
+    "typecheck:web": "npm run typecheck -w @cellule/docs",
+    "check:web": "npm run check -w @cellule/docs",
+    "test:web": "npm run test -w @cellule/docs"
   }
 }

@@ -80,7 +80,7 @@ def main() -> int:
     paths = [ROOT / "README.md"]
     for crate in CRATES:
         paths.extend(sorted((ROOT / crate).rglob("*.md")))
-    paths.extend(sorted((ROOT / "apps/web/content/authored").rglob("*.mdx")))
+    paths.extend(sorted((ROOT / "apps/docs/content/authored").rglob("*.mdx")))
     for path in paths:
         if "target" in path.parts:
             continue

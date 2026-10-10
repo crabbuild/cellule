@@ -16,14 +16,14 @@ npm run dev:web
 The preview runs at `http://localhost:3000`. To select a port:
 
 ```sh
-npm run dev -w @cellule/web -- --port 3100
+npm run dev -w @cellule/docs -- --port 3100
 ```
 
 ```sh
 npm run check:web
 npm run build:web
 npx playwright install chromium
-npm run start -w @cellule/web -- --port 3000
+npm run start -w @cellule/docs -- --port 3000
 ```
 
 With the server running, use another terminal:
@@ -38,7 +38,7 @@ Markdown endpoints, unknown-page responses, mobile overflow, theme switching,
 clipboard copy, interactive explorers, tenant/target selection, owner handoff,
 example walkthroughs and retry explanations, diagram zoom/download, and all
 repository and authored Mermaid diagrams rendered as SVG. Screenshots are saved under the ignored
-`apps/web/test-results/` directory. CI runs this against the production build.
+`apps/docs/test-results/` directory. CI runs this against the production build.
 
 ## Content ownership
 
@@ -78,7 +78,7 @@ Development startup, type checking, and production builds regenerate content.
 After editing a repository guide during an existing preview, run:
 
 ```sh
-npm run generate:content -w @cellule/web
+npm run generate:content -w @cellule/docs
 ```
 
 New repository documents must be tracked by Git to join the collection. Authored
@@ -161,12 +161,12 @@ configuration default, not evidence of deployment.
 
 ```sh
 NEXT_PUBLIC_SITE_URL=https://your-domain.example npm run build:web
-npm run start -w @cellule/web
+npm run start -w @cellule/docs
 ```
 
 The app can run on a Node.js Next.js host or a provider with Next.js support.
 Deploy the repository with its lockfile, run the build command, and start the
-app with `npm run start -w @cellule/web`. The search API needs a server; the
+app with `npm run start -w @cellule/docs`. The search API needs a server; the
 remaining content pages are prerendered. No credentials are required.
 
 Fonts are bundled locally through Fontsource; builds and rendering do not fetch

@@ -33,7 +33,7 @@ or a dedicated verification snapshot for broad suites and process tests. The [ap
 
 ## Website and documentation
 
-The [website guide](apps/web/README.md) documents the Next.js and Fumadocs app.
+The [website guide](apps/docs/README.md) documents the Next.js and Fumadocs app.
 Use Node.js 22+ and npm 11. Run `npm ci`, `npm run check:web`, and
 `npm run build:web` from the repository root. The website browser checks run
 against a running server with `npm run test:web`; install Chromium with
@@ -41,7 +41,7 @@ against a running server with `npm run test:web`; install Chromium with
 
 Edit canonical guides in their current repository paths. Website builds map
 those documents into Fumadocs and rewrite local links. Put website-specific
-entry pages in `apps/web/content/authored/`; do not edit generated docs.
+entry pages in `apps/docs/content/authored/`; do not edit generated docs.
 Keep measured claims tied to the report's revision and environment. CI checks
 all internal website documentation links and SVG diagram rendering.
 

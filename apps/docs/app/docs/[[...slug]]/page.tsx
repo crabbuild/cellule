@@ -30,7 +30,7 @@ export default async function Page({ params }: Props) {
   if (!page) notFound();
   const MDX = page.data.body;
   const sourcePath =
-    page.data.sourcePath ?? `apps/web/content/authored/${page.path}`;
+    page.data.sourcePath ?? `apps/docs/content/authored/${page.path}`;
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
       <DocsTitle>{page.data.title}</DocsTitle>

@@ -67,7 +67,7 @@ def rustdoc_arguments(libraries: dict[str, Path]) -> list[str]:
 def main() -> int:
     documents = [
         path
-        for path in sorted((ROOT / "apps/web/content/authored").rglob("*.mdx"))
+        for path in sorted((ROOT / "apps/docs/content/authored").rglob("*.mdx"))
         if "```rust" in path.read_text()
     ]
     if not documents:
