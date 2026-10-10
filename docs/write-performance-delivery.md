@@ -1,5 +1,12 @@
 # Write performance implementation and verification
 
+The external [two-cohort preparation prototype](bundle-preparation-pipeline-prototype.md)
+can prepare a successor before predecessor upload/selection, while rejecting
+out-of-order coverage, missing dependencies, catalog changes and late fenced
+uploads. Its Rust and bounded-model checks pass. Managed memory, receipt-credit
+and joined lifecycle integration remain required; serving behavior and the last
+measured application rates are unchanged.
+
 The latest [single-pass encoder diagnostic](single-pass-bundle-encoding.md)
 reduces mean release-profile encoding time by 17.7%. Two reverse-order mixed-load
 pairs give conflicting application results; neither reaches the target. All
