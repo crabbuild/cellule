@@ -1,5 +1,18 @@
 # Node write and read performance design
 
+The latest [shared-overlay diagnostic](../../../docs/pr67-shared-overlay-measurement.md)
+rejects and reverts recovered-overlay integration through the shared producer.
+Fresh Fleet throughput falls 537.38→501.40/s and successful scheduled p99 rises
+371.96→383.70 ms; fresh celld completes 1,999.78/s with 14.52-ms p99. Only 58 of
+1,450 admitted Cells share an object; 1,005 preparations fall back under memory
+pressure. Total observed store bytes/success rise 74,318→78,018, with node authority
+accounting for about four-fifths. Both Cellule warm ACK audits fail, cold audit is
+not reached, and debt grows. Prioritize composing ready checkpoints with native
+selection under one bounded canonical catalog verification/CAS, better admission
+and cohort density using original credits, and warm read/retry availability.
+Production is restored; all profiles remain unqualified and acceptance gates
+below are unchanged. Shared root packing alone does not deliver parity.
+
 The latest [checkpoint-cohort diagnostic](../../../docs/pr67-checkpoint-cohort-measurement.md)
 rejects and reverts bounded parallel checkpoint verification. The controlled
 fixture overlaps eight fresh roots rather than one, but application TPS falls
