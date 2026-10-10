@@ -58,6 +58,13 @@ jobs:
         run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
       - name: Test
         run: cargo test --workspace --all-features --locked
+      - name: Verify authority publication and renewal
+        env:
+          CELLULE_TEST_FLEET_TLS: ${{ runner.temp }}/cellule-authority-tls
+        run: |
+          python3 scripts/generate-capacity-tls.py "$CELLULE_TEST_FLEET_TLS"
+          cargo test -p cellule-axum --example sql --all-features --locked \
+            fleet::authority:: -- --ignored
       - name: Compile website Rust examples
         run: python3 scripts/check-web-rust-examples.py
       - name: Run SQL example
