@@ -110,6 +110,7 @@ impl NodeBundlePublicationAuthority for Authority {
         &'a self,
         captures: &'a [crate::node::log_shipper::AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
+        prefixes: &'a [&'a BundleCoverageProof],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
@@ -133,7 +134,14 @@ impl NodeBundlePublicationAuthority for Authority {
                 .await?;
             let (next, proofs) = self
                 .directory
-                .select_node_bundle(&node, &prepared, lease, Limits::default(), NOW)
+                .select_node_bundle_extending(
+                    &node,
+                    &prepared,
+                    lease,
+                    prefixes,
+                    Limits::default(),
+                    NOW,
+                )
                 .await?;
             *node = next;
             Ok(proofs)

@@ -47,7 +47,7 @@ fn sparse_ranges_bound_padding_use_union_bytes_and_preserve_every_locator() {
         extent(1, 500, 10),
         extent(2, 0, 10),
     ])];
-    let planned = windows(&bindings)
+    let planned = windows(&bindings.iter().collect::<Vec<_>>())
         .unwrap()
         .collect::<Result<Vec<_>>>()
         .unwrap();
@@ -74,7 +74,7 @@ fn sparse_ranges_bound_padding_use_union_bytes_and_preserve_every_locator() {
         extent(1, SCRATCH_BYTES, 1),
     ])];
     assert_eq!(
-        windows(&large).unwrap().count(),
+        windows(&large.iter().collect::<Vec<_>>()).unwrap().count(),
         2,
         "a window never exceeds shared scratch"
     );
@@ -92,14 +92,17 @@ fn protocol_maximum_verification_payload_fits_its_admitted_metadata_charge() {
     let rows = MAX_FRAMES * std::mem::size_of::<Vec<Option<proof::FrameStep>>>();
     let total = windows + indices + facts + rows;
     assert!(
-        total + 256 * 1024 <= METADATA_BYTES,
+        total + LIVE_PREFIX_INDEX_BYTES + 256 * 1024 <= METADATA_BYTES,
         "payload {total} leaves less than 256 KiB overhead"
     );
     let invalid = [binding(vec![extent(1, 0, 0)])];
-    assert!(matches!(super::windows(&invalid), Err(Error::Capacity(_))));
+    assert!(matches!(
+        super::windows(&invalid.iter().collect::<Vec<_>>()),
+        Err(Error::Capacity(_))
+    ));
     let invalid = [binding(vec![extent(1, u64::MAX, 1)])];
     assert!(matches!(
-        super::windows(&invalid),
+        super::windows(&invalid.iter().collect::<Vec<_>>()),
         Err(Error::Node("bundle locator overflow"))
     ));
 }

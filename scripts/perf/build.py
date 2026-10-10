@@ -33,7 +33,8 @@ def adapt(source):
     replace(sql, 'let [SqlValue::Integer(total_cents)]', 'let [SqlValue::Integer(total_cents), SqlValue::Text(value)]')
     replace(sql, 'total_cents: *total_cents,', 'total_cents: *total_cents,\n                value: value.clone(),')
     replace(sql, 'DiskBudget::new(1 << 30)', 'DiskBudget::new(std::env::var("PARITY_DISK_BYTES").unwrap_or_else(|_| "1073741824".into()).parse()?)')
-    replace(sql, '16 * 1024 * 1024', 'std::env::var("PARITY_RETAINED_BYTES").unwrap_or_else(|_| "67108864".into()).parse()?', 2)
+    replace(sql, '            RETAINED_WORK_BYTES,', '            std::env::var("PARITY_RETAINED_BYTES").unwrap_or_else(|_| RETAINED_WORK_BYTES.to_string()).parse()?,')
+    replace(sql, 'pool, RETAINED_WORK_BYTES, session, host', 'pool, std::env::var("PARITY_RETAINED_BYTES").unwrap_or_else(|_| RETAINED_WORK_BYTES.to_string()).parse()?, session, host')
     fleet = source / 'crates/cellule-axum/examples/fleet/mod.rs'
     replace(fleet, '            let peers = enrollment.authority.recruit().await?;', '            // Fixture policy: keep real node authority for bucket-only runs.\n            if std::env::var_os("CELLULE_AXUM_BUCKET_ONLY").is_some() { return Ok(()); }\n            let peers = enrollment.authority.recruit().await?;')
     replace(fleet, 'println!("Follower durability: enrolled two original boots over pinned mTLS");',

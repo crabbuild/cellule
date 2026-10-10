@@ -388,3 +388,69 @@ async fn version_cutover_rejects_erased_and_unknown_authority_fields() {
     node["bundle"]["unrecognized"] = 1.into();
     assert!(NodeAdvertisement::decode_canonical(&serde_json::to_vec(&node).unwrap()).is_err());
 }
+
+#[tokio::test]
+async fn suffix_admission_keeps_exact_totals_and_rejects_both_overflow_stages() {
+    let mut f = Fixture::new().await;
+    let mut cell = f.cell(4).await;
+    let (_, frames, assigned) = f.append(&mut cell, 2);
+    let prepared = f
+        .directory
+        .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+        .await
+        .unwrap();
+    let (_, mut proofs) = f
+        .directory
+        .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
+        .await
+        .unwrap();
+    let mut proof = proofs.pop().unwrap();
+    let locator = proof.binding.locators[0].clone();
+    // These deliberately altered extents test admission arithmetic only;
+    // they are never used as publication or reconstruction evidence.
+    proof.binding.locators = (1..=MAX_LOCATORS)
+        .map(|bytes| Locator {
+            bytes: bytes as u64,
+            ..locator.clone()
+        })
+        .collect();
+    let total = (MAX_LOCATORS * (MAX_LOCATORS + 1) / 2) as u64;
+    assert_eq!(proof.native_suffix_bytes().unwrap(), total);
+    assert_eq!(
+        proof.materialization_bytes().unwrap(),
+        (total * 6 + MAX_BUNDLE_BYTES) as usize
+    );
+    proof.binding.locators.clear();
+    assert_eq!(proof.native_suffix_bytes().unwrap(), 0);
+    assert_eq!(
+        proof.materialization_bytes().unwrap(),
+        MAX_BUNDLE_BYTES as usize
+    );
+    proof.binding.locators = vec![
+        Locator {
+            bytes: u64::MAX,
+            ..locator.clone()
+        },
+        Locator {
+            bytes: 1,
+            ..locator.clone()
+        },
+    ];
+    assert!(matches!(
+        proof.native_suffix_bytes(),
+        Err(Error::Capacity("bundle materialization memory"))
+    ));
+    assert!(matches!(
+        proof.materialization_bytes(),
+        Err(Error::Capacity("bundle materialization memory"))
+    ));
+    proof.binding.locators = vec![Locator {
+        bytes: u64::MAX / 6 + 1,
+        ..locator
+    }];
+    assert!(proof.native_suffix_bytes().is_ok());
+    assert!(matches!(
+        proof.materialization_bytes(),
+        Err(Error::Capacity("bundle materialization memory"))
+    ));
+}

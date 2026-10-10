@@ -1,5 +1,406 @@
 # Write performance implementation and verification
 
+The October 10 checkpoint-verification diagnostic compares production sources
+matching `25a76c0` with bounded concurrent root verification. At 2,000 offered
+writes/s across 2,000 Cells, Cellule completes 408.10/s before and 573.72/s after;
+successful scheduled p99 worsens from 341.71 to 422.65 ms. Fresh celld completes
+1,999.80/s at 30.99 ms. All 46,747 baseline, 66,091 candidate and 181,995 celld
+ACKs pass warm/cold state and original-retry audits. Cellule drain falls from
+78.01 to 57.95 seconds, but errors, dropped offers and growing unpublished debt
+remain. This single 60-second write-only pair on a shared 8-CPU/8-GiB VM proves
+neither sustainable capacity nor the requested 8-vCPU/16-GiB mixed-load target.
+The subsequent change overlapping checkpoint authority reads is not included
+in those measurements. Its separate 60-second run completes 598.72 writes/s at
+443.01-ms successful scheduled p99, with 16,152 returned errors and 67,752 dropped
+offers. All 68,049 ACKs pass independently reconciled warm/cold state and retry
+audits; drain takes 58.43 seconds. This is another unqualified diagnostic, and
+does not measure the subsequent live-prefix extension experiment.
+
+The live-prefix experiment's separate 60-second pair completes 852.28 writes/s
+at 388.69-ms successful scheduled p99, but fails 4,696 of 91,268 warm ACK checks
+with HTTP 503s. Cold audit is therefore unverified. Measured requests include
+12,066 errors and 56,563 dropped offers. Fresh celld completes 1,999.85/s at
+13.95-ms successful scheduled p99, with all 182,001 warm/cold state and retry
+checks passing. Independent journal reconciliation covers every original ACK
+in both arms; it does not turn failed availability checks into a correctness
+pass. Cellule's retained capture bytes rise from 0.62 to 1.05 MB while the
+root-materialization debt counter rises from 58.25 to 85.70 MB. Those are
+different obligations; diagnosis of the 503s remains open. This experiment
+establishes neither an acceptable improvement nor parity.
+
+Three subsequent runs with application error logging complete 839.17, 825.03
+and 872.72 writes/s. All 92,183, 88,976 and 92,795 ACKs respectively pass warm
+and cold reads and original retries. They do not reproduce or resolve the
+earlier warm-audit failure. Load-time errors are predominantly publication
+backlog refusals; the first two probes also report 136/204 node-retained-byte
+refusals and 15/16 resource-ledger refusals. A focused admitted-query probe
+confirms that native admission pressure alone does not fence the original
+Cell. It remains external diagnostic evidence, with no runtime fix inferred.
+These runs use the same runtime source with external application probes; the
+provider VM disk was expanded from 240 to 320 GiB after an initial attempt
+failed the unchanged inode-health gate. CPU and memory stayed unchanged, and
+all earlier volumes remain preserved. A native test build overlapped only
+the second probe's post-audit drain, so that drain is not a performance sample.
+All three probes remain unqualified; background materialization and foreground
+work still contend for retained-memory admission.
+
+A subsequent fresh pair tests eight ordered native range reads during
+materialization, within the unchanged memory allowance. Baseline throughput is
+852.55 writes/s and the trial is 790.80/s; measured request errors rise from
+11,700 to 15,270, and successful scheduled p99 worsens from 368.62 to 514.08 ms.
+All 91,575 baseline and 86,452 trial ACKs pass warm/cold state
+and original-retry audits. Fresh celld completes 1,999.78/s with three measured
+request errors and all 181,994 ACKs passing both audits. The trial passed all
+twelve contributor checks, including 2,075 tests (43 ignored), but this single
+60-second pair establishes no acceptable throughput improvement. The parallel
+reconstruction change is reverted; its frozen source and failed-before,
+passed-after concurrency/cancellation tests remain in the external
+`materialization-candidate` evidence. Qualification remains unmet.
+Immutable manifests, journals and independent audits
+are retained under `cellule-ios-parity-20261010` in the external build volume.
+
+The fresh read/mixed baseline uses the retained live-prefix implementation,
+with serial reconstruction. Read-only throughput is 18,081.33/s, with 115,097
+measured offers dropped and 30.8-ms scheduled p99 across attempted reads.
+Simultaneous offered load of 2,000 writes/s and 20,000 reads/s yields only
+191.17 writes/s and 4,153.95 reads/s. The mixed window has 420 write errors,
+108,100 dropped writes and 950,513 dropped reads; scheduled p99 across attempts
+is 146.3 ms for writes and 91.4 ms for reads. Independent reconciliation covers
+both phases' raw counters, successful outputs and all 21,691 acknowledged
+writes, which pass warm/cold state and original-retry audits. The same shared
+8-CPU/8-GiB VM and 60-second diagnostic limits apply. A subsequent actor trial
+skips full-resident materialization scans after ordinary read events, retaining
+scans after publication, mutation, lifecycle and timer events and throughout
+shutdown. In the matching trial, read-only throughput rises to 19,115.47/s and
+scheduled p99 falls to 4.6 ms, with 53,047 dropped measured offers. Mixed traffic
+rises to 663.02 writes/s plus 7,583.73 reads/s; scheduled p99 across attempts
+falls to 99.4 ms for writes and 67.5 ms for reads. The mixed phase still has
+8,344 write errors, 71,842 dropped writes and 744,753 dropped reads. All 74,097
+ACKs pass warm/cold state and retry audits. The same client/auditor binaries and
+images were used, and all twelve contributor checks passed, including 2,073
+workspace tests (43 ignored). The read-scan change is retained as an improvement
+in this single diagnostic pair, without claiming repeatability or qualification.
+Mixed-load materialization debt still grows from 56.02 to 76.25 MB while retained
+capture bytes stay below 0.3 MB at both window boundaries; healthy bucket
+publication alone does not establish sustainable root materialization.
+
+The fresh pinned celld v0.6.1 reference reaches 19,994.73 reads/s alone and
+1,989.33 writes/s plus 19,832.78 reads/s under the same mixed offer. Mixed
+scheduled p99 is 27.2 ms for writes and 13.9 ms for reads. It still reports
+11 measured write errors, 612 dropped writes and 9,932 dropped reads, so it
+also fails the strict diagnostic gates. All 181,020 ACKs pass warm/cold state
+and retry audits. These results demonstrate substantial remaining Cellule
+headroom in this environment. The architectural source review used v0.6.2;
+these measurements remain v0.6.1, and full resource and repetition
+qualification is still missing.
+
+The affected-Cell eligibility trial checks only that Cell after ordinary
+command ingress, non-fenced execution/proof completions and successful bundle
+selection. It requests a full fleet scan only when that Cell is eligible,
+using the same readiness predicate as the dispatcher. Existing timer ticks,
+root-publication completions, lifecycle events and shutdown retain full scans.
+All twelve verification routes pass, including 2,073 workspace tests. Read-only
+throughput is 18,883.92/s with 3.5-ms scheduled p99. Mixed throughput rises to
+802.18 writes/s plus 12,304.78 reads/s, but returns 29,305 write errors and 275
+read errors, drops 42,540 writes and 461,412 reads, and has scheduled p99 of
+108.1 ms and 70.8 ms respectively. All 92,319 ACKs pass independently reconciled
+warm/cold state and original-retry audits. The same client/auditor binaries and
+images were used. This source remains the working diagnostic candidate; the
+higher error counts and missed capacity/latency gates preclude acceptance as a
+qualified improvement.
+
+The external root-pressure probe completes 822.22 writes/s plus 12,916.13
+reads/s, with 30,232 write errors and 17 read errors. All 93,262 ACKs pass
+independently reconciled warm/cold state and original-retry audits. Across the
+full owner lifetime, 174 of 508 sampled soft admission refusals occur with no
+root working reservations. All five logged hard node-reservation failures
+observe seven active roots charging about 33 MB. These observations identify
+both publication backlog and background working-memory pressure; they do not
+attribute every measurement-window failure to either cause. The counters are
+sampled separately and include drain/retry work. A further external diagnostic
+measures publication phase wall times before choosing a production change.
+The instrumented results remain unqualified. No budget is raised.
+
+The publication-phase probe completes 824.77 writes/s and 13,688.65 reads/s,
+with 28,634 write errors and 87 read errors. All 92,449 ACKs pass independent
+warm/cold state and original-retry reconciliation. Excluding initialization,
+1,716 completed publication rounds spend 40.88 seconds in combined encoding
+and upload, 26.98 seconds loading catalogs, 6.85 seconds in selection CAS, and
+0.03 seconds waiting for the example authority mutex. These sums include
+warmup, measured load and outstanding publication drain; they are wall times,
+not measurement-window CPU profiles. They point to preparation throughput,
+not lock acquisition, as the next optimization target. A further external probe
+separates encoding, its validation passes, and object-store PUT duration.
+
+That finer probe completes 645.87 writes/s and 11,609.13 reads/s, with 36,469
+write errors and 737 read errors; all 82,575 ACKs pass independent warm/cold
+state and retry reconciliation. Its 1,604 post-initialization rounds spend
+28.79 seconds in object PUTs and 12.62 seconds encoding, including 5.47 seconds
+in encoder self-verification. These instrumented single runs are not a clean
+performance comparison. The next isolated hypothesis trial doubles the cohort
+from 64 to 128 rows while retaining the 4-MiB object limit, 20-MiB producer
+reservation and 64-binding verification working sets. It is not a production
+format change: older readers reject larger cohorts, so adoption requires
+explicit format compatibility and resource validation in addition to throughput
+evidence. Canonical self-verification remains enabled.
+The corrected external trial passes 269 node-level tests, retaining the original
+64-Cell historical-read and 65-root recovery checks. Its new 128-Cell test checks
+cold reconstruction and corruption rejection in the second bounded verification
+chunk. Verification chunks follow historical object position to preserve read
+coalescing. The load test nevertheless fences its owner after publication reaches
+69 captures: receipt admission retained a separate hard-coded 64-capture limit.
+The warm audit returns 503 for all 6,410 acknowledged writes, and no cold audit
+runs. This is a failed availability/recovery qualification, not a throughput gain
+or proof of acknowledged-state loss. Its artifacts remain retained. The next
+external trial shares the publication bound with receipt admission and adds an
+end-to-end 128-capture receipt, credit-release and shutdown regression.
+The new regression first reproduces `Capacity("selected capture cohort")` on
+the failed candidate. The corrected candidate passes all 270 node tests,
+including that regression and a larger queued-producer case. Its verification
+snapshot differs from the release source only in a test fixture's lookup of each
+Cell's final submitted capture; production bytes and client/auditor identities
+match. The corrected run completes 19,778.55 reads/s alone and 816.10 writes/s
+plus 14,134.73 reads/s under mixed load. The mixed window still returns 31,527
+write errors and 192 read errors and drops 39,477 write offers and 351,498 read
+offers. All 98,520 ACKs pass independently reconciled warm/cold state and
+original-retry checks; drain takes 44.38 seconds. Bucket lag at measurement
+start is 148 frames, rising to 1,441 at the end. This improves the initial
+publication backlog but establishes neither sustainable performance nor parity.
+The larger batch remains an external, incompatible format experiment. The next
+separate trial preserves foreground memory headroom when admitting background
+root materialization, with one hard-budget root allowed for progress and the
+existing shutdown admission unchanged. That trial passes 863 runtime tests
+(4 ignored) but reduces mixed throughput to 770.52 writes/s plus 9,163.38
+reads/s. Write errors fall to 3,484, while dropped writes rise to 70,285 and
+dropped reads to 650,152. All 95,494 ACKs pass independently reconciled warm/cold
+state and original retries. Root debt grows from 97.63 to 117.02 MB and drain
+takes 48.65 seconds. Fewer returned errors do not establish an improvement;
+this policy remains external. A follow-up tests skipping the full eligible-Cell
+scan when sampled capacity cannot fit even the minimum root working set.
+Actual reservations still recheck the current ledger atomically. The follow-up
+passes 866 runtime tests (4 ignored), and its release source matches the tested
+snapshot. Its fresh mixed run reaches 1,080.37 writes/s plus 16,034.03 reads/s,
+but returns 31,426 write errors and drops 23,748 writes and 237,894 reads.
+Read-only throughput is 17,373.42/s. All 112,838 ACKs pass independently
+reconciled warm/cold state and original retries. Root debt grows from 93.15 to
+300.62 MB, only 444 roots materialize during the measured minute, and drain
+takes 56.66 seconds. Faster scheduling does not establish sustainable cleanup;
+the combined experiment remains external and unqualified. Twelve Docker
+samples inside the mixed window average 2.61 CPUs for the owner and 4.73 CPUs
+for the fleet, so aggregate shared-VM CPU saturation is not established. A
+repeat reaches 1,258.30 writes/s plus 16,238.52 reads/s, but still returns 22,163
+write errors and drops 22,325 writes and 225,629 reads. All 125,519 ACKs pass
+independent warm/cold state and retry audits; drain takes 56.56 seconds. Root
+debt again grows, from 99.00 to 352.08 MB. Its intended CPU sampling collected
+no samples because the process detector used a Docker `top` format without the
+required PID column. The workload is retained, but it is not CPU-profile
+evidence. The corrected collector has a verified process trigger and reports
+unexpected detection errors instead of continuing silently.
+
+The corrected collector records 2,488 and 3,930 user-CPU samples in two
+windows, with no lost samples. Before the root-age threshold, the sampled
+`blocks_commands` path accounts for 5.18% self CPU and its `Error` destructor
+another 14.27%. Caller stacks lead through `dispatch` and `ready_since`.
+`native_suffix_bytes` eagerly constructs a capacity error for each successful
+locator addition. The candidate instead folds checked additions as `Option`
+and constructs the same error once on overflow. Exact totals, memory budgets
+and persisted formats stay unchanged; arithmetic tests cover both summation
+and materialization-cost overflow. All 12 isolated verification routes pass,
+including 2,074 workspace tests (43 ignored) and strict Clippy. The experimental
+configuration passes 867 runtime tests (4 ignored). The profiled workload
+itself reaches 1,155.20 writes/s and
+14,884.40 reads/s, with 19,386 write errors and 31,286 write/306,906 read offers
+dropped. All 118,699 ACKs pass independent warm/cold state and retry audits.
+Sampling overhead excludes this run from performance qualification.
+
+The unprofiled sum-fix trial reaches 18,396.40 reads/s alone and 1,102.97
+writes/s plus 17,275.42 reads/s under mixed load. It returns 37,174 write errors
+and drops 16,647 write offers and 163,354 read offers. All 117,718 ACKs pass
+independent warm/cold state and original-retry reconciliation; drain takes
+57.45 seconds. Root debt grows from 103.31 to 325.09 MB, with only 311 roots
+materialized during the minute. The comparison does not establish sustainable
+improvement. The next isolated trial retains the sum fix but removes the
+experimental headroom admission and capacity precheck, returning to the
+128-row baseline's root admission. This tests whether the headroom policy is
+restricting cleanup; all publication, authority and hard memory gates remain.
+
+That trial passes 860 runtime tests (4 ignored), then reaches 19,850.92 reads/s
+alone but only 693.95 writes/s plus 13,450.03 reads/s under mixed load. It returns
+37,575 write errors and drops 40,788 writes and 392,962 reads. Root debt falls
+from 90.46 to 81.33 MB as 1,788 roots materialize. All 89,046 ACKs pass
+independent warm/cold state and original retries; drain takes 47.86 seconds.
+Restoring cleanup does not recover the target throughput. The shared 8-GiB VM
+and Cellule-only 64-MiB retained-work admission remain diagnostic restrictions,
+not the requested owner hardware contract. Further qualification needs explicit
+owner/support resource separation and measured memory accounting; historical
+profiles and their failed gates remain unchanged.
+
+The first isolated-owner diagnostic uses a 12-vCPU/24-GiB VM, verified guest
+CPU sets 0–7 for the 8-vCPU/16-GiB owner and 8–11 for support roles, and no
+container swap. The same binary and 64-MiB work budget reach 19,686.80 reads/s
+alone, then 735.40 writes/s plus 15,416.13 reads/s together. Mixed load returns
+45,771 write errors and 487 read errors and drops 30,078 writes and 274,462
+reads. Root debt falls from 103.36 to 68.29 MB. The warm audit checks all 95,687
+ACKs and retries without error, but owner drain exceeds 120 seconds and cold
+audit is not reached. Timestamped logs show materialization fencing about
+39 seconds after drain begins, followed by a fenced heartbeat and repeated
+node-log drain failure. Live scratch archives preserve 5,339 owner files and
+both follower journals before forced cleanup; archives are not cold-recovery
+proof. A FIFO authority mutex shared by heartbeat and per-Cell close work is a
+renewal-starvation hypothesis requiring a direct reproducer. The planned larger
+work-budget comparison is deferred while this failure is investigated.
+
+An external timing-only build reproduces the failed drain on the same profile.
+The last heartbeat waits 19.676 seconds for the authority mutex; a preceding
+checkpoint releases it with only 50 ms left on the original lease. Close and
+checkpoint queues reach 29.03 and 28.69 seconds respectively. The heartbeat's
+directory refresh returns after terminal local expiry and correctly cannot
+revive the guard. The candidate makes each authority operation recheck the
+lease after acquiring the mutex and perform the existing signed refresh when
+20 seconds or less remain. It keeps the 30-second lease, terminal fencing and
+the original cached node-log closure proof. All 13 general verification routes
+pass. Two fixture-backed regressions fail against the original boundary and
+pass against the candidate: queued work preserves renewal, and a heartbeat
+fenced while queued leaves the signed directory progress unchanged. Strict
+Clippy also passes with these tests. A first candidate test attempt reused the
+old native Cargo executable and is excluded; the passing candidate uses a
+fresh target directory and compiled source. The workload rerun without the
+authority timing probe fails after RustFS reaches its 2-GiB container limit
+and is OOM-killed. Sampled provider memory rises from 417.9 MiB to 1.997 GiB;
+the final sample precedes the kill by less than a second. Independent raw
+journal reconciliation covers all 74,041 ACKs, but every warm state check
+returns HTTP 503, no original retry is verified, and cold audit is not reached.
+The bucket volume and owner/follower scratch archives are preserved. This is
+an availability failure with recovery unverified, not evidence of lost ACKs
+or a passing workload test of the lease fix. No throughput claim follows.
+
+The pinned RustFS source already has container-aware runtime sizing and
+object-cache memory accounting. Its cache configuration defaults to disabled;
+the actual startup path still needs verification. Docker memory totals alone
+cannot distinguish retained heap, active request buffers and charged kernel
+memory. A fresh external probe keeps the binary, resources and workload fixed
+and samples cgroup memory categories and process resident memory. Provider
+configuration and the larger Cellule work-budget experiment remain unchanged
+until the failure is understood. The probe reproduces exit 137 with Docker's
+OOM flag set. Its final sample has 2,066,649,088 anonymous bytes, including
+1,904,214,016 transparent-huge-page bytes, with only 39,079,936 file-cache bytes
+and 41,275,392 kernel bytes left. Reclaiming file cache therefore does not
+prevent the observed failure. This distinguishes anonymous-memory growth from
+file-cache pressure, but does not yet distinguish live allocations from
+allocator retention. Of 90,912 warm ACK checks, 6,943 fail and 83,969 original
+retries are checked. The next external comparison changes only the provider's
+`MIMALLOC_ALLOW_THP=0` setting; the owner and provider memory limits, Cellule
+work budget, binaries, workload and correctness gates stay fixed.
+
+That single-setting comparison completes with all 97,948 ACKs independently
+reconciled against the raw journals and passing warm/cold state and original
+retry checks. Owner drain takes 42.78 seconds. Sampled anonymous memory peaks
+at 1,218,736,128 bytes, with no OOM kill; total cgroup memory still reaches
+2 GiB as file cache occupies the remaining allowance. The harness now uses
+the tested RustFS setting for both applications. Its 46 script tests and local
+documentation-link checks pass. This short run supports the provider setting
+and exercises the queued-renewal fix through drain, but does not qualify
+long-run stability. Mixed throughput is 793.13 writes/s plus 14,275.65 reads/s,
+with 35,801 write errors, 35 read errors, 36,589 dropped writes and 343,324
+dropped reads. Performance parity remains unmet. The next diagnostic changes
+only the retained-work allowance from 64 to 256 MiB, keeping the owner at
+8 CPUs/16 GiB and preserving the publication and recovery gates.
+
+The 256-MiB trial returns no measured request errors, but completes only
+916.97 writes/s and 9,017.80 reads/s while dropping 64,946 writes and 658,711
+reads. Scheduled p99 is 295.0 ms for writes and 159.5 ms for reads. Root debt
+grows from 108.99 to 162.20 MB; selected roots advance by 1,550 during the
+window. All 108,277 ACKs pass independent raw reconciliation and warm/cold
+state and original-retry audits. Drain takes 45.42 seconds. Thus admitting
+more work does not establish sustainable capacity. Sampled owner CPU averages
+329.9% of one core within its eight-core allowance; this cannot distinguish
+a busy serial coordinator from time waiting on storage. A fresh CPU profile
+of this exact binary and configuration is the next diagnostic.
+
+Inspection also finds the runnable SQL example's 16-MiB retained-work default
+below the shared publisher's 20-MiB startup reservation. The example now uses
+a named 64-MiB allowance; the external benchmark adapter still supplies its
+explicit per-case budget. This repairs example configuration without changing
+the frozen binaries used for either memory-budget diagnostic. Its fresh
+verification snapshot passes all 13 routes, including 2,074 workspace tests
+(43 ignored), 12 example tests (two fixture-dependent tests ignored), strict
+Clippy, API docs, and the script and documentation checks. The benchmark
+adaptation smoke check covers both runtime constructors. The earlier explicit
+queued-renewal regression results remain separate from these default tests.
+
+The next CPU observer times out while checking the Docker phase; the workload
+continues and all 101,610 ACKs pass independent warm/cold reconciliation.
+A recovered recording attaches to the same owner. Its initial five seconds
+are bounded inside the measured window with about six seconds of end margin,
+using recorded wall-time bounds and a host/guest clock-offset check. The full
+recording crosses into audit and is excluded from load attribution; no early
+window was recovered. In the retained subset, materialization dispatch costs
+24.74% inclusive user CPU, with 16.31% self CPU in `blocks_commands`. The caller
+stack runs through fleet candidate collection and `ready_since`.
+
+The candidate now returns before collecting candidates when all eight root
+slots are occupied, and treats successful `BundleSelectionReady` notifications
+as changes to their own Cell. Existing timers, error handling, oldest-first
+ordering, memory reservations and drain scans remain. This targets measured
+CPU work without changing admission or durability policy. All 13 main-source
+verification routes pass, including 2,074 workspace tests (43 ignored). The
+Linux candidate is built with matching clients, images and workload fixtures;
+its experimental 128-row runtime suites and doctest also pass (1,273 passed,
+11 ignored). In the matched 256-MiB short diagnostic, successful mixed writes
+rise 916.97→1,062.83/s and reads 9,017.80→10,654.25/s. Returned errors remain
+zero, but 56,121 write offers and 560,598 read offers are dropped. Write request
+p99 rises 217.7→239.8 ms; read p99 falls 82.0→64.8 ms. Root debt grows
+118,847,699→217,716,863 bytes during the candidate's measured window, compared
+with 108,988,873→162,200,876 bytes in the baseline. This is not sustainable
+capacity or performance qualification. Independent raw reconciliation and both
+warm/cold state and retry audits pass for all 120,236 ACKs; drain takes 46.24 s
+and cold startup 38.01 s.
+
+Twelve mixed-window resource samples show owner CPU averaging 287.5% of one
+core, versus 329.9% in the baseline. Publication cohorts bounded by the two
+tiered-through snapshots average 117.5 captures and 103.9 ms each, including
+45.6 ms catalog loading and 40.2 ms encoding/upload. The first cohort can
+straddle the initial snapshot; these are wall times, not CPU measurements.
+The next investigation must separate catalog read count, bytes and latency
+from scheduling and CPU, then evaluate bounded publication preparation and
+pipelining without weakening the canonical selection CAS or recovery proof.
+
+The follow-up catalog I/O observer passes 1,273 runtime tests (11 ignored)
+and independently reconciles all 117,789 ACKs through warm and cold audits.
+Its mixed result is 1,080.77 writes/s and 10,680.78 reads/s, with zero returned
+errors but 55,015 write drops and 559,036 read drops. Drain takes 49.11 s and
+cold startup 31.65 s. This observer run remains excluded from qualification.
+Across 581 large catalog loads bounded by the tiered-through snapshots,
+each load averages 74.05 shard windows and 13.44 history windows. Joined shard
+read waits cost 28.95 ms, shard decoding 7.23 ms, history read waits 4.91 ms,
+and history decoding 0.58 ms, within 45.26 ms total loading. These are completed
+operation wall times; boundary operations may overlap the snapshots.
+
+A rejected candidate spent unused shard-phase raw-body credit on bounded gaps
+between requested extents. The selected-metadata preflight and 4-MiB raw-body
+cap remained. Its sparse-shard regression failed on the original planner's
+three reads and passed with two on the candidate, including corruption checks.
+All 13 contributor routes passed (2,075 workspace tests, 43 ignored), as did
+1,274 benchmark-variant runtime tests (11 ignored). Those correctness results
+did not predict its application performance.
+
+The matched short run reduced large-cohort shard windows 74.05→36.21 and
+catalog loading 45.26→32.10 ms, while shard bytes per load grew
+778,397→1,356,270. Average bundle PUT time also rose 21.82→35.14 ms, offsetting
+the loading gain in the serialized publication path. Successful mixed writes
+changed 1,080.77→1,065.92/s and reads 10,680.78→10,739.03/s; write request p99
+rose 242.2→530.1 ms. Returned errors remained zero, but 55,970 write offers
+and 555,569 read offers were dropped. Candidate root debt grew
+125,177,918→227,019,161 bytes. All 122,436 ACKs passed independent raw and
+warm/cold state/retry audits; drain took 51.09 s and cold startup 37.02 s.
+One short pair does not establish a universal regression or attribute every
+PUT delay, but it supplies no end-to-end improvement to justify the extra
+overfetch. The candidate and its test were reverted; evidence remains outside
+Git. Production shard windows retain zero gap credit. The next investigation
+must address serialized publication and metadata amplification, rather than
+infer capacity from fewer storage requests alone.
+
+
 The fresh [integrated root-cut comparison](pr67-root-cut-measurement.md) includes
 main PR #64 and separates selected capture cleanup from original root tasks.
 At 2,000 offered Fleet writes/s across 2,000 Cells, successful throughput falls

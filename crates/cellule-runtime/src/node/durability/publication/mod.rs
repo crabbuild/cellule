@@ -6,6 +6,7 @@ use std::sync::{Mutex as StdMutex, Weak};
 use tokio::sync::{mpsc, oneshot, watch};
 
 mod checkpoints;
+mod prefixes;
 
 const MAX_CAPTURES: usize = 64;
 const MAX_FRAMES: usize = 64;
@@ -41,12 +42,16 @@ impl BundleCheckpoint {
 pub trait NodeBundlePublicationAuthority: NodeBundleAuthority {
     /// Selects the complete ordered cohort with its native coverage in one CAS.
     /// Includes ready exact materialized checkpoints in that same catalog/CAS.
+    /// Prefixes borrow previously verified original live proofs. They can avoid
+    /// historical reads only after exact lease, origin and prefix matching;
+    /// absent or mismatched prefixes require complete fresh verification.
     /// Return original live proofs only after dependency verification and CAS;
     /// success also joins every supplied checkpoint obligation.
     fn select<'a>(
         &'a self,
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
+        prefixes: &'a [&'a BundleCoverageProof],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>>;
     /// Checkpoints exact materialized roots together. An obsolete notification
@@ -89,6 +94,8 @@ impl Publisher {
                 // The fifth buffer covers the fresh cohort origin read. After
                 // matching the proposal, its allocation is released for 2 MiB
                 // of historical scratch and bounded operation-local facts.
+                // The weak prefix index shares that metadata allowance, including
+                // expired small anchors; it never retains full proof allocations.
                 .with_retained_bytes((5 * crate::node::bundle::MAX_BUNDLE_BYTES) as usize),
         )
     }
@@ -222,6 +229,7 @@ async fn run(
     progress: &watch::Sender<Progress>,
     lease: &NodeLeaseGuard,
 ) -> Result<()> {
+    let mut prefixes = prefixes::Prefixes::new()?;
     let mut carry = None;
     let mut checkpoints_open = true;
     loop {
@@ -306,11 +314,20 @@ async fn run(
         }
         ready_checkpoints.extend(&mut checkpoints, MAX_FRAMES - frames)?;
         let original = durability.upgrade().ok_or(Error::RuntimeClosed)?;
+        let prior = prefixes.for_captures(&captures);
+        let borrowed = prior
+            .iter()
+            .map(|selected| &selected.proof)
+            .collect::<Vec<_>>();
         let result = tokio::select! {
-            proofs = authority.select(&captures, ready_checkpoints.values(), lease) => proofs,
+            proofs = authority.select(&captures, ready_checkpoints.values(), &borrowed, lease) => proofs,
             () = lease.wait_fenced() => Err(Error::Fenced),
         }
         .map_err(Arc::new);
+        // Drop temporary strong references before waiting for new receipt credit.
+        // The weak index never extends a completed actor/root obligation.
+        drop(borrowed);
+        drop(prior);
         // Root tasks can release their original credit before receipt admission.
         // Completion follows the combined canonical CAS, never enqueue/upload.
         ready_checkpoints.complete(result.as_ref().map(|_| ()).map_err(Arc::clone));
@@ -342,6 +359,7 @@ async fn run(
             }
         };
         let selected = cohort.confirm(&original, memory)?;
+        prefixes.remember(&selected);
         progress.send_modify(|state| state.through = selected.selected_through());
         drop(selected);
         drop(captures);

@@ -5,8 +5,9 @@ use std::ops::Range;
 use std::sync::Mutex;
 use tokio::sync::Semaphore;
 
-const READ_CONCURRENCY: usize = 8;
+pub(super) const READ_CONCURRENCY: usize = 8;
 mod base;
+pub(super) use base::verify as verify_bases;
 // Together scratch and metadata replace the released fresh-origin buffer;
 // they never add to the producer's original 20-MiB working reservation.
 const SCRATCH_BYTES: u64 = MAX_BUNDLE_BYTES / 2;
@@ -26,17 +27,17 @@ struct Window {
     reads: Vec<ReadIndex>,
 }
 
-fn locator(bindings: &[Binding], read: ReadIndex) -> &Locator {
+fn locator<'a>(bindings: &[&'a Binding], read: ReadIndex) -> &'a Locator {
     // Indices are constructed from these immutable slices inside this module.
     &bindings[usize::from(read.binding)].locators[usize::from(read.locator)]
 }
 
 struct Windows<'a> {
-    bindings: &'a [Binding],
+    bindings: &'a [&'a Binding],
     reads: std::iter::Peekable<std::vec::IntoIter<ReadIndex>>,
 }
 
-fn windows(bindings: &[Binding]) -> Result<Windows<'_>> {
+fn windows<'a>(bindings: &'a [&'a Binding]) -> Result<Windows<'a>> {
     if bindings.len() > MAX_FRAMES
         || bindings
             .iter()
@@ -126,7 +127,7 @@ pub(super) async fn verify_cohort(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
     epoch: u64,
-    bindings: &[Binding],
+    bindings: &[&Binding],
     limits: cellule_ltx::Limits,
     origin: &origin::OriginBundle,
 ) -> Result<()> {
@@ -145,7 +146,7 @@ pub(super) async fn verify_cohort(
     }
     // Base and historical verification occupy the released origin allowance
     // in disjoint phases. No historical facts or windows coexist with bases.
-    base::verify(layout, bindings, limits).await?;
+    verify_bases(layout, bindings, limits).await?;
     let windows = windows(bindings)?;
     let facts = Mutex::new(
         bindings
@@ -187,7 +188,7 @@ async fn read_window(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
     epoch: u64,
-    bindings: &[Binding],
+    bindings: &[&Binding],
     limits: cellule_ltx::Limits,
     origin: &origin::OriginBundle,
     scratch: &Semaphore,
@@ -241,7 +242,7 @@ async fn read_window(
         let frame = proof::checked_frame(
             session,
             epoch,
-            &bindings[usize::from(read.binding)],
+            bindings[usize::from(read.binding)],
             value,
             bytes.slice(start..start + length),
             limits,

@@ -154,6 +154,40 @@ pub(super) fn start_selection(
     });
 }
 
+// Foreground events inspect only their affected Cell. The fleet scan uses this
+// same predicate to retain age, forced-drain and checkpoint-bound semantics.
+pub(super) fn ready_since(
+    active: &ActiveCell,
+    now: std::time::Instant,
+) -> Option<std::time::Instant> {
+    let debt = active.root_debt.as_ref()?;
+    let forced = active.draining()
+        || active
+            .queue
+            .front()
+            .is_some_and(|work| matches!(work, QueuedWork::Migration(_)))
+        || !active.publications.is_empty()
+            && active.publications.iter().any(|queued| {
+                queued
+                    .durability
+                    .as_ref()
+                    .is_none_or(|pending| !pending.has_managed_bundle_capture())
+            });
+    (active.publisher.is_some()
+        && active.materializing.is_none()
+        && !active.selecting
+        && (forced
+            || blocks_commands(active)
+            || debt
+                .selected
+                .proof
+                .commit_sequence()
+                .saturating_sub(active.published_sequence)
+                >= CHECKPOINT_COMMANDS
+            || now.saturating_duration_since(debt.submitted_at) >= MAX_ROOT_AGE))
+        .then_some(debt.submitted_at)
+}
+
 pub(super) fn dispatch(
     pool: &SqlWorkerPool,
     cells: &mut HashMap<CellId, ActiveCell>,
@@ -163,43 +197,21 @@ pub(super) fn dispatch(
         .values()
         .filter(|active| active.materializing.is_some())
         .count();
+    let mut available = MAX_MATERIALIZERS.saturating_sub(running);
+    // A completion revisits dispatch after releasing its slot. Walking and
+    // sorting the fleet while every slot is occupied cannot start any work.
+    if available == 0 {
+        return;
+    }
     let now = std::time::Instant::now();
     let mut ready: Vec<_> = cells
         .iter()
-        .filter_map(|(cell, active)| {
-            let debt = active.root_debt.as_ref()?;
-            let forced = active.draining()
-                || active
-                    .queue
-                    .front()
-                    .is_some_and(|work| matches!(work, QueuedWork::Migration(_)))
-                || !active.publications.is_empty()
-                    && active.publications.iter().any(|queued| {
-                        queued
-                            .durability
-                            .as_ref()
-                            .is_none_or(|pending| !pending.has_managed_bundle_capture())
-                    });
-            (active.publisher.is_some()
-                && active.materializing.is_none()
-                && !active.selecting
-                && (forced
-                    || blocks_commands(active)
-                    || debt
-                        .selected
-                        .proof
-                        .commit_sequence()
-                        .saturating_sub(active.published_sequence)
-                        >= CHECKPOINT_COMMANDS
-                    || now.saturating_duration_since(debt.submitted_at) >= MAX_ROOT_AGE))
-                .then_some((debt.submitted_at, *cell))
-        })
+        .filter_map(|(cell, active)| ready_since(active, now).map(|since| (since, *cell)))
         .collect();
     ready.sort_unstable_by(|(a, cell_a), (b, cell_b)| {
         a.cmp(b)
             .then_with(|| cell_a.as_bytes().cmp(cell_b.as_bytes()))
     });
-    let mut available = MAX_MATERIALIZERS.saturating_sub(running);
     for (_, cell) in ready {
         if available == 0 {
             break;

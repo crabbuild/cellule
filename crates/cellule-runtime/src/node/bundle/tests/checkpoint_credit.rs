@@ -69,11 +69,14 @@ impl NodeBundlePublicationAuthority for HeldCheckpoints {
         &'a self,
         captures: &'a [AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
+        prefixes: &'a [&'a BundleCoverageProof],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<BundleCoverageProof>>> {
         Box::pin(async move {
             self.gate.wait(checkpoints).await;
-            self.original.select(captures, checkpoints, lease).await
+            self.original
+                .select(captures, checkpoints, prefixes, lease)
+                .await
         })
     }
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {

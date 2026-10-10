@@ -3,6 +3,7 @@ use super::*;
 use crate::control::authority::CellAuthority;
 use crate::node::log::CellIssuedRange;
 use crate::node::{NodeDirectory, VersionedNodeAdvertisement};
+use futures_util::{StreamExt, TryStreamExt, stream};
 
 impl NodeDirectory {
     /// Advances a Cell's authenticated reconstruction base only after its exact
@@ -237,44 +238,96 @@ pub(super) async fn apply_checkpoints(
     checkpoints: &[(&CellAuthority, &BundleCoverageProof)],
     limits: cellule_ltx::Limits,
 ) -> Result<bool> {
-    let mut changed = false;
-    for (authority, proof) in checkpoints {
-        let pin = proof.binding();
-        let binding = catalog.binding_mut(pin.digest)?;
-        if authority.layout().application_id() != binding.application.as_bytes()
-            || authority.layout().node_path(pin.session.as_bytes())
-                != layout.node_path(pin.session.as_bytes())
-            || authority.layout().immutable_cache_identity() != layout.immutable_cache_identity()
-        {
-            return Err(Error::Fenced);
-        }
-        let current = authority
-            .load(binding.control.cell)
-            .await?
-            .ok_or(Error::Fenced)?;
-        let control = current.value();
-        if control.bundle_binding != Some(pin)
-            || control.epoch != binding.control.epoch
-            || control.incarnation != binding.control.incarnation
-            || control.code != binding.control.code
-            || control.schema != binding.control.schema
-        {
-            return Err(Error::PendingPublication);
-        }
-        let root = control.ltx_root().ok_or(Error::PendingPublication)?;
-        let prefix = materialized_prefix(binding, proof, &root)?;
-        if prefix == 0 && Some(root) == binding.control.ltx_root() {
-            // Repeating an exact installed checkpoint is a no-op even if
-            // newer captures remain selected beyond this materialized base.
-            continue;
-        }
-        binding.control = control.clone();
-        verify_base(layout, binding, limits).await?;
-        binding.locators.drain(..prefix);
+    // Control bodies are individually bounded at 8 KiB and this cohort at 64
+    // rows. Observations finish and their temporary bodies drop before root
+    // verification uses the same working allowance. No write starts here.
+    let bindings = &catalog.bindings;
+    let updates: Vec<_> = stream::iter(0..checkpoints.len())
+        .map(|index| async move {
+            let (authority, proof) = checkpoints[index];
+            observe_checkpoint(layout, bindings, authority, proof).await
+        })
+        .buffer_unordered(verification::READ_CONCURRENCY)
+        .try_collect()
+        .await?;
+    let mut changed = Vec::with_capacity(checkpoints.len());
+    for update in updates.into_iter().flatten() {
+        let binding = catalog
+            .bindings
+            .get_mut(update.binding)
+            .ok_or(Error::Node("bundle checkpoint binding missing"))?;
+        binding.control = update.control;
+        binding.locators.drain(..update.prefix);
         if binding.locators.is_empty() {
             binding.first_commit = binding.selected_commit;
         }
-        changed = true;
+        changed.push(update.binding);
     }
-    Ok(changed)
+    // Only this operation's unselected catalog is changed above. Authenticate
+    // every new base before an upload or CAS can expose any checkpoint prefix.
+    // Borrow the original rows: eight small-root operations share the existing
+    // 4-MiB scratch allowance; larger graphs retain canonical serial verification.
+    let bases = changed
+        .iter()
+        .map(|index| {
+            catalog
+                .bindings
+                .get(*index)
+                .ok_or(Error::Node("bundle checkpoint binding missing"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    verification::verify_bases(layout, &bases, limits).await?;
+    Ok(!changed.is_empty())
+}
+
+struct CheckpointUpdate {
+    binding: usize,
+    control: Control,
+    prefix: usize,
+}
+
+async fn observe_checkpoint(
+    layout: &cellule_ltx::CellStorageLayout,
+    bindings: &[Binding],
+    authority: &CellAuthority,
+    proof: &BundleCoverageProof,
+) -> Result<Option<CheckpointUpdate>> {
+    let pin = proof.binding();
+    let (index, binding) = bindings
+        .iter()
+        .enumerate()
+        .find(|(_, binding)| binding.control.bundle_binding == Some(pin))
+        .ok_or(Error::Node("bundle binding missing"))?;
+    if authority.layout().application_id() != binding.application.as_bytes()
+        || authority.layout().node_path(pin.session.as_bytes())
+            != layout.node_path(pin.session.as_bytes())
+        || authority.layout().immutable_cache_identity() != layout.immutable_cache_identity()
+    {
+        return Err(Error::Fenced);
+    }
+    let current = authority
+        .load(binding.control.cell)
+        .await?
+        .ok_or(Error::Fenced)?;
+    let control = current.value();
+    if control.bundle_binding != Some(pin)
+        || control.epoch != binding.control.epoch
+        || control.incarnation != binding.control.incarnation
+        || control.code != binding.control.code
+        || control.schema != binding.control.schema
+    {
+        return Err(Error::PendingPublication);
+    }
+    let root = control.ltx_root().ok_or(Error::PendingPublication)?;
+    let prefix = materialized_prefix(binding, proof, &root)?;
+    if prefix == 0 && Some(root) == binding.control.ltx_root() {
+        // Repeating an exact installed checkpoint is a no-op even if
+        // newer captures remain selected beyond this materialized base.
+        return Ok(None);
+    }
+    Ok(Some(CheckpointUpdate {
+        binding: index,
+        control: control.clone(),
+        prefix,
+    }))
 }

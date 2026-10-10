@@ -41,8 +41,16 @@ pub(super) async fn run(
     let mut pressure_tick = tokio::time::interval(PRESSURE_SAMPLE);
     pressure_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     pressure_tick.tick().await;
+    let mut scan_materialization = true;
     loop {
-        super::materialization::dispatch(&pool, &mut cells, &mut tasks);
+        // Reads do not create root debt; ordinary writes inspect their own
+        // Cell before requesting a fleet scan. Existing timer ticks revisit age
+        // thresholds and released admission credit. Shutdown must scan before
+        // deciding that no background work remains.
+        if scan_materialization || shutdown.draining {
+            super::materialization::dispatch(&pool, &mut cells, &mut tasks);
+        }
+        scan_materialization = true;
         if !shutdown.draining {
             maintenance::drive(
                 &pool,
@@ -106,7 +114,20 @@ pub(super) async fn run(
                         }
                         break;
                     };
+                    let changed_cell = match &message {
+                        Message::Execute(command) => Some(command.cell),
+                        _ => None,
+                    };
+                    scan_materialization = !matches!(
+                        &message,
+                        Message::Lookup { .. } | Message::Query(_) | Message::Resolve(_)
+                    );
                     handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &admission, &mut movement, &mut movement_permits, &mut next_generation);
+                    if let Some(cell) = changed_cell {
+                        scan_materialization = cells.get(&cell).is_some_and(|active| {
+                            super::materialization::ready_since(active, std::time::Instant::now()).is_some()
+                        });
+                    }
                 }
                 _ = renewal_tick.tick() => {
                     renewals.scan_due(&cells);
@@ -162,14 +183,44 @@ pub(super) async fn run(
                     }
                     break;
                 };
+                    let changed_cell = match &message {
+                        Message::Execute(command) => Some(command.cell),
+                        _ => None,
+                    };
+                    scan_materialization = !matches!(
+                        &message,
+                        Message::Lookup { .. } | Message::Query(_) | Message::Resolve(_)
+                    );
                     handle_message(message, &mut receiver, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &telemetry, &mut pressure, &admission, &mut movement, &mut movement_permits, &mut next_generation);
+                    if let Some(cell) = changed_cell {
+                        scan_materialization = cells.get(&cell).is_some_and(|active| {
+                            super::materialization::ready_since(active, std::time::Instant::now()).is_some()
+                        });
+                    }
             }
             result = tasks.join_next() => {
                 let Some(Ok(result)) = result else {
                     return;
                 };
+                let changed_cell = match &result {
+                    TaskResult::Executed { cell, fenced: false, .. }
+                    | TaskResult::Proven { cell, fenced: false, .. }
+                    | TaskResult::BundleSelectionReady { cell, result: Ok(()), .. }
+                    | TaskResult::BundleSelected { cell, result: Ok(_), .. } => Some(*cell),
+                    _ => None,
+                };
+                scan_materialization = !matches!(
+                    &result,
+                    TaskResult::Queried { fenced: false, .. }
+                        | TaskResult::Resolved { fenced: false, .. }
+                );
                 let renewed = matches!(result, TaskResult::Renewed { .. });
                 super::tasks::handle_task(result, &pool, &mut cells, &mut transitioning, &mut tasks, &mut shutdown, &node_lease, &unpublished_node_log_bytes, &publications, &mut movement, &mut movement_permits);
+                if let Some(cell) = changed_cell {
+                    scan_materialization = cells.get(&cell).is_some_and(|active| {
+                        super::materialization::ready_since(active, std::time::Instant::now()).is_some()
+                    });
+                }
                 if renewed {
                     renewals.finished();
                     if !shutdown.draining {

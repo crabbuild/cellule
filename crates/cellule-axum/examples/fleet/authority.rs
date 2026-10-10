@@ -118,8 +118,26 @@ impl Enrollment {
 
 impl Authority {
     async fn refresh(&self) -> Result<()> {
+        let _state = self.live_state().await?;
+        Ok(())
+    }
+
+    async fn live_state(&self) -> Result<tokio::sync::MutexGuard<'_, State>> {
         self.lease.check()?;
         let mut state = self.state.lock().await;
+        self.renew_if_due(&mut state).await?;
+        Ok(state)
+    }
+
+    async fn renew_if_due(&self, state: &mut State) -> Result<()> {
+        // FIFO close/checkpoint queues can outlast the heartbeat's renewal
+        // window. Whichever operation acquires the state maintains the same
+        // authoritative lease before doing more work. Expiry stays terminal,
+        // including time spent waiting for this mutex or the refresh CAS.
+        self.lease.check()?;
+        if self.lease.remaining() > Duration::from_secs(20) {
+            return Ok(());
+        }
         let previous = state.observed.advertisement();
         let now = clock()?;
         let next = NodeAdvertisement::sign(
@@ -149,7 +167,7 @@ impl Authority {
 
     pub async fn recruit(&self) -> Result<Vec<NodeAdvertisement>> {
         self.lease.check()?;
-        let mut state = self.state.lock().await;
+        let mut state = self.live_state().await?;
         state.observed = self
             .directory
             .recruit_log(&state.observed, 1, 16 << 20, 3, clock()?)
@@ -213,7 +231,7 @@ impl NodeBundleAuthority for Authority {
         observed: &'a cellule_runtime::control::authority::VersionedControl,
     ) -> BoxFuture<'a, Result<cellule_runtime::control::authority::VersionedControl>> {
         Box::pin(async move {
-            let mut state = self.state.lock().await;
+            let mut state = self.live_state().await?;
             let current = self.current(&state, 1).await?;
             let (next, pinned) = self
                 .directory
@@ -234,7 +252,7 @@ impl NodeBundleAuthority for Authority {
         Box::pin(async move {
             // Runtime joins the complete issued producer prefix before entering
             // this mutex, including captures whose Fleet ACK preceded selection.
-            let mut state = self.state.lock().await;
+            let mut state = self.live_state().await?;
             let mut current = self.current(&state, issued.log_epoch()).await?;
             let proof = self
                 .directory
@@ -269,10 +287,11 @@ impl NodeBundlePublicationAuthority for Authority {
         &'a self,
         captures: &'a [cellule_runtime::node::log_shipper::AssignedCapture],
         checkpoints: &'a [BundleCheckpoint],
+        prefixes: &'a [&'a cellule_runtime::node::bundle::BundleCoverageProof],
         lease: &'a NodeLeaseGuard,
     ) -> BoxFuture<'a, Result<Vec<cellule_runtime::node::bundle::BundleCoverageProof>>> {
         Box::pin(async move {
-            let mut state = self.state.lock().await;
+            let mut state = self.live_state().await?;
             let current = self.current(&state, 1).await?;
             let frames = captures
                 .iter()
@@ -293,10 +312,11 @@ impl NodeBundlePublicationAuthority for Authority {
                 .await?;
             let (next, proofs) = self
                 .directory
-                .select_node_bundle(
+                .select_node_bundle_extending(
                     &current,
                     &prepared,
                     lease,
+                    prefixes,
                     cellule_ltx::Limits::default(),
                     clock()?,
                 )
@@ -309,7 +329,7 @@ impl NodeBundlePublicationAuthority for Authority {
 
     fn checkpoint<'a>(&'a self, checkpoints: &'a [BundleCheckpoint]) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let mut state = self.state.lock().await;
+            let mut state = self.live_state().await?;
             let current = self.current(&state, 1).await?;
             let ready = ready_checkpoints(checkpoints).await?;
             state.observed = if ready.is_empty() {
@@ -358,7 +378,7 @@ impl NodeLogAuthority for Authority {
 
     fn activate<'a>(&'a self, epoch: u64) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let mut state = self.state.lock().await;
+            let mut state = self.live_state().await?;
             let current = self.current(&state, epoch).await?;
             state.observed = self.directory.activate_log(&current, clock()?).await?;
             self.lease.check()
@@ -367,7 +387,7 @@ impl NodeLogAuthority for Authority {
 
     fn advance_coverage<'a>(&'a self, epoch: u64, through: u64) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let mut state = self.state.lock().await;
+            let mut state = self.live_state().await?;
             let current = self.current(&state, epoch).await?;
             state.observed = self
                 .directory
@@ -391,6 +411,7 @@ impl NodeLogAuthority for Authority {
                     Err(Error::Fenced)
                 };
             }
+            self.renew_if_due(&mut state).await?;
             let current = self
                 .current(&state, retirement.barrier().log_epoch())
                 .await?;
@@ -434,4 +455,100 @@ async fn ready_checkpoints(
         ready.push((checkpoint.authority(), checkpoint.proof()));
     }
     Ok(ready)
+}
+
+#[cfg(test)]
+mod renewal_tests {
+    use super::*;
+
+    async fn authority() -> Arc<Authority> {
+        let root = PathBuf::from(std::env::var_os("CELLULE_TEST_FLEET_TLS").unwrap());
+        let tls = Arc::new(
+            LoadedPeerTls::load(
+                &root.join("node-0.crt"),
+                &root.join("node-0.key"),
+                &root.join("ca.crt"),
+                "localhost",
+            )
+            .unwrap(),
+        );
+        let code = Digest::from_bytes([7; 32]);
+        let directory = NodeDirectory::new(
+            cellule_ltx::CellStorageLayout::new(
+                cellule_store::Store::new(Arc::new(object_store::memory::InMemory::new())),
+                object_store::path::Path::from("renewal-test"),
+                [9; 16],
+            ),
+            tls.fleet(),
+            code,
+            code,
+        );
+        let enrollment = Enrollment::start(
+            directory,
+            tls,
+            0,
+            SessionId::from_bytes([11; 16]),
+            "https://localhost:8081".into(),
+            code,
+            None,
+        )
+        .await
+        .unwrap();
+        enrollment.stop.send(true).unwrap();
+        enrollment.heartbeat.await.unwrap().unwrap();
+        // A shorter local deadline is conservative relative to the signed
+        // advertisement. It reproduces a nearly exhausted renewal window.
+        let mut authority = Arc::try_unwrap(enrollment.authority).ok().unwrap();
+        let now = clock().unwrap();
+        authority.lease = NodeLeaseGuard::new(now, now + 1_000).unwrap();
+        Arc::new(authority)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires generated CELLULE_TEST_FLEET_TLS fixture"]
+    async fn queued_authority_work_renews_before_the_original_local_deadline() {
+        let authority = authority().await;
+        let held = authority.state.lock().await;
+        let mut tasks = Vec::new();
+        for _ in 0..20 {
+            let authority = Arc::clone(&authority);
+            tasks.push(Box::pin(async move {
+                let _state = authority.live_state().await?;
+                tokio::time::sleep(Duration::from_millis(75)).await;
+                authority.lease.check()
+            }));
+        }
+        for task in &mut tasks {
+            assert!(futures_util::poll!(task.as_mut()).is_pending());
+        }
+        drop(held);
+        for result in futures_util::future::join_all(tasks).await {
+            result.unwrap();
+        }
+        let state = authority.state.lock().await;
+        assert_eq!(state.observed.advertisement().progress(), 2);
+        assert!(authority.lease.remaining() > Duration::from_secs(20));
+        authority.lease.fence();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires generated CELLULE_TEST_FLEET_TLS fixture"]
+    async fn heartbeat_fenced_while_queued_does_not_publish_a_new_advertisement() {
+        let authority = authority().await;
+        let state = authority.state.lock().await;
+        let session = state.observed.advertisement().session();
+        let heartbeat = authority.refresh();
+        tokio::pin!(heartbeat);
+        assert!(futures_util::poll!(heartbeat.as_mut()).is_pending());
+        authority.lease.fence();
+        drop(state);
+        assert!(matches!(heartbeat.await, Err(Error::Fenced)));
+        let observed = authority
+            .directory
+            .load_if_live(session, clock().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(observed.advertisement().progress(), 1);
+    }
 }

@@ -45,6 +45,7 @@ mod binding;
 mod closure;
 mod codec;
 mod continuation;
+mod extension;
 mod index;
 mod origin;
 mod proof;
@@ -64,6 +65,7 @@ mod tests;
 
 pub(crate) const MAX_BUNDLE_BYTES: u64 = 4 << 20;
 const MAX_BINDINGS: usize = 4_096;
+pub(crate) const LIVE_PREFIX_INDEX_BYTES: usize = 448 << 10;
 const MAX_LOCATORS: usize = 256;
 const MAX_INLINE_LOCATORS: usize = 32;
 const MAX_FRAMES: usize = 64;
@@ -168,6 +170,15 @@ pub struct BundleCoverageProof {
 }
 
 impl BundleCoverageProof {
+    pub(crate) fn scope(&self) -> crate::node::log::CellLogScope {
+        crate::node::log::CellLogScope {
+            application: self.binding.application,
+            cell: self.binding.control.cell,
+            incarnation: self.binding.control.incarnation,
+            cell_epoch: self.binding.control.epoch,
+        }
+    }
+
     pub(crate) fn check_live_assignment(
         &self,
         assignment: &crate::node::log::AssignedCommitRange,
@@ -207,14 +218,13 @@ impl BundleCoverageProof {
     }
 
     pub(crate) fn native_suffix_bytes(&self) -> Result<u64> {
+        // Readiness scans visit every locator. Keep the successful fold free
+        // of Error construction and destruction at each addition.
         self.binding
             .locators
             .iter()
-            .try_fold(0_u64, |total, locator| {
-                total
-                    .checked_add(locator.bytes)
-                    .ok_or(Error::Capacity("bundle materialization memory"))
-            })
+            .try_fold(0_u64, |total, locator| total.checked_add(locator.bytes))
+            .ok_or_else(|| Error::Capacity("bundle materialization memory"))
     }
     /// Exact immutable base required for reconstruction.
     pub fn base(&self) -> Result<cellule_ltx::RootRef> {

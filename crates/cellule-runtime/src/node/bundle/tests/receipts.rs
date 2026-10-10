@@ -155,6 +155,13 @@ async fn selection_receipts_require_complete_cohort_and_admission_and_share_one_
         .await
         .unwrap();
     assert!(Arc::ptr_eq(&first, &second));
+    let weak_prefix = first.weak_prefix();
+    assert!(
+        weak_prefix
+            .upgrade()
+            .and_then(|anchor| anchor.upgrade())
+            .is_some()
+    );
     assert!(first.proof.contains_assignment(&submitted[0].assignment));
     assert!(second.proof.contains_assignment(&submitted[1].assignment));
     let prefix = durability
@@ -186,6 +193,10 @@ async fn selection_receipts_require_complete_cohort_and_admission_and_share_one_
     drop(publication);
     drop(captures);
     drop(submitted);
+    assert!(
+        weak_prefix.upgrade().is_none(),
+        "prefix lookup retained a completed proof"
+    );
     assert_eq!(
         pool.resource_ledger()
             .snapshot()
