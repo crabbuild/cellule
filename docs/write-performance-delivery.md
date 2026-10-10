@@ -365,6 +365,41 @@ The next investigation must separate catalog read count, bytes and latency
 from scheduling and CPU, then evaluate bounded publication preparation and
 pipelining without weakening the canonical selection CAS or recovery proof.
 
+The follow-up catalog I/O observer passes 1,273 runtime tests (11 ignored)
+and independently reconciles all 117,789 ACKs through warm and cold audits.
+Its mixed result is 1,080.77 writes/s and 10,680.78 reads/s, with zero returned
+errors but 55,015 write drops and 559,036 read drops. Drain takes 49.11 s and
+cold startup 31.65 s. This observer run remains excluded from qualification.
+Across 581 large catalog loads bounded by the tiered-through snapshots,
+each load averages 74.05 shard windows and 13.44 history windows. Joined shard
+read waits cost 28.95 ms, shard decoding 7.23 ms, history read waits 4.91 ms,
+and history decoding 0.58 ms, within 45.26 ms total loading. These are completed
+operation wall times; boundary operations may overlap the snapshots.
+
+A rejected candidate spent unused shard-phase raw-body credit on bounded gaps
+between requested extents. The selected-metadata preflight and 4-MiB raw-body
+cap remained. Its sparse-shard regression failed on the original planner's
+three reads and passed with two on the candidate, including corruption checks.
+All 13 contributor routes passed (2,075 workspace tests, 43 ignored), as did
+1,274 benchmark-variant runtime tests (11 ignored). Those correctness results
+did not predict its application performance.
+
+The matched short run reduced large-cohort shard windows 74.05→36.21 and
+catalog loading 45.26→32.10 ms, while shard bytes per load grew
+778,397→1,356,270. Average bundle PUT time also rose 21.82→35.14 ms, offsetting
+the loading gain in the serialized publication path. Successful mixed writes
+changed 1,080.77→1,065.92/s and reads 10,680.78→10,739.03/s; write request p99
+rose 242.2→530.1 ms. Returned errors remained zero, but 55,970 write offers
+and 555,569 read offers were dropped. Candidate root debt grew
+125,177,918→227,019,161 bytes. All 122,436 ACKs passed independent raw and
+warm/cold state/retry audits; drain took 51.09 s and cold startup 37.02 s.
+One short pair does not establish a universal regression or attribute every
+PUT delay, but it supplies no end-to-end improvement to justify the extra
+overfetch. The candidate and its test were reverted; evidence remains outside
+Git. Production shard windows retain zero gap credit. The next investigation
+must address serialized publication and metadata amplification, rather than
+infer capacity from fewer storage requests alone.
+
 
 The fresh [integrated root-cut comparison](pr67-root-cut-measurement.md) includes
 main PR #64 and separates selected capture cleanup from original root tasks.
