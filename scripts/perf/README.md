@@ -1,9 +1,28 @@
 # Docker write verification
 
-This harness runs the same SQL application on Cellule and pinned celld v0.6.1.
+This harness compares HTTP/SQL applications on Cellule and pinned celld v0.6.1.
 It defaults to 1,000 Cells, 96-byte values, INSERT plus SELECT in one transaction,
-and a two-hour durable request/result ledger. It is **SQL application parity**;
-it does not reproduce a bounded KV upsert benchmark.
+and a two-hour durable request/result ledger. It matches the application workload
+and audits successful responses, durable retries and restored rows. It does not
+reproduce a bounded KV upsert benchmark.
+
+| Layer | Cellule | celld |
+| --- | --- | --- |
+| Client and auditor | Rust HTTP load generator and auditor | Identical Rust client and auditor binaries |
+| Application | Rust/Axum orders service, adapted from `crates/cellule-axum/examples/sql.rs` | JavaScript Worker and Durable Object in `scripts/perf/celld/index.js` |
+| Application storage interface | Cellule SQL commands and owner-ordered queries | Durable Object `storage.sql` and `storage.transactionSync` |
+| Framework implementation | Rust | Rust daemon embedding V8 |
+
+Celld's [documented application API](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/docs/README.md)
+is JavaScript. This fixture deploys that application; it does not call celld's
+Rust library directly. The Rust client does not make the server application Rust.
+The implementations also differ in routing, request-ledger schema and internal
+admission policy. These are **matched HTTP/SQL application comparisons**, not
+measurements of isolated Rust framework overhead or identical SQL statements.
+Attribute bottlenecks using measured phases and controlled changes, rather than
+inferring them from a TPS ratio. A direct Rust storage/replication microbenchmark
+would need its own matched inputs and durability boundary; it would measure that
+subsystem and would not replace end-to-end qualification.
 
 Use a dedicated Linux Docker context. The current shared-VM profile gives
 nodes an 8-CPU/16-GiB ceiling, tmpfs state of 4 GiB, a 2-CPU/2-GiB RustFS

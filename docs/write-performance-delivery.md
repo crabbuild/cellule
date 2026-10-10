@@ -1,5 +1,16 @@
 # Write performance implementation and verification
 
+The latest [publication-credit report](pr67-publication-pressure-measurement.md)
+fixes working memory held after completed root I/O, without raising any bounds.
+Two fresh write pairs observe 388.70→589.85/s and 535.17→583.92/s. The repeat
+worsens successful scheduled p99 345.91→408.79 ms and fails 713 warm retry
+checks; cold recovery is not reached. Total store bytes/success and unpublished
+log debt grow in both candidate windows. No acceptable repeatable performance
+gain or parity is established; PR #67 remains a draft. The report and harness
+now explicitly identify Cellule's Rust/Axum application and celld's JavaScript
+Worker/Durable Object: these are matched HTTP/SQL application comparisons,
+not an isolated comparison through identical Rust application interfaces.
+
 The latest [composed-publication diagnostic](pr67-composed-publication-measurement.md)
 reserves the complete ready root-callback cohort before native batching and
 shares one exact catalog/CAS with new captures. Its fresh corrected comparison
