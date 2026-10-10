@@ -54,3 +54,5 @@ mod inventory;
 mod metadata_cohort;
 mod metadata_windows;
 mod preparation;
+
+mod pipeline;

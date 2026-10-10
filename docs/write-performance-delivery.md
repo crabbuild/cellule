@@ -1,5 +1,11 @@
 # Write performance implementation and verification
 
+The [typed staging integration](typed-bundle-staging.md) now separates encoded
+and uploaded production proposals and verifies preparation overlapping a held
+PUT. Selection remains ordered and freshly verified. The managed publisher is
+still serial; admission/lifecycle integration and measured application gains
+remain required. The performance goal remains unmet.
+
 The external [two-cohort preparation prototype](bundle-preparation-pipeline-prototype.md)
 can prepare a successor before predecessor upload/selection, while rejecting
 out-of-order coverage, missing dependencies, catalog changes and late fenced

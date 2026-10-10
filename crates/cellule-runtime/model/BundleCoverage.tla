@@ -31,10 +31,13 @@ Init == /\ open = TRUE /\ version = 0 /\ head = 0
    Complete abstracts authentication of all bytes, outcomes and dependencies.
    It is a checked input, not an assumption about every uploaded object. *)
 Prepare(b) == /\ stage[b] = 0 /\ open /\ RowCells(b) \cap closed = {}
-              /\ (SkipPrefix \/ b = head + 1)
+              /\ (SkipPrefix \/ b = head + 1 \/
+                    (b = head + 2 /\ stage[b-1] \in {1, 2}
+                     /\ proposedHead[b-1] = head
+                     /\ proposedVersion[b-1] = version))
               /\ stage' = [stage EXCEPT ![b] = 1]
               /\ proposedVersion' = [proposedVersion EXCEPT ![b] = version]
-              /\ proposedHead' = [proposedHead EXCEPT ![b] = head]
+              /\ proposedHead' = [proposedHead EXCEPT ![b] = IF b = head + 2 THEN b-1 ELSE head]
               /\ proposedEpoch' = [proposedEpoch EXCEPT ![b] = epoch]
               /\ UNCHANGED <<open, version, head, epoch, closed, endpoint,
                    complete, present, proof, ack, visible, root,
@@ -144,6 +147,7 @@ Next == (\E b \in Bundles : Prepare(b) \/ Upload(b, TRUE) \/ Upload(b, FALSE)
               \/ (\E b \in Bundles : Ack(c, b) \/ Read(c, b) \/ Materialize(c, b)))
         \/ FenceNode
 Spec == Init /\ [][Next]_vars
+NeverPrepareAhead == ~(stage[1] \in {1, 2} /\ stage[2] \in {1, 2})
 CellFence == ~badSelection
 ContiguousSelection == ~badPrefix
 CompleteSelection == ~badContents

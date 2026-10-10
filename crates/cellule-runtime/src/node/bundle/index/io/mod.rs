@@ -11,9 +11,9 @@ async fn load_root(
     layout: &cellule_ltx::CellStorageLayout,
     session: SessionId,
     head: NodeBundleHead,
-    origin: Option<&super::super::origin::OriginBundle>,
+    origin: Option<&super::super::origin::ProposalMetadata<'_>>,
 ) -> Result<Option<Root>> {
-    let header = super::super::origin::read_range(
+    let header = super::super::origin::read_metadata_range(
         layout,
         session,
         head.epoch,
@@ -48,7 +48,7 @@ async fn load_rows(
     root: &Root,
     shard: &Shard,
     id: u8,
-    origin: Option<&super::super::origin::OriginBundle>,
+    origin: Option<&super::super::origin::ProposalMetadata<'_>>,
 ) -> Result<DecodedRows> {
     let bytes = read_rows(layout, root, shard, origin).await?;
     decode_rows(root, shard, id, bytes)
@@ -58,13 +58,13 @@ async fn read_rows(
     layout: &cellule_ltx::CellStorageLayout,
     root: &Root,
     shard: &Shard,
-    origin: Option<&super::super::origin::OriginBundle>,
+    origin: Option<&super::super::origin::ProposalMetadata<'_>>,
 ) -> Result<Bytes> {
     let extent = &shard.extent;
     let object = extent
         .object
         .ok_or(Error::Node("unresolved bundle catalog shard"))?;
-    let bytes = super::super::origin::read_range(
+    let bytes = super::super::origin::read_metadata_range(
         layout,
         root.session,
         root.epoch,
@@ -117,7 +117,7 @@ pub(in crate::node::bundle) async fn load_cells(
     session: SessionId,
     head: NodeBundleHead,
     cells: &BTreeSet<CellKey>,
-    origin: Option<&super::super::origin::OriginBundle>,
+    origin: Option<&super::super::origin::ProposalMetadata<'_>>,
     preparation: Option<&mut BundlePreparation>,
 ) -> Result<Catalog> {
     let shards = cells
@@ -142,7 +142,7 @@ async fn load_inner(
     head: NodeBundleHead,
     wanted: Option<&BTreeSet<u8>>,
     cells: Option<&BTreeSet<CellKey>>,
-    origin: Option<&super::super::origin::OriginBundle>,
+    origin: Option<&super::super::origin::ProposalMetadata<'_>>,
     mut preparation: Option<&mut BundlePreparation>,
 ) -> Result<Catalog> {
     let Some(root) = load_root(layout, session, head, origin).await? else {
@@ -329,7 +329,7 @@ async fn hydrate_histories(
     layout: &cellule_ltx::CellStorageLayout,
     root: &Root,
     cells: Option<&BTreeSet<CellKey>>,
-    origin: Option<&super::super::origin::OriginBundle>,
+    origin: Option<&super::super::origin::ProposalMetadata<'_>>,
     mut padding: u64,
     bindings: &mut [Binding],
     histories: &mut BTreeMap<[u8; 32], history::History>,

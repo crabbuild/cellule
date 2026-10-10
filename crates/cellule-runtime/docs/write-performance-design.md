@@ -301,6 +301,18 @@ successive captures, then cold-restores every participating Cell. This changes
 preparation CPU work; publication remains serial and still retains native-byte
 credit until selection. No capacity qualification follows from the codec test.
 
+The protocol API now separates `StagedNodeBundle` from `PreparedNodeBundle`.
+`stage_node_bundle_after` encodes without PUT and can borrow one exact staged
+predecessor. `upload_node_bundle` shares those immutable bytes while returning
+only the uploaded representation accepted by selection. Index loading uses a
+metadata-only predecessor view; it cannot create the fresh origin capability
+consumed by verification. The bounded model includes two preparations before
+upload. The [typed staging regressions](../../../docs/typed-bundle-staging.md)
+cover overlapping preparation/PUT, ordered CAS, fencing and exact cold restore.
+The managed producer still calls the canonical serial wrapper. Pipelining that
+producer requires pre-admitted receipt/buffer credit and joined accepted I/O;
+these APIs alone do not improve application TPS or qualify capacity.
+
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
 The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)

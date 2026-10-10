@@ -91,10 +91,10 @@ pub(super) fn cohort<'a>(
 pub(super) async fn read(
     layout: &cellule_ltx::CellStorageLayout,
     root: &Root,
-    origin: Option<&super::super::super::origin::OriginBundle>,
+    origin: Option<&super::super::super::origin::ProposalMetadata<'_>>,
     window: Window,
 ) -> Result<(Window, Bytes)> {
-    let bytes = super::super::super::origin::read_range(
+    let bytes = super::super::super::origin::read_metadata_range(
         layout,
         root.session,
         root.epoch,

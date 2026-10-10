@@ -156,15 +156,72 @@ impl NodeDirectory {
             &crate::control::authority::CellAuthority,
             &BundleCoverageProof,
         )],
-        mut preparation: Option<&mut BundlePreparation>,
+        preparation: Option<&mut BundlePreparation>,
         limits: cellule_ltx::Limits,
         now_ms: i64,
     ) -> Result<PreparedNodeBundle> {
+        let staged = self
+            .stage_node_bundle_after(
+                observed,
+                None,
+                frames,
+                assignments,
+                checkpoints,
+                preparation,
+                limits,
+                now_ms,
+            )
+            .await?;
+        self.upload_node_bundle(staged).await
+    }
+
+    /// Encodes one bounded native cohort without uploading it. An optional
+    /// predecessor must extend the exact observed head in the same session and
+    /// epoch; only its immutable metadata is borrowed. At most one successor is
+    /// prepared ahead of the observed head. Selection still requires completed
+    /// uploads, fresh origin/dependency verification and ordered authority CAS.
+    ///
+    /// The caller admits and retains all staged proposals, working scratch and
+    /// later receipt allocations before dispatch. This method grants no proof
+    /// and does not reserve host resources on behalf of manual callers.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one bounded preparation carries its original authority, work and scratch"
+    )]
+    pub async fn stage_node_bundle_after(
+        &self,
+        observed: &VersionedNodeAdvertisement,
+        previous: Option<&StagedNodeBundle>,
+        frames: &[cellule_ltx::VerifiedNodeFrame],
+        assignments: &[crate::node::log::AssignedCommitRange],
+        checkpoints: &[(
+            &crate::control::authority::CellAuthority,
+            &BundleCoverageProof,
+        )],
+        mut preparation: Option<&mut BundlePreparation>,
+        limits: cellule_ltx::Limits,
+        now_ms: i64,
+    ) -> Result<std::sync::Arc<StagedNodeBundle>> {
         self.validate(&observed.advertisement, now_ms)?;
-        let head = observed
+        let selected = observed
             .advertisement
             .bundle
             .ok_or(Error::Node("bundle lane is absent"))?;
+        let head = if let Some(previous) = previous {
+            if previous.original != Some(selected)
+                || previous.catalog.session != observed.advertisement.session
+                || previous.head.epoch != selected.epoch
+                || previous.assignments.is_empty()
+            {
+                return Err(Error::Fenced);
+            }
+            previous.head
+        } else {
+            selected
+        };
+        // An unuploaded proposal can supply metadata only, never the fresh
+        // OriginBundle capability required by selection and frame verification.
+        let metadata = previous.map(origin::ProposalMetadata::new).transpose()?;
         if frames.is_empty() || frames.len() + checkpoints.len() > MAX_FRAMES {
             return Err(Error::Capacity("bundle frame count"));
         }
@@ -178,7 +235,7 @@ impl NodeDirectory {
             observed.advertisement.session,
             head,
             &cells,
-            None,
+            metadata.as_ref(),
             preparation.as_deref_mut(),
         )
         .await?;
@@ -260,12 +317,11 @@ impl NodeDirectory {
             });
             catalog.selected_through = scope.node_sequence;
         }
-        let mut prepared = self.upload_catalog(Some(head), catalog, frames).await?;
+        let staged = self.stage_catalog(Some(head), catalog, frames, assignments.to_vec())?;
         if let Some(preparation) = preparation {
-            preparation.remember(&self.layout, &prepared)?;
+            preparation.remember(&self.layout, &staged)?;
         }
-        prepared.assignments = assignments.to_vec();
-        Ok(prepared)
+        Ok(staged)
     }
 
     /// Selects exactly the uploaded catalog/range after I/O, under the original
