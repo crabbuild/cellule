@@ -72,7 +72,7 @@ impl Db {
         }
     }
 
-    /// Uses SQLite WAL `NORMAL` when external proofs own command durability.
+    /// Uses SQLite WAL `NORMAL` on both connections when external proofs own durability.
     ///
     /// Call before accepting mutations in a fresh or exactly restored session.
     /// A successful local commit can be lost after an OS crash or power loss;
@@ -92,6 +92,11 @@ impl Db {
             .writer
             .pragma_update(None, "synchronous", "NORMAL")
             .map_err(LtxError::from)
+            .and_then(|()| {
+                self.reader
+                    .pragma_update(None, "synchronous", "NORMAL")
+                    .map_err(LtxError::from)
+            })
             .and_then(|()| self.capture.use_external_durability());
         if configured.is_err() {
             self.fenced = true;

@@ -56,26 +56,32 @@ fn external_durability_is_explicit_and_refuses_an_uncaptured_commit() {
     let temp = tempfile::TempDir::new().unwrap();
     let mut db = Db::open(&temp.path().join("durability.sqlite"), Limits::default()).unwrap();
     let synchronous = |db: &mut Db| {
-        db.query_with(|connection| {
-            connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
-        })
-        .unwrap()
+        let writer = db
+            .writer
+            .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        let reader = db
+            .query_with(|connection| {
+                connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+            })
+            .unwrap();
+        (writer, reader)
     };
-    assert_eq!(synchronous(&mut db), 2);
+    assert_eq!(synchronous(&mut db), (2, 2));
     db.transaction(|tx| tx.execute_batch("CREATE TABLE witness(value INTEGER)"))
         .unwrap();
     assert!(matches!(
         db.use_external_durability(),
         Err(LtxError::InvalidState(_))
     ));
-    assert_eq!(synchronous(&mut db), 2);
+    assert_eq!(synchronous(&mut db), (2, 2));
     db.capture().unwrap();
     assert!(db.use_external_durability().is_err());
     db.close().unwrap();
 
     let mut external = Db::open(&temp.path().join("external.sqlite"), Limits::default()).unwrap();
     external.use_external_durability().unwrap();
-    assert_eq!(synchronous(&mut external), 1);
+    assert_eq!(synchronous(&mut external), (1, 1));
     external
         .transaction(|tx| {
             tx.execute_batch("CREATE TABLE witness(value INTEGER); INSERT INTO witness VALUES(7)")
@@ -107,6 +113,34 @@ fn external_durability_configuration_failure_fences_the_session() {
         db.use_external_durability(),
         Err(LtxError::Sqlite(_))
     ));
+    assert!(matches!(db.transaction(|_| Ok(())), Err(LtxError::Fenced)));
+    assert!(matches!(
+        db.use_external_durability(),
+        Err(LtxError::Fenced)
+    ));
+}
+
+#[test]
+fn external_durability_partial_reader_configuration_fences_the_session() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut db = Db::open(
+        &temp.path().join("reader-configuration.sqlite"),
+        Limits::default(),
+    )
+    .unwrap();
+    db.reader.execute_batch("BEGIN").unwrap();
+    assert!(matches!(
+        db.use_external_durability(),
+        Err(LtxError::Sqlite(_))
+    ));
+    // The writer changed before the reader failed. That partial state cannot
+    // admit SQL or retries of configuration, even though no capture was made.
+    assert_eq!(
+        db.writer
+            .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
     assert!(matches!(db.transaction(|_| Ok(())), Err(LtxError::Fenced)));
     assert!(matches!(
         db.use_external_durability(),
