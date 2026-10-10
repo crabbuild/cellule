@@ -443,13 +443,18 @@ remained substantial, and candidate root-materialization debt grew
 warm and cold state/retry audits. This preserves a measured improvement without
 claiming the 2,000-write/20,000-read capacity goal or sustained parity.
 
-CI at the prior PR revision also exposed a stack overflow in the combined
-follower/reader maintenance executable. It reproduces locally at the normal
-stack limit; an enlarged-stack diagnostic completes but is not an accepted fix.
-A separate fixture observation can race with automatic coverage cleanup and
-find no retained tail. These executable checks remain required, beyond the
-13 contributor routes above. Their diagnosis is separate from the measured
-cache candidate.
+CI at the prior PR revision exposed a stack overflow in the combined
+follower/reader maintenance executable. Its setup and reader composition now
+construct large futures behind synchronous boxed boundaries. The previous
+construction still overflows with the same fixture; both corrected maintenance
+cases pass at the normal stack limit. The finite fixture also holds coverage
+publication until maintenance observes its required foreign retained tail,
+then releases the hold before drain/rotation. Failed exits release it as well;
+authority is checked after the wait and protocol assertions remain unchanged.
+All 382 host example tests pass at the normal stack limit, including recovery,
+maintenance and shutdown. These executable checks remain required beyond the
+13 contributor routes. The host-only correction is separate from the measured
+SQL cache candidate.
 
 
 The fresh [integrated root-cut comparison](pr67-root-cut-measurement.md) includes

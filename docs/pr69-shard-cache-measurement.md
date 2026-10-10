@@ -72,8 +72,9 @@ root materialization remain performance work.
 All 13 isolated contributor routes pass: 2,081 workspace tests pass and 43
 environment-dependent tests remain ignored. The six TLS-backed authority tests
 also pass. The bundle suite has 123 passing tests, including the new cache
-regressions. Separate host maintenance CI diagnostics are tracked in the delivery
-log; these contributor routes do not replace that executable scenario gate.
+regressions. The separate host maintenance correction passes all 382 executable
+example tests at the normal stack limit. It is tracked in the delivery log and
+was not part of either measured SQL executable.
 
 The external artifact root is `cellule-ios-parity-20261010`. The cases are
 `shard-cache-baseline-trial/cellule-fleet-parity-shard-cache-baseline-r1` and
