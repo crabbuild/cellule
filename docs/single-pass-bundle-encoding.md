@@ -85,8 +85,8 @@ the first pair regresses and the reverse-order pair improves. Neither pair
 reaches the goal. Publication is still serial and native-byte admission credit
 remains held until authoritative selection.
 
-The [performance proposal](write-performance-proposal.md) retains the sustained,
-repetition, overload, recovery and device requirements. Raw journals, binaries,
+Performance qualification still requires sustained load,
+repetition, overload, recovery and device evidence. Raw journals, binaries,
 failed prototypes, volumes, reports and source manifests remain outside Git under
 `cellule-ios-parity-20261010`. The external evidence index is
 `single-pass-encoding-two-pair-evidence-index.json`, SHA-256

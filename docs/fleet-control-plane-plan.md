@@ -22,7 +22,7 @@ without earlier conversation context. Sections explicitly marked proposed do
 not describe shipped APIs. Release acceptance includes the production and scale
 gates in this document.
 
-The [production audit](fleet-control-plane-audit.md) records the gaps found in
+The production audit recorded the gaps found in
 the first design and maps each to a required implementation and release gate.
 
 | Read first | Purpose |
@@ -85,7 +85,7 @@ them by configuration.
 The current ownership-only example explicitly reports incomplete role coverage.
 Its overload and controller-restart scenarios do not establish complete node
 maintenance or production availability. Track completion against the exact
-source revision and [fleet execution evidence](fleet-operations-progress.md).
+source revision and fleet execution evidence.
 
 ## Architecture and responsibilities
 

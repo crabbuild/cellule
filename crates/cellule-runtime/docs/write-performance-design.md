@@ -1,6 +1,6 @@
 # Node write and read performance design
 
-The latest [composed-publication measurement](../../../docs/pr67-composed-publication-measurement.md)
+The latest composed-publication measurement
 joins ready exact materialized checkpoints and new complete native captures in
 one fresh bounded catalog load, upload and fenced CAS. Reserving all ready
 checkpoint rows before native assembly fixes a demonstrated cohort split. Fresh
@@ -14,7 +14,7 @@ open. This short observation establishes no repeatable performance parity; PR
 
 The following measurements remain historical observations.
 
-The latest [shared-overlay diagnostic](../../../docs/pr67-shared-overlay-measurement.md)
+The latest shared-overlay diagnostic
 rejects and reverts recovered-overlay integration through the shared producer.
 Fresh Fleet throughput falls 537.38→501.40/s and successful scheduled p99 rises
 371.96→383.70 ms; fresh celld completes 1,999.78/s with 14.52-ms p99. Only 58 of
@@ -27,7 +27,7 @@ and cohort density using original credits, and warm read/retry availability.
 Production is restored; all profiles remain unqualified and acceptance gates
 below are unchanged. Shared root packing alone does not deliver parity.
 
-The latest [checkpoint-cohort diagnostic](../../../docs/pr67-checkpoint-cohort-measurement.md)
+The latest checkpoint-cohort diagnostic
 rejects and reverts bounded parallel checkpoint verification. The controlled
 fixture overlaps eight fresh roots rather than one, but application TPS falls
 583.20→537.28/s and successful scheduled p99 barely changes, 368.89→367.03 ms.
@@ -39,7 +39,7 @@ existing shared producer. Prioritize that integration, publication bytes per
 write and the remaining capacity-fencing failure. All profiles remain unqualified;
 the acceptance gates below are unchanged.
 
-The preceding [sparse-shard diagnostic](../../../docs/pr67-shard-window-measurement.md)
+The preceding sparse-shard diagnostic
 rejects and reverts wide metadata reads. Its component fixture improves 49→2
 reads, but fresh application TPS falls 510.13→300.63/s and successful scheduled
 p99 rises 1,314.72→2,554.88 ms. Node-authority range bytes rise 61.17% despite
@@ -49,7 +49,7 @@ baseline fails 110 warm checks with HTTP 503s. Prioritize total publication
 bytes/work and warm availability under backlog. No arm is qualified; the
 acceptance gates below remain unchanged.
 
-The preceding [publication-admission measurement](../../../docs/pr67-publication-admission-measurement.md)
+The preceding publication-admission measurement
 identifies a post-SQL RAM reservation race and transfers unused original command
 credit to publication. All 47,471 candidate ACKs pass warm/cold mutation and
 original retry audits; fleet drain takes 47.68 seconds. Write performance
@@ -58,7 +58,7 @@ regresses in this short pair: 481.80→451.70 successful writes/s and
 Publication debt and extensive root/history I/O remain. These are diagnostics,
 not performance parity or qualification. The acceptance gates below are unchanged.
 
-The [native-pipeline comparison](../../../docs/pr67-native-pipeline-measurement.md)
+The native-pipeline comparison
 completes 468.38 Fleet writes/s for unchanged production, 404.68/s for the first
 pipeline candidate, 553.53/s for the corrected candidate and 1,993.08/s for celld.
 The correction preserves a four-millisecond assembly window and credits ready
@@ -71,7 +71,7 @@ HTTP 503s; none reaches cold audit. The corrected owner exceeds the original
 original retries but drops 403 offers. These diagnostics establish no qualified
 capacity. Publication cost, complete draining and availability remain unresolved.
 
-The [preceding fresh write comparison](../../../docs/pr67-base-pipeline-measurement.md)
+The preceding fresh write comparison
 completes 579.10 Fleet writes/s for unchanged production code, 570.25/s for a
 continuous-base-slot trial and 1,999.83/s for celld. The trial has no acceptable
 TPS/latency gain and is reverted. Both Cellule cases fail warm ACK availability
@@ -79,7 +79,7 @@ checks with HTTP 503s and never reach cold audit; celld passes all 182,001 warm
 and cold mutations and original retries. These short shared-VM runs establish
 no qualified capacity. The acceptance contract below is unchanged.
 
-The [preceding paired 2,000-Cell measurements](../../../docs/pr67-metadata-window-measurement.md)
+The preceding paired 2,000-Cell measurements
 complete 502.28 Fleet writes/s versus 455.73 before and 1,999.83 for fresh
 celld. Metadata windows reduce observed GET/range work, but successful scheduled
 write p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only
@@ -89,10 +89,10 @@ seconds. The baseline write case fails two warm retries and never reaches the
 cold audit. Both Cellule read arms drop offers and the read guardrail fails.
 One short pair establishes no acceptable, repeatable or attributable gain.
 Publication cost and debt remain; all profiles are unqualified and PR #67 stays
-a draft. The [preceding encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
+a draft. The preceding encoder comparison
 and its passing and failed evidence remain separate observations.
 
-The [submission diagnosis](../../../docs/pr67-submission-timing-measurement.md)
+The submission diagnosis
 identified publication capacity held under the global issuance lock. Earlier
 phase counts straddled window boundaries and could not support an exact
 successful-submission partition. The new byte-bounded feed removes that
@@ -102,7 +102,7 @@ consumer expensive. Matching celld requires reducing that work and separating
 native progress from bounded recoverable publication debt; larger queues alone
 do not increase sustainable throughput.
 
-The separate [fresh timing-only diagnosis](../../../docs/pr67-publication-path-diagnosis.md)
+The separate fresh timing-only diagnosis
 reproduces 468.42 writes/s versus 1,999.77 for celld. Serial selection averages
 106.68 ms for 59.30 captures; checkpoint callbacks occupy another 14.83% of the
 interval, explaining an approximate 473-capture/s service rate. Its submission
@@ -138,9 +138,9 @@ Count the client, provider and followers separately from the serving node.
 Docker can simulate the deployment, but sharing one 8-CPU VM between all roles
 does not qualify an 8-CPU serving node. Report KV overwrite and SQL commands with
 the durable request/result ledger separately. tmpfs results do not qualify
-physical-media durability. Preserve the stronger historical comparison gates in
-the [workspace proposal](../../../docs/write-performance-proposal.md); this node
-capacity contract does not turn a failed earlier profile into a passing one.
+physical-media durability. Preserve the stronger historical comparison gates;
+this node capacity contract does not turn a failed earlier profile into a
+passing one.
 
 ## Shared durability beneath independent executors
 
@@ -279,7 +279,7 @@ reproduce each result; every participating Cell cold-restores its exact seed
 and outcomes. Separate-object fixtures continue to enforce eight reads with
 no ninth read, cancellation without publication and missing-origin rejection.
 These are component results, not new application TPS or qualification. The
-preceding [catalog overlap diagnostic](../../../docs/pr67-catalog-overlap-measurement.md)
+preceding catalog overlap diagnostic
 records a higher write rate and lower read rate; performance qualification fails.
 
 Dense encoding now maps the original at-most-64 frame digests to unique
@@ -287,7 +287,7 @@ catalog locations in one locator scan, then assigns extents in issued order.
 Strictly ordered pins support history lookup without full binding scans;
 detached leaf encoding reuses the original shard groups. Fixed planning uses
 about 4 KiB of stack without new retained admission, format or proof changes.
-The [encoder comparison](../../../docs/pr67-encoder-cost-measurement.md)
+The encoder comparison
 preserves exact bytes in the external old-encoder oracle, but establishes no
 repeatable application improvement and fails performance qualification.
 
@@ -322,10 +322,10 @@ qualification follows from these managed lifecycle checks.
 
 The first end-to-end Fleet diagnostic of this connection failed throughput,
 availability and drain. It is experimental, not performance qualification.
-The subsequent [coverage-race measurement](../../../docs/pr67-coverage-race-measurement.md)
+The subsequent coverage-race measurement
 at `e40ecd6` passes warm/cold ACK read/retry and joined drain, but completes
 100.20 Fleet writes/s versus 106.05 before the fix. There is no measured speedup.
-The earlier [cohort-origin comparison](../../../docs/pr67-cohort-origin-measurement.md)
+The earlier cohort-origin comparison
 at `9d4e632` reduces 187 reads of one fresh 64-Cell bundle to one. In one paired
 window it completes 95.35 Fleet writes/s versus 88.28, with successful scheduled
 p99 of 4,414.52 ms. ACK audits and drain pass, but total GET/range work remains
@@ -352,7 +352,7 @@ after selection readiness, rather than timing an origin wait after Fleet ACKs.
 Fencing/removal cancels only observation; original native publication and
 checkpoint/drain obligations remain joined. Its real-actor delayed-selection
 regression passes read/retry visibility, older-root progress and joined cold
-restore. The [paired measurement](../../../docs/pr67-selection-readiness-measurement.md)
+restore. The paired measurement
 at `6c909a6` completes 184.77 Fleet writes/s versus 195.13 before, with failed
 application availability. Bucket completes 248.68 writes/s versus 247.55 with
 passing ACK audits; its fixture bypasses the managed producer. No throughput
@@ -366,19 +366,19 @@ transfers from admission acquired before root I/O and releases with the worker.
 Regression cases exercise live writes, read/retry visibility, joined cold
 restore and successive intermediate bases. This supplies no new durability or
 origin-availability proof. The
-[checkpoint-continuity measurement](../../../docs/pr67-checkpoint-continuity-measurement.md)
+checkpoint-continuity measurement
 at `4a8f55c` completes 185.83 Fleet writes/s versus 164.73 but still returns
 304,151 measured errors and fails warm ACK availability. Bucket completes
 215.08 writes/s versus 227.15 with passing audits and higher p99. All contributor
 checks pass, but the original application load failure persists. No acceptable
 improvement or parity is established. A subsequent
-[release-build repeat](../../../docs/pr67-release-repeat-measurement.md) of the
+release-build repeat of the
 same binary completes 107.95 Fleet and 268.12 Bucket writes/s. Fleet still fails
 warm ACK availability; Bucket audits pass but delivery targets fail. Diagnostic
 logs identify shared-selection deadlines that fence Cells and publication
 backlog refusals. This supplies no demonstrated throughput improvement.
 
-The earlier [asynchronous-root comparison](../../../docs/pr67-async-root-measurement.md)
+The earlier asynchronous-root comparison
 at `6d62d41` completes 183.65 Fleet writes/s versus 115.27, with successful
 scheduled p99 of 1,782.74 ms. It returns 297,811 measured errors and fails its
 warm ACK audit. No cold or successful drain evidence follows. Root density is
@@ -463,7 +463,7 @@ original thresholds and evidence.
 
 Implementation and prior measured results are tracked in the
 [bundle delivery record](../../../docs/bundle-coverage-implementation.md) and
-[WAL comparison](../../../docs/pr67-normal-wal-reevaluation.md). Keep bulk logs,
+WAL comparison. Keep bulk logs,
 raw request ledgers and source manifests outside the repository.
 
 The recovery coordinator now discovers selected-only Cells and joins exact

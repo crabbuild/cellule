@@ -30,9 +30,8 @@ its [source defaults](https://github.com/denoland/celld/blob/f2bf648663a610eefde
 are one-shot HTTP, window zero and four rounds. Stream code in the repository
 does not establish that a measured case enabled it. Cellule currently uses
 eight rounds and a general four-millisecond assembly interval; celld's normal
-SQL Cells do not take its Queue-specific grouping delay. The
-[core-path contract](../../docs/write-performance-proposal.md#core-write-path-reference)
-records the remaining algorithm and configuration differences. No recorded
+SQL Cells do not take its Queue-specific grouping delay. Algorithm and
+configuration differences remain. No recorded
 case establishes core write-path parity.
 
 Use a dedicated Linux Docker context. The current shared-VM profile gives
@@ -214,8 +213,8 @@ into fresh directories before using the current JSONL runner; retain their
 original runner and JSON-array journals as historical evidence.
 
 Individual reports expose achieved rate, failed delivery gates, window costs
-and confirmed commands per selected root. They cannot establish the complete
-[proposal qualification](../../docs/write-performance-proposal.md): that also
+and confirmed commands per selected root. They cannot establish complete
+performance qualification: that also
 requires three matched repetitions, A/A variance, publication age/frontier
 stability, read guardrails and the overload/recovery experiment. Missing evidence
 stays explicitly unverified. Raw artifacts are never committed.

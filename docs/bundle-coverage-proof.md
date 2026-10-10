@@ -3,8 +3,8 @@
 Status: protocol model and connected implementation APIs; bundle-based bucket
 responses remain disabled. [Implementation and remaining gates](bundle-coverage-implementation.md)
 records the verified slice and its limits. Shared payload upload and signed
-append grants are separate implemented paths. The
-[proposal](write-performance-proposal.md) remains the qualification contract.
+append grants are separate implemented paths. Performance qualification remains
+required.
 
 ## Cost and latency gap
 
@@ -57,8 +57,7 @@ latency/debt benefit is not a remedy.
 
 At the 15K Fleet target, the same candidate accumulated 70.64 MB of unpublished
 log debt and its object frontier lagged by 50,548 sequences. It completed only
-295.263 commands/s, failed delivery and had 432 warm-audit HTTP 503s. The
-[delivery report](write-performance-delivery.md) preserves this failure.
+295.263 commands/s, failed delivery and had 432 warm-audit HTTP 503s.
 Follower acknowledgments keep the immediate proof path short only while the
 publication/retention path can make progress. M4 must reduce the complete cost
 and bound unmaterialized locators, with headroom for leases and drain.

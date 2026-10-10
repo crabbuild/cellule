@@ -1,14 +1,13 @@
 # Publication metadata cutover: plan
 
 Historical draft at `2d02d08`. Its successive alternatives and implementation
-recommendations are superseded by the
-[write performance proposal and delivery plan](write-performance-proposal.md).
+recommendations are superseded.
 In particular, retain accumulating lineage until a complete replacement is
 specified and proven; do not implement the single-predecessor root rewrite below.
 
 Hard cutover, no compatibility shims. Goal: reduce objects uploaded per published
-root from 4–7 toward celld's 1, and re-measure the matched head-to-head in
-`docs/performance-audit-rustfs.md`.
+root from 4–7 toward celld's 1, and re-measure the matched head-to-head from
+the historical RustFS audit.
 
 Every fact below was read from the tree at `2d02d08` plus the shipped group-size
 change. No number here is a measurement except where it cites the audit.
@@ -350,7 +349,7 @@ touches the LTX format and its vectors.
 
 Never weaken a qualification profile or an expected-evidence assertion to make a
 step pass. The one test that encodes the retracted group-size sequencing is
-already updated and justified in `docs/performance-audit-rustfs.md`.
+already updated and justified in the historical RustFS audit.
 
 ## Why this is written down rather than half-applied
 

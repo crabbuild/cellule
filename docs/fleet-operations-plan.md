@@ -115,7 +115,7 @@ earlier test results do not certify subsequent changes. The commands and
 required assertions below define the implementation gates.
 
 Focused implementation checkpoints are recorded in
-[execution evidence](fleet-operations-progress.md). Each checkpoint states
+execution evidence. Each checkpoint states
 its source fingerprint, selected commands, and limits; it does not mark an
 entire work package complete.
 
@@ -409,7 +409,7 @@ The host startup intent barrier and reference boot producer implement the order
 below. Complete observer/role production, ongoing supervision and the full W8
 maintenance/deployment evidence remain required. See the
 [host startup contract](../crates/cellule-host/docs/lifecycle.md#fleet-boot-admission)
-and [recorded evidence](fleet-operations-progress.md).
+and recorded evidence.
 
 1. Load a stable physical NodeId, create a fresh boot session, and read its
    committed intent. Missing or ambiguous intent cannot open acquisition.
@@ -1541,7 +1541,7 @@ host executor to that path without reinterpreting ordinary release records.
 Public SQL/Queue/Effect/Activity, restored Workflow waits/timers, accepted Cron
 dispatch with due-work handoff and deduplicated successor delivery, host release
 and pure action contracts have focused coverage in the
-[execution evidence](fleet-operations-progress.md). The driver now accepts
+execution evidence. The driver now accepts
 busy maintenance demand with a separate configured peak envelope under exact
 Evacuating intent and fresh source/receiver evidence; ordinary pressure/count
 moves still require settled samples. Canonical minion `maintenance-busy` now
@@ -1850,7 +1850,7 @@ The following example commands are deliverables of W8. The current tree supports
 `overload`, `controller-restart`, `receiver-loss`, writer-only `maintenance`,
 reader-only `maintenance-reader`, live-follower `maintenance-follower`, and
 combined reader/follower `maintenance-roles` with
-the evidence limits recorded in [execution evidence](fleet-operations-progress.md).
+the evidence limits recorded in execution evidence.
 Reader-only, live-follower-only and combined reader/follower maintenance each
 have focused end-to-end minion scenarios, as does failed-owner follower
 maintenance. A role-complete maintenance CLI and the full fault/provider

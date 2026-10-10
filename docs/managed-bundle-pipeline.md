@@ -2,7 +2,7 @@
 
 October 10, 2026. The runtime-owned producer can stage and upload one successor
 while its predecessor is publishing. Selection and receipt confirmation remain
-ordered. A [fresh application diagnostic](managed-bundle-pipeline-measurement.md)
+ordered. A fresh application diagnostic
 completes 873.35–1,038.80 writes/s and 8,877.55–10,897.50 reads/s, with
 268.3–689.1-ms write request p99 and growing root-materialization debt.
 **The 2,000-Cell mixed-load goal remains unmet; these short pairs do not qualify
@@ -84,7 +84,7 @@ compatibility, dependency verification and two-preparation model checks. Those
 model checks do not establish host memory accounting or adapter liveness; the
 managed tests cover those lifetimes separately.
 
-The [latest application measurements](managed-bundle-pipeline-measurement.md)
+The latest application measurements
 compare serial `d42b978` with this managed integration at `4712c4c`. Builds,
 raw failed/passed logs and isolated snapshots for this
 integration are retained outside Git under

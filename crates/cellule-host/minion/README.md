@@ -630,8 +630,8 @@ controlled bootstrap/import barrier, wire every enrollment producer, authenticat
 management requests, retain canonical enrollment proofs, produce complete fresh
 observations, and supervise the public reconciliation driver. The reference
 adapter does not infer these facts from an empty directory or a bootstrap flag.
-See the [implementation evidence](../../../docs/fleet-operations-progress.md)
-for exact source fingerprints and remaining work.
+Verify evidence against the exact source revision and track remaining work in
+the [fleet operations plan](../../../docs/fleet-operations-plan.md).
 
 The synthetic controller deadline cases use Tokio's test clock after fixture
 setup to inject timeout at an observed endpoint boundary. They separately prove

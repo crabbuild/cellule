@@ -23,7 +23,7 @@ dependencies and compares the exact predecessor in the canonical CAS.
 
 The ordinary materializer already permits 45 seconds of root age and batches
 up to its existing command/history limits. Another root-delay change is not
-the selected next action; the [earlier delay experiment](pr67-fleet-root-delay-measurement.md)
+the selected next action; the earlier delay experiment
 was rejected. The pipeline targets serialized immutable work without changing
 Cell transactions, follower membership or durability proofs.
 

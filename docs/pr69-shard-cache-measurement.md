@@ -90,5 +90,5 @@ files, `shard-cache-source-delta.json`, `shard-cache-source-comparison.json` and
 | Baseline | `98673fe11be8f288e3093cfadcc1d2ccbf2a06d4f930bc691f1470bcc5a3d5f7` |
 | Cache | `778b4f78757772b97e2d89953132f99503c5bdade528393dda231594f94269ec` |
 
-See [delivery status](write-performance-delivery.md) and the
+See the
 [shared durability design](../crates/cellule-runtime/docs/write-performance-design.md).

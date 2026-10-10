@@ -1051,8 +1051,7 @@ receiver restoration. Effect expiry preserves the existing retry backoff and
 inbox deduplication; Activity expiry preserves its pinned definition and rejects
 stale completion tokens. Unclaimed Effects and Activities resume through the
 registered native drivers. Restored Workflow waits accept deduplicated signals,
-and preserved due timers advance through the normal Tick. These local fixtures
-are recorded in the [execution evidence](../../../docs/fleet-operations-progress.md);
+and preserved due timers advance through the normal Tick. These are local fixtures;
 provider/process faults, Cron and Blob owners still require qualification.
 
 A transferable primitive snapshot grants no release authority and does not

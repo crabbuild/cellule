@@ -1,6 +1,6 @@
 # Bundle coverage implementation
 
-The [current paired 2,000-Cell measurements](pr67-metadata-window-measurement.md)
+The current paired 2,000-Cell measurements
 complete 502.28 Fleet writes/s versus 455.73 before and 1,999.83 for fresh
 celld. Metadata windows reduce observed GET/range work, but successful scheduled
 write p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only
@@ -10,10 +10,10 @@ seconds. The baseline write case fails two warm retries and never reaches the
 cold audit. Both Cellule read arms drop offers and the read guardrail fails.
 One short pair establishes no acceptable, repeatable or attributable gain.
 Publication cost and debt remain; all profiles are unqualified and PR #67 stays
-a draft. The [preceding encoder comparison](pr67-encoder-cost-measurement.md)
+a draft. The preceding encoder comparison
 and its passing and failed evidence remain separate observations.
 
-The [submission diagnosis](pr67-submission-timing-measurement.md) identifies
+The submission diagnosis identifies
 publication capacity held under the global issuance lock. Observed ordered wait remains about 119 ms; unequal phase counts prevent an
 exact successful-submission partition in this latest window.
 Celld pipelines native progress independently of bucket publication. Similar
@@ -25,9 +25,8 @@ installs it; Bucket benchmark wiring bypasses it. Remaining gaps are publication
 and verification cost, publication-coupled native admission, materializer
 progress and remaining overload availability, ordered shipping, safe collection
 and full lifecycle/performance qualification.
-The [historical-read experiment](pr67-historical-read-measurement.md) was reverted
-after a severe Fleet regression. Earlier measured slices remain linked from the
-[delivery record](write-performance-delivery.md).
+The historical-read experiment was reverted
+after a severe Fleet regression.
 
 ## Celld reference and Cellule adaptation
 
@@ -240,7 +239,7 @@ The first full run timed out at an unchanged five-second follower-backlog drain.
 That exact binary passed the case alone in 0.91 seconds; the identical frozen
 source then passed the complete workspace rerun with the same four test workers
 and deadlines. Failed runs, source hashes and count provenance remain outside
-Git. A subsequent [fresh application measurement](pr67-write-measurement-4957985.md)
+Git. A subsequent fresh application measurement
 at `4957985` observed 344.19 Fleet-configured TPS and 147.98 Bucket TPS, with
 failed qualification. Fleet successful-write p99 regressed, and ordinary bundle
 ACKs stay disabled; component I/O reductions do not establish application gains.
@@ -453,5 +452,4 @@ Remaining work before qualified production enablement:
 4. Implement complete cross-Cell reference inventory, pins and grace-qualified
    collection. Preserve original catalog and base dependencies throughout.
 5. Run the unchanged all-ACK cold recovery, paired Docker throughput/latency,
-   debt, read, overload and drain qualification from the
-   [performance proposal](write-performance-proposal.md).
+   debt, read, overload and drain qualification.
