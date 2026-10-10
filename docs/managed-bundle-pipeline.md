@@ -2,10 +2,11 @@
 
 October 10, 2026. The runtime-owned producer can stage and upload one successor
 while its predecessor is publishing. Selection and receipt confirmation remain
-ordered. A fresh application diagnostic
-completes 873.35–1,038.80 writes/s and 8,877.55–10,897.50 reads/s, with
-268.3–689.1-ms write request p99 and growing root-materialization debt.
-**The 2,000-Cell mixed-load goal remains unmet; these short pairs do not qualify
+ordered. The latest completed production diagnostic reaches 1,249.90 writes/s
+and 12,580.70 reads/s, with 240.5-ms write request p99, dropped offers and growing
+root-materialization debt. Removing the checkpoint serial guard did not improve
+completed throughput in its complete pair and remains an unadopted experiment.
+**The 2,000-Cell mixed-load goal remains unmet; these short runs do not qualify
 sustainable capacity.**
 
 ## Publication and admission
@@ -84,11 +85,45 @@ compatibility, dependency verification and two-preparation model checks. Those
 model checks do not establish host memory accounting or adapter liveness; the
 managed tests cover those lifetimes separately.
 
-The latest application measurements
-compare serial `d42b978` with this managed integration at `4712c4c`. Builds,
-raw failed/passed logs and isolated snapshots for this
-integration are retained outside Git under
-`cellule-ios-parity-20261010/managed-bundle-pipeline`.
+## Current application measurement
+
+The completed production baseline uses `4712c4c`, whose Rust/Cargo sources match
+`ea4903d` on main. One complete pair and an unpaired candidate repeat use an
+8-vCPU/16-GiB owner, two required followers, RustFS and 2,000 uniformly active
+Cells. Each offers 2,000 writes/s and 20,000 reads/s after a 30-second warmup,
+with a 60-second measurement, the same client/auditor binaries, workload and
+resource limits.
+Owner and follower state use tmpfs.
+
+| Completed run | Writes/s | Reads/s | Write request p99 | Read request p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Production baseline | 1,249.90 | 12,580.70 | 240.5 ms | 48.1 ms |
+| Checkpoint-overlap experiment | 1,209.43 | 12,058.38 | 221.2 ms | 46.2 ms |
+| Unpaired experiment repeat | 1,232.40 | 12,024.07 | 219.3 ms | 51.4 ms |
+
+The baseline's separate read-only window completes 19,656.13 reads/s. Mixed-load
+queued offers are dropped in all three runs. Root debt grows
+134,899,950→203,855,477 bytes in production, versus
+133,416,864→250,078,928 bytes in the paired experiment. The repeat grows
+127,963,421→243,394,635 bytes. The production checkpoint guard is retained.
+
+All 402,167 ACKs across the three completed cases independently reconcile with
+raw client journals and pass warm/cold state and original retry audits. The final
+baseline attempt fails copying client evidence with an unexpected EOF while the
+dedicated VM reports filesystem I/O errors. Its artifacts and stopped disk
+images are preserved; it contributes no completed comparison or capacity claim.
+
+Builds, failed/passed logs and snapshots are retained outside Git under
+`cellule-ios-parity-20261010`. The three-run evidence index is
+`checkpoint-pipeline-three-completed-evidence-index.json`, SHA-256
+`3e62e448476193424d8c555ca9b021e130819f01f576ff180ff089bff2869b85`.
+These diagnostics establish neither sustainable capacity nor celld parity.
+
+CNB3 stores a 32-KiB authenticated header, changed catalog shards, new native
+frames and detached Cell histories in one immutable upload. Unchanged extents
+remain exact references to earlier objects. The
+[format and recovery contract](bundle-coverage-implementation.md) describe its
+digest chain and CNB1/CNB2 reader compatibility. The experiment changes no bytes.
 
 ## Verification
 
