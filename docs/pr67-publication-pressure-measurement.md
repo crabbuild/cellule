@@ -133,6 +133,16 @@ followers group approximately 8.55–11.23 delivered frames per data sync. These
 overlapping caller waits cannot be added as serial service time. Each follower
 still awaits one grouped RPC. Full ordered streaming remains open work.
 
+The verified reference also defaults to one-shot HTTP: the recorded celld cases
+do not set `CELLD_LOG_TRANSPORT=stream`. Its default pipeline is four and its
+stream window is zero, while Cellule uses eight rounds. Streaming is a celld
+capability, not an explanation established by these default-transport results.
+The [core-path contract](write-performance-proposal.md#core-write-path-reference)
+records the actual reference configuration and remaining publication/capture
+differences. A subsequent stream-interface regression spike is unintegrated,
+preserved externally and removed from production; no throughput gain is claimed
+for it.
+
 A separate paged-catalog experiment is rejected: one 2,000-Cell single update
 reduces encoded metadata 62.36%, but a uniform 64-Cell cohort saves only 0.37%
 and adds another metadata I/O stage. Its fresh run falls 436.55→364.37 writes/s,

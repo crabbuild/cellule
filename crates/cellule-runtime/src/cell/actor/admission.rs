@@ -68,7 +68,7 @@ pub(super) fn fence_active(active: &mut ActiveCell) {
     // An accepted materializer owns its obligation until joined completion.
     // Otherwise retain the original owner/pin via unpublished_node_logs while
     // the fenced worker is discarded; no successful release is fabricated.
-    if !active.materializing && active.root_debt.take().is_some() {
+    if active.root_debt.take().is_some() {
         active
             .coordination
             .step(CoordinationInput::FinishPublication {

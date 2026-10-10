@@ -24,6 +24,17 @@ inferring them from a TPS ratio. A direct Rust storage/replication microbenchmar
 would need its own matched inputs and durability boundary; it would measure that
 subsystem and would not replace end-to-end qualification.
 
+The pinned celld reference uses ordered one-shot HTTP by default. This runner
+does not set `CELLD_LOG_TRANSPORT`, `CELLD_LOG_WINDOW` or `CELLD_LOG_PIPELINE`:
+its [source defaults](https://github.com/denoland/celld/blob/f2bf648663a610eefde71f3547ad61e9b896b1f0/crates/celld/node_log.rs#L5815)
+are one-shot HTTP, window zero and four rounds. Stream code in the repository
+does not establish that a measured case enabled it. Cellule currently uses
+eight rounds and a general four-millisecond assembly interval; celld's normal
+SQL Cells do not take its Queue-specific grouping delay. The
+[core-path contract](../../docs/write-performance-proposal.md#core-write-path-reference)
+records the remaining algorithm and configuration differences. No recorded
+case establishes core write-path parity.
+
 Use a dedicated Linux Docker context. The current shared-VM profile gives
 nodes an 8-CPU/16-GiB ceiling, tmpfs state of 4 GiB, a 2-CPU/2-GiB RustFS
 provider, and a 4-CPU/4-GiB client. These ceilings exceed the shared VM's total

@@ -386,6 +386,12 @@ pub(super) fn handle_message(
                             .chain(active.root_debt.as_ref().map(|debt| debt.submitted_at))
                             .chain(
                                 active
+                                    .materializing
+                                    .as_ref()
+                                    .map(|root| root.debt.submitted_at),
+                            )
+                            .chain(
+                                active
                                     .publications
                                     .front()
                                     .map(|queued| queued.submitted_at),

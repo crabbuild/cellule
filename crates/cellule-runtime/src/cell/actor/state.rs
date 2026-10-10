@@ -292,7 +292,8 @@ pub(super) struct ActiveCell {
     // Dropping/fencing the Cell cancels observation, never native publication.
     pub(super) selection_waiter: Option<tokio_util::sync::DropGuard>,
     pub(super) root_debt: Option<RootDebt>,
-    pub(super) materializing: bool,
+    pub(super) materializing: Option<MaterializingRoot>,
+    pub(super) selecting: bool,
     pub(super) publishing_since: Option<std::time::Instant>,
     pub(super) publication_bytes: u64,
     pub(super) unpublished_node_logs: usize,
@@ -408,10 +409,17 @@ pub(super) struct SelectedPublication {
     pub(super) debt: RootDebt,
 }
 
+pub(super) struct MaterializingRoot {
+    pub(super) debt: RootDebt,
+    // Completion of the original native bind, not cancellation of root work.
+    pub(super) joined: tokio_util::sync::CancellationToken,
+}
+
 impl ActiveCell {
     pub(super) fn selected_due_head(&self) -> (u64, Option<i64>) {
         self.root_debt
             .as_ref()
+            .or_else(|| self.materializing.as_ref().map(|root| &root.debt))
             .map_or((self.published_sequence, self.next_due_ms), |debt| {
                 (debt.selected.proof.commit_sequence(), debt.next_due_ms)
             })
@@ -559,7 +567,6 @@ pub(super) enum TaskResult {
         cell: CellId,
         generation: u64,
         effect_id: u64,
-        publisher: Box<CellPublisher>,
         covered: u64,
         retained_bytes: u64,
         result: crate::Result<Box<SelectedPublication>>,

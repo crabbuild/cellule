@@ -415,13 +415,17 @@ fn run_worker_command(
         WorkerCommand::BindBundleMaterialized {
             cell,
             root,
+            original,
             retained,
             reply,
         } => {
             let result = cells
                 .get_mut(&cell)
                 .ok_or(Error::CellNotActive)
-                .and_then(|cell| cell.executor.bind_bundle_materialized(&root, retained));
+                .and_then(|cell| {
+                    cell.executor
+                        .bind_bundle_materialized(&root, &original, retained)
+                });
             let _ = reply.send(result);
         }
         WorkerCommand::ConfirmBootstrapPublished { cell, cuts, reply } => {

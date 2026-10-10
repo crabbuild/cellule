@@ -815,6 +815,7 @@ impl SqlWorkerPool {
         &self,
         cell: CellId,
         root: cellule_ltx::RootRef,
+        original: Arc<crate::node::log_shipper::SelectedBundle>,
         retained: ResourceReservation,
     ) -> Result<()> {
         let (reply, response) = oneshot::channel();
@@ -823,6 +824,7 @@ impl SqlWorkerPool {
             WorkerCommand::BindBundleMaterialized {
                 cell,
                 root,
+                original,
                 retained,
                 reply,
             },
@@ -1313,6 +1315,7 @@ enum WorkerCommand {
     BindBundleMaterialized {
         cell: CellId,
         root: cellule_ltx::RootRef,
+        original: Arc<crate::node::log_shipper::SelectedBundle>,
         retained: ResourceReservation,
         reply: oneshot::Sender<Result<()>>,
     },

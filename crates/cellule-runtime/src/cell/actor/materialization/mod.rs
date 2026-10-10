@@ -25,6 +25,9 @@ pub(super) fn start_selection(
     pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
+    if active.selecting {
+        return;
+    }
     let ready = active
         .publications
         .iter()
@@ -39,9 +42,24 @@ pub(super) fn start_selection(
         readiness::wait(cell, active, tasks);
         return;
     }
-    let Some(publisher) = active.publisher.take() else {
+    let binding = active
+        .publisher
+        .as_ref()
+        .and_then(|publisher| publisher.control().value().bundle_binding)
+        .or_else(|| {
+            active
+                .materializing
+                .as_ref()
+                .map(|root| root.debt.selected.proof.binding())
+        });
+    let Some(binding) = binding else {
         return;
     };
+    let materializing = active
+        .materializing
+        .as_ref()
+        .map(|root| (Arc::clone(&root.debt.selected), root.joined.clone()));
+    active.selecting = true;
     // Retire only a selected oldest prefix. The bounded unselected suffix
     // stays in the original queue, without excluding root preparation.
     let coverage: Vec<_> = active.publications.drain(..ready).collect();
@@ -53,8 +71,8 @@ pub(super) fn start_selection(
     let generation = active.generation;
     let effect_id = active.begin_task(CoordinationEffect::Publication);
     active.publishing_since = coverage.first().map(|queued| queued.submitted_at);
-    // Worker cleanup is dispatched through the same owned pool as SQL. The
-    // publisher token excludes root preparation only during verified cleanup.
+    // Cleanup uses immutable verified coverage, not the mutable publisher.
+    // Keep one original FIFO cleanup task per Cell while root I/O continues.
     let pool = pool.clone();
     tasks.spawn(async move {
         let result = async {
@@ -72,11 +90,19 @@ pub(super) fn start_selection(
                 captures.push(capture);
             }
             let selected = Arc::clone(captures.last().ok_or(Error::PendingPublication)?.selected());
-            if publisher.control().value().bundle_binding != Some(selected.proof.binding())
+            if binding != selected.proof.binding()
                 || selected.proof.commit_sequence() != newest.pending.outcome().commit_sequence()
                 || selected.proof.position() != newest.pending.cuts().position
             {
                 return Err(Error::Fenced);
+            }
+            if let Some((original, joined)) = materializing
+                && selected.proof.base()? != original.proof.base()?
+            {
+                // A proof rebased by the original checkpoint needs its native
+                // prefix witness. Old-base proofs can retire throughout root
+                // I/O; only the new-base handoff waits for that exact bind.
+                joined.cancelled().await;
             }
             let released = pool.release_bundle_captures(cell, captures).await?;
             if released.len() != coverage.len()
@@ -121,7 +147,6 @@ pub(super) fn start_selection(
             cell,
             generation,
             effect_id,
-            publisher: Box::new(publisher),
             covered,
             retained_bytes,
             result,
@@ -134,7 +159,10 @@ pub(super) fn dispatch(
     cells: &mut HashMap<CellId, ActiveCell>,
     tasks: &mut JoinSet<TaskResult>,
 ) {
-    let running = cells.values().filter(|active| active.materializing).count();
+    let running = cells
+        .values()
+        .filter(|active| active.materializing.is_some())
+        .count();
     let now = std::time::Instant::now();
     let mut ready: Vec<_> = cells
         .iter()
@@ -153,7 +181,8 @@ pub(super) fn dispatch(
                             .is_none_or(|pending| !pending.has_managed_bundle_capture())
                     });
             (active.publisher.is_some()
-                && !active.materializing
+                && active.materializing.is_none()
+                && !active.selecting
                 && (forced
                     || blocks_commands(active)
                     || debt
@@ -203,7 +232,12 @@ pub(super) fn dispatch(
             continue;
         };
         let debt = debt.clone();
-        active.materializing = true;
+        let joined = tokio_util::sync::CancellationToken::new();
+        active.root_debt = None;
+        active.materializing = Some(MaterializingRoot {
+            debt: debt.clone(),
+            joined: joined.clone(),
+        });
         available -= 1;
         let effect_id = active.begin_task(CoordinationEffect::Publication);
         let generation = active.generation;
@@ -233,13 +267,14 @@ pub(super) fn dispatch(
                 // block replication or materialization for independent Cells.
                 let retained = reservation.split_retained(crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes())?;
                 drop(reservation);
-                // Checkpoint the authenticated locator prefix before admitting
-                // more selection; both root and index now cover this exact cut.
+                // Checkpoint this exact cut. Later selected captures can retire
+                // independently; a rebased proof waits for the native witness.
                 debt.durability.checkpoint_materialized(publisher.authority(), root).await?;
                 // Transfer pre-admitted metadata to the worker. No admission
                 // can fail after the canonical root and checkpoint are joined.
-                pool.bind_bundle_materialized(cell, root, retained).await
+                pool.bind_bundle_materialized(cell, root, Arc::clone(&debt.selected), retained).await
             }.await;
+            joined.cancel();
             publisher.record_publication_timing(crate::fleet::telemetry::PublicationTiming {
                 queue_wait: started.saturating_duration_since(debt.submitted_at),
                 preparation: std::time::Duration::ZERO,

@@ -422,7 +422,7 @@ pub(super) fn start_publication(
     pool: &SqlWorkerPool,
     tasks: &mut JoinSet<TaskResult>,
 ) {
-    if active.publications.is_empty() {
+    if active.publications.is_empty() || active.selecting {
         return;
     }
     if active.publications.iter().all(|queued| {
@@ -638,7 +638,7 @@ pub(super) fn start_admitted_publication(
                 if let Some(pending) = durabilities.last().and_then(Option::as_ref) {
                     pending.checkpoint_materialized(publisher.authority(), root).await?;
                 }
-                pool.bind_bundle_materialized(cell, root, checkpoint_retained).await?;
+                pool.bind_bundle_materialized(cell, root, selected, checkpoint_retained).await?;
                 authority = authority_started.elapsed();
                 return Ok(());
             }

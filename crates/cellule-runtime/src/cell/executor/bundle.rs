@@ -64,6 +64,7 @@ impl CellExecutor {
     pub(crate) fn bind_bundle_materialized(
         &mut self,
         root: &cellule_ltx::RootRef,
+        original: &crate::node::log_shipper::SelectedBundle,
         mut retained: crate::fleet::resource::ResourceReservation,
     ) -> Result<()> {
         let selected = self
@@ -72,8 +73,8 @@ impl CellExecutor {
             .ok_or(Error::PendingPublication)?;
         if root.cell != *self.cell.as_bytes()
             || root.incarnation != *self.incarnation.as_bytes()
-            || root.commit_sequence != selected.proof.commit_sequence()
-            || root.position != selected.proof.position()
+            || root.commit_sequence != original.proof.commit_sequence()
+            || root.position != original.proof.position()
         {
             return Err(Error::Control(
                 "materialized root differs from bundle cleanup",
@@ -82,14 +83,20 @@ impl CellExecutor {
         // The actor has joined the exact root CAS and catalog checkpoint before
         // this native bind. Retain a compact identity of that original prefix,
         // so older receipts can meet later proofs rebased on this exact root.
-        let checkpoint = selected.proof.materialized_prefix(
+        selected.proof.continues_selected_prefix(
+            &original.proof,
+            self.bundle_checkpoint.as_ref().map(|(prefix, _)| prefix),
+        )?;
+        let checkpoint = original.proof.materialized_prefix(
             *root,
             self.bundle_checkpoint.as_ref().map(|(prefix, _)| prefix),
         )?;
         retained.shrink_retained(checkpoint.retained_bytes())?;
         self.published_sequence = root.commit_sequence;
         self.bundle_checkpoint = Some((checkpoint, retained));
-        self.bundle_materialization = None;
+        if selected.proof.commit_sequence() == root.commit_sequence {
+            self.bundle_materialization = None;
+        }
         Ok(())
     }
 }

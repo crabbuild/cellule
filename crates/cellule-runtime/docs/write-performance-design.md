@@ -342,6 +342,15 @@ future returns, its overlay and preparation buffers have exited: release that
 credit before waiting in the shared checkpoint queue. Retain the separately
 pre-admitted prefix metadata through the original checkpoint and worker binding;
 the Cell still waits for that callback before advancing its materialization.
+Selected-capture cleanup has its own FIFO task and immutable binding check;
+it does not take the root publisher. An in-flight root owns its original cut
+and publication obligation, while later selected debt keeps a separate one.
+The native root bind checks the original proof and preserves a verified later
+suffix. Proofs that change base wait for the original bind's prefix witness;
+old-base proofs can retire during root preparation and checkpoint callbacks.
+Serving/due observations include both in-flight and later selected debt, and
+shutdown joins both obligations before release. This separation adds no ACK
+source and does not increase locator, retained-memory or materializer bounds.
 Cancellation or failure releases the remaining guards. The eight-materializer
 limit and node memory budget stay unchanged.
 

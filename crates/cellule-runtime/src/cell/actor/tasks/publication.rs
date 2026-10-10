@@ -37,7 +37,6 @@ pub(super) fn handle_bundle_selected(
     cell: CellId,
     generation: u64,
     effect_id: u64,
-    publisher: Box<CellPublisher>,
     covered: u64,
     retained_bytes: u64,
     result: crate::Result<Box<SelectedPublication>>,
@@ -61,7 +60,7 @@ pub(super) fn handle_bundle_selected(
         return;
     }
     active.finish_task(effect_id, CoordinationEffect::Publication);
-    active.publisher = Some(*publisher);
+    active.selecting = false;
     active.publishing_since = None;
     active.publication_bytes = active.publication_bytes.saturating_sub(retained_bytes);
     let result = result.and_then(|selected| {
@@ -276,10 +275,9 @@ pub(super) fn handle_published(
     active.finish_task(effect_id, CoordinationEffect::Publication);
     active.last_work_at = std::time::Instant::now();
     let object_published = result.is_ok();
-    if active.materializing {
-        active.materializing = false;
-        active.root_debt = None;
-    }
+    // The completed task owns only its original cut. A concurrently selected
+    // suffix has a separate obligation and remains due after this completion.
+    active.materializing = None;
     active.publishing_since = None;
     if object_published {
         // Control now names this commit, so the local mirror can answer a due

@@ -431,6 +431,8 @@ pub(super) async fn managed_actor_case(
         usize::from(per_cell) * 2
     );
     let mut held_checkpoint_bytes = None;
+    let mut held_capture_cleanup = None;
+    let mut preparation_capture_cleanup = None;
     if checkpoint_continuation {
         // These captures are selected against the old base while the actor's
         // first materializer owns the publisher and waits for preparation.
@@ -453,6 +455,22 @@ pub(super) async fn managed_actor_case(
                 .unwrap();
             results.push((byte, identity, result));
         }
+        preparation_capture_cleanup = Some(
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let mut pending = false;
+                    for (target, _, _, _) in &cells {
+                        pending |= pool.pending(target.cell_id()).await.unwrap().is_some();
+                    }
+                    if !pending {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .is_ok(),
+        );
         drop(preparation.take());
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
@@ -524,6 +542,25 @@ pub(super) async fn managed_actor_case(
             println!(
                 "held original checkpoint retained bytes: {}",
                 held_checkpoint_bytes.unwrap()
+            );
+            // A verified later prefix must retire independently of the first
+            // root's original checkpoint callback. Record the verdict before
+            // resuming it, but always join recovery before asserting.
+            held_capture_cleanup = Some(
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        let mut pending = false;
+                        for (target, _, _, _) in &cells {
+                            pending |= pool.pending(target.cell_id()).await.unwrap().is_some();
+                        }
+                        if !pending {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .is_ok(),
             );
             // Even a failing credit verdict resumes and joins the original
             // callbacks, subsequent receipts, shutdown and cold verification.
@@ -646,6 +683,18 @@ pub(super) async fn managed_actor_case(
         assert!(
             bytes <= super::checkpoint_credit::HELD_METADATA_CEILING,
             "completed root buffers remain charged while checkpoint is held: {bytes} bytes"
+        );
+    }
+    if let Some(cleaned) = held_capture_cleanup {
+        assert!(
+            cleaned,
+            "selected captures waited for root checkpoint ownership"
+        );
+    }
+    if let Some(cleaned) = preparation_capture_cleanup {
+        assert!(
+            cleaned,
+            "selected captures waited for original root preparation"
         );
     }
 }
