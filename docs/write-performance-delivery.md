@@ -1,5 +1,15 @@
 # Write performance implementation and verification
 
+The latest [composed-publication diagnostic](pr67-composed-publication-measurement.md)
+reserves the complete ready root-callback cohort before native batching and
+shares one exact catalog/CAS with new captures. Its fresh corrected comparison
+records 407.03→468.80 successful Fleet writes/s with unchanged ~389-ms successful
+scheduled p99; every one of 53,527 ACKs passes warm/cold mutation and retry
+audits. The initial composed candidate regresses 364.02→328.98/s and remains
+recorded separately. Total store bytes/success and publication debt still grow;
+errors/drops and the remaining transport/qualification gaps keep PR #67 a draft.
+Earlier milestone reports below are historical; acceptance gates are unchanged.
+
 This delivers packed dependencies, shared publication, signed append grants and
 a quantified gap report, not the completed M0–M5 plan. A pinned Docker
 comparison retains exact retry and cold-state audits. **Celld write parity

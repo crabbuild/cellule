@@ -1,11 +1,18 @@
 # Node write and read performance design
 
-The current candidate composes ready materialized checkpoints and new native
-captures into one fresh catalog load, upload and fenced selection CAS. Exact
-prefix proofs, original callbacks, the 64-row limit and the 20-MiB publication
-working reservation remain in force. Idle and receipt-pressure paths still join
-standalone checkpoints. Measurement and qualification determine whether this
-candidate is retained; the diagnostic history below remains separate evidence.
+The latest [composed-publication measurement](../../../docs/pr67-composed-publication-measurement.md)
+joins ready exact materialized checkpoints and new complete native captures in
+one fresh bounded catalog load, upload and fenced CAS. Reserving all ready
+checkpoint rows before native assembly fixes a demonstrated cohort split. Fresh
+Fleet TPS rises 407.03→468.80/s; successful scheduled p99 stays about 389 ms. All
+53,527 candidate ACKs pass warm/cold mutation and original retry audits, and all
+2,000 Cells drain idle. Node-authority PUTs/success fall 21.38%, but total observed
+store bytes/success rise 8.68% and publication debt still grows. Errors/drops,
+latency, sustained capacity, streaming transport and complete qualification remain
+open. This short observation establishes no repeatable performance parity; PR
+#67 stays a draft and all acceptance gates remain unchanged.
+
+The following measurements remain historical observations.
 
 The latest [shared-overlay diagnostic](../../../docs/pr67-shared-overlay-measurement.md)
 rejects and reverts recovered-overlay integration through the shared producer.
