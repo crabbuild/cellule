@@ -23,6 +23,7 @@ mod faults;
 mod index;
 mod lifecycle;
 mod managed;
+mod materialization_reads;
 mod pipeline;
 mod publication_hooks;
 mod ranges;

@@ -3,6 +3,7 @@ use super::*;
 use crate::control::authority::{CellAuthority, VersionedControl};
 use crate::node::NodeDirectory;
 use crate::node::directory::NodeRecord;
+use futures_util::{StreamExt, stream::FuturesOrdered};
 
 impl NodeDirectory {
     /// Reopens one authority-pinned selected Cell suffix from canonical origin.
@@ -150,23 +151,65 @@ async fn verify_binding_into(
 ) -> Result<()> {
     verify_base(layout, binding, limits).await?;
     let mut chain = BindingChain::new(binding)?;
-    for locator in &binding.locators {
-        let object = locator
-            .object
-            .ok_or(Error::Node("bundle locator is unresolved"))?;
-        let end = locator
-            .offset
-            .checked_add(locator.bytes)
-            .ok_or(Error::Node("bundle locator overflow"))?;
-        let bytes =
-            origin::read_range(layout, session, epoch, object, locator.offset..end, origin).await?;
-        let frame = checked_frame(session, epoch, binding, locator, bytes, limits)?;
-        chain.accept(FrameStep::from_frame(&frame))?;
-        if let Some(frames) = &mut frames {
-            frames.push(frame);
+    let mut pending = binding.locators.iter();
+    let mut reads = FuturesOrdered::new();
+    for locator in pending.by_ref().take(verification::READ_CONCURRENCY) {
+        reads.push_back(read_frame(
+            layout, session, epoch, binding, locator, limits, origin,
+        ));
+    }
+    // The original suffix admission already covers all retained frame bodies.
+    // Overlap bounded GETs, consume facts in exact locator order, and join the
+    // accepted window after failure without dispatching any later reads.
+    let mut failure = None;
+    while let Some(result) = reads.next().await {
+        if failure.is_some() {
+            continue;
+        }
+        let result = result.and_then(|frame| {
+            chain.accept(FrameStep::from_frame(&frame))?;
+            if let Some(frames) = &mut frames {
+                frames.push(frame);
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            failure = Some(error);
+        } else if let Some(locator) = pending.next() {
+            reads.push_back(read_frame(
+                layout, session, epoch, binding, locator, limits, origin,
+            ));
         }
     }
-    chain.finish(binding)
+    match failure {
+        Some(error) => Err(error),
+        None => chain.finish(binding),
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one exact authenticated locator and origin scope"
+)]
+async fn read_frame(
+    layout: &cellule_ltx::CellStorageLayout,
+    session: SessionId,
+    epoch: u64,
+    binding: &Binding,
+    locator: &Locator,
+    limits: cellule_ltx::Limits,
+    origin: Option<&origin::OriginBundle>,
+) -> Result<cellule_ltx::VerifiedNodeFrame> {
+    let object = locator
+        .object
+        .ok_or(Error::Node("bundle locator is unresolved"))?;
+    let end = locator
+        .offset
+        .checked_add(locator.bytes)
+        .ok_or(Error::Node("bundle locator overflow"))?;
+    let bytes =
+        origin::read_range(layout, session, epoch, object, locator.offset..end, origin).await?;
+    checked_frame(session, epoch, binding, locator, bytes, limits)
 }
 
 /// Checked frame facts retained only within one verification operation. They

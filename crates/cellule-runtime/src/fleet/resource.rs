@@ -438,6 +438,12 @@ impl ResourceLedger {
         self.try_reserve_inner(RetentionStage::Materialization, cost, !progress_needed)
     }
 
+    pub(crate) fn materialization_headroom(&self) -> Result<usize> {
+        let state = self.snapshot()?;
+        Ok(publication_working_threshold(state.limit.retained_bytes())
+            .saturating_sub(state.used.retained_bytes()))
+    }
+
     fn try_reserve_inner(
         &self,
         stage: RetentionStage,

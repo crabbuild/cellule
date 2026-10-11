@@ -217,6 +217,19 @@ pub(super) fn dispatch(
     if available == 0 {
         return;
     }
+    // Every root needs at least this original I/O body and prefix metadata.
+    // Avoid sorting the entire dirty fleet on each SQL event when no parallel
+    // job can fit. Exact admission below still arbitrates concurrent releases.
+    let minimum = crate::node::bundle::MAX_BUNDLE_BYTES as usize
+        + crate::node::bundle::MaterializedBundlePrefix::maximum_retained_bytes();
+    if running != 0
+        && pool
+            .resource_ledger()
+            .materialization_headroom()
+            .is_ok_and(|bytes| bytes <= minimum)
+    {
+        return;
+    }
     let now = std::time::Instant::now();
     let mut ready: Vec<_> = cells
         .iter()

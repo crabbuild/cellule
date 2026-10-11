@@ -43,6 +43,16 @@ preserves heartbeat and coverage changes observed after staging.
 
 ## Checkpoints and joined lifetime
 
+Materialization overlaps at most eight original authenticated frame-range reads
+within its existing `6 × suffix bytes + 4 MiB` working reservation. Verification
+consumes frame facts in locator order. A failure stops new dispatch, joins the
+accepted window, preserves the first source error and grants no root credit.
+Base-origin verification remains fresh and precedes those reads.
+
+When a materializer is already alive and even the minimum working reservation
+cannot fit, dispatch skips the repeated dirty-fleet walk and sort. This is only
+a scheduling hint; the original atomic admission still decides each job.
+
 A first cohort containing root checkpoint notifications uses serial publication.
 The lookahead cohort contains native captures only. Ready root notifications
 join the next first cohort or the existing idle checkpoint path. This preserves
