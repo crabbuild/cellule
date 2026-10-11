@@ -107,7 +107,7 @@ pub(super) async fn rotated(fixture: &ManagedFixture) -> cellule_host::NodeLogRo
     request
 }
 
-async fn evidence(
+pub(super) async fn evidence(
     fixture: &ManagedFixture,
     original: &EnrollmentRecord,
     operation: &MaintenanceOperation,

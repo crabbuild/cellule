@@ -49,7 +49,9 @@ pub(super) async fn run(
     // These role-enabled futures contain native peer activation and complete
     // fleet capture. Their synchronous boxed constructors keep construction
     // temporaries out of the parent poll frame as well as its retained state.
-    let inputs = setup::initialize(root, &journal, nodes, boots, roles).await?;
+    let inputs = setup::initialize(root, &journal, nodes, boots, roles)
+        .await
+        .map_err(|source| failure("follower-maintenance-initialize", source))?;
     let version = journal.load_snapshot(scope()).await?.registry();
     let page = journal.enrollments_page(version, None, 128).await?;
     let original = page
@@ -236,7 +238,9 @@ pub(super) async fn run(
             "follower rotation lacks original tail coverage or the newer epoch",
         ));
     }
-    let renewed = service::resume(root, nodes, boots, &inputs).await?;
+    let renewed = service::resume(root, nodes, boots, &inputs)
+        .await
+        .map_err(|source| failure("follower-maintenance-resume", source))?;
     let current = journal.load_snapshot(scope()).await?;
     let policy = FollowerReplacementPolicy::new(scope(), 1, 2)?;
     journal
@@ -249,7 +253,8 @@ pub(super) async fn run(
         .ok_or_else(|| invalid("follower maintenance operation disappeared"))?;
     let capture = nodes[0]
         .follower_evacuation(&original, operation, 2, deadline())
-        .await?;
+        .await
+        .map_err(|source| failure("follower-maintenance-capture", source))?;
     if !Arc::ptr_eq(capture.rotation(), &completion)
         || capture.retired_members().len() != 2
         || capture
@@ -278,7 +283,8 @@ pub(super) async fn run(
         deadline(),
         clock,
     )
-    .await?;
+    .await
+    .map_err(|source| failure("follower-maintenance-publication", source))?;
     let record = publication.record()?;
     let reader_capture = if let Some(readers) = &inputs.readers {
         // A follower proof alone cannot close a donor that also owns a reader.
@@ -399,6 +405,16 @@ fn checked_report(report: &cellule_host::fleet::FleetReconcileReport) -> Journal
         return Err(Box::new(failure.clone()));
     }
     Ok(())
+}
+
+// A finite scenario must keep the failing boundary and the original typed
+// source together. Repeated Fenced errors without a phase cannot distinguish
+// native rotation, resumed service and fresh policy verification.
+pub(super) fn failure(name: &'static str, source: impl Into<JournalError>) -> JournalError {
+    Box::new(cellule_runtime::Error::Facility {
+        name,
+        source: source.into(),
+    })
 }
 
 // Preserve the supervisor's shared source error when this finite command exits.

@@ -17,12 +17,20 @@ impl ManagedFixture {
     }
 
     pub async fn with_members(count: usize, max_epochs: usize) -> Self {
+        Self::with_store(count, max_epochs, Arc::new(InMemory::new())).await
+    }
+
+    pub async fn with_store(
+        count: usize,
+        max_epochs: usize,
+        store: Arc<dyn object_store::ObjectStore>,
+    ) -> Self {
         assert!((3..=4).contains(&count));
         assert!((1..=3).contains(&max_epochs));
         let root = tempfile::tempdir().unwrap();
         let app = application::compile().unwrap();
         let layout = CellStorageLayout::new(
-            Store::new(Arc::new(InMemory::new())),
+            Store::new(store),
             ObjectPath::from("managed-followers"),
             [3; 16],
         );

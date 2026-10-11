@@ -234,6 +234,32 @@ both original failures. The original CI logs remain and the job is retried
 without weaker assertions or longer deadlines; a passing repeat does not identify
 or fix the intermittent failure's cause.
 
+### Checkpoint-overlap candidate
+
+The next candidate composes checkpoints in either of its two ordered cohorts,
+releases duplicate preparation snapshots after encoding, and shares heavy
+preparation/verification scratch. It preserves the existing 64-MiB budget,
+foreground headroom, fresh dependency checks and authority CAS. An accepted
+checkpoint joins its original callback to preserve upload source errors even
+when a sibling upload delays worker termination.
+
+The focused bundle suite passes 150 cases; the subsequent six-case checkpoint
+suite also covers a checkpoint in each cohort and independently ordered credit.
+Exact encoding comparisons retain complete sibling catalogs and require
+byte/digest equality. These are correctness and bounded-lifetime regressions;
+the candidate's fresh application capacity ramp has not yet completed. The
+500-write/s and mixed/read-only tables above still describe source `03d2eba`,
+not this candidate. See the [managed protocol](managed-bundle-pipeline.md).
+
+The maintenance investigation also reproduces a distinct capture race: a real
+same-boot heartbeat between two directory observations caused `Fenced` through
+full-advertisement equality. Capture now retains the exact Open epoch, membership
+and signed boot identity while reobserving monotone generation, activation,
+coverage and lease progress. Its original heartbeat regression fails before the
+change and passes after it; a held-read closure case still rejects. The original
+CI failures and 50 passing local repeats remain retained. This concrete fix is
+not yet confirmation of the hosted failure's cause or a passing new CI run.
+
 ## Retained failed attempts
 
 | Attempt | Outcome |

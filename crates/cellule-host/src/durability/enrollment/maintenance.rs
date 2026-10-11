@@ -370,7 +370,7 @@ impl FleetFollowerEnrollment {
             .inspect_log_enrollment(&replacement.attempt, now_ms()?)
             .await?
             .ok_or(Error::Fenced)?;
-        let authority = enrollment.enrollment().advertisement().clone();
+        let mut authority = enrollment.enrollment().advertisement().clone();
         let source = roster.boot(self.node, self.session)?;
         if source.intent().mode() != NodeMode::Active
             || replacement.members.iter().any(|member| {
@@ -412,16 +412,22 @@ impl FleetFollowerEnrollment {
                 .inspect_log_enrollment(&replacement.attempt, now_ms()?)
                 .await?
                 .ok_or(Error::Fenced)?;
-            if current.enrollment().advertisement() != &authority
-                || authority
+            let observed = current.enrollment().advertisement();
+            // Heartbeat, activation and covered-prefix publication can advance
+            // this same ensemble during suspended journal/directory reads.
+            // Reobserve their monotone progress; never accept a new boot, closed
+            // epoch or changed membership as the original replacement witness.
+            if !same_ensemble(&authority, observed)?
+                || observed
                     .log()
                     .is_none_or(|log| log.phase() != NodeLogPhase::Open)
-                || authority
+                || observed
                     .operational_sample()
                     .is_none_or(|sample| sample.mode != NodeMode::Active)
             {
                 return Err(Error::Fenced);
             }
+            authority.clone_from(observed);
             let (application, durability) = self.runtime.node_durability().ok_or(Error::Fenced)?;
             if application != self.scope.application
                 || !node.is_ready()
@@ -480,6 +486,25 @@ fn same_boot(
         && original.failure_domain() == current.failure_domain()
         && current.generation() >= original.generation()
         && current.issued_at_ms() >= original.issued_at_ms())
+}
+
+fn same_ensemble(
+    original: &NodeAdvertisement,
+    current: &NodeAdvertisement,
+) -> cellule_runtime::Result<bool> {
+    Ok(same_boot(original, current)?
+        && current.expires_at_ms() >= original.expires_at_ms()
+        && current.progress() >= original.progress()
+        && current.log().is_some_and(|log| {
+            original.log().is_some_and(|old| {
+                old.phase() == NodeLogPhase::Open
+                    && log.phase() == NodeLogPhase::Open
+                    && log.epoch() == old.epoch()
+                    && log.members() == old.members()
+                    && (!old.active() || log.active())
+                    && log.tiered_through() >= old.tiered_through()
+            })
+        }))
 }
 
 /// Immutable identity shared by native capture and durable revalidation.

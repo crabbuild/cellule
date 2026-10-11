@@ -29,6 +29,7 @@ use std::sync::{
 mod fixture;
 use fixture::*;
 mod aggregate;
+mod authority_race;
 mod coverage;
 mod evacuation;
 mod inventory;

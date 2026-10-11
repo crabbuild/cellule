@@ -200,7 +200,8 @@ pub(super) fn initialize<'a>(
         .await?;
         boots[0]
             .refresh_capacity(0, journal.as_ref(), deadline())
-            .await?;
+            .await
+            .map_err(|source| failure("follower-maintenance-leader-refresh", source))?;
         let handle = nodes[0]
             .runtime()
             .bootstrap(
@@ -216,7 +217,8 @@ pub(super) fn initialize<'a>(
                     Ok(())
                 },
             )
-            .await?;
+            .await
+            .map_err(|source| failure("follower-maintenance-bootstrap", source))?;
         let now = clock()?;
         let identity = MutationIdentity {
             request_id: RequestId::from_bytes([1; 16]),

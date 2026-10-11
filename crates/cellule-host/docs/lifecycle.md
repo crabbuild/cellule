@@ -215,6 +215,12 @@ expired operation or incomplete enrollment produces no settlement evidence.
 Complete foreign/native inventory, Pending producers, failed-owner recovery and
 terminal action handoff remain required before physical-node shutdown.
 
+Directory rechecks accept heartbeat, follower activation and covered-prefix
+advancement for the same signed boot and Open ensemble. Generation, issue time,
+lease expiry, progress, activation and coverage cannot regress; epoch and members
+remain exact. The capture retains its final observation. Closure, replacement or
+authority loss still rejects the interval, including changes after a held read.
+
 ### Persist and revalidate follower replacement evidence
 
 `FollowerReplacementPolicy` gives the application's nonzero member minimum a

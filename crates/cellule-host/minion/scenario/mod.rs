@@ -225,14 +225,20 @@ async fn execute(scenario: Scenario) -> JournalResult<ScenarioSummary> {
         if let Err(error) = node.shutdown().await
             && cleanup_error.is_none()
         {
-            cleanup_error = Some(Box::new(error) as JournalError);
+            cleanup_error = Some(Box::new(cellule_runtime::Error::Facility {
+                name: "fleet-example-node-shutdown",
+                source: Box::new(error),
+            }) as JournalError);
         }
     }
     for boot in &boots {
         if let Err(error) = boot.withdraw(&journal).await
             && cleanup_error.is_none()
         {
-            cleanup_error = Some(error);
+            cleanup_error = Some(Box::new(cellule_runtime::Error::Facility {
+                name: "fleet-example-boot-withdrawal",
+                source: error,
+            }) as JournalError);
         }
     }
     if result.is_ok() && cleanup_error.is_none() {
