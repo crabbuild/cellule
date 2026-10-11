@@ -67,6 +67,17 @@ async fn successor_stages_before_upload_but_requires_ordered_selection_and_full_
         first.head.epoch,
         first.head.digest.as_bytes(),
     );
+    assert!(
+        first.catalog.index.is_none(),
+        "encoded proposal retained duplicate preparation histories"
+    );
+    assert_eq!(
+        first.catalog.bindings.len(),
+        64,
+        "staged metadata retains unrelated inventory rows"
+    );
+    assert_eq!(first.catalog.bindings.capacity(), 64);
+    assert!(first.retained_work_bytes().unwrap() <= 2 * MAX_BUNDLE_BYTES as usize);
     let mut second_frames = Vec::new();
     let mut second_assignments = Vec::new();
     for cell in &mut cells {

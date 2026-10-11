@@ -17,6 +17,7 @@ const NOW: i64 = 1_000_000;
 const EPOCH: u64 = 2;
 mod actor;
 mod checkpoint_credit;
+mod checkpoint_pipeline;
 mod composed;
 mod coverage;
 mod faults;

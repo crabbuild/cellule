@@ -196,6 +196,44 @@ impl StagedNodeBundle {
     pub const fn head(&self) -> NodeBundleHead {
         self.head
     }
+
+    fn retained_metadata_bytes(&self) -> Result<usize> {
+        if self.catalog.index.is_some() {
+            return Err(Error::Node("staged bundle retains preparation index"));
+        }
+        let assignments = self
+            .assignments
+            .capacity()
+            .checked_mul(std::mem::size_of::<crate::node::log::AssignedCommitRange>())
+            .ok_or(Error::Capacity("staged bundle metadata"))?;
+        let fixed = self
+            .catalog
+            .bindings
+            .capacity()
+            .checked_mul(std::mem::size_of::<Binding>())
+            .and_then(|bytes| bytes.checked_add(assignments))
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<Self>() + 256))
+            .ok_or(Error::Capacity("staged bundle metadata"))?;
+        self.catalog
+            .bindings
+            .iter()
+            .try_fold(fixed, |bytes, binding| {
+                binding
+                    .locators
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Locator>())
+                    .and_then(|locators| bytes.checked_add(locators))
+                    .and_then(|bytes| bytes.checked_add(binding.control.retained_heap_bytes()))
+                    .and_then(|bytes| bytes.checked_add(256))
+                    .ok_or(Error::Capacity("staged bundle metadata"))
+            })
+    }
+
+    pub(crate) fn retained_work_bytes(&self) -> Result<usize> {
+        self.retained_metadata_bytes()?
+            .checked_add(self.body.len())
+            .ok_or(Error::Capacity("staged bundle memory"))
+    }
 }
 
 /// Selected, dependency-verified coverage of one exact Cell writer.

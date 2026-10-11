@@ -12,17 +12,17 @@ use futures_util::stream::BoxStream;
 use object_store::ObjectStore;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Debug, Default)]
-struct ManagedStore {
+pub(super) struct ManagedStore {
     inner: InMemory,
-    armed: AtomicBool,
-    puts: std::sync::atomic::AtomicUsize,
-    hold_second: AtomicBool,
-    second_entered: tokio::sync::Notify,
-    second_done: tokio::sync::Notify,
-    second_resume: tokio::sync::Notify,
-    fail_first: AtomicBool,
-    entered: tokio::sync::Notify,
-    resume: tokio::sync::Notify,
+    pub(super) armed: AtomicBool,
+    pub(super) puts: std::sync::atomic::AtomicUsize,
+    pub(super) hold_second: AtomicBool,
+    pub(super) second_entered: tokio::sync::Notify,
+    pub(super) second_done: tokio::sync::Notify,
+    pub(super) second_resume: tokio::sync::Notify,
+    pub(super) fail_first: AtomicBool,
+    pub(super) entered: tokio::sync::Notify,
+    pub(super) resume: tokio::sync::Notify,
 }
 
 impl std::fmt::Display for ManagedStore {
@@ -335,7 +335,7 @@ async fn optional_overlap_preserves_foreground_headroom_with_live_selected_debt(
         .resource_ledger()
         .try_reserve_in(
             RetentionStage::Selection,
-            ResourceCost::zero().with_retained_bytes(8 << 20),
+            ResourceCost::zero().with_retained_bytes(14 << 20),
         )
         .unwrap();
     let first = case.first().await;
@@ -356,6 +356,31 @@ async fn optional_overlap_preserves_foreground_headroom_with_live_selected_debt(
         0
     );
     assert!(snapshot.used.retained_bytes() < snapshot.limit.retained_bytes() * 3 / 4);
+    case.store.resume.notify_one();
+    drop(selected_debt);
+    case.finish([first, second]).await;
+}
+
+#[tokio::test]
+async fn compact_pipeline_overlaps_with_selected_debt_without_consuming_foreground_headroom() {
+    use crate::fleet::resource::{ResourceCost, RetentionStage};
+    let mut case = Case::new(64 << 20, false, false).await;
+    let selected_debt = case
+        .pool
+        .resource_ledger()
+        .try_reserve_in(
+            RetentionStage::Selection,
+            ResourceCost::zero().with_retained_bytes(8 << 20),
+        )
+        .unwrap();
+    let first = case.first().await;
+    let second = case.second().await;
+    tokio::time::timeout(Duration::from_secs(2), case.store.second_done.notified())
+        .await
+        .unwrap();
+    let snapshot = case.pool.resource_ledger().snapshot().unwrap();
+    assert!(snapshot.used.retained_bytes() < snapshot.limit.retained_bytes() * 3 / 4);
+    assert_eq!(case.durability.progress().unwrap().tiered_through, 0);
     case.store.resume.notify_one();
     drop(selected_debt);
     case.finish([first, second]).await;

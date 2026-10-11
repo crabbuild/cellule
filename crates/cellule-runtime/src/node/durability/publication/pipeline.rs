@@ -26,12 +26,14 @@ fn reserve(
     original: &NodeDurability,
     authority: &dyn NodeBundlePublicationAuthority,
     captures: usize,
+    staged: &crate::node::bundle::StagedNodeBundle,
 ) -> Result<Memory> {
     let first = authority.receipt_memory_bound(captures)?;
     let second = authority.receipt_memory_bound(MAX_CAPTURES)?;
+    let working = staged.retained_work_bytes()?;
     let bytes = first
         .checked_add(second)
-        .and_then(|bytes| bytes.checked_add((5 * crate::node::bundle::MAX_BUNDLE_BYTES) as usize))
+        .and_then(|bytes| bytes.checked_add(working))
         .ok_or(Error::Capacity("bundle pipeline memory"))?;
     let reserved = original
         .selection_resources
@@ -77,7 +79,6 @@ pub(super) async fn publish(
 ) -> Result<Option<Unconfirmed>> {
     let telemetry = original.shipper.telemetry();
     let first_capture_count = first.captures.len();
-    let may_overlap = first.ready_checkpoints.values().is_empty();
     let failure = OnceLock::new();
     let round = match telemetry
         .publication_phase(Phase::CatalogWait, authority.begin_round())
@@ -111,6 +112,13 @@ pub(super) async fn publish(
     };
     let (finished, first_finished) = oneshot::channel();
     let (receipt, first_receipt) = oneshot::channel();
+    // Preserve the original five-buffer working bound by serializing heavy
+    // preparation and verification. Uploads still overlap. Extra admission
+    // owns the first compact proposal while the successor uses that scratch.
+    // During first verification, its three scratch buffers and the at-most
+    // two-buffer successor fit the original five; the first proposal remains
+    // covered by this exact additional reservation throughout both cohorts.
+    let scratch = tokio::sync::Mutex::new(());
     let (first_result, successor) = tokio::join!(
         async {
             let result = async {
@@ -124,10 +132,10 @@ pub(super) async fn publish(
                         .map(|selected| &selected.proof)
                         .collect::<Vec<_>>();
                     telemetry
-                        .publication_phase(
-                            Phase::Selection,
-                            round.select(&uploaded, &borrowed, lease),
-                        )
+                        .publication_phase(Phase::Selection, async {
+                            let _scratch = scratch.lock().await;
+                            round.select(&uploaded, &borrowed, lease).await
+                        })
                         .await
                 }
                 .await;
@@ -163,11 +171,6 @@ pub(super) async fn publish(
         },
         async {
             let result = async {
-                if !may_overlap {
-                    telemetry.node_publication_fallback(Fallback::Checkpoints);
-                    let _ = receipt.send(None);
-                    return Ok(None);
-                }
                 let next = if let Some(next) = carry.take().or_else(|| feed.try_recv()) {
                     Some(next)
                 } else {
@@ -183,29 +186,33 @@ pub(super) async fn publish(
                     let _ = receipt.send(None);
                     return Ok(None);
                 };
-                let mut memory = match reserve(original, authority.as_ref(), first_capture_count) {
-                    Ok(memory) => memory,
-                    Err(Error::Capacity("bundle pipeline headroom")) => {
-                        telemetry.node_publication_fallback(Fallback::Headroom);
-                        *carry = Some(next);
-                        let _ = receipt.send(None);
-                        return Ok(None);
-                    }
-                    Err(Error::Capacity(_)) => {
-                        telemetry.node_publication_fallback(Fallback::Capacity);
-                        *carry = Some(next);
-                        let _ = receipt.send(None);
-                        return Ok(None);
-                    }
-                    Err(error) => return Err(error),
-                };
+                let mut memory =
+                    match reserve(original, authority.as_ref(), first_capture_count, &staged) {
+                        Ok(memory) => memory,
+                        Err(Error::Capacity("bundle pipeline headroom")) => {
+                            telemetry.node_publication_fallback(Fallback::Headroom);
+                            *carry = Some(next);
+                            let _ = receipt.send(None);
+                            return Ok(None);
+                        }
+                        Err(Error::Capacity(_)) => {
+                            telemetry.node_publication_fallback(Fallback::Capacity);
+                            *carry = Some(next);
+                            let _ = receipt.send(None);
+                            return Ok(None);
+                        }
+                        Err(error) => return Err(error),
+                    };
                 // This is a nonblocking admission under ordering. It either
                 // prepaid both receipt lifetimes or returns to the serial path.
                 let first_memory = memory.reserved.split_retained(memory.first)?;
                 let second_memory = memory.reserved.split_retained(memory.second)?;
                 let _ = receipt.send(Some(first_memory));
-                // No standalone checkpoint is dispatched while this round owns
-                // ordering; the bounded gather includes only available row slots.
+                // The staged predecessor already carries its verified new
+                // bases. A successor inherits them and may compose further
+                // checkpoints in its available rows; neither callback gains
+                // credit until that cohort's ordered authoritative selection.
+                // No standalone checkpoint is dispatched under round ordering.
                 let second = assemble(
                     authority,
                     feed,
@@ -213,22 +220,24 @@ pub(super) async fn publish(
                     checkpoints,
                     next,
                     None,
-                    false,
+                    true,
                     lease,
                     telemetry,
                 )
                 .await?;
                 let upload = async {
                     let next = telemetry
-                        .publication_phase(
-                            Phase::Preparation,
-                            round.stage(
-                                Some(&staged),
-                                &second.captures,
-                                second.ready_checkpoints.values(),
-                                Some(preparation),
-                            ),
-                        )
+                        .publication_phase(Phase::Preparation, async {
+                            let _scratch = scratch.lock().await;
+                            round
+                                .stage(
+                                    Some(&staged),
+                                    &second.captures,
+                                    second.ready_checkpoints.values(),
+                                    Some(preparation),
+                                )
+                                .await
+                        })
                         .await?;
                     lease.check()?;
                     telemetry

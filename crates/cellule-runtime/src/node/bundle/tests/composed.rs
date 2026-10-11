@@ -11,14 +11,14 @@ use crate::node::log_shipper::NodeLogShipper;
 use futures_util::{future::BoxFuture, poll};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct HeldSelection {
-    original: Arc<Authority>,
-    calls: AtomicUsize,
-    combined: AtomicUsize,
-    largest_combined: AtomicUsize,
-    hold_after: usize,
-    entered: tokio::sync::Notify,
-    resume: tokio::sync::Notify,
+pub(super) struct HeldSelection {
+    pub(super) original: Arc<Authority>,
+    pub(super) calls: AtomicUsize,
+    pub(super) combined: AtomicUsize,
+    pub(super) largest_combined: AtomicUsize,
+    pub(super) hold_after: usize,
+    pub(super) entered: tokio::sync::Notify,
+    pub(super) resume: tokio::sync::Notify,
 }
 impl NodeBundleAuthority for HeldSelection {
     fn bind<'a>(

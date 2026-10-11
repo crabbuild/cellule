@@ -33,13 +33,47 @@ impl NodeDirectory {
             digest,
             selected_through: catalog.selected_through,
         };
-        Ok(std::sync::Arc::new(StagedNodeBundle {
+        // Encoding and self-verification consumed the preparation snapshot.
+        // Successor assembly reads its immutable bytes; live selection needs
+        // only the new native bindings. Keep neither sibling rows nor their
+        // duplicate loaded histories across upload/selection lifetimes.
+        catalog.index = None;
+        let rows = std::mem::take(&mut catalog.bindings);
+        let count = rows
+            .iter()
+            .filter(|binding| {
+                binding
+                    .locators
+                    .iter()
+                    .any(|locator| locator.object.is_none())
+            })
+            .count();
+        let mut selected = Vec::with_capacity(count);
+        for binding in rows {
+            if binding
+                .locators
+                .iter()
+                .any(|locator| locator.object.is_none())
+            {
+                selected.push(binding);
+            }
+        }
+        catalog.bindings = selected;
+        let staged = StagedNodeBundle {
             original,
             catalog,
             body,
             head,
             assignments,
-        }))
+        };
+        // A retained proposal is at most one encoded object plus one bounded
+        // native metadata allocation. Shared preparation/verification scratch
+        // can account for that concrete lifetime independently of temporary
+        // decoder/encoder allocations, which have already joined above.
+        if staged.retained_metadata_bytes()? > MAX_BUNDLE_BYTES as usize {
+            return Err(Error::Capacity("staged bundle metadata"));
+        }
+        Ok(std::sync::Arc::new(staged))
     }
 
     /// Uploads already-encoded immutable bytes, without selecting authority or

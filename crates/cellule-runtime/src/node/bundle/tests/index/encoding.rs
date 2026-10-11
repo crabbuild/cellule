@@ -42,6 +42,23 @@ async fn dense_multi_cell_encoding_preserves_the_original_native_order_and_bytes
             frames.extend(capture);
             assignments.push(assignment);
         }
+        let keys = cells
+            .iter()
+            .map(|cell| {
+                (
+                    *f.layout.application_id(),
+                    *cell.control.value().cell.as_bytes(),
+                )
+            })
+            .collect();
+        let mut original_catalog = crate::node::bundle::store::load_catalog_cells(
+            &f.layout,
+            f.node.advertisement().session(),
+            f.node.advertisement().bundle_head().unwrap(),
+            &keys,
+        )
+        .await
+        .unwrap();
         let proposal = f
             .directory
             .prepare_node_bundle(&f.node, &frames, &assignments, now)
@@ -52,12 +69,28 @@ async fn dense_multi_cell_encoding_preserves_the_original_native_order_and_bytes
         // roots include generated identities, so a stored digest is not a
         // stable cross-run wire fixture. Both encoders must agree byte for byte
         // over the same 64-Cell cohort and its unrelated catalog siblings.
-        let mut original_catalog = proposal.catalog.clone();
+        // Staging now discards preparation snapshots and unrelated live rows
+        // after encoding. Compare against the complete original input catalog,
+        // preserving every sibling and its predecessor shard/history references.
+        original_catalog.selected_through = proposal.catalog.selected_through;
+        original_catalog.predecessor = proposal.catalog.predecessor;
+        for binding in &proposal.catalog.bindings {
+            *original_catalog
+                .binding_mut(binding.control.bundle_binding.unwrap().digest)
+                .unwrap() = binding.clone();
+        }
         let (original_body, original_digest) =
             catalog_index::encode_original(&mut original_catalog, &frames).unwrap();
         assert_eq!(proposal.body, original_body);
         assert_eq!(proposal.head.digest, original_digest);
-        assert_eq!(proposal.catalog, original_catalog);
+        for binding in &proposal.catalog.bindings {
+            assert_eq!(
+                binding,
+                original_catalog
+                    .binding_mut(binding.control.bundle_binding.unwrap().digest)
+                    .unwrap()
+            );
+        }
         let mut next_offset = None;
         for frame in &frames {
             let locators: Vec<_> = proposal

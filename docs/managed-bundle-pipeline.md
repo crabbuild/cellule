@@ -25,7 +25,7 @@ The manual `select` method uses these same three phases.
 | Event | Managed behavior |
 | --- | --- |
 | First cohort starts | Keep the existing 20-MiB working reservation and 2-MiB shard cache |
-| Another capture arrives during publication | Try to admit another 20 MiB plus conservative receipt bounds for both cohorts on the original ledger, preserving publication progress and foreground burst headroom |
+| Another capture arrives during publication | Admit the first proposal's encoded body and retained native metadata plus conservative receipt bounds for both cohorts; share the original preparation/verification scratch while preserving foreground burst headroom |
 | Extra credit unavailable | Keep that capture for the next serial round; do not wait while holding catalog ordering |
 | Successor PUT finishes first | Retain uploaded bytes; grant no coverage or response credit |
 | First selection succeeds | Confirm its original receipts and release its native capture credit independently of the second PUT |
@@ -60,11 +60,21 @@ When root I/O is already alive and even the minimum working reservation
 cannot fit, dispatch skips the repeated dirty-fleet walk and sort. This is only
 a scheduling hint; the original atomic admission still decides each job.
 
-A first cohort containing root checkpoint notifications uses serial publication.
-The lookahead cohort contains native captures only. Ready root notifications
-join the next first cohort or the existing idle checkpoint path. This preserves
-the original root-credit release path and bounds callback retention during a
-held upload.
+Both cohorts may combine ready root checkpoints and native captures within the
+original 64-row bound. A successor inherits its predecessor's encoded checkpoint
+bases. Each callback receives credit only after its own fresh verification and
+ordered authority CAS; an uploaded successor cannot credit either cohort early.
+Standalone checkpoints never run while that round holds catalog ordering.
+
+After encoding and self-verification, a staged proposal retains its immutable
+body and only the native bindings needed for selection. Loaded shard/history
+snapshots and unrelated bindings are released; the complete wire bytes remain
+unchanged. Staged metadata is bounded to 4 MiB and its capacities are charged
+with the body under the optional overlap reservation. Heavy successor preparation
+and predecessor verification share one scoped scratch lane. Uploads may overlap,
+while the existing five-buffer working reservation, 64-MiB budget and foreground
+headroom threshold remain unchanged. Retained receipts keep their separate
+conservative admission.
 
 When extra receipt credit is unavailable, the round returns catalog ordering
 before the existing receipt-admission wait. That wait continues to service
@@ -75,6 +85,9 @@ Managed failure, fencing and shutdown do not cancel already-dispatched uploads
 or checkpoint I/O. Cancelling a shutdown caller leaves the original worker
 alive; a later shutdown joins that worker and observes its terminal result.
 Manual callers continue to own their admission and accepted I/O lifetimes.
+An accepted checkpoint waiter also joins its original callback. Fencing cannot
+replace that callback's source error while a sibling upload delays the worker's
+terminal status; a successful callback still checks the original lease.
 
 The first follower proof also owns a node authority activation obligation.
 One epoch-owned driver coalesces activation waiters; cancellation or an Object
@@ -99,6 +112,14 @@ second until it joins. Each case returns all retained-byte credit. Existing
 maximum-history and full-cohort fixtures check the conservative receipt bound.
 The real example authority also exercises two staged cohorts, heartbeat renewal,
 blocked binding and rejection of out-of-order selection.
+
+Checkpoint regressions hold a checkpoint-bearing first upload and observe the
+successor upload under the unchanged 64-MiB budget. A second case composes
+checkpoints in both cohorts, releases the first callback while the second upload
+is held, and cold-restores both exact histories. Upload failure, fencing,
+cancelled shutdown and a missing checkpoint base preserve source errors, refuse
+early credit and join every accepted upload. A selected-debt fixture verifies
+overlap without consuming foreground burst headroom.
 
 A longer-stall regression holds the first PUT across 31 seconds and renews the
 writer during that wait. Its initial implementation rejects successor staging

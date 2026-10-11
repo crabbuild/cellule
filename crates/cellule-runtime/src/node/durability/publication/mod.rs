@@ -150,10 +150,14 @@ impl Publisher {
         // Cell departure is allowed only after this original callback joins,
         // not after enqueue. Otherwise closing/detaching its pin could overtake
         // a still-running catalog checkpoint from the accepted root task.
-        tokio::select! {
-            result = completion => result.map_err(|_| Error::RuntimeClosed)?.map_err(Error::Shared),
-            () = self.lease.wait_fenced() => self.terminal_error(),
+        // Admission transferred the obligation to the original producer.
+        // Fencing cannot abandon that callback or replace its source error
+        // while another accepted upload still delays the worker's termination.
+        match completion.await {
+            Ok(result) => result.map_err(Error::Shared)?,
+            Err(_) => return self.terminal_error(),
         }
+        self.lease.check()
     }
 
     fn terminal_error(&self) -> Result<()> {
