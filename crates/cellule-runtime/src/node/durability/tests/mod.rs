@@ -11,6 +11,7 @@ use crate::node::log_transport::{
     AppendRequest, NodeLogTransport, RetireRequest, SealRequest, TailRequest,
 };
 
+mod activation_lifetime;
 mod closure;
 
 #[derive(Default)]

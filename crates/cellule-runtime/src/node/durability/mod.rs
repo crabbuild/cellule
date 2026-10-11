@@ -15,6 +15,7 @@ use crate::node::log_shipper::{NodeLogShipper, NodeLogSubmission};
 use crate::node::log_transport::NodeLogTransport;
 use crate::{Error, Result};
 
+mod activation;
 mod object_coverage;
 use object_coverage::ObjectCoverage;
 mod publication;
@@ -195,7 +196,7 @@ pub struct NodeDurability {
     authority: Arc<dyn NodeLogAuthority>,
     transport: Arc<dyn NodeLogTransport>,
     node_lease: NodeLeaseGuard,
-    activated: OnceCell<()>,
+    activation: activation::Activation,
     object_coverage: ObjectCoverage,
     shutdown: Mutex<()>,
     retirement: std::sync::Mutex<Option<Arc<NodeLogRetirementObservation>>>,
@@ -245,7 +246,7 @@ impl NodeDurability {
             authority,
             transport,
             node_lease,
-            activated: OnceCell::new(),
+            activation: activation::Activation::default(),
             object_coverage: ObjectCoverage::default(),
             shutdown: Mutex::new(()),
             retirement: std::sync::Mutex::new(None),
@@ -487,18 +488,7 @@ impl NodeDurability {
             result = self.gate.wait_followers(ticket) => result?,
             () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
         }
-        self.activated
-            .get_or_try_init(|| async {
-                self.node_lease.check()?;
-                tokio::select! {
-                    result = self.authority.activate(ticket.log_epoch()) => result?,
-                    () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
-                }
-                self.node_lease.check()?;
-                self.gate.activate_fleet()?;
-                Ok::<(), Error>(())
-            })
-            .await?;
+        self.activate_fleet(ticket.log_epoch()).await?;
         let proof = tokio::select! {
             result = self.gate.prove(ticket) => result?,
             () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
@@ -517,18 +507,7 @@ impl NodeDurability {
         self.node_lease.check()?;
         let activate = async {
             self.gate.wait_followers(ticket).await?;
-            self.activated
-                .get_or_try_init(|| async {
-                    self.node_lease.check()?;
-                    tokio::select! {
-                        result = self.authority.activate(ticket.log_epoch()) => result?,
-                        () = self.node_lease.wait_fenced() => return Err(Error::Fenced),
-                    }
-                    self.node_lease.check()?;
-                    self.gate.activate_fleet()?;
-                    Ok::<(), Error>(())
-                })
-                .await?;
+            self.activate_fleet(ticket.log_epoch()).await?;
             Ok::<(), Error>(())
         };
         tokio::pin!(activate);
@@ -542,6 +521,15 @@ impl NodeDurability {
         };
         self.node_lease.check()?;
         Ok(proof)
+    }
+
+    async fn activate_fleet(&self, epoch: u64) -> Result<()> {
+        let activation = self
+            .activation
+            .wait(epoch, &self.gate, &self.authority, &self.node_lease)
+            .await;
+        self.node_lease.check()?;
+        activation
     }
 
     /// Records an already-published object root and persists its contiguous watermark.
@@ -679,12 +667,20 @@ impl NodeDurability {
             return Ok(proof);
         }
         let shipping = self.shipper.shutdown().await;
-        if let Some(publisher) = self.publisher.get() {
+        let publication = if let Some(publisher) = self.publisher.get() {
             // Join both tasks even when fencing stopped the shipper. Preserve
             // the producer's original cause rather than its secondary fence.
-            publisher.join().await?;
-        }
+            publisher.join().await
+        } else {
+            Ok(())
+        };
+        // Activation may outlive its original waiter. Join it before coverage
+        // and closure use the authority adapter's acknowledged version, even
+        // when shipping or publication has already failed.
+        let activation = self.activation.join().await;
+        publication?;
         shipping?;
+        activation?;
         self.object_coverage
             .flush(&self.gate, self.authority.as_ref(), &self.node_lease, &[])
             .await?;
