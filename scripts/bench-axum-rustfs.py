@@ -294,8 +294,8 @@ def steady_reads(args, directory, service, concurrency, acknowledged):
 
 def verify_active_owner_refused(binary, directory, prefix, cells, workers):
     env = os.environ.copy()
-    # Exercise the same Cell authority refusal without trying to enroll another
-    # boot for the fixture's already-live physical leader identity.
+    # Without directory enrollment this boot cannot prove takeover of the
+    # fixture's active predecessor. Check that precise startup refusal.
     env.pop("CELLULE_AXUM_FLEET_DIR", None)
     env.pop("CELLULE_AXUM_FOLLOWER", None)
     env.update(CELLULE_TEST_PREFIX=prefix, CELLULE_AXUM_BIND="127.0.0.1:0",
@@ -304,7 +304,7 @@ def verify_active_owner_refused(binary, directory, prefix, cells, workers):
     with log.open("w") as output:
         candidate = subprocess.run([str(binary)], env=env, stdout=output, stderr=subprocess.STDOUT, timeout=120)
     require(candidate.returncode != 0, "second service took an active Cell")
-    require("idle acquisition requires a published idle control" in log.read_text(), "second service failed for an unexpected reason")
+    require('Node("crash takeover requires real directory enrollment")' in log.read_text(), "second service failed for an unexpected reason")
 
 
 def point(args, directory, repeat, concurrency, cells):
