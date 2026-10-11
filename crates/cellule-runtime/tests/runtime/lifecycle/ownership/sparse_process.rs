@@ -258,6 +258,31 @@ async fn rustfs_process_killed_sparse_owner_restores_published_root_and_continue
         )
         .await
         .unwrap();
+    // The killed owner acknowledged this exact mutation. Recovery must retain
+    // both its state and request outcome: an original retry must never execute
+    // the mutation again merely because the local writer files disappeared.
+    let retried = successor
+        .execute(
+            mutation_identity_window(67, 10, 10_000),
+            Digest::from_bytes([68; 32]),
+            21,
+            1_024,
+            1_024,
+            |_| {
+                Err(cellule_runtime::Error::Control(
+                    "acknowledged retry executed after owner kill",
+                ))
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        retried,
+        StoredOutcome::Success {
+            result: b"published".to_vec(),
+            commit_sequence: 1,
+        }
+    );
     let outcome = successor
         .execute(
             mutation_identity_window(71, 10, 10_000),

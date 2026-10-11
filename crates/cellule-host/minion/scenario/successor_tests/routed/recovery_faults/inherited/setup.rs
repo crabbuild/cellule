@@ -85,6 +85,9 @@ impl Inherited {
             );
             capacity.follower_free_bytes = capacity.free_disk_bytes.min(64 << 20);
             capacity.log_protocol = cellule_runtime::node::NODE_LOG_PROTOCOL_VERSION;
+            // Derive expiry from the same instant: a second clock read can
+            // cross a millisecond boundary and exceed the maximum lifetime.
+            let issued_at = clock().unwrap();
             let next = NodeAdvertisement::sign(
                 ad.node(),
                 ad.session(),
@@ -95,8 +98,8 @@ impl Inherited {
                 ad.release(),
                 &ed25519_dalek::SigningKey::from_bytes(&[index as u8 + 1; 32]),
                 ad.progress(),
-                clock().unwrap(),
-                clock().unwrap() + 30_000,
+                issued_at,
+                issued_at + 30_000,
                 ad.module_digests().to_vec(),
                 ad.peer_versions().to_vec(),
                 ad.failure_domain().clone(),

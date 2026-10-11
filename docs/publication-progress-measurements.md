@@ -260,6 +260,22 @@ change and passes after it; a held-read closure case still rejects. The original
 CI failures and 50 passing local repeats remain retained. This concrete fix is
 not yet confirmation of the hosted failure's cause or a passing new CI run.
 
+An isolated controller repeat passed 383 of 384 cases. The remaining failure
+was fixture construction: separate clock reads could sign a 30,001-ms
+advertisement against the 30,000-ms maximum. Deriving both timestamps from one
+reading preserves the lifetime contract; all three inherited-recovery cases
+then pass with their original assertions.
+
+The device-backed sparse-owner process test also passes against fresh ext4
+SQLite and RustFS volumes. After the child acknowledges one mutation, the test
+kills its process, deletes its local writer files, restores the authoritative
+root, and retries the original request with a handler that fails if invoked.
+The retry returns the original result and sequence; the next mutation verifies
+the recovered state. This qualifies that published-root process-loss path,
+not unpublished follower tails, network partitions or physical power loss.
+The initial missing-import build failure and corrected passing run are both
+retained under the v9 artifact directory.
+
 ## Retained failed attempts
 
 | Attempt | Outcome |
