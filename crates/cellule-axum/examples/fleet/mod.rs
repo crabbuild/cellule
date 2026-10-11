@@ -83,7 +83,8 @@ impl Config {
         metrics: Arc<QueryMetrics>,
     ) -> Result<Owner> {
         let tls = self.tls()?;
-        let directory = NodeDirectory::new(layout, tls.fleet(), code, code);
+        let directory = NodeDirectory::new(layout, tls.fleet(), code, code)
+            .with_telemetry(runtime.telemetry_handle());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .map_err(transport_error)?;

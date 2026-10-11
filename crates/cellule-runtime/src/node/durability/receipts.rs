@@ -84,6 +84,7 @@ impl<'a> SelectedCaptures<'a> {
         // Transfer a single cohort admission before waking any sibling. Waiting
         // for credit may have joined older checkpoints, so revalidate the
         // original lease/gate against these exact live proofs after the wait.
+        memory.set_stage(crate::fleet::resource::RetentionStage::Selection)?;
         let memories = self
             .bytes
             .into_iter()

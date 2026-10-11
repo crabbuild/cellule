@@ -324,7 +324,10 @@ pub(super) fn reserve_pending_publication(
     // Larger cuts still need their full charged admission. Returning unused
     // result capacity first makes it available without changing the node limit.
     pool.resource_ledger()
-        .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))
+        .try_reserve_in(
+            crate::fleet::resource::RetentionStage::Capture,
+            ResourceCost::zero().with_retained_bytes(bytes),
+        )
         .map_err(|error| match error {
             Error::Capacity(_) => Error::Capacity("pending publication bytes"),
             error => error,

@@ -1,6 +1,9 @@
 //! One lazy successor: pre-admitted overlap, ordered proof, joined I/O.
 use super::*;
 use crate::fleet::resource::{ResourceCost, ResourceReservation};
+use crate::fleet::telemetry::{
+    NodePublicationPhase as Phase, PublicationPipelineFallback as Fallback,
+};
 use crate::node::bundle::PreparedNodeBundle;
 use std::sync::OnceLock;
 
@@ -34,7 +37,7 @@ fn reserve(
         .selection_resources
         .get()
         .ok_or(Error::PendingPublication)?
-        .try_reserve(ResourceCost::zero().with_retained_bytes(bytes))?;
+        .try_reserve_pipeline(ResourceCost::zero().with_retained_bytes(bytes))?;
     Ok(Memory {
         first,
         second,
@@ -72,10 +75,14 @@ pub(super) async fn publish(
     progress: &watch::Sender<Progress>,
     lease: &NodeLeaseGuard,
 ) -> Result<Option<Unconfirmed>> {
+    let telemetry = original.shipper.telemetry();
     let first_capture_count = first.captures.len();
     let may_overlap = first.ready_checkpoints.values().is_empty();
     let failure = OnceLock::new();
-    let round = match authority.begin_round().await {
+    let round = match telemetry
+        .publication_phase(Phase::CatalogWait, authority.begin_round())
+        .await
+    {
         Ok(round) => round,
         Err(error) => {
             let error = Arc::new(error);
@@ -83,12 +90,15 @@ pub(super) async fn publish(
             return Err(Error::Shared(error));
         }
     };
-    let staged = match round
-        .stage(
-            None,
-            &first.captures,
-            first.ready_checkpoints.values(),
-            Some(preparation),
+    let staged = match telemetry
+        .publication_phase(
+            Phase::Preparation,
+            round.stage(
+                None,
+                &first.captures,
+                first.ready_checkpoints.values(),
+                Some(preparation),
+            ),
         )
         .await
     {
@@ -105,13 +115,20 @@ pub(super) async fn publish(
         async {
             let result = async {
                 let publication = async {
-                    let uploaded = round.upload(Arc::clone(&staged)).await?;
+                    let uploaded = telemetry
+                        .publication_phase(Phase::Upload, round.upload(Arc::clone(&staged)))
+                        .await?;
                     let prior = prefixes.for_captures(&first.captures);
                     let borrowed = prior
                         .iter()
                         .map(|selected| &selected.proof)
                         .collect::<Vec<_>>();
-                    round.select(&uploaded, &borrowed, lease).await
+                    telemetry
+                        .publication_phase(
+                            Phase::Selection,
+                            round.select(&uploaded, &borrowed, lease),
+                        )
+                        .await
                 }
                 .await;
                 let publication = recorded(publication, &failure, lease).map_err(Arc::new);
@@ -147,6 +164,7 @@ pub(super) async fn publish(
         async {
             let result = async {
                 if !may_overlap {
+                    telemetry.node_publication_fallback(Fallback::Checkpoints);
                     let _ = receipt.send(None);
                     return Ok(None);
                 }
@@ -161,12 +179,20 @@ pub(super) async fn publish(
                     }
                 };
                 let Some(next) = next else {
+                    telemetry.node_publication_fallback(Fallback::NoSuccessor);
                     let _ = receipt.send(None);
                     return Ok(None);
                 };
                 let mut memory = match reserve(original, authority.as_ref(), first_capture_count) {
                     Ok(memory) => memory,
+                    Err(Error::Capacity("bundle pipeline headroom")) => {
+                        telemetry.node_publication_fallback(Fallback::Headroom);
+                        *carry = Some(next);
+                        let _ = receipt.send(None);
+                        return Ok(None);
+                    }
                     Err(Error::Capacity(_)) => {
+                        telemetry.node_publication_fallback(Fallback::Capacity);
                         *carry = Some(next);
                         let _ = receipt.send(None);
                         return Ok(None);
@@ -189,19 +215,25 @@ pub(super) async fn publish(
                     None,
                     false,
                     lease,
+                    telemetry,
                 )
                 .await?;
                 let upload = async {
-                    let next = round
-                        .stage(
-                            Some(&staged),
-                            &second.captures,
-                            second.ready_checkpoints.values(),
-                            Some(preparation),
+                    let next = telemetry
+                        .publication_phase(
+                            Phase::Preparation,
+                            round.stage(
+                                Some(&staged),
+                                &second.captures,
+                                second.ready_checkpoints.values(),
+                                Some(preparation),
+                            ),
                         )
                         .await?;
                     lease.check()?;
-                    round.upload(next).await
+                    telemetry
+                        .publication_phase(Phase::Upload, round.upload(next))
+                        .await
                 }
                 .await;
                 match recorded(upload, &failure, lease) {
@@ -245,8 +277,11 @@ pub(super) async fn publish(
         .iter()
         .map(|selected| &selected.proof)
         .collect::<Vec<_>>();
-    let result = round
-        .select(&successor.uploaded, &borrowed, lease)
+    let result = telemetry
+        .publication_phase(
+            Phase::Selection,
+            round.select(&successor.uploaded, &borrowed, lease),
+        )
         .await
         .map_err(Arc::new);
     drop(borrowed);

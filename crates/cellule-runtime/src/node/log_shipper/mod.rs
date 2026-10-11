@@ -213,6 +213,10 @@ pub struct NodeLogShipper {
 }
 
 impl NodeLogShipper {
+    pub(crate) fn telemetry(&self) -> &crate::fleet::telemetry::CellTelemetryHandle {
+        &self.telemetry
+    }
+
     /// Starts one shipper for the exact ensemble owned by `gate`.
     pub fn new(
         gate: DurabilityGate,

@@ -40,6 +40,7 @@ pub struct NodeDirectory {
     // maintenance continue to read their canonical records directly.
     reader_membership: Arc<RwLock<Option<advertisement::ReaderMembership>>>,
     inventory_scope: [u8; 16],
+    pub(super) telemetry: crate::fleet::telemetry::CellTelemetryHandle,
 }
 
 /// Request verifier bound to one mTLS-authenticated enrollment observation.
@@ -106,7 +107,19 @@ impl NodeDirectory {
             recovery_scan: Arc::new(RwLock::new(None)),
             reader_membership: Arc::new(RwLock::new(None)),
             inventory_scope: rand::random(),
+            telemetry: crate::fleet::telemetry::CellTelemetryHandle::default(),
         }
+    }
+
+    /// Uses the application's original runtime sink for bundle verification and
+    /// selection diagnostics. Observations grant no availability or authority.
+    #[must_use]
+    pub fn with_telemetry(
+        mut self,
+        telemetry: crate::fleet::telemetry::CellTelemetryHandle,
+    ) -> Self {
+        self.telemetry = telemetry;
+        self
     }
 
     /// Returns the fleet this directory is scoped to.

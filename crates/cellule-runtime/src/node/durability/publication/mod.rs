@@ -71,7 +71,8 @@ impl Publisher {
             .selection_resources
             .get()
             .ok_or(Error::PendingPublication)?;
-        resources.try_reserve(
+        resources.try_reserve_in(
+            crate::fleet::resource::RetentionStage::Publisher,
             crate::fleet::resource::ResourceCost::zero()
                 // The fifth buffer covers the fresh cohort origin read. After
                 // matching the proposal, its allocation is released for 2 MiB
@@ -221,6 +222,12 @@ async fn run(
     mut preparation: crate::node::bundle::BundlePreparation,
     lease: &NodeLeaseGuard,
 ) -> Result<()> {
+    let telemetry = durability
+        .upgrade()
+        .ok_or(Error::RuntimeClosed)?
+        .shipper
+        .telemetry()
+        .clone();
     let mut prefixes = prefixes::Prefixes::new()?;
     let mut carry = None;
     let mut checkpoints_open = true;
@@ -234,14 +241,14 @@ async fn run(
         } else if let Some(capture) = feed.try_recv() {
             Some(capture)
         } else if let Some(first) = first_checkpoint.take() {
-            checkpoint_cohort(&authority, &mut checkpoints, first).await?;
+            checkpoint_cohort(&authority, &mut checkpoints, first, &telemetry).await?;
             continue;
         } else {
             tokio::select! {
                 capture = feed.recv() => capture,
                 checkpoint = checkpoints.recv(), if checkpoints_open => {
                     if let Some(first) = checkpoint {
-                        checkpoint_cohort(&authority, &mut checkpoints, first).await?;
+                        checkpoint_cohort(&authority, &mut checkpoints, first, &telemetry).await?;
                     }
                     else { checkpoints_open = false; }
                     continue;
@@ -251,7 +258,7 @@ async fn run(
         };
         let Some(first) = capture else {
             if let Some(first) = first_checkpoint.take() {
-                checkpoint_cohort(&authority, &mut checkpoints, first).await?;
+                checkpoint_cohort(&authority, &mut checkpoints, first, &telemetry).await?;
             }
             break;
         };
@@ -264,6 +271,7 @@ async fn run(
             first_checkpoint,
             true,
             lease,
+            &telemetry,
         )
         .await?;
         let original = durability.upgrade().ok_or(Error::RuntimeClosed)?;
@@ -285,7 +293,13 @@ async fn run(
         };
         let cohort = receipts::SelectedCaptures::new(&original, &captures, proofs)?;
         let memory = {
-            let admission = cohort.resources(&original)?.reserve(cohort.cost());
+            let admission = telemetry.publication_phase(
+                crate::fleet::telemetry::NodePublicationPhase::ReceiptWait,
+                cohort.resources(&original)?.reserve_in(
+                    crate::fleet::resource::RetentionStage::Selection,
+                    cohort.cost(),
+                ),
+            );
             tokio::pin!(admission);
             loop {
                 tokio::select! {
@@ -300,7 +314,7 @@ async fn run(
                             // Root tasks retain their admission until this callback
                             // joins. Servicing it while receipt credit is exhausted
                             // releases credit without repeating the durable CAS.
-                            checkpoint_cohort(&authority, &mut checkpoints, first).await?;
+                            checkpoint_cohort(&authority, &mut checkpoints, first, &telemetry).await?;
                         } else { checkpoints_open = false; }
                     }
                 }
@@ -315,7 +329,7 @@ async fn run(
     }
     checkpoints.close();
     while let Some(first) = checkpoints.recv().await {
-        checkpoint_cohort(&authority, &mut checkpoints, first).await?;
+        checkpoint_cohort(&authority, &mut checkpoints, first, &telemetry).await?;
     }
     Ok(())
 }
@@ -331,10 +345,14 @@ async fn checkpoint_cohort(
     authority: &Arc<dyn NodeBundlePublicationAuthority>,
     receiver: &mut mpsc::Receiver<CheckpointRequest>,
     first: CheckpointRequest,
+    telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
 ) -> Result<()> {
     let cohort = checkpoints::Cohort::gather(receiver, Some(first), MAX_CAPTURES)?;
-    let result = authority
-        .checkpoint(cohort.values())
+    let result = telemetry
+        .publication_phase(
+            crate::fleet::telemetry::NodePublicationPhase::Checkpoint,
+            authority.checkpoint(cohort.values()),
+        )
         .await
         .map_err(Arc::new);
     cohort.complete(result.clone());
@@ -359,6 +377,7 @@ async fn assemble(
     mut first_checkpoint: Option<CheckpointRequest>,
     include_checkpoints: bool,
     lease: &NodeLeaseGuard,
+    telemetry: &crate::fleet::telemetry::CellTelemetryHandle,
 ) -> Result<CaptureCohort> {
     let mut captures = vec![first];
     let mut frames = captures[0].frames().len();
@@ -371,7 +390,7 @@ async fn assemble(
     if frames == MAX_FRAMES
         && let Some(first) = first_checkpoint.take()
     {
-        checkpoint_cohort(authority, checkpoints, first).await?;
+        checkpoint_cohort(authority, checkpoints, first, telemetry).await?;
     }
     // Original root tasks hold credit until their callback joins. Reserve
     // the entire ready cohort before native assembly can occupy its rows;
@@ -411,6 +430,12 @@ async fn assemble(
         ready_checkpoints.extend(checkpoints, MAX_FRAMES - frames)?;
     }
 
+    telemetry.node_publication_cohort(crate::fleet::telemetry::NodePublicationCohort {
+        captures: captures.len(),
+        frames,
+        bytes,
+        checkpoints: ready_checkpoints.notification_count(),
+    });
     Ok(CaptureCohort {
         captures,
         ready_checkpoints,

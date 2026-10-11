@@ -62,6 +62,13 @@ fn permille(used: u64, limit: u64) -> crate::Result<u16> {
 }
 
 impl CellRuntime {
+    /// Diagnostic retained ownership from one locked resource snapshot.
+    /// The returned stage counts reconcile exactly to its retained total;
+    /// they grant no admission or durability proof.
+    pub fn retained_work(&self) -> crate::Result<ResourceSnapshot> {
+        self.inner.resources.snapshot()
+    }
+
     pub(crate) fn session(&self) -> SessionId {
         self.inner.session
     }

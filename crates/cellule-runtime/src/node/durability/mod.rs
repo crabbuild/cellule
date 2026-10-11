@@ -367,7 +367,8 @@ impl NodeDurability {
             .ok_or(Error::PendingPublication)?;
         // Reserve before cloning locator metadata; the original cohort remains
         // separately charged until its other original consumers release it.
-        let memory = resources.try_reserve(
+        let memory = resources.try_reserve_in(
+            crate::fleet::resource::RetentionStage::Selection,
             crate::fleet::resource::ResourceCost::zero()
                 .with_retained_bytes(selected.proof.retained_metadata_bytes()?),
         )?;

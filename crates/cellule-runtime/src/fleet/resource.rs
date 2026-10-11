@@ -23,6 +23,16 @@ pub(crate) const READ_REPLICA_NATIVE_BYTES: usize = 12 * 1024 * 1024;
 pub(crate) const READ_REPLICA_FILE_DESCRIPTORS: usize = 4;
 pub(crate) const HYDRATION_JOB_CAPACITY: usize = 2;
 
+pub(crate) const fn retained_admission_threshold(limit: usize) -> usize {
+    limit.saturating_sub(limit / 4)
+}
+
+const fn publication_working_threshold(limit: usize) -> usize {
+    // Keep the original quarter for publication progress, and another eighth
+    // below foreground shedding for bursts of admitted SQL/result buffers.
+    retained_admission_threshold(limit).saturating_sub(limit / 8)
+}
+
 /// Bounded resources owned by one runtime admission token.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ResourceCost {
@@ -310,6 +320,50 @@ impl ResourceCost {
     }
 }
 
+/// Diagnostic ownership of retained work; stages do not change admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetentionStage {
+    /// Reservations outside the instrumented publication/request paths.
+    Other,
+    /// Accepted operation and response bytes.
+    Request,
+    /// Captured data awaiting publication and local cleanup.
+    Capture,
+    /// The original publisher's working buffers and metadata cache.
+    Publisher,
+    /// Pre-admitted successor buffers and receipt allowance.
+    Pipeline,
+    /// Selected dependency proofs retained by original consumers.
+    Selection,
+    /// Root reconstruction and joined checkpoint work.
+    Materialization,
+}
+
+impl RetentionStage {
+    /// All finite ownership classes, in snapshot order.
+    pub const ALL: [Self; 7] = [
+        Self::Other,
+        Self::Request,
+        Self::Capture,
+        Self::Publisher,
+        Self::Pipeline,
+        Self::Selection,
+        Self::Materialization,
+    ];
+    /// Stable diagnostic label, without Cell or request identity.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Other => "other",
+            Self::Request => "request",
+            Self::Capture => "capture",
+            Self::Publisher => "publisher",
+            Self::Pipeline => "pipeline",
+            Self::Selection => "selection",
+            Self::Materialization => "materialization",
+        }
+    }
+}
+
 /// Point-in-time usage and limits for one resource ledger.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResourceSnapshot {
@@ -317,6 +371,9 @@ pub struct ResourceSnapshot {
     pub used: ResourceCost,
     /// Cost the ledger admits.
     pub limit: ResourceCost,
+    /// Retained ownership, indexed by [`RetentionStage::ALL`]. Its sum equals
+    /// `used.retained_bytes()` in this same locked snapshot.
+    pub retained_by_stage: [usize; 7],
 }
 
 #[derive(Clone)]
@@ -342,6 +399,7 @@ impl ResourceLedger {
                 snapshot: Mutex::new(ResourceSnapshot {
                     used: ResourceCost::zero(),
                     limit,
+                    retained_by_stage: [0; 7],
                 }),
                 released: tokio::sync::Notify::new(),
             }),
@@ -353,6 +411,39 @@ impl ResourceLedger {
     }
 
     pub(crate) fn try_reserve(&self, cost: ResourceCost) -> Result<ResourceReservation> {
+        self.try_reserve_in(RetentionStage::Other, cost)
+    }
+
+    pub(crate) fn try_reserve_in(
+        &self,
+        stage: RetentionStage,
+        cost: ResourceCost,
+    ) -> Result<ResourceReservation> {
+        self.try_reserve_inner(stage, cost, false)
+    }
+
+    /// Optional overlap must leave the foreground's existing progress reserve.
+    /// Check and admission share the lock so concurrent receipts cannot defeat it.
+    pub(crate) fn try_reserve_pipeline(&self, cost: ResourceCost) -> Result<ResourceReservation> {
+        self.try_reserve_inner(RetentionStage::Pipeline, cost, true)
+    }
+
+    pub(crate) fn try_reserve_materialization(
+        &self,
+        cost: ResourceCost,
+        progress_needed: bool,
+    ) -> Result<ResourceReservation> {
+        // The actor allows one cleanup when no original materializer is alive.
+        // Debt already above the working threshold must still be reducible.
+        self.try_reserve_inner(RetentionStage::Materialization, cost, !progress_needed)
+    }
+
+    fn try_reserve_inner(
+        &self,
+        stage: RetentionStage,
+        cost: ResourceCost,
+        preserve_headroom: bool,
+    ) -> Result<ResourceReservation> {
         let mut state = self
             .state
             .snapshot
@@ -365,14 +456,32 @@ impl ResourceLedger {
         if !next.fits_within(state.limit) {
             return Err(Error::Capacity("resource ledger"));
         }
+        if preserve_headroom
+            && next.retained_bytes() >= publication_working_threshold(state.limit.retained_bytes())
+        {
+            return Err(Error::Capacity(match stage {
+                RetentionStage::Materialization => "root materialization headroom",
+                _ => "bundle pipeline headroom",
+            }));
+        }
         state.used = next;
+        state.retained_by_stage[stage as usize] += cost.retained_bytes;
         Ok(ResourceReservation {
             ledger: self.clone(),
             cost,
+            stage,
         })
     }
 
     pub(crate) async fn reserve(&self, cost: ResourceCost) -> Result<ResourceReservation> {
+        self.reserve_in(RetentionStage::Other, cost).await
+    }
+
+    pub(crate) async fn reserve_in(
+        &self,
+        stage: RetentionStage,
+        cost: ResourceCost,
+    ) -> Result<ResourceReservation> {
         if !cost.fits_within(self.snapshot()?.limit) {
             return Err(Error::Capacity("resource ledger"));
         }
@@ -380,7 +489,7 @@ impl ResourceLedger {
             // Register before checking capacity so a release between the
             // failed attempt and await cannot leave the waiter asleep.
             let released = self.state.released.notified();
-            match self.try_reserve(cost) {
+            match self.try_reserve_in(stage, cost) {
                 Ok(reservation) => return Ok(reservation),
                 Err(Error::Capacity(_)) => released.await,
                 Err(error) => return Err(error),
@@ -476,11 +585,12 @@ impl ResourceLedger {
         Ok(())
     }
 
-    fn release(&self, cost: ResourceCost) {
+    fn release(&self, stage: RetentionStage, cost: ResourceCost) {
         if let Ok(mut state) = self.state.snapshot.lock()
             && let Some(used) = state.used.checked_sub(cost)
         {
             state.used = used;
+            state.retained_by_stage[stage as usize] -= cost.retained_bytes;
         }
     }
 }
@@ -490,9 +600,25 @@ impl ResourceLedger {
 pub(crate) struct ResourceReservation {
     ledger: ResourceLedger,
     cost: ResourceCost,
+    stage: RetentionStage,
 }
 
 impl ResourceReservation {
+    /// Reclassifies the original admitted lifetime without changing capacity.
+    pub(crate) fn set_stage(&mut self, stage: RetentionStage) -> Result<()> {
+        if stage != self.stage {
+            let mut state = self
+                .ledger
+                .state
+                .snapshot
+                .lock()
+                .map_err(|_| Error::Control("resource ledger lock poisoned"))?;
+            state.retained_by_stage[self.stage as usize] -= self.cost.retained_bytes;
+            state.retained_by_stage[stage as usize] += self.cost.retained_bytes;
+            self.stage = stage;
+        }
+        Ok(())
+    }
     pub(crate) const fn retained_bytes(&self) -> usize {
         self.cost.retained_bytes
     }
@@ -509,6 +635,7 @@ impl ResourceReservation {
         Ok(Self {
             ledger: self.ledger.clone(),
             cost: ResourceCost::zero().with_retained_bytes(bytes),
+            stage: self.stage,
         })
     }
 
@@ -520,8 +647,10 @@ impl ResourceReservation {
             .checked_sub(bytes)
             .ok_or(Error::Capacity("capture cleanup cannot grow admission"))?;
         self.cost.retained_bytes = bytes;
-        self.ledger
-            .release(ResourceCost::zero().with_retained_bytes(released));
+        self.ledger.release(
+            self.stage,
+            ResourceCost::zero().with_retained_bytes(released),
+        );
         self.ledger.state.released.notify_waiters();
         Ok(())
     }
@@ -529,7 +658,7 @@ impl ResourceReservation {
 
 impl Drop for ResourceReservation {
     fn drop(&mut self) {
-        self.ledger.release(self.cost);
+        self.ledger.release(self.stage, self.cost);
         self.ledger.state.released.notify_waiters();
     }
 }
@@ -647,6 +776,48 @@ impl cellule_ltx::HostResourceAdmission for LedgerHostResourceAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stage_transfer_reconciles_without_admitting_more_work() {
+        let limit = ResourceCost::zero().with_retained_bytes(128);
+        let ledger = ResourceLedger::new(limit);
+        let mut request = ledger
+            .try_reserve_in(RetentionStage::Request, limit)
+            .unwrap();
+        let mut capture = request.split_retained(96).unwrap();
+        capture.set_stage(RetentionStage::Capture).unwrap();
+        let snapshot = ledger.snapshot().unwrap();
+        assert_eq!(
+            snapshot.retained_by_stage[RetentionStage::Request as usize],
+            32
+        );
+        assert_eq!(
+            snapshot.retained_by_stage[RetentionStage::Capture as usize],
+            96
+        );
+        assert_eq!(
+            snapshot.retained_by_stage.iter().sum::<usize>(),
+            snapshot.used.retained_bytes()
+        );
+        assert!(
+            ledger
+                .try_reserve(ResourceCost::zero().with_retained_bytes(1))
+                .is_err()
+        );
+        capture.shrink_retained(16).unwrap();
+        capture.set_stage(RetentionStage::Selection).unwrap();
+        drop(request);
+        let snapshot = ledger.snapshot().unwrap();
+        assert_eq!(
+            snapshot.retained_by_stage[RetentionStage::Selection as usize],
+            16
+        );
+        assert_eq!(snapshot.retained_by_stage.iter().sum::<usize>(), 16);
+        drop(capture);
+        let snapshot = ledger.snapshot().unwrap();
+        assert_eq!(snapshot.used, ResourceCost::zero());
+        assert_eq!(snapshot.retained_by_stage, [0; 7]);
+    }
 
     #[test]
     fn retained_transfer_preserves_usage_until_each_owner_releases() {

@@ -84,7 +84,9 @@ impl WorkAdmission {
         // own this exact cut without racing a second global admission. Keep
         // the input and actual reply charged until their command is dropped.
         let publication = if publication_bytes != 0 && publication_bytes <= unused {
-            Some(self._node_bytes.split_retained(publication_bytes)?)
+            let mut publication = self._node_bytes.split_retained(publication_bytes)?;
+            publication.set_stage(crate::fleet::resource::RetentionStage::Capture)?;
+            Some(publication)
         } else {
             None
         };
@@ -588,6 +590,21 @@ impl CellHandle {
         operation_bytes: usize,
         max_result_bytes: usize,
     ) -> crate::Result<WorkAdmission> {
+        let result = self.reserve_work_kind_inner(kind, operation_bytes, max_result_bytes);
+        if let Err(error) = &result {
+            self.inner
+                .telemetry
+                .admission_refused(crate::fleet::telemetry::AdmissionRefusal::from_error(error));
+        }
+        result
+    }
+
+    fn reserve_work_kind_inner(
+        &self,
+        kind: AdmissionKind,
+        operation_bytes: usize,
+        max_result_bytes: usize,
+    ) -> crate::Result<WorkAdmission> {
         if self.inner.shutting_down.load(Ordering::Acquire) {
             return Err(Error::RuntimeClosed);
         }
@@ -622,7 +639,7 @@ impl CellHandle {
             let retained = snapshot.used.retained_bytes();
             let limit = snapshot.limit.retained_bytes();
             let disk = self.inner.replica_host.local_disk_budget();
-            if retained >= limit.saturating_sub(limit / 4)
+            if retained >= crate::fleet::resource::retained_admission_threshold(limit)
                 || disk.used() >= disk.capacity().saturating_sub(disk.capacity() / 4)
             {
                 return Err(Error::Capacity("publication backlog"));
@@ -643,7 +660,10 @@ impl CellHandle {
             _node_bytes: self
                 .inner
                 .resources
-                .try_reserve(ResourceCost::zero().with_retained_bytes(reservation_bytes))
+                .try_reserve_in(
+                    crate::fleet::resource::RetentionStage::Request,
+                    ResourceCost::zero().with_retained_bytes(reservation_bytes),
+                )
                 .map_err(|error| match error {
                     Error::Capacity(_) => Error::Capacity("node retained bytes"),
                     error => error,

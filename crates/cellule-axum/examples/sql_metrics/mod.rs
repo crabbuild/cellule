@@ -10,6 +10,7 @@ use std::{
 };
 
 mod capture;
+mod publication;
 mod storage;
 mod submission;
 use capture::CaptureMetrics;
@@ -42,6 +43,7 @@ pub(super) struct QueryMetrics {
     selected_roots: AtomicU64,
     materialized_commits: AtomicU64,
     shared: SharedMetrics,
+    publication: publication::Metrics,
     follower_frames: AtomicU64,
     follower_sync_calls: AtomicU64,
     follower_failures: AtomicU64,
@@ -314,6 +316,35 @@ impl CellTelemetry for QueryMetrics {
         self.writes.objects.fetch_add(objects, Ordering::Relaxed);
         self.writes.bytes.fetch_add(bytes, Ordering::Relaxed);
     }
+    fn node_publication_started(
+        &self,
+        phase: cellule_runtime::fleet::telemetry::NodePublicationPhase,
+    ) {
+        self.publication.started(phase);
+    }
+    fn node_publication_phase(
+        &self,
+        phase: cellule_runtime::fleet::telemetry::NodePublicationPhase,
+        elapsed: Duration,
+        outcome: cellule_runtime::fleet::telemetry::PublicationPhaseOutcome,
+    ) {
+        self.publication.completed(phase, elapsed, outcome);
+    }
+    fn node_publication_cohort(
+        &self,
+        cohort: cellule_runtime::fleet::telemetry::NodePublicationCohort,
+    ) {
+        self.publication.cohort(cohort);
+    }
+    fn node_publication_fallback(
+        &self,
+        reason: cellule_runtime::fleet::telemetry::PublicationPipelineFallback,
+    ) {
+        self.publication.fallback(reason);
+    }
+    fn admission_refused(&self, reason: cellule_runtime::fleet::telemetry::AdmissionRefusal) {
+        self.publication.refused(reason);
+    }
     fn shared_publication(&self, timing: SharedPublicationTiming) {
         self.shared.cohorts.fetch_add(1, Ordering::Relaxed);
         self.shared
@@ -374,6 +405,10 @@ impl CellTelemetry for QueryMetrics {
 }
 
 impl QueryMetrics {
+    pub(super) fn http_failure(&self, error: &cellule_axum::HttpError, write: bool) {
+        self.publication.http_failure(error, write);
+    }
+
     pub(super) fn peer_phase(&self, phase: PeerPhase, elapsed: Duration) {
         self.peer[phase as usize].observe(elapsed);
     }
@@ -425,6 +460,7 @@ impl QueryMetrics {
         ] {
             histograms.insert(name.into(), histogram.raw());
         }
+        histograms.extend(self.publication.histograms());
         histograms.extend(self.capture.window_snapshot());
         histograms.extend(self.submission.window_snapshot());
         value["histograms"] = histograms.into();
@@ -498,6 +534,7 @@ impl QueryMetrics {
             .collect();
         serde_json::json!({
             "schema_version": 3,
+            "node_publication": self.publication.snapshot(),
             "sample_session": self.sample_session.get_or_init(uuid::Uuid::now_v7).to_string(),
             "sample_elapsed_ns": nanos(self.sample_origin.get_or_init(std::time::Instant::now).elapsed()),
             "host_capacity": self.host_capacity,

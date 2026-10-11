@@ -325,6 +325,43 @@ async fn tight_original_budget_uses_one_cohort_and_returns_all_credit() {
 }
 
 #[tokio::test]
+async fn optional_overlap_preserves_foreground_headroom_with_live_selected_debt() {
+    use crate::fleet::resource::{ResourceCost, RetentionStage};
+    let mut case = Case::new(64 << 20, false, false).await;
+    // Model other Cells' original selected receipts while this cohort's PUT
+    // is stalled. The optional successor must not make fresh SQL shed itself.
+    let selected_debt = case
+        .pool
+        .resource_ledger()
+        .try_reserve_in(
+            RetentionStage::Selection,
+            ResourceCost::zero().with_retained_bytes(8 << 20),
+        )
+        .unwrap();
+    let first = case.first().await;
+    let second = case.second().await;
+    let overlapped = tokio::time::timeout(
+        Duration::from_millis(250),
+        case.store.second_done.notified(),
+    )
+    .await
+    .is_ok();
+    assert!(
+        !overlapped,
+        "optional overlap consumed foreground progress headroom"
+    );
+    let snapshot = case.pool.resource_ledger().snapshot().unwrap();
+    assert_eq!(
+        snapshot.retained_by_stage[RetentionStage::Pipeline as usize],
+        0
+    );
+    assert!(snapshot.used.retained_bytes() < snapshot.limit.retained_bytes() * 3 / 4);
+    case.store.resume.notify_one();
+    drop(selected_debt);
+    case.finish([first, second]).await;
+}
+
+#[tokio::test]
 async fn fenced_join_waits_for_both_accepted_uploads_after_caller_cancellation() {
     failed_join(false).await;
 }

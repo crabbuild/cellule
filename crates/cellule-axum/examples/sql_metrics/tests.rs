@@ -1,6 +1,57 @@
 use super::*;
 
 #[test]
+fn node_publication_metrics_keep_phase_failures_and_http_sources_separate() {
+    use cellule_runtime::fleet::telemetry::{
+        NodePublicationPhase as Phase, PublicationPhaseOutcome,
+    };
+    let metrics = QueryMetrics::default();
+    metrics.node_publication_started(Phase::Verification);
+    metrics.node_publication_phase(
+        Phase::Verification,
+        Duration::from_millis(3),
+        PublicationPhaseOutcome::Failed,
+    );
+    metrics.node_publication_started(Phase::Checkpoint);
+    metrics.node_publication_phase(
+        Phase::Checkpoint,
+        Duration::from_millis(4),
+        PublicationPhaseOutcome::Cancelled,
+    );
+    metrics.http_failure(
+        &cellule_axum::HttpError::from(cellule_runtime::Error::Shared(std::sync::Arc::new(
+            cellule_runtime::Error::Capacity("pending publication bytes"),
+        ))),
+        true,
+    );
+    let snapshot = metrics.window_snapshot();
+    assert_eq!(
+        snapshot["node_publication"]["phases"]["verification"]["failed"],
+        1
+    );
+    assert_eq!(
+        snapshot["node_publication"]["phases"]["verification"]["active"],
+        0
+    );
+    assert_eq!(
+        snapshot["node_publication"]["phases"]["checkpoint"]["cancelled"],
+        1
+    );
+    assert_eq!(
+        snapshot["node_publication"]["http_failures"]["writes"]["pending_publication_bytes"],
+        1
+    );
+    assert_eq!(
+        snapshot["node_publication"]["http_failures"]["reads"]["pending_publication_bytes"],
+        0
+    );
+    assert_eq!(
+        snapshot["histograms"]["node_publication_verification"]["total_ns"],
+        3_000_000
+    );
+}
+
+#[test]
 fn sparse_export_preserves_cumulative_histogram_indices_and_overflow() {
     let histogram = Histogram::default();
     histogram.observe(Duration::from_micros(201));

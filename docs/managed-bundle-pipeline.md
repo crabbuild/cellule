@@ -23,7 +23,7 @@ The manual `select` method uses these same three phases.
 | Event | Managed behavior |
 | --- | --- |
 | First cohort starts | Keep the existing 20-MiB working reservation and 2-MiB shard cache |
-| Another capture arrives during publication | Try to admit another 20 MiB plus conservative receipt bounds for both cohorts on the original ledger |
+| Another capture arrives during publication | Try to admit another 20 MiB plus conservative receipt bounds for both cohorts on the original ledger, preserving publication progress and foreground burst headroom |
 | Extra credit unavailable | Keep that capture for the next serial round; do not wait while holding catalog ordering |
 | Successor PUT finishes first | Retain uploaded bytes; grant no coverage or response credit |
 | First selection succeeds | Confirm its original receipts and release its native capture credit independently of the second PUT |
@@ -92,6 +92,51 @@ compare serial `d42b978` with this managed integration at `4712c4c`. Builds,
 raw failed/passed logs and isolated snapshots for this
 integration are retained outside Git under
 `cellule-ios-parity-20261010/managed-bundle-pipeline`.
+
+## Publication diagnostics
+
+The runtime's `CellTelemetry` sink observes managed bundle preparation, upload,
+selection, receipt admission, materialization, checkpoint callbacks and worker
+binding. Install the same `CellTelemetryHandle` on `NodeDirectory` with
+`with_telemetry` to separate fresh dependency verification and the authority
+CAS inside selection. Phase callbacks include success, source failure and
+cancellation; the sink captured at phase entry receives both entry and exit.
+Callbacks must remain bounded and nonblocking.
+
+The SQL example exports these observations under `node_publication`, with raw
+cumulative histograms under `histograms.node_publication_*`. Selection includes
+verification and CAS; materialization includes root reconstruction and its Cell
+CAS. These nested durations and overlapping pipeline work cannot be summed as
+request latency. `checkpoint_wait` includes the original queued notification;
+`checkpoint` measures a standalone authority checkpoint. Native cohort counters
+report captures, frames, bytes and included checkpoint notifications. Serial
+fallback counters distinguish checkpoints, capacity, foreground headroom and an
+absent successor. Optional overlap admission atomically stays below the same
+75% retained-byte threshold used by ordinary write admission, reserving another
+eighth of the budget below that threshold for foreground bursts. Parallel root
+materializers use the same working threshold. When none is alive, one required
+cleanup may use the original full budget so existing debt cannot starve its own
+reduction. These rules do not increase the total budget or reduce receipt or
+materialization bounds.
+
+`CellRuntime::retained_work` returns one locked ledger snapshot whose
+`retained_by_stage` counts sum to its retained total. Ownership classes follow
+the original reservation through split, reclassification, shrink and drop;
+they do not alter admission or represent estimated heap use. Unclassified work
+remains explicit as `other`. The separate native-log byte window still has its
+own accounting. The example exports this snapshot under `retained_work`.
+
+Actor admission refusals are counted separately from application HTTP failures:
+a backlog-refused mutation may still resolve an existing durable outcome.
+The example's finite HTTP failure classes preserve the source chain and public
+error envelope, including post-commit capacity failures. Neither counter grants
+an outcome or recovery proof. Use raw request journals to reconcile offered,
+successful, failed, dropped and late requests.
+
+The 45-second root age trigger is a materialization policy, not a guarantee
+that bucket selection is delayed by 45 seconds. Compare issued and selected
+node-log frontiers, retained ownership, root debt age and phase service rates
+before attributing an old root to a slow bundle upload.
 
 ## Verification
 

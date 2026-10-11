@@ -38,8 +38,10 @@ const BODY_BYTES: usize = PREPARATION_BYTES
 
 impl BundlePreparation {
     pub(crate) fn reserve(resources: &ResourceLedger) -> Result<Self> {
-        let reservation =
-            resources.try_reserve(ResourceCost::zero().with_retained_bytes(PREPARATION_BYTES))?;
+        let reservation = resources.try_reserve_in(
+            crate::fleet::resource::RetentionStage::Publisher,
+            ResourceCost::zero().with_retained_bytes(PREPARATION_BYTES),
+        )?;
         Ok(Self {
             scope: None,
             entries: std::iter::repeat_with(|| None)

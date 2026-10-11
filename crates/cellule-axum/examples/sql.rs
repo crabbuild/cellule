@@ -154,6 +154,7 @@ struct Order {
 struct ServiceState {
     app: ApplicationHandle<OrdersApp>,
     targets: Arc<Vec<CellTarget>>,
+    metrics: Arc<sql_metrics::QueryMetrics>,
 }
 
 impl FromRef<ServiceState> for ApplicationHandle<OrdersApp> {
@@ -182,6 +183,18 @@ async fn create_order(
     app: Cellule<OrdersApp>,
     State(state): State<ServiceState>,
     Json(input): Json<CreateOrder>,
+) -> Result<(StatusCode, CellJson<Order>), HttpError> {
+    let result = create_order_inner(app, &state, input).await;
+    if let Err(error) = &result {
+        state.metrics.http_failure(error, true);
+    }
+    result
+}
+
+async fn create_order_inner(
+    app: Cellule<OrdersApp>,
+    state: &ServiceState,
+    input: CreateOrder,
 ) -> Result<(StatusCode, CellJson<Order>), HttpError> {
     let target = state.target(input.id)?;
     let sql = app.sql::<Orders>(target)?;
@@ -234,7 +247,11 @@ async fn get_order(
     HttpPath(id): HttpPath<i64>,
     MinimumReceipt(minimum): MinimumReceipt,
 ) -> Result<CellJson<Option<Order>>, HttpError> {
-    read_order(&app, state.target(id)?, id, minimum).await
+    let result = async { read_order(&app, state.target(id)?, id, minimum).await }.await;
+    if let Err(error) = &result {
+        state.metrics.http_failure(error, false);
+    }
+    result
 }
 
 async fn read_order(
@@ -531,6 +548,16 @@ async fn main() -> ExampleResult<()> {
                             },
                             None => serde_json::Value::Null,
                         };
+                        sample["retained_work"] = match runtime.retained_work() {
+                            Ok(snapshot) => serde_json::json!({
+                                "total": snapshot.used.retained_bytes(),
+                                "capacity": snapshot.limit.retained_bytes(),
+                                "stages": cellule_runtime::fleet::resource::RetentionStage::ALL.iter()
+                                    .map(|stage| (stage.label().to_owned(), snapshot.retained_by_stage[*stage as usize]))
+                                    .collect::<std::collections::BTreeMap<_, _>>(),
+                            }),
+                            Err(error) => serde_json::json!({"error": error.to_string()}),
+                        };
                         sample["runtime"] = serde_json::json!({
                             "active_cells": stats.active_cells(),
                             "retained_bytes": stats.retained_bytes(),
@@ -549,6 +576,7 @@ async fn main() -> ExampleResult<()> {
             .with_state(ServiceState {
                 app: typed,
                 targets: Arc::new(targets.clone()),
+                metrics: query_metrics.clone(),
             });
         // This local fixture binds only loopback. A product installs its own
         // authentication and authorization before exposing these handlers.

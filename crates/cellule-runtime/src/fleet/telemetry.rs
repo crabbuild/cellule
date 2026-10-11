@@ -183,6 +183,172 @@ pub struct SharedPublicationTiming {
     pub succeeded: bool,
 }
 
+/// A bounded node-publication or materialization phase. Durations are
+/// nested where documented; overlapping phases must not be summed as latency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodePublicationPhase {
+    /// catalog wait observation.
+    CatalogWait,
+    /// preparation observation.
+    Preparation,
+    /// upload observation.
+    Upload,
+    /// verification observation.
+    Verification,
+    /// selection observation.
+    Selection,
+    /// Authority CAS inside a selection round (nested duration).
+    AuthorityCas,
+    /// receipt wait observation.
+    ReceiptWait,
+    /// materialization observation.
+    Materialization,
+    /// checkpoint observation.
+    Checkpoint,
+    /// Queueing and completion of an original materialized-root notification.
+    CheckpointWait,
+    /// worker binding observation.
+    WorkerBinding,
+}
+impl NodePublicationPhase {
+    /// Finite diagnostic values in index order.
+    pub const ALL: [Self; 11] = [
+        Self::CatalogWait,
+        Self::Preparation,
+        Self::Upload,
+        Self::Verification,
+        Self::Selection,
+        Self::AuthorityCas,
+        Self::ReceiptWait,
+        Self::Materialization,
+        Self::Checkpoint,
+        Self::CheckpointWait,
+        Self::WorkerBinding,
+    ];
+    /// Diagnostic label with no request or Cell identity.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::CatalogWait => "catalog_wait",
+            Self::Preparation => "preparation",
+            Self::Upload => "upload",
+            Self::Verification => "verification",
+            Self::Selection => "selection",
+            Self::AuthorityCas => "authority_cas",
+            Self::ReceiptWait => "receipt_wait",
+            Self::Materialization => "materialization",
+            Self::Checkpoint => "checkpoint",
+            Self::CheckpointWait => "checkpoint_wait",
+            Self::WorkerBinding => "worker_binding",
+        }
+    }
+}
+/// Why the original actor refused work before dispatch.
+/// A command refusal may still enter the separately bounded retry-resolution lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdmissionRefusal {
+    /// closed observation.
+    Closed,
+    /// fenced observation.
+    Fenced,
+    /// draining observation.
+    Draining,
+    /// publication backlog observation.
+    PublicationBacklog,
+    /// mailbox requests observation.
+    MailboxRequests,
+    /// mailbox bytes observation.
+    MailboxBytes,
+    /// node bytes observation.
+    NodeBytes,
+    /// invalid size observation.
+    InvalidSize,
+    /// other observation.
+    Other,
+}
+impl AdmissionRefusal {
+    /// Finite diagnostic values in index order.
+    pub const ALL: [Self; 9] = [
+        Self::Closed,
+        Self::Fenced,
+        Self::Draining,
+        Self::PublicationBacklog,
+        Self::MailboxRequests,
+        Self::MailboxBytes,
+        Self::NodeBytes,
+        Self::InvalidSize,
+        Self::Other,
+    ];
+    /// Diagnostic label with no request or Cell identity.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::Fenced => "fenced",
+            Self::Draining => "draining",
+            Self::PublicationBacklog => "publication_backlog",
+            Self::MailboxRequests => "mailbox_requests",
+            Self::MailboxBytes => "mailbox_bytes",
+            Self::NodeBytes => "node_bytes",
+            Self::InvalidSize => "invalid_size",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl AdmissionRefusal {
+    pub(crate) fn from_error(error: &crate::Error) -> Self {
+        use crate::Error;
+        match error {
+            Error::Shared(source) => Self::from_error(source),
+            Error::RuntimeClosed => Self::Closed,
+            Error::Fenced => Self::Fenced,
+            Error::CellDraining => Self::Draining,
+            Error::Capacity("publication backlog") => Self::PublicationBacklog,
+            Error::Capacity("Cell mailbox requests") => Self::MailboxRequests,
+            Error::Capacity("Cell mailbox bytes") => Self::MailboxBytes,
+            Error::Capacity("node retained bytes") => Self::NodeBytes,
+            Error::Capacity("operation or result bytes" | "mailbox bytes") => Self::InvalidSize,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// Terminal phase outcome; cancellation records elapsed work without implying success.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicationPhaseOutcome {
+    /// The original phase completed successfully.
+    Succeeded,
+    /// The original phase returned an error.
+    Failed,
+    /// Its future exited without a terminal result.
+    Cancelled,
+}
+
+/// A frozen native cohort; bytes exclude the catalog/framing overhead.
+#[derive(Clone, Copy, Debug)]
+pub struct NodePublicationCohort {
+    /// Complete captured assignments.
+    pub captures: usize,
+    /// Native frames in those assignments.
+    pub frames: usize,
+    /// Encoded native bytes retained by the captures.
+    pub bytes: usize,
+    /// Original materialized-root notifications included in this cohort.
+    pub checkpoints: usize,
+}
+
+/// Why a ready predecessor did not overlap a successor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicationPipelineFallback {
+    /// Materialized checkpoints require serial catalog preparation.
+    Checkpoints,
+    /// The original ledger could not pre-admit successor buffers and receipts.
+    Capacity,
+    /// No successor arrived before predecessor selection completed.
+    NoSuccessor,
+    /// Overlap would consume the existing foreground publication headroom.
+    Headroom,
+}
+
 /// Native follower timing for one dispatched append batch.
 /// One follower append attempt, measured on the blocking worker.
 ///
@@ -492,6 +658,24 @@ pub trait CellTelemetry: Send + Sync {
     /// record the objects they did upload.
     fn publication_cost(&self, _objects: u64, _bytes: u64) {}
 
+    /// Begins one original phase; pair with its terminal observation to expose
+    /// in-flight work. Sinks must remain finite and nonblocking.
+    fn node_publication_started(&self, _phase: NodePublicationPhase) {}
+    /// Completes one phase, including failed and cancelled work.
+    fn node_publication_phase(
+        &self,
+        _phase: NodePublicationPhase,
+        _elapsed: Duration,
+        _outcome: PublicationPhaseOutcome,
+    ) {
+    }
+    /// Observes a frozen managed bundle's density.
+    fn node_publication_cohort(&self, _cohort: NodePublicationCohort) {}
+    /// Observes an ordered pipeline's serial fallback reason.
+    fn node_publication_fallback(&self, _reason: PublicationPipelineFallback) {}
+    /// Records the specific pre-dispatch refusal; it grants no outcome proof.
+    fn admission_refused(&self, _reason: AdmissionRefusal) {}
+
     /// Records shared cohort work without Cell identity labels.
     fn shared_publication(&self, _timing: SharedPublicationTiming) {}
 
@@ -696,6 +880,37 @@ impl CellTelemetryHandle {
     pub(crate) fn publication_cost(&self, objects: u64, bytes: u64) {
         if let Some(telemetry) = self.inner.get() {
             telemetry.publication_cost(objects, bytes);
+        }
+    }
+
+    pub(crate) async fn publication_phase<T>(
+        &self,
+        phase: NodePublicationPhase,
+        work: impl std::future::Future<Output = crate::Result<T>>,
+    ) -> crate::Result<T> {
+        let mut observation = PublicationObservation::new(self.clone(), phase);
+        let result = work.await;
+        observation.outcome = if result.is_ok() {
+            PublicationPhaseOutcome::Succeeded
+        } else {
+            PublicationPhaseOutcome::Failed
+        };
+        result
+    }
+
+    pub(crate) fn node_publication_cohort(&self, cohort: NodePublicationCohort) {
+        if let Some(sink) = self.inner.get() {
+            sink.node_publication_cohort(cohort);
+        }
+    }
+    pub(crate) fn node_publication_fallback(&self, reason: PublicationPipelineFallback) {
+        if let Some(sink) = self.inner.get() {
+            sink.node_publication_fallback(reason);
+        }
+    }
+    pub(crate) fn admission_refused(&self, reason: AdmissionRefusal) {
+        if let Some(sink) = self.inner.get() {
+            sink.admission_refused(reason);
         }
     }
 
@@ -913,6 +1128,91 @@ mod tests {
             vec![
                 DurabilitySubmissionOutcome::Unavailable,
                 DurabilitySubmissionOutcome::Fleet,
+            ]
+        );
+    }
+}
+
+// This guard follows the polled original future, including cancellation. It
+// owns no authority or work reservation and never changes the source error.
+struct PublicationObservation {
+    sink: Option<Arc<dyn CellTelemetry>>,
+    phase: NodePublicationPhase,
+    started: std::time::Instant,
+    outcome: PublicationPhaseOutcome,
+}
+impl PublicationObservation {
+    fn new(telemetry: CellTelemetryHandle, phase: NodePublicationPhase) -> Self {
+        let sink = telemetry.inner.get().cloned();
+        if let Some(sink) = &sink {
+            sink.node_publication_started(phase);
+        }
+        Self {
+            sink,
+            phase,
+            started: std::time::Instant::now(),
+            outcome: PublicationPhaseOutcome::Cancelled,
+        }
+    }
+}
+impl Drop for PublicationObservation {
+    fn drop(&mut self) {
+        if let Some(sink) = &self.sink {
+            sink.node_publication_phase(self.phase, self.started.elapsed(), self.outcome);
+        }
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Sink {
+        events: Mutex<Vec<(NodePublicationPhase, PublicationPhaseOutcome)>>,
+    }
+    impl CellTelemetry for Sink {
+        fn node_publication_phase(
+            &self,
+            phase: NodePublicationPhase,
+            _: Duration,
+            outcome: PublicationPhaseOutcome,
+        ) {
+            self.events.lock().unwrap().push((phase, outcome));
+        }
+    }
+
+    #[tokio::test]
+    async fn original_phase_reports_failure_and_cancellation_without_replacing_source() {
+        let sink = Arc::new(Sink::default());
+        let handle = CellTelemetryHandle::from_sink(sink.clone());
+        let result: crate::Result<()> = handle
+            .publication_phase(NodePublicationPhase::Upload, async {
+                Err(crate::Error::Capacity("original source"))
+            })
+            .await;
+        assert!(matches!(
+            result,
+            Err(crate::Error::Capacity("original source"))
+        ));
+        let mut pending = Box::pin(handle.publication_phase(
+            NodePublicationPhase::ReceiptWait,
+            std::future::pending::<crate::Result<()>>(),
+        ));
+        assert!(futures_util::poll!(pending.as_mut()).is_pending());
+        drop(pending);
+        assert_eq!(
+            *sink.events.lock().unwrap(),
+            vec![
+                (
+                    NodePublicationPhase::Upload,
+                    PublicationPhaseOutcome::Failed
+                ),
+                (
+                    NodePublicationPhase::ReceiptWait,
+                    PublicationPhaseOutcome::Cancelled
+                ),
             ]
         );
     }

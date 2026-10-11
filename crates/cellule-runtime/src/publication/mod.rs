@@ -117,27 +117,38 @@ impl CellPublisher {
         proof: &crate::node::bundle::BundleCoverageProof,
         next_due_ms: Option<i64>,
     ) -> Result<cellule_ltx::RootRef> {
-        self.check_node_lease()?;
-        if self.observed.value().bundle_binding != Some(proof.binding()) {
-            return Err(Error::Fenced);
-        }
-        let base = self.observed.value().ltx_root().ok_or(Error::Fenced)?;
-        if base.commit_sequence == proof.commit_sequence() && base.position == proof.position() {
-            return Ok(base);
-        }
-        let overlay = proof
-            .recovery_overlay_from(self.authority.layout(), self.replica.limits(), base)
-            .await?;
-        self.check_node_lease()?;
-        let (replica, confirmation) = lineage::replica(self.replica.clone(), &self.authority);
-        let prepared = replica
-            .prepare_recovered_overlay(&overlay, self.observed.value().schema)
+        let telemetry = self.telemetry.clone();
+        telemetry
+            .publication_phase(
+                crate::fleet::telemetry::NodePublicationPhase::Materialization,
+                async {
+                    self.check_node_lease()?;
+                    if self.observed.value().bundle_binding != Some(proof.binding()) {
+                        return Err(Error::Fenced);
+                    }
+                    let base = self.observed.value().ltx_root().ok_or(Error::Fenced)?;
+                    if base.commit_sequence == proof.commit_sequence()
+                        && base.position == proof.position()
+                    {
+                        return Ok(base);
+                    }
+                    let overlay = proof
+                        .recovery_overlay_from(self.authority.layout(), self.replica.limits(), base)
+                        .await?;
+                    self.check_node_lease()?;
+                    let (replica, confirmation) =
+                        lineage::replica(self.replica.clone(), &self.authority);
+                    let prepared = replica
+                        .prepare_recovered_overlay(&overlay, self.observed.value().schema)
+                        .await
+                        .map_err(lineage::error)?;
+                    self.lineage_confirmed = *confirmation
+                        .lock()
+                        .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
+                    self.publish_prepared(&prepared, next_due_ms).await
+                },
+            )
             .await
-            .map_err(lineage::error)?;
-        self.lineage_confirmed = *confirmation
-            .lock()
-            .map_err(|_| Error::Peer("root lineage confirmation lock poisoned"))?;
-        self.publish_prepared(&prepared, next_due_ms).await
     }
 
     pub(crate) fn with_shared_publication(
