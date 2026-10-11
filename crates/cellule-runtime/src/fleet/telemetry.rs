@@ -883,19 +883,26 @@ impl CellTelemetryHandle {
         }
     }
 
-    pub(crate) async fn publication_phase<T>(
+    pub(crate) fn publication_phase<T>(
         &self,
         phase: NodePublicationPhase,
         work: impl std::future::Future<Output = crate::Result<T>>,
-    ) -> crate::Result<T> {
-        let mut observation = PublicationObservation::new(self.clone(), phase);
-        let result = work.await;
-        observation.outcome = if result.is_ok() {
-            PublicationPhaseOutcome::Succeeded
-        } else {
-            PublicationPhaseOutcome::Failed
-        };
-        result
+    ) -> impl std::future::Future<Output = crate::Result<T>> {
+        // Box at construction, before the observation future can be embedded
+        // in another async frame. Publication work contains large bounded
+        // envelopes; inlining it through telemetry can exhaust a worker stack.
+        let work = Box::pin(work);
+        let handle = self.clone();
+        async move {
+            let mut observation = PublicationObservation::new(handle, phase);
+            let result = work.await;
+            observation.outcome = if result.is_ok() {
+                PublicationPhaseOutcome::Succeeded
+            } else {
+                PublicationPhaseOutcome::Failed
+            };
+            result
+        }
     }
 
     pub(crate) fn node_publication_cohort(&self, cohort: NodePublicationCohort) {
@@ -1181,6 +1188,23 @@ mod publication_tests {
         ) {
             self.events.lock().unwrap().push((phase, outcome));
         }
+    }
+
+    #[tokio::test]
+    async fn phase_observation_keeps_large_work_out_of_its_caller_frame() {
+        let handle = CellTelemetryHandle::default();
+        let bytes = [0x5a_u8; 128 << 10];
+        let work = async move {
+            tokio::task::yield_now().await;
+            Ok(bytes.iter().map(|byte| u64::from(*byte)).sum::<u64>())
+        };
+        let observed = handle.publication_phase(NodePublicationPhase::Materialization, work);
+        assert!(
+            std::mem::size_of_val(&observed) <= 1024,
+            "phase observation embeds {} bytes of accepted work in its caller",
+            std::mem::size_of_val(&observed),
+        );
+        assert_eq!(observed.await.unwrap(), 0x5a * (128 << 10));
     }
 
     #[tokio::test]
