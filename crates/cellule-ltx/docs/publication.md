@@ -37,6 +37,14 @@ retry pins and rechecks the selected capture bytes, so path replacement cannot
 change an in-flight proposal. The host owns request admission, deadlines, and
 reconciliation after ambiguous results.
 
+The in-memory CRB1 bundle encoder verifies each complete LTX segment before
+copying its owned bytes into the envelope. It reparses the complete footer,
+checks contiguous extents and duplicate identities, and requires every parsed
+row to match the original verified metadata. This avoids a second LTX scan of
+the same bytes while preserving the canonical encoding. External memory and
+file decoders independently verify every segment; root preparation and fresh
+origin verification retain their own checks.
+
 `RootPreparation` identifies a native verified derivation while uploads may still
 be running. Its construction is private and it grants no uploaded-root, restore,
 serving, authority or acknowledgement rights. A `RootPreparationMetadata` future

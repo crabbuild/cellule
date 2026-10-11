@@ -99,6 +99,76 @@ fn encode_rejects_a_duplicate_segment_identity() {
 }
 
 #[test]
+fn encode_matches_the_complete_canonical_envelope_and_independent_decoder() {
+    let directory = tempfile::tempdir().unwrap();
+    let (info, body) = segment(directory.path(), 4);
+    let entries = (1..=4)
+        .map(|id| BundleEntry::for_cell([id; 32], [id; 16], info.clone(), body.clone()))
+        .collect::<Vec<_>>();
+    let mut payload = Vec::new();
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            let row = BundleRow {
+                repository: entry.repository.clone(),
+                epoch: entry.epoch.clone(),
+                info: entry.info.clone(),
+                offset: payload.len() as u64,
+            };
+            payload.extend_from_slice(&entry.bytes);
+            row
+        })
+        .collect::<Vec<_>>();
+    let expected = envelope(&rows, payload);
+    let encoded = Bundle::encode(entries, Limits::default()).unwrap();
+    assert_eq!(encoded.read_all().unwrap().as_ref(), expected);
+    assert_eq!(encoded.digest(), *blake3::hash(&expected).as_bytes());
+    let decoded = Bundle::decode(expected, Limits::default()).unwrap();
+    assert_eq!(decoded.digest(), encoded.digest());
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(decoded.rows()[index].info, row.info);
+        assert_eq!(decoded.rows()[index].offset, row.offset);
+        assert_eq!(decoded.read_segment(index).unwrap().as_ref(), body);
+    }
+}
+
+#[test]
+fn encode_still_verifies_ltx_after_its_outer_digest_is_rebound() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut info, mut body) = segment(directory.path(), 5);
+    *body.last_mut().unwrap() ^= 1;
+    info.blake3 = *blake3::hash(&body).as_bytes();
+    assert!(
+        Bundle::encode(
+            vec![BundleEntry::for_cell([5; 32], [5; 16], info, body)],
+            Limits::default(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn encode_includes_the_footer_in_the_complete_plan_bound() {
+    let directory = tempfile::tempdir().unwrap();
+    let (info, body) = segment(directory.path(), 6);
+    let limits = Limits {
+        max_capture_bytes: info.size_bytes,
+        max_file_bytes: info.size_bytes,
+        max_plan_bytes: info.size_bytes,
+        ..Limits::default()
+    };
+    assert!(matches!(
+        Bundle::encode(
+            vec![BundleEntry::for_cell([6; 32], [6; 16], info, body)],
+            limits,
+        ),
+        Err(cellule_ltx::LtxError::Limit(
+            cellule_ltx::LimitKind::BundleBytes
+        ))
+    ));
+}
+
+#[test]
 fn builder_rejects_more_than_the_segment_limit() {
     let directory = tempfile::tempdir().unwrap();
     let limits = Limits {

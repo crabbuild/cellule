@@ -339,6 +339,44 @@ Artifacts: `cellule-checkpoint-overlap-20261011-v9`, case
 `publication-analysis.json`. The 1,000/1,500/2,000 ramp and fresh read/mixed
 qualification remain outstanding.
 
+### Removing a duplicate LTX scan
+
+A diagnostic captured an actual SQLite mutation and encoded 64 distinct Cell
+rows from the same pinned 203-byte LTX segment. The in-memory CRB1 constructor
+verified each segment before copying it, then verified it again through the
+external decoder. Temporary counters in an isolated snapshot measured 128 full
+segment validations per encoding. The candidate performs 64, retaining complete
+footer/layout checks and exact comparisons with the original verified rows.
+Its independent decoder still performs all 64 validations. The complete
+40,144-byte envelope and digest match exactly before and after.
+
+Eight debug-build samples of 100 encodings had median durations of 1,041.49 ms
+before and 636.36 ms after. These shared-host component timings do not establish
+application throughput or a causal fleet speedup. Instrumentation was removed
+before verification: the full LTX suite passed 323 tests/doctests with seven
+ignored, the runtime suite passed 1,316 with thirteen ignored, local-only LTX
+passed 66, and strict workspace Clippy passed. Existing origin verification,
+formats and resource bounds remain intact. Artifacts are in the v9
+`bundle-encode-diagnostic` directory, including the pinned input, raw samples,
+counter comparison and contract results.
+
+### Requested three-node resource profile
+
+The `three-node-1cpu` profile uses one owner and two required followers, each
+limited to 1 vCPU and 2 GiB memory with swap disabled. Their guest CPU sets are
+0, 1 and 2; RustFS occupies 3–4 and the client 5–8. A live Docker probe confirmed
+the configured limits and effective cgroup quota, memory and zero-swap limits
+for all five containers. This establishes resource enforcement, not application
+capacity. The original queued 8-CPU-owner repeat was stopped before startup in
+response to this resource request; its deferral and observations remain retained.
+
+Fresh application runs will retain the same 2,000 Cells, 64-MiB budget, five-minute
+windows and every-ACK warm/cold readback and retry checks. Results belong to this
+separate resource profile. Artifacts are under
+`cellule-three-small-nodes-20261011-v10`; the initial resource evidence is
+`limits-probe.json`. These containers share one Linux VM and their temporary
+database storage remains tmpfs; physical-media tests are a separate route.
+
 ## Retained failed attempts
 
 | Attempt | Outcome |

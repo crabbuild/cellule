@@ -18,10 +18,20 @@ CREDS = ['-e', 'AWS_ACCESS_KEY_ID=benchmark_access', '-e', 'AWS_SECRET_ACCESS_KE
 def isolated_owner():
     return getattr(ARGS, 'resource_profile', 'shared-vm') == 'isolated-owner'
 
-def resource_limits(role):
+def small_nodes():
+    return getattr(ARGS, 'resource_profile', 'shared-vm') == 'three-node-1cpu'
+
+def resource_limits(role, node_index=None):
     if role not in ('owner', 'follower', 'provider', 'client'):
         raise ValueError('unknown benchmark resource role')
-    if isolated_owner():
+    if small_nodes():
+        cpus, gib = {'owner': (1, 2), 'follower': (1, 2),
+                     'provider': (2, 2), 'client': (4, 2)}[role]
+        if role == 'follower' and node_index not in (1, 2):
+            raise ValueError('small-node follower requires its placement index')
+        cpuset = {'owner': '0', 'follower': str(node_index),
+                  'provider': '3-4', 'client': '5-8'}[role]
+    elif isolated_owner():
         cpus, gib = {'owner': (8, 16), 'follower': (1, 2),
                      'provider': (2, 2), 'client': (4, 2)}[role]
         cpuset = '0-7' if role == 'owner' else '8-11'
@@ -31,10 +41,10 @@ def resource_limits(role):
         cpuset = None
     return cpus, gib, cpuset
 
-def resource_args(role):
-    cpus, gib, cpuset = resource_limits(role)
+def resource_args(role, node_index=None):
+    cpus, gib, cpuset = resource_limits(role, node_index)
     args = ['--cpus', str(cpus), '--memory', f'{gib}g']
-    if isolated_owner() or role != 'client':
+    if isolated_owner() or small_nodes() or role != 'client':
         args += ['--memory-swap', f'{gib}g']
     if cpuset:
         args += ['--cpuset-cpus', cpuset]
@@ -43,11 +53,18 @@ def resource_args(role):
 def validate_resource_host(info):
     if isolated_owner() and (info['NCPU'] < 12 or info['MemTotal'] < 23 * 1024**3):
         raise ValueError('isolated owner requires at least 12 guest CPUs and 23 GiB usable memory')
+    if small_nodes() and (info['NCPU'] < 9 or info['MemTotal'] < 12 * 1024**3):
+        raise ValueError('three small nodes and separate support roles require at least 9 guest CPUs and 12 GiB usable memory')
 
 def verify_resource_role(name, role):
-    if not isolated_owner():
+    if not isolated_owner() and not small_nodes():
         return None
-    cpus, gib, cpuset = resource_limits(role)
+    node_index = None
+    if role == 'follower':
+        if not name.endswith(('-peer-1', '-peer-2')):
+            raise ValueError('follower name lacks its placement index')
+        node_index = int(name[-1])
+    cpus, gib, cpuset = resource_limits(role, node_index)
     config = json.loads(docker('inspect', name).stdout)[0]['HostConfig']
     expected = {'NanoCpus': cpus * 10**9, 'Memory': gib * 1024**3,
                 'MemorySwap': gib * 1024**3, 'CpusetCpus': cpuset}
@@ -230,9 +247,12 @@ def sampler(directory, stop):
 
 def start_node(system, durability, index, prefix, name):
     port = 8080 + index * 10
-    args = ['run', '-d', '--name', name, '--network', 'host', *resource_args('follower' if index else 'owner'), '--ulimit', 'nofile=65536:65536', '--tmpfs', '/scratch:rw,size=4g', *CREDS]
+    workers = 1 if small_nodes() else 8
+    args = ['run', '-d', '--name', name, '--network', 'host', *resource_args('follower' if index else 'owner', index), '--ulimit', 'nofile=65536:65536', '--tmpfs', '/scratch:rw,size=4g', *CREDS]
+    if small_nodes():
+        args += ['-e', 'TOKIO_WORKER_THREADS=1']
     if system == 'cellule':
-        args += ['-e', f'PARITY_RETAINED_BYTES={ARGS.retained_bytes}', '-e', f'PARITY_DISK_BYTES={ARGS.disk_bytes}', '-v', f'{BASE}:/work:ro', '-e', 'TMPDIR=/scratch', '-e', f'CELLULE_AXUM_CELLS={ARGS.cells}', '-e', 'CELLULE_AXUM_WORKERS=8', '-e', f'CELLULE_AXUM_BIND=127.0.0.1:{port}', '-e', 'CELLULE_TEST_ENDPOINT=http://127.0.0.1:9000', '-e', 'CELLULE_TEST_BUCKET=comparison', '-e', f'CELLULE_TEST_PREFIX={prefix}']
+        args += ['-e', f'PARITY_RETAINED_BYTES={ARGS.retained_bytes}', '-e', f'PARITY_DISK_BYTES={ARGS.disk_bytes}', '-v', f'{BASE}:/work:ro', '-e', 'TMPDIR=/scratch', '-e', f'CELLULE_AXUM_CELLS={ARGS.cells}', '-e', f'CELLULE_AXUM_WORKERS={workers}', '-e', f'CELLULE_AXUM_BIND=127.0.0.1:{port}', '-e', 'CELLULE_TEST_ENDPOINT=http://127.0.0.1:9000', '-e', 'CELLULE_TEST_BUCKET=comparison', '-e', f'CELLULE_TEST_PREFIX={prefix}']
         if durability == 'fleet' or index == 0:
             args += ['-e', 'CELLULE_AXUM_FLEET_DIR=/scratch/fleet']
         if durability == 'bucket' and index == 0:
@@ -241,7 +261,7 @@ def start_node(system, durability, index, prefix, name):
             args += ['-e', f'CELLULE_AXUM_FOLLOWER={index}']
         args += [RUST, 'sh', '-c', f"mkdir -m 700 /scratch/fleet && cp /work/tls/ca.crt /work/tls/node-{index}.crt /work/tls/node-{index}.key /scratch/fleet/ && exec /work/{MANIFEST['binaries']['sql']['path']}"]
     else:
-        args += ['-e', f'CELLD_PLACEMENT_WEIGHT={(1000000000 if index == 0 else 1)}', '-e', 'CELLD_WATCH=/scratch', '-e', f'CELLD_DURABILITY={durability}', '-e', 'CELLD_SHUTDOWN_TOTAL_MS=600000', '-e', 'CELLD_TOKIO_THREADS=8', '-e', 'CELLD_REBALANCE_INTERVAL_MS=0', '-e', f"CELLD_NODE={name.replace('-cold', '-owner')}", '-e', 'RUST_LOG=warn,celld::node_log=info', CELLD, '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1', '--listen', f'127.0.0.1:{port}', '--internal-listen', f'127.0.0.1:{port + 1}', '--advertise', f'127.0.0.1:{port + 1}']
+        args += ['-e', f'CELLD_PLACEMENT_WEIGHT={(1000000000 if index == 0 else 1)}', '-e', 'CELLD_WATCH=/scratch', '-e', f'CELLD_DURABILITY={durability}', '-e', 'CELLD_SHUTDOWN_TOTAL_MS=600000', '-e', f'CELLD_TOKIO_THREADS={workers}', '-e', 'CELLD_REBALANCE_INTERVAL_MS=0', '-e', f"CELLD_NODE={name.replace('-cold', '-owner')}", '-e', 'RUST_LOG=warn,celld::node_log=info', CELLD, '--bucket', f's3://comparison/{prefix}', '--endpoint', 'http://127.0.0.1:9000', '--region', 'us-east-1', '--listen', f'127.0.0.1:{port}', '--internal-listen', f'127.0.0.1:{port + 1}', '--advertise', f'127.0.0.1:{port + 1}']
     docker(*args)
     verify_resource_role(name, 'follower' if index else 'owner')
     return wait_ready(name, 'Follower service:' if index else 'Orders service:') if system == 'cellule' else wait_ready(name, port=port)
@@ -332,7 +352,10 @@ def run_case(system, durability):
     directory.mkdir(exist_ok=False)
     (directory / 'runner.py').write_bytes(RUNNER_BYTES)
     prefix = label + '-' + uuid.uuid4().hex[:12]
-    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': ARGS.cells, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': 8, 'owner_memory_bytes': 16 * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': 'isolated-owner-sql-ledger-96-v1' if isolated_owner() else 'shared-vm-sql-ledger-96', 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'provider_lifecycle_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
+    owner_cpus, owner_gib, _ = resource_limits('owner')
+    profile = ('three-node-1cpu-sql-ledger-96-v1' if small_nodes() else
+               'isolated-owner-sql-ledger-96-v1' if isolated_owner() else 'shared-vm-sql-ledger-96')
+    put(directory / 'case.json', {'system': system, 'durability': durability, 'prefix': prefix, 'framework_commit': MANIFEST['framework_revision'] if system == 'cellule' else 'f2bf648663a610eefde71f3547ad61e9b896b1f0', 'resident_cells': ARGS.cells, 'concurrency': int(ARGS.concurrency), 'queue_capacity': int(ARGS.queue_capacity), 'candidate_binary': MANIFEST['binaries']['sql']['path'], 'celld_application': 'celld-app', 'retained_budget_bytes': int(ARGS.retained_bytes), 'managed_disk_budget_bytes': int(ARGS.disk_bytes), 'value_bytes': 96, 'owner_cpus': owner_cpus, 'owner_memory_bytes': owner_gib * 1024 ** 3, 'followers': 2 if durability == 'fleet' else 0, 'profile': profile, 'provider_storage': 'fresh Linux Docker volume', 'provider_filesystem_required': True, 'provider_lifecycle_required': True, 'telemetry': ARGS.telemetry, 'warmup_seconds': ARGS.warmup, 'seconds': ARGS.seconds, 'runner_sha256': RUNNER_SHA256, 'docker_host': DOCKER_HOST, 'diagnostic': ARGS.seconds < 300 or ARGS.warmup < 30 or ARGS.telemetry == 'off'})
     names = []
     stop = threading.Event()
     sampling = None
@@ -542,8 +565,8 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Paired, pinned SQL durability verification; raw evidence stays outside the repository.')
     parser.add_argument('--context', required=True)
-    parser.add_argument('--resource-profile', choices=['shared-vm', 'isolated-owner'], default='shared-vm',
-                        help='isolated-owner reserves guest CPUs 0-7 for the owner and 8-11 for support roles')
+    parser.add_argument('--resource-profile', choices=['shared-vm', 'isolated-owner', 'three-node-1cpu'], default='shared-vm',
+                        help='isolated-owner reserves CPUs 0-7; three-node-1cpu pins three 1-CPU/2-GiB nodes separately from support roles')
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--tag', default=uuid.uuid4().hex[:10])
     parser.add_argument('--seconds', type=int, default=300)

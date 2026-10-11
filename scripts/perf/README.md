@@ -61,6 +61,24 @@ separate profile: do not compare it as an algorithm change against historical
 shared-VM runs. Guest CPU placement does not isolate host services or qualify
 physical-device durability; report those limits separately.
 
+`--resource-profile three-node-1cpu` runs one owner and two required followers,
+each with 1 CPU, 2 GiB memory and no swap. They occupy guest CPUs 0, 1 and 2.
+RustFS uses CPUs 3–4 with a 2-CPU/2-GiB limit; the client uses CPUs 5–8 with
+a 4-CPU/2-GiB limit. Each application node uses one SQLite worker and one
+Tokio worker. This profile requires at least nine guest CPUs and 12 GiB usable
+memory and saves the same Docker and effective cgroup checks. It keeps the
+64-MiB retained-work budget and all delivery, debt and ACK audit requirements.
+These are three capped containers in one Linux VM; host failures remain shared.
+Record this profile separately from either 8-CPU owner profile. Node state is
+still tmpfs, so device-backed crash tests remain a separate verification route.
+
+```sh
+python3 scripts/perf/run.py cellule-fleet --context dedicated-linux \
+  --artifacts /absolute/external/candidate --resource-profile three-node-1cpu \
+  --tag three-small-nodes --cells 2000 --seconds 300 --warmup 30 \
+  --repetitions 1 --write-rates 750 1000 1500 2000
+```
+
 The example authority's renewal and publication regressions use a generated TLS
 identity and an in-memory directory. From an isolated verification checkout,
 run them explicitly with the TLS directory produced by

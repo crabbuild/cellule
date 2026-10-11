@@ -236,7 +236,24 @@ impl Bundle {
         bytes.extend(footer);
         bytes.extend(len.to_le_bytes());
         bytes.extend(b"CRB1");
-        Self::decode(bytes, limits)
+        let bytes = Bytes::from(bytes);
+        let decoded = memory_rows(&bytes, limits)?;
+        // Every complete segment was verified before its bytes moved into
+        // this private envelope. Reparse and validate the entire footer, then
+        // require its exact original rows; repeating the LTX scan adds no
+        // proof about these unchanged owned bytes. External decoders still
+        // independently verify every segment.
+        if decoded.len() != rows.len()
+            || decoded.iter().zip(&rows).any(|(decoded, original)| {
+                decoded.repository != original.repository
+                    || decoded.epoch != original.epoch
+                    || decoded.info != original.info
+                    || decoded.offset != original.offset
+            })
+        {
+            return Err(LtxError::LTXCorrupted);
+        }
+        Ok(Self::from_validated_memory(bytes, decoded))
     }
 
     /// Verifies the complete envelope, every extent, and every segment digest.
@@ -247,11 +264,7 @@ impl Bundle {
     /// Verifies a shared envelope without copying its complete body.
     pub fn decode_bytes(bytes: Bytes, limits: Limits) -> Result<Self> {
         let limits = limits.validate()?;
-        if bytes.len() as u64 > limits.max_plan_bytes {
-            return Err(LtxError::Limit(crate::LimitKind::BundleBytes));
-        }
-        let (rows, payload_end) = decode_footer(&bytes, limits)?;
-        validate_row_layout(&rows, payload_end, limits)?;
+        let rows = memory_rows(&bytes, limits)?;
         for row in &rows {
             let start = usize::try_from(row.offset).map_err(|_| LtxError::LTXCorrupted)?;
             let end = start
@@ -261,12 +274,16 @@ impl Bundle {
                 .ok_or(LtxError::LTXCorrupted)?;
             crate::recovery::verify_segment(&bytes[start..end], &row.info, limits)?;
         }
-        Ok(Self {
+        Ok(Self::from_validated_memory(bytes, rows))
+    }
+
+    fn from_validated_memory(bytes: Bytes, rows: Vec<BundleRow>) -> Self {
+        Self {
             digest: *blake3::hash(&bytes).as_bytes(),
             length: bytes.len() as u64,
             body: BundleBody::Memory(bytes),
             rows,
-        })
+        }
     }
 
     /// Verifies an envelope from a caller-owned file without retaining its body in memory.
@@ -435,6 +452,15 @@ impl Bundle {
             }
         })
     }
+}
+
+fn memory_rows(bytes: &[u8], limits: Limits) -> Result<Vec<BundleRow>> {
+    if bytes.len() as u64 > limits.max_plan_bytes {
+        return Err(LtxError::Limit(crate::LimitKind::BundleBytes));
+    }
+    let (rows, payload_end) = decode_footer(bytes, limits)?;
+    validate_row_layout(&rows, payload_end, limits)?;
+    Ok(rows)
 }
 
 struct BundleUploadSource {
