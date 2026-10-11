@@ -210,11 +210,11 @@ under the v7 directory, with `mixed-publication-analysis.json`,
 
 ## Next capacity work
 
-1. Compose ready root checkpoints and native captures in one verified canonical
-   catalog update, or otherwise restore safe overlap. The measured mixed path
-   falls back to serial publication in 1,019 of 1,022 rounds. Preserve root credit,
-   exact dependency verification and the authority CAS; retain the current guard
-   until the replacement protocol and fault tests prove the same ordering.
+1. Qualify the checkpoint-overlap candidate below on an idle host. The earlier
+   mixed path fell back to serial publication in 1,019 of 1,022 rounds; the
+   candidate removes that fallback while preserving exact dependency verification,
+   ordered root credit and the authority CAS. Its first fresh 750-write/s run
+   failed delivery and debt gates under competing compiler load.
 2. Reduce preparation/verification work and bytes per cohort. Use the new phase
    and stage measurements to check actual allocation bounds and repeated catalog
    work. Ramp fresh five-minute offers through 750, 1,000, 1,500 and 2,000 writes/s,
@@ -257,8 +257,10 @@ full-advertisement equality. Capture now retains the exact Open epoch, membershi
 and signed boot identity while reobserving monotone generation, activation,
 coverage and lease progress. Its original heartbeat regression fails before the
 change and passes after it; a held-read closure case still rejects. The original
-CI failures and 50 passing local repeats remain retained. This concrete fix is
-not yet confirmation of the hosted failure's cause or a passing new CI run.
+CI failures and 50 passing local repeats remain retained. Hosted workspace run
+38181130233 subsequently passed, including the public controller models. This
+concrete fix and passing run do not establish that the heartbeat race caused
+the original hosted failures.
 
 An isolated controller repeat passed 383 of 384 cases. The remaining failure
 was fixture construction: separate clock reads could sign a 30,001-ms
@@ -275,6 +277,67 @@ the recovered state. This qualifies that published-root process-loss path,
 not unpublished follower tails, network partitions or physical power loss.
 The initial missing-import build failure and corrected passing run are both
 retained under the v9 artifact directory.
+
+Two further ignored integration cases passed against fresh ext4 follower,
+SQLite and RustFS volumes. The exact two-follower ensemble is authoritative
+before the child can acknowledge. The first case holds the original data PUT,
+verifies a follower-based success while the authoritative root remains at
+sequence zero, kills the child and removes its local writer files. Recovery
+reopens both native follower logs, verifies their exact retained frame, restores
+the acknowledged state and returns the original retry without running its
+mutation again.
+
+The second case forwards the child's real RustFS traffic through a test-owned
+TCP proxy, publishes one mutation, then closes existing connections and rejects
+new connections. The next mutation receives no success before its client
+deadline. Its captured state is nevertheless present on both follower disks;
+recovery retains that uncertain mutation as well as the earlier ACK. Both
+original request IDs return their stored outcomes without reexecution. The
+proxy recorded 49 rejected or closed connections in the passing run.
+
+The native followers share the killed process and use separate device-backed
+directories. These cases qualify process loss, native follower persistence and
+an owner-to-object-store TCP partition, not remote peer transport, follower
+network partitions or power loss. Initial setup and incorrect uncertain-tail
+expectation failures remain retained alongside the passing `device-crash-r5`
+logs. Strict runtime test Clippy and the isolated shared-store integration suite
+pass: 246 cases, with six environment-dependent cases ignored.
+
+### Fresh 750-write/s checkpoint-overlap run
+
+Source `da8887d`, five-minute offered window, 2,000 Cells, unchanged 64-MiB
+budget and the same client/auditor binaries:
+
+| Measurement | Result |
+| --- | --- |
+| Offered writes | 225,000 |
+| Successful writes within the window | 210,347; 701.16/s |
+| Returned errors / dropped offers | 11,915 / 2,731 |
+| Scheduled p50 / p95 / p99 | 9.7 / 50.1 / 318.4 ms |
+| Warmup errors / drops | 0 / 42 |
+| Every-ACK warm and cold readback and original retries | All 234,813; zero errors |
+| Joined fleet drain / cold startup | 108.56 / 29.75 seconds |
+| Final three-minute debt / age slopes | +866,204 bytes/s / +393 ms/s; failed |
+| Pipeline checkpoint / headroom fallbacks | 0 / 3,579 |
+
+The case completed its audits but failed the capacity gate. Host samples inside
+the measured window show competing compiler activity in 19 of 20 observations,
+averaging 349% sampled CPU and peaking at 696%. It does not establish idle-host
+capacity or isolate a causal throughput effect of the candidate. Retain this
+failed attempt and repeat on an idle host before advancing the ramp.
+
+Within this window, materialization averaged 44.17 ms and checkpoint waiting
+93.83 ms. Preparation, upload and selection averaged 20.62, 20.31 and 12.34 ms.
+The publisher retains its original 22-MiB scratch/cache reservation; sampled
+root I/O concurrency falls from two to one as retained selection metadata and
+captures grow. These observations identify admission and root work to investigate;
+they do not justify changing the budget or weakening the debt gate.
+
+Artifacts: `cellule-checkpoint-overlap-20261011-v9`, case
+`cellule-fleet-parity-checkpoint-overlap-v9-750-r1`, with
+`capacity-750-derived.json`, `capacity-750-host-window.json` and the case's
+`publication-analysis.json`. The 1,000/1,500/2,000 ramp and fresh read/mixed
+qualification remain outstanding.
 
 ## Retained failed attempts
 

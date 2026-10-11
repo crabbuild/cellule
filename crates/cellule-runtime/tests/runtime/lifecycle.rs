@@ -61,7 +61,7 @@ pub mod residency;
 
 #[derive(Debug)]
 pub(super) struct PausingStore {
-    inner: Arc<InMemory>,
+    inner: Arc<dyn ObjectStore>,
     armed: AtomicBool,
     update_armed: AtomicBool,
     failing: AtomicBool,
@@ -87,7 +87,7 @@ pub(super) struct PausingStore {
 }
 
 impl PausingStore {
-    pub(super) fn new(inner: Arc<InMemory>) -> Self {
+    pub(super) fn new(inner: Arc<dyn ObjectStore>) -> Self {
         Self {
             inner,
             armed: AtomicBool::new(false),

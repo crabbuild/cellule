@@ -8,7 +8,7 @@ const CHILD_PATH: &str = "runtime::lifecycle::ownership::sparse_process::rustfs_
 const ACTIVE_PATH_ENV: &str = "CELLULE_LTX_SPARSE_OWNER_ACTIVE";
 const READY_PATH_ENV: &str = "CELLULE_LTX_SPARSE_OWNER_READY";
 
-fn rustfs_store() -> Store {
+pub(super) fn rustfs_store() -> Store {
     let required = |name| std::env::var(name).unwrap_or_else(|_| panic!("missing {name}"));
     build_explicit_store(
         &required("CELLULE_TEST_BUCKET"),
