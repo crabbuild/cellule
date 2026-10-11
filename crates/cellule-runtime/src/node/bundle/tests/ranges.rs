@@ -2,6 +2,45 @@ use super::*;
 use object_store::ObjectStoreExt as _;
 
 #[tokio::test]
+async fn retained_proof_charges_endpoint_capacity_without_serialized_control_copies() {
+    let mut f = Fixture::new().await;
+    let mut cell = f.cell(4).await;
+    let (_, frames, assigned) = f.append(&mut cell, 2);
+    let prepared = f
+        .directory
+        .prepare_node_bundle(&f.node, &frames, &[assigned], NOW)
+        .await
+        .unwrap();
+    let (_, mut proofs) = f
+        .directory
+        .select_node_bundle(&f.node, &prepared, &f.lease, Limits::default(), NOW)
+        .await
+        .unwrap();
+    let mut proof = proofs.pop().unwrap();
+    let original = proof.retained_metadata_bytes().unwrap();
+    let owner = proof.binding.control.owner.as_mut().unwrap();
+    let original_capacity = owner.endpoint.capacity();
+    // Identical authority bytes can retain a larger allocation. Accounting
+    // must observe capacity, rather than infer storage from serialized length.
+    let encoded = owner.endpoint.clone();
+    owner.endpoint.reserve_exact(8192);
+    let extra = owner.endpoint.capacity() - original_capacity;
+    assert_eq!(owner.endpoint, encoded);
+    assert_eq!(proof.retained_metadata_bytes().unwrap(), original + extra);
+
+    // One small selected proof should not retain transient codec buffers.
+    // This is a footprint ceiling, independent of the accounting formula.
+    assert!(
+        original < 2048,
+        "selected proof retains serialized control scratch"
+    );
+    assert!(
+        proof.retained_metadata_bytes().unwrap()
+            <= f.directory.bundle_receipt_memory_bound(1).unwrap()
+    );
+}
+
+#[tokio::test]
 async fn missing_base_chunk_cannot_mint_a_selected_reconstruction_proof() {
     let mut f = Fixture::new().await;
     let mut cell = f.cell(4).await;

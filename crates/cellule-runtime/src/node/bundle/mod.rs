@@ -292,7 +292,10 @@ impl BundleCoverageProof {
     }
 
     pub(crate) fn retained_metadata_bytes(&self) -> Result<usize> {
-        let control = self.binding.control.encode()?.len();
+        // This proof retains one decoded control, never serialized copies.
+        // Charge its endpoint allocation by capacity and its inline fields
+        // through Self below. Encoding scratch belongs to publication work.
+        let control_heap = self.binding.control.retained_heap_bytes();
         self.binding
             .locators
             .capacity()
@@ -304,7 +307,7 @@ impl BundleCoverageProof {
                         .map_or(0, |live| live.retained_metadata_bytes()),
                 )
             })
-            .and_then(|bytes| bytes.checked_add(control.checked_mul(4)?))
+            .and_then(|bytes| bytes.checked_add(control_heap))
             .and_then(|bytes| bytes.checked_add(std::mem::size_of::<Self>() + 256))
             .ok_or(Error::Capacity("selected bundle metadata"))
     }

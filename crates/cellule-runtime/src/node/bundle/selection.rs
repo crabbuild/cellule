@@ -126,7 +126,8 @@ impl NodeDirectory {
         }
         // Cloned locator arrays cannot exceed the validated history bound.
         // Collected live assignments grow geometrically within the 64-frame
-        // cohort. Control-owned strings/maps retain their existing 4x charge.
+        // cohort. Preserve the conservative codec/endpoint preflight allowance;
+        // transfer only concrete retained allocations after verification.
         let origin = self.layout.node_path(&[0; 16]).to_string();
         let each = MAX_LOCATORS * std::mem::size_of::<Locator>()
             + MAX_FRAMES * std::mem::size_of::<crate::node::log::AssignedCommitRange>()

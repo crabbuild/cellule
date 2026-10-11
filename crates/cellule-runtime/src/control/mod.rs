@@ -217,6 +217,29 @@ pub enum Transition {
 }
 
 impl Control {
+    /// Heap storage retained by an already decoded control. Inline fields are
+    /// charged by the containing proof; codec buffers have working admission.
+    pub(crate) fn retained_heap_bytes(&self) -> usize {
+        // Keep this exhaustive: adding a persisted field requires deciding
+        // whether its allocation belongs to retained proof admission.
+        let Self {
+            cell: _,
+            incarnation: _,
+            epoch: _,
+            revision: _,
+            progress: _,
+            state: _,
+            owner,
+            root: _,
+            recovery: _,
+            bundle_binding: _,
+            code: _,
+            schema: _,
+            next_due_ms: _,
+        } = self;
+        owner.as_ref().map_or(0, |owner| owner.endpoint.capacity())
+    }
+
     /// Returns this record's incarnation/epoch identity, without granting authority.
     #[must_use]
     pub const fn owner_fence(&self) -> OwnerFence {
