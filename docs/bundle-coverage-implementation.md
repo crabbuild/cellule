@@ -174,9 +174,9 @@ unknown fields are rejected. Old readers must not operate on those records.
 Use a fresh development prefix and initialize the lane before native issuance;
 there is no live-format migration or same-boot bundle-epoch rotation.
 
-New `CNB3` objects contain a fixed authenticated root index, changed catalog
-shards, native extents and detached histories under the existing
-`cells/v1/node-logs/<session>/<epoch>/coverage/v1/<digest>.cnb` path. The head digest
+Node Bundle v1 objects contain a fixed authenticated root index, changed catalog
+shards, native extents and detached histories under the new
+`cells/v1/node-logs/<session>/<epoch>/coverage/node-bundle/v1/<digest>.nodebundle` path. The head digest
 authenticates the 32 KiB header; shard digests authenticate each binding row and
 its exact history extent; history digests authenticate every native reference.
 New histories share the one immutable upload. Old native bodies are never copied
@@ -202,12 +202,21 @@ before the first history read. This bounds protocol input, not total heap usage
 or host admission. Hydration alone does not rewrite a shard; modifications to an
 unloaded history reject.
 
-`CNB1` complete catalogs and `CNB2` inline indexed shards remain readable, with
-their original 32-inline-locator bound. Updating them selects `CNB3` without
-changing Cell pins; unchanged inline shards can remain referenced. Older binaries
-cannot read `CNB3`. Upgrade every recovery consumer before selecting it, using a
-fresh development prefix. This does not migrate unbound live actor activations
-or enable bundle responses.
+Node Bundle v1 is a hard format cutover. Its root identifier is
+`cellule.node-bundle.v1` followed by a NUL byte; catalog shards, catalog rows,
+and Cell histories use `cellule.catalog-shard.v1`, `cellule.catalog-rows.v1`,
+and `cellule.cell-history.v1` respectively. The 32-KiB header stores the root
+identifier, a big-endian u32 payload length, the authenticated index payload,
+and zero padding. Inner identifiers use the existing bounded length encoding.
+
+Writers and readers use only the new identifiers and
+`coverage/node-bundle/v1/<digest>.nodebundle` objects. Previous bundle formats
+and object paths are rejected; there are no aliases, fallback reads, or automatic
+migration. Upgrade every publication and recovery consumer together. Existing
+bundle-backed prefixes are unsupported; start the new binaries with a fresh
+prefix. Before retiring an existing deployment, drain and materialize its
+complete acknowledged history with the previous binary. This change does not
+rewrite existing objects or discard recovery obligations.
 
 | Development bound | Value |
 | --- | ---: |
@@ -218,7 +227,6 @@ or enable bundle responses.
 | Native frames per selection | 64 |
 | Detached exact frame references per Cell | 256 |
 | One encoded history | 32 KiB |
-| Legacy inline locators per Cell | 32 |
 | Native suffix bytes verified per Cell | 4 MiB |
 | Distinct base-root origin dependencies verified per Cell | 65,536 |
 
@@ -232,6 +240,9 @@ latest application measurement fails availability. See the
 [node performance design](../crates/cellule-runtime/docs/write-performance-design.md).
 
 ## Verification and remaining delivery
+
+The milestone measurements and verification counts below predate the Node Bundle
+v1 cutover. They describe the tested revisions, not the new format's performance.
 
 The atomic-coverage snapshot passed all twelve contributor checks: **1,940
 top-level workspace cases passed, 38 ignored; 60 local LTX cases passed**.
@@ -257,7 +268,7 @@ and Cell CAS. The 256-reference boundary also costs four in this fixture; an
 oversized changed image preserves the ordinary bundle fallback.
 
 The new one-Cell update among 1,000 bindings uses **35,416 metadata bytes**, versus
-35,223 with inline `CNB2`. Recovery uses four coverage-object ranges: header,
+35,223 with the previous inline format. Recovery uses four coverage-object ranges: header,
 shard, history and native frame. Prefix checkpoint uses three ranges with no
 native-body reads. The extra history read buys selective dense lookup; it is not
 a claimed read TPS improvement. One shared shard test corrupts a sibling history:
@@ -265,8 +276,9 @@ the requested Cell still selects without fetching or rewriting it, while a
 complete reconstruction load rejects the missing/corrupt sibling. Additional
 codec tests cover original pin/session/epoch, exact count/native-byte claims,
 truncation, the 256-reference limit and aggregate admission before history I/O.
-Both legacy complete catalogs and inline indexed suffixes migrate with the same
-Cell pin. All raw logs remain outside Git.
+That milestone also verified migration from previous complete catalogs and
+inline indexed suffixes with the same Cell pin. The hard cutover removes that
+support. All raw logs remain outside Git.
 
 The frozen detached-history and streaming-materialization source passed all
 twelve contributor checks: **1,908 workspace tests passed, 38 ignored; 60 local
@@ -328,7 +340,7 @@ application TPS:
 
 The index regression reproduces a **783,146-byte** metadata rewrite for one
 update among 1,000 Cells on the old source. The same test measures **35,223 bytes**
-with the original `CNB2` (95.5% less), retains one immutable PUT plus one node CAS, and recovers
+with the original inline format (95.5% less), retains one immutable PUT plus one node CAS, and recovers
 through three coverage-object ranges: header, chosen shard and native frame.
 An exact materialized-prefix checkpoint among those 1,000 Cells falls from
 **253 coverage-object reads to two**, without reading old native frames. A
@@ -345,7 +357,7 @@ requires at least 215 commands per Cell checkpoint if that four-PUT path and
 64/64 cohorts hold, before retries or maintenance. Real larger checkpoints must
 be measured; that original 32-locator safety ceiling did not satisfy this constraint.
 
-Additional tests cover legacy migration with the same Cell pin, a reused shard
+At that milestone, additional tests covered migration with the same Cell pin, a reused shard
 without reading its old header, corrupt and missing reused shards, and refusal
 to omit a corrupt shard from complete inventory. Bootstrap enrollment accepts
 the runtime's command-zero root only before any native issuance; the first

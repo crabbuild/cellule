@@ -1,4 +1,4 @@
-// Reference CNB3 encoder from aaed329, retained only for byte compatibility.
+// Independent reference layout encoder, using the current format identifiers.
 // Keep its two-pass shard construction independent of the production plan.
 use super::*;
 
@@ -154,7 +154,6 @@ pub(in crate::node::bundle) fn encode_original(
         }
     }
     let root = Root {
-        detached: true,
         session: catalog.session,
         epoch: catalog.epoch,
         predecessor: catalog.predecessor,
@@ -197,7 +196,7 @@ fn encode_leaf_original(
     }
     let inline = crate::node::bundle::codec::encode_leaf(&compact)?;
     let mut e = BoundedEncoder::new(crate::node::bundle::MAX_BUNDLE_BYTES as u32)?;
-    e.write_bytes(b"CBL3")?;
+    e.write_bytes(history::LEAF_MAGIC)?;
     e.write_bytes(&inline)?;
     e.write_count(
         compact

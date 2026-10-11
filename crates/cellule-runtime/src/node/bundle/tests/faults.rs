@@ -75,7 +75,7 @@ impl ObjectStore for ReplyFault {
             self.node_started.notify_one();
             self.node_resume.notified().await;
         }
-        if path.as_ref().ends_with(".cnb") {
+        if path.as_ref().ends_with(".nodebundle") {
             self.coverage_puts.fetch_add(1, Ordering::SeqCst);
         }
         if node_update && mode == 4 {
@@ -95,7 +95,7 @@ impl ObjectStore for ReplyFault {
         {
             return Err(denied());
         }
-        let eligible = (mode == 1 && path.as_ref().ends_with(".cnb"))
+        let eligible = (mode == 1 && path.as_ref().ends_with(".nodebundle"))
             || (mode == 8
                 && path.as_ref().ends_with("/control.json")
                 && matches!(opts.mode, object_store::PutMode::Update(_)))
@@ -128,7 +128,9 @@ impl ObjectStore for ReplyFault {
             self.node_resume.notified().await;
         }
         let metadata = match &opts.range {
-            Some(object_store::GetRange::Bounded(range)) if path.as_ref().ends_with(".cnb") => {
+            Some(object_store::GetRange::Bounded(range))
+                if path.as_ref().ends_with(".nodebundle") =>
+            {
                 (mode == 14 && range.start != 0)
                     || (mode == 15
                         && self
@@ -155,7 +157,7 @@ impl ObjectStore for ReplyFault {
             self.node_resume.notified().await;
         }
         if self.mode.load(Ordering::SeqCst) == 11
-            && path.as_ref().ends_with(".cnb")
+            && path.as_ref().ends_with(".nodebundle")
             && opts.range.is_some()
         {
             self.range_started.fetch_add(1, Ordering::SeqCst);

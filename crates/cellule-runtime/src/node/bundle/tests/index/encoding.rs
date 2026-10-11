@@ -29,7 +29,9 @@ async fn dense_multi_cell_encoding_preserves_the_original_native_order_and_bytes
     // original roots are deliberately unavailable: encoding may retain their
     // references, but selecting this cohort must verify only its own bases.
     inventory(&mut f, &cells[0], 1_937).await;
-    let original_sizes = [504_123, 511_931, 518_715, 525_755, 532_603, 539_643];
+    // Node Bundle v1's named identifiers expand the 58 touched shards and 64
+    // histories; the fixed header size and verbatim native bytes stay the same.
+    let encoded_sizes = [507_369, 515_177, 521_961, 529_001, 535_849, 542_889];
     let mut latest = Vec::new();
     for commit in 2..=7 {
         let now = f.heartbeat().await;
@@ -45,7 +47,7 @@ async fn dense_multi_cell_encoding_preserves_the_original_native_order_and_bytes
             .prepare_node_bundle(&f.node, &frames, &assignments, now)
             .await
             .unwrap();
-        assert_eq!(proposal.body.len(), original_sizes[(commit - 2) as usize]);
+        assert_eq!(proposal.body.len(), encoded_sizes[(commit - 2) as usize]);
         // Compare this exact capture with the pre-optimization encoder. Native
         // roots include generated identities, so a stored digest is not a
         // stable cross-run wire fixture. Both encoders must agree byte for byte

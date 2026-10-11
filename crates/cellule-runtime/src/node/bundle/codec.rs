@@ -1,8 +1,8 @@
-//! Bounded binary catalog and verbatim native frame extents.
+//! Bounded Node Bundle v1 catalog rows; native frames live in indexed extents.
 use super::*;
 use crate::codec::{BoundedDecoder, BoundedEncoder, read_fixed};
 
-const MAGIC: &[u8] = b"CNB1";
+const MAGIC: &[u8] = b"cellule.catalog-rows.v1";
 
 fn position_write(e: &mut BoundedEncoder, p: cellule_ltx::Position) -> Result<()> {
     e.write_u64(p.txid)?;
@@ -26,7 +26,7 @@ struct Metadata {
     extents: Vec<([u8; 32], std::ops::Range<usize>)>,
 }
 
-fn metadata(catalog: &Catalog, frames: usize) -> Result<Metadata> {
+fn metadata(catalog: &Catalog) -> Result<Metadata> {
     catalog.validate()?;
     let mut e = BoundedEncoder::new(MAX_BUNDLE_BYTES as u32)?;
     let mut extents = Vec::new();
@@ -40,8 +40,8 @@ fn metadata(catalog: &Catalog, frames: usize) -> Result<Metadata> {
     e.write_u64(catalog.selected_through)?;
     e.write_count(catalog.bindings.len())?;
     for binding in &catalog.bindings {
-        if binding.locators.len() > MAX_INLINE_LOCATORS {
-            return Err(Error::Capacity("inline bundle locator count"));
+        if binding.locators.len() > 1 {
+            return Err(Error::Capacity("bundle row history descriptor count"));
         }
         e.write_bytes(binding.application.as_bytes())?;
         e.write_u64(binding.first_commit)?;
@@ -73,49 +73,10 @@ fn metadata(catalog: &Catalog, frames: usize) -> Result<Metadata> {
             extents.push((*pin.as_bytes(), start..e.encoded_len()));
         }
     }
-    e.write_count(frames)?;
     Ok(Metadata {
         encoder: e,
         extents,
     })
-}
-
-#[cfg(test)]
-pub(super) fn encode(
-    catalog: &mut Catalog,
-    frames: &[cellule_ltx::VerifiedNodeFrame],
-) -> Result<Bytes> {
-    if frames.len() > MAX_FRAMES {
-        return Err(Error::Capacity("bundle frame count"));
-    }
-    let mut offset = metadata(catalog, frames.len())?.encoder.finish().len() as u64;
-    for frame in frames {
-        offset = offset
-            .checked_add(4)
-            .ok_or(Error::Capacity("bundle extent"))?;
-        let digest = Digest::from_bytes(frame.digest());
-        let matches = catalog
-            .bindings
-            .iter_mut()
-            .flat_map(|binding| &mut binding.locators)
-            .filter(|locator| locator.object.is_none() && locator.frame_digest == digest)
-            .map(|locator| {
-                locator.offset = offset;
-                locator.bytes = frame.encoded().len() as u64;
-            })
-            .count();
-        if matches != 1 {
-            return Err(Error::Node("bundle frame locator is not unique"));
-        }
-        offset = offset
-            .checked_add(frame.encoded().len() as u64)
-            .ok_or(Error::Capacity("bundle bytes"))?;
-    }
-    let mut e = metadata(catalog, frames.len())?.encoder;
-    for frame in frames {
-        e.write_bytes(frame.encoded())?;
-    }
-    Ok(Bytes::from(e.finish()))
 }
 
 #[cfg(test)]
@@ -124,22 +85,14 @@ pub(super) fn encode_leaf(catalog: &Catalog) -> Result<Bytes> {
 }
 
 pub(super) fn encode_leaf_plan(catalog: &Catalog) -> Result<LeafEncoding> {
-    let metadata = metadata(catalog, 0)?;
+    let metadata = metadata(catalog)?;
     Ok(LeafEncoding {
         body: metadata.encoder.finish(),
         extents: metadata.extents,
     })
 }
 
-pub(super) fn decode(body: &Bytes) -> Result<Catalog> {
-    decode_inner(body, true)
-}
-
 pub(super) fn decode_leaf(body: &Bytes) -> Result<Catalog> {
-    decode_inner(body, false)
-}
-
-fn decode_inner(body: &Bytes, complete_object: bool) -> Result<Catalog> {
     let mut d = BoundedDecoder::new(body, MAX_BUNDLE_BYTES as u32)?;
     if d.read_bytes()? != MAGIC {
         return Err(Error::Node("unsupported node bundle format"));
@@ -183,7 +136,7 @@ fn decode_inner(body: &Bytes, complete_object: bool) -> Result<Catalog> {
         let selected_commit = d.read_u64()?;
         let selected_position = position_read(&mut d)?;
         let count = d.read_count()?;
-        if count > MAX_INLINE_LOCATORS {
+        if count > 1 {
             return Err(Error::Capacity("bundle locator count"));
         }
         let mut locators = Vec::with_capacity(count);
@@ -217,22 +170,6 @@ fn decode_inner(body: &Bytes, complete_object: bool) -> Result<Catalog> {
             locators,
         });
     }
-    let count = d.read_count()?;
-    if count > MAX_FRAMES || (!complete_object && count != 0) {
-        return Err(Error::Capacity("bundle frame count"));
-    }
-    let mut local = Vec::with_capacity(count);
-    for _ in 0..count {
-        let frame = d.read_bytes()?;
-        // This offset comes from the borrowed input, rather than trusting an
-        // encoded locator or scanning other node objects for a matching row.
-        let offset = frame.as_ptr() as usize - body.as_ptr() as usize;
-        local.push((
-            offset as u64,
-            frame.len() as u64,
-            Digest::from_bytes(*blake3::hash(frame).as_bytes()),
-        ));
-    }
     d.finish()?;
     let catalog = Catalog {
         session,
@@ -243,22 +180,5 @@ fn decode_inner(body: &Bytes, complete_object: bool) -> Result<Catalog> {
         index: None,
     };
     catalog.validate()?;
-    let locators: Vec<_> = catalog
-        .bindings
-        .iter()
-        .flat_map(|binding| &binding.locators)
-        .filter(|locator| locator.object.is_none())
-        .map(|locator| (locator.offset, locator.bytes, locator.frame_digest))
-        .collect();
-    if complete_object
-        && (locators.len() != local.len()
-            || local
-                .iter()
-                .any(|extent| locators.iter().filter(|locator| *locator == extent).count() != 1))
-    {
-        return Err(Error::Node(
-            "bundle local extents differ from complete manifest",
-        ));
-    }
     Ok(catalog)
 }

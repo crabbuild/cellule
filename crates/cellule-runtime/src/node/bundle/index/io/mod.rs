@@ -12,7 +12,7 @@ async fn load_root(
     session: SessionId,
     head: NodeBundleHead,
     origin: Option<&super::super::origin::ProposalMetadata<'_>>,
-) -> Result<Option<Root>> {
+) -> Result<Root> {
     let header = super::super::origin::read_metadata_range(
         layout,
         session,
@@ -22,9 +22,6 @@ async fn load_root(
         origin,
     )
     .await?;
-    if !matches!(header.get(..8), Some(magic) if magic == MAGIC || magic == DENSE_MAGIC) {
-        return Ok(None);
-    }
     if *blake3::hash(&header).as_bytes() != *head.digest.as_bytes() {
         return Err(Error::Node("bundle index header digest differs"));
     }
@@ -40,7 +37,7 @@ async fn load_root(
             shard.extent.object = Some(head.digest);
         }
     }
-    Ok(Some(root))
+    Ok(root)
 }
 
 async fn load_rows(
@@ -145,9 +142,7 @@ async fn load_inner(
     origin: Option<&super::super::origin::ProposalMetadata<'_>>,
     mut preparation: Option<&mut BundlePreparation>,
 ) -> Result<Catalog> {
-    let Some(root) = load_root(layout, session, head, origin).await? else {
-        return super::super::store::load_legacy_catalog(layout, session, head).await;
-    };
+    let root = load_root(layout, session, head, origin).await?;
     if let Some(preparation) = preparation.as_deref_mut() {
         preparation.bind(layout, session, head.epoch);
     }
@@ -414,10 +409,7 @@ pub(in crate::node::bundle) async fn ensure_drained(
     session: SessionId,
     head: NodeBundleHead,
 ) -> Result<()> {
-    let Some(root) = load_root(layout, session, head, None).await? else {
-        let catalog = super::super::store::load_legacy_catalog(layout, session, head).await?;
-        return check_closed(&catalog.bindings);
-    };
+    let root = load_root(layout, session, head, None).await?;
     let mut pins = std::collections::HashSet::new();
     for (id, shard) in root.shards.iter().enumerate() {
         let Some(shard) = shard else { continue };
@@ -453,13 +445,7 @@ pub(in crate::node::bundle) async fn binding_inventory(
     session: SessionId,
     head: NodeBundleHead,
 ) -> Result<Vec<Binding>> {
-    let Some(root) = load_root(layout, session, head, None).await? else {
-        return Ok(
-            super::super::store::load_legacy_catalog(layout, session, head)
-                .await?
-                .bindings,
-        );
-    };
+    let root = load_root(layout, session, head, None).await?;
     let mut bindings = Vec::new();
     let mut pins = std::collections::HashSet::new();
     for (id, shard) in root.shards.iter().enumerate() {

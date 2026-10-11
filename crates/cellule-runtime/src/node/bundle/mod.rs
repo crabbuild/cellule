@@ -1,4 +1,4 @@
-//! Verified node-wide coverage and bounded per-Cell reconstruction locators.
+//! Node Bundle v1: verified node-wide coverage and bounded Cell locators.
 //!
 //! Upload is a proposal. The canonical node-record CAS selects its complete
 //! binding catalog and native range together. Cell authority pins each binding
@@ -70,7 +70,6 @@ pub(crate) const MAX_BUNDLE_BYTES: u64 = 4 << 20;
 const MAX_BINDINGS: usize = 4_096;
 pub(crate) const LIVE_PREFIX_INDEX_BYTES: usize = 448 << 10;
 const MAX_LOCATORS: usize = 256;
-const MAX_INLINE_LOCATORS: usize = 32;
 const MAX_FRAMES: usize = 64;
 // Reconstruction retains at most one Cell suffix. Selection streams checked
 // historical frames and shares one fresh cohort body for its new extents.

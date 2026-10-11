@@ -1,6 +1,8 @@
-//! Canonical fixed-size authenticated root header; leaf codecs remain CNB1.
+//! Canonical fixed-size authenticated Node Bundle v1 header.
 use super::*;
 use crate::codec::{BoundedDecoder, BoundedEncoder, read_fixed};
+
+const PREFIX_BYTES: usize = MAGIC.len() + 4;
 
 pub(in crate::node::bundle) fn write_extent(
     e: &mut BoundedEncoder,
@@ -34,7 +36,7 @@ pub(super) fn read_extent(d: &mut BoundedDecoder<'_>) -> Result<Locator> {
 
 pub(super) fn encode(root: &Root) -> Result<Bytes> {
     validate(root)?;
-    let mut e = BoundedEncoder::new((HEADER_BYTES - 12) as u32)?;
+    let mut e = BoundedEncoder::new((HEADER_BYTES - PREFIX_BYTES) as u32)?;
     e.write_bytes(root.session.as_bytes())?;
     e.write_u64(root.epoch)?;
     e.write_bool(root.predecessor.is_some())?;
@@ -56,7 +58,7 @@ pub(super) fn encode(root: &Root) -> Result<Bytes> {
     }
     let payload = e.finish();
     let mut header = Vec::with_capacity(HEADER_BYTES);
-    header.extend_from_slice(if root.detached { DENSE_MAGIC } else { MAGIC });
+    header.extend_from_slice(MAGIC);
     header.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     header.extend_from_slice(&payload);
     header.resize(HEADER_BYTES, 0);
@@ -64,24 +66,25 @@ pub(super) fn encode(root: &Root) -> Result<Bytes> {
 }
 
 pub(super) fn decode(header: &[u8]) -> Result<Root> {
-    if header.len() != HEADER_BYTES
-        || !matches!(header.get(..8), Some(magic) if magic == MAGIC || magic == DENSE_MAGIC)
-    {
+    if header.len() != HEADER_BYTES || !header.starts_with(MAGIC) {
         return Err(Error::Node("unsupported bundle index header"));
     }
     let length = u32::from_be_bytes(
-        header[8..12]
+        header[MAGIC.len()..PREFIX_BYTES]
             .try_into()
             .map_err(|_| Error::Node("truncated bundle index header"))?,
     ) as usize;
-    let end = 12_usize
+    let end = PREFIX_BYTES
         .checked_add(length)
         .filter(|end| *end <= HEADER_BYTES)
         .ok_or(Error::Node("bundle index header length"))?;
     if header[end..].iter().any(|byte| *byte != 0) {
         return Err(Error::Node("noncanonical bundle index padding"));
     }
-    let mut d = BoundedDecoder::new(&header[12..end], (HEADER_BYTES - 12) as u32)?;
+    let mut d = BoundedDecoder::new(
+        &header[PREFIX_BYTES..end],
+        (HEADER_BYTES - PREFIX_BYTES) as u32,
+    )?;
     let session = SessionId::from_bytes(read_fixed(&mut d, "bundle index session length")?);
     let epoch = d.read_u64()?;
     let predecessor = if d.read_bool()? {
@@ -115,7 +118,6 @@ pub(super) fn decode(header: &[u8]) -> Result<Root> {
     }
     d.finish()?;
     let root = Root {
-        detached: header.get(..8) == Some(DENSE_MAGIC.as_slice()),
         session,
         epoch,
         predecessor,
@@ -162,7 +164,7 @@ fn validate(root: &Root) -> Result<()> {
         }
         local_end += frame.bytes;
     }
-    if local_end > root.object_bytes || (!root.detached && local_end != root.object_bytes) {
+    if local_end > root.object_bytes {
         return Err(Error::Node("bundle index object length differs"));
     }
     Ok(())

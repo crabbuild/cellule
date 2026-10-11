@@ -162,7 +162,6 @@ pub(super) fn encode(
         }
     }
     let root = Root {
-        detached: true,
         session: catalog.session,
         epoch: catalog.epoch,
         predecessor: catalog.predecessor,

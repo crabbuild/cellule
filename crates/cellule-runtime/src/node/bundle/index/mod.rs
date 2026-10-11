@@ -22,8 +22,6 @@ pub(super) use dense::encode_original;
 pub(super) use history::validate_deferred;
 #[cfg(test)]
 pub(super) use io::load;
-#[cfg(test)]
-pub(super) use tests::encode_inline;
 
 #[cfg(test)]
 pub(super) fn history_extent(catalog: &Catalog, pin: Digest) -> Option<Locator> {
@@ -38,8 +36,7 @@ pub(super) use io::{binding_inventory, ensure_drained, load_cells};
 
 pub(super) const HEADER_BYTES: usize = 32 << 10;
 const SHARDS: usize = 256;
-const MAGIC: &[u8; 8] = b"\0\0\0\x04CNB2";
-const DENSE_MAGIC: &[u8; 8] = b"\0\0\0\x04CNB3";
+const MAGIC: &[u8] = b"cellule.node-bundle.v1\0";
 pub(super) type CellKey = ([u8; 16], [u8; 32]);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +47,6 @@ struct Shard {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Root {
-    detached: bool,
     session: SessionId,
     epoch: u64,
     predecessor: Option<Digest>,
@@ -127,11 +123,6 @@ fn extent_bytes(body: &Bytes, locator: &Locator) -> Result<Bytes> {
     Ok(Bytes::copy_from_slice(bytes))
 }
 
-#[cfg(test)]
-fn decode_leaf(body: Bytes, shard: &Shard, id: u8, root: &Root) -> Result<Catalog> {
-    decode_leaf_with_histories(body, shard, id, root).map(|(catalog, _)| catalog)
-}
-
 fn decode_leaf_with_histories(
     body: Bytes,
     shard: &Shard,
@@ -144,9 +135,6 @@ fn decode_leaf_with_histories(
         return Err(Error::Node("bundle catalog shard digest differs"));
     }
     let (catalog, histories) = history::decode_leaf(&body)?;
-    if !root.detached && body.get(..8) == Some(b"\0\0\0\x04CBL3".as_slice()) {
-        return Err(Error::Node("inline bundle index contains detached history"));
-    }
     if catalog.session != root.session
         || catalog.epoch != root.epoch
         || catalog.selected_through > root.selected_through
@@ -163,16 +151,12 @@ fn decode_leaf_with_histories(
 }
 
 pub(super) fn body_digest(body: &Bytes) -> Result<Digest> {
-    if matches!(body.get(..8), Some(magic) if magic == MAGIC || magic == DENSE_MAGIC) {
-        let header = body
-            .get(..HEADER_BYTES)
-            .ok_or(Error::Node("truncated bundle index header"))?;
-        let root = codec::decode(header)?;
-        if root.object_bytes != body.len() as u64 {
-            return Err(Error::Node("bundle proposal object length differs"));
-        }
-        Ok(Digest::from_bytes(*blake3::hash(header).as_bytes()))
-    } else {
-        Ok(Digest::from_bytes(*blake3::hash(body).as_bytes()))
+    let header = body
+        .get(..HEADER_BYTES)
+        .ok_or(Error::Node("truncated bundle index header"))?;
+    let root = codec::decode(header)?;
+    if root.object_bytes != body.len() as u64 {
+        return Err(Error::Node("bundle proposal object length differs"));
     }
+    Ok(Digest::from_bytes(*blake3::hash(header).as_bytes()))
 }

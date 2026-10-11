@@ -8,10 +8,13 @@ completes 873.35–1,038.80 writes/s and 8,877.55–10,897.50 reads/s, with
 **The 2,000-Cell mixed-load goal remains unmet; these short pairs do not qualify
 sustainable capacity.**
 
+These measurements predate the [Node Bundle v1 cutover](bundle-coverage-implementation.md#format-and-bounds).
+They are historical evidence, not measurements of the new format.
+
 ## Publication and admission
 
 `NodeBundlePublicationAuthority::begin_round` acquires catalog ordering and
-observes its original head. The round stages immutable CNB3 proposals, uploads
+observes its original head. The round stages immutable Node Bundle v1 proposals, uploads
 them and selects each through complete fresh dependency verification and the
 existing authority CAS. Heartbeat state is released during staging and upload.
 Binding, checkpoint and close operations retain the same catalog ordering.

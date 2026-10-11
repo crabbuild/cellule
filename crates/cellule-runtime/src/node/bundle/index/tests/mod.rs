@@ -66,6 +66,5 @@ fn history_binding(cell: [u8; 32], count: usize) -> Binding {
 }
 
 mod admission;
+mod format;
 mod histories;
-mod legacy;
-pub(in crate::node::bundle) use legacy::encode_inline;

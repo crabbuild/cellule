@@ -7,6 +7,8 @@ is pending. At `d42b978` the managed serving publisher remained serial. The
 runtime producer. **No new application throughput or capacity claim follows
 from this change.**
 
+The verification evidence below predates the [Node Bundle v1 cutover](bundle-coverage-implementation.md#format-and-bounds).
+
 ## Protocol and ownership
 
 | Phase | Value | Permitted action |
@@ -32,8 +34,8 @@ from the fresh origin view required by selection, which still reads the complete
 uploaded object and verifies every needed reconstruction dependency. Immutable
 PUT completion supplies no authority or response credit. A changed catalog or
 fenced writer rejects selection; heartbeat-only rebasing keeps its canonical
-checks. CNB3 encoding and the existing frame, history and object bounds remain
-unchanged.
+checks. At the tested revisions, bundle encoding and the existing frame, history
+and object bounds remained unchanged.
 
 ## Deterministic checks
 

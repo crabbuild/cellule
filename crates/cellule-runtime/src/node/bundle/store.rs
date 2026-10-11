@@ -196,43 +196,6 @@ pub(super) async fn load_catalog_cells(
     index::load_cells(layout, session, head, cells, None, None).await
 }
 
-pub(super) async fn load_legacy_catalog(
-    layout: &cellule_ltx::CellStorageLayout,
-    session: SessionId,
-    head: NodeBundleHead,
-) -> Result<Catalog> {
-    let (body, _) = layout
-        .store()
-        .get_with_etag_bounded(
-            &layout.node_coverage_bundle_path(
-                session.as_bytes(),
-                head.epoch,
-                head.digest.as_bytes(),
-            ),
-            MAX_BUNDLE_BYTES,
-        )
-        .await?;
-    if *blake3::hash(&body).as_bytes() != *head.digest.as_bytes() {
-        return Err(Error::Node("bundle catalog digest differs"));
-    }
-    let mut catalog = codec::decode(&body)?;
-    if catalog.session != session
-        || catalog.epoch != head.epoch
-        || catalog.selected_through != head.selected_through
-    {
-        return Err(Error::Node("bundle catalog scope differs"));
-    }
-    for locator in catalog
-        .bindings
-        .iter_mut()
-        .flat_map(|binding| &mut binding.locators)
-    {
-        if locator.object.is_none() {
-            locator.object = Some(head.digest);
-        }
-    }
-    Ok(catalog)
-}
 /// A Cell pin cannot exist outside the complete canonical inventory, including
 /// when callers use the lower-level CellAuthority transition directly.
 pub(crate) async fn ensure_enrollment(

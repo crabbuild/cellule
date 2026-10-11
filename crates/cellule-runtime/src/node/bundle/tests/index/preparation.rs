@@ -55,7 +55,7 @@ async fn prepared_shards_remove_repeat_reads_without_changing_the_proposal() {
         .requests()
         .into_iter()
         .filter(|read| {
-            read.location.ends_with(".cnb")
+            read.location.ends_with(".nodebundle")
                 && read.kind == cellule_store::test_support::ObjectReadKind::Range
         })
         .count();
@@ -74,7 +74,7 @@ async fn prepared_shards_remove_repeat_reads_without_changing_the_proposal() {
         .requests()
         .into_iter()
         .filter(|read| {
-            read.location.ends_with(".cnb")
+            read.location.ends_with(".nodebundle")
                 && read.kind == cellule_store::test_support::ObjectReadKind::Range
         })
         .count();
@@ -98,7 +98,7 @@ async fn prepared_shards_remove_repeat_reads_without_changing_the_proposal() {
         f.count
             .requests()
             .iter()
-            .filter(|read| read.location.ends_with(".cnb")
+            .filter(|read| read.location.ends_with(".nodebundle")
                 && read.kind == cellule_store::test_support::ObjectReadKind::Range)
             .count()
             >= 5,

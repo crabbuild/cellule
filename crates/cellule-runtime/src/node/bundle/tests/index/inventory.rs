@@ -37,7 +37,7 @@ async fn streamed_maintenance_inventory_verifies_the_last_shard_before_accepting
         .count
         .requests()
         .into_iter()
-        .filter(|read| read.location.ends_with(".cnb"))
+        .filter(|read| read.location.ends_with(".nodebundle"))
         .collect();
     assert!(reads.len() > 240, "closure checks every nonempty shard");
     assert!(

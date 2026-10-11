@@ -291,7 +291,7 @@ The encoder comparison
 preserves exact bytes in the external old-encoder oracle, but establishes no
 repeatable application improvement and fails performance qualification.
 
-Changed CNB3 shards now retain a one-use canonical encoding plan. The encoder
+Changed Node Bundle v1 shards now retain a one-use canonical encoding plan. The encoder
 records each detached history field, assigns native and history offsets, then
 fills those same-width fields without serializing all sibling controls again.
 Complete local self-verification, fresh origin verification and the canonical

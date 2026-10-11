@@ -41,7 +41,7 @@ async fn updating_one_of_a_thousand_cells_does_not_rewrite_the_complete_inventor
         .count
         .requests()
         .into_iter()
-        .filter(|read| read.location.ends_with(".cnb"))
+        .filter(|read| read.location.ends_with(".nodebundle"))
         .collect();
     assert!(
         catalog_reads

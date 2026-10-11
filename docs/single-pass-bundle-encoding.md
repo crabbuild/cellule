@@ -4,6 +4,9 @@ Measured October 10, 2026. Canonical shard encoding uses less CPU in the isolate
 release replay. Two application pairs give conflicting throughput results.
 **The 2,000-Cell mixed-load goal remains unqualified.**
 
+These measurements predate the [Node Bundle v1 cutover](bundle-coverage-implementation.md#format-and-bounds).
+They are historical evidence, not measurements of the new format.
+
 ## Change and compatibility
 
 Baseline is main `aaed329e28236b6cb3314c40add0669809d180b1`; candidate is
@@ -13,7 +16,7 @@ and fills its same-width history extent fields after assigning native offsets.
 It avoids serializing every sibling control record twice. Plans exist only during
 encoding and retain no authority or availability proof.
 
-CNB3 bytes, 64-frame/4-MiB cohorts, admission budgets, complete local
+At the tested revisions, bundle bytes, 64-frame/4-MiB cohorts, admission budgets, complete local
 self-verification, fresh origin verification and authoritative selection CAS are
 unchanged. The 64-Cell/2,000-binding fixture compares every encoded byte, header
 digest and resulting catalog against the original encoder over six captures,

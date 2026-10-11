@@ -64,7 +64,6 @@ async fn aggregate_history_budget_is_checked_before_the_first_history_read() {
         bindings: 129,
     });
     let root = Root {
-        detached: true,
         session,
         epoch: 2,
         predecessor: None,
@@ -125,7 +124,6 @@ async fn selected_shard_budget_is_checked_before_loading_any_leaf() {
         });
     }
     let root = Root {
-        detached: false,
         session,
         epoch: 2,
         predecessor: None,

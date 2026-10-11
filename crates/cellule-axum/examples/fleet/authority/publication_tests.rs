@@ -40,7 +40,7 @@ impl ObjectStore for PausedBundleStore {
         payload: object_store::PutPayload,
         options: object_store::PutOptions,
     ) -> object_store::Result<object_store::PutResult> {
-        if path.as_ref().ends_with(".cnb") && self.armed.swap(false, Ordering::AcqRel) {
+        if path.as_ref().ends_with(".nodebundle") && self.armed.swap(false, Ordering::AcqRel) {
             self.entered.notify_one();
             self.resume.notified().await;
         }

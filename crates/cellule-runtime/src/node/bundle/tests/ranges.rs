@@ -216,7 +216,7 @@ async fn corrupt_origin_dependency_and_overlapping_ranges_fail_closed() {
         .layout
         .node_coverage_bundle_path(&[1; 16], EPOCH, prepared.head.digest.as_bytes());
     let mut corrupt = prepared.body.to_vec();
-    // Native bodies precede the detached history in CNB3. Corrupt the actual
+    // Native bodies precede the detached history in Node Bundle v1. Corrupt the actual
     // retained native extent, rather than an older superseded history page.
     let native_offset = prepared
         .catalog

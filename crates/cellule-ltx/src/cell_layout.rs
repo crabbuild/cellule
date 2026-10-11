@@ -325,7 +325,7 @@ impl CellStorageLayout {
         ))
     }
 
-    /// Exact immutable node-wide coverage catalog and native range object.
+    /// Exact immutable Node Bundle v1 coverage catalog and native range object.
     #[must_use]
     pub fn node_coverage_bundle_path(
         &self,
@@ -334,7 +334,7 @@ impl CellStorageLayout {
         digest: &[u8; 32],
     ) -> Path {
         Path::from(format!(
-            "{}/cells/v1/node-logs/{}/{epoch}/coverage/v1/{}.cnb",
+            "{}/cells/v1/node-logs/{}/{epoch}/coverage/node-bundle/v1/{}.nodebundle",
             self.root,
             encode_hex(session),
             encode_hex(digest)
@@ -396,7 +396,7 @@ mod tests {
             layout
                 .node_coverage_bundle_path(&[0xdd; 16], 7, &[0xef; 32])
                 .as_ref(),
-            "tenant-root/cells/v1/node-logs/dddddddddddddddddddddddddddddddd/7/coverage/v1/efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef.cnb"
+            "tenant-root/cells/v1/node-logs/dddddddddddddddddddddddddddddddd/7/coverage/node-bundle/v1/efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef.nodebundle"
         );
         assert_eq!(
             layout

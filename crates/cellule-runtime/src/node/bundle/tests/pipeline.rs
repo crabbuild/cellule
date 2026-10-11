@@ -39,7 +39,8 @@ impl ObjectStore for ManagedStore {
         payload: object_store::PutPayload,
         options: object_store::PutOptions,
     ) -> object_store::Result<object_store::PutResult> {
-        let number = if path.as_ref().ends_with(".cnb") && self.armed.load(Ordering::Acquire) {
+        let number = if path.as_ref().ends_with(".nodebundle") && self.armed.load(Ordering::Acquire)
+        {
             Some(self.puts.fetch_add(1, Ordering::AcqRel))
         } else {
             None

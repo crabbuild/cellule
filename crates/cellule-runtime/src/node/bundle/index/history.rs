@@ -3,8 +3,8 @@ use super::*;
 use crate::codec::{BoundedDecoder, BoundedEncoder, read_fixed};
 
 pub(super) const MAX_HISTORY_BYTES: u64 = 32 << 10;
-const LEAF_MAGIC: &[u8] = b"CBL3";
-const HISTORY_MAGIC: &[u8] = b"CLH3";
+pub(super) const LEAF_MAGIC: &[u8] = b"cellule.catalog-shard.v1";
+const HISTORY_MAGIC: &[u8] = b"cellule.cell-history.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct History {
@@ -68,9 +68,8 @@ pub(super) fn decode(
     let mut native_bytes = 0_u64;
     for _ in 0..count {
         let locator = super::codec::read_extent(&mut d)?;
-        // Native locators from the complete legacy format may precede the
-        // fixed index header, so the history preserves that older byte offset.
-        if locator.bytes == 0
+        if locator.offset < HEADER_BYTES as u64
+            || locator.bytes == 0
             || locator
                 .offset
                 .checked_add(locator.bytes)
@@ -180,9 +179,6 @@ pub(super) fn encode_leaf(
 }
 
 pub(super) fn decode_leaf(body: &Bytes) -> Result<(Catalog, BTreeMap<[u8; 32], History>)> {
-    if body.get(..8) != Some(b"\0\0\0\x04CBL3".as_slice()) {
-        return Ok((super::super::codec::decode_leaf(body)?, BTreeMap::new()));
-    }
     let mut d = BoundedDecoder::new(body, MAX_BUNDLE_BYTES as u32)?;
     if d.read_bytes()? != LEAF_MAGIC {
         return Err(Error::Node("unsupported detached bundle leaf"));

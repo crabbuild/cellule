@@ -137,7 +137,7 @@ async fn checkpoint_uses_the_exact_materialized_proof_without_scanning_siblings_
         .count
         .requests()
         .into_iter()
-        .filter(|read| read.location.ends_with(".cnb"))
+        .filter(|read| read.location.ends_with(".nodebundle"))
         .collect();
     assert_eq!(
         reads.len(),
