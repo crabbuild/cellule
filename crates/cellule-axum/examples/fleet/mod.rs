@@ -1,4 +1,4 @@
-//! Optional three-process, real-directory follower durability benchmark wiring.
+//! Real-directory node leases and optional three-process follower durability.
 use super::sql_metrics::{PeerPhase, QueryMetrics};
 use cellule_peer_http::LoadedPeerTls;
 use cellule_runtime::identity::NodeId;
@@ -22,10 +22,14 @@ mod wire;
 pub(super) struct Config {
     root: PathBuf,
     pub index: u8,
+    with_followers: bool,
 }
 
 impl Config {
-    pub fn from_env() -> Result<Option<Self>> {
+    pub fn from_env(static_writers: bool) -> Result<Option<Self>> {
+        if static_writers && std::env::var_os("CELLULE_AXUM_FOLLOWER").is_some() {
+            return Err(Error::Node("static writers cannot select a follower role"));
+        }
         let Some(root) = std::env::var_os("CELLULE_AXUM_FLEET_DIR") else {
             if std::env::var_os("CELLULE_AXUM_FOLLOWER").is_some() {
                 return Err(Error::Node("follower requires CELLULE_AXUM_FLEET_DIR"));
@@ -43,12 +47,26 @@ impl Config {
                 "2" => 2,
                 _ => return Err(Error::Node("CELLULE_AXUM_FOLLOWER must be 1 or 2")),
             },
+            Err(std::env::VarError::NotPresent) if static_writers => {
+                let index = match std::env::var("CELLULE_AXUM_NODE_INDEX") {
+                    Ok(value) => value
+                        .parse::<u8>()
+                        .map_err(|_| Error::Node("invalid static writer index"))?,
+                    Err(std::env::VarError::NotPresent) => 0,
+                    Err(_) => return Err(Error::Node("invalid static writer index")),
+                };
+                if index > 2 {
+                    return Err(Error::Node("leased example supports three static writers"));
+                }
+                index
+            }
             Err(std::env::VarError::NotPresent) => 0,
             Err(_) => return Err(Error::Node("invalid capacity follower role")),
         };
         Ok(Some(Self {
             root: root.into(),
             index,
+            with_followers: !static_writers,
         }))
     }
 
@@ -95,7 +113,7 @@ impl Config {
         let enrollment = authority::Enrollment::start(
             directory.clone(),
             tls.clone(),
-            0,
+            self.index,
             session,
             endpoint.clone(),
             code,
@@ -121,6 +139,9 @@ impl Config {
         });
         let result = async {
             runtime.install_node_lease(enrollment.authority.lease.clone())?;
+            if !self.with_followers {
+                return Ok(());
+            }
             let peers = enrollment.authority.recruit().await?;
             let members = peers.iter().map(|peer| peer.node()).collect();
             let transport = Arc::new(transport::Transport::new(
@@ -128,7 +149,7 @@ impl Config {
             )?);
             let config = cellule_runtime::node::durability::NodeDurabilityConfig::new(
                 session,
-                node(0),
+                node(self.index),
                 1,
                 members,
                 transport,
@@ -151,7 +172,14 @@ impl Config {
             let _ = management.await;
             return Err(error);
         }
-        println!("Follower durability: enrolled two original boots over pinned mTLS");
+        if self.with_followers {
+            println!("Follower durability: enrolled two original boots over pinned mTLS");
+        } else {
+            println!(
+                "Node lease: enrolled static writer {}; object durability",
+                self.index
+            );
+        }
         Ok(Owner {
             enrollment,
             endpoint,
@@ -169,6 +197,10 @@ pub(super) struct Owner {
 }
 
 impl Owner {
+    pub fn directory(&self) -> NodeDirectory {
+        self.enrollment.authority.directory.clone()
+    }
+
     // Call after the runtime drained publications and closed its exact node log.
     pub async fn stop(self) -> Result<()> {
         let _ = self.stop.send(());
@@ -184,7 +216,7 @@ fn node(index: u8) -> NodeId {
     NodeId::from_bytes([index + 1; 16])
 }
 
-fn clock() -> Result<i64> {
+pub(super) fn clock() -> Result<i64> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(transport_error)?;

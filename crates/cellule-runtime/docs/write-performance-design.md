@@ -1,16 +1,16 @@
 # Node write and read performance design
 
-The latest composed-publication measurement
-joins ready exact materialized checkpoints and new complete native captures in
-one fresh bounded catalog load, upload and fenced CAS. Reserving all ready
-checkpoint rows before native assembly fixes a demonstrated cohort split. Fresh
-Fleet TPS rises 407.03→468.80/s; successful scheduled p99 stays about 389 ms. All
-53,527 candidate ACKs pass warm/cold mutation and original retry audits, and all
-2,000 Cells drain idle. Node-authority PUTs/success fall 21.38%, but total observed
-store bytes/success rise 8.68% and publication debt still grows. Errors/drops,
-latency, sustained capacity, streaming transport and complete qualification remain
-open. This short observation establishes no repeatable performance parity; PR
-#67 stays a draft and all acceptance gates remain unchanged.
+The latest completed production mixed-load diagnostic reaches 1,249.90 Fleet
+writes/s and 12,580.70 reads/s across 2,000 Cells on an 8-vCPU/16-GiB owner.
+Write request p99 is 240.5 ms; read request p99 is 48.1 ms. Queued offers are
+dropped and root debt grows. A checkpoint-overlap experiment completes fewer
+requests and grows more debt in its complete pair, so production retains the
+checkpoint serial guard. All 402,167 ACKs across three completed cases pass
+independent warm/cold state and original retry audits. The final baseline repeat
+fails with VM filesystem I/O errors and is excluded. See the
+[current managed-pipeline measurements](../../../docs/managed-bundle-pipeline.md#current-application-measurement).
+These 60-second tmpfs diagnostics do not qualify capacity or performance parity;
+the acceptance gates below remain unchanged.
 
 The following measurements remain historical observations.
 

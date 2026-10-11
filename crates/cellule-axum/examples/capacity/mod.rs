@@ -11,6 +11,8 @@ use tokio::{
 mod arrivals;
 mod metrics;
 mod request;
+#[cfg(test)]
+mod tests;
 use metrics::Metrics;
 use request::{Observation, WriteRequest};
 
@@ -20,6 +22,8 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 #[serde(deny_unknown_fields)]
 pub struct Config {
     address: std::net::SocketAddr,
+    #[serde(default)]
+    node_addresses: Vec<std::net::SocketAddr>,
     cells: usize,
     concurrency: usize,
     queue_capacity: usize,
@@ -48,6 +52,17 @@ enum ProbePhase {
 impl Config {
     fn validate(&self) -> Result<()> {
         if !self.address.ip().is_loopback()
+            || self.node_addresses.len() > 3
+            || self
+                .node_addresses
+                .iter()
+                .any(|address| !address.ip().is_loopback())
+            || self
+                .node_addresses
+                .iter()
+                .enumerate()
+                .any(|(index, address)| self.node_addresses[..index].contains(address))
+            || self.node_addresses.len() > self.cells
             || !(1..=2_000).contains(&self.cells)
             || !(1..=1_024).contains(&self.concurrency)
             || !(1..=16_384).contains(&self.queue_capacity)
@@ -72,6 +87,15 @@ impl Config {
             return Err("invalid bounded loopback capacity configuration".into());
         }
         Ok(())
+    }
+
+    fn url(&self, shard: usize) -> String {
+        let address = if self.node_addresses.is_empty() {
+            self.address
+        } else {
+            self.node_addresses[shard % self.node_addresses.len()]
+        };
+        format!("http://{address}")
     }
 }
 
@@ -181,7 +205,6 @@ pub async fn run(config: Config) -> Result<()> {
         .no_proxy()
         .timeout(Duration::from_secs(60))
         .build()?;
-    let url = format!("http://{}", config.address);
     let mut seeds: Vec<Observation> = Vec::with_capacity(config.cells);
     let mut setup = journal(&config.evidence_directory.join("setup.jsonl"))?;
     let setup_started = Instant::now();
@@ -203,6 +226,7 @@ pub async fn run(config: Config) -> Result<()> {
         0
     } {
         let id = i64::try_from(index)?;
+        let url = config.url(index);
         let initial: Observation = client
             .get(format!("{url}/orders/{id}"))
             .send()
@@ -295,12 +319,11 @@ pub async fn run(config: Config) -> Result<()> {
     let receiver = Arc::new(Mutex::new(receiver));
     let mut tasks = JoinSet::new();
     for index in 0..config.concurrency {
-        let (config, seeds, receiver, client, url) = (
+        let (config, seeds, receiver, client) = (
             config.clone(),
             seeds.clone(),
             receiver.clone(),
             client.clone(),
-            url.clone(),
         );
         tasks.spawn(async move {
             let mut writes = Metrics::new(config.cells);
@@ -320,6 +343,7 @@ pub async fn run(config: Config) -> Result<()> {
                             Kind::Write => config.cells,
                         } as u64,
                 )?;
+                let url = config.url(shard);
                 let started = Instant::now();
                 let (body, read_id, result) = match job.kind {
                     Kind::Write => {
