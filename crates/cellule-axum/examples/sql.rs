@@ -26,10 +26,10 @@ use axum::{
 };
 use cellule_app::{ApplicationHandle, CellApplication, CellType};
 use cellule_axum::{CellJson, Cellule, HttpError, MinimumReceipt};
-use cellule_ltx::{CellReplica, DiskBudget, Host, Limits};
-use cellule_runtime::cell::catalog::{CatalogEntry, CellCatalog};
+use cellule_ltx::{DiskBudget, Host};
+use cellule_runtime::cell::catalog::CellCatalog;
 use cellule_runtime::control::{Owner, authority::CellAuthority};
-use cellule_runtime::identity::{IncarnationId, RequestId};
+use cellule_runtime::identity::RequestId;
 use cellule_runtime::ltx::CellStorageLayout;
 use cellule_runtime::primitives::sql::{SqlBatch, SqlStatement, SqlValue, register_sql};
 use cellule_runtime::registry::OperationDescriptor;
@@ -46,7 +46,9 @@ use uuid::Uuid;
 
 mod fleet;
 mod order_response;
+mod sql_activation;
 mod sql_metrics;
+mod sql_placement;
 
 const ORDERS: NamespaceId = NamespaceId::from_bytes([1; 16]);
 const MAX_CELLS: u32 = 2_000;
@@ -154,6 +156,7 @@ struct Order {
 struct ServiceState {
     app: ApplicationHandle<OrdersApp>,
     targets: Arc<Vec<CellTarget>>,
+    placement: sql_placement::Placement,
 }
 
 impl FromRef<ServiceState> for ApplicationHandle<OrdersApp> {
@@ -164,13 +167,7 @@ impl FromRef<ServiceState> for ApplicationHandle<OrdersApp> {
 
 impl ServiceState {
     fn target(&self, id: i64) -> cellule_runtime::Result<CellTarget> {
-        let count = i64::try_from(self.targets.len())
-            .map_err(|_| Error::Identity("order Cell count is out of bounds"))?;
-        if count == 0 {
-            return Err(Error::Identity("orders service has no Cells"));
-        }
-        let shard = usize::try_from(id.rem_euclid(count))
-            .map_err(|_| Error::Identity("order shard is out of bounds"))?;
+        let shard = self.placement.local_index(id)?;
         self.targets
             .get(shard)
             .cloned()
@@ -350,8 +347,14 @@ async fn main() -> ExampleResult<()> {
         .with_ansi(false)
         .try_init()
         .map_err(std::io::Error::other)?;
-    let fleet_config = fleet::Config::from_env()?;
     let cells = example_count("CELLULE_AXUM_CELLS", 1, MAX_CELLS)?;
+    let placement = sql_placement::Placement::from_env(cells)?;
+    let fleet_config = fleet::Config::from_env(placement.node_count != 1)?;
+    if placement.node_count != 1 && fleet_config.is_none() {
+        return Err(
+            "static writer placement requires CELLULE_AXUM_FLEET_DIR for real node leases".into(),
+        );
+    }
     let workers = example_count("CELLULE_AXUM_WORKERS", 1, 16)?;
     let bind: SocketAddr = std::env::var("CELLULE_AXUM_BIND")
         .unwrap_or_else(|_| "127.0.0.1:3000".into())
@@ -367,9 +370,11 @@ async fn main() -> ExampleResult<()> {
     })?);
     let tenant = TenantId::from_bytes([2; 16]);
     let application_id = ApplicationId::from_bytes([3; 16]);
-    let targets: Vec<_> = (0..cells)
+    let targets: Vec<_> = placement
+        .shards()
         .map(|shard| CellTarget::new(tenant, application_id, ORDERS, &partition_for_shard(shard)))
         .collect::<cellule_runtime::Result<_>>()?;
+    let cells = u32::try_from(targets.len())?;
     let (store, prefix) = example_storage().await?;
     let host = Host::default().with_local_disk_budget(DiskBudget::new(1 << 30));
     let query_metrics = Arc::new(sql_metrics::QueryMetrics::new(&host));
@@ -386,6 +391,7 @@ async fn main() -> ExampleResult<()> {
     let authority = CellAuthority::new(layout.clone());
     if let Some(config) = &fleet_config
         && config.index != 0
+        && placement.node_count == 1
     {
         config
             .serve_follower(layout, code, bind, query_metrics.clone())
@@ -435,68 +441,31 @@ async fn main() -> ExampleResult<()> {
                 .endpoint
                 .clone();
         }
-        let mut handles = Vec::with_capacity(targets.len());
-        let mut restored = 0;
         let activation_started = std::time::Instant::now();
-        for (shard, target) in targets.iter().enumerate() {
-            // Publish the catalog entry and fenced owner before bootstrapping each Cell.
-            let proof = catalog
-                .provision(CatalogEntry::new(target, CatalogRole::Sql, code, 1)?)
-                .await?;
-            let existing = authority.load(target.cell_id()).await?;
-            let restoring = existing.is_some();
-            let observed = match existing {
-                Some(observed) => observed,
-                None => {
-                    authority
-                        .create_initial(&proof, IncarnationId::from_bytes([4; 16]), owner.clone())
-                        .await?
-                }
-            };
-            let incarnation = observed.value().incarnation;
-            let replica = CellReplica::new(
-                layout.clone(),
-                *target.cell_id().as_bytes(),
-                *incarnation.as_bytes(),
-                Limits::default(),
-            )?;
-            let destination = files.path().join(format!("orders-{shard}.sqlite"));
-            let handle = if restoring {
-                // A drained owner released authority to Idle. This public API claims
-                // it with a fresh session and verifies/restores the pinned S3 root.
-                runtime
-                    .acquire_idle_restored(
-                        proof,
-                        replica,
-                        authority.clone(),
-                        observed,
-                        destination,
-                        owner.clone(),
-                    )
-                    .await?
-            } else {
-                runtime
-                    .bootstrap(
-                        proof,
-                        replica,
-                        authority.clone(),
-                        observed,
-                        destination,
-                        |transaction| {
-                            transaction.execute_batch(SCHEMA)?;
-                            Ok(())
-                        },
-                    )
-                    .await?
-            };
-            handles.push(handle);
-            restored += usize::from(restoring);
+        let directory = fleet_owner.as_ref().map(fleet::Owner::directory);
+        let started = sql_activation::Startup {
+            catalog: &catalog,
+            authority: &authority,
+            layout: &layout,
+            runtime: &runtime,
+            directory: directory.as_ref(),
+            owner: &owner,
+            code,
+            destination: files.path(),
         }
-        let client =
-            CellClient::local_many_with_telemetry(registry, handles, runtime.telemetry_handle())?;
+        .run(&targets)
+        .await?;
+        let restored = started.restored;
+        let taken_over = started.taken_over;
+        let client = CellClient::local_many_with_telemetry(
+            registry,
+            started.handles,
+            runtime.telemetry_handle(),
+        )?;
         let typed =
             ApplicationHandle::<OrdersApp>::new(client, application, tenant, application_id)?;
         let router = Router::new()
+            .route("/debug/topology", get(move || async move { Json(placement) }))
             .route("/debug/metrics", get({
                 let metrics = query_metrics.clone();
                 let runtime = runtime.clone();
@@ -549,6 +518,7 @@ async fn main() -> ExampleResult<()> {
             .with_state(ServiceState {
                 app: typed,
                 targets: Arc::new(targets.clone()),
+                placement,
             });
         // This local fixture binds only loopback. A product installs its own
         // authentication and authorization before exposing these handlers.
@@ -560,6 +530,7 @@ async fn main() -> ExampleResult<()> {
             workers,
             files.path().display()
         );
+        println!("Cells taken over: {taken_over}");
         println!(
             "Cells activation milliseconds: {}",
             activation_started.elapsed().as_millis()
@@ -621,7 +592,8 @@ async fn main() -> ExampleResult<()> {
         println!(
             "Cell drained: {}",
             serde_json::json!({
-                "shard": shard, "cell": cell, "state": "idle",
+                "shard": placement.node_index as usize + shard * placement.node_count as usize,
+                "cell": cell, "state": "idle",
                 "epoch": drained.value().epoch, "commit_sequence": root.commit_sequence
             })
         );
