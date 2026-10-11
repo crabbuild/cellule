@@ -11,12 +11,8 @@ const MAX_MATERIALIZERS: usize = 8;
 fn reserve_materialization(
     resources: &crate::fleet::resource::ResourceLedger,
     bytes: usize,
-    progress_needed: bool,
 ) -> crate::Result<crate::fleet::resource::ResourceReservation> {
-    resources.try_reserve_materialization(
-        ResourceCost::zero().with_retained_bytes(bytes),
-        progress_needed,
-    )
+    resources.try_reserve_materialization(ResourceCost::zero().with_retained_bytes(bytes))
 }
 
 #[cfg(test)]
@@ -226,7 +222,7 @@ pub(super) fn dispatch(
         && pool
             .resource_ledger()
             .materialization_headroom()
-            .is_ok_and(|bytes| bytes <= minimum)
+            .is_ok_and(|(bytes, working)| working && bytes <= minimum)
     {
         return;
     }
@@ -260,13 +256,7 @@ pub(super) fn dispatch(
                     )
                     .ok_or(Error::Capacity("checkpoint metadata admission"))
             })
-            .and_then(|bytes| {
-                reserve_materialization(
-                    &pool.resource_ledger(),
-                    bytes,
-                    available == MAX_MATERIALIZERS,
-                )
-            });
+            .and_then(|bytes| reserve_materialization(&pool.resource_ledger(), bytes));
         let Ok(reservation) = reservation else {
             continue;
         };

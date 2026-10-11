@@ -521,6 +521,7 @@ async fn main() -> ExampleResult<()> {
                             Ok(snapshot) => serde_json::json!({
                                 "total": snapshot.used.retained_bytes(),
                                 "capacity": snapshot.limit.retained_bytes(),
+                                "working_materializations": snapshot.working_materializations,
                                 "stages": cellule_runtime::fleet::resource::RetentionStage::ALL.iter()
                                     .map(|stage| (stage.label().to_owned(), snapshot.retained_by_stage[*stage as usize]))
                                     .collect::<std::collections::BTreeMap<_, _>>(),

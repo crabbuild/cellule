@@ -374,6 +374,17 @@ pub struct ResourceSnapshot {
     /// Retained ownership, indexed by [`RetentionStage::ALL`]. Its sum equals
     /// `used.retained_bytes()` in this same locked snapshot.
     pub retained_by_stage: [usize; 7],
+    /// Admitted root I/O lifetimes whose working buffers have not yet exited.
+    /// Joined roots waiting for their exact checkpoint retain bytes but no
+    /// working admission.
+    pub working_materializations: usize,
+}
+
+#[derive(Clone, Copy)]
+enum WorkingAdmission {
+    Unrestricted,
+    Optional,
+    Materialization,
 }
 
 #[derive(Clone)]
@@ -400,6 +411,7 @@ impl ResourceLedger {
                     used: ResourceCost::zero(),
                     limit,
                     retained_by_stage: [0; 7],
+                    working_materializations: 0,
                 }),
                 released: tokio::sync::Notify::new(),
             }),
@@ -419,36 +431,40 @@ impl ResourceLedger {
         stage: RetentionStage,
         cost: ResourceCost,
     ) -> Result<ResourceReservation> {
-        self.try_reserve_inner(stage, cost, false)
+        self.try_reserve_inner(stage, cost, WorkingAdmission::Unrestricted)
     }
 
     /// Optional overlap must leave the foreground's existing progress reserve.
     /// Check and admission share the lock so concurrent receipts cannot defeat it.
     pub(crate) fn try_reserve_pipeline(&self, cost: ResourceCost) -> Result<ResourceReservation> {
-        self.try_reserve_inner(RetentionStage::Pipeline, cost, true)
+        self.try_reserve_inner(RetentionStage::Pipeline, cost, WorkingAdmission::Optional)
     }
 
     pub(crate) fn try_reserve_materialization(
         &self,
         cost: ResourceCost,
-        progress_needed: bool,
     ) -> Result<ResourceReservation> {
-        // The actor allows one cleanup when no original materializer is alive.
-        // Debt already above the working threshold must still be reducible.
-        self.try_reserve_inner(RetentionStage::Materialization, cost, !progress_needed)
+        self.try_reserve_inner(
+            RetentionStage::Materialization,
+            cost,
+            WorkingAdmission::Materialization,
+        )
     }
 
-    pub(crate) fn materialization_headroom(&self) -> Result<usize> {
+    pub(crate) fn materialization_headroom(&self) -> Result<(usize, bool)> {
         let state = self.snapshot()?;
-        Ok(publication_working_threshold(state.limit.retained_bytes())
-            .saturating_sub(state.used.retained_bytes()))
+        Ok((
+            publication_working_threshold(state.limit.retained_bytes())
+                .saturating_sub(state.used.retained_bytes()),
+            state.working_materializations != 0,
+        ))
     }
 
     fn try_reserve_inner(
         &self,
         stage: RetentionStage,
         cost: ResourceCost,
-        preserve_headroom: bool,
+        admission: WorkingAdmission,
     ) -> Result<ResourceReservation> {
         let mut state = self
             .state
@@ -462,6 +478,15 @@ impl ResourceLedger {
         if !next.fits_within(state.limit) {
             return Err(Error::Capacity("resource ledger"));
         }
+        let working = matches!(admission, WorkingAdmission::Materialization);
+        // One root I/O may reduce debt beyond the working threshold. Its
+        // original buffers release this opportunity before checkpoint waiting;
+        // retained prefix metadata cannot serialize unrelated root I/O.
+        let preserve_headroom = match admission {
+            WorkingAdmission::Unrestricted => false,
+            WorkingAdmission::Optional => true,
+            WorkingAdmission::Materialization => state.working_materializations != 0,
+        };
         if preserve_headroom
             && next.retained_bytes() >= publication_working_threshold(state.limit.retained_bytes())
         {
@@ -470,12 +495,18 @@ impl ResourceLedger {
                 _ => "bundle pipeline headroom",
             }));
         }
+        let working_materializations = state
+            .working_materializations
+            .checked_add(usize::from(working))
+            .ok_or(Error::Capacity("materialization admission arithmetic"))?;
         state.used = next;
+        state.working_materializations = working_materializations;
         state.retained_by_stage[stage as usize] += cost.retained_bytes;
         Ok(ResourceReservation {
             ledger: self.clone(),
             cost,
             stage,
+            working,
         })
     }
 
@@ -591,11 +622,15 @@ impl ResourceLedger {
         Ok(())
     }
 
-    fn release(&self, stage: RetentionStage, cost: ResourceCost) {
+    fn release(&self, stage: RetentionStage, cost: ResourceCost, working: bool) {
         if let Ok(mut state) = self.state.snapshot.lock()
             && let Some(used) = state.used.checked_sub(cost)
+            && let Some(working_materializations) = state
+                .working_materializations
+                .checked_sub(usize::from(working))
         {
             state.used = used;
+            state.working_materializations = working_materializations;
             state.retained_by_stage[stage as usize] -= cost.retained_bytes;
         }
     }
@@ -607,6 +642,7 @@ pub(crate) struct ResourceReservation {
     ledger: ResourceLedger,
     cost: ResourceCost,
     stage: RetentionStage,
+    working: bool,
 }
 
 impl ResourceReservation {
@@ -642,6 +678,7 @@ impl ResourceReservation {
             ledger: self.ledger.clone(),
             cost: ResourceCost::zero().with_retained_bytes(bytes),
             stage: self.stage,
+            working: false,
         })
     }
 
@@ -656,6 +693,7 @@ impl ResourceReservation {
         self.ledger.release(
             self.stage,
             ResourceCost::zero().with_retained_bytes(released),
+            false,
         );
         self.ledger.state.released.notify_waiters();
         Ok(())
@@ -664,7 +702,7 @@ impl ResourceReservation {
 
 impl Drop for ResourceReservation {
     fn drop(&mut self) {
-        self.ledger.release(self.stage, self.cost);
+        self.ledger.release(self.stage, self.cost, self.working);
         self.ledger.state.released.notify_waiters();
     }
 }
