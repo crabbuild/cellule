@@ -1,16 +1,17 @@
 # Managed bundle publication pipeline
 
-October 10, 2026. The runtime-owned producer can stage and upload one successor
+October 11, 2026. The runtime-owned producer can stage and upload one successor
 while its predecessor is publishing. Selection and receipt confirmation remain
-ordered. The latest completed production diagnostic reaches 1,249.90 writes/s
-and 12,580.70 reads/s, with 240.5-ms write request p99, dropped offers and growing
-root-materialization debt. Removing the checkpoint serial guard did not improve
-completed throughput in its complete pair and remains an unadopted experiment.
-**The 2,000-Cell mixed-load goal remains unmet; these short runs do not qualify
-sustainable capacity.**
+ordered. Stage accounting and phase telemetry now identify retained-byte pressure
+and root work separately. Optional overlap and parallel materialization preserve
+foreground headroom; historical frame reads overlap within the original admitted
+suffix bound.
 
-These measurements predate the [Node Bundle v1 cutover](bundle-coverage-implementation.md#format-and-bounds).
-They are historical evidence, not measurements of the new format.
+Fresh 2,000-Cell runs with the current format are recorded in
+[publication-progress measurements](publication-progress-measurements.md).
+The historical application table below predates the
+[Node Bundle v1 cutover](bundle-coverage-implementation.md#format-and-bounds);
+it does not qualify the current implementation or the mixed-load goal.
 
 ## Publication and admission
 
@@ -36,6 +37,12 @@ bounds. Receipt admission covers the maximum native history, live assignments,
 bounded control allocation and origin path. Confirmation still checks actual
 costs before transferring reservations or waking any capture.
 
+Retained receipts charge locator and assignment capacities, the origin path,
+the control's endpoint capacity, and the inline proof and wrapper storage.
+The decoded control holds no serialized copies; those transient buffers belong
+to the unchanged publication working reservation. An exhaustive control-field
+match keeps future heap-owning fields part of this accounting decision.
+
 The two-cohort window is lazy: a capture can arrive after the first PUT has
 started. There is no requirement to collect both cohorts before dispatching
 the first. Selection advances only the original complete assignments and
@@ -49,7 +56,7 @@ consumes frame facts in locator order. A failure stops new dispatch, joins the
 accepted window, preserves the first source error and grants no root credit.
 Base-origin verification remains fresh and precedes those reads.
 
-When a materializer is already alive and even the minimum working reservation
+When root I/O is already alive and even the minimum working reservation
 cannot fit, dispatch skips the repeated dirty-fleet walk and sort. This is only
 a scheduling hint; the original atomic admission still decides each job.
 
@@ -68,6 +75,14 @@ Managed failure, fencing and shutdown do not cancel already-dispatched uploads
 or checkpoint I/O. Cancelling a shutdown caller leaves the original worker
 alive; a later shutdown joins that worker and observes its terminal result.
 Manual callers continue to own their admission and accepted I/O lifetimes.
+
+The first follower proof also owns a node authority activation obligation.
+One epoch-owned driver coalesces activation waiters; cancellation or an Object
+proof winning cannot abandon an accepted CAS before the adapter joins its reply.
+Shutdown freezes further activation starts and joins that driver before coverage
+or closure, including earlier shipping/publication failures. Lease fencing remains
+terminal. A failed callback grants no Fleet proof; complete Object coverage can
+still drain the epoch.
 
 ## Regression evidence
 
@@ -98,7 +113,7 @@ compatibility, dependency verification and two-preparation model checks. Those
 model checks do not establish host memory accounting or adapter liveness; the
 managed tests cover those lifetimes separately.
 
-## Current application measurement
+## Historical application measurement
 
 The completed production baseline uses `4712c4c`, whose Rust/Cargo sources match
 `ea4903d` on main. One complete pair and an unpaired candidate repeat use an
@@ -132,11 +147,11 @@ Builds, failed/passed logs and snapshots are retained outside Git under
 `3e62e448476193424d8c555ca9b021e130819f01f576ff180ff089bff2869b85`.
 These diagnostics establish neither sustainable capacity nor celld parity.
 
-CNB3 stores a 32-KiB authenticated header, changed catalog shards, new native
+The historical format stored a 32-KiB authenticated header, changed catalog shards, new native
 frames and detached Cell histories in one immutable upload. Unchanged extents
-remain exact references to earlier objects. The
-[format and recovery contract](bundle-coverage-implementation.md) describe its
-digest chain and CNB1/CNB2 reader compatibility. The experiment changes no bytes.
+remained exact references to earlier objects. The experiment changed no bytes.
+The current [format and recovery contract](bundle-coverage-implementation.md)
+uses Node Bundle v1 exclusively; legacy bundle readers were removed at cutover.
 
 ## Publication diagnostics
 
@@ -159,17 +174,23 @@ fallback counters distinguish checkpoints, capacity, foreground headroom and an
 absent successor. Optional overlap admission atomically stays below the same
 75% retained-byte threshold used by ordinary write admission, reserving another
 eighth of the budget below that threshold for foreground bursts. Parallel root
-materializers use the same working threshold. When none is alive, one required
-cleanup may use the original full budget so existing debt cannot starve its own
-reduction. These rules do not increase the total budget or reduce receipt or
-materialization bounds.
+materializers use the same working threshold. When no root I/O is alive, one
+required cleanup may use the original full budget so existing debt cannot starve
+its own reduction. The working reservation releases this opportunity when root
+I/O and its Cell CAS join. Prefix metadata remains admitted through checkpoint
+and worker binding, without serializing another Cell's root I/O with that wait.
+The original eight-task limit includes both working and checkpoint phases.
+These rules do not increase the total budget or reduce receipt or materialization
+bounds.
 
 `CellRuntime::retained_work` returns one locked ledger snapshot whose
 `retained_by_stage` counts sum to its retained total. Ownership classes follow
 the original reservation through split, reclassification, shrink and drop;
-they do not alter admission or represent estimated heap use. Unclassified work
+they report admitted reservations rather than sampled heap use. Unclassified work
 remains explicit as `other`. The separate native-log byte window still has its
 own accounting. The example exports this snapshot under `retained_work`.
+Its `working_materializations` count reports original root I/O admissions in the
+same locked snapshot; retained checkpoint metadata does not hold that count.
 
 Actor admission refusals are counted separately from application HTTP failures:
 a backlog-refused mutation may still resolve an existing durable outcome.
@@ -185,7 +206,23 @@ before attributing an old root to a slow bundle upload.
 
 ## Verification
 
-All 13 contributor routes pass on an isolated snapshot, including 2,095
+The publication-progress changes pass 2,112 workspace tests and 15 SQL example
+tests on an isolated snapshot, plus strict all-target/all-feature Clippy,
+formatting, boundary/layout checks and document/SQL validators. Focused tests
+reproduce the original pipeline and materializer headroom failures, then verify
+foreground admission and continued cleanup against the same ledger. A held-first
+frame fixture reproduces serial historical reads; its bounded-overlap replacement
+cold-restores the exact outcomes. The failure-window fixture verifies joined
+accepted reads, preserved source errors and unchanged root authority.
+Additional regressions distinguish joined root working admission from retained
+checkpoint metadata, charge spare endpoint allocation without retaining codec
+scratch, join accepted activation after proof-waiter cancellation, and bound the telemetry wrapper's async frame. The latter
+reproduces a large inline child frame; boxing work at construction preserves phase
+outcomes and avoids the webhook scenario's default-worker stack overflow. Its
+unoptimized demo and complete process journey pass without enlarging stacks or
+changing the original fault assertions.
+
+At the earlier pipeline milestone, all 13 contributor routes passed on an isolated snapshot, including 2,095
 workspace tests with 43 environment-dependent cases ignored, strict Clippy,
 all targets/features, API docs, local LTX, boundary/layout checks and document
 validators. The focused bundle suite passes 125 cases. The seven TLS-dependent

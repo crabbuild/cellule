@@ -1,6 +1,11 @@
 # Bundle coverage implementation
 
-The current paired 2,000-Cell measurements
+Fresh Node Bundle v1 measurements pass a five-minute 500-offered-write/s
+milestone; the separate 2K-write/20K-read target remains unqualified. See
+[publication-progress measurements](publication-progress-measurements.md) for
+the current source, resources, errors, drops and complete ACK audits.
+
+The historical paired 2,000-Cell measurements
 complete 502.28 Fleet writes/s versus 455.73 before and 1,999.83 for fresh
 celld. Metadata windows reduce observed GET/range work, but successful scheduled
 write p99 worsens 827.14→1,454.42 ms and returned errors increase. Read-only
@@ -236,7 +241,8 @@ reverified. The 215-command checkpoint density is now represented and measured
 for a small-image fixture; total lifecycle cost is not qualified. Host memory,
 native-job admission and materializer progress still require qualification.
 The actor now owns bounded admitted scheduling and joins accepted jobs; its
-latest application measurement fails availability. See the
+fresh mixed application measurement fails delivery at the full offered targets,
+while the smaller 500-write/s milestone passes. See the
 [node performance design](../crates/cellule-runtime/docs/write-performance-design.md).
 
 ## Verification and remaining delivery

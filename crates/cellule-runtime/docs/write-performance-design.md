@@ -1,16 +1,25 @@
 # Node write and read performance design
 
-The latest completed production mixed-load diagnostic reaches 1,249.90 Fleet
-writes/s and 12,580.70 reads/s across 2,000 Cells on an 8-vCPU/16-GiB owner.
-Write request p99 is 240.5 ms; read request p99 is 48.1 ms. Queued offers are
-dropped and root debt grows. A checkpoint-overlap experiment completes fewer
-requests and grows more debt in its complete pair, so production retains the
-checkpoint serial guard. All 402,167 ACKs across three completed cases pass
-independent warm/cold state and original retry audits. The final baseline repeat
-fails with VM filesystem I/O errors and is excluded. See the
-[current managed-pipeline measurements](../../../docs/managed-bundle-pipeline.md#current-application-measurement).
-These 60-second tmpfs diagnostics do not qualify capacity or performance parity;
-the acceptance gates below remain unchanged.
+A fresh five-minute public-application run at 2,000 Cells sustains 500 offered
+Fleet writes/s with zero errors, drops or admission refusals under the unchanged
+64-MiB retained-work budget. A fresh repeat after joining authority activation
+also has zero errors/drops: all 167,001 ACKs pass warm/cold readback and exact
+retries; drain takes 39.25 seconds. Scheduled write p99 is 16.0 ms, and root age
+stays around 42–49 seconds. These are development diagnostics with tmpfs local
+state; they do not qualify the 2K-write/20K-read target or
+physical-media durability. See [fresh publication-progress measurements](../../../docs/publication-progress-measurements.md)
+for source identity, actual resources, phase observations and retained failures.
+The acceptance gates below remain unchanged.
+
+The fresh 60-second mixed diagnostic completes 971.25 writes/s and 18,529.95
+reads/s at 2K/20K offered load. Writes have 53,037 errors and 8,662 drops; reads
+have zero returned errors and 88,152 drops. Publication backlog reaches the
+foreground threshold, root age grows 57.7→88.7 seconds, and checkpoints force
+serial publication in 1,019 of 1,022 rounds. A read-only window reaches 15,806.40/s
+with zero returned errors and 251,484 drops under sampled competing compiler
+load. All 90,562 ACKs pass warm/cold reads and exact retries; drain takes 38.77
+seconds. See the same fresh report for actual host/storage differences and phase
+attribution. The full mixed/read targets remain unqualified.
 
 The following measurements remain historical observations.
 
