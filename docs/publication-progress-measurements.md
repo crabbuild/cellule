@@ -314,6 +314,43 @@ this test-barrier correction does not establish a performance gain or identify
 the original maintenance failure's cause. Artifacts are retained under
 `cellule-checkpoint-barrier-20261012-v27`.
 
+Fresh hosted Rust run [38209589260](https://github.com/crabbuild/cellule/actions/runs/38209589260)
+passed the full workspace, both original maintenance cases, MSRV and strict
+lint at `23f035d`. The separate routing performance run retained a failure and
+a source-identical repeat:
+
+| Forwarded writes, concurrency 1 | Main writes/s | PR writes/s | Main p95 / p99 | PR p95 / p99 |
+| --- | ---: | ---: | ---: | ---: |
+| [Attempt 1](https://github.com/crabbuild/cellule/actions/runs/38209589255/attempts/1), failed | 80.33 | 69.60 | 22.37 / 92.93 ms | 37.53 / 140.66 ms |
+| [Attempt 2](https://github.com/crabbuild/cellule/actions/runs/38209589255/attempts/2), passed | 73.38 | 73.25 | 21.04 / 26.66 ms | 20.84 / 26.67 ms |
+
+Each attempt retains all four paired repeats against main `c79834d`, with the
+same measurement harness and identical baseline/candidate binary hashes across
+attempts. Comparisons were independently recomputed. No slow pair, threshold or
+deadline was removed. Attempt 1 remains a performance failure; its regression
+did not reproduce, and attempt 2 does not prove a fleet improvement. These are
+single-Cell root-publication routing tests on hosted x86_64 Linux/RustFS,
+without shared follower-log durability. They do not replace the three-VM
+capacity ramp or its every-ACK audit.
+
+Two fresh [remote unpublished-tail cases](remote-follower-tail-verification.md)
+also passed on three separate 1-vCPU/2-GiB VMs with native ext4. Each acknowledged
+one write on both remote followers while bucket coverage remained zero, killed
+the owner, waited for actual lease expiry, and recovered through the canonical
+remote sealing/tail protocol into a fresh successor volume. Exact retry returned
+the original result without executing its handler. Successor and followers
+joined; all owned containers were terminal without OOM, and follower VM boots
+and OOM counters were unchanged. Strict SQL-example test lint passed. The first
+failed fixture invocation and all source/binary/resource evidence remain in
+`cellule-remote-tail-20261012-v28`; successor enrollment then preceded the old
+lease's expiry. These cases qualify one unpublished ACK each after process loss,
+not physical power loss, peer partition, or throughput.
+
+The missing support VM and four raw TCP tunnels were restored. The matched
+750-write/s comparison remains queued behind the unchanged idle-host gate and
+exclusive fixture admission. The original full ramp, read/mixed tests and
+conditional rollback remain outstanding.
+
 The maintenance investigation also reproduces a distinct capture race: a real
 same-boot heartbeat between two directory observations caused `Fenced` through
 full-advertisement equality. Capture now retains the exact Open epoch, membership

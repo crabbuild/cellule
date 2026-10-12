@@ -13,6 +13,8 @@ use std::{
 };
 
 mod authority;
+#[cfg(test)]
+mod remote_fault_tests;
 mod server;
 #[cfg(test)]
 mod tests;
