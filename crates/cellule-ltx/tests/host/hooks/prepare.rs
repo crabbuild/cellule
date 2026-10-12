@@ -512,7 +512,13 @@ async fn prepare_opens_captured_segments_concurrently() {
         Limits::default(),
     )
     .unwrap()
-    .with_host(Host::default().with_executor(Arc::new(DelayedExecutor { delay })));
+    .with_host(
+        // This test measures the three-open wave, so reserve its own three job
+        // slots instead of competing for the process-wide, CPU-sized pool.
+        Host::default()
+            .with_job_slots(Arc::new(tokio::sync::Semaphore::new(3)))
+            .with_executor(Arc::new(DelayedExecutor { delay })),
+    );
     let started = tokio::time::Instant::now();
 
     replica.prepare(None, &captured, 1, 1).await.unwrap();

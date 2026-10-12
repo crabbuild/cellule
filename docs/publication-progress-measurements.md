@@ -61,6 +61,17 @@ before/after evidence remain retained under
 `cellule-host-starting-stats-20261012-v42`. This fixture change leaves the
 prepared main/PR benchmark binaries and all performance gates unchanged.
 
+Rust CI run `38289876672` at `14dcb55` fails the LTX concurrent-open test at
+600 ms against its 500-ms assertion. The unchanged test reproduces 20/20 times
+with two available job slots: three opens require two waves. Its fixture now
+owns three job slots, so the assertion measures independent opens without
+competing for the default process-wide pool. The same 500-ms assertion passes
+100/100 times, and all 76 LTX host tests pass with default parallel execution
+(three environment-dependent tests ignored). CI logs and the isolated
+before/after evidence remain under `cellule-ltx-open-wave-20261012-v43`.
+This test fixture change leaves production admission limits and the prepared
+performance binaries unchanged.
+
 ## Fresh hosted routing comparison
 
 October 12, 2026 UTC. Compose run `38274456201`, attempt 1, compares main
