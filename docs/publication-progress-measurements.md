@@ -449,6 +449,36 @@ failed fsyncs spanning 15.3–1,469.7 ms. The deadline fix preserves serving acr
 the observed clock difference; this busy-host diagnostic still fails delivery
 and latency qualification. Evidence is in `cellule-request-deadline-20261011-v14`.
 
+The committed revision `d821b6e` was then rebuilt without diagnostic patches and
+verified on the three separate VMs. Both windows used 16 Cells, 96-byte values,
+the unchanged 64-MiB budget, 30 seconds warmup and 120 seconds measurement:
+
+| Window / request | Offered/s | Delivered/s | Scheduled p50 / p95 / p99 | Errors / drops |
+| --- | ---: | ---: | --- | --- |
+| Mixed writes | 10 | 9.04 | 34.3 / 2,650.2 / 10,284.6 ms | 0 / 115 |
+| Mixed reads | 100 | 90.51 | 4.9 / 2,313.0 / 10,217.1 ms | 0 / 1,139 |
+| Read-only | 100 | 100.00 | 4.7 / 13.1 / 53.7 ms | 0 / 0 |
+
+The mixed scheduled histogram overflowed for 13 write and 127 read samples,
+so its table percentiles use nearest-rank quantiles from all attempted measured
+request journals. Dropped offers have no latency sample; the original driver's
+overflow and failed qualification are retained. All 1,402 ACKs passed warm/cold
+readback and exact retry. Drain took 15.78 seconds; cold startup took 2.18 seconds.
+All node processes stopped normally; guest swap and OOM counters stayed zero.
+Mixed response-source deltas were 86 follower proofs and 999 bundle proofs;
+the followers recorded 13 and 12 failed appends. Their failures grant no Fleet
+credit. Start, minute and end samples in both windows showed active Fleet in
+epoch 1 without fencing or rotation.
+
+Host CPU idle ranged from 3.16–52.17% in mixed samples and 0.17–66.64% in
+read-only samples. This verifies functional behavior at the stated workload;
+it does not qualify capacity. `cellule-three-vms-current-20261011-v15` retains
+the source/binary identity, raw windows, `three-vm-current-results.json` and
+`three-vm-current-results.md`. The waiting high-rate run now uses this committed
+build, the original 2,000-Cell/five-minute/64-MiB profile, unchanged timed driver
+and previously verified setup-only pacing. Earlier waiting queues were joined
+before any high-rate case was admitted.
+
 The four ext4-backed process/partition cases were also repeated with fresh
 volumes after a prior cleanup observation was interrupted. All four passed in
 51.36 seconds; the repeat recorded both provider and worker stopped without
