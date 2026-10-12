@@ -502,6 +502,35 @@ binary hashes, raw windows and `three-vm-headroom-results.json` are retained in
 `cellule-grant-headroom-20261011-v16`. A fresh committed build and the unchanged
 idle-host ramp remain required.
 
+The committed early-renewal revision `a0860db` was rebuilt without overlays and
+completed both fresh 120-second windows on the same three VMs:
+
+| Window / request | Offered/s | Delivered/s | Scheduled p50 / p95 / p99 | Errors / drops |
+| --- | ---: | ---: | --- | --- |
+| Mixed writes | 10 | 9.98 | 47.8 / 1,070.8 / 1,870.8 ms | 0 / 2 |
+| Mixed reads | 100 | 99.77 | 6.2 / 796.4 / 1,666.0 ms | 0 / 28 |
+| Read-only | 100 | 100.00 | 5.1 / 12.5 / 34.6 ms | 0 / 0 |
+
+All 1,515 ACKs passed warm/cold readback and exact retries. Joined fleet drain
+took 10.81 seconds; cold startup took 3.28 seconds. Both followers recorded
+zero measured append failures. The host remained busy: mixed CPU idle samples
+ranged from 0–60.23%, and read-only samples from 0–50.30%. Dropped offers still
+fail capacity qualification. These rates describe the stated offered workloads;
+they are not maximum write/read capacity. Source/binary identity, guest resource
+observations and raw evidence are in `cellule-grant-current-20261011-v18`.
+
+Following the user's regression concern, the high-rate candidate queue is held
+pending a baseline comparison. `origin/main` at `c79834d` is being rebuilt with
+only the proven request-deadline correction common to both builds. Baseline
+grant reuse remains unchanged. The comparison alternates baseline/candidate
+order on identical VM limits, workloads and budgets, retaining every ACK audit
+and host resource sample. It includes the original 2,000-Cell, five-minute,
+750-write/s profile. Performance changes that fail to improve the controlled
+throughput/tail-latency comparison must be reverted; correctness fixes and
+recovery evidence remain required. No paired result or rollback decision exists
+yet. The fresh idle-host comparison is retained in
+`cellule-origin-comparison-20261011-v19`.
+
 The four ext4-backed process/partition cases were also repeated with fresh
 volumes after a prior cleanup observation was interrupted. All four passed in
 51.36 seconds; the repeat recorded both provider and worker stopped without
