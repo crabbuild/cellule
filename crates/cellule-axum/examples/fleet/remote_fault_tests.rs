@@ -1,4 +1,4 @@
-//! Real signed follower RPCs, unpublished ACK, killed owner and canonical recovery.
+//! Signed follower RPCs, unpublished ACK, killed owner, partitions and recovery.
 //! The external driver owns three distinct VM/container roles and their native disks.
 use super::*;
 use cellule_ltx::{CellReplica, Host, Limits};
@@ -31,6 +31,7 @@ const PAYLOAD: Digest = Digest::from_bytes([156; 32]);
 struct HeldData {
     inner: Arc<dyn ObjectStore>,
     armed: AtomicBool,
+    held_root: AtomicBool,
     entered: tokio::sync::Notify,
 }
 impl std::fmt::Display for HeldData {
@@ -46,8 +47,15 @@ impl ObjectStore for HeldData {
         payload: object_store::PutPayload,
         options: object_store::PutOptions,
     ) -> object_store::Result<object_store::PutResult> {
-        if path.as_ref().ends_with(".nodebundle") && self.armed.load(Ordering::Acquire) {
-            self.entered.notify_one();
+        if self.armed.load(Ordering::Acquire)
+            && (path.as_ref().ends_with(".nodebundle") || path.as_ref().ends_with(".root"))
+        {
+            if path.as_ref().ends_with(".root") {
+                self.held_root.store(true, Ordering::Release);
+            }
+            if path.as_ref().ends_with(".nodebundle") {
+                self.entered.notify_one();
+            }
             // A killed owner cannot select this immutable upload. Authority and
             // enrollment operations still use the real strongly consistent store.
             std::future::pending::<()>().await;
@@ -96,6 +104,16 @@ impl ObjectStore for HeldData {
     }
 }
 
+async fn wait_driver(device: &std::path::Path, name: &str) {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while !device.join(name).exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 fn target() -> CellTarget {
     CellTarget::new(
         TenantId::from_bytes([61; 16]),
@@ -119,8 +137,18 @@ fn marker(name: &str, value: serde_json::Value) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[ignore = "requires isolated RustFS, pinned TLS and an external driver owning three separate 1-vCPU/2-GiB VMs"]
 async fn remote_crash_fixture_child() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+        .with_writer(std::io::stderr)
+        .try_init();
     // Refuse an incomplete invocation rather than quietly substituting memory.
     let role = std::env::var("CELLULE_REMOTE_FAULT_ROLE").unwrap();
+    let fault =
+        std::env::var("CELLULE_REMOTE_FAULT_KIND").unwrap_or_else(|_| "owner-process-loss".into());
+    assert!(matches!(
+        fault.as_str(),
+        "owner-process-loss" | "peer-partition"
+    ));
     std::env::var("CELLULE_TEST_ENDPOINT").unwrap();
     let device = PathBuf::from(std::env::var("CELLULE_TEST_DEVICE_PATH").unwrap());
     let config = Config::from_env(false).unwrap().unwrap();
@@ -129,6 +157,7 @@ async fn remote_crash_fixture_child() {
     let held = Arc::new(HeldData {
         inner: remote.inner().clone(),
         armed: AtomicBool::new(false),
+        held_root: AtomicBool::new(false),
         entered: tokio::sync::Notify::new(),
     });
     let store = if role == "owner" {
@@ -152,6 +181,34 @@ async fn remote_crash_fixture_child() {
         return;
     }
     assert_eq!(config.index, 0);
+    let before = (role == "recover").then(|| {
+        serde_json::from_str::<serde_json::Value>(
+            &std::env::var("CELLULE_REMOTE_FAULT_ACK").unwrap(),
+        )
+        .unwrap()
+    });
+    if let Some(before) = &before {
+        let predecessor = SessionId::from_bytes(
+            *uuid::Uuid::parse_str(before["session"].as_str().unwrap())
+                .unwrap()
+                .as_bytes(),
+        );
+        // Check actual authority before enrolling a fourth live session. The
+        // owner can heartbeat after writing its first ACK marker.
+        let directory =
+            NodeDirectory::new(layout.clone(), config.tls().unwrap().fleet(), CODE, CODE);
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while directory
+                .is_live(predecessor, clock().unwrap())
+                .await
+                .unwrap()
+            {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
     let session = SessionId::from_bytes(*uuid::Uuid::now_v7().as_bytes());
     let pool = SqlWorkerPool::new(1, 8)
         .unwrap()
@@ -219,9 +276,19 @@ async fn remote_crash_fixture_child() {
                 Ok(HandlerOutcome::Success(1i64.to_be_bytes().to_vec()))
             }),
         )
-        .await
-        .unwrap()
-        .unwrap();
+        .await;
+        if outcome.is_err() {
+            eprintln!(
+                "Initial remote ACK timed out; held root: {}; metrics: {}",
+                held.held_root.load(Ordering::Acquire),
+                metrics.snapshot()
+            );
+            eprintln!(
+                "Initial remote ACK progress: {:?}",
+                runtime.node_durability().unwrap().1.progress()
+            );
+        }
+        let outcome = outcome.unwrap().unwrap();
         assert_eq!(
             outcome,
             StoredOutcome::Success {
@@ -260,12 +327,86 @@ async fn remote_crash_fixture_child() {
                 "held_bundle_upload": true
             }),
         );
+        if fault == "peer-partition" {
+            wait_driver(&device, "partition-installed").await;
+            let submitted = metrics.snapshot()["node_log_submission"]["assigned_frames"]
+                .as_u64()
+                .unwrap();
+            let executed = Arc::new(AtomicBool::new(false));
+            let execution = executed.clone();
+            let now = clock().unwrap();
+            let second = handle.execute(
+                MutationIdentity {
+                    request_id: RequestId::from_bytes([157; 16]),
+                    issued_at_ms: now,
+                    expires_at_ms: now.checked_add(120_000).unwrap(),
+                },
+                Digest::from_bytes([158; 32]),
+                now,
+                1_024,
+                1_024,
+                move |tx| {
+                    tx.execute("UPDATE counter SET value = value + 1", [])?;
+                    execution.store(true, Ordering::Release);
+                    Ok(HandlerOutcome::Success(2i64.to_be_bytes().to_vec()))
+                },
+            );
+            tokio::pin!(second);
+            let captured = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if executed.load(Ordering::Acquire)
+                        && metrics.snapshot()["node_log_submission"]["assigned_frames"]
+                            .as_u64()
+                            .unwrap()
+                            > submitted
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        result = &mut second => panic!("partitioned command finished before capture: {result:?}"),
+                        () = tokio::time::sleep(Duration::from_millis(20)) => {}
+                    }
+                }
+            });
+            captured.await.unwrap();
+            let read = handle.query(64, 64, |tx| {
+                let value: i64 = tx.query_row("SELECT value FROM counter", [], |row| row.get(0))?;
+                Ok(value.to_be_bytes().to_vec())
+            });
+            tokio::pin!(read);
+            let mut command_error = None;
+            let mut read_error = None;
+            let observing = tokio::time::sleep(Duration::from_secs(2));
+            tokio::pin!(observing);
+            loop {
+                tokio::select! {
+                    result = &mut second, if command_error.is_none() => {
+                        command_error = Some(format!("{:?}", result.unwrap_err()));
+                    }
+                    result = &mut read, if read_error.is_none() => {
+                        read_error = Some(format!("{:?}", result.unwrap_err()));
+                    }
+                    () = &mut observing => break,
+                }
+            }
+            let current = authority.load(target.cell_id()).await.unwrap().unwrap();
+            assert_eq!(current.value().ltx_root().unwrap().commit_sequence, 0);
+            marker(
+                "partition-gated.json",
+                serde_json::json!({
+                    "second_handler_executed": true, "second_capture_assigned": true,
+                    "second_success": false, "read_success": false,
+                    "command_error": command_error, "read_error": read_error,
+                    "bucket_commit_sequence": 0,
+                }),
+            );
+            std::future::pending::<()>().await;
+        }
         std::future::pending::<()>().await;
         return;
     }
     assert_eq!(role, "recover");
-    let before: serde_json::Value =
-        serde_json::from_str(&std::env::var("CELLULE_REMOTE_FAULT_ACK").unwrap()).unwrap();
+    let before = before.unwrap();
     let predecessor = SessionId::from_bytes(
         *uuid::Uuid::parse_str(before["session"].as_str().unwrap())
             .unwrap()
@@ -284,7 +425,7 @@ async fn remote_crash_fixture_child() {
     .unwrap();
     // Expired advertisements cannot be loaded as live authority. The fencing
     // CAS returns the exact original membership that recovery must account for.
-    let fenced = directory
+    let mut fenced = directory
         .claim_expired(predecessor, session, clock().unwrap())
         .await
         .unwrap();
@@ -306,16 +447,48 @@ async fn remote_crash_fixture_child() {
             session,
             config.tls().unwrap(),
             peers,
-            metrics,
+            metrics.clone(),
         )
         .unwrap(),
     );
-    let recovery = NodeLogRecovery::from_fenced(transport, &fenced, Limits::default()).unwrap();
+    let mut recovery =
+        NodeLogRecovery::from_fenced(transport.clone(), &fenced, Limits::default()).unwrap();
     let manifests = RecoveryManifestStore::new(layout, Limits::default());
-    let inventory = recoverable_cells(&catalog, &authority, predecessor, 1)
+    let mut inventory = recoverable_cells(&catalog, &authority, predecessor, 1)
         .await
         .unwrap();
     assert_eq!(inventory.len(), 1);
+    if fault == "peer-partition" {
+        let result = RecoveryCoordinator::new(recovery, manifests.clone())
+            .recover_and_seal(&directory, fenced, inventory, clock().unwrap())
+            .await;
+        assert!(matches!(
+            result,
+            Err(Error::Node(
+                "active node log has no complete follower witness"
+            ))
+        ));
+        let current = authority.load(target.cell_id()).await.unwrap().unwrap();
+        assert_eq!(current.value().owner.as_ref().unwrap().session, predecessor);
+        assert_eq!(current.value().ltx_root().unwrap().commit_sequence, 0);
+        assert!(current.value().recovery.is_none());
+        marker(
+            "recovery-refused.json",
+            serde_json::json!({
+                "missing_witness_refused": true, "bucket_commit_sequence": 0,
+                "no_takeover": true, "no_overlay": true,
+            }),
+        );
+        wait_driver(&device, "one-witness-reachable").await;
+        fenced = directory
+            .claim_expired(predecessor, session, clock().unwrap())
+            .await
+            .unwrap();
+        recovery = NodeLogRecovery::from_fenced(transport, &fenced, Limits::default()).unwrap();
+        inventory = recoverable_cells(&catalog, &authority, predecessor, 1)
+            .await
+            .unwrap();
+    }
     let completed = RecoveryCoordinator::new(recovery, manifests.clone())
         .recover_and_seal(&directory, fenced, inventory, clock().unwrap())
         .await
@@ -364,6 +537,16 @@ async fn remote_crash_fixture_child() {
             .unwrap(),
         1i64.to_be_bytes()
     );
+    if fault == "peer-partition" {
+        marker(
+            "recovered-before-drain.json",
+            serde_json::json!({
+                "value": 1, "commit_sequence": 1, "exact_retry": true,
+                "single_reachable_witness": true,
+            }),
+        );
+        wait_driver(&device, "partition-healed").await;
+    }
     handle.drain().await.unwrap();
     runtime.shutdown().await.unwrap();
     owner.stop().await.unwrap();

@@ -6,6 +6,49 @@ uses an 8-vCPU owner. Fresh verification on three separate 1-vCPU/2-GiB VMs
 has not passed latency and backlog qualification. The separate
 2K-write/20K-read qualification remains open.
 
+## Fresh receiver-clock and peer-partition verification
+
+October 12, 2026 UTC. A three-VM partition repeat failed before the partition
+was installed: sender verification rejected a signed append grant and disabled
+fleet proofs. An isolated diagnostic recorded both receiver issue times ahead
+of the sender's clock by 31 and 52 ms. Signature, boot, certificate, key,
+ensemble and sequence-window checks passed; only the issue-time check failed.
+The same grant implementation exists byte-for-byte on main `c79834d`.
+
+Sender verification now applies the existing node-advertisement clock-skew
+bound. The signed lifetime, sender's original monotonic cache horizon,
+receiver's strict local validity, native fsync gate and terminal fencing remain
+unchanged. A signed-grant/native-append regression test fails before the change
+with just 1 ms of clock difference. All nine grant tests pass afterward, and
+all 903 runtime library tests pass (four environment-dependent tests ignored).
+Strict runtime all-target/all-feature Clippy and SQL-example test Clippy pass.
+The SQL example's 16 ordinary tests pass (eight environment-dependent tests
+ignored). The remote fault child runs explicitly through the external driver.
+
+Two final partition repeats pass using the original mTLS and signed-grant
+transport on three separate 1-vCPU/2-GiB VMs with native ext4. Each obtains one
+unpublished ACK, blocks both actual follower TCP paths, verifies that a captured
+second write and its observed read cannot return success, and kills the owner.
+Recovery refuses both unreachable followers without taking over the Cell or
+attaching an overlay. Reaching one complete original follower then recovers the
+ACK and exact retry while the other path remains blocked. Both paths are healed
+before joined shutdown; all owned roles become terminal without OOM. Actual
+iptables packet-drop counters are retained at each partition stage.
+
+The original failures, diagnostic source/binaries and two final cases
+(`peer-partition-v35-r9` and `r10`) remain under
+`cellule-peer-partition-20261012-v35`. The before/after regression and complete
+runtime library logs remain under `cellule-recovery-retry-20261012-v36`.
+Temporary debug instrumentation is absent from the corrected source. This is
+process-loss and follower-path verification, not physical power-loss or capacity
+qualification. It does not identify the unlogged append failure in the earlier
+750-write/s run or the original intermittent maintenance `Fenced` cause.
+
+The next matched capacity comparison applies the common transport correction
+to both main and the PR, preserving the original workload, budgets, guards and
+every-ACK audits. The workstation remains busy; no corrected capacity result or
+performance improvement is claimed.
+
 ## Fresh hosted routing comparison
 
 October 12, 2026 UTC. Compose run `38274456201`, attempt 1, compares main

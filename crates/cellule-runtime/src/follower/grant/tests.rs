@@ -147,6 +147,34 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn receiver_clock_ahead_preserves_the_exact_signed_append_window() {
+    let mut f = Fixture::new().await;
+    let grant = f.grant(1).await.unwrap();
+    // A sender can receive a freshly issued grant before its own wall clock
+    // reaches the receiver's issue time. Native authorization still uses the
+    // receiver's original monotonic horizon and terminal lease.
+    let decoded = NodeAppendGrant::verify(&grant.encode(), &f.receiver, NOW - 1).unwrap();
+    assert_eq!(decoded.digest(), grant.digest());
+    assert_eq!(decoded.issued_at_ms(), NOW);
+    assert_eq!(decoded.expires_at_ms(), NOW + APPEND_GRANT_LIFETIME_MS);
+    assert!(!decoded.valid_at(NOW - 1));
+    assert!(NodeAppendGrant::verify(&grant.encode(), &f.receiver, NOW - 5 * 60_000 - 1,).is_err());
+    assert!(
+        NodeAppendGrant::verify(&grant.encode(), &f.receiver, decoded.expires_at_ms()).is_err()
+    );
+    f.backend.reset();
+    let frame = f.frame(1);
+    assert_eq!(
+        f.append(&decoded, vec![frame])
+            .await
+            .unwrap()
+            .durable_through,
+        1
+    );
+    assert!(f.backend.requests().is_empty());
+}
+
+#[tokio::test]
 async fn signed_grant_binds_every_byte_and_amortizes_directory_reads() {
     let mut f = Fixture::new().await;
     let grant = f.grant(1).await.unwrap();

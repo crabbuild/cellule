@@ -29,6 +29,13 @@ monotonic horizon starts before those reads; wall-clock rollback and slow I/O
 cannot extend it. This is a bounded authorization horizon, not a device
 persistence or clock-skew qualification.
 
+Sender verification permits a receiver issue time ahead of its own wall clock
+within the existing five-minute node-advertisement skew bound. It still rejects
+negative times, expired grants and invalid signed lifetimes. The sender's cached
+monotonic horizon starts before issuance I/O and uses the original signed
+lifetime, so that allowance adds no lifetime. Receiver issuance, native append
+release, sealing and lease checks retain their original strict local horizons.
+
 The signed pruning floor is the lower of fresh authoritative object coverage
 and the sequence immediately before the requested window. Publication can
 advance past frames already queued by the source; retaining their first

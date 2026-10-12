@@ -24,6 +24,8 @@ pub struct NodeAppendGrant {
 
 impl NodeAppendGrant {
     /// Verifies the exact receiver signature and the caller's original boot pin.
+    /// Receiver issue times use the same bounded clock skew as advertisements;
+    /// this cannot extend the receiver's registered monotonic authorization.
     pub fn verify(encoded: &[u8], receiver: &NodeAdvertisement, now_ms: i64) -> Result<Self> {
         if encoded.len() != BODY_BYTES + 64 || &encoded[..8] != MAGIC {
             return Err(Error::PeerAuthorization("invalid append grant encoding"));
@@ -46,7 +48,11 @@ impl NodeAppendGrant {
             || grant.receiver_certificate() != receiver.certificate
             || grant.receiver_key() != receiver.public_key
             || grant.expires_at_ms() > receiver.expires_at_ms
-            || !grant.valid_at(now_ms)
+            || now_ms < 0
+            || grant.issued_at_ms() > now_ms.saturating_add(MAX_CLOCK_SKEW_MS)
+            // This is the sender's clock, while issuance and native proof
+            // release use the receiver's clock and original monotonic horizon.
+            || !grant.valid_at(now_ms.max(grant.issued_at_ms()))
             || grant.last_sequence().checked_sub(grant.first_sequence())
                 != Some(APPEND_GRANT_SEQUENCES - 1)
             || grant.first_sequence() == 0
@@ -111,7 +117,8 @@ impl NodeAppendGrant {
     pub fn expires_at_ms(&self) -> i64 {
         self.number(368) as i64
     }
-    /// Whether wall-clock policy still permits this signed grant.
+    /// Whether the receiver's wall clock still permits this signed grant.
+    /// Senders use [`Self::verify`] for bounded differences between clocks.
     #[must_use]
     pub fn valid_at(&self, now_ms: i64) -> bool {
         self.issued_at_ms() >= 0

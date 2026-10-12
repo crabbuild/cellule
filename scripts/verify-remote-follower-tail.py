@@ -5,16 +5,22 @@ import json
 import pathlib
 import subprocess
 import shutil
+import shlex
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-parser = argparse.ArgumentParser(description='Verify a remote unpublished ACK after owner process loss on three separate 1-vCPU/2-GiB Docker hosts.')
+parser = argparse.ArgumentParser(description='Verify a remote unpublished ACK after owner loss or follower TCP partition on three separate 1-vCPU/2-GiB Docker hosts.')
 parser.add_argument('--artifacts', type=pathlib.Path, required=True)
 parser.add_argument('--binary', type=pathlib.Path, required=True, help='release SQL example test executable, not the ordinary SQL server')
 parser.add_argument('--context', required=True, help='separate provider/client support Docker context')
 parser.add_argument('--node-contexts', nargs=3, required=True, metavar=('OWNER', 'FOLLOWER1', 'FOLLOWER2'))
 parser.add_argument('--tag', required=True, help='new isolated object prefix and container-name suffix')
+parser.add_argument('--fault', choices=['owner-process-loss', 'peer-partition'], default='owner-process-loss')
+parser.add_argument('--owner-ssh-config', type=pathlib.Path, help='SSH configuration for the owner VM; required for peer-partition')
+parser.add_argument('--owner-ssh-host', help='owner VM SSH alias; required for peer-partition')
 args = parser.parse_args()
+if args.fault == 'peer-partition' and (not args.owner_ssh_config or not args.owner_ssh_host):
+    parser.error('peer-partition requires owner VM SSH configuration and alias')
 BASE = args.artifacts.resolve()
 if BASE.is_relative_to(ROOT):
     parser.error('evidence must be outside the source checkout')
@@ -37,8 +43,9 @@ RUST = 'rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb
 STORE = 'ghcr.io/rustfs/rustfs@sha256:bffcab0c9d647aab0055d1c69d340b202d0909966b385932d4ead1aeb7602858'
 SELECTOR = 'fleet::remote_fault_tests::remote_crash_fixture_child'
 owned = []
+partition_rules = set()
 status = dict(phase='setup', started_at=time.time(), performance_qualification=False,
-              fault='owner process SIGKILL after remote fleet ACK before bundle publication',
+              fault=args.fault,
               transport='original pinned mTLS + signed grants + sealed remote tail',
               scope='three independent 1-CPU/2-GiB VMs, native ext4; not physical power loss',
               joins=[], ack_count=0, audit_count=0)
@@ -65,6 +72,47 @@ def wait_until(predicate, seconds, label):
             return
         time.sleep(0.5)
     raise RuntimeError('Fixture guard expired: ' + label)
+
+
+def owner_ssh(*command):
+    result = subprocess.run(['ssh', '-F', str(args.owner_ssh_config.resolve()),
+                             '-o', 'BatchMode=yes', args.owner_ssh_host, shlex.join(command)],
+                            text=True, capture_output=True, timeout=25)
+    if result.returncode:
+        raise RuntimeError('Owner VM SSH command failed: ' + result.stderr)
+    return result.stdout
+
+
+def partition_rule(port, install):
+    rule = ['OUTPUT', '-p', 'tcp', '-d', '127.0.0.1', '--dport', str(port),
+            '-m', 'comment', '--comment', 'cellule-' + TAG + '-partition', '-j', 'DROP']
+    if install:
+        # Record before the command: an SSH reply loss may leave the rule installed.
+        partition_rules.add(port)
+        owner_ssh('sudo', '-n', 'iptables', '-I', *rule)
+    else:
+        owner_ssh('sudo', '-n', 'iptables', '-D', *rule)
+        partition_rules.remove(port)
+
+
+def partition_snapshot(label, ports):
+    raw = owner_ssh('sudo', '-n', 'iptables', '-L', 'OUTPUT', '-n', '-v', '-x')
+    (CASE / (label + '-iptables.txt')).write_text(raw)
+    counters = {}
+    for line in raw.splitlines():
+        if 'cellule-' + TAG + '-partition' not in line:
+            continue
+        for port in ports:
+            if 'dpt:' + str(port) in line:
+                counters[port] = int(line.split()[0])
+    assert all(counters.get(port, 0) > 0 for port in ports), 'no actual dropped TCP packets'
+    status.setdefault('partition_observations', []).append(dict(label=label, dropped_packets=counters))
+    save()
+
+
+def signal(context, name, file):
+    code = "import os,pathlib; p=pathlib.Path('/scratch')/" + repr(file) + "; f=p.open('x'); f.write('ready\\n'); f.flush(); os.fsync(f.fileno()); f.close()"
+    docker(context, 'exec', name, 'python3', '-c', code)
 
 
 def native_snapshot(context, name):
@@ -94,7 +142,7 @@ def start_role(role, index):
     if docker(context, 'volume', 'inspect', volume, check=False).returncode == 0:
         raise RuntimeError('Native state volume is not fresh: ' + volume)
     docker(context, 'volume', 'create', '--label', 'cellule.fault.artifacts=' + str(CASE), volume)
-    args = ['run', '-d', '--name', name, '--label', 'cellule.fault.artifacts=' + str(CASE),
+    run_arguments = ['run', '-d', '--name', name, '--label', 'cellule.fault.artifacts=' + str(CASE),
             '--network', 'host', '--cpus', '1', '--memory', '2g', '--memory-swap', '2g',
             '--ulimit', 'nofile=65536:65536', '-v', volume + ':/scratch', '-v', str(BASE) + ':/work:ro',
             '-e', 'AWS_ACCESS_KEY_ID=benchmark_access', '-e', 'AWS_SECRET_ACCESS_KEY=benchmark_secret_private',
@@ -102,15 +150,16 @@ def start_role(role, index):
             '-e', 'CELLULE_TEST_BUCKET=comparison', '-e', 'CELLULE_TEST_PREFIX=' + TAG,
             '-e', 'CELLULE_TEST_DEVICE_PATH=/scratch', '-e', 'TMPDIR=/scratch',
             '-e', 'CELLULE_AXUM_FLEET_DIR=/scratch/fleet', '-e', 'CELLULE_REMOTE_FAULT_ROLE=' + role,
+            '-e', 'CELLULE_REMOTE_FAULT_KIND=' + args.fault,
             '-e', 'TOKIO_WORKER_THREADS=1', '-e', 'RUST_BACKTRACE=1']
     if index:
-        args += ['-e', 'CELLULE_AXUM_FOLLOWER=' + str(index)]
+        run_arguments += ['-e', 'CELLULE_AXUM_FOLLOWER=' + str(index)]
     if role == 'recover':
-        args += ['-e', 'CELLULE_REMOTE_FAULT_ACK=' + json.dumps(status['ack'])]
-    args += [RUST, 'sh', '-c', f'mkdir -m 700 /scratch/fleet && cp /work/tls/ca.crt /work/tls/node-{index}.crt /work/tls/node-{index}.key /scratch/fleet/ && exec /work/bin/sql_fault {SELECTOR} --exact --ignored --nocapture']
+        run_arguments += ['-e', 'CELLULE_REMOTE_FAULT_ACK=' + json.dumps(status['ack'])]
+    run_arguments += [RUST, 'sh', '-c', f'mkdir -m 700 /scratch/fleet && cp /work/tls/ca.crt /work/tls/node-{index}.crt /work/tls/node-{index}.key /scratch/fleet/ && exec /work/bin/sql_fault {SELECTOR} --exact --ignored --nocapture']
     # Track ownership before the RPC: a failed Docker response can be ambiguous.
     owned.append((context, name))
-    docker(context, *args)
+    docker(context, *run_arguments)
     status.setdefault('roles', []).append(dict(role=role, index=index, context=context, name=name, volume=volume))
     save()
     return context, name
@@ -118,7 +167,12 @@ def start_role(role, index):
 
 def marker(context, name, file):
     result = docker(context, 'exec', name, 'cat', '/scratch/' + file, check=False)
-    return json.loads(result.stdout) if result.returncode == 0 else None
+    if result.returncode == 0:
+        return json.loads(result.stdout)
+    state = json.loads(docker(context, 'inspect', name).stdout)[0]['State']
+    if not state['Running']:
+        raise RuntimeError(f'Fixture role exited before {file}: {name}, exit {state["ExitCode"]}')
+    return None
 
 
 def joined(context, name, seconds):
@@ -176,10 +230,25 @@ try:
     before = {name: native_snapshot(context, name) for context, name in [owner, *followers]}
     assert len({value['boot_id'] for value in before.values()}) == 3
     (CASE / 'native-before-crash.json').write_text(json.dumps(before, indent=2) + '\n')
+    if args.fault == 'peer-partition':
+        assert owner_ssh('cat', '/proc/sys/kernel/random/boot_id').strip() == before[owner[1]]['boot_id']
+        partition_rule(8090, True)
+        partition_rule(8100, True)
+        signal(*owner, 'partition-installed')
+        status['phase'] = 'checking_partition_output_gate'
+        save()
+        wait_until(lambda: marker(*owner, 'partition-gated.json') is not None, 10, 'partitioned output gate')
+        gated = marker(*owner, 'partition-gated.json')
+        assert gated['second_handler_executed'] and gated['second_capture_assigned']
+        assert not gated['second_success'] and not gated['read_success']
+        assert gated['bucket_commit_sequence'] == 0
+        (CASE / 'partition-gated.json').write_text(json.dumps(gated, indent=2) + '\n')
     status['phase'] = 'killing_owner'
     save()
     docker(*owner[:1], 'kill', '--signal', 'KILL', owner[1])
     assert joined(*owner, 10) == 137
+    if args.fault == 'peer-partition':
+        partition_snapshot('both-followers-blocked', [8090, 8100])
     # The embedding example bounds its live inventory to the three-node fleet.
     # Enroll the replacement only after actual old-boot lease expiry, using
     # wall time; never fake a future recovery timestamp or relax that bound.
@@ -194,6 +263,25 @@ try:
     (CASE / 'native-successor.json').write_text(json.dumps(successor_native, indent=2) + '\n')
     status['phase'] = 'recovering_remote_tail'
     save()
+    if args.fault == 'peer-partition':
+        wait_until(lambda: marker(*successor, 'recovery-refused.json') is not None,
+                   65, 'recovery refuses missing complete follower witness')
+        refused = marker(*successor, 'recovery-refused.json')
+        assert refused['missing_witness_refused'] and refused['no_takeover'] and refused['no_overlay']
+        assert refused['bucket_commit_sequence'] == 0
+        (CASE / 'recovery-refused.json').write_text(json.dumps(refused, indent=2) + '\n')
+        partition_snapshot('recovery-refused', [8090, 8100])
+        partition_rule(8090, False)
+        signal(*successor, 'one-witness-reachable')
+        wait_until(lambda: marker(*successor, 'recovered-before-drain.json') is not None,
+                   45, 'one complete reachable follower recovers original ACK')
+        recovered = marker(*successor, 'recovered-before-drain.json')
+        assert recovered['value'] == recovered['commit_sequence'] == 1
+        assert recovered['exact_retry'] and recovered['single_reachable_witness']
+        (CASE / 'recovered-before-drain.json').write_text(json.dumps(recovered, indent=2) + '\n')
+        partition_snapshot('one-follower-still-blocked', [8100])
+        partition_rule(8100, False)
+        signal(*successor, 'partition-healed')
     assert joined(*successor, 100) == 0
     # Read the marker from the stopped container without reusing its database.
     docker(successor[0], 'cp', successor[1] + ':/scratch/recovered.json', str(CASE / 'recovered.json'))
@@ -215,7 +303,13 @@ except Exception as error:
 finally:
     # Even a failed scenario has to join every accepted process and retain logs.
     cleanup_errors = []
-    for context, name in owned:
+    for port in sorted(partition_rules.copy()):
+        try:
+            partition_rule(port, False)
+        except Exception as error:
+            cleanup_errors.append(dict(partition_port=port, error=repr(error)))
+    # Keep the real provider alive until node shutdown has joined its I/O.
+    for context, name in reversed(owned):
         try:
             inspection = docker(context, 'inspect', name, check=False)
             if inspection.returncode:
@@ -230,6 +324,9 @@ finally:
             terminal = json.loads(docker(context, 'inspect', name).stdout)[0]
             assert not terminal['State']['Running'] and not terminal['State']['OOMKilled']
             (CASE / (name + '-terminal.json')).write_text(json.dumps(terminal, indent=2) + '\n')
+            if status['phase'] == 'passed':
+                expected_exit = 137 if name == owner[1] else 0
+                assert terminal['State']['ExitCode'] == expected_exit
         except Exception as error:
             cleanup_errors.append(dict(context=context, name=name, error=repr(error)))
     if cleanup_errors:
