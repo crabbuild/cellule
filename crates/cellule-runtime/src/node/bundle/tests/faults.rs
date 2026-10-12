@@ -122,6 +122,16 @@ impl ObjectStore for ReplyFault {
     }
     async fn get_opts(&self, path: &Path, opts: GetOptions) -> object_store::Result<GetResult> {
         let mode = self.mode.load(Ordering::SeqCst);
+        if mode == 17
+            && path.as_ref().ends_with(".root")
+            && self
+                .mode
+                .compare_exchange(17, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            // Exercise a real I/O wait beyond the production claim lifetime.
+            tokio::time::sleep(std::time::Duration::from_secs(33)).await;
+        }
         if mode == 16 && path.as_ref().ends_with("/control.json") {
             self.control_started.fetch_add(1, Ordering::SeqCst);
             self.node_started.notify_one();

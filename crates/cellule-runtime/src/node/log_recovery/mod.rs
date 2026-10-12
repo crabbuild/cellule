@@ -25,12 +25,14 @@ const MAX_RECOVERY_CATALOG_HEAD_READS: usize = 32;
 const MAX_RECOVERY_PAGE_BYTES: u64 = 1 << 20;
 const MAX_RECOVERY_PAGE_FRAMES: usize = 4_096;
 
+mod claim;
 pub mod retirement;
 mod tail;
 mod witness;
 
 use tail::*;
 
+pub(crate) use claim::RecoveryClaimLease;
 use witness::*;
 
 /// Bounded work counters emitted for one node-log recovery attempt.
@@ -537,7 +539,10 @@ impl RecoveryCoordinator {
         cells: Vec<RecoveryCell>,
         sealed: SealedSession,
     ) -> Result<RecoveryCoordinatorResult> {
-        Ok(self.recover_attempt(fenced, cells, sealed).await?.result)
+        Ok(self
+            .recover_attempt(fenced, cells, sealed, None)
+            .await?
+            .result)
     }
 
     async fn recover_attempt(
@@ -545,6 +550,7 @@ impl RecoveryCoordinator {
         fenced: FencedNodeSession,
         cells: Vec<RecoveryCell>,
         sealed: SealedSession,
+        claim: Option<&RecoveryClaimLease<'_>>,
     ) -> Result<RecoveryAttempt> {
         self.recovery.validate_fence(&fenced)?;
         let mut bases = Vec::with_capacity(cells.len());
@@ -583,6 +589,7 @@ impl RecoveryCoordinator {
             &cells,
             sealed.durable_through,
             self.recovery.limits,
+            claim,
         )
         .await?;
         if let Some(drain) = &drain {
@@ -741,27 +748,32 @@ impl RecoveryCoordinator {
         cells: Vec<RecoveryCell>,
         now_ms: i64,
     ) -> Result<CompletedNodeRecovery> {
-        let started = std::time::Instant::now();
         self.recovery.validate_fence(&fenced)?;
-        let witness = self.recovery.ensure_sealed_bounded().await?;
-        let attempt = self.recover_attempt(fenced.clone(), cells, witness).await?;
-        let Some(drain) = attempt.drain else {
-            return self
-                .finish(directory, fenced, attempt.result.controls, now_ms)
-                .await;
-        };
-        let manifest = pinned_manifest(&attempt.result.controls, &fenced, self.recovery.log_epoch)?;
-        let (fresh, controls) = drain
-            .complete(directory, &self.manifests, &fenced, now_ms, started)
-            .await?;
-        let now = crate::node::bundle::recovery::logical_now(now_ms, started)?;
-        let sealed = directory.seal_recovery(&fresh, manifest, now).await?;
-        let takeover = NodeTakeoverProof::after_recovery(&fenced, &sealed)?;
-        Ok(CompletedNodeRecovery {
-            sealed,
-            controls,
-            takeover,
-        })
+        let claim = RecoveryClaimLease::new(directory, fenced.clone(), now_ms).await?;
+        claim
+            .run(async {
+                let witness = self.recovery.ensure_sealed_bounded().await?;
+                let attempt = self
+                    .recover_attempt(fenced.clone(), cells, witness, Some(&claim))
+                    .await?;
+                let manifest =
+                    pinned_manifest(&attempt.result.controls, &fenced, self.recovery.log_epoch)?;
+                let controls = match attempt.drain {
+                    Some(drain) => {
+                        drain
+                            .complete(directory, &self.manifests, &fenced, &claim)
+                            .await?
+                    }
+                    None => attempt.result.controls,
+                };
+                let completed = claim.seal(manifest).await?;
+                Ok(CompletedNodeRecovery {
+                    sealed: completed.sealed,
+                    controls,
+                    takeover: completed.takeover,
+                })
+            })
+            .await
     }
 
     /// Seals one still-current claim after all recovered controls were pinned.

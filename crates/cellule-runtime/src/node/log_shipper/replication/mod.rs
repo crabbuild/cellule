@@ -211,6 +211,20 @@ async fn run_member(
             )
             .await
             .map_err(Arc::new);
+        if let Err(error) = &result {
+            tracing::warn!(
+                leader_session = ?leader,
+                log_epoch = epoch,
+                member = ?member,
+                first_sequence = requests.first().map(|request| request.first),
+                last_sequence = last,
+                covered_through = covered,
+                frame_count,
+                bytes,
+                error = ?error,
+                "follower group append failed"
+            );
+        }
         // One canonical follower append covers the delivered group and its
         // single fsync. Every original request receives the same verified watermark.
         for request in requests {

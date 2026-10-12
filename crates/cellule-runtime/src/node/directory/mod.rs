@@ -586,10 +586,7 @@ impl NodeTombstone {
     }
 
     pub(super) fn renew(mut self, fenced: &FencedNodeSession, now_ms: i64) -> Result<Self> {
-        if self.session != fenced.session
-            || self.claimant != Some(fenced.claimant)
-            || self.claim_generation != fenced.claim_generation
-        {
+        if self.fenced()? != *fenced {
             return Err(Error::Fenced);
         }
         let current_expiry = self

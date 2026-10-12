@@ -1,6 +1,6 @@
 //! Terminal catalog selection owned by a verified complete recovery attempt.
 use super::*;
-use crate::node::log_recovery::RecoveryCell;
+use crate::node::log_recovery::{RecoveryCell, RecoveryClaimLease};
 use crate::recovery::manifest::RecoveryManifestStore;
 use std::collections::BTreeMap;
 
@@ -30,6 +30,7 @@ impl BundleRecoveryDrain {
         cells: &[RecoveryCell],
         durable_through: u64,
         limits: cellule_ltx::Limits,
+        claim: Option<&RecoveryClaimLease<'_>>,
     ) -> Result<Option<Self>> {
         let Some(original) = fenced.bundle_head() else {
             return Ok(None);
@@ -42,7 +43,15 @@ impl BundleRecoveryDrain {
         let mut scopes = BTreeMap::new();
         let mut closed = BTreeMap::new();
         let mut unpinned = BTreeMap::new();
-        for binding in fenced_bindings(layout, fenced).await? {
+        let bindings = if let Some(claim) = claim {
+            // Renewal changes expiry, while the fenced immutable head stays
+            // fixed. Check the lease's exact current proof before reading it.
+            claim.verify().await?;
+            index::binding_inventory(layout, fenced.session(), original).await?
+        } else {
+            fenced_bindings(layout, fenced).await?
+        };
+        for binding in bindings {
             if binding.phase == BindingPhase::Closed {
                 if binding.terminal
                     != Some((
@@ -216,9 +225,8 @@ impl BundleRecoveryDrain {
         directory: &crate::node::NodeDirectory,
         manifests: &RecoveryManifestStore,
         fenced: &FencedNodeSession,
-        now_ms: i64,
-        started: std::time::Instant,
-    ) -> Result<(FencedNodeSession, Vec<VersionedControl>)> {
+        claim: &RecoveryClaimLease<'_>,
+    ) -> Result<Vec<VersionedControl>> {
         if fenced.bundle_head() != Some(self.original)
             || directory.layout.node_path(fenced.session().as_bytes())
                 != manifests.layout().node_path(fenced.session().as_bytes())
@@ -229,7 +237,7 @@ impl BundleRecoveryDrain {
         }
         let mut controls = Vec::with_capacity(self.scopes.len());
         for scope in self.scopes.values() {
-            check_claim(directory, fenced, logical_now(now_ms, started)?).await?;
+            claim.verify().await?;
             let authority = &scope.cell.authority;
             let mut current = authority
                 .load(scope.binding.control.cell)
@@ -259,7 +267,7 @@ impl BundleRecoveryDrain {
                 let successor = current
                     .value()
                     .publish_recovery(&prepared, current.value().next_due_ms)?;
-                check_claim(directory, fenced, logical_now(now_ms, started)?).await?;
+                claim.verify().await?;
                 current = match authority
                     .transition(
                         &current,
@@ -349,15 +357,14 @@ impl BundleRecoveryDrain {
             catalog.selected_through = self.durable_through;
             let prepared = directory.upload_catalog(Some(head), catalog, &[]).await?;
             staged = prepared.head;
-            check_claim(directory, fenced, logical_now(now_ms, started)?).await?;
+            claim.verify().await?;
         }
         // Intermediate cohort objects are immutable staging, never authority.
         // Select the fully closed inventory with one original-claim node CAS.
         store::ensure_session_drained(manifests.layout(), fenced.session(), Some(staged)).await?;
-        let (mut current, token) =
-            check_claim(directory, fenced, logical_now(now_ms, started)?).await?;
+        let (mut proof, mut current, token) = claim.lock_verified().await?;
         if staged == self.original {
-            return Ok((fenced.clone(), controls));
+            return Ok(controls);
         }
         current.bundle = Some(staged);
         let path = manifests.layout().node_path(fenced.session().as_bytes());
@@ -370,11 +377,15 @@ impl BundleRecoveryDrain {
         {
             // Lost reply only reconciles this exact immutable head, original
             // claim generation, expiry and recovering log.
-            check_claim(directory, &fresh, logical_now(now_ms, started)?)
-                .await
-                .map_err(|_| Error::from(source))?;
+            let actual = directory.load_record_at(&path).await?;
+            if !matches!(actual, Some((NodeRecord::Tombstone(current), _)) if current.fenced().is_ok_and(|current| current == fresh))
+                || claim.now()? >= fresh.claim_expires_at_ms()
+            {
+                return Err(source.into());
+            }
         }
-        Ok((fresh, controls))
+        *proof = fresh;
+        Ok(controls)
     }
 }
 
@@ -385,26 +396,6 @@ fn same_scope(original: &Control, current: &Control) -> bool {
         && original.bundle_binding == current.bundle_binding
         && original.code == current.code
         && original.schema == current.schema
-}
-
-async fn check_claim(
-    directory: &crate::node::NodeDirectory,
-    fenced: &FencedNodeSession,
-    now_ms: i64,
-) -> Result<(crate::node::directory::NodeTombstone, cellule_store::ETag)> {
-    directory
-        .load(fenced.claimant(), now_ms)
-        .await?
-        .ok_or(Error::Fenced)?;
-    let path = directory.layout.node_path(fenced.session().as_bytes());
-    let Some((NodeRecord::Tombstone(current), token)) = directory.load_record_at(&path).await?
-    else {
-        return Err(Error::Fenced);
-    };
-    if current.fenced()? != *fenced || now_ms >= fenced.claim_expires_at_ms() {
-        return Err(Error::Fenced);
-    }
-    Ok((*current, token))
 }
 
 pub(crate) fn logical_now(now_ms: i64, started: std::time::Instant) -> Result<i64> {

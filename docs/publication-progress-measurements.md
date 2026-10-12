@@ -6,7 +6,65 @@ uses an 8-vCPU owner. Fresh verification on three separate 1-vCPU/2-GiB VMs
 has not passed latency and backlog qualification. The separate
 2K-write/20K-read qualification remains open.
 
-## Fresh PR #76 write verification
+## Latest 750-write/s PR #76 verification
+
+October 12, 2026 UTC. The fresh matched cases use 2,000 Cells and three
+separate 1-vCPU/2-GiB Linux VMs, with native disk-backed node volumes. Both
+use 96-byte SQL ledger rows, a 30-second warmup, a 300-second write window,
+the unchanged 64-MiB retained-work budget and 128/128 client limits. Workload,
+auditor and runner bytes match. Main `c79834d` includes only the common
+request-deadline correction; the PR binary is built from `a0860db`, whose
+production code matches PR head `89d4599`.
+
+| Fresh run | Completed inside window / offered | Errors / dropped offers | Scheduled p50 / p95 / p99, all attempts | Warm / cold ACK audits |
+| --- | ---: | ---: | --- | --- |
+| Main + common deadline correction | 85,803 / 225,000 (286.01/s) | 61,824 / 77,258 | 89.2 / 1,280.4 / 1,966.6 ms | All 99,711 pass / all 99,711 pass |
+| PR #76 | 98,015 / 225,000 (326.72/s) | 405 / 126,580 | 279.3 / 2,463.0 / 4,110.5 ms | 110,861 checked, 73,262 errors / not reached |
+
+Successful-write scheduled p50/p95/p99, calculated directly from the request
+journals using nearest rank, are 106.488/1,269.665/1,868.134 ms on main and
+277.601/2,434.809/3,933.745 ms on the PR. All failed attempts and drops remain
+qualification failures. These rates are delivered throughput at 750 offered
+writes/s; they do not establish sustainable capacity.
+
+Both cases fail the existing delivery, 50-ms p99 and publication-backlog gates.
+The last three one-minute segments have positive unpublished-byte slopes of
+20,225 B/s on main and 205,167 B/s on the PR, and positive oldest-debt-age
+slopes. Main's joined drain takes 90.62 seconds. The PR's warm audit reports
+HTTP 503 fencing refusals; its owner then exceeds the unchanged 120-second
+drain deadline and is stopped with exit 137. Both followers exit 0. No node
+reports an OOM or swap activity. A refused audit response does not establish
+that the acknowledged data was lost.
+
+The PR records one follower-append failure near the end of the timed window,
+disables fleet proofs and enters rotation. The original failure cause was not
+logged at that boundary. A failure-only warning now preserves the member,
+sequence range and original error for the next reproduction; successful appends
+do not emit it. The original case, all 110,861 ACKs, provider objects and native
+volumes remain retained for canonical recovery investigation.
+
+Each window has 17 usable host/guest samples with zero collection errors.
+Host CPU idle ranges are 23.13–62.60% on main and 8.39–70.71% on the PR.
+Compilers appear in both traces; another native benchmark also appears during
+the PR window. Neither window qualifies as an idle-host comparison. The
+controller stops after the failed PR audit; it does not admit the second pair,
+higher write rates or read/mixed cases. No performance gain or causal rollback
+verdict is established. The original 2,000-Cell 750→1,000→1,500→2,000 ramp,
+read/mixed qualification and original maintenance-fence diagnosis remain open.
+
+The retained `fresh-write-comparison-v30.json` and `.md` reports under
+`cellule-origin-comparison-20261011-v19` reconcile every request journal,
+original histogram, ACK manifest, publication frontier and resource window.
+The PR case is under `cellule-grant-current-20261011-v18`.
+
+The latest Compose CI run `38217748520` also retains a failed leased
+local-command/c16 gate: main 553.509/s, PR 498.1505/s, ratio 0.899986 against
+the unchanged 0.90 minimum. Its p95 ratio is 1.491617 and p99 ratio 0.854865.
+All four pairs remain included. This hosted routing fixture publishes per-cell
+roots and does not test the three-VM follower-log capacity path. Rust CI run
+`38217748541` passes; that does not override the performance gate failure.
+
+## Earlier low-rate PR #76 write diagnostics
 
 October 12, 2026 UTC. These new runs use three separate Linux VMs, each with
 1 vCPU and 2 GiB, on the shared workstation. Each has fresh native disk-backed
@@ -346,10 +404,42 @@ failed fixture invocation and all source/binary/resource evidence remain in
 lease's expiry. These cases qualify one unpublished ACK each after process loss,
 not physical power loss, peer partition, or throughput.
 
-The missing support VM and four raw TCP tunnels were restored. The matched
-750-write/s comparison remains queued behind the unchanged idle-host gate and
-exclusive fixture admission. The original full ramp, read/mixed tests and
-conditional rollback remain outstanding.
+The missing support VM and four raw TCP tunnels were restored. The first matched
+750-write/s cases subsequently ran and failed qualification as recorded above;
+the controller stopped after the PR audit failed. The original full ramp,
+read/mixed tests and conditional rollback remain outstanding.
+
+A subsequent diagnostic attempts canonical recovery of that retained PR case,
+using its original provider and follower disks. All native state was archived
+before the attempt. Recovery discovers 1,968 still-owned Cells, then returns
+`Fenced` after 42.40 seconds; no ACK recovery qualification is claimed. The
+diagnostic driver's initial cleanup stopped the provider before joining the
+followers, causing their later storage errors. The corrected dependency order
+joins followers first. Both the recovery failure and failed cleanup remain
+retained under `cellule-retained-audit-20261012-v31`. The original two-hour
+request identities have expired; the diagnostic does not change clocks or
+identities to manufacture an exact-retry pass.
+
+A second retained-case attempt reproduces the recovery failure. Its targeted
+probe shows the same claimant, claim generation, recovering log and bundle head;
+the current time is 11.180 seconds beyond the 30-second claim expiry. This
+identifies a recovery-claim lifecycle failure, independently of the original
+append failure and intermittent maintenance CI failure.
+
+The managed recovery path now renews that exact claim during verification and
+materialization, without changing its lifetime or permitting expired claims.
+Renewal and terminal authority CAS are serialized; immutable terminal inventory
+verification runs outside that lock. A real 33-second root-read regression test
+fails before the fix and passes afterward. All 18 focused recovery tests,
+80 node tests and strict runtime test lint pass in an isolated Linux snapshot.
+The fixed native-VM diagnostic completes in 158.45 seconds, including restoring
+all 2,000 exact roots and joining the runtime and owner. Both followers and the
+provider also join with exit 0, with no OOM. The offline audit checks every one
+of the 110,861 original ACKs against the restored row, exact receipt position,
+runtime metadata and canonical stored outcome, with zero violations. It takes
+207.87 seconds. The original capacity and HTTP-retry failures remain failures;
+this diagnostic does not establish a performance improvement or a fresh HTTP
+exact-retry pass. All original journals, hashes and failed attempts remain.
 
 The maintenance investigation also reproduces a distinct capture race: a real
 same-boot heartbeat between two directory observations caused `Fenced` through

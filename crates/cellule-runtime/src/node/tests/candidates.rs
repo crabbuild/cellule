@@ -249,6 +249,12 @@ async fn expired_enrolled_log_becomes_a_renewable_recovery_claim() {
         .unwrap();
     assert_eq!(renewed.claim_generation(), fenced.claim_generation());
     assert!(renewed.claim_expires_at_ms() > fenced.claim_expires_at_ms());
+    assert!(matches!(
+        directory
+            .refresh_recovery_claim(&fenced, NOW_MS + 15_001)
+            .await,
+        Err(Error::Fenced)
+    ));
     let sealed = directory
         .seal_recovery(&renewed, None, NOW_MS + 15_001)
         .await

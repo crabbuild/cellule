@@ -125,6 +125,7 @@ async fn fence(f: &Fixture) -> crate::node::FencedNodeSession {
 enum Scenario {
     Pruned,
     Complete,
+    SlowRecovery,
     PartialRoot,
     LostRootReply,
     LostCatalogReply,
@@ -141,6 +142,7 @@ impl Scenario {
         matches!(
             self,
             Self::Complete
+                | Self::SlowRecovery
                 | Self::PartialRoot
                 | Self::LostRootReply
                 | Self::LostCatalogReply
@@ -171,6 +173,11 @@ async fn expired_claim_cannot_materialize_or_close_original_bound_cells() {
 #[tokio::test]
 async fn recovery_materializes_full_fleet_suffix_and_closes_quiet_binding_before_transfer() {
     verify_recovery(Scenario::Complete).await;
+}
+
+#[tokio::test]
+async fn live_claimant_renews_recovery_during_root_verification_beyond_claim_lifetime() {
+    verify_recovery(Scenario::SlowRecovery).await;
 }
 
 #[tokio::test]
@@ -617,10 +624,38 @@ async fn verify_recovery(scenario: Scenario) {
             cells = discovered.cells;
             coordinator = RecoveryCoordinator::new(resumed, manifests.clone());
         }
-        let completed = coordinator
-            .recover_and_seal(&f.directory, completion_fence, cells, NOW + 31_002)
-            .await
-            .unwrap();
+        let completed = if matches!(scenario, Scenario::SlowRecovery) {
+            faults.mode.store(17, std::sync::atomic::Ordering::SeqCst);
+            let now = NOW + 31_002;
+            let started = std::time::Instant::now();
+            let mut claimant = f
+                .directory
+                .load(completion_fence.claimant(), now)
+                .await
+                .unwrap()
+                .unwrap();
+            let recovery = coordinator.recover_and_seal(&f.directory, completion_fence, cells, now);
+            tokio::pin!(recovery);
+            loop {
+                tokio::select! {
+                    result = &mut recovery => break result.unwrap(),
+                    () = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                        let current_now = now + i64::try_from(started.elapsed().as_millis()).unwrap();
+                        let mut next = claimant.advertisement().clone();
+                        next.issued_at_ms = current_now;
+                        next.expires_at_ms = current_now + 30_000;
+                        next.progress += 1;
+                        next.signature = SigningKey::from_bytes(&[10; 32]).sign(&next.signing_bytes().unwrap()).to_bytes();
+                        claimant = f.directory.refresh(&claimant, next, current_now).await.unwrap();
+                    }
+                }
+            }
+        } else {
+            coordinator
+                .recover_and_seal(&f.directory, completion_fence, cells, NOW + 31_002)
+                .await
+                .unwrap()
+        };
         assert_eq!(
             completed.controls.len(),
             if matches!(scenario, Scenario::SealInterrupted) {

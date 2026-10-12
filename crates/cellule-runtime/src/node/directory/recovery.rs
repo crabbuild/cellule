@@ -6,6 +6,14 @@
 
 use super::*;
 
+/// Verified immutable closure, bound to this store and exact failed-session head.
+pub(crate) struct PreparedRecoverySeal {
+    session: SessionId,
+    head: Option<crate::node::bundle::NodeBundleHead>,
+    path: object_store::path::Path,
+    store_identity: u64,
+}
+
 impl NodeDirectory {
     /// Reads live scheduler membership and primes the advisory recovery scan.
     ///
@@ -501,11 +509,39 @@ impl NodeDirectory {
         };
         let renewed = (*current).renew(fenced, now_ms)?;
         let proof = renewed.fenced()?;
-        self.layout
+        if let Err(source) = self
+            .layout
             .store()
             .update(&path, Bytes::from(renewed.encode()?), token)
-            .await?;
+            .await
+        {
+            // A lost reply can credit only this exact renewal, never another
+            // claimant, generation, log or terminal catalog selection.
+            let actual = self.load_record_at(&path).await?;
+            if !matches!(actual, Some((NodeRecord::Tombstone(current), _)) if current.fenced().is_ok_and(|current| current == proof))
+            {
+                return Err(source.into());
+            }
+        }
         Ok(proof)
+    }
+
+    pub(crate) async fn prepare_recovery_seal(
+        &self,
+        fenced: &FencedNodeSession,
+    ) -> Result<PreparedRecoverySeal> {
+        crate::node::bundle::store::ensure_session_drained(
+            &self.layout,
+            fenced.session(),
+            fenced.bundle_head(),
+        )
+        .await?;
+        Ok(PreparedRecoverySeal {
+            session: fenced.session(),
+            head: fenced.bundle_head(),
+            path: self.layout.node_path(fenced.session().as_bytes()),
+            store_identity: self.layout.immutable_cache_identity(),
+        })
     }
 
     /// Seals an exact recovery claim after every affected Cell pins its overlay.
@@ -515,20 +551,30 @@ impl NodeDirectory {
         recovery_manifest: Option<Digest>,
         now_ms: i64,
     ) -> Result<SealedNodeLog> {
+        let prepared = self.prepare_recovery_seal(fenced).await?;
+        self.seal_recovery_prepared(fenced, recovery_manifest, now_ms, &prepared)
+            .await
+    }
+
+    pub(crate) async fn seal_recovery_prepared(
+        &self,
+        fenced: &FencedNodeSession,
+        recovery_manifest: Option<Digest>,
+        now_ms: i64,
+        prepared: &PreparedRecoverySeal,
+    ) -> Result<SealedNodeLog> {
         let path = self.layout.node_path(fenced.session.as_bytes());
         let Some((NodeRecord::Tombstone(current), token)) = self.load_record_at(&path).await?
         else {
             return Err(Error::Fenced);
         };
-        // A recovery manifest is not terminal bundle closure. Keep the whole
-        // failed boot fenced until every original binding is materialized and
-        // checkpointed; lower-level callers cannot bypass the coordinator.
-        crate::node::bundle::store::ensure_session_drained(
-            &self.layout,
-            current.session,
-            current.bundle,
-        )
-        .await?;
+        if prepared.session != current.session
+            || prepared.head != current.bundle
+            || prepared.path != path
+            || prepared.store_identity != self.layout.immutable_cache_identity()
+        {
+            return Err(Error::Fenced);
+        }
         if let Some(log) = &current.log
             && matches!(log.phase(), NodeLogPhase::Sealed | NodeLogPhase::Retired)
             && log.recovery_manifest() == recovery_manifest
@@ -537,6 +583,9 @@ impl NodeDirectory {
                 session: current.session,
                 log: log.clone(),
             });
+        }
+        if current.fenced()? != *fenced {
+            return Err(Error::Fenced);
         }
         let sealed = (*current).seal(fenced, recovery_manifest, now_ms)?;
         let log = sealed
