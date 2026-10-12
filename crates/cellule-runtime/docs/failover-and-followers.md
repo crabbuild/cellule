@@ -1646,6 +1646,10 @@ terminal node CAS lock and ends with the attempt, including cancellation. A dead
 claimant, changed proof or expired claim still rejects. Terminal inventory
 verification runs outside that lock; sealing checks its exact immutable head
 against fresh authority before the final CAS.
+A retry after a committed seal adopts the exact recorded result without a new
+claim. It checks current controls, the complete original manifest and each
+referenced overlay, then rechecks canonical closure and the live claimant. A
+stale control or missing payload rejects; adoption writes no recovery state.
 Partial-root retries reuse the original digest-verified manifest and match every
 remaining tail's scope, predecessor, complete physical/logical range and bundle
 digest. A materialized root ahead of the old catalog is only a verified base;

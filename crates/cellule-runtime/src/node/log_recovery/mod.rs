@@ -26,6 +26,7 @@ const MAX_RECOVERY_PAGE_BYTES: u64 = 1 << 20;
 const MAX_RECOVERY_PAGE_FRAMES: usize = 4_096;
 
 mod claim;
+mod completed;
 pub mod retirement;
 mod tail;
 mod witness;
@@ -749,6 +750,12 @@ impl RecoveryCoordinator {
         now_ms: i64,
     ) -> Result<CompletedNodeRecovery> {
         self.recovery.validate_fence(&fenced)?;
+        if let Some(completed) = self
+            .resume_completed(directory, &fenced, &cells, now_ms)
+            .await?
+        {
+            return Ok(completed);
+        }
         let claim = RecoveryClaimLease::new(directory, fenced.clone(), now_ms).await?;
         claim
             .run(async {

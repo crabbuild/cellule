@@ -6,6 +6,56 @@ uses an 8-vCPU owner. Fresh verification on three separate 1-vCPU/2-GiB VMs
 has not passed latency and backlog qualification. The separate
 2K-write/20K-read qualification remains open.
 
+## Fresh hosted routing comparison
+
+October 12, 2026 UTC. Compose run `38274456201`, attempt 1, compares main
+`c79834d` with merge revision `0816881` (parents main and PR head `9e68a3e`).
+It retains four alternating pairs with the same harness on one hosted Linux
+runner. Each command lane executes 1,024 commands and each warm query lane
+executes 4,096 queries per run. The table reports medians of all four runs at
+concurrency 16; latency is measured from invocation, without paced offers.
+
+| Lane | Main / PR operations per second | Main p50 / p95 / p99 | PR p50 / p95 / p99 |
+| --- | ---: | --- | --- |
+| Local writes | 619.80 / 616.28 | 24.54 / 36.15 / 41.99 ms | 24.63 / 35.38 / 43.35 ms |
+| Forwarded writes | 497.19 / 504.74 | 29.45 / 40.15 / 45.69 ms | 29.15 / 39.68 / 44.48 ms |
+| Local warm reads | 16,297.29 / 16,524.87 | 0.501 / 0.897 / 1.039 ms | 0.491 / 0.883 / 0.959 ms |
+| Forwarded warm reads | 4,261.77 / 4,300.75 | 2.030 / 3.480 / 4.283 ms | 2.051 / 3.471 / 4.205 ms |
+
+The leased routing gate passes. Local writes deliver 0.57% less throughput and
+3.24% higher p99; forwarded writes deliver 1.52% more throughput and 2.65% lower
+p99. These small differences do not establish a general improvement. The
+expired-burst local-query lane also retains a p99 alert (1.574 times main),
+within the unchanged 2.0 gate. All lanes and the earlier failed comparison
+remain included.
+
+The same run's object-only gate also passes. At concurrency 16, local writes
+measure 424.25/s on main and 426.34/s on the PR, with p99 56.76 and 53.34 ms.
+Forwarded writes measure 371.73/s and 367.92/s, with p99 58.54 and 59.50 ms.
+Forwarded reads retain a p99 alert: 9.55 ms on main and 10.70 ms on the PR
+(1.120 times main). Their throughput is 1,930.15/s and 1,870.17/s. These
+results also show mixed small changes rather than a consistent gain.
+
+This fixture publishes per-cell roots. It does not run the three-VM shared-log
+workload, enforce its 64-MiB profile, or qualify its sustainable capacity.
+The raw `manifest.json`, `comparison.json`, binaries and all request logs are
+retained under `cellule-ci-routing-9e-20261012-v37/{leased,object-only}`, from
+[the leased CI job](https://github.com/crabbuild/cellule/actions/runs/38274456201).
+The matched three-VM 750-write/s comparison is still waiting for five
+continuous idle minutes on the workstation. Higher-rate, read and mixed-load
+qualification remain open.
+
+Rust CI run `38274456048` at `9e68a3e` fails four idempotent recovery-retry
+tests: the new renewal guard tries to validate a claim that the committed seal
+has already cleared. An isolated Linux run reproduces all four failures. The
+correction adopts only the canonical terminal result, checks exact controls,
+manifest and referenced overlays, and performs no recovery authority writes.
+All eight focused recovery tests pass, including rejection of stale controls;
+all 1,317 runtime tests and doctests pass with all features. Strict all-target
+runtime Clippy passes. Original CI logs and both local runs remain under
+`cellule-recovery-retry-20261012-v36`. This is a recovery correctness fix;
+the original intermittent maintenance `Fenced` cause remains unproved.
+
 ## Latest 750-write/s PR #76 verification
 
 October 12, 2026 UTC. The fresh matched cases use 2,000 Cells and three
@@ -57,12 +107,12 @@ The retained `fresh-write-comparison-v30.json` and `.md` reports under
 original histogram, ACK manifest, publication frontier and resource window.
 The PR case is under `cellule-grant-current-20261011-v18`.
 
-The latest Compose CI run `38217748520` also retains a failed leased
+The earlier Compose CI run `38217748520` also retains a failed leased
 local-command/c16 gate: main 553.509/s, PR 498.1505/s, ratio 0.899986 against
 the unchanged 0.90 minimum. Its p95 ratio is 1.491617 and p99 ratio 0.854865.
 All four pairs remain included. This hosted routing fixture publishes per-cell
-roots and does not test the three-VM follower-log capacity path. Rust CI run
-`38217748541` passes; that does not override the performance gate failure.
+roots and does not test the three-VM follower-log capacity path. Earlier Rust
+CI run `38217748541` passes; that does not override the performance gate failure.
 
 ## Earlier low-rate PR #76 write diagnostics
 

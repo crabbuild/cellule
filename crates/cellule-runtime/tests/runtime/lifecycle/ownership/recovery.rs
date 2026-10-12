@@ -263,6 +263,23 @@ async fn recover_retained_tail(rooted: bool, fail_at: u8, interrupted: bool) {
         completed.sealed.log().phase(),
         cellule_runtime::node::log_state::NodeLogPhase::Sealed
     );
+    // A terminal recovery retry may adopt the exact attached result, but it
+    // cannot certify the stale pre-recovery control under that same seal.
+    assert!(matches!(
+        resumed
+            .recover_and_seal(
+                &directory,
+                fenced.clone(),
+                vec![cellule_runtime::node::log_recovery::RecoveryCell {
+                    application: fixture.target.application(),
+                    authority: authority.clone(),
+                    observed: stale.clone(),
+                }],
+                10_003,
+            )
+            .await,
+        Err(cellule_runtime::Error::Fenced)
+    ));
     let repeated = resumed
         .recover_and_seal(
             &directory,
