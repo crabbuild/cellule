@@ -212,7 +212,13 @@ impl NodeLogTransport for Transport {
                 .collect();
             for attempt in 0..2 {
                 let valid = cached.as_ref().is_some_and(|grant| {
-                    std::time::Instant::now() < grant.expires
+                    // Leave time for transport and native fsync before the
+                    // follower rechecks authority. Its signed expiry remains
+                    // unchanged and can still reject a slower append.
+                    grant
+                        .expires
+                        .saturating_duration_since(std::time::Instant::now())
+                        > Duration::from_secs(1)
                         && grant
                             .authorization
                             .authorize(

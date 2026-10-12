@@ -432,7 +432,7 @@ The owner entered rotation and its Cells stopped serving. All 1,200 measured
 write and 12,000 read attempts failed; the warm audit could not read the 140
 earlier ACKs, and the cold audit did not run. Owner drain exceeded 120 seconds
 and cleanup stopped it; followers stopped normally, with no container OOM.
-The early-renewal prototype was not promoted and its effect remains unproved.
+That failed early-renewal prototype was not promoted.
 `cellule-grant-renewal-20261011-v13` retains the failed attempt and exact deadline
 samples. These append/grant observations do not establish the cause of the
 earlier maintenance CI failures, whose fixture uses local follower transport.
@@ -478,6 +478,29 @@ the source/binary identity, raw windows, `three-vm-current-results.json` and
 build, the original 2,000-Cell/five-minute/64-MiB profile, unchanged timed driver
 and previously verified setup-only pacing. Earlier waiting queues were joined
 before any high-rate case was admitted.
+
+After the deadline fix, a fresh uninstrumented early-renewal probe used the
+same three VMs, 16 Cells and 120-second mixed window. The client renews cached
+grants when one second or less remains. Signed five-second expiry, native
+pre/post-fsync authority checks and the bounded exact-frame retry stay unchanged.
+Both followers recorded zero failed appends and neither peer log contained
+`Fenced`, compared with 13 and 12 measured failures in the preceding separate
+run. The renewal change is now applied to the SQL example transport; it leaves
+time for transport and fsync but cannot guarantee an append finishes before
+expiry.
+
+The probe delivered 9.51 writes/s and 95.18 reads/s, with zero returned errors
+and 58 write / 578 read drops. Scheduled write/read p99 was 4,897.4/4,747.7 ms.
+One write completed after the window and is excluded from delivered throughput.
+All 1,459 ACKs passed warm/cold readback and exact retry; joined drain took
+11.01 seconds and cold startup took 2.24 seconds. Node processes stopped
+normally, guest OOM/swap counters remained zero, and boot IDs stayed stable.
+Every mixed-window host sample reported 0% CPU idle. These separate busy-host
+runs do not establish a throughput gain; dropped offers and seconds-long tails
+still fail capacity and latency qualification. The explicit patch, source and
+binary hashes, raw windows and `three-vm-headroom-results.json` are retained in
+`cellule-grant-headroom-20261011-v16`. A fresh committed build and the unchanged
+idle-host ramp remain required.
 
 The four ext4-backed process/partition cases were also repeated with fresh
 volumes after a prior cleanup observation was interrupted. All four passed in
