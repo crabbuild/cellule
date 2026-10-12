@@ -416,6 +416,39 @@ Exact resource identities, metrics, hashes and raw evidence are retained in
 The fresh 2,000-Cell, five-minute 750-write/s case waits for the original idle-host
 start check; higher ramp points remain pending.
 
+A separate 120-second diagnostic on the same three VMs traced all 41 rejected
+append attempts to grant expiry **after native fsync**. The lane remained open
+and the token digest matched; the original post-write check refused the proof.
+Failed attempts spent 22.2–872.0 ms in fsync. Error-only instrumentation retained
+the original errors and authority checks. The window delivered 9.88 writes/s
+and 98.81 reads/s, with zero returned errors but 14 write and 143 read drops;
+scheduled write/read p99 was 3,363.3/3,011.9 ms. All 1,503 ACKs passed warm/cold
+readback and exact retry; drain took 18.10 seconds. This busy-host diagnostic
+does not qualify capacity. Evidence is in `cellule-grant-fenced-20261011-v12`.
+
+A one-second early-renewal prototype then failed for a separate reason: a signed
+grant request exceeded the follower's unchanged ten-second horizon by 1 ms.
+The owner entered rotation and its Cells stopped serving. All 1,200 measured
+write and 12,000 read attempts failed; the warm audit could not read the 140
+earlier ACKs, and the cold audit did not run. Owner drain exceeded 120 seconds
+and cleanup stopped it; followers stopped normally, with no container OOM.
+The early-renewal prototype was not promoted and its effect remains unproved.
+`cellule-grant-renewal-20261011-v13` retains the failed attempt and exact deadline
+samples. These append/grant observations do not establish the cause of the
+earlier maintenance CI failures, whose fixture uses local follower transport.
+
+The client now leaves one second below the receiver's existing ten-second
+horizon; earlier grant deadlines still take precedence. Five signed-transport
+tests passed, including the reproduced 1-ms lag, the headroom boundary, expired
+grant deadlines and overflow. A fresh 120-second run with this deadline change
+and the original grant reuse completed: 9.46 writes/s and 94.58 reads/s, zero
+returned errors, 65 write drops and 650 read drops. Scheduled write/read p99 was
+6,866.7/6,842.5 ms. All 1,452 ACKs passed warm/cold readback and exact retry;
+drain took 10.27 seconds. There were 39 post-fsync grant-expiry rejections, with
+failed fsyncs spanning 15.3–1,469.7 ms. The deadline fix preserves serving across
+the observed clock difference; this busy-host diagnostic still fails delivery
+and latency qualification. Evidence is in `cellule-request-deadline-20261011-v14`.
+
 The four ext4-backed process/partition cases were also repeated with fresh
 volumes after a prior cleanup observation was interrupted. All four passed in
 51.36 seconds; the repeat recorded both provider and worker stopped without

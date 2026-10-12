@@ -126,3 +126,35 @@ fn grant_issuance_and_append_tokens_have_separate_signed_shapes() {
     request.grant.pop();
     assert!(wire::validate(&request, 1000).is_err());
 }
+
+#[test]
+fn sender_deadline_passes_receiver_horizon_with_clock_headroom_and_preserves_grant_expiry() {
+    let mut request = wire::Request {
+        sender: vec![1; 16],
+        leader: vec![1; 16],
+        member: vec![2; 16],
+        epoch: 1,
+        operation: 5,
+        first_sequence: 1,
+        deadline_ms: wire::request_deadline(1000, 0).unwrap(),
+        ..Default::default()
+    };
+    // The real three-VM request failed this first receiver check with a 1-ms
+    // lag. Exercise the same producer/consumer seam, including its full buffer.
+    assert!(wire::validate(&request, 999).is_ok());
+    assert!(wire::validate(&request, 0).is_ok());
+    assert!(wire::validate(&request, -1).is_err());
+    request.operation = 1;
+    request.frames = vec![vec![3; 128]];
+    request.grant = vec![7; 32];
+    request.deadline_ms = wire::request_deadline(1000, 2000).unwrap();
+    assert!(wire::validate(&request, 1000).is_ok());
+    assert!(matches!(
+        wire::validate(&request, 2000),
+        Err(Error::PeerAuthorization("expired capacity log request"))
+    ));
+    assert!(matches!(
+        wire::request_deadline(i64::MAX, 0),
+        Err(Error::Deadline)
+    ));
+}

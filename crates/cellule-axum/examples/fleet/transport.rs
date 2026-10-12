@@ -102,12 +102,7 @@ impl Transport {
         };
         request.sender = self.sender.as_bytes().to_vec();
         request.member = member.as_bytes().to_vec();
-        let deadline = clock()?.checked_add(10_000).ok_or(Error::Deadline)?;
-        request.deadline_ms = if request.deadline_ms == 0 {
-            deadline
-        } else {
-            request.deadline_ms.min(deadline)
-        };
+        request.deadline_ms = wire::request_deadline(clock()?, request.deadline_ms)?;
         let phase = std::time::Instant::now();
         let body = request.encode_to_vec();
         let digest = blake3::hash(&body);

@@ -82,6 +82,18 @@ fn signing_bytes(body: &[u8], domain: &[u8]) -> Vec<u8> {
     bytes
 }
 
+pub(super) fn request_deadline(now: i64, previous: i64) -> Result<i64> {
+    // Leave clock headroom below the receiver's ten-second horizon. Using the
+    // whole horizon rejected a real grant request when its clock lagged by 1 ms.
+    // A grant's own expiry remains an earlier, independent limit.
+    let deadline = now.checked_add(9_000).ok_or(Error::Deadline)?;
+    Ok(if previous == 0 {
+        deadline
+    } else {
+        previous.min(deadline)
+    })
+}
+
 pub(super) fn validate(request: &Request, now: i64) -> Result<()> {
     if request.sender.len() != 16
         || request.member.len() != 16
