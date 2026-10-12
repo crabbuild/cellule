@@ -91,6 +91,10 @@ async fn operational_pressure_recovers_acquisition_without_clearing_a_cordon() {
 async fn node_shutdown_is_idempotent_and_returns_stopped_state() {
     let pool = SqlWorkerPool::new(1, 1).unwrap();
     let host = ReplicaHost::default();
+    let process_disk = host.local_disk_budget();
+    // Parallel tests charge the default process budget. This fixture owns an
+    // independent envelope with the same capacity for its exact stats snapshot.
+    let host = host.with_local_disk_budget(DiskBudget::new(process_disk.capacity()));
     let node = CellNodeBuilder::new(application())
         .with_runtime(pool, 16 * 1024 * 1024)
         .with_replica_host(host)
@@ -102,7 +106,10 @@ async fn node_shutdown_is_idempotent_and_returns_stopped_state() {
     let starting = node.status();
     assert_eq!(starting.state(), NodeState::Starting);
     assert!(!starting.is_shutting_down());
+    // Force the shared-budget interleaving that originally made CI flaky.
+    let unrelated_disk = process_disk.try_reserve(4096).unwrap();
     assert_eq!(starting.stats(), node.stats());
+    drop(unrelated_disk);
     assert!(node.start().is_err());
     node.install_task_group(CancellationToken::new(), CancellationToken::new())
         .unwrap();

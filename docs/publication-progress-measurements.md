@@ -49,6 +49,18 @@ to both main and the PR, preserving the original workload, budgets, guards and
 every-ACK audits. The workstation remains busy; no corrected capacity result or
 performance improvement is claimed.
 
+Rust CI run `38286916209` at `48ff24b` fails the host lifecycle test's startup
+snapshot equality, before shutdown. The default Host disk budget is
+process-shared, and another parallel test changes its usage between the two
+samples. An unrelated 4,096-byte reservation reproduces the same assertion
+deterministically. The fixture now owns a private budget with the same capacity
+and retains both the forced interleaving and the complete stats assertion.
+The focused test, all 131 host node tests with default parallel execution, and
+strict all-target/all-feature host Clippy pass. Original CI and local
+before/after evidence remain retained under
+`cellule-host-starting-stats-20261012-v42`. This fixture change leaves the
+prepared main/PR benchmark binaries and all performance gates unchanged.
+
 ## Fresh hosted routing comparison
 
 October 12, 2026 UTC. Compose run `38274456201`, attempt 1, compares main
