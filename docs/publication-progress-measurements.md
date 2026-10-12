@@ -302,6 +302,18 @@ the candidate's fresh application capacity ramp has not yet completed. The
 500-write/s and mixed/read-only tables above still describe source `03d2eba`,
 not this candidate. See the [managed protocol](managed-bundle-pipeline.md).
 
+Hosted workspace run [38206015346](https://github.com/crabbuild/cellule/actions/runs/38206015346)
+at `9f22376` failed the checkpoint shutdown-cancellation test. An assertion-only
+isolated reproduction showed its successor-entry notification returning with
+only one current PUT entered: the notification belonged to the preceding
+cohort. The test now consumes that prior notification before resetting its
+counter and requires two current PUTs before injecting fencing. All six
+checkpoint cases pass with the original deadlines, shutdown assertions,
+resource-release checks and 64-MiB budget. Production code is unchanged;
+this test-barrier correction does not establish a performance gain or identify
+the original maintenance failure's cause. Artifacts are retained under
+`cellule-checkpoint-barrier-20261012-v27`.
+
 The maintenance investigation also reproduces a distinct capture race: a real
 same-boot heartbeat between two directory observations caused `Fenced` through
 full-advertisement equality. Capture now retains the exact Open epoch, membership

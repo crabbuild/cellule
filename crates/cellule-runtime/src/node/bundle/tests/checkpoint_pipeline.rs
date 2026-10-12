@@ -117,6 +117,13 @@ async fn checkpoint_case(retained: usize, outcome: Outcome) {
     tokio::time::timeout(Duration::from_secs(3), store.second_done.notified())
         .await
         .unwrap();
+    // Consume the prior successor's entry permit before resetting its PUT
+    // counter. Otherwise it can certify the next cohort before that upload
+    // enters, and fencing legitimately prevents admission instead of testing
+    // that shutdown joins an accepted PUT.
+    tokio::time::timeout(Duration::from_secs(3), store.second_entered.notified())
+        .await
+        .unwrap();
     store.resume.notify_one();
     tokio::time::timeout(Duration::from_secs(3), authority.entered.notified())
         .await
@@ -180,6 +187,11 @@ async fn checkpoint_case(retained: usize, outcome: Outcome) {
     let overlap = tokio::time::timeout(Duration::from_secs(2), successor_entered.notified())
         .await
         .is_ok();
+    assert_eq!(
+        store.puts.load(Ordering::Acquire),
+        2,
+        "current successor PUT has not entered"
+    );
     assert!(!first.selection.as_ref().unwrap().is_ready());
     assert!(!second.selection.as_ref().unwrap().is_ready());
     assert!(
